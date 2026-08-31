@@ -2911,7 +2911,9 @@ app.get("/api/analytics/report", (req, res) => {
   // Camareiras / Usuários
   const candidateUsers = (db.users || []).filter(u => u.role === "camareira" || u.role === "cleaner" || u.role === "admin");
   const cleaningsByUser = candidateUsers.map(u => {
-    const userCleanings = completedCleanings.filter(c => c.assignedUserId === u.id);
+    const userCleanings = completedCleanings
+      .filter(c => c.assignedUserId === u.id)
+      .sort((a, b) => new Date(a.requestDate).getTime() - new Date(b.requestDate).getTime());
     let totalMinutes = 0;
     let validDurationCount = 0;
     
