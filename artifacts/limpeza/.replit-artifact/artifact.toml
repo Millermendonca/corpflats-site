@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Controle de Limpeza"
+description = "Sistema de controle de limpeza de flats para camareiras e gestores. Integra com planilha Excel no OneDrive para detectar checkouts, gerencia status de limpeza em 5 etapas, controla ocupação de flats e mantém histórico de limpezas."
+version = "1.0.0"
+id = "artifacts/limpeza"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 25992
+
+[services.development]
+run = "pnpm --filter @workspace/limpeza run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/limpeza", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/limpeza/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25992"
+BASE_PATH = "/"

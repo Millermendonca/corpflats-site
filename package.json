@@ -1,0 +1,28 @@
+{
+  "name": "workspace",
+  "version": "0.0.0",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "npm --prefix artifacts/limpeza run build",
+    "postinstall": "npm --prefix artifacts/limpeza run build",
+    "start": "node server.mjs"
+  },
+  "private": true,
+  "dependencies": {
+    "@replit/connectors-sdk": "^0.4.1",
+    "@xmldom/xmldom": "^0.9.12",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "node-forge": "^1.4.0",
+    "pg": "^8.13.1",
+    "xlsx": "^0.18.5",
+    "xml-crypto": "^6.1.2",
+    "xpath": "^0.0.34"
+  },
+  "devDependencies": {
+    "prettier": "^3.9.6",
+    "typescript": "~5.9.3"
+  }
+}

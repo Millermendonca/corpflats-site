@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: guest-flow-manager
+    env: node
+    plan: free
+    buildCommand: pnpm install --no-frozen-lockfile && pnpm --filter @workspace/limpeza build
+    startCommand: node server.mjs
+    envVars:
+      - key: NODE_VERSION
+        value: 20.10.0
