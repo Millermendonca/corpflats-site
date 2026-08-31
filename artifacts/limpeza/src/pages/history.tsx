@@ -79,7 +79,7 @@ export default function History() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {history.map((entry: CleaningHistoryEntry) => {
+                  {([...(history || [])].sort((a, b) => new Date(a.requestDate || a.completedAt || 0).getTime() - new Date(b.requestDate || b.completedAt || 0).getTime())).map((entry: CleaningHistoryEntry) => {
                     const dt = entry.completedAt ? parseISO(entry.completedAt) : parseISO(entry.createdAt!)
                     const conf = statusLabels[entry.status] || { label: entry.status, bg: "bg-muted" }
                     return (
