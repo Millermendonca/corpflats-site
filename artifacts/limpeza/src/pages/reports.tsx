@@ -667,7 +667,7 @@ export default function Reports() {
                   <div>
                     {/* Sub-janelinha com barra de rolagem */}
                     <div className="max-h-[380px] overflow-y-auto divide-y divide-border/60 p-4">
-                      {history.map((h, i) => (
+                      {[...(history || [])].sort((a: any, b: any) => new Date(a.requestDate).getTime() - new Date(b.requestDate).getTime()).map((h, i) => (
                         <div key={i} className="py-3 flex items-center justify-between gap-2 hover:bg-muted/20 rounded-xl px-2 transition-colors">
                           <div className="flex items-center gap-3">
                             <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center font-black text-sm">
