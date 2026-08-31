@@ -964,7 +964,7 @@ export default function Reports() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                        {(activeCleanerReceipt.cleanings || []).map((c: any, idx: number) => {
+                        {([...(activeCleanerReceipt.cleanings || [])].sort((a: any, b: any) => new Date(a.requestDate).getTime() - new Date(b.requestDate).getTime())).map((c: any, idx: number) => {
                           const dateFormatted = c.requestDate ? c.requestDate.split('-').reverse().join('/') : "-"
                           const timeFormatted = c.completedAt ? new Date(c.completedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "12:00"
                           const rateVal = Number(activeCleanerReceipt.ratePerRoom || report?.defaultRatePerRoom || 35).toFixed(2)
