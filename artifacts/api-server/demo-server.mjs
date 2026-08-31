@@ -2913,7 +2913,13 @@ app.get("/api/analytics/report", (req, res) => {
   const cleaningsByUser = candidateUsers.map(u => {
     const userCleanings = completedCleanings
       .filter(c => c.assignedUserId === u.id)
-      .sort((a, b) => new Date(a.requestDate).getTime() - new Date(b.requestDate).getTime());
+      .sort((a, b) => {
+        const dateA = a.requestDate || "";
+        const dateB = b.requestDate || "";
+        const c = dateA.localeCompare(dateB);
+        if (c !== 0) return c;
+        return Number(String(a.flatNumber).replace(/\D/g, "") || 0) - Number(String(b.flatNumber).replace(/\D/g, "") || 0);
+      });
     let totalMinutes = 0;
     let validDurationCount = 0;
     
