@@ -511,10 +511,10 @@ export default function Reports() {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-border">
-                            {filteredHistory.map((entry: any) => (
+                            {[...filteredHistory].sort((a: any, b: any) => (a.requestDate || "").localeCompare(b.requestDate || "")).map((entry: any) => (
                               <tr key={entry.id} className="hover:bg-muted/30 transition-colors">
-                                <td className="p-3.5 text-muted-foreground whitespace-nowrap">
-                                  {entry.completedAt ? new Date(entry.completedAt).toLocaleString("pt-BR") : (entry.requestDate || "—")}
+                                <td className="p-3.5 text-foreground font-semibold whitespace-nowrap">
+                                  {entry.requestDate ? entry.requestDate.split('-').reverse().join('/') : (entry.completedAt ? new Date(entry.completedAt).toLocaleDateString("pt-BR") : "—")}
                                 </td>
                                 <td className="p-3.5 font-bold text-foreground">
                                   Apt {entry.flatNumber}
@@ -526,7 +526,7 @@ export default function Reports() {
                                   {entry.durationMinutes ? `${entry.durationMinutes} min` : "~35 min"}
                                 </td>
                                 <td className="p-3.5">
-                                  <Badge className="bg-emerald-600 text-white text-[10px] px-2 py-0.5">
+                                  <Badge className="bg-emerald-600 text-white text-[10px] px-2 py-0.5 font-bold">
                                     Concluído
                                   </Badge>
                                 </td>
@@ -597,107 +597,119 @@ export default function Reports() {
         ) : (
           /* VISÃO PRÓPRIA DA CAMAREIRA */
           <div className="space-y-6">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <Card className="bg-emerald-500/10 dark:bg-emerald-950/30 border-emerald-500/40 p-5 rounded-3xl shadow-sm">
-                <div className="flex items-center gap-3.5">
-                  <div className="p-3.5 bg-emerald-600 text-white rounded-2xl shadow-sm">
-                    <DollarSign className="w-7 h-7" />
-                  </div>
-                  <div>
-                    <div className="text-xs font-bold text-emerald-700 dark:text-emerald-300 uppercase tracking-wider">
-                      Seu Valor Acumulado a Receber
-                    </div>
-                    <div className="text-3xl font-black text-emerald-950 dark:text-emerald-100 mt-0.5">
-                      R$ {(report?.myTotalToPay || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                    </div>
-                    <div className="text-[11px] text-emerald-800 dark:text-emerald-300 mt-1">
-                      Valor por Quarto: <strong>R$ {Number(report?.myRatePerRoom || 35).toFixed(2)}</strong>
-                    </div>
-                  </div>
-                </div>
-              </Card>
+            {(() => {
+              const sortedCamareiraHistory = [...(history || [])].sort((a: any, b: any) => (a.requestDate || "").localeCompare(b.requestDate || ""));
+              const ratePerFlat = Number(report?.myRatePerRoom || report?.defaultRatePerRoom || 22.50);
+              const calculatedTotal = (report?.myTotalToPay && report.myTotalToPay > 0) 
+                ? report.myTotalToPay 
+                : (sortedCamareiraHistory.length * ratePerFlat);
 
-              <Card className="bg-primary/5 border-primary/20 p-5 rounded-3xl shadow-sm">
-                <div className="flex items-center gap-3.5">
-                  <div className="p-3.5 bg-primary text-primary-foreground rounded-2xl shadow-sm">
-                    <CheckCircle2 className="w-7 h-7" />
-                  </div>
-                  <div>
-                    <div className="text-xs font-bold text-primary uppercase tracking-wider">
-                      Quartos Limpos no Período
-                    </div>
-                    <div className="text-3xl font-black text-foreground mt-0.5">
-                      {history.length || 0} flats
-                    </div>
-                  </div>
-                </div>
-              </Card>
-
-              <Card className="bg-blue-500/10 border-blue-500/30 p-5 rounded-3xl shadow-sm">
-                <div className="flex items-center gap-3.5">
-                  <div className="p-3.5 bg-blue-600 text-white rounded-2xl shadow-sm">
-                    <Clock className="w-7 h-7" />
-                  </div>
-                  <div>
-                    <div className="text-xs font-bold text-blue-700 dark:text-blue-300 uppercase tracking-wider">
-                      Tempo Médio por Quarto
-                    </div>
-                    <div className="text-3xl font-black text-foreground mt-0.5">
-                      ~35 min
-                    </div>
-                  </div>
-                </div>
-              </Card>
-            </div>
-
-            {/* Lista dos Meus Atendimentos */}
-            <Card className="rounded-3xl border border-border shadow-sm overflow-hidden">
-              <CardHeader className="p-5 border-b border-border bg-muted/20">
-                <CardTitle className="text-base font-black text-foreground flex items-center gap-2">
-                  <Calendar className="w-5 h-5 text-primary" />
-                  <span>Histórico das Minhas Diárias Concluídas</span>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-0">
-                {history.length === 0 ? (
-                  <div className="text-center py-10 text-muted-foreground text-xs">
-                    Nenhum quarto limpo registrado no período selecionado.
-                  </div>
-                ) : (
-                  <div>
-                    {/* Sub-janelinha com barra de rolagem */}
-                    <div className="max-h-[380px] overflow-y-auto divide-y divide-border/60 p-4">
-                      {[...(history || [])].sort((a: any, b: any) => new Date(a.requestDate).getTime() - new Date(b.requestDate).getTime()).map((h, i) => (
-                        <div key={i} className="py-3 flex items-center justify-between gap-2 hover:bg-muted/20 rounded-xl px-2 transition-colors">
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center font-black text-sm">
-                              {h.flatNumber}
-                            </div>
-                            <div>
-                              <div className="font-bold text-sm text-foreground">Apartamento {h.flatNumber}</div>
-                              <div className="text-xs text-muted-foreground">
-                                Data da Limpeza: {h.requestDate ? h.requestDate.split('-').reverse().join('/') : "-"}
-                              </div>
-                            </div>
+              return (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <Card className="bg-emerald-500/10 dark:bg-emerald-950/30 border-emerald-500/40 p-5 rounded-3xl shadow-sm">
+                      <div className="flex items-center gap-3.5">
+                        <div className="p-3.5 bg-emerald-600 text-white rounded-2xl shadow-sm">
+                          <DollarSign className="w-7 h-7" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-emerald-700 dark:text-emerald-300 uppercase tracking-wider">
+                            Seu Valor Acumulado a Receber
                           </div>
-
-                          <div className="text-right">
-                            <Badge className="bg-emerald-600 text-white font-bold text-xs">
-                              + R$ {Number(report?.myRatePerRoom || 35).toFixed(2)}
-                            </Badge>
+                          <div className="text-3xl font-black text-emerald-950 dark:text-emerald-100 mt-0.5">
+                            R$ {calculatedTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </div>
+                          <div className="text-[11px] text-emerald-800 dark:text-emerald-300 mt-1">
+                            Valor por Quarto: <strong>R$ {ratePerFlat.toFixed(2)}</strong>
                           </div>
                         </div>
-                      ))}
-                    </div>
+                      </div>
+                    </Card>
 
-                    <div className="p-3 bg-muted/20 border-t border-border flex items-center justify-between text-[11px] text-muted-foreground font-semibold">
-                      <span>Total de diárias: <strong>{history.length}</strong> quartos</span>
-                      <span>Rolagem interna</span>
-                    </div>
+                    <Card className="bg-primary/5 border-primary/20 p-5 rounded-3xl shadow-sm">
+                      <div className="flex items-center gap-3.5">
+                        <div className="p-3.5 bg-primary text-primary-foreground rounded-2xl shadow-sm">
+                          <CheckCircle2 className="w-7 h-7" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-primary uppercase tracking-wider">
+                            Quartos Limpos no Período
+                          </div>
+                          <div className="text-3xl font-black text-foreground mt-0.5">
+                            {sortedCamareiraHistory.length} flats
+                          </div>
+                        </div>
+                      </div>
+                    </Card>
+
+                    <Card className="bg-blue-500/10 border-blue-500/30 p-5 rounded-3xl shadow-sm">
+                      <div className="flex items-center gap-3.5">
+                        <div className="p-3.5 bg-blue-600 text-white rounded-2xl shadow-sm">
+                          <Clock className="w-7 h-7" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-blue-700 dark:text-blue-300 uppercase tracking-wider">
+                            Tempo Médio por Quarto
+                          </div>
+                          <div className="text-3xl font-black text-foreground mt-0.5">
+                            ~35 min
+                          </div>
+                        </div>
+                      </div>
+                    </Card>
                   </div>
-                )}
-              </CardContent>
-            </Card>
+
+                  {/* Lista dos Meus Atendimentos */}
+                  <Card className="rounded-3xl border border-border shadow-sm overflow-hidden">
+                    <CardHeader className="p-5 border-b border-border bg-muted/20">
+                      <CardTitle className="text-base font-black text-foreground flex items-center gap-2">
+                        <Calendar className="w-5 h-5 text-primary" />
+                        <span>Histórico das Minhas Diárias Concluídas</span>
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-0">
+                      {sortedCamareiraHistory.length === 0 ? (
+                        <div className="text-center py-10 text-muted-foreground text-xs">
+                          Nenhum quarto limpo registrado no período selecionado.
+                        </div>
+                      ) : (
+                        <div>
+                          {/* Sub-janelinha com barra de rolagem */}
+                          <div className="max-h-[380px] overflow-y-auto divide-y divide-border/60 p-4">
+                            {sortedCamareiraHistory.map((h: any, i: number) => (
+                              <div key={i} className="py-3 flex items-center justify-between gap-2 hover:bg-muted/20 rounded-xl px-2 transition-colors">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center font-black text-sm">
+                                    {h.flatNumber}
+                                  </div>
+                                  <div>
+                                    <div className="font-bold text-sm text-foreground">Apartamento {h.flatNumber}</div>
+                                    <div className="text-xs text-muted-foreground">
+                                      Data da Limpeza: <strong className="text-foreground">{h.requestDate ? h.requestDate.split('-').reverse().join('/') : "-"}</strong>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="text-right">
+                                  <Badge className="bg-emerald-600 text-white font-bold text-xs">
+                                    + R$ {ratePerFlat.toFixed(2)}
+                                  </Badge>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="p-3 bg-muted/20 border-t border-border flex items-center justify-between text-[11px] text-muted-foreground font-semibold">
+                            <span>Total de diárias: <strong>{sortedCamareiraHistory.length}</strong> quartos</span>
+                            <span>Rolagem interna</span>
+                          </div>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </>
+              );
+            })()}
           </div>
         )}
 
