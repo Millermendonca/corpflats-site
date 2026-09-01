@@ -14,7 +14,7 @@ import { Switch } from "@/components/ui/switch"
 import { 
   CalendarDays, Plus, ChevronLeft, ChevronRight, Search, 
   Calendar as CalendarIcon, User, Users, Phone, Mail, ShieldAlert, CheckCircle2,
-  Clock, DollarSign, BedDouble, AlertTriangle, Lock, Trash2, Edit3, MessageCircle, KeyRound, Sparkles, FileText
+  Clock, DollarSign, BedDouble, AlertTriangle, Lock, Trash2, Edit3, MessageCircle, KeyRound, Sparkles, FileText, Tag, Coffee, Building2, Wind, Zap, Bed, Check, RotateCcw, AlertCircle, RefreshCw
 } from "lucide-react"
 import { 
   format, addDays, subDays, startOfMonth, endOfMonth, eachDayOfInterval, 
@@ -71,6 +71,49 @@ export default function PmsCalendar() {
   const [formExtraMattress, setFormExtraMattress] = useState(false)
   const [formIncludeBreakfast, setFormIncludeBreakfast] = useState(false)
   const [formSpecialRequests, setFormSpecialRequests] = useState("")
+
+  const fetchFairShare = async (cin: string, cout: string, excludeId: any = null) => {
+    if (!cin || !cout) return
+    setLoadingFairShare(true)
+    try {
+      const url = `/api/pms/fair-share-flat?checkin=${cin}&checkout=${cout}${excludeId ? `&excludeResId=${excludeId}` : ''}`
+      const res = await fetch(url, { credentials: "include" })
+      if (res.ok) {
+        const json = await res.json()
+        setFairShareResult(json)
+        return json
+      }
+    } catch {} finally {
+      setLoadingFairShare(false)
+    }
+  }
+
+  useEffect(() => {
+    if (resModalOpen && formCheckin && formCheckout) {
+      fetchFairShare(formCheckin, formCheckout, selectedRes?.id).then((result) => {
+        if (!selectedRes && result?.bestFlatId && (!formFlatId || formFlatId === "auto")) {
+          setFormFlatId(String(result.bestFlatId))
+        }
+      })
+    }
+  }, [resModalOpen, formCheckin, formCheckout])
+
+  // Flat Tags Modal State
+  const [flatTagsModalOpen, setFlatTagsModalOpen] = useState(false)
+  const [selectedFlatForTags, setSelectedFlatForTags] = useState<any | null>(null)
+  const [flatTags, setFlatTags] = useState<string[]>([])
+  const [flatAirType, setFlatAirType] = useState("split")
+  const [flatBedType, setFlatBedType] = useState("casal")
+  const [flatHasMicrowave, setFlatHasMicrowave] = useState(true)
+  const [flatCustomTagInput, setFlatCustomTagInput] = useState("")
+  const [savingFlatTags, setSavingFlatTags] = useState(false)
+
+  // Fair-Share & Conflito State
+  const [fairShareResult, setFairShareResult] = useState<any | null>(null)
+  const [loadingFairShare, setLoadingFairShare] = useState(false)
+  const [formForceReplace, setFormForceReplace] = useState(false)
+  const [formIsMonthlyGuest, setFormIsMonthlyGuest] = useState(false)
+
 
   // Multi-Guest & Corporate Requester State
   const [formGuestCount, setFormGuestCount] = useState<"1" | "2" | "3">("1")
@@ -135,6 +178,89 @@ export default function PmsCalendar() {
   }, [])
 
   // Auto-scroll inicial para posicionar o dia de hoje na 3ª ou 4ª coluna à esquerda
+
+  const handleOpenFlatTagsModal = (flat: any) => {
+    setSelectedFlatForTags(flat)
+    setFlatTags(Array.isArray(flat.tags) ? [...flat.tags] : [])
+    setFlatAirType(flat.airConditionerType || (flat.tags?.includes("Ar Janela") ? "janela" : "split"))
+    setFlatBedType(flat.bedType || (flat.tags?.includes("2 Camas Solteiro") ? "solteiro_duplo" : "casal"))
+    setFlatHasMicrowave(flat.hasMicrowave !== undefined ? flat.hasMicrowave : (flat.tags?.includes("Micro-ondas") ?? true))
+    setFlatCustomTagInput("")
+    setFlatTagsModalOpen(true)
+  }
+
+  const handleAddCustomTag = (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
+    const trimmed = flatCustomTagInput.trim()
+    if (trimmed && !flatTags.includes(trimmed)) {
+      setFlatTags(prev => [...prev, trimmed])
+      setFlatCustomTagInput("")
+    }
+  }
+
+  const handleRemoveTag = (tagToRemove: string) => {
+    setFlatTags(prev => prev.filter(t => t !== tagToRemove))
+  }
+
+  const handleTogglePresetTag = (tag: string) => {
+    if (flatTags.includes(tag)) {
+      handleRemoveTag(tag)
+    } else {
+      setFlatTags(prev => [...prev, tag])
+    }
+  }
+
+  const handleSaveFlatTags = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedFlatForTags) return
+    setSavingFlatTags(true)
+
+    // Sincroniza presets com as tags
+    const finalTags = [...flatTags]
+    if (flatAirType === "split" && !finalTags.includes("Split")) finalTags.push("Split")
+    if (flatAirType === "janela" && !finalTags.includes("Ar Janela")) finalTags.push("Ar Janela")
+    if (flatAirType === "split") {
+      const idx = finalTags.indexOf("Ar Janela"); if (idx > -1) finalTags.splice(idx, 1)
+    }
+    if (flatAirType === "janela") {
+      const idx = finalTags.indexOf("Split"); if (idx > -1) finalTags.splice(idx, 1)
+    }
+
+    if (flatBedType === "solteiro_duplo" && !finalTags.includes("2 Solteiro")) finalTags.push("2 Solteiro")
+    if (flatBedType === "casal" && !finalTags.includes("Casal")) finalTags.push("Casal")
+    if (flatBedType === "casal") {
+      const idx = finalTags.indexOf("2 Solteiro"); if (idx > -1) finalTags.splice(idx, 1)
+    }
+    if (flatBedType === "solteiro_duplo") {
+      const idx = finalTags.indexOf("Casal"); if (idx > -1) finalTags.splice(idx, 1)
+    }
+
+    if (flatHasMicrowave && !finalTags.includes("Micro-ondas")) finalTags.push("Micro-ondas")
+    if (!flatHasMicrowave) {
+      const idx = finalTags.indexOf("Micro-ondas"); if (idx > -1) finalTags.splice(idx, 1)
+    }
+
+    try {
+      const res = await fetch(`/api/flats/${selectedFlatForTags.id}/tags`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          tags: Array.from(new Set(finalTags)),
+          airConditionerType: flatAirType,
+          bedType: flatBedType,
+          hasMicrowave: flatHasMicrowave
+        })
+      })
+      if (res.ok) {
+        setFlatTagsModalOpen(false)
+        fetchData()
+      }
+    } finally {
+      setSavingFlatTags(false)
+    }
+  }
+
   const scrollToToday = (behavior: "auto" | "smooth" = "smooth") => {
     if (scrollContainerRef.current) {
       const targetDateStr = format(subDays(new Date(), 3), "yyyy-MM-dd")
@@ -909,6 +1035,47 @@ export default function PmsCalendar() {
                     </div>
                   </div>
                   <Switch checked={formEarlyCheckin} onCheckedChange={setFormEarlyCheckin} />
+                </div>
+
+
+                {/* Alerta de Quarto Ocupado & Substituição com Transferência Automática */}
+                {(() => {
+                  const selectedStat = fairShareResult?.allStats?.find((s: any) => String(s.flat?.id) === String(formFlatId));
+                  if (!selectedStat || selectedStat.isAvailable || selectedRes) return null;
+                  const conflict = selectedStat.conflicts?.[0];
+
+                  return (
+                    <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/60 rounded-2xl space-y-2 text-xs">
+                      <div className="flex items-start gap-2 text-amber-800 dark:text-amber-200">
+                        <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                        <div>
+                          <span className="font-bold block">Apt {selectedStat.flat?.number} já possui reserva no período!</span>
+                          <span className="text-[11px] text-amber-700 dark:text-amber-300/90 block">
+                            Hóspede atual: <strong>{conflict?.guestName || "Outro Hóspede"}</strong> ({conflict?.checkinDate} a {conflict?.checkoutDate})
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="pt-1.5 border-t border-amber-200 dark:border-amber-800/60 flex items-center justify-between">
+                        <div className="text-[11px] text-slate-700 dark:text-slate-300 font-medium">
+                          Substituir e transferir <strong>{conflict?.guestName || "hóspede"}</strong> para o próximo Quarto da Vez
+                        </div>
+                        <Switch checked={formForceReplace} onCheckedChange={setFormForceReplace} />
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Switch: Mensalista / Contrato */}
+                <div className="p-3 bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800/60 rounded-xl flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Building2 className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                    <div>
+                      <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">Cliente Mensalista / Contrato Long Stay</span>
+                      <span className="text-[11px] text-muted-foreground">Exibe destaque visual exclusivo no Livro de Reservas</span>
+                    </div>
+                  </div>
+                  <Switch checked={formIsMonthlyGuest} onCheckedChange={setFormIsMonthlyGuest} />
                 </div>
 
                 {/* Auto NFS-e Switch */}

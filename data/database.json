@@ -26,7 +26,18 @@
       "colIndex": 2,
       "colName": "113 solteiro",
       "isOccupied": true,
-      "updatedAt": "2026-09-01T07:26:30.433Z"
+      "updatedAt": "2026-09-01T11:47:10.446Z",
+      "tags": [
+        "Split ❄️",
+        "Micro-ondas ⚡",
+        "Casal 🛏️",
+        "Andar Baixo"
+      ],
+      "airConditionerType": "split",
+      "bedType": "casal",
+      "hasMicrowave": true,
+      "features": [],
+      "notes": ""
     },
     {
       "id": 2,

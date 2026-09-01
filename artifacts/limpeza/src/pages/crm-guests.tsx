@@ -11,6 +11,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription 
 } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
+import { Switch } from "@/components/ui/switch"
 import { 
   Users, Search, Plus, Phone, Mail, User, MessageCircle, 
   Calendar, BedDouble, DollarSign, History, Star, Edit2, ShieldCheck, Tag, 
@@ -54,6 +55,7 @@ export default function CrmGuests() {
     vehiclePlate: "",
     breakfastNotes: ""
   })
+  const [formIsMonthlyGuest, setFormIsMonthlyGuest] = useState(false)
   const [savingGuest, setSavingGuest] = useState(false)
 
   // Modal Create / Edit Company

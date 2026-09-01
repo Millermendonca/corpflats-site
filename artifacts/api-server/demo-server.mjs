@@ -1640,6 +1640,27 @@ app.patch("/api/flats/:id", (req, res) => {
   res.json(f);
 });
 
+// ── Atualização de Tags e Particularidades do Flat ───────────────────────────
+app.put("/api/flats/:id/tags", (req, res) => {
+  const id = Number(req.params.id);
+  const flat = (db.flats || []).find(f => f.id === id);
+  if (!flat) return res.status(404).json({ error: "Flat não encontrado" });
+
+  const { tags = [], airConditionerType, bedType, hasMicrowave, features = [], notes = "" } = req.body;
+  
+  flat.tags = Array.isArray(tags) ? tags : [];
+  if (airConditionerType !== undefined) flat.airConditionerType = airConditionerType;
+  if (bedType !== undefined) flat.bedType = bedType;
+  if (hasMicrowave !== undefined) flat.hasMicrowave = Boolean(hasMicrowave);
+  if (Array.isArray(features)) flat.features = features;
+  if (notes !== undefined) flat.notes = notes;
+  flat.updatedAt = new Date().toISOString();
+
+  saveDatabase();
+  console.log(`[Flats] Particularidades do Apt ${flat.number} atualizadas: ${flat.tags.join(", ") || "Sem tags"}`);
+  res.json({ success: true, flat });
+});
+
 // ── Acknowledge Extended Stay ("Ciente") Endpoint ───────────────────────────
 app.post("/api/cleaning/assignments/:requestId/acknowledge-extended", (req, res) => {
   const reqId = Number(req.params.requestId);
@@ -3472,6 +3493,120 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
 });
 
 // ── PMS & CRM Endpoints ────────────────────────────────────────────────────
+
+// ── Motor Fair-Share: Quarto da Vez (Balanceamento de Uso & Ociosidade) ───────
+function calculateFairShareStats(checkinDate, checkoutDate, excludeResId = null) {
+  const flats = (db.flats || []).filter(f => String(f.number) !== "502" && f.id !== 9);
+  if (flats.length === 0) return { bestFlat: null, availableCount: 0, allStats: [] };
+
+  const [y, m] = checkinDate.split("-").map(Number);
+  const monthStart = `${y}-${String(m).padStart(2, '0')}-01`;
+  const nextM = m === 12 ? 1 : m + 1;
+  const nextY = m === 12 ? y + 1 : y;
+  const monthEnd = `${nextY}-${String(nextM).padStart(2, '0')}-01`;
+
+  const flatStats = flats.map(flat => {
+    // 1. Verifica conflitos no período solicitado
+    const conflicts = (db.reservations || []).filter(r => 
+      r.id !== excludeResId &&
+      r.status !== "cancelada" &&
+      (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
+      r.checkinDate < checkoutDate &&
+      r.checkoutDate > checkinDate
+    );
+
+    const blockConflicts = (db.roomBlocks || []).filter(b => 
+      (b.flatId === flat.id || String(b.flatNumber) === String(flat.number)) &&
+      b.startDate < checkoutDate &&
+      b.endDate > checkinDate
+    );
+
+    const isAvailable = conflicts.length === 0 && blockConflicts.length === 0;
+
+    // 2. Calcula total de diárias ocupadas no mês do checkin
+    const monthReservations = (db.reservations || []).filter(r => 
+      r.id !== excludeResId &&
+      r.status !== "cancelada" &&
+      (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
+      r.checkinDate < monthEnd &&
+      r.checkoutDate > monthStart
+    );
+
+    let monthOccupiedDays = 0;
+    for (const r of monthReservations) {
+      const startD = new Date(Math.max(new Date(r.checkinDate).getTime(), new Date(monthStart).getTime()));
+      const endD = new Date(Math.min(new Date(r.checkoutDate).getTime(), new Date(monthEnd).getTime()));
+      const days = Math.max(0, Math.round((endD - startD) / 86400000));
+      monthOccupiedDays += days;
+    }
+
+    // 3. Dias desde o último checkout antes do checkinDate (tempo ocioso)
+    const pastReservations = (db.reservations || []).filter(r => 
+      r.id !== excludeResId &&
+      r.status !== "cancelada" &&
+      (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
+      r.checkoutDate <= checkinDate
+    ).sort((a, b) => b.checkoutDate.localeCompare(a.checkoutDate));
+
+    let daysSinceLastCheckout = 999;
+    if (pastReservations.length > 0) {
+      const lastOut = new Date(pastReservations[0].checkoutDate);
+      const reqIn = new Date(checkinDate);
+      daysSinceLastCheckout = Math.max(0, Math.round((reqIn - lastOut) / 86400000));
+    }
+
+    return {
+      flat,
+      isAvailable,
+      conflicts: conflicts.map(c => ({
+        id: c.id,
+        code: c.code,
+        guestName: c.guestName,
+        checkinDate: c.checkinDate,
+        checkoutDate: c.checkoutDate,
+        channel: c.channel
+      })),
+      blockConflicts,
+      monthOccupiedDays,
+      daysSinceLastCheckout,
+      reservationsCountMonth: monthReservations.length
+    };
+  });
+
+  const available = flatStats.filter(s => s.isAvailable);
+
+  // Ordenação: 1º menor uso no mês, 2º maior ociosidade, 3º número do flat
+  available.sort((a, b) => {
+    if (a.monthOccupiedDays !== b.monthOccupiedDays) {
+      return a.monthOccupiedDays - b.monthOccupiedDays;
+    }
+    if (a.daysSinceLastCheckout !== b.daysSinceLastCheckout) {
+      return b.daysSinceLastCheckout - a.daysSinceLastCheckout;
+    }
+    return a.flat.number.localeCompare(b.flat.number, undefined, { numeric: true });
+  });
+
+  const bestFlat = available.length > 0 ? available[0].flat : null;
+
+  return {
+    bestFlat,
+    bestFlatId: bestFlat?.id || null,
+    bestFlatNumber: bestFlat?.number || null,
+    availableCount: available.length,
+    allStats: flatStats
+  };
+}
+
+app.get("/api/pms/fair-share-flat", (req, res) => {
+  const { checkin, checkout, excludeResId } = req.query;
+  if (!checkin || !checkout) {
+    return res.status(400).json({ error: "Check-in e Check-out são obrigatórios." });
+  }
+
+  const result = calculateFairShareStats(checkin, checkout, excludeResId ? Number(excludeResId) : null);
+  res.json(result);
+});
+
 app.get("/api/pms/calendar", (req, res) => {
   const { startDate, endDate } = req.query;
   const start = startDate || getOffsetDateStr(-3);
@@ -4672,6 +4807,21 @@ app.get("/api/pms/guests/:id", (req, res) => {
     signatureUrl: signatureUrl || g.signatureUrl || null,
     stays
   });
+});
+
+
+app.put("/api/pms/guests/:id", (req, res) => {
+  const id = Number(req.params.id);
+  const guest = (db.guests || []).find(g => g.id === id);
+  if (!guest) return res.status(404).json({ error: "Hóspede não encontrado." });
+
+  const fields = ["name", "phone", "email", "document", "city", "notes", "tags", "isMonthlyGuest", "clientType"];
+  for (const f of fields) {
+    if (req.body[f] !== undefined) guest[f] = req.body[f];
+  }
+  guest.updatedAt = new Date().toISOString();
+  saveDatabase();
+  res.json(guest);
 });
 
 app.post("/api/pms/guests", (req, res) => {
