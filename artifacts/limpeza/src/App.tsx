@@ -173,19 +173,61 @@ function Router() {
   );
 }
 
-function RoutedErrorBoundary({ children }: { children: ReactNode }) {
-  const [location] = useLocation();
-  return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>;
+function VersionGuard({ children }: { children: ReactNode }) {
+  useEffect(() => {
+    let isMounted = true;
+
+    const checkAppVersion = async () => {
+      try {
+        const res = await fetch("/api/system/version?_nocache=" + Date.now(), { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        const serverVersion = data.version;
+        if (!serverVersion || !isMounted) return;
+
+        const currentVersion = localStorage.getItem("gfm_app_version");
+
+        if (currentVersion && currentVersion !== serverVersion) {
+          console.warn(`[Deploy Detector] Nova versão (${serverVersion}) detectada! Limpando cache e forçando reautenticação...`);
+          try {
+            await fetch("/api/auth/logout", { method: "POST" });
+          } catch {}
+          localStorage.clear();
+          sessionStorage.clear();
+          localStorage.setItem("gfm_app_version", serverVersion);
+          window.location.replace("/login");
+          return;
+        }
+
+        if (!currentVersion) {
+          localStorage.setItem("gfm_app_version", serverVersion);
+        }
+      } catch {}
+    };
+
+    checkAppVersion();
+    const timer = setInterval(checkAppVersion, 15000);
+    window.addEventListener("focus", checkAppVersion);
+    return () => {
+      isMounted = false;
+      clearInterval(timer);
+      window.removeEventListener("focus", checkAppVersion);
+    };
+  }, []);
+
+  return <>{children}</>;
 }
 
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
-          <Router />
-        </WouterRouter>
-        <Toaster />
+        <VersionGuard>
+          <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+            <Router />
+          </WouterRouter>
+          <Toaster />
+        </VersionGuard>
       </TooltipProvider>
     </QueryClientProvider>
   );

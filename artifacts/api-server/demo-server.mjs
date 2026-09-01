@@ -1,3 +1,4 @@
+const APP_BUILD_ID = process.env.RENDER_GIT_COMMIT || `build_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 const DEFAULT_FLATS = [
   { id: 1, number: "113", colName: "113 solteiro", isOccupied: true },
   { id: 2, number: "114", colName: "114 Solteiro", isOccupied: true },
@@ -73,6 +74,17 @@ app.use(cookieParser());
 app.use("/api/storage/files", express.static(UPLOADS_DIR));
 
 // ── Database Health & Diagnostics Endpoint ──────────────────────────────────
+
+app.get("/api/system/version", (req, res) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  res.json({
+    version: APP_BUILD_ID,
+    timestamp: new Date().toISOString()
+  });
+});
+
 app.get("/api/system/db-status", async (req, res) => {
   let pgStatus = "disconnected";
   let pgError = null;
