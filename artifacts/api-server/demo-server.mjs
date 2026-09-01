@@ -1703,6 +1703,7 @@ app.post("/api/public/checkout", (req, res) => {
 
 // ── Flats Endpoints ─────────────────────────────────────────────────────────
 app.get("/api/flats", (req, res) => {
+  db.flats = (db.flats || []).filter(f => String(f.number) !== "502");
   triggerBackgroundSync();
   res.json(db.flats);
 });
