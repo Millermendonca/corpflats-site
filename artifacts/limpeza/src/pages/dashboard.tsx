@@ -62,48 +62,7 @@ export default function Dashboard() {
     setStatusFilter("all") // Reset filter on date change
   }
 
-  const [isSyncing, setIsSyncing] = useState(false)
-  const [isUploadingSheet, setIsUploadingSheet] = useState(false)
-  const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const handleSyncNow = async () => {
-    setIsSyncing(true)
-    try {
-      await fetch("/api/reservations/sync", { method: "POST" })
-      await queryClient.invalidateQueries({ queryKey: getListCheckoutsQueryKey({ date: selectedDateStr }) })
-      await queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey({ date: selectedDateStr }) })
-      await queryClient.invalidateQueries({ queryKey: getListCheckinsQueryKey({ date: selectedDateStr }) })
-    } finally {
-      setIsSyncing(false)
-    }
-  }
-
-  const handleUploadExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setIsUploadingSheet(true)
-    try {
-      const reader = new FileReader()
-      reader.onload = async () => {
-        const result = reader.result as string
-        const base64 = result.split(",")[1] || result
-        const res = await fetch("/api/sync/upload-sheet-json", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ base64 })
-        })
-        if (res.ok) {
-          await queryClient.invalidateQueries({ queryKey: getListCheckoutsQueryKey({ date: selectedDateStr }) })
-          await queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey({ date: selectedDateStr }) })
-          await queryClient.invalidateQueries({ queryKey: getListCheckinsQueryKey({ date: selectedDateStr }) })
-        }
-      }
-      reader.readAsDataURL(file)
-    } finally {
-      setIsUploadingSheet(false)
-      if (fileInputRef.current) fileInputRef.current.value = ""
-    }
-  }
 
   const { data: checkouts, isLoading: loadingCheckouts } = useListCheckouts(
     { date: selectedDateStr },
@@ -281,41 +240,6 @@ export default function Dashboard() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2.5">
-            {/* Hidden Excel File Input for instant upload */}
-            <input 
-              type="file" 
-              ref={fileInputRef} 
-              onChange={handleUploadExcel} 
-              accept=".xlsx,.xls" 
-              className="hidden" 
-            />
-
-            {/* Import Excel File Button */}
-            {isAdmin && (
-              <Button 
-                variant="outline"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isUploadingSheet}
-                title="Enviar arquivo Excel atualizado do seu computador diretamente para a nuvem"
-                className="bg-card border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 font-semibold shadow-2xs flex items-center gap-1.5 text-xs h-9"
-              >
-                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
-                <span>{isUploadingSheet ? "Enviando..." : "Importar Excel"}</span>
-              </Button>
-            )}
-
-            {/* Sync Spreadsheet Button */}
-            <Button 
-              variant="outline"
-              onClick={handleSyncNow}
-              disabled={isSyncing}
-              title="Recarregar dados da planilha do Excel agora"
-              className="bg-card border-border/80 font-semibold shadow-2xs flex items-center gap-1.5 text-xs h-9"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin text-primary" : "text-muted-foreground"}`} />
-              <span>{isSyncing ? "Sincronizando..." : "Sincronizar"}</span>
-            </Button>
-
             {/* Add Manual Flat Button right on main screen */}
             <Button 
               onClick={handleOpenManualModal}
