@@ -26,7 +26,11 @@
       "colIndex": 2,
       "colName": "113 solteiro",
       "isOccupied": true,
-      "updatedAt": "2026-08-31T17:43:19.019Z"
+      "updatedAt": "2026-08-31T17:43:19.019Z",
+      "adminNote": null,
+      "specialRequests": null,
+      "pendingObservation": null,
+      "setupInfo": null
     },
     {
       "id": 2,
@@ -34,7 +38,11 @@
       "colIndex": 3,
       "colName": "114 Solteiro",
       "isOccupied": true,
-      "updatedAt": "2026-08-31T17:43:19.019Z"
+      "updatedAt": "2026-08-31T17:43:19.019Z",
+      "adminNote": null,
+      "specialRequests": null,
+      "pendingObservation": null,
+      "setupInfo": null
     },
     {
       "id": 3,
@@ -42,7 +50,11 @@
       "colIndex": 4,
       "colName": "116",
       "isOccupied": true,
-      "updatedAt": "2026-08-31T17:43:19.019Z"
+      "updatedAt": "2026-08-31T17:43:19.019Z",
+      "adminNote": null,
+      "specialRequests": null,
+      "pendingObservation": null,
+      "setupInfo": null
     },
     {
       "id": 4,
@@ -50,7 +62,11 @@
       "colIndex": 5,
       "colName": "211 de casal",
       "isOccupied": true,
-      "updatedAt": "2026-08-31T17:43:19.019Z"
+      "updatedAt": "2026-08-31T17:43:19.019Z",
+      "adminNote": null,
+      "specialRequests": null,
+      "pendingObservation": null,
+      "setupInfo": null
     },
     {
       "id": 5,
@@ -58,7 +74,11 @@
       "colIndex": 6,
       "colName": "212 solteiro",
       "isOccupied": true,
-      "updatedAt": "2026-08-31T17:43:19.019Z"
+      "updatedAt": "2026-08-31T17:43:19.019Z",
+      "adminNote": null,
+      "specialRequests": null,
+      "pendingObservation": null,
+      "setupInfo": null
     },
     {
       "id": 6,
@@ -66,7 +86,11 @@
       "colIndex": 7,
       "colName": "215 Solteiro",
       "isOccupied": true,
-      "updatedAt": "2026-08-31T17:43:19.019Z"
+      "updatedAt": "2026-08-31T17:43:19.019Z",
+      "adminNote": null,
+      "specialRequests": null,
+      "pendingObservation": null,
+      "setupInfo": null
     },
     {
       "id": 7,
@@ -74,7 +98,11 @@
       "colIndex": 8,
       "colName": "313 Solteiro X SPLIT",
       "isOccupied": true,
-      "updatedAt": "2026-08-31T17:43:19.019Z"
+      "updatedAt": "2026-08-31T17:43:19.019Z",
+      "adminNote": null,
+      "specialRequests": null,
+      "pendingObservation": null,
+      "setupInfo": null
     },
     {
       "id": 8,
@@ -82,7 +110,11 @@
       "colIndex": 9,
       "colName": "408 Casal",
       "isOccupied": true,
-      "updatedAt": "2026-08-31T17:43:19.019Z"
+      "updatedAt": "2026-08-31T17:43:19.019Z",
+      "adminNote": null,
+      "specialRequests": null,
+      "pendingObservation": null,
+      "setupInfo": null
     },
     {
       "id": 10,
@@ -90,7 +122,11 @@
       "colIndex": 11,
       "colName": "509 casal",
       "isOccupied": true,
-      "updatedAt": "2026-08-31T17:43:19.019Z"
+      "updatedAt": "2026-08-31T17:43:19.019Z",
+      "adminNote": null,
+      "specialRequests": null,
+      "pendingObservation": null,
+      "setupInfo": null
     },
     {
       "id": 11,
@@ -98,7 +134,11 @@
       "colIndex": 12,
       "colName": "511 casal X",
       "isOccupied": true,
-      "updatedAt": "2026-08-31T17:43:19.019Z"
+      "updatedAt": "2026-08-31T17:43:19.019Z",
+      "adminNote": null,
+      "specialRequests": null,
+      "pendingObservation": null,
+      "setupInfo": null
     },
     {
       "id": 12,
@@ -106,7 +146,11 @@
       "colIndex": 13,
       "colName": "512 Solteiro",
       "isOccupied": true,
-      "updatedAt": "2026-08-31T17:43:19.019Z"
+      "updatedAt": "2026-08-31T17:43:19.019Z",
+      "adminNote": null,
+      "specialRequests": null,
+      "pendingObservation": null,
+      "setupInfo": null
     },
     {
       "id": 13,
@@ -114,7 +158,11 @@
       "colIndex": 14,
       "colName": "605 solteiro",
       "isOccupied": true,
-      "updatedAt": "2026-08-31T17:43:19.019Z"
+      "updatedAt": "2026-08-31T17:43:19.019Z",
+      "adminNote": null,
+      "specialRequests": null,
+      "pendingObservation": null,
+      "setupInfo": null
     },
     {
       "id": 14,
@@ -122,7 +170,11 @@
       "colIndex": 15,
       "colName": "712 Solteiro SPLIT",
       "isOccupied": true,
-      "updatedAt": "2026-08-31T17:43:19.019Z"
+      "updatedAt": "2026-08-31T17:43:19.019Z",
+      "adminNote": null,
+      "specialRequests": null,
+      "pendingObservation": null,
+      "setupInfo": null
     },
     {
       "id": 15,
@@ -130,7 +182,11 @@
       "colIndex": 16,
       "colName": "715 Solteiro",
       "isOccupied": true,
-      "updatedAt": "2026-08-31T17:43:19.019Z"
+      "updatedAt": "2026-08-31T17:43:19.019Z",
+      "adminNote": null,
+      "specialRequests": null,
+      "pendingObservation": null,
+      "setupInfo": null
     },
     {
       "id": 16,
@@ -138,7 +194,11 @@
       "colIndex": 17,
       "colName": "904 split",
       "isOccupied": true,
-      "updatedAt": "2026-08-31T17:43:19.019Z"
+      "updatedAt": "2026-08-31T17:43:19.019Z",
+      "adminNote": null,
+      "specialRequests": null,
+      "pendingObservation": null,
+      "setupInfo": null
     },
     {
       "id": 17,
@@ -146,7 +206,11 @@
       "colIndex": 18,
       "colName": "905 split",
       "isOccupied": true,
-      "updatedAt": "2026-08-31T17:43:19.019Z"
+      "updatedAt": "2026-08-31T17:43:19.019Z",
+      "adminNote": null,
+      "specialRequests": null,
+      "pendingObservation": null,
+      "setupInfo": null
     },
     {
       "id": 18,
@@ -154,7 +218,11 @@
       "colIndex": 19,
       "colName": "X 907 casal",
       "isOccupied": true,
-      "updatedAt": "2026-08-31T17:43:19.019Z"
+      "updatedAt": "2026-08-31T17:43:19.019Z",
+      "adminNote": null,
+      "specialRequests": null,
+      "pendingObservation": null,
+      "setupInfo": null
     },
     {
       "id": 19,
@@ -162,7 +230,11 @@
       "colIndex": 20,
       "colName": "1004 Solteiro X",
       "isOccupied": true,
-      "updatedAt": "2026-08-31T17:43:19.019Z"
+      "updatedAt": "2026-08-31T17:43:19.019Z",
+      "adminNote": null,
+      "specialRequests": null,
+      "pendingObservation": null,
+      "setupInfo": null
     },
     {
       "id": 21,
@@ -170,35 +242,18 @@
       "colIndex": 22,
       "colName": "1304 Solteiro(ferro unindo)",
       "isOccupied": true,
-      "updatedAt": "2026-08-31T17:43:19.019Z"
+      "updatedAt": "2026-08-31T17:43:19.019Z",
+      "adminNote": null,
+      "specialRequests": null,
+      "pendingObservation": null,
+      "setupInfo": null
     }
   ],
   "cleaningRequests": [],
   "periodicTasks": [],
   "periodicExecutions": [],
   "surveys": [],
-  "observations": [
-    {
-      "id": 1,
-      "flatNumber": "304",
-      "type": "manutencao",
-      "description": "[IA Auto-Ticket] Revisão de Ar Condicionado Split detectado na avaliação de Fernanda Costa (BOOKING): \"Adorei a jacuzzi e a sauna no topo do prédio Soho. Porém o ar condicionado do quarto 304 estava com um pequeno gotejamen...\"",
-      "severity": "media",
-      "status": "pendente",
-      "createdAt": "2026-08-19T14:50:12.215Z",
-      "generatedFromReviewId": 2
-    },
-    {
-      "id": 2,
-      "flatNumber": "211",
-      "type": "manutencao",
-      "description": "[IA Auto-Ticket] Revisão de Fechadura / Porta detectado na avaliação de Rodrigo Mendes (Engenheiro) (SITE): \"Viajo muito a trabalho para Campos. O café da manhã entregue pontualmente no quarto fez toda a diferença. O check-in dig...\"",
-      "severity": "media",
-      "status": "pendente",
-      "createdAt": "2026-08-19T14:50:12.215Z",
-      "generatedFromReviewId": 3
-    }
-  ],
+  "observations": [],
   "guests": [
     {
       "id": 1,
