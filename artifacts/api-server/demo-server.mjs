@@ -1819,6 +1819,8 @@ app.post("/api/cleaning/requests/manual", (req, res) => {
 });
 
 function getRequestsForDate(dateStr) {
+  // Purifica cleaningRequests em memória descartando qualquer registro corrompido ou sem hóspede
+  db.cleaningRequests = (db.cleaningRequests || []).filter(r => r.source === "manual" || (r.requestDate >= "2026-09-01" && (r.status === "clean" || r.status === "cleaning" || r.status === "inspected")));
   const requestsForDate = [];
   const existingFlatNumbersForDate = new Set();
 
@@ -1904,7 +1906,8 @@ function getRequestsForDate(dateStr) {
   if (dateStr === getTodayStr()) {
     const previousUncleaned = (db.cleaningRequests || []).filter(r => {
       const fNumber = String(r.flatNumber || "");
-      if (r.requestDate < "2026-09-01" || r.requestDate >= dateStr || r.status === "clean" || r.status === "extended" || r.status === "no_show") return false;
+      if (!r.requestDate || r.requestDate < "2026-09-01" || r.requestDate >= dateStr || r.status === "clean" || r.status === "extended" || r.status === "no_show") return false;
+      if (!r.leavingGuest && r.source !== "manual") return false;
       if (stayoverFlatNumbers.has(fNumber)) return false;
       if (existingFlatNumbersForDate.has(fNumber)) return false;
       return true;
