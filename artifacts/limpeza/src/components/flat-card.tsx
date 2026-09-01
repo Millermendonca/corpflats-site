@@ -1106,7 +1106,7 @@ export function FlatCard({
                   </div>
                 )}
 
-                {currentStatus === "clean" && isAdmin && (
+                {currentStatus === "clean" && (
                   <div className="flex gap-1.5">
                     <Button 
                       size="sm" 
@@ -1114,18 +1114,21 @@ export function FlatCard({
                       className="flex-1 text-xs text-slate-600 border-slate-300 hover:bg-slate-100" 
                       onClick={() => handleStatusChange("dirty")}
                       disabled={isProcessing}
+                      title="Devolver quarto para o estado sujo e desfazer o registro de limpeza"
                     >
-                      Reabrir
+                      <RotateCcw className="w-3.5 h-3.5 mr-1" /> Devolver Quarto
                     </Button>
-                    <Button 
-                      size="sm" 
-                      variant="outline" 
-                      className="flex-1 text-xs text-emerald-700 border-emerald-300 hover:bg-emerald-50 font-bold" 
-                      onClick={() => setAdminCleanModalOpen(true)}
-                      disabled={isProcessing}
-                    >
-                      Trocar Camareira
-                    </Button>
+                    {isAdmin && (
+                      <Button 
+                        size="sm" 
+                        variant="outline" 
+                        className="flex-1 text-xs text-emerald-700 border-emerald-300 hover:bg-emerald-50 font-bold" 
+                        onClick={() => setAdminCleanModalOpen(true)}
+                        disabled={isProcessing}
+                      >
+                        Trocar Camareira
+                      </Button>
+                    )}
                   </div>
                 )}
 

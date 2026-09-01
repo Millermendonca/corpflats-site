@@ -2360,6 +2360,7 @@ app.post("/api/cleaning/assignments/:requestId/release", (req, res) => {
     ...item,
     flatNumber: flat ? flat.number : String(item.flatId),
     assignedUsername: null,
+    assignedUserName: null,
   });
 });
 
