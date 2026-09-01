@@ -1932,9 +1932,9 @@ function getRequestsForDate(dateStr) {
 }
 
 app.post("/api/admin/reset-cleaning-cache", (req, res) => {
-  db.cleaningRequests = (db.cleaningRequests || []).filter(r => r.source === "manual");
+  db.cleaningRequests = [];
   saveDatabase();
-  res.json({ success: true, count: db.cleaningRequests.length });
+  res.json({ success: true, count: 0 });
 });
 
 app.post("/api/reservations/clear-all", (req, res) => {
