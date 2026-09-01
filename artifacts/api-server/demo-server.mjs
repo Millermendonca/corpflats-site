@@ -2859,7 +2859,7 @@ app.patch("/api/observations/:id/resolve", (req, res) => {
 app.get("/api/cleaning/rates", (req, res) => {
   if (!db.cleaningRates) {
     db.cleaningRates = {
-      defaultRatePerRoom: 35.00,
+      defaultRatePerRoom: 22.50,
       userRates: {}
     };
     saveDatabase();
@@ -2870,11 +2870,11 @@ app.get("/api/cleaning/rates", (req, res) => {
     username: u.username,
     name: u.name || u.username,
     role: u.role,
-    rate: db.cleaningRates.userRates?.[u.id] !== undefined ? Number(db.cleaningRates.userRates[u.id]) : Number(db.cleaningRates.defaultRatePerRoom || 35.00)
+    rate: db.cleaningRates.userRates?.[u.id] !== undefined ? Number(db.cleaningRates.userRates[u.id]) : Number(db.cleaningRates.defaultRatePerRoom || 22.50)
   }));
 
   res.json({
-    defaultRatePerRoom: Number(db.cleaningRates.defaultRatePerRoom || 35.00),
+    defaultRatePerRoom: Number(db.cleaningRates.defaultRatePerRoom || 22.50),
     userRates: db.cleaningRates.userRates || {},
     cleaners: list
   });
@@ -2896,9 +2896,9 @@ app.get("/api/analytics/report", (req, res) => {
   const endDate = req.query.endDate || getTodayStr();
 
   if (!db.cleaningRates) {
-    db.cleaningRates = { defaultRatePerRoom: 35.00, userRates: {} };
+    db.cleaningRates = { defaultRatePerRoom: 22.50, userRates: {} };
   }
-  const defaultRate = Number(db.cleaningRates.defaultRatePerRoom || 35.00);
+  const defaultRate = Number(db.cleaningRates.defaultRatePerRoom || 22.50);
 
   // Filtra limpezas concluídas no período [startDate, endDate]
   const completedCleanings = (db.cleaningRequests || []).filter(r => {
