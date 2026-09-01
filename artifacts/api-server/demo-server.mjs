@@ -1900,8 +1900,8 @@ function getRequestsForDate(dateStr) {
     }
   }
 
-  // 5. Carry-Over de pendências não limpas de dias anteriores (apenas se o quarto NÃO virou stayover)
-  if (dateStr >= getTodayStr()) {
+  // 5. Carry-Over de pendências não limpas de dias anteriores (apenas se o quarto NÃO virou stayover e APENAS PARA HOJE)
+  if (dateStr === getTodayStr()) {
     const previousUncleaned = (db.cleaningRequests || []).filter(r => {
       const fNumber = String(r.flatNumber || "");
       if (r.requestDate < "2026-09-01" || r.requestDate >= dateStr || r.status === "clean" || r.status === "extended" || r.status === "no_show") return false;
