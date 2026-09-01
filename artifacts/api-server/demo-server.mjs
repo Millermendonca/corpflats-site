@@ -1948,79 +1948,108 @@ app.post("/api/cleaning/requests/manual", (req, res) => {
 });
 
 function getRequestsForDate(dateStr) {
-  const validFlatIds = new Set(db.flats.map(f => f.id));
-  const validFlatNumbers = new Set(db.flats.map(f => f.number));
-
   const requestsForDate = [];
-  const existingFlatIdsForDate = new Set();
+  const existingFlatNumbersForDate = new Set();
 
-  // 1. Requests agendados para a data solicitada (1 por flat)
-  for (const r of db.cleaningRequests) {
-    if ((validFlatIds.has(r.flatId) || validFlatNumbers.has(r.flatNumber)) && 
-        r.requestDate === dateStr && 
-        r.status !== "extended" && 
-        r.status !== "no_show" && 
-        !r.isExtended) {
-      if (!existingFlatIdsForDate.has(r.flatId)) {
-        requestsForDate.push(r);
-        existingFlatIdsForDate.add(r.flatId);
-      }
+  // 1. Identifica flats que estão com hóspede contínuo (STAYOVER) na data consultada
+  // Se o hóspede entrou antes/em dateStr e só sai DEPOIS de dateStr (checkoutDate > dateStr),
+  // o flat é um stayover e NÃO tem checkout na data dateStr!
+  const stayoverFlatNumbers = new Set(
+    (db.reservations || [])
+      .filter(r => r.status !== "cancelada" && r.checkinDate <= dateStr && r.checkoutDate > dateStr)
+      .map(r => String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || "")))
+  );
+
+  // 2. Busca todas as reservas ativas que possuem CHECKOUT na data consultada (checkoutDate === dateStr)
+  const pmsCheckouts = (db.reservations || []).filter(r => 
+    r.status !== "cancelada" && 
+    r.checkoutDate === dateStr
+  );
+
+  // Se houver reservas para o mesmo flat, mantém a mais recente
+  const pmsCheckoutsByFlat = new Map();
+  for (const res of pmsCheckouts) {
+    const fNumber = String(res.flatNumber || (db.flats.find(f => f.id === res.flatId)?.number || ""));
+    if (!fNumber) continue;
+    if (stayoverFlatNumbers.has(fNumber)) continue;
+    pmsCheckoutsByFlat.set(fNumber, res);
+  }
+
+  // 3. Monta os cards de limpeza dinâmicos a partir dos checkouts do PMS
+  for (const [flatNumber, pmsRes] of pmsCheckoutsByFlat.entries()) {
+    const flat = db.flats.find(f => String(f.number) === flatNumber) || { id: pmsRes.flatId, number: flatNumber, isOccupied: true };
+
+    const arrivingRes = (db.reservations || []).find(r => 
+      r.status !== "cancelada" && 
+      String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || "")) === flatNumber && 
+      r.checkinDate === dateStr
+    );
+
+    const existingCleaning = (db.cleaningRequests || []).find(c => 
+      String(c.flatNumber) === flatNumber && 
+      c.requestDate === dateStr
+    );
+
+    const card = {
+      id: existingCleaning ? existingCleaning.id : (pmsRes.id || (10000 + flat.id)),
+      flatId: flat.id,
+      flatNumber: flat.number,
+      requestDate: dateStr,
+      source: "checkout",
+      status: existingCleaning ? existingCleaning.status : "dirty",
+      assignedUserId: existingCleaning ? existingCleaning.assignedUserId : null,
+      assignedUsername: existingCleaning ? existingCleaning.assignedUsername : null,
+      assignedUserName: existingCleaning ? existingCleaning.assignedUserName : null,
+      isVacant: existingCleaning ? Boolean(existingCleaning.isVacant) : false,
+      isPriority: existingCleaning ? Boolean(existingCleaning.isPriority) : Boolean(pmsRes.isPriority),
+      isExtended: false,
+      twinBeds: Boolean(pmsRes.twinBeds),
+      extraMattress: Boolean(pmsRes.extraMattress),
+      adminNote: existingCleaning?.adminNote || pmsRes.notes || pmsRes.specialRequests || null,
+      leavingGuest: pmsRes.guestName || pmsRes.title || "Hóspede",
+      arrivingGuest: arrivingRes ? (arrivingRes.guestName || arrivingRes.title) : null,
+      pendingObservation: existingCleaning ? existingCleaning.pendingObservation : null,
+      willCleanAt: existingCleaning ? existingCleaning.willCleanAt : null,
+      cleaningStartedAt: existingCleaning ? existingCleaning.cleaningStartedAt : null,
+      completedAt: existingCleaning ? existingCleaning.completedAt : null,
+      createdAt: existingCleaning ? existingCleaning.createdAt : `${dateStr}T08:00:00.000Z`,
+      updatedAt: existingCleaning ? existingCleaning.updatedAt : `${dateStr}T08:00:00.000Z`
+    };
+
+    requestsForDate.push(card);
+    existingFlatNumbersForDate.add(flatNumber);
+  }
+
+  // 4. Adiciona solicitações manuais adicionadas diretamente pela administração
+  for (const r of (db.cleaningRequests || [])) {
+    const fNumber = String(r.flatNumber || "");
+    if (r.requestDate === dateStr && r.source === "manual" && !existingFlatNumbersForDate.has(fNumber)) {
+      requestsForDate.push(r);
+      existingFlatNumbersForDate.add(fNumber);
     }
   }
 
-  // 2. Para a visualização de HOJE e DIAS FUTUROS (dateStr >= getTodayStr()),
-  // busca pendências ativas de dias anteriores (quartos que ainda não foram limpos)
+  // 5. Carry-Over de pendências não limpas de dias anteriores (apenas se o quarto NÃO virou stayover)
   if (dateStr >= getTodayStr()) {
-    const cleanedOrResolvedForTarget = new Set(
-      db.cleaningRequests
-        .filter(r => r.requestDate === dateStr && (r.status === "clean" || r.status === "no_show"))
-        .map(r => r.flatId)
-    );
-
-    const stayoversTarget = stayoverFlatsByDate.get(dateStr) || new Set();
-
-    const allPreviousUncleaned = db.cleaningRequests.filter(r => {
-      // Pega apenas requisições com data ANTERIOR à data consultada (dateStr)
-      if (r.requestDate >= dateStr || r.status === "extended" || r.status === "no_show" || r.isExtended) {
-        return false;
-      }
-      
-      // Se o quarto tem permanência contínua (stayover) na data consultada, não puxa checkout antigo
-      if (stayoversTarget.has(r.flatId) || stayoversTarget.has(r.flatNumber) || stayoversTarget.has(String(r.flatNumber)) || stayoversTarget.has(Number(r.flatNumber))) {
-        return false;
-      }
-
-      // 1. Se ainda está sujo ou não finalizado, é uma pendência ativa para dateStr!
-      if (r.status !== "clean") {
-        if (existingFlatIdsForDate.has(r.flatId) || cleanedOrResolvedForTarget.has(r.flatId)) {
-          return false;
-        }
-        return true;
-      }
-
-      // 2. Se FOI LIMPO, mas a conclusão (completedAt) ocorreu na data consultada, mantém como concluído na data
-      const completedDateStr = r.completedAt ? r.completedAt.substring(0, 10) : "";
-      if (completedDateStr === dateStr) {
-        if (existingFlatIdsForDate.has(r.flatId)) {
-          return false;
-        }
-        return true;
-      }
-
-      return false;
+    const previousUncleaned = (db.cleaningRequests || []).filter(r => {
+      const fNumber = String(r.flatNumber || "");
+      if (r.requestDate >= dateStr || r.status === "clean" || r.status === "extended" || r.status === "no_show") return false;
+      if (stayoverFlatNumbers.has(fNumber)) return false;
+      if (existingFlatNumbersForDate.has(fNumber)) return false;
+      return true;
     });
 
-    // Ordena do dia mais recente para o mais antigo para manter a ocorrência mais recente
-    allPreviousUncleaned.sort((a, b) => new Date(b.requestDate).getTime() - new Date(a.requestDate).getTime());
+    previousUncleaned.sort((a, b) => new Date(b.requestDate).getTime() - new Date(a.requestDate).getTime());
 
-    for (const prevReq of allPreviousUncleaned) {
-      if (!existingFlatIdsForDate.has(prevReq.flatId)) {
+    for (const prevReq of previousUncleaned) {
+      const fNumber = String(prevReq.flatNumber || "");
+      if (!existingFlatNumbersForDate.has(fNumber)) {
         requestsForDate.push({
           ...prevReq,
           isPendingFromPreviousDay: true,
-          originalRequestDate: prevReq.requestDate,
+          originalRequestDate: prevReq.requestDate
         });
-        existingFlatIdsForDate.add(prevReq.flatId);
+        existingFlatNumbersForDate.add(fNumber);
       }
     }
   }
@@ -2028,9 +2057,6 @@ function getRequestsForDate(dateStr) {
   return requestsForDate;
 }
 
-// ── Reservations & Checkouts Endpoints ─────────────────────────────────────
-
-// ─── Limpeza Geral de Reservas de Teste ───────────────────────────────────────
 app.post("/api/reservations/clear-all", (req, res) => {
   const count = (db.reservations || []).length;
   db.reservations = [];
