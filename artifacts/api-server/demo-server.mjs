@@ -1345,113 +1345,14 @@ let lastBackgroundSyncTime = 0;
 let isSyncingSpreadsheet = false;
 
 async function loadSpreadsheetData(forceReprocess = false) {
-  let buf = null;
-  const localFilePath = getLocalSpreadsheetPath();
-
-  if (localFilePath) {
-    try {
-      buf = fs.readFileSync(localFilePath);
-      // Auto push to cloud Render in background if we are running locally
-      if (!process.env.RENDER) {
-        const base64 = buf.toString("base64");
-        fetch("https://corpflats.onrender.com/api/sync/upload-sheet-json", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ base64 })
-        }).then(r => r.json()).then(d => console.log(`[Cloud Sync Push] Render atualizado:`, d.message)).catch(() => {});
-      }
-    } catch (err) {
-      console.warn("[Excel Engine] Falha ao ler arquivo local:", err.message);
-    }
-  }
-
-  // Microsoft Graph API Direct Integration Mode
-  if (!buf && db.microsoftGraphConfig?.clientId && db.microsoftGraphConfig?.clientSecret) {
-    try {
-      const graph = new MicrosoftGraphService(db.microsoftGraphConfig);
-      const graphBuf = await graph.downloadExcelBuffer(db.microsoftGraphConfig.filePath);
-      if (graphBuf && graphBuf.length > 1000) {
-        buf = graphBuf;
-        const cloudCache = path.join(DATA_DIR, "latest_sheet.xlsx");
-        try { fs.writeFileSync(cloudCache, buf); } catch {}
-      }
-    } catch (err) {
-      if (!global.__graphErrorLogged) {
-        console.warn(`[Microsoft Graph Engine] Erro ao sincronizar via Graph API: ${err.message}`);
-        global.__graphErrorLogged = true;
-      }
-    }
-  }
-
-  // Cloud Mode: Tenta baixar diretamente da URL do OneDrive configurada com anti-cache
-  if (!buf && db.settings.onedriveShareUrl) {
-    const candidateUrls = convertToDirectDownloadUrls(db.settings.onedriveShareUrl);
-    for (const url of candidateUrls) {
-      try {
-        const cacheBusterUrl = url.includes("?") ? `${url}&_t=${Date.now()}` : `${url}?_t=${Date.now()}`;
-        const res = await fetch(cacheBusterUrl, { 
-          redirect: "follow", 
-          headers: { 
-            "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0", 
-            "Pragma": "no-cache",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" 
-          },
-          signal: AbortSignal.timeout(12000)
-        });
-        if (res.ok) {
-          const ab = await res.arrayBuffer();
-          if (ab && ab.byteLength > 1000) {
-            const tempBuf = Buffer.from(ab);
-            // Confirma cabeçalho de zip/xlsx real (PK signature: 0x50 0x4B)
-            if (tempBuf[0] === 0x50 && tempBuf[1] === 0x4B) {
-              buf = tempBuf;
-              const cloudCache = path.join(DATA_DIR, "latest_sheet.xlsx");
-              try { fs.writeFileSync(cloudCache, buf); } catch {}
-              break;
-            }
-          }
-        }
-      } catch (e) {
-      }
-    }
-  }
-
-  // Cloud cache fallback se a rede falhar
-  if (!buf) {
-    const cloudCache = path.join(DATA_DIR, "latest_sheet.xlsx");
-    if (fs.existsSync(cloudCache)) {
-      try {
-        buf = fs.readFileSync(cloudCache);
-      } catch {}
-    }
-  }
-
-  if (!buf) {
-    return false;
-  }
-
-  // Detecção de Hash SHA256 e Data Atual para atualizar quando houver alteração real ou virada de dia
-  const todayStr = getTodayStr();
-  const currentHash = crypto.createHash("sha256").update(buf).digest("hex") + "_" + todayStr;
-  if (!forceReprocess && currentHash === lastProcessedSheetHash) {
-    return true; // Planilha idêntica no mesmo dia, mantém cache sem reprocessar
-  }
-
-  lastProcessedSheetHash = currentHash;
-  return parseSpreadsheetBuffer(buf);
+  // Transição definitiva para o PMS nativo: sincronização de planilha externa desativada.
+  return true;
 }
 
 // ── Disparo Não-Bloqueante em Background (Stale-While-Revalidate) ──────────────
 function triggerBackgroundSync() {
-  const now = Date.now();
-  if (now - lastBackgroundSyncTime < 10000 || isSyncingSpreadsheet) return;
-  lastBackgroundSyncTime = now;
-  isSyncingSpreadsheet = true;
-
-  setImmediate(async () => {
-    try {
-      await loadSpreadsheetData();
-    } catch (err) {
+  return;
+} catch (err) {
     } finally {
       isSyncingSpreadsheet = false;
     }
