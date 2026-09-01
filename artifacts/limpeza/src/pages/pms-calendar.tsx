@@ -699,12 +699,16 @@ export default function PmsCalendar() {
                         
                         // Find matching reservation
                         const resItem = data.reservations.find(r => 
-                          r.flatId === flat.id && r.checkinDate <= dayStr && r.checkoutDate > dayStr
+                          (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) && 
+                          r.checkinDate <= dayStr && 
+                          r.checkoutDate > dayStr
                         )
 
                         // Find matching block
                         const blockItem = data.blocks.find(b => 
-                          b.flatId === flat.id && b.startDate <= dayStr && b.endDate >= dayStr
+                          (b.flatId === flat.id || String(b.flatNumber) === String(flat.number)) && 
+                          b.startDate <= dayStr && 
+                          b.endDate >= dayStr
                         )
 
                         const isCheckinDay = resItem && resItem.checkinDate === dayStr
