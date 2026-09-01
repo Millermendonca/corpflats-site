@@ -173,6 +173,11 @@ function Router() {
   );
 }
 
+function RoutedErrorBoundary({ children }: { children: ReactNode }) {
+  const [location] = useLocation();
+  return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>;
+}
+
 function VersionGuard({ children }: { children: ReactNode }) {
   useEffect(() => {
     let isMounted = true;
