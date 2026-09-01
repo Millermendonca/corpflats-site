@@ -2033,7 +2033,7 @@ function getRequestsForDate(dateStr) {
   if (dateStr >= getTodayStr()) {
     const previousUncleaned = (db.cleaningRequests || []).filter(r => {
       const fNumber = String(r.flatNumber || "");
-      if (r.requestDate >= dateStr || r.status === "clean" || r.status === "extended" || r.status === "no_show") return false;
+      if (r.requestDate < "2026-09-01" || r.requestDate >= dateStr || r.status === "clean" || r.status === "extended" || r.status === "no_show") return false;
       if (stayoverFlatNumbers.has(fNumber)) return false;
       if (existingFlatNumbersForDate.has(fNumber)) return false;
       return true;
