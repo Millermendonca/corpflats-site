@@ -651,6 +651,20 @@ async function loadDatabase() {
       }
     }
 
+    // Restauração de Certificado Digital A1 a partir do PostgreSQL
+    if (db.nfseConfig?.certificadoA1?.pfxBase64) {
+      try {
+        const certDir = path.join(__dirname, "certs");
+        if (!fs.existsSync(certDir)) fs.mkdirSync(certDir, { recursive: true });
+        const certPath = path.join(certDir, "certificado_corpflats_a1.pfx");
+        const buffer = Buffer.from(db.nfseConfig.certificadoA1.pfxBase64.replace(/^data:.*,/, ""), "base64");
+        fs.writeFileSync(certPath, buffer);
+        console.log("[NFS-e] Certificado Digital A1 restaurado da nuvem com sucesso!");
+      } catch (cErr) {
+        console.warn("[NFS-e] Falha ao restaurar arquivo do certificado:", cErr.message);
+      }
+    }
+
     // Auto-sanitização mandatória: Remove resquícios legados de Macaé e garante Campos dos Goytacazes
     const branding = db.siteConfig?.branding || {};
     const hero = db.siteConfig?.hero || {};

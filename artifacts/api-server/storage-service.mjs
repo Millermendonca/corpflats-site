@@ -120,13 +120,6 @@ export async function uploadImageToStorage(base64Data, filenamePrefix = "doc", d
     }
   }
 
-  // 2. Fallback: Save to optimized local disk uploads
-  try {
-    const localFilePath = path.join(UPLOADS_DIR, uniqueName);
-    fs.writeFileSync(localFilePath, buffer);
-    return `/api/storage/files/${uniqueName}`;
-  } catch {
-    // If disk write fails, keep compressed base64
-    return base64Data;
-  }
+  // 2. Fallback Permanente: Salva em Base64 no PostgreSQL caso R2 não esteja ativo
+  return base64Data.startsWith("data:") ? base64Data : `data:${mimeType};base64,${rawBase64}`;
 }
