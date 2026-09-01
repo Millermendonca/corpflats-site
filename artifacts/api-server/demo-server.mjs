@@ -2352,17 +2352,80 @@ app.post("/api/cleaning/assignments/:requestId/resolve-issue", (req, res) => {
   });
 });
 
+
+// ── Helper Universal: Encontra ou Auto-Cria Solicitação de Limpeza em Memória / Banco ──
+function findOrUpsertCleaningRequest(reqId, flatNumber, flatId, dateStr = null) {
+  if (!db.cleaningRequests) db.cleaningRequests = [];
+  const targetDate = dateStr || getTodayStr();
+
+  // 1. Procura por ID numérico direto
+  let item = db.cleaningRequests.find(r => r.id === Number(reqId));
+
+  // 2. Procura por Flat e Data
+  if (!item && flatNumber) {
+    item = db.cleaningRequests.find(r => String(r.flatNumber) === String(flatNumber) && r.requestDate === targetDate);
+  }
+  if (!item && flatId) {
+    item = db.cleaningRequests.find(r => r.flatId === Number(flatId) && r.requestDate === targetDate);
+  }
+
+  // 3. Se ainda não achou, procura nos cards dinâmicos gerados para a data
+  if (!item) {
+    const virtualList = getRequestsForDate(targetDate);
+    const virtualCard = virtualList.find(c => 
+      c.id === Number(reqId) || 
+      (flatNumber && String(c.flatNumber) === String(flatNumber)) ||
+      (flatId && c.flatId === Number(flatId))
+    );
+
+    const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
+    const newId = maxId + 1;
+    const now = new Date().toISOString();
+
+    const targetFlatObj = db.flats.find(f => 
+      (virtualCard && (f.id === virtualCard.flatId || String(f.number) === String(virtualCard.flatNumber))) ||
+      (flatNumber && String(f.number) === String(flatNumber)) ||
+      (flatId && f.id === Number(flatId))
+    );
+
+    item = {
+      id: newId,
+      flatId: targetFlatObj ? targetFlatObj.id : (virtualCard?.flatId || (flatId ? Number(flatId) : 1)),
+      flatNumber: targetFlatObj ? targetFlatObj.number : (virtualCard?.flatNumber || String(flatNumber || "113")),
+      requestDate: targetDate,
+      source: virtualCard?.source || "checkout",
+      status: virtualCard?.status || "dirty",
+      assignedUserId: virtualCard?.assignedUserId || null,
+      assignedUsername: virtualCard?.assignedUsername || null,
+      assignedUserName: virtualCard?.assignedUserName || null,
+      isVacant: Boolean(virtualCard?.isVacant),
+      isPriority: Boolean(virtualCard?.isPriority),
+      isExtended: false,
+      twinBeds: Boolean(virtualCard?.twinBeds),
+      extraMattress: Boolean(virtualCard?.extraMattress),
+      adminNote: virtualCard?.adminNote || null,
+      leavingGuest: virtualCard?.leavingGuest || null,
+      arrivingGuest: virtualCard?.arrivingGuest || null,
+      pendingObservation: null,
+      willCleanAt: null,
+      cleaningStartedAt: null,
+      completedAt: null,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    db.cleaningRequests.unshift(item);
+  }
+
+  return item;
+}
+
 // ── Cleaning Status Change & Execution ──────────────────────────────────────
 app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
   const reqId = Number(req.params.requestId);
   const { status, observation, isVacant, executedPeriodicTaskIds = [], surveyAnswers = [], flatNumber, flatId, date, assignedUserId } = req.body;
-  let item = db.cleaningRequests.find(r => r.id === reqId);
-  if (!item && flatNumber && date) {
-    item = db.cleaningRequests.find(r => r.flatNumber === String(flatNumber) && r.requestDate === date);
-  }
-  if (!item && flatId && date) {
-    item = db.cleaningRequests.find(r => r.flatId === Number(flatId) && r.requestDate === date);
-  }
+  
+  let item = findOrUpsertCleaningRequest(reqId, flatNumber, flatId, date);
   if (!item) return res.status(404).json({ error: "Solicitação não encontrada" });
 
   const userAuth = getAuthUser(req);
@@ -2519,8 +2582,8 @@ app.post("/api/cleaning/assignments/batch-claim", (req, res) => {
 
   const todayStr = getTodayStr();
   for (const id of requestIds) {
-    const item = db.cleaningRequests.find(r => r.id === id);
-    if (item && item.status === "dirty") {
+    const item = findOrUpsertCleaningRequest(id, null, null, todayStr);
+    if (item && (item.status === "dirty" || !item.status)) {
       item.status = "will_clean";
       item.assignedUserId = userAuth ? userAuth.id : 2;
       item.willCleanAt = now;

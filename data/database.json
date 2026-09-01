@@ -192,7 +192,58 @@
       "updatedAt": "2026-09-01T07:26:30.433Z"
     }
   ],
-  "cleaningRequests": [],
+  "cleaningRequests": [
+    {
+      "id": 2,
+      "flatId": 7,
+      "flatNumber": "313",
+      "requestDate": "2026-09-01",
+      "source": "checkout",
+      "status": "clean",
+      "assignedUserId": 3,
+      "assignedUsername": null,
+      "assignedUserName": null,
+      "isVacant": false,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": null,
+      "leavingGuest": "Dayana",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-09-01T18:41:03.627Z",
+      "cleaningStartedAt": null,
+      "completedAt": "2026-09-01T18:41:03.656Z",
+      "createdAt": "2026-09-01T18:41:03.627Z",
+      "updatedAt": "2026-09-01T18:41:03.656Z"
+    },
+    {
+      "id": 1,
+      "flatId": 10,
+      "flatNumber": "509",
+      "requestDate": "2026-09-01",
+      "source": "checkout",
+      "status": "clean",
+      "assignedUserId": 3,
+      "assignedUsername": null,
+      "assignedUserName": null,
+      "isVacant": false,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": null,
+      "leavingGuest": null,
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-09-01T18:40:49.412Z",
+      "cleaningStartedAt": null,
+      "completedAt": "2026-09-01T18:40:49.441Z",
+      "createdAt": "2026-09-01T18:40:49.412Z",
+      "updatedAt": "2026-09-01T18:40:49.441Z"
+    }
+  ],
   "periodicTasks": [],
   "periodicExecutions": [],
   "surveys": [],
@@ -1227,6 +1278,74 @@
       "billingTerms": "Faturamento 15 dias após emissão da nota fiscal",
       "notes": "Hospedagem frequente de engenheiros e técnicos",
       "createdAt": "2026-02-15T14:30:00.000Z"
+    }
+  ],
+  "auditLogs": [
+    {
+      "id": 3,
+      "timestamp": "2026-09-01T18:41:03.628Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "CLEANING_STATUS_WILL_CLEAN",
+      "actor": {
+        "name": "Grazi",
+        "role": "camareira"
+      },
+      "details": {
+        "requestId": 2,
+        "flatNumber": "313",
+        "status": "will_clean",
+        "assignedUserId": 3,
+        "assignedMaidName": "Grazi",
+        "markedByAdmin": false
+      },
+      "source": "cleaning_dashboard",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": 2,
+      "timestamp": "2026-09-01T18:40:49.442Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "CLEANING_COMPLETED_BY_ADMIN_FOR_MAID",
+      "actor": {
+        "name": "admin",
+        "role": "admin"
+      },
+      "details": {
+        "requestId": 1,
+        "flatNumber": "509",
+        "status": "clean",
+        "assignedUserId": 3,
+        "assignedMaidName": "Grazi",
+        "markedByAdmin": true
+      },
+      "source": "cleaning_dashboard",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": 1,
+      "timestamp": "2026-09-01T18:40:49.414Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "CLEANING_STATUS_WILL_CLEAN",
+      "actor": {
+        "name": "Grazi",
+        "role": "camareira"
+      },
+      "details": {
+        "requestId": 1,
+        "flatNumber": "509",
+        "status": "will_clean",
+        "assignedUserId": 3,
+        "assignedMaidName": "Grazi",
+        "markedByAdmin": false
+      },
+      "source": "cleaning_dashboard",
+      "ip": "",
+      "userAgent": ""
     }
   ]
 }
