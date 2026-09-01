@@ -1352,49 +1352,6 @@ async function loadSpreadsheetData(forceReprocess = false) {
 // ── Disparo Não-Bloqueante em Background (Stale-While-Revalidate) ──────────────
 function triggerBackgroundSync() {
   return;
-} catch (err) {
-    } finally {
-      isSyncingSpreadsheet = false;
-    }
-  });
-}
-
-// Carga Inicial
-loadSpreadsheetData();
-
-// ── Background Cloud Polling Contínuo (a cada 15 segundos na nuvem) ──────────
-setInterval(async () => {
-  try {
-    if (db.settings.onedriveShareUrl) {
-      await loadSpreadsheetData();
-    }
-  } catch (err) {
-  }
-}, 15 * 1000);
-
-// ── Watcher Local Ultrarrápido (500ms + Timer de 5s para Push Automático) ─────
-const localFile = getLocalSpreadsheetPath();
-if (localFile) {
-  fs.watchFile(localFile, { interval: 500 }, (curr, prev) => {
-    if (curr.mtimeMs !== prev.mtimeMs) {
-      console.log(`[File Watcher] Alteração detectada no Excel em ${new Date().toLocaleTimeString()}! Sincronizando local e nuvem...`);
-      loadSpreadsheetData(true);
-    }
-  });
-
-  // Poller de redundância local a cada 5s
-  setInterval(() => {
-    try {
-      if (fs.existsSync(localFile)) {
-        const buf = fs.readFileSync(localFile);
-        const hash = crypto.createHash("sha256").update(buf).digest("hex");
-        if (hash !== lastProcessedSheetHash) {
-          console.log(`[Local Periodic Poller] Novo conteúdo detectado no Excel! Enviando para nuvem...`);
-          loadSpreadsheetData(true);
-        }
-      }
-    } catch {}
-  }, 5000);
 }
 
 // ── Auth Endpoints with Real Password Validation ────────────────────────────
