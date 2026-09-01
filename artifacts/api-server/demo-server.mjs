@@ -1,3 +1,25 @@
+const DEFAULT_FLATS = [
+  { id: 1, number: "113", colName: "113 solteiro", isOccupied: true },
+  { id: 2, number: "114", colName: "114 Solteiro", isOccupied: true },
+  { id: 3, number: "116", colName: "116", isOccupied: true },
+  { id: 4, number: "211", colName: "211 de casal", isOccupied: true },
+  { id: 5, number: "212", colName: "212 solteiro", isOccupied: true },
+  { id: 6, number: "215", colName: "215 Solteiro", isOccupied: true },
+  { id: 7, number: "313", colName: "313 solteiro", isOccupied: true },
+  { id: 8, number: "408", colName: "408 casal", isOccupied: true },
+  { id: 10, number: "509", colName: "509 casal", isOccupied: true },
+  { id: 11, number: "511", colName: "511 casal", isOccupied: true },
+  { id: 12, number: "512", colName: "512 casal", isOccupied: true },
+  { id: 13, number: "605", colName: "605 solteiro", isOccupied: true },
+  { id: 14, number: "712", colName: "712 Solteiro SPLIT", isOccupied: true },
+  { id: 15, number: "715", colName: "715 Solteiro", isOccupied: true },
+  { id: 16, number: "904", colName: "904 split", isOccupied: true },
+  { id: 17, number: "905", colName: "905 split", isOccupied: true },
+  { id: 18, number: "907", colName: "X 907 casal", isOccupied: true },
+  { id: 19, number: "1004", colName: "1004 Solteiro X", isOccupied: true },
+  { id: 21, number: "1304", colName: "1304 Solteiro(ferro unindo)", isOccupied: true }
+];
+
 import { emitirNfseGissReal, COD_MUNICIPIO, renderGissDanfseHtml } from "./giss-soap.mjs";
 import { processChatConversation, formatarDescricaoComTemplate, DEFAULT_FISCAL_TEMPLATE } from "./chat-service.mjs";
 import { lookupCep, lookupCnpj } from "./lookup.mjs";
@@ -1035,7 +1057,7 @@ function getPrevDay(dateStr) {
 }
 
 // ── Ultra-Fast Spreadsheet Parser ──────────────────────────────────────────
-const ALLOWED_COLUMN_LETTERS = ["C", "D", "E", "F", "G", "H", "I", "J", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "W"];
+const ALLOWED_COLUMN_LETTERS = ["C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "W"];
 const ALLOWED_COLUMN_INDICES = ALLOWED_COLUMN_LETTERS.map(l => XLSX.utils.decode_col(l));
 
 function parseSpreadsheetBuffer(buf) {
