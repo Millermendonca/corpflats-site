@@ -1931,6 +1931,12 @@ function getRequestsForDate(dateStr) {
   return requestsForDate;
 }
 
+app.post("/api/admin/reset-cleaning-cache", (req, res) => {
+  db.cleaningRequests = (db.cleaningRequests || []).filter(r => r.source === "manual");
+  saveDatabase();
+  res.json({ success: true, count: db.cleaningRequests.length });
+});
+
 app.post("/api/reservations/clear-all", (req, res) => {
   const count = (db.reservations || []).length;
   db.reservations = [];

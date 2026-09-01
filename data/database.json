@@ -442,7 +442,7 @@
       "companyName": "",
       "invoiceDetails": null,
       "checkinDate": "2026-08-31",
-      "checkoutDate": "2026-09-01",
+      "checkoutDate": "2026-09-02",
       "status": "confirmada",
       "channel": "booking",
       "dailyRate": 250,
@@ -460,8 +460,8 @@
       "specialRequests": "",
       "includeBreakfast": false,
       "createdAt": "2026-09-01T06:05:07.542Z",
-      "updatedAt": "2026-09-01T07:44:14.994Z",
-      "calendarSequence": 3
+      "updatedAt": "2026-09-01T07:59:50.216Z",
+      "calendarSequence": 4
     },
     {
       "id": 9,
