@@ -117,6 +117,49 @@ export default function PmsCalendar() {
   const [amenityCategoryFilter, setAmenityCategoryFilter] = useState("all")
   const [showFullCatalog, setShowFullCatalog] = useState(false)
 
+  // Essential Tags Drag & Drop Management
+  const [essentialTagIds, setEssentialTagIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem("gfm_essential_tags");
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return [
+      "cama_casal", "2_camas_solteiro", "ar_split", "ar_janela", "microondas",
+      "frigobar", "cafeteira", "cozinha_completa", "wifi_alta_velocidade",
+      "home_office", "smart_tv", "fechadura_digital", "garagem_coberta",
+      "elevador", "portaria_24h", "piscina", "academia", "aceita_pet",
+      "proibido_fumar", "foco_corporativo", "longa_estadia", "reformado"
+    ];
+  });
+  const [essentialConfigModalOpen, setEssentialConfigModalOpen] = useState(false);
+  const [draggedTagId, setDraggedTagId] = useState<string | null>(null);
+
+  // Carrega tags essenciais do servidor se disponíveis
+  useEffect(() => {
+    fetch("/api/pms/amenities/essential-tags")
+      .then(r => r.json())
+      .then(d => {
+        if (d.essentialTagIds && Array.isArray(d.essentialTagIds)) {
+          setEssentialTagIds(d.essentialTagIds);
+          localStorage.setItem("gfm_essential_tags", JSON.stringify(d.essentialTagIds));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleSaveEssentialTags = async (newIds: string[]) => {
+    setEssentialTagIds(newIds);
+    localStorage.setItem("gfm_essential_tags", JSON.stringify(newIds));
+    try {
+      await fetch("/api/pms/amenities/essential-tags", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ essentialTagIds: newIds })
+      });
+    } catch (e) {}
+  };
+
+
   const [savingFlatTags, setSavingFlatTags] = useState(false)
 
   // Fair-Share & Conflito State
@@ -1626,6 +1669,177 @@ export default function PmsCalendar() {
 
         
         
+        
+        {/* ── MODAL DRAG & DROP: CONFIGURAÇÃO DE TAGS ESSENCIAIS DO HOTEL ── */}
+        <Dialog open={essentialConfigModalOpen} onOpenChange={setEssentialConfigModalOpen}>
+          <DialogContent className="sm:max-w-3xl bg-card border border-border rounded-3xl max-h-[90vh] flex flex-col p-0 overflow-hidden shadow-2xl">
+            <DialogHeader className="p-5 pb-3 border-b border-border shrink-0">
+              <DialogTitle className="flex items-center gap-2 text-base font-black">
+                <SlidersHorizontal className="w-4 h-4 text-primary" />
+                Personalizar Tags Essenciais (Arrastar e Soltar)
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                Arraste ou clique nas tags para definir quais comodidades aparecem no <strong>Modo Essencial</strong> da sua propriedade.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="flex-1 overflow-y-auto p-5 grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+              {/* Coluna 1: Tags Essenciais Ativas (Drop Zone) */}
+              <div 
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const id = e.dataTransfer.getData("text/plain") || draggedTagId;
+                  if (id && !essentialTagIds.includes(id)) {
+                    handleSaveEssentialTags([...essentialTagIds, id]);
+                  }
+                  setDraggedTagId(null);
+                }}
+                className="bg-primary/5 border-2 border-dashed border-primary/40 rounded-2xl p-4 flex flex-col min-h-[380px]"
+              >
+                <div className="flex items-center justify-between pb-3 border-b border-primary/20 mb-3">
+                  <span className="font-black text-xs text-primary flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5" />
+                    Tags Essenciais Ativas ({essentialTagIds.length})
+                  </span>
+                  <span className="text-[10px] text-muted-foreground font-medium">Solte aqui para ativar</span>
+                </div>
+
+                <div className="flex-1 space-y-1.5 overflow-y-auto max-h-[320px] pr-1">
+                  {essentialTagIds.map(id => {
+                    const item = FLAT_AMENITIES_CATALOG.find(a => a.id === id);
+                    if (!item) return null;
+
+                    return (
+                      <div
+                        key={id}
+                        draggable={true}
+                        onDragStart={(e) => {
+                          setDraggedTagId(id);
+                          e.dataTransfer.setData("text/plain", id);
+                        }}
+                        className="p-2 bg-card border border-primary/30 rounded-xl flex items-center justify-between shadow-2xs hover:border-primary cursor-grab active:cursor-grabbing transition-all group"
+                      >
+                        <div className="flex items-center gap-2 truncate">
+                          <span className={`p-1 rounded-md shrink-0 ${item.colorClass || 'text-primary bg-muted'}`}>
+                            {renderAmenityIcon(item.iconName, "w-3.5 h-3.5")}
+                          </span>
+                          <div className="truncate">
+                            <div className="font-bold text-[11px] truncate text-foreground">{item.label}</div>
+                            <div className="text-[9px] text-muted-foreground">{item.categoryLabel}</div>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleSaveEssentialTags(essentialTagIds.filter(t => t !== id));
+                          }}
+                          className="w-6 h-6 rounded-lg bg-rose-500/10 hover:bg-rose-500 text-rose-500 hover:text-white flex items-center justify-center font-black transition-colors shrink-0"
+                          title="Remover das tags essenciais"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    );
+                  })}
+                  {essentialTagIds.length === 0 && (
+                    <div className="text-center py-12 text-muted-foreground text-xs">
+                      Nenhuma tag essencial. Arraste tags da direita para cá.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Coluna 2: Catálogo Geral Disponível (Drop Zone) */}
+              <div 
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const id = e.dataTransfer.getData("text/plain") || draggedTagId;
+                  if (id && essentialTagIds.includes(id)) {
+                    handleSaveEssentialTags(essentialTagIds.filter(t => t !== id));
+                  }
+                  setDraggedTagId(null);
+                }}
+                className="bg-muted/30 border-2 border-dashed border-border rounded-2xl p-4 flex flex-col min-h-[380px]"
+              >
+                <div className="flex items-center justify-between pb-3 border-b border-border mb-3">
+                  <span className="font-black text-xs text-foreground flex items-center gap-1.5">
+                    <Tag className="w-3.5 h-3.5 text-muted-foreground" />
+                    Catálogo Geral ({FLAT_AMENITIES_CATALOG.length - essentialTagIds.length})
+                  </span>
+                  <span className="text-[10px] text-muted-foreground font-medium">Arraste para a esquerda</span>
+                </div>
+
+                <div className="flex-1 space-y-1.5 overflow-y-auto max-h-[320px] pr-1">
+                  {FLAT_AMENITIES_CATALOG.filter(a => !essentialTagIds.includes(a.id)).map(item => (
+                    <div
+                      key={item.id}
+                      draggable={true}
+                      onDragStart={(e) => {
+                        setDraggedTagId(item.id);
+                        e.dataTransfer.setData("text/plain", item.id);
+                      }}
+                      className="p-2 bg-card border border-border rounded-xl flex items-center justify-between shadow-2xs hover:border-primary/50 cursor-grab active:cursor-grabbing transition-all group"
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <span className={`p-1 rounded-md shrink-0 ${item.colorClass || 'text-muted-foreground bg-muted'}`}>
+                          {renderAmenityIcon(item.iconName, "w-3.5 h-3.5")}
+                        </span>
+                        <div className="truncate">
+                          <div className="font-bold text-[11px] truncate text-foreground">{item.label}</div>
+                          <div className="text-[9px] text-muted-foreground">{item.categoryLabel}</div>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleSaveEssentialTags([...essentialTagIds, item.id]);
+                        }}
+                        className="w-6 h-6 rounded-lg bg-primary/10 hover:bg-primary text-primary hover:text-white flex items-center justify-center font-bold text-xs transition-colors shrink-0"
+                        title="Adicionar aos essenciais"
+                      >
+                        +
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <DialogFooter className="p-4 border-t border-border bg-card flex items-center justify-between sm:justify-between">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  const defaults = [
+                    "cama_casal", "2_camas_solteiro", "ar_split", "ar_janela", "microondas",
+                    "frigobar", "cafeteira", "cozinha_completa", "wifi_alta_velocidade",
+                    "home_office", "smart_tv", "fechadura_digital", "garagem_coberta",
+                    "elevador", "portaria_24h", "piscina", "academia", "aceita_pet",
+                    "proibido_fumar", "foco_corporativo", "longa_estadia", "reformado"
+                  ];
+                  handleSaveEssentialTags(defaults);
+                }}
+                className="text-xs font-semibold text-muted-foreground hover:text-foreground"
+              >
+                Restaurar Padrões
+              </Button>
+
+              <Button
+                type="button"
+                onClick={() => setEssentialConfigModalOpen(false)}
+                className="rounded-xl h-9 text-xs font-black bg-primary text-primary-foreground px-5"
+              >
+                Concluir Configuração
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         {/* ── MODAL: CATÁLOGO COMPLETO DE PARTICULARIDADES & TAGS (76 OPÇÕES) ── */}
         <Dialog open={flatTagsModalOpen} onOpenChange={setFlatTagsModalOpen}>
           <DialogContent className="sm:max-w-2xl bg-card border border-border rounded-3xl max-h-[90vh] flex flex-col p-0 overflow-hidden shadow-2xl">
@@ -1642,15 +1856,29 @@ export default function PmsCalendar() {
                 </div>
 
                 {/* Opção de Esconder/Mostrar Opções Não Utilizadas */}
-                <div className="flex items-center gap-2 bg-muted/50 px-3 py-1.5 rounded-2xl border border-border">
-                  <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
-                    {showFullCatalog ? "Ver Catálogo Amplo (76)" : "Modo Essencial"}
-                  </span>
-                  <Switch 
-                    checked={showFullCatalog} 
-                    onCheckedChange={setShowFullCatalog}
-                    title="Alternar entre o catálogo essencial ou exibir todas as 76 tags cadastradas"
-                  />
+                <div className="flex items-center gap-2">
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={() => setEssentialConfigModalOpen(true)}
+                    className="h-8 text-[10.5px] font-bold rounded-xl gap-1.5 px-2.5 border-primary/30 text-primary hover:bg-primary/10"
+                    title="Arrastar e escolher quais tags aparecem no Modo Essencial"
+                  >
+                    <SlidersHorizontal className="w-3.5 h-3.5" />
+                    <span>Configurar Essenciais</span>
+                  </Button>
+
+                  <div className="flex items-center gap-2 bg-muted/50 px-3 py-1.5 rounded-2xl border border-border">
+                    <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                      {showFullCatalog ? "Ver Todas (76)" : "Modo Essencial"}
+                    </span>
+                    <Switch 
+                      checked={showFullCatalog} 
+                      onCheckedChange={setShowFullCatalog}
+                      title="Alternar entre o catálogo essencial ou exibir todas as 76 tags cadastradas"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -1697,7 +1925,7 @@ export default function PmsCalendar() {
                   if (amenitySearch.trim()) {
                     return item.label.toLowerCase().includes(amenitySearch.toLowerCase());
                   }
-                  if (!showFullCatalog && !item.isStandardDefault && !flatTags.some(t => t.toLowerCase() === item.label.toLowerCase() || t.toLowerCase() === item.id)) {
+                  if (!showFullCatalog && !essentialTagIds.includes(item.id) && !flatTags.some(t => t.toLowerCase() === item.label.toLowerCase() || t.toLowerCase() === item.id)) {
                     return false;
                   }
                   return true;

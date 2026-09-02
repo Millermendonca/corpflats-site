@@ -191,6 +191,8 @@ export default function CrmGuests() {
         document: formDocument.trim(),
         city: formCity.trim(),
         companyId: formCompanyId ? Number(formCompanyId) : null,
+        isMonthlyGuest: Boolean(formIsMonthlyGuest),
+        clientType: formIsMonthlyGuest ? "mensalista" : "avulso",
         notes: formNotes.trim(),
         preferences: formPreferences
       }

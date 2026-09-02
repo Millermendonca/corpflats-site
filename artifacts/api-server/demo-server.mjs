@@ -4898,18 +4898,64 @@ app.get("/api/pms/guests/:id", (req, res) => {
 });
 
 
-app.put("/api/pms/guests/:id", (req, res) => {
+const handleUpdateGuest = (req, res) => {
   const id = Number(req.params.id);
   const guest = (db.guests || []).find(g => g.id === id);
   if (!guest) return res.status(404).json({ error: "Hóspede não encontrado." });
 
-  const fields = ["name", "phone", "email", "document", "city", "notes", "tags", "isMonthlyGuest", "clientType"];
+  const fields = ["name", "fullName", "phone", "email", "document", "documentNumber", "city", "notes", "tags", "isMonthlyGuest", "clientType", "companyId", "preferences"];
   for (const f of fields) {
     if (req.body[f] !== undefined) guest[f] = req.body[f];
   }
+  if (req.body.isMonthlyGuest !== undefined) {
+    guest.isMonthlyGuest = Boolean(req.body.isMonthlyGuest);
+    guest.clientType = req.body.isMonthlyGuest ? "mensalista" : "avulso";
+    
+    // Atualiza imediatamente todas as reservas desse hóspede
+    const cleanDoc = (guest.document || guest.documentNumber || "").replace(/\D/g, "");
+    const cleanPhone = (guest.phone || "").replace(/\D/g, "");
+    const guestNameLower = (guest.fullName || guest.name || "").trim().toLowerCase();
+
+    (db.reservations || []).forEach(r => {
+      const resDoc = (r.guestDocument || r.document || "").replace(/\D/g, "");
+      const resPhone = (r.guestPhone || "").replace(/\D/g, "");
+      const resName = (r.guestName || "").trim().toLowerCase();
+      if ((cleanDoc && resDoc === cleanDoc) || (cleanPhone && resPhone === cleanPhone) || (guestNameLower && resName === guestNameLower) || r.guestId === guest.id) {
+        r.isMonthlyGuest = guest.isMonthlyGuest;
+        r.clientType = guest.clientType;
+      }
+    });
+  }
+
   guest.updatedAt = new Date().toISOString();
   saveDatabase();
   res.json(guest);
+};
+
+app.put("/api/pms/guests/:id", handleUpdateGuest);
+app.patch("/api/pms/guests/:id", handleUpdateGuest);
+
+// Gerenciamento de Tags Essenciais da Propriedade
+app.get("/api/pms/amenities/essential-tags", (req, res) => {
+  if (!db.essentialTagIds) {
+    db.essentialTagIds = [
+      "cama_casal", "2_camas_solteiro", "ar_split", "ar_janela", "microondas",
+      "frigobar", "cafeteira", "cozinha_completa", "wifi_alta_velocidade",
+      "home_office", "smart_tv", "fechadura_digital", "garagem_coberta",
+      "elevador", "portaria_24h", "piscina", "academia", "aceita_pet",
+      "proibido_fumar", "foco_corporativo", "longa_estadia", "reformado"
+    ];
+  }
+  res.json({ essentialTagIds: db.essentialTagIds });
+});
+
+app.put("/api/pms/amenities/essential-tags", (req, res) => {
+  const { essentialTagIds } = req.body;
+  if (Array.isArray(essentialTagIds)) {
+    db.essentialTagIds = essentialTagIds;
+    saveDatabase();
+  }
+  res.json({ essentialTagIds: db.essentialTagIds || [] });
 });
 
 app.post("/api/pms/guests", (req, res) => {
