@@ -773,10 +773,10 @@ export default function PmsCalendar() {
             onMouseUp={handleFinishDrag}
             onMouseLeave={() => { if (isDragging) handleFinishDrag(); }}
           >
-            <div style={{ minWidth: `${110 + daysInView.length * 44}px` }}>
+            <div style={{ minWidth: `${130 + daysInView.length * 48}px` }}>
               {/* Header Days Row */}
               <div 
-                style={{ gridTemplateColumns: `110px repeat(${daysInView.length}, minmax(44px, 1fr))` }}
+                style={{ gridTemplateColumns: `130px repeat(${daysInView.length}, 48px)` }}
                 className="grid border-b bg-muted/40 text-center font-bold text-xs sticky top-0 z-20 shadow-2xs"
               >
                 <div className="p-2.5 text-left border-r bg-card/95 backdrop-blur-md sticky left-0 z-30 font-black text-foreground shadow-xs">
@@ -827,7 +827,7 @@ export default function PmsCalendar() {
                     <div 
                       key={flat.id} 
                       style={{ 
-                        gridTemplateColumns: `120px repeat(${daysInView.length}, minmax(46px, 1fr))`,
+                        gridTemplateColumns: `130px repeat(${daysInView.length}, 48px)`,
                         gridTemplateRows: "48px"
                       }}
                       className="grid border-b hover:bg-muted/10 transition-colors h-12 items-center relative"

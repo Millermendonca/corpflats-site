@@ -3676,8 +3676,32 @@ app.get("/api/pms/calendar", (req, res) => {
   const end = endDate || getOffsetDateStr(30);
 
   const flats = [...db.flats].filter(f => String(f.number) !== "502" && f.id !== 9).sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true }));
-  const reservations = (db.reservations || []).filter(r => {
+  const rawReservations = (db.reservations || []).filter(r => {
     return r.checkinDate <= end && r.checkoutDate >= start && r.status !== "cancelada";
+  });
+
+  const reservations = rawReservations.map(r => {
+    const matchedGuest = (db.guests || []).find(g => 
+      (g.id && g.id === r.guestId) ||
+      (g.document && r.guestDocument && g.document.replace(/\D/g, '') === r.guestDocument.replace(/\D/g, '')) ||
+      (g.phone && r.guestPhone && g.phone.replace(/\D/g, '') === r.guestPhone.replace(/\D/g, '')) ||
+      (g.name && r.guestName && g.name.toLowerCase().trim() === r.guestName.toLowerCase().trim()) ||
+      (g.fullName && r.guestName && g.fullName.toLowerCase().trim() === r.guestName.toLowerCase().trim())
+    );
+
+    const isMonthly = Boolean(
+      r.isMonthlyGuest || 
+      r.clientType === "mensalista" || 
+      matchedGuest?.isMonthlyGuest || 
+      matchedGuest?.clientType === "mensalista"
+    );
+
+    return {
+      ...r,
+      isMonthlyGuest: isMonthly,
+      clientType: isMonthly ? "mensalista" : (r.clientType || "avulso"),
+      includeBreakfast: Boolean(r.includeBreakfast || r.hasBreakfast)
+    };
   });
   const blocks = (db.roomBlocks || []).filter(b => {
     return b.startDate <= end && b.endDate >= start;
@@ -3719,7 +3743,8 @@ app.post("/api/pms/reservations", (req, res) => {
     twinBeds = false,
     extraMattress = false,
     specialRequests = "",
-    includeBreakfast = false
+    includeBreakfast = false,
+    isMonthlyGuest = false
   } = req.body;
 
   if (!flatId || !checkinDate || !checkoutDate || (!guestName && (!guests || guests.length === 0))) {
