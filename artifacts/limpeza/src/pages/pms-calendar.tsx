@@ -32,6 +32,74 @@ const CHANNEL_CONFIG: Record<string, { label: string; bg: string; text: string; 
 
 import { AccessDenied } from "@/components/access-denied"
 
+
+// ── Símbolos & Emojis Pré-definidos dos Apartamentos ─────────────────────────
+const FLAT_SYMBOL_PRESETS = [
+  { id: "split", emoji: "❄️", label: "Split", desc: "Ar Condicionado Split" },
+  { id: "janela", emoji: "🪟", label: "Ar Janela", desc: "Ar Condicionado de Janela" },
+  { id: "casal", emoji: "🛏️", label: "Cama Casal", desc: "Cama de Casal" },
+  { id: "solteiro_duplo", emoji: "👥", label: "2 Solteiros", desc: "2 Camas de Solteiro" },
+  { id: "microondas", emoji: "⚡", label: "Micro-ondas", desc: "Possui Micro-ondas" },
+  { id: "reformado", emoji: "✨", label: "Reformado", desc: "Apartamento Reformado / Moderno" },
+  { id: "andar_alto", emoji: "🏙️", label: "Andar Alto", desc: "Andar Alto" },
+  { id: "andar_baixo", emoji: "🚪", label: "Andar Baixo", desc: "Andar Baixo" },
+  { id: "vista_livre", emoji: "🌅", label: "Vista Livre", desc: "Vista Panorâmica Livre" },
+  { id: "smart_tv", emoji: "📺", label: "Smart TV", desc: "Smart TV com Apps" },
+  { id: "frigobar", emoji: "🧊", label: "Frigobar", desc: "Frigobar / Geladeira" },
+  { id: "cozinha", emoji: "🍳", label: "Cozinha", desc: "Cozinha Completa" },
+  { id: "varanda", emoji: "🌿", label: "Varanda", desc: "Varanda / Sacada" },
+  { id: "garagem", emoji: "🚗", label: "Garagem", desc: "Vaga de Garagem" },
+  { id: "pet", emoji: "🐾", label: "Pet Friendly", desc: "Aceita Animais de Estimação" },
+  { id: "cafe", emoji: "☕", label: "Cafeteira", desc: "Cafeteira Nespresso / Expresso" }
+];
+
+function getFlatDisplaySymbols(flat: any): Array<{ emoji: string; label: string; desc: string }> {
+  const result: Array<{ emoji: string; label: string; desc: string }> = [];
+  const tags: string[] = Array.isArray(flat.tags) ? flat.tags : [];
+
+  // 1. Ar Condicionado
+  if (flat.airConditionerType === "janela" || tags.some(t => t.toLowerCase().includes("janela"))) {
+    result.push({ emoji: "🪟", label: "Ar Janela", desc: "Ar Condicionado de Janela" });
+  } else if (flat.airConditionerType === "split" || tags.some(t => t.toLowerCase().includes("split")) || !flat.airConditionerType) {
+    result.push({ emoji: "❄️", label: "Split", desc: "Ar Condicionado Split" });
+  }
+
+  // 2. Camas
+  if (flat.bedType === "solteiro_duplo" || tags.some(t => t.toLowerCase().includes("solteiro") || t.includes("👥"))) {
+    result.push({ emoji: "👥", label: "2 Solteiros", desc: "2 Camas de Solteiro" });
+  } else {
+    result.push({ emoji: "🛏️", label: "Cama Casal", desc: "Cama de Casal" });
+  }
+
+  // 3. Micro-ondas
+  if (flat.hasMicrowave || tags.some(t => t.toLowerCase().includes("micro") || t.includes("⚡"))) {
+    result.push({ emoji: "⚡", label: "Micro-ondas", desc: "Possui Micro-ondas" });
+  }
+
+  // 4. Reformado
+  if (tags.some(t => t.toLowerCase().includes("reform") || t.includes("✨"))) {
+    result.push({ emoji: "✨", label: "Reformado", desc: "Apartamento Reformado / Moderno" });
+  }
+
+  // 5. Outros Presets e Tags Personalizadas
+  for (const t of tags) {
+    const matchedPreset = FLAT_SYMBOL_PRESETS.find(p => p.label.toLowerCase() === t.toLowerCase() || p.emoji === t.trim().substring(0, 2));
+    if (matchedPreset && !result.some(r => r.emoji === matchedPreset.emoji)) {
+      result.push({ emoji: matchedPreset.emoji, label: matchedPreset.label, desc: matchedPreset.desc });
+    } else if (!matchedPreset && !result.some(r => r.label === t)) {
+      const firstChar = t.trim().substring(0, 2);
+      const isEmoji = /\p{Extended_Pictographic}/u.test(firstChar);
+      result.push({
+        emoji: isEmoji ? firstChar : "🏷️",
+        label: t,
+        desc: t
+      });
+    }
+  }
+
+  return result;
+}
+
 export default function PmsCalendar() {
   const [, setLocation] = useLocation()
   const { data: user, isLoading: loadingUser } = useGetMe()
@@ -106,6 +174,7 @@ export default function PmsCalendar() {
   const [flatBedType, setFlatBedType] = useState("casal")
   const [flatHasMicrowave, setFlatHasMicrowave] = useState(true)
   const [flatCustomTagInput, setFlatCustomTagInput] = useState("")
+  const [customEmojiSelected, setCustomEmojiSelected] = useState("🏷️")
   const [savingFlatTags, setSavingFlatTags] = useState(false)
 
   // Fair-Share & Conflito State
@@ -801,139 +870,182 @@ export default function PmsCalendar() {
                 })}
               </div>
 
-              {/* Rows: Flats */}
+                            {/* Rows: Flats */}
               {loading ? (
                 <div className="text-center py-16 text-xs text-muted-foreground">Carregando mapa de ocupação...</div>
               ) : data.flats.length === 0 ? (
                 <div className="text-center py-16 text-xs text-muted-foreground">Nenhum apartamento cadastrado.</div>
               ) : (
                 data.flats.map((flat) => {
+                  const symbols = getFlatDisplaySymbols(flat);
+                  const flatReservations = data.reservations.filter(r => (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)));
+                  const flatBlocks = data.blocks.filter(b => (b.flatId === flat.id || String(b.flatNumber) === String(flat.number)));
+
                   return (
                     <div 
                       key={flat.id} 
-                      style={{ gridTemplateColumns: `110px repeat(${daysInView.length}, minmax(44px, 1fr))` }}
-                      className="grid border-b hover:bg-muted/20 transition-colors h-12 items-center"
+                      style={{ 
+                        gridTemplateColumns: `120px repeat(${daysInView.length}, minmax(46px, 1fr))`,
+                        gridTemplateRows: "48px"
+                      }}
+                      className="grid border-b hover:bg-muted/10 transition-colors h-12 items-center relative"
                     >
-                      {/* Flat Number Header with Clickable Tags Management */}
+                      {/* Flat Number Header with Organized Compact Emoji Symbols */}
                       <div 
+                        style={{ gridColumn: "1 / 2", gridRow: "1 / 2" }}
                         onClick={() => handleOpenFlatTagsModal(flat)}
-                        className="px-2 py-1 font-bold text-xs border-r text-foreground flex flex-col justify-center h-full bg-card sticky left-0 z-10 shadow-xs cursor-pointer hover:bg-primary/10 transition-colors group"
-                        title="Clique para gerenciar particularidades deste quarto (Split, Janela, Camas, Micro-ondas, Tags...)"
+                        className="px-2.5 py-1 font-bold text-xs border-r text-foreground flex flex-col justify-center h-full bg-card sticky left-0 z-20 shadow-xs cursor-pointer hover:bg-primary/10 transition-colors group"
+                        title="Clique para gerenciar símbolos e características deste quarto"
                       >
                         <div className="flex items-center justify-between w-full">
-                          <span className="font-black text-slate-900 dark:text-slate-100 group-hover:text-primary transition-colors">Apt {flat.number}</span>
-                          <Tag className="w-3.5 h-3.5 text-muted-foreground/50 group-hover:text-primary transition-colors shrink-0 ml-1" />
-                        </div>
-                        {/* Tags / Símbolos Visuais do Quarto */}
-                        {flat.tags && flat.tags.length > 0 ? (
-                          <div className="flex items-center gap-0.5 flex-wrap mt-0.5 overflow-hidden max-h-4">
-                            {flat.tags.slice(0, 2).map((t: string, idx: number) => (
-                              <span key={idx} className="text-[7.5px] leading-tight px-1 py-0.2 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded font-bold truncate max-w-[42px]">
-                                {t}
-                              </span>
-                            ))}
-                            {flat.tags.length > 2 && (
-                              <span className="text-[7px] text-muted-foreground font-black">+{flat.tags.length - 2}</span>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-[8px] text-primary/70 font-bold group-hover:text-primary transition-colors flex items-center gap-0.5">
-                            + particularidades
+                          <span className="font-black text-slate-900 dark:text-slate-100 group-hover:text-primary transition-colors text-xs">
+                            Apt {flat.number}
                           </span>
-                        )}
+                          <Tag className="w-3 h-3 text-muted-foreground/40 group-hover:text-primary transition-colors shrink-0 ml-1" />
+                        </div>
+
+                        {/* Símbolos Emojis Organizados & Limpos */}
+                        <div className="flex items-center gap-1 mt-0.5 overflow-hidden">
+                          {symbols.slice(0, 4).map((sym, sIdx) => (
+                            <span 
+                              key={sIdx} 
+                              title={`${sym.emoji} ${sym.label} - ${sym.desc}`}
+                              className="text-[11px] leading-none p-0.5 bg-slate-100 dark:bg-slate-800 rounded hover:scale-125 transition-transform cursor-help"
+                            >
+                              {sym.emoji}
+                            </span>
+                          ))}
+                          {symbols.length > 4 && (
+                            <span className="text-[8px] text-muted-foreground font-black leading-none bg-slate-200 dark:bg-slate-700 px-1 py-0.5 rounded">
+                              +{symbols.length - 4}
+                            </span>
+                          )}
+                          {symbols.length === 0 && (
+                            <span className="text-[8px] text-primary/70 font-semibold group-hover:text-primary transition-colors">
+                              + símbolos
+                            </span>
+                          )}
+                        </div>
                       </div>
 
-                      {/* Days Cells */}
-                      {daysInView.map((day) => {
-                        const dayStr = format(day, "yyyy-MM-dd")
-                        
-                        // Find matching reservation
-                        const resItem = data.reservations.find(r => 
-                          (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) && 
-                          r.checkinDate <= dayStr && 
-                          r.checkoutDate > dayStr
-                        )
-
-                        // Find matching block
-                        const blockItem = data.blocks.find(b => 
-                          (b.flatId === flat.id || String(b.flatNumber) === String(flat.number)) && 
-                          b.startDate <= dayStr && 
-                          b.endDate >= dayStr
-                        )
-
-                        const isCheckinDay = resItem && resItem.checkinDate === dayStr
-                        const channelCfg = resItem ? (CHANNEL_CONFIG[resItem.channel] || CHANNEL_CONFIG.direta) : null
-                        const isMobileStart = mobileRangeStart && mobileRangeStart.flatId === flat.id && isSameDay(mobileRangeStart.day, day)
-                        const inDragRange = isCellInDragRange(flat.id, day)
+                      {/* Background Day Cells (Para seleção e criação de reserva) */}
+                      {daysInView.map((day, dIdx) => {
+                        const dayStr = format(day, "yyyy-MM-dd");
+                        const isMobileStart = mobileRangeStart && mobileRangeStart.flatId === flat.id && isSameDay(mobileRangeStart.day, day);
+                        const inDragRange = isCellInDragRange(flat.id, day);
 
                         return (
                           <div 
-                            key={dayStr} 
+                            key={dayStr}
+                            style={{ gridColumn: `${dIdx + 2} / span 1`, gridRow: "1 / 2" }}
                             data-calendar-cell="true"
                             data-flat-id={flat.id}
                             data-day-str={dayStr}
-                            onMouseDown={(e) => handleStartDrag(flat.id, day, Boolean(resItem || blockItem), e)}
+                            onMouseDown={(e) => handleStartDrag(flat.id, day, false, e)}
                             onMouseEnter={() => handleDragOver(flat.id, day)}
-                            onClick={() => handleCellClick(flat, day, resItem, blockItem)}
-                            className={`h-full border-r relative flex items-center justify-center cursor-pointer transition-all select-none ${
+                            onClick={() => handleCellClick(flat, day, null, null)}
+                            className={`h-full border-r relative flex items-center justify-center cursor-pointer transition-all select-none z-0 ${
                               isMobileStart
-                                ? 'bg-emerald-500/25 dark:bg-emerald-500/35 border-emerald-500 z-20'
+                                ? 'bg-emerald-500/25 dark:bg-emerald-500/35 border-emerald-500 z-10'
                                 : inDragRange
                                 ? 'bg-indigo-500/25 dark:bg-indigo-500/35 border-indigo-400 z-10'
                                 : isToday(day) ? 'bg-primary/5' : ''
                             } hover:bg-primary/10`}
-                            title={resItem ? `${resItem.guestName} (${resItem.channel}) - ${resItem.checkinDate} até ${resItem.checkoutDate}` : `Toque para selecionar início e fim no Apt ${flat.number}`}
+                            title={`Toque para iniciar reserva no Apt ${flat.number} em ${format(day, "dd/MM/yyyy")}`}
                           >
-                            {isMobileStart && !resItem && !blockItem && (
+                            {isMobileStart && (
                               <div className="w-full h-8 mx-0.5 rounded-md bg-emerald-600 text-white flex flex-col items-center justify-center text-[9px] font-black shadow-xs ring-2 ring-emerald-400">
                                 <span>Check-in</span>
                               </div>
                             )}
-
-                            {!isMobileStart && inDragRange && !resItem && !blockItem && (
+                            {!isMobileStart && inDragRange && (
                               <div className="w-full h-8 mx-0.5 rounded-md bg-indigo-600/90 text-white flex items-center justify-center text-[10px] font-black shadow-xs ring-1 ring-indigo-400">
                                 ✨
                               </div>
                             )}
-
-                            {!isMobileStart && !inDragRange && resItem && (
-                              <div 
-                                className={`w-full h-8 mx-0.5 rounded-md ${channelCfg?.bg} ${channelCfg?.text} flex items-center px-1 text-[10px] font-bold overflow-hidden shadow-2xs border ${channelCfg?.border} ${(resItem.isMonthlyGuest || resItem.clientType === "mensalista") ? 'ring-2 ring-purple-400 dark:ring-purple-500 shadow-md !bg-purple-900 !border-purple-600' : ''}`}
-                                title={`${resItem.guestName} (${channelCfg?.label || resItem.channel}) • ${resItem.checkinDate} a ${resItem.checkoutDate}${resItem.includeBreakfast ? ' • ☕ Café Incluso' : ''}${(resItem.isMonthlyGuest || resItem.clientType === "mensalista") ? ' • 🏢 Mensalista' : ''}`}
-                              >
-                                {isCheckinDay ? (
-                                  <div className="flex items-center gap-1 min-w-0 truncate w-full">
-                                    {resItem.includeBreakfast && (
-                                      <span title="Café da Manhã Incluso" className="shrink-0 text-xs">☕</span>
-                                    )}
-                                    {(resItem.isMonthlyGuest || resItem.clientType === "mensalista") && (
-                                      <span title="Cliente Mensalista / Contrato" className="shrink-0 text-[8px] uppercase tracking-wider bg-purple-950 text-purple-200 px-1 py-0.2 rounded font-black border border-purple-400/50">
-                                        🏢 Mensalista
-                                      </span>
-                                    )}
-                                    <span className="truncate">{resItem.guestName}</span>
-                                  </div>
-                                ) : (
-                                  resItem.includeBreakfast && (
-                                    <span title="Café Incluso" className="text-[10px] opacity-70 mx-auto">☕</span>
-                                  )
-                                )}
-                              </div>
-                            )}
-
-                            {!isMobileStart && !inDragRange && blockItem && !resItem && (
-                              <div 
-                                className="w-full h-8 mx-0.5 rounded-md bg-slate-800 text-white flex items-center justify-center text-[10px] font-bold shadow-2xs"
-                                title={`Bloqueio: ${blockItem.reason} (${blockItem.notes || ''})`}
-                              >
-                                <Lock className="w-3 h-3" />
-                              </div>
-                            )}
                           </div>
-                        )
+                        );
+                      })}
+
+                      {/* Unified Multi-Day Reservation Continuous Bars (Gantt Hotel Style) */}
+                      {flatReservations.map(resItem => {
+                        const startIdx = daysInView.findIndex(d => format(d, "yyyy-MM-dd") === resItem.checkinDate);
+                        const endIdx = daysInView.findIndex(d => format(d, "yyyy-MM-dd") === resItem.checkoutDate);
+
+                        const timelineStartStr = format(daysInView[0], "yyyy-MM-dd");
+                        const timelineEndStr = format(daysInView[daysInView.length - 1], "yyyy-MM-dd");
+
+                        if (resItem.checkoutDate <= timelineStartStr || resItem.checkinDate > timelineEndStr) return null;
+
+                        const actualStartIdx = startIdx >= 0 ? startIdx : 0;
+                        const actualEndIdx = endIdx >= 0 ? endIdx : daysInView.length;
+                        const colStart = actualStartIdx + 2;
+                        const colSpan = Math.max(1, actualEndIdx - actualStartIdx);
+
+                        const channelCfg = CHANNEL_CONFIG[resItem.channel] || CHANNEL_CONFIG.direta;
+                        const nightsCount = differenceInDays(parseISO(resItem.checkoutDate), parseISO(resItem.checkinDate)) || 1;
+                        const isMensalista = resItem.isMonthlyGuest || resItem.clientType === "mensalista";
+
+                        return (
+                          <div
+                            key={`res-${resItem.id}`}
+                            style={{ gridColumn: `${colStart} / span ${colSpan}`, gridRow: "1 / 2" }}
+                            onClick={(e) => { e.stopPropagation(); handleEditRes(resItem); }}
+                            className={`h-8.5 mx-1 rounded-xl ${channelCfg?.bg} ${channelCfg?.text} flex items-center px-2.5 text-[11px] font-bold overflow-hidden shadow-xs border ${channelCfg?.border} z-10 cursor-pointer hover:brightness-110 hover:shadow-md hover:scale-[1.01] transition-all ${isMensalista ? 'ring-2 ring-purple-400 dark:ring-purple-500 shadow-md !bg-purple-900 !border-purple-600' : ''}`}
+                            title={`${resItem.guestName} (${channelCfg?.label || resItem.channel}) • ${resItem.checkinDate} a ${resItem.checkoutDate} (${nightsCount} ${nightsCount === 1 ? 'diária' : 'diárias'})${resItem.includeBreakfast ? ' • ☕ Café Incluso' : ''}${isMensalista ? ' • 🏢 Mensalista' : ''}`}
+                          >
+                            <div className="flex items-center gap-1.5 min-w-0 truncate w-full">
+                              {resItem.includeBreakfast && (
+                                <span title="Café da Manhã Incluso" className="shrink-0 text-xs">☕</span>
+                              )}
+                              {isMensalista && (
+                                <span title="Cliente Mensalista / Contrato" className="shrink-0 text-[8px] uppercase tracking-wider bg-purple-950 text-purple-200 px-1.5 py-0.2 rounded font-black border border-purple-400/50">
+                                  🏢 Mensalista
+                                </span>
+                              )}
+                              <span className="truncate font-black text-white">{resItem.guestName}</span>
+                              {colSpan >= 2 && (
+                                <span className="text-[10px] opacity-85 shrink-0 font-semibold ml-auto bg-black/20 px-1.5 py-0.2 rounded-md">
+                                  {nightsCount} {nightsCount === 1 ? 'diária' : 'diárias'}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {/* Unified Multi-Day Room Block Bars */}
+                      {flatBlocks.map(blockItem => {
+                        const startIdx = daysInView.findIndex(d => format(d, "yyyy-MM-dd") === blockItem.startDate);
+                        const endIdx = daysInView.findIndex(d => format(d, "yyyy-MM-dd") === blockItem.endDate);
+
+                        const timelineStartStr = format(daysInView[0], "yyyy-MM-dd");
+                        const timelineEndStr = format(daysInView[daysInView.length - 1], "yyyy-MM-dd");
+
+                        if (blockItem.endDate < timelineStartStr || blockItem.startDate > timelineEndStr) return null;
+
+                        const actualStartIdx = startIdx >= 0 ? startIdx : 0;
+                        const actualEndIdx = endIdx >= 0 ? endIdx : daysInView.length;
+                        const colStart = actualStartIdx + 2;
+                        const colSpan = Math.max(1, actualEndIdx - actualStartIdx + 1);
+
+                        return (
+                          <div
+                            key={`block-${blockItem.id}`}
+                            style={{ gridColumn: `${colStart} / span ${colSpan}`, gridRow: "1 / 2" }}
+                            onClick={(e) => { e.stopPropagation(); }}
+                            className="h-8.5 mx-1 rounded-xl bg-slate-800 text-white flex items-center px-2.5 text-[10px] font-bold shadow-xs z-10 cursor-pointer overflow-hidden border border-slate-700"
+                            title={`Bloqueio: ${blockItem.reason} (${blockItem.notes || ''})`}
+                          >
+                            <div className="flex items-center gap-1.5 truncate">
+                              <Lock className="w-3 h-3 shrink-0" />
+                              <span className="truncate">{blockItem.reason === "manutencao" ? "🛠️ Manutenção" : "🔑 Bloqueio"} {blockItem.notes ? `• ${blockItem.notes}` : ""}</span>
+                            </div>
+                          </div>
+                        );
                       })}
                     </div>
-                  )
+                  );
                 })
               )}
             </div>
@@ -1570,24 +1682,25 @@ export default function PmsCalendar() {
         </Dialog>
 
 
-        {/* ── MODAL: GERENCIAMENTO DE TAGS E PARTICULARIDADES DO FLAT ── */}
+        
+        {/* ── MODAL: GERENCIAMENTO DE SÍMBOLOS E PARTICULARIDADES DO FLAT ── */}
         <Dialog open={flatTagsModalOpen} onOpenChange={setFlatTagsModalOpen}>
           <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-base font-black">
-                <Tag className="w-4 h-4 text-primary" />
-                Particularidades do Apt {selectedFlatForTags?.number}
+                <Sparkles className="w-4 h-4 text-primary" />
+                Símbolos & Particularidades do Apt {selectedFlatForTags?.number}
               </DialogTitle>
               <DialogDescription className="text-xs">
-                Defina as características físicas e marcadores visuais deste apartamento para visualização no livro de reservas.
+                Selecione os símbolos e emojis para identificar as características deste flat no mapa de reservas.
               </DialogDescription>
             </DialogHeader>
 
             <form onSubmit={handleSaveFlatTags} className="space-y-4 py-2 text-xs">
               {/* Ar Condicionado */}
               <div className="space-y-1.5">
-                <Label className="font-bold flex items-center gap-1.5">
-                  <Wind className="w-3.5 h-3.5 text-sky-500" /> Tipo de Ar Condicionado
+                <Label className="font-bold flex items-center gap-1.5 text-slate-900 dark:text-slate-100">
+                  <Wind className="w-3.5 h-3.5 text-sky-500" /> Ar Condicionado
                 </Label>
                 <div className="grid grid-cols-2 gap-2">
                   <Button
@@ -1595,25 +1708,27 @@ export default function PmsCalendar() {
                     variant={flatAirType === "split" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setFlatAirType("split")}
-                    className="h-8.5 text-xs font-bold rounded-xl gap-1.5"
+                    className="h-9 text-xs font-bold rounded-xl gap-2 justify-start px-3"
                   >
-                    ❄️ Split
+                    <span className="text-base">❄️</span>
+                    <span>Ar Split</span>
                   </Button>
                   <Button
                     type="button"
                     variant={flatAirType === "janela" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setFlatAirType("janela")}
-                    className="h-8.5 text-xs font-bold rounded-xl gap-1.5"
+                    className="h-9 text-xs font-bold rounded-xl gap-2 justify-start px-3"
                   >
-                    💨 Ar de Janela
+                    <span className="text-base">🪟</span>
+                    <span>Ar de Janela</span>
                   </Button>
                 </div>
               </div>
 
               {/* Camas */}
               <div className="space-y-1.5">
-                <Label className="font-bold flex items-center gap-1.5">
+                <Label className="font-bold flex items-center gap-1.5 text-slate-900 dark:text-slate-100">
                   <Bed className="w-3.5 h-3.5 text-indigo-500" /> Configuração de Camas
                 </Label>
                 <div className="grid grid-cols-2 gap-2">
@@ -1622,91 +1737,125 @@ export default function PmsCalendar() {
                     variant={flatBedType === "casal" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setFlatBedType("casal")}
-                    className="h-8.5 text-xs font-bold rounded-xl gap-1.5"
+                    className="h-9 text-xs font-bold rounded-xl gap-2 justify-start px-3"
                   >
-                    🛏️ Cama Casal
+                    <span className="text-base">🛏️</span>
+                    <span>Cama de Casal</span>
                   </Button>
                   <Button
                     type="button"
                     variant={flatBedType === "solteiro_duplo" ? "default" : "outline"}
                     size="sm"
                     onClick={() => setFlatBedType("solteiro_duplo")}
-                    className="h-8.5 text-xs font-bold rounded-xl gap-1.5"
+                    className="h-9 text-xs font-bold rounded-xl gap-2 justify-start px-3"
                   >
-                    🛏️🛏️ 2 Camas Solteiro
+                    <span className="text-base">👥</span>
+                    <span>2 Camas Solteiro</span>
                   </Button>
                 </div>
               </div>
 
-              {/* Micro-ondas */}
-              <div className="p-3 bg-muted/40 border border-border rounded-2xl flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Zap className="w-4 h-4 text-amber-500" />
-                  <div>
-                    <span className="font-bold block text-foreground">Possui Micro-ondas</span>
-                    <span className="text-[11px] text-muted-foreground">Eletrodoméstico na bancada da cozinha</span>
-                  </div>
-                </div>
-                <Switch checked={flatHasMicrowave} onCheckedChange={setFlatHasMicrowave} />
-              </div>
-
-              {/* Tags Pré-definidas Rápidas */}
+              {/* Símbolos Rápidos com Emojis */}
               <div className="space-y-1.5">
-                <Label className="font-bold">Tags Rápidas Sugeridas</Label>
-                <div className="flex flex-wrap gap-1.5">
+                <Label className="font-bold flex items-center gap-1.5 text-slate-900 dark:text-slate-100">
+                  <Tag className="w-3.5 h-3.5 text-amber-500" /> Símbolos Rápidos & Comodidades
+                </Label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
                   {[
-                    "Andar Alto 🏙️",
-                    "Andar Baixo",
-                    "Vista Livre 🌅",
-                    "Smart TV 📺",
-                    "Frigobar 🧊",
-                    "Cozinha Completa 🍳",
-                    "Reformado ✨",
-                    "Varanda"
+                    { tag: "Micro-ondas", emoji: "⚡", label: "Micro-ondas" },
+                    { tag: "Reformado", emoji: "✨", label: "Reformado" },
+                    { tag: "Andar Alto", emoji: "🏙️", label: "Andar Alto" },
+                    { tag: "Andar Baixo", emoji: "🚪", label: "Andar Baixo" },
+                    { tag: "Vista Livre", emoji: "🌅", label: "Vista Livre" },
+                    { tag: "Smart TV", emoji: "📺", label: "Smart TV" },
+                    { tag: "Frigobar", emoji: "🧊", label: "Frigobar" },
+                    { tag: "Cozinha", emoji: "🍳", label: "Cozinha" },
+                    { tag: "Varanda", emoji: "🌿", label: "Varanda" }
                   ].map(preset => {
-                    const active = flatTags.includes(preset);
+                    const active = flatTags.some(t => t.toLowerCase() === preset.tag.toLowerCase() || t.includes(preset.emoji));
                     return (
                       <Button
-                        key={preset}
+                        key={preset.tag}
                         type="button"
                         variant={active ? "default" : "outline"}
                         size="sm"
-                        onClick={() => handleTogglePresetTag(preset)}
-                        className="h-7 text-[10.5px] font-bold rounded-lg px-2.5"
+                        onClick={() => {
+                          if (preset.tag === "Micro-ondas") {
+                            setFlatHasMicrowave(!flatHasMicrowave);
+                          }
+                          handleTogglePresetTag(preset.tag);
+                        }}
+                        className={`h-8 text-[11px] font-bold rounded-xl gap-1.5 justify-start px-2 ${active ? 'bg-primary text-primary-foreground' : 'text-slate-700 dark:text-slate-300'}`}
                       >
-                        {preset} {active && "✓"}
+                        <span>{preset.emoji}</span>
+                        <span>{preset.label}</span>
+                        {active && <span className="ml-auto text-[10px]">✓</span>}
                       </Button>
                     );
                   })}
                 </div>
               </div>
 
-              {/* Adicionar Tag Personalizada Livre */}
-              <div className="space-y-1.5">
-                <Label className="font-bold">Adicionar Tag Personalizada</Label>
+              {/* Criar Novo Símbolo Personalizado com Seletor de Emoji */}
+              <div className="p-3 bg-muted/40 border border-border rounded-2xl space-y-2">
+                <Label className="font-bold block text-slate-900 dark:text-slate-100">Criar Novo Símbolo Personalizado</Label>
+                <div className="flex flex-wrap gap-1 mb-1.5">
+                  {["🏷️", "☕", "🚗", "🐾", "💼", "🌊", "🛋️", "🔑", "📶", "🔇", "⭐", "🔒"].map(em => (
+                    <button
+                      key={em}
+                      type="button"
+                      onClick={() => setCustomEmojiSelected(em)}
+                      className={`w-7 h-7 rounded-lg text-sm flex items-center justify-center transition-transform ${customEmojiSelected === em ? 'bg-primary text-primary-foreground scale-110 shadow-xs' : 'bg-background hover:bg-muted'}`}
+                    >
+                      {em}
+                    </button>
+                  ))}
+                </div>
                 <div className="flex gap-2">
-                  <Input
-                    value={flatCustomTagInput}
-                    onChange={e => setFlatCustomTagInput(e.target.value)}
-                    placeholder="Ex: Cafeteira Nespresso, Mesa Home Office..."
-                    className="h-9 text-xs rounded-xl"
-                    onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); handleAddCustomTag(); } }}
-                  />
-                  <Button type="button" onClick={() => handleAddCustomTag()} className="h-9 text-xs font-bold rounded-xl px-3">
-                    + Adicionar
+                  <div className="relative flex-1">
+                    <span className="absolute left-2.5 top-2 text-sm">{customEmojiSelected}</span>
+                    <Input
+                      value={flatCustomTagInput}
+                      onChange={e => setFlatCustomTagInput(e.target.value)}
+                      placeholder="Nome do símbolo (Ex: Garagem, Nespresso, Pet...)"
+                      className="h-9 text-xs pl-8 rounded-xl"
+                      onKeyDown={e => { 
+                        if (e.key === "Enter") { 
+                          e.preventDefault(); 
+                          const combined = `${customEmojiSelected} ${flatCustomTagInput.trim()}`;
+                          if (flatCustomTagInput.trim() && !flatTags.includes(combined)) {
+                            setFlatTags(prev => [...prev, combined]);
+                            setFlatCustomTagInput("");
+                          }
+                        } 
+                      }}
+                    />
+                  </div>
+                  <Button 
+                    type="button" 
+                    onClick={() => {
+                      const combined = `${customEmojiSelected} ${flatCustomTagInput.trim()}`;
+                      if (flatCustomTagInput.trim() && !flatTags.includes(combined)) {
+                        setFlatTags(prev => [...prev, combined]);
+                        setFlatCustomTagInput("");
+                      }
+                    }} 
+                    className="h-9 text-xs font-bold rounded-xl px-3"
+                  >
+                    + Criar
                   </Button>
                 </div>
               </div>
 
-              {/* Tags Ativas no Quarto */}
+              {/* Símbolos Ativos no Quarto */}
               {flatTags.length > 0 && (
                 <div className="space-y-1.5 pt-1">
-                  <Label className="text-[11px] font-bold text-muted-foreground">Tags Ativas no Quarto ({flatTags.length}):</Label>
-                  <div className="flex flex-wrap gap-1.5 p-2.5 bg-muted/30 border border-border rounded-2xl">
+                  <Label className="text-[11px] font-bold text-muted-foreground">Símbolos Ativos no Quarto ({flatTags.length}):</Label>
+                  <div className="flex flex-wrap gap-1.5 p-2.5 bg-muted/20 border border-border rounded-2xl">
                     {flatTags.map(tag => (
-                      <span key={tag} className="inline-flex items-center gap-1 text-[11px] bg-primary/10 text-primary font-bold px-2 py-0.5 rounded-lg border border-primary/20">
+                      <span key={tag} className="inline-flex items-center gap-1 text-[11px] bg-primary/10 text-primary font-bold px-2.5 py-1 rounded-xl border border-primary/20">
                         {tag}
-                        <button type="button" onClick={() => handleRemoveTag(tag)} className="hover:text-rose-500 ml-0.5">✕</button>
+                        <button type="button" onClick={() => handleRemoveTag(tag)} className="hover:text-rose-500 ml-1 font-black">✕</button>
                       </span>
                     ))}
                   </div>
@@ -1715,7 +1864,7 @@ export default function PmsCalendar() {
 
               <DialogFooter className="gap-2 pt-3 border-t border-border">
                 <Button type="submit" disabled={savingFlatTags} className="rounded-xl h-10 text-xs font-black bg-primary hover:bg-primary/90 text-primary-foreground">
-                  {savingFlatTags ? "Salvando..." : "Salvar Particularidades"}
+                  {savingFlatTags ? "Salvando..." : "Salvar Símbolos"}
                 </Button>
                 <Button type="button" variant="outline" onClick={() => setFlatTagsModalOpen(false)} className="rounded-xl h-10 text-xs font-bold">
                   Cancelar
@@ -1724,6 +1873,7 @@ export default function PmsCalendar() {
             </form>
           </DialogContent>
         </Dialog>
+
 
         {/* Modal: Room Block */}
         <Dialog open={blockModalOpen} onOpenChange={setBlockModalOpen}>
