@@ -1044,13 +1044,9 @@ export default function PmsCalendar() {
                                   👑 Mensalista
                                 </span>
                               )}
-                              {/* Quantidade de diárias NA FRENTE do nome */}
-                              <span className="shrink-0 text-[9px] font-extrabold bg-black/30 text-white/95 px-1.5 py-0.2 rounded-md">
-                                {nightsCount} {nightsCount === 1 ? 'diária' : 'diárias'}
-                              </span>
-                              {/* Nome do Hóspede com truncamento automático se faltar espaço */}
+                              {/* Texto Contínuo Único: Nome do Hóspede seguido do número de diárias */}
                               <span className="truncate font-black text-white text-[11.5px] min-w-0">
-                                {resItem.guestName}
+                                {resItem.guestName} • {nightsCount} {nightsCount === 1 ? 'diária' : 'diárias'}
                               </span>
                             </div>
                           </div>
