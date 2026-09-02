@@ -975,25 +975,26 @@ export default function PmsCalendar() {
                           <div
                             key={`res-${resItem.id}`}
                             style={{ gridColumn: `${colStart} / span ${colSpan}`, gridRow: "1 / 2" }}
-                            onClick={(e) => { e.stopPropagation(); handleEditRes(resItem); }}
-                            className={`h-8.5 mx-1 rounded-xl ${channelCfg?.bg} ${channelCfg?.text} flex items-center px-2.5 text-[11px] font-bold overflow-hidden shadow-xs border ${channelCfg?.border} z-10 cursor-pointer hover:brightness-110 hover:shadow-md hover:scale-[1.01] transition-all ${isMensalista ? 'ring-2 ring-purple-400 dark:ring-purple-500 shadow-md !bg-purple-900 !border-purple-600' : ''}`}
-                            title={`${resItem.guestName} (${channelCfg?.label || resItem.channel}) • ${resItem.checkinDate} a ${resItem.checkoutDate} (${nightsCount} ${nightsCount === 1 ? 'diária' : 'diárias'})${resItem.includeBreakfast ? ' • ☕ Café Incluso' : ''}${isMensalista ? ' • 🏢 Mensalista' : ''}`}
+                            onClick={(e) => { e.stopPropagation(); handleOpenEditRes(resItem); }}
+                            className={`h-8.5 mx-0.5 rounded-xl ${
+                              isMensalista 
+                                ? 'bg-gradient-to-r from-purple-800 via-indigo-900 to-purple-800 text-white border-2 border-purple-300 shadow-md ring-2 ring-purple-500/80' 
+                                : `${channelCfg?.bg} ${channelCfg?.text} border ${channelCfg?.border} shadow-xs`
+                            } flex items-center px-2 text-[11px] font-bold overflow-hidden z-10 cursor-pointer hover:brightness-110 hover:shadow-md hover:scale-[1.01] active:scale-[0.99] transition-all`}
+                            title={`${resItem.guestName} (${channelCfg?.label || resItem.channel}) • ${resItem.checkinDate} a ${resItem.checkoutDate} (${nightsCount} ${nightsCount === 1 ? 'diária' : 'diárias'})${resItem.includeBreakfast ? ' • ☕ Café Incluso' : ''}${isMensalista ? ' • 👑 Mensalista / Contrato Long Stay' : ''}`}
                           >
-                            <div className="flex items-center gap-1.5 min-w-0 truncate w-full">
+                            <div className="flex items-center gap-1.5 min-w-0 w-full overflow-hidden">
                               {resItem.includeBreakfast && (
                                 <span title="Café da Manhã Incluso" className="shrink-0 text-xs">☕</span>
                               )}
                               {isMensalista && (
-                                <span title="Cliente Mensalista / Contrato" className="shrink-0 text-[8px] uppercase tracking-wider bg-purple-950 text-purple-200 px-1.5 py-0.2 rounded font-black border border-purple-400/50">
-                                  🏢 Mensalista
+                                <span title="Cliente Mensalista / Contrato Long Stay" className="shrink-0 text-[8.5px] uppercase font-black px-1.5 py-0.2 bg-amber-400 text-slate-950 rounded shadow-xs tracking-wider">
+                                  👑 Mensalista
                                 </span>
                               )}
-                              <span className="truncate font-black text-white">{resItem.guestName}</span>
-                              {colSpan >= 2 && (
-                                <span className="text-[10px] opacity-85 shrink-0 font-semibold ml-auto bg-black/20 px-1.5 py-0.2 rounded-md">
-                                  {nightsCount} {nightsCount === 1 ? 'diária' : 'diárias'}
-                                </span>
-                              )}
+                              <span className="truncate font-black text-white text-[11.5px] flex-1 min-w-0">
+                                {resItem.guestName}
+                              </span>
                             </div>
                           </div>
                         );
