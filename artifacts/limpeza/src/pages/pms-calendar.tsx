@@ -1496,6 +1496,162 @@ export default function PmsCalendar() {
           </DialogContent>
         </Dialog>
 
+
+        {/* ── MODAL: GERENCIAMENTO DE TAGS E PARTICULARIDADES DO FLAT ── */}
+        <Dialog open={flatTagsModalOpen} onOpenChange={setFlatTagsModalOpen}>
+          <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-base font-black">
+                <Tag className="w-4 h-4 text-primary" />
+                Particularidades do Apt {selectedFlatForTags?.number}
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                Defina as características físicas e marcadores visuais deste apartamento para visualização no livro de reservas.
+              </DialogDescription>
+            </DialogHeader>
+
+            <form onSubmit={handleSaveFlatTags} className="space-y-4 py-2 text-xs">
+              {/* Ar Condicionado */}
+              <div className="space-y-1.5">
+                <Label className="font-bold flex items-center gap-1.5">
+                  <Wind className="w-3.5 h-3.5 text-sky-500" /> Tipo de Ar Condicionado
+                </Label>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    type="button"
+                    variant={flatAirType === "split" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setFlatAirType("split")}
+                    className="h-8.5 text-xs font-bold rounded-xl gap-1.5"
+                  >
+                    ❄️ Split
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={flatAirType === "janela" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setFlatAirType("janela")}
+                    className="h-8.5 text-xs font-bold rounded-xl gap-1.5"
+                  >
+                    💨 Ar de Janela
+                  </Button>
+                </div>
+              </div>
+
+              {/* Camas */}
+              <div className="space-y-1.5">
+                <Label className="font-bold flex items-center gap-1.5">
+                  <Bed className="w-3.5 h-3.5 text-indigo-500" /> Configuração de Camas
+                </Label>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    type="button"
+                    variant={flatBedType === "casal" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setFlatBedType("casal")}
+                    className="h-8.5 text-xs font-bold rounded-xl gap-1.5"
+                  >
+                    🛏️ Cama Casal
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={flatBedType === "solteiro_duplo" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setFlatBedType("solteiro_duplo")}
+                    className="h-8.5 text-xs font-bold rounded-xl gap-1.5"
+                  >
+                    🛏️🛏️ 2 Camas Solteiro
+                  </Button>
+                </div>
+              </div>
+
+              {/* Micro-ondas */}
+              <div className="p-3 bg-muted/40 border border-border rounded-2xl flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Zap className="w-4 h-4 text-amber-500" />
+                  <div>
+                    <span className="font-bold block text-foreground">Possui Micro-ondas</span>
+                    <span className="text-[11px] text-muted-foreground">Eletrodoméstico na bancada da cozinha</span>
+                  </div>
+                </div>
+                <Switch checked={flatHasMicrowave} onCheckedChange={setFlatHasMicrowave} />
+              </div>
+
+              {/* Tags Pré-definidas Rápidas */}
+              <div className="space-y-1.5">
+                <Label className="font-bold">Tags Rápidas Sugeridas</Label>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    "Andar Alto 🏙️",
+                    "Andar Baixo",
+                    "Vista Livre 🌅",
+                    "Smart TV 📺",
+                    "Frigobar 🧊",
+                    "Cozinha Completa 🍳",
+                    "Reformado ✨",
+                    "Varanda"
+                  ].map(preset => {
+                    const active = flatTags.includes(preset);
+                    return (
+                      <Button
+                        key={preset}
+                        type="button"
+                        variant={active ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => handleTogglePresetTag(preset)}
+                        className="h-7 text-[10.5px] font-bold rounded-lg px-2.5"
+                      >
+                        {preset} {active && "✓"}
+                      </Button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Adicionar Tag Personalizada Livre */}
+              <div className="space-y-1.5">
+                <Label className="font-bold">Adicionar Tag Personalizada</Label>
+                <div className="flex gap-2">
+                  <Input
+                    value={flatCustomTagInput}
+                    onChange={e => setFlatCustomTagInput(e.target.value)}
+                    placeholder="Ex: Cafeteira Nespresso, Mesa Home Office..."
+                    className="h-9 text-xs rounded-xl"
+                    onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); handleAddCustomTag(); } }}
+                  />
+                  <Button type="button" onClick={() => handleAddCustomTag()} className="h-9 text-xs font-bold rounded-xl px-3">
+                    + Adicionar
+                  </Button>
+                </div>
+              </div>
+
+              {/* Tags Ativas no Quarto */}
+              {flatTags.length > 0 && (
+                <div className="space-y-1.5 pt-1">
+                  <Label className="text-[11px] font-bold text-muted-foreground">Tags Ativas no Quarto ({flatTags.length}):</Label>
+                  <div className="flex flex-wrap gap-1.5 p-2.5 bg-muted/30 border border-border rounded-2xl">
+                    {flatTags.map(tag => (
+                      <span key={tag} className="inline-flex items-center gap-1 text-[11px] bg-primary/10 text-primary font-bold px-2 py-0.5 rounded-lg border border-primary/20">
+                        {tag}
+                        <button type="button" onClick={() => handleRemoveTag(tag)} className="hover:text-rose-500 ml-0.5">✕</button>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <DialogFooter className="gap-2 pt-3 border-t border-border">
+                <Button type="submit" disabled={savingFlatTags} className="rounded-xl h-10 text-xs font-black bg-primary hover:bg-primary/90 text-primary-foreground">
+                  {savingFlatTags ? "Salvando..." : "Salvar Particularidades"}
+                </Button>
+                <Button type="button" variant="outline" onClick={() => setFlatTagsModalOpen(false)} className="rounded-xl h-10 text-xs font-bold">
+                  Cancelar
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+
         {/* Modal: Room Block */}
         <Dialog open={blockModalOpen} onOpenChange={setBlockModalOpen}>
           <DialogContent className="sm:max-w-sm">
