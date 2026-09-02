@@ -270,6 +270,7 @@ export function FlatCard({
       const interval = setInterval(calculate, 15000)
       return () => clearInterval(interval)
     }
+    return undefined
   }, [request?.status, request?.cleaningStartedAt])
 
   const updateOccupancy = useUpdateFlat({
@@ -697,7 +698,10 @@ export function FlatCard({
                     checked={isSelected}
                     onChange={(e) => {
                       e.stopPropagation()
-                      onToggleSelect?.()
+                      const cardId = request?.id || flat?.cleaningRequest?.id || flat?.flatId || flat?.id
+                      if (cardId) {
+                        onToggleSelect?.(Number(cardId))
+                      }
                     }}
                     className="w-4 h-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500 cursor-pointer shrink-0"
                     title="Selecionar para limpeza em lote"

@@ -1854,8 +1854,8 @@ app.post("/api/cleaning/requests/manual", (req, res) => {
 });
 
 function getRequestsForDate(dateStr) {
-  // Purifica cleaningRequests em memória descartando qualquer registro corrompido ou sem hóspede
-  db.cleaningRequests = (db.cleaningRequests || []).filter(r => r.source === "manual" || (r.requestDate >= "2026-09-01" && (r.status === "clean" || r.status === "cleaning" || r.status === "inspected")));
+  // Garante que cleaningRequests existe e não possui registros nulos
+  db.cleaningRequests = (db.cleaningRequests || []).filter(r => r && (r.flatId || r.flatNumber));
   const requestsForDate = [];
   const existingFlatNumbersForDate = new Set();
 
@@ -1894,7 +1894,7 @@ function getRequestsForDate(dateStr) {
     );
 
     const existingCleaning = (db.cleaningRequests || []).find(c => 
-      String(c.flatNumber) === flatNumber && 
+      (String(c.flatNumber) === flatNumber || c.flatId === flat.id) && 
       c.requestDate === dateStr
     );
 
@@ -2456,6 +2456,8 @@ app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
     item.status = status;
     if (status === "dirty") {
       item.assignedUserId = null;
+      item.assignedUsername = null;
+      item.assignedUserName = null;
       item.willCleanAt = null;
       item.cleaningStartedAt = null;
       item.completedAt = null;
@@ -2466,6 +2468,11 @@ app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
       } else {
         item.assignedUserId = userAuth ? userAuth.id : 2;
       }
+      const assignedU = db.users.find(u => u.id === item.assignedUserId);
+      if (assignedU) {
+        item.assignedUsername = assignedU.username;
+        item.assignedUserName = assignedU.name || assignedU.username;
+      }
       item.willCleanAt = now;
     } else if (status === "cleaning_now") {
       item.cleaningStartedAt = now;
@@ -2474,12 +2481,22 @@ app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
       } else if (!item.assignedUserId) {
         item.assignedUserId = userAuth ? userAuth.id : 2;
       }
+      const assignedU = db.users.find(u => u.id === item.assignedUserId);
+      if (assignedU) {
+        item.assignedUsername = assignedU.username;
+        item.assignedUserName = assignedU.name || assignedU.username;
+      }
     } else if (status === "clean" || status === "pending_issue") {
       item.completedAt = now;
       if (assignedUserId) {
         item.assignedUserId = Number(assignedUserId);
       } else if (!item.assignedUserId) {
         item.assignedUserId = userAuth ? userAuth.id : 2;
+      }
+      const assignedU = db.users.find(u => u.id === item.assignedUserId);
+      if (assignedU) {
+        item.assignedUsername = assignedU.username;
+        item.assignedUserName = assignedU.name || assignedU.username;
       }
       item.pendingObservation = status === "pending_issue" ? (observation || "Pendência registrada") : null;
 
@@ -2586,6 +2603,11 @@ app.post("/api/cleaning/assignments/batch-claim", (req, res) => {
     if (item && (item.status === "dirty" || !item.status)) {
       item.status = "will_clean";
       item.assignedUserId = userAuth ? userAuth.id : 2;
+      const assignedU = db.users.find(u => u.id === item.assignedUserId);
+      if (assignedU) {
+        item.assignedUsername = assignedU.username;
+        item.assignedUserName = assignedU.name || assignedU.username;
+      }
       item.willCleanAt = now;
       item.updatedAt = now;
       claimed++;

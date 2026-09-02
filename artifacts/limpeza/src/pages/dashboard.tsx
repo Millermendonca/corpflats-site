@@ -435,6 +435,7 @@ export default function Dashboard() {
             {filteredFlats.map((flat: any) => {
               const req = flat.cleaningRequest
               const chk = checkins?.find((c: any) => c.flatId === flat.flatId)
+              const cardId = req?.id || flat.flatId || flat.id
               
               return (
                 <FlatCard 
@@ -443,7 +444,7 @@ export default function Dashboard() {
                   request={req}
                   checkin={chk}
                   date={selectedDateStr}
-                  isSelected={req?.id ? selectedRequestIds.includes(req.id) : false}
+                  isSelected={cardId ? selectedRequestIds.includes(cardId) : false}
                   onToggleSelect={toggleSelect}
                   selectable={!isAdmin}
                   onSelectDate={setDate}
