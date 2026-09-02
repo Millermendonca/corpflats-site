@@ -18,7 +18,7 @@ import {
 } from "lucide-react"
 import { 
   format, addDays, subDays, startOfMonth, endOfMonth, eachDayOfInterval, 
-  isSameDay, isToday, parseISO, differenceInDays 
+  isSameDay, isToday, isYesterday, parseISO, differenceInDays 
 } from "date-fns"
 import { ptBR } from "date-fns/locale"
 
@@ -434,11 +434,11 @@ export default function PmsCalendar() {
   const daysInView = eachDayOfInterval({ start: timelineStart, end: timelineEnd })
 
   // Configuração de larguras das colunas da agenda
-  const TODAY_COL_WIDTH = 240 // Coluna expandida no dia atual para exibir o nome completo do hóspede
-  const NORMAL_COL_WIDTH = 48 // Largura padrão dos demais dias
-  const FLAT_COL_WIDTH = 130  // Largura da coluna fixa de apartamentos
+  const EXPANDED_COL_WIDTH = 240 // Coluna expandida no dia atual e dia anterior para exibir o nome completo do hóspede
+  const NORMAL_COL_WIDTH = 48    // Largura padrão dos demais dias
+  const FLAT_COL_WIDTH = 130     // Largura da coluna fixa de apartamentos
 
-  const getDayColWidth = (day: Date) => (isToday(day) ? TODAY_COL_WIDTH : NORMAL_COL_WIDTH)
+  const getDayColWidth = (day: Date) => (isToday(day) || isYesterday(day) ? EXPANDED_COL_WIDTH : NORMAL_COL_WIDTH)
   const gridTemplateColumns = `${FLAT_COL_WIDTH}px ${daysInView.map(day => `${getDayColWidth(day)}px`).join(" ")}`
   const totalGridMinWidth = FLAT_COL_WIDTH + daysInView.reduce((acc, day) => acc + getDayColWidth(day), 0)
 
@@ -1070,6 +1070,7 @@ export default function PmsCalendar() {
                 </div>
                 {daysInView.map((day) => {
                   const today = isToday(day)
+                  const yesterday = isYesterday(day)
                   const isWeekend = day.getDay() === 0 || day.getDay() === 6
                   const isFirstOfMonth = day.getDate() === 1
                   const dayStr = format(day, "yyyy-MM-dd")
@@ -1096,6 +1097,38 @@ export default function PmsCalendar() {
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
                           <span className="bg-primary text-primary-foreground rounded-full w-6 h-6 text-xs font-black flex items-center justify-center shadow-xs">
+                            {format(day, "d")}
+                          </span>
+                          <span className="text-[10px] font-bold text-muted-foreground uppercase">
+                            /{format(day, "MM")}
+                          </span>
+                        </div>
+                      </div>
+                    )
+                  }
+
+                  if (yesterday) {
+                    return (
+                      <div 
+                        key={day.toISOString()} 
+                        data-header-day={dayStr}
+                        className="p-1 border-r relative flex items-center justify-between px-3 bg-slate-200/60 dark:bg-slate-800/60 text-slate-800 dark:text-slate-200 font-bold border-l border-border/60 shadow-2xs"
+                      >
+                        {isFirstOfMonth && (
+                          <span className="absolute -top-2.5 left-1 text-[9px] font-black uppercase tracking-wider bg-primary text-primary-foreground px-1.5 py-0.2 rounded-md shadow-xs">
+                            {format(day, "MMM", { locale: ptBR })}
+                          </span>
+                        )}
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="bg-slate-700 dark:bg-slate-300 text-white dark:text-slate-900 text-[9.5px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-md shadow-xs shrink-0">
+                            ONTEM
+                          </span>
+                          <span className="text-xs font-black text-slate-800 dark:text-slate-200 capitalize truncate">
+                            {format(day, "EEEE", { locale: ptBR })}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <span className="bg-slate-700/10 dark:bg-slate-300/15 text-slate-900 dark:text-slate-100 rounded-full w-6 h-6 text-xs font-black flex items-center justify-center">
                             {format(day, "d")}
                           </span>
                           <span className="text-[10px] font-bold text-muted-foreground uppercase">
@@ -1194,6 +1227,7 @@ export default function PmsCalendar() {
                         const isMobileStart = mobileRangeStart && mobileRangeStart.flatId === flat.id && isSameDay(mobileRangeStart.day, day);
                         const inDragRange = isCellInDragRange(flat.id, day);
                         const today = isToday(day);
+                        const yesterday = isYesterday(day);
 
                         return (
                           <div 
@@ -1210,7 +1244,9 @@ export default function PmsCalendar() {
                                 ? 'bg-emerald-500/25 dark:bg-emerald-500/35 border-emerald-500 z-10'
                                 : inDragRange
                                 ? 'bg-indigo-500/25 dark:bg-indigo-500/35 border-indigo-400 z-10'
-                                : today ? 'bg-primary/[0.07] border-r-primary/20' : ''
+                                : today ? 'bg-primary/[0.07] border-r-primary/20'
+                                : yesterday ? 'bg-slate-500/[0.04] dark:bg-slate-400/[0.04]'
+                                : ''
                             } hover:bg-primary/10 group/cell`}
                             title={`Toque para iniciar reserva no Apt ${flat.number} em ${format(day, "dd/MM/yyyy")}`}
                           >
@@ -1227,6 +1263,11 @@ export default function PmsCalendar() {
                             {!isMobileStart && !inDragRange && today && (
                               <span className="opacity-0 group-hover/cell:opacity-80 text-[10px] text-primary font-bold flex items-center gap-1 transition-opacity">
                                 <Plus className="w-3 h-3" /> Disponível
+                              </span>
+                            )}
+                            {!isMobileStart && !inDragRange && yesterday && (
+                              <span className="opacity-0 group-hover/cell:opacity-80 text-[10px] text-muted-foreground font-semibold flex items-center gap-1 transition-opacity">
+                                Ontem
                               </span>
                             )}
                           </div>
