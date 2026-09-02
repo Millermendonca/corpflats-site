@@ -434,7 +434,7 @@ export default function PmsCalendar() {
   const daysInView = eachDayOfInterval({ start: timelineStart, end: timelineEnd })
 
   // Configuração de larguras das colunas da agenda
-  const EXPANDED_COL_WIDTH = 240 // Coluna expandida no dia atual e dia anterior para exibir o nome completo do hóspede
+  const EXPANDED_COL_WIDTH = 100 // Coluna de 100px no dia atual e dia anterior
   const NORMAL_COL_WIDTH = 48    // Largura padrão dos demais dias
   const FLAT_COL_WIDTH = 130     // Largura da coluna fixa de apartamentos
 
@@ -1080,29 +1080,24 @@ export default function PmsCalendar() {
                       <div 
                         key={day.toISOString()} 
                         data-header-day={dayStr}
-                        className="p-1 border-r relative flex items-center justify-between px-3 bg-primary/20 text-primary font-black shadow-inner ring-1 ring-primary/40"
+                        className="p-1 border-r relative flex flex-col items-center justify-center bg-primary/20 text-primary font-black shadow-inner ring-1 ring-primary/40"
                       >
                         {isFirstOfMonth && (
-                          <span className="absolute -top-2.5 left-1 text-[9px] font-black uppercase tracking-wider bg-primary text-primary-foreground px-1.5 py-0.2 rounded-md shadow-xs">
+                          <span className="absolute -top-2.5 left-1 text-[8px] font-black uppercase tracking-wider bg-primary text-primary-foreground px-1 py-0.2 rounded-md shadow-xs">
                             {format(day, "MMM", { locale: ptBR })}
                           </span>
                         )}
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <span className="bg-primary text-primary-foreground text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full shadow-xs shrink-0">
+                        <div className="flex items-center gap-1">
+                          <span className="bg-primary text-primary-foreground text-[8px] font-black uppercase tracking-wider px-1.5 py-0.2 rounded-md shadow-xs">
                             HOJE
                           </span>
-                          <span className="text-xs font-black text-slate-900 dark:text-slate-100 capitalize truncate">
-                            {format(day, "EEEE", { locale: ptBR })}
+                          <span className="text-[9px] uppercase font-bold text-primary">
+                            {format(day, "EEE", { locale: ptBR })}
                           </span>
                         </div>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <span className="bg-primary text-primary-foreground rounded-full w-6 h-6 text-xs font-black flex items-center justify-center shadow-xs">
-                            {format(day, "d")}
-                          </span>
-                          <span className="text-[10px] font-bold text-muted-foreground uppercase">
-                            /{format(day, "MM")}
-                          </span>
-                        </div>
+                        <span className="text-xs font-black text-primary mt-0.5">
+                          {format(day, "d")}
+                        </span>
                       </div>
                     )
                   }
@@ -1112,29 +1107,24 @@ export default function PmsCalendar() {
                       <div 
                         key={day.toISOString()} 
                         data-header-day={dayStr}
-                        className="p-1 border-r relative flex items-center justify-between px-3 bg-slate-200/60 dark:bg-slate-800/60 text-slate-800 dark:text-slate-200 font-bold border-l border-border/60 shadow-2xs"
+                        className="p-1 border-r relative flex flex-col items-center justify-center bg-slate-200/60 dark:bg-slate-800/60 text-slate-800 dark:text-slate-200 font-bold border-l border-border/60 shadow-2xs"
                       >
                         {isFirstOfMonth && (
-                          <span className="absolute -top-2.5 left-1 text-[9px] font-black uppercase tracking-wider bg-primary text-primary-foreground px-1.5 py-0.2 rounded-md shadow-xs">
+                          <span className="absolute -top-2.5 left-1 text-[8px] font-black uppercase tracking-wider bg-primary text-primary-foreground px-1 py-0.2 rounded-md shadow-xs">
                             {format(day, "MMM", { locale: ptBR })}
                           </span>
                         )}
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <span className="bg-slate-700 dark:bg-slate-300 text-white dark:text-slate-900 text-[9.5px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-md shadow-xs shrink-0">
+                        <div className="flex items-center gap-1">
+                          <span className="bg-slate-700 dark:bg-slate-300 text-white dark:text-slate-900 text-[8px] font-black uppercase tracking-wider px-1.5 py-0.2 rounded-md shadow-xs">
                             ONTEM
                           </span>
-                          <span className="text-xs font-black text-slate-800 dark:text-slate-200 capitalize truncate">
-                            {format(day, "EEEE", { locale: ptBR })}
+                          <span className="text-[9px] uppercase font-bold text-slate-700 dark:text-slate-300">
+                            {format(day, "EEE", { locale: ptBR })}
                           </span>
                         </div>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <span className="bg-slate-700/10 dark:bg-slate-300/15 text-slate-900 dark:text-slate-100 rounded-full w-6 h-6 text-xs font-black flex items-center justify-center">
-                            {format(day, "d")}
-                          </span>
-                          <span className="text-[10px] font-bold text-muted-foreground uppercase">
-                            /{format(day, "MM")}
-                          </span>
-                        </div>
+                        <span className="text-xs font-black text-slate-800 dark:text-slate-100 mt-0.5">
+                          {format(day, "d")}
+                        </span>
                       </div>
                     )
                   }
