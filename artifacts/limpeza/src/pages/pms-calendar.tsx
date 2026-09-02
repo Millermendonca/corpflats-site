@@ -42,10 +42,11 @@ export default function PmsCalendar() {
 
   const [currentDate, setCurrentDate] = useState(new Date())
   const scrollContainerRef = useRef<HTMLDivElement>(null)
-  const [data, setData] = useState<{ flats: any[]; reservations: any[]; blocks: any[] }>({
+  const [data, setData] = useState<{ flats: any[]; reservations: any[]; blocks: any[]; guests?: any[] }>({
     flats: [],
     reservations: [],
-    blocks: []
+    blocks: [],
+    guests: []
   })
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState("")
@@ -431,6 +432,15 @@ export default function PmsCalendar() {
   const timelineStart = subDays(new Date(), 30)
   const timelineEnd = addDays(new Date(), 90)
   const daysInView = eachDayOfInterval({ start: timelineStart, end: timelineEnd })
+
+  // Configuração de larguras das colunas da agenda
+  const TODAY_COL_WIDTH = 240 // Coluna expandida no dia atual para exibir o nome completo do hóspede
+  const NORMAL_COL_WIDTH = 48 // Largura padrão dos demais dias
+  const FLAT_COL_WIDTH = 130  // Largura da coluna fixa de apartamentos
+
+  const getDayColWidth = (day: Date) => (isToday(day) ? TODAY_COL_WIDTH : NORMAL_COL_WIDTH)
+  const gridTemplateColumns = `${FLAT_COL_WIDTH}px ${daysInView.map(day => `${getDayColWidth(day)}px`).join(" ")}`
+  const totalGridMinWidth = FLAT_COL_WIDTH + daysInView.reduce((acc, day) => acc + getDayColWidth(day), 0)
 
   const fetchCompanies = async () => {
     try {
@@ -1049,10 +1059,10 @@ export default function PmsCalendar() {
             onMouseUp={handleFinishDrag}
             onMouseLeave={() => { if (isDragging) handleFinishDrag(); }}
           >
-            <div style={{ minWidth: `${130 + daysInView.length * 48}px` }}>
+            <div style={{ minWidth: `${totalGridMinWidth}px` }}>
               {/* Header Days Row */}
               <div 
-                style={{ gridTemplateColumns: `130px repeat(${daysInView.length}, 48px)` }}
+                style={{ gridTemplateColumns }}
                 className="grid border-b bg-muted/40 text-center font-bold text-xs sticky top-0 z-20 shadow-2xs"
               >
                 <div className="p-2.5 text-left border-r bg-card/95 backdrop-blur-md sticky left-0 z-30 font-black text-foreground shadow-xs">
@@ -1064,6 +1074,38 @@ export default function PmsCalendar() {
                   const isFirstOfMonth = day.getDate() === 1
                   const dayStr = format(day, "yyyy-MM-dd")
 
+                  if (today) {
+                    return (
+                      <div 
+                        key={day.toISOString()} 
+                        data-header-day={dayStr}
+                        className="p-1 border-r relative flex items-center justify-between px-3 bg-primary/20 text-primary font-black shadow-inner ring-1 ring-primary/40"
+                      >
+                        {isFirstOfMonth && (
+                          <span className="absolute -top-2.5 left-1 text-[9px] font-black uppercase tracking-wider bg-primary text-primary-foreground px-1.5 py-0.2 rounded-md shadow-xs">
+                            {format(day, "MMM", { locale: ptBR })}
+                          </span>
+                        )}
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="bg-primary text-primary-foreground text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full shadow-xs shrink-0">
+                            HOJE
+                          </span>
+                          <span className="text-xs font-black text-slate-900 dark:text-slate-100 capitalize truncate">
+                            {format(day, "EEEE", { locale: ptBR })}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <span className="bg-primary text-primary-foreground rounded-full w-6 h-6 text-xs font-black flex items-center justify-center shadow-xs">
+                            {format(day, "d")}
+                          </span>
+                          <span className="text-[10px] font-bold text-muted-foreground uppercase">
+                            /{format(day, "MM")}
+                          </span>
+                        </div>
+                      </div>
+                    )
+                  }
+
                   return (
                     <div 
                       key={day.toISOString()} 
@@ -1071,7 +1113,7 @@ export default function PmsCalendar() {
                       className={`p-1 border-r relative flex flex-col items-center justify-center ${
                         isFirstOfMonth ? 'border-l-2 border-l-primary bg-primary/5' : ''
                       } ${
-                        today ? 'bg-primary/20 text-primary font-black shadow-inner' : isWeekend ? 'bg-muted/60 text-foreground' : 'text-muted-foreground'
+                        isWeekend ? 'bg-muted/60 text-foreground' : 'text-muted-foreground'
                       }`}
                     >
                       {isFirstOfMonth && (
@@ -1080,7 +1122,7 @@ export default function PmsCalendar() {
                         </span>
                       )}
                       <span className="text-[9px] uppercase font-bold">{format(day, "EEE", { locale: ptBR })}</span>
-                      <span className={`text-xs font-black ${today ? 'bg-primary text-primary-foreground rounded-full w-5.5 h-5.5 flex items-center justify-center shadow-xs' : ''}`}>
+                      <span className="text-xs font-black">
                         {format(day, "d")}
                       </span>
                     </div>
@@ -1088,7 +1130,7 @@ export default function PmsCalendar() {
                 })}
               </div>
 
-                            {/* Rows: Flats */}
+              {/* Rows: Flats */}
               {loading ? (
                 <div className="text-center py-16 text-xs text-muted-foreground">Carregando mapa de ocupação...</div>
               ) : data.flats.length === 0 ? (
@@ -1103,7 +1145,7 @@ export default function PmsCalendar() {
                     <div 
                       key={flat.id} 
                       style={{ 
-                        gridTemplateColumns: `130px repeat(${daysInView.length}, 48px)`,
+                        gridTemplateColumns,
                         gridTemplateRows: "48px"
                       }}
                       className="grid border-b hover:bg-muted/10 transition-colors h-12 items-center relative"
@@ -1151,6 +1193,7 @@ export default function PmsCalendar() {
                         const dayStr = format(day, "yyyy-MM-dd");
                         const isMobileStart = mobileRangeStart && mobileRangeStart.flatId === flat.id && isSameDay(mobileRangeStart.day, day);
                         const inDragRange = isCellInDragRange(flat.id, day);
+                        const today = isToday(day);
 
                         return (
                           <div 
@@ -1167,8 +1210,8 @@ export default function PmsCalendar() {
                                 ? 'bg-emerald-500/25 dark:bg-emerald-500/35 border-emerald-500 z-10'
                                 : inDragRange
                                 ? 'bg-indigo-500/25 dark:bg-indigo-500/35 border-indigo-400 z-10'
-                                : isToday(day) ? 'bg-primary/5' : ''
-                            } hover:bg-primary/10`}
+                                : today ? 'bg-primary/[0.07] border-r-primary/20' : ''
+                            } hover:bg-primary/10 group/cell`}
                             title={`Toque para iniciar reserva no Apt ${flat.number} em ${format(day, "dd/MM/yyyy")}`}
                           >
                             {isMobileStart && (
@@ -1180,6 +1223,11 @@ export default function PmsCalendar() {
                               <div className="w-full h-8 mx-0.5 rounded-md bg-indigo-600/90 text-white flex items-center justify-center text-[10px] font-black shadow-xs ring-1 ring-indigo-400">
                                 ✨
                               </div>
+                            )}
+                            {!isMobileStart && !inDragRange && today && (
+                              <span className="opacity-0 group-hover/cell:opacity-80 text-[10px] text-primary font-bold flex items-center gap-1 transition-opacity">
+                                <Plus className="w-3 h-3" /> Disponível
+                              </span>
                             )}
                           </div>
                         );
