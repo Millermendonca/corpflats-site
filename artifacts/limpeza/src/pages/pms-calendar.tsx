@@ -199,6 +199,202 @@ export default function PmsCalendar() {
   const [blockReason, setBlockReason] = useState("manutencao")
   const [blockNotes, setBlockNotes] = useState("")
 
+
+  // ── MOTOR GANTT: ARRASTAR, MOVER ENTRE QUARTOS E REDIMENSIONAR ESTADIAS ──
+  interface ResDragState {
+    res: any;
+    originFlatId: number;
+    originFlatNumber: string;
+    originCheckin: string;
+    originCheckout: string;
+    nightsCount: number;
+    mode: "move" | "resize-left" | "resize-right";
+    startPointerX: number;
+    startPointerY: number;
+    hasMoved: boolean;
+    currentFlatId: number;
+    currentFlatNumber: string;
+    currentCheckin: string;
+    currentCheckout: string;
+  }
+
+  const [resDragState, setResDragState] = useState<ResDragState | null>(null);
+
+  const handleStartResDrag = (
+    resItem: any, 
+    flat: any, 
+    mode: "move" | "resize-left" | "resize-right", 
+    e: React.MouseEvent
+  ) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+
+    const nights = differenceInDays(parseISO(resItem.checkoutDate), parseISO(resItem.checkinDate)) || 1;
+
+    setResDragState({
+      res: resItem,
+      originFlatId: flat.id,
+      originFlatNumber: flat.number,
+      originCheckin: resItem.checkinDate,
+      originCheckout: resItem.checkoutDate,
+      nightsCount: nights,
+      mode,
+      startPointerX: e.clientX,
+      startPointerY: e.clientY,
+      hasMoved: false,
+      currentFlatId: flat.id,
+      currentFlatNumber: flat.number,
+      currentCheckin: resItem.checkinDate,
+      currentCheckout: resItem.checkoutDate
+    });
+  };
+
+  useEffect(() => {
+    if (!resDragState) return;
+
+    const onPointerMove = (e: MouseEvent) => {
+      const dx = Math.abs(e.clientX - resDragState.startPointerX);
+      const dy = Math.abs(e.clientY - resDragState.startPointerY);
+
+      if (!resDragState.hasMoved && (dx > 3 || dy > 3)) {
+        resDragState.hasMoved = true;
+      }
+
+      if (!resDragState.hasMoved) return;
+
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const cell = el?.closest("[data-calendar-cell='true']") as HTMLElement;
+
+      if (cell) {
+        const targetFlatId = Number(cell.getAttribute("data-flat-id"));
+        const targetDayStr = cell.getAttribute("data-day-str");
+
+        if (targetFlatId && targetDayStr) {
+          const targetFlat = data.flats.find(f => f.id === targetFlatId);
+          const targetFlatNum = targetFlat?.number || String(targetFlatId);
+
+          setResDragState(prev => {
+            if (!prev) return null;
+            let newCheckin = prev.currentCheckin;
+            let newCheckout = prev.currentCheckout;
+
+            if (prev.mode === "move") {
+              newCheckin = targetDayStr;
+              newCheckout = format(addDays(parseISO(targetDayStr), prev.nightsCount), "yyyy-MM-dd");
+            } else if (prev.mode === "resize-left") {
+              if (targetDayStr < prev.originCheckout) {
+                newCheckin = targetDayStr;
+                newCheckout = prev.originCheckout;
+              }
+            } else if (prev.mode === "resize-right") {
+              if (targetDayStr > prev.originCheckin) {
+                newCheckin = prev.originCheckin;
+                newCheckout = targetDayStr;
+              }
+            }
+
+            return {
+              ...prev,
+              hasMoved: true,
+              currentFlatId: targetFlatId,
+              currentFlatNumber: targetFlatNum,
+              currentCheckin: newCheckin,
+              currentCheckout: newCheckout
+            };
+          });
+        }
+      }
+    };
+
+    const onPointerUp = async () => {
+      if (!resDragState) return;
+
+      if (!resDragState.hasMoved) {
+        handleOpenEditRes(resDragState.res);
+        setResDragState(null);
+        return;
+      }
+
+      const changed = (
+        resDragState.currentFlatId !== resDragState.originFlatId ||
+        resDragState.currentCheckin !== resDragState.originCheckin ||
+        resDragState.currentCheckout !== resDragState.originCheckout
+      );
+
+      if (!changed) {
+        setResDragState(null);
+        return;
+      }
+
+      // Validação de Conflitos
+      const hasConflict = data.reservations.some(r => {
+        if (r.id === resDragState.res.id || r.status === "cancelada") return false;
+        const sameFlat = r.flatId === resDragState.currentFlatId || String(r.flatNumber) === String(resDragState.currentFlatNumber);
+        if (!sameFlat) return false;
+        return r.checkinDate < resDragState.currentCheckout && r.checkoutDate > resDragState.currentCheckin;
+      });
+
+      const hasBlockConflict = data.blocks.some(b => {
+        const sameFlat = b.flatId === resDragState.currentFlatId || String(b.flatNumber) === String(resDragState.currentFlatNumber);
+        if (!sameFlat) return false;
+        return b.startDate <= resDragState.currentCheckout && b.endDate >= resDragState.currentCheckin;
+      });
+
+      if (hasConflict || hasBlockConflict) {
+        alert(`Não foi possível mover a reserva: o Apt ${resDragState.currentFlatNumber} já possui ocupação ou bloqueio no período (${format(parseISO(resDragState.currentCheckin), "dd/MM")} a ${format(parseISO(resDragState.currentCheckout), "dd/MM")}).`);
+        setResDragState(null);
+        return;
+      }
+
+      try {
+        const payload = {
+          flatId: resDragState.currentFlatId,
+          checkinDate: resDragState.currentCheckin,
+          checkoutDate: resDragState.currentCheckout
+        };
+
+        // Otimista
+        setData(prev => ({
+          ...prev,
+          reservations: prev.reservations.map(r => {
+            if (r.id === resDragState.res.id) {
+              return {
+                ...r,
+                flatId: resDragState.currentFlatId,
+                flatNumber: resDragState.currentFlatNumber,
+                checkinDate: resDragState.currentCheckin,
+                checkoutDate: resDragState.currentCheckout
+              };
+            }
+            return r;
+          })
+        }));
+
+        await fetch(`/api/pms/reservations/${resDragState.res.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          credentials: "include"
+        });
+
+        fetchData();
+      } catch (e) {
+        console.error("Erro ao salvar nova posição da reserva:", e);
+        fetchData();
+      } finally {
+        setResDragState(null);
+      }
+    };
+
+    window.addEventListener("mousemove", onPointerMove);
+    window.addEventListener("mouseup", onPointerUp);
+
+    return () => {
+      window.removeEventListener("mousemove", onPointerMove);
+      window.removeEventListener("mouseup", onPointerUp);
+    };
+  }, [resDragState, data]);
+
   // Block Details and Removal State
   const [selectedBlockForDetails, setSelectedBlockForDetails] = useState<any>(null)
   const [blockDetailsModalOpen, setBlockDetailsModalOpen] = useState(false)
@@ -989,8 +1185,9 @@ export default function PmsCalendar() {
                         );
                       })}
 
-                      {/* Unified Multi-Day Reservation Continuous Bars (Gantt Hotel Style) */}
+                      {/* Unified Multi-Day Reservation Continuous Bars (Arrastável & Redimensionável) */}
                       {flatReservations.map(resItem => {
+                        const isBeingDragged = resDragState?.res.id === resItem.id;
                         const startIdx = daysInView.findIndex(d => format(d, "yyyy-MM-dd") === resItem.checkinDate);
                         const endIdx = daysInView.findIndex(d => format(d, "yyyy-MM-dd") === resItem.checkoutDate);
 
@@ -1027,15 +1224,27 @@ export default function PmsCalendar() {
                           <div
                             key={`res-${resItem.id}`}
                             style={{ gridColumn: `${colStart} / span ${colSpan}`, gridRow: "1 / 2" }}
-                            onClick={(e) => { e.stopPropagation(); handleOpenEditRes(resItem); }}
-                            className={`h-8.5 mx-0.5 rounded-xl ${
+                            onMouseDown={(e) => handleStartResDrag(resItem, flat, "move", e)}
+                            className={`h-8.5 mx-0.5 rounded-xl relative select-none ${
                               isMensalista 
                                 ? 'bg-gradient-to-r from-purple-800 via-indigo-900 to-purple-800 text-white border-2 border-purple-300 shadow-md ring-2 ring-purple-500/80' 
                                 : `${channelCfg?.bg} ${channelCfg?.text} border ${channelCfg?.border} shadow-xs`
-                            } flex items-center px-2 text-[11px] font-bold overflow-hidden z-10 cursor-pointer hover:brightness-110 hover:shadow-md hover:scale-[1.01] active:scale-[0.99] transition-all`}
-                            title={`${resItem.guestName} (${channelCfg?.label || resItem.channel}) • ${resItem.checkinDate} a ${resItem.checkoutDate} (${nightsCount} ${nightsCount === 1 ? 'diária' : 'diárias'})${resItem.includeBreakfast ? ' • ☕ Café Incluso' : ''}${isMensalista ? ' • 👑 Mensalista / Contrato Long Stay' : ''}`}
+                            } flex items-center px-2 text-[11px] font-bold overflow-hidden z-10 cursor-grab active:cursor-grabbing hover:brightness-110 hover:shadow-md transition-all ${
+                              isBeingDragged && resDragState?.hasMoved ? 'opacity-30 border-dashed scale-95' : ''
+                            }`}
+                            title={`${resItem.guestName} (${channelCfg?.label || resItem.channel}) • ${resItem.checkinDate} a ${resItem.checkoutDate} • Clique para abrir ou arraste para mover/redimensionar`}
                           >
-                            <div className="flex items-center gap-1.5 min-w-0 w-full overflow-hidden whitespace-nowrap">
+                            {/* Handle Esquerdo: Redimensionar Início (Check-in) */}
+                            <div
+                              className="absolute left-0 top-0 bottom-0 w-3 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-l"
+                              onMouseDown={(e) => handleStartResDrag(resItem, flat, "resize-left", e)}
+                              title="Arraste para alterar a data de Check-in"
+                            >
+                              <div className="w-0.5 h-3.5 bg-white/50 rounded-full group-hover/resize-l:bg-white" />
+                            </div>
+
+                            {/* Conteúdo Central com Nome e Diárias Contínuos */}
+                            <div className="flex items-center gap-1.5 min-w-0 w-full overflow-hidden whitespace-nowrap px-1.5 pointer-events-none">
                               {resItem.includeBreakfast && (
                                 <span title="Café da Manhã Incluso" className="shrink-0 text-xs">☕</span>
                               )}
@@ -1044,14 +1253,45 @@ export default function PmsCalendar() {
                                   👑 Mensalista
                                 </span>
                               )}
-                              {/* Texto Contínuo Único: Nome do Hóspede seguido do número de diárias */}
                               <span className="truncate font-black text-white text-[11.5px] min-w-0">
                                 {resItem.guestName} • {nightsCount} {nightsCount === 1 ? 'diária' : 'diárias'}
                               </span>
                             </div>
+
+                            {/* Handle Direito: Redimensionar Fim (Check-out) */}
+                            <div
+                              className="absolute right-0 top-0 bottom-0 w-3 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-r"
+                              onMouseDown={(e) => handleStartResDrag(resItem, flat, "resize-right", e)}
+                              title="Arraste para alterar a data de Check-out"
+                            >
+                              <div className="w-0.5 h-3.5 bg-white/50 rounded-full group-hover/resize-r:bg-white" />
+                            </div>
                           </div>
                         );
                       })}
+
+                      {/* Ghost Preview Bar ao Arrastar / Mover / Redimensionar */}
+                      {resDragState && resDragState.hasMoved && flat.id === resDragState.currentFlatId && (() => {
+                        const gStartIdx = daysInView.findIndex(d => format(d, "yyyy-MM-dd") === resDragState.currentCheckin);
+                        const gEndIdx = daysInView.findIndex(d => format(d, "yyyy-MM-dd") === resDragState.currentCheckout);
+                        const gColStart = (gStartIdx >= 0 ? gStartIdx : 0) + 2;
+                        const gColSpan = Math.max(1, (gEndIdx >= 0 ? gEndIdx : daysInView.length) - (gStartIdx >= 0 ? gStartIdx : 0));
+                        const gNights = differenceInDays(parseISO(resDragState.currentCheckout), parseISO(resDragState.currentCheckin)) || 1;
+
+                        return (
+                          <div
+                            style={{ gridColumn: `${gColStart} / span ${gColSpan}`, gridRow: "1 / 2" }}
+                            className="h-9 mx-0.5 rounded-xl bg-indigo-600/90 text-white border-2 border-dashed border-white shadow-2xl flex items-center px-3 text-[11px] font-black z-30 pointer-events-none animate-pulse"
+                          >
+                            <div className="flex items-center gap-2 truncate">
+                              <span>🚀</span>
+                              <span className="truncate">
+                                Apt {resDragState.currentFlatNumber} • {resDragState.res.guestName} ({format(parseISO(resDragState.currentCheckin), "dd/MM")} a {format(parseISO(resDragState.currentCheckout), "dd/MM")} - {gNights}d)
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       {/* Unified Multi-Day Room Block Bars (Clicável com opção de remoção) */}
                       {flatBlocks.map(blockItem => {
@@ -1104,6 +1344,24 @@ export default function PmsCalendar() {
             </div>
           </div>
         </Card>
+
+        
+        {/* Banner Flutuante de Ajuda ao Mover / Redimensionar Reserva */}
+        {resDragState && resDragState.hasMoved && (
+          <div className="fixed top-4 inset-x-4 sm:inset-x-auto sm:right-6 z-50 bg-slate-950/95 backdrop-blur-md text-white px-4 py-2.5 rounded-2xl shadow-2xl flex items-center gap-3 text-xs border border-indigo-500 animate-in slide-in-from-top duration-150">
+            <div className="w-7 h-7 rounded-xl bg-indigo-600 flex items-center justify-center font-black shrink-0">
+              {resDragState.mode === "move" ? "↔️" : "↔"}
+            </div>
+            <div>
+              <div className="font-black text-indigo-300">
+                {resDragState.mode === "move" ? "Movendo Reserva" : "Alterando Duração"}:
+              </div>
+              <div className="font-semibold text-[11px]">
+                Apt {resDragState.currentFlatNumber} • {format(parseISO(resDragState.currentCheckin), "dd/MM")} até {format(parseISO(resDragState.currentCheckout), "dd/MM")} ({differenceInDays(parseISO(resDragState.currentCheckout), parseISO(resDragState.currentCheckin))} noites)
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Mobile 2-Tap Selection Floating Banner (Topo não-obstrutivo) */}
         {mobileRangeStart && !isDragging && (
