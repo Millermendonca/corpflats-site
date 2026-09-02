@@ -199,6 +199,37 @@ export default function PmsCalendar() {
   const [blockReason, setBlockReason] = useState("manutencao")
   const [blockNotes, setBlockNotes] = useState("")
 
+  // Block Details and Removal State
+  const [selectedBlockForDetails, setSelectedBlockForDetails] = useState<any>(null)
+  const [blockDetailsModalOpen, setBlockDetailsModalOpen] = useState(false)
+  const [deletingBlock, setDeletingBlock] = useState(false)
+
+  const handleOpenBlockDetails = (blockItem: any, flat: any) => {
+    setSelectedBlockForDetails({ ...blockItem, flatNumber: flat.number, flatId: flat.id })
+    setBlockDetailsModalOpen(true)
+  }
+
+  const handleDeleteBlock = async (blockId: number) => {
+    if (!confirm("Tem certeza que deseja remover este bloqueio e liberar o quarto para reservas?")) return
+    setDeletingBlock(true)
+    try {
+      const res = await fetch(`/api/pms/blocks/${blockId}`, {
+        method: "DELETE",
+        credentials: "include"
+      })
+      if (res.ok) {
+        setBlockDetailsModalOpen(false)
+        setSelectedBlockForDetails(null)
+        fetchData()
+      }
+    } catch (e) {
+      console.error("Erro ao remover bloqueio:", e)
+    } finally {
+      setDeletingBlock(false)
+    }
+  }
+
+
   // Timeline Contínua Multi-Mês (sem quebra de mês a mês)
   // Permite rolar continuamente para frente e para trás
   const timelineStart = subDays(new Date(), 30)
@@ -1026,7 +1057,7 @@ export default function PmsCalendar() {
                         );
                       })}
 
-                      {/* Unified Multi-Day Room Block Bars */}
+                      {/* Unified Multi-Day Room Block Bars (Clicável com opção de remoção) */}
                       {flatBlocks.map(blockItem => {
                         const startIdx = daysInView.findIndex(d => format(d, "yyyy-MM-dd") === blockItem.startDate);
                         const endIdx = daysInView.findIndex(d => format(d, "yyyy-MM-dd") === blockItem.endDate);
@@ -1045,14 +1076,28 @@ export default function PmsCalendar() {
                           <div
                             key={`block-${blockItem.id}`}
                             style={{ gridColumn: `${colStart} / span ${colSpan}`, gridRow: "1 / 2" }}
-                            onClick={(e) => { e.stopPropagation(); }}
-                            className="h-8.5 mx-1 rounded-xl bg-slate-800 text-white flex items-center px-2.5 text-[10px] font-bold shadow-xs z-10 cursor-pointer overflow-hidden border border-slate-700"
-                            title={`Bloqueio: ${blockItem.reason} (${blockItem.notes || ''})`}
+                            onClick={(e) => { e.stopPropagation(); handleOpenBlockDetails(blockItem, flat); }}
+                            className="h-8.5 mx-0.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 text-white flex items-center justify-between px-2.5 text-[10.5px] font-bold shadow-xs z-10 cursor-pointer overflow-hidden border border-slate-700 hover:border-amber-400/60 transition-all hover:scale-[1.01] active:scale-[0.99] group"
+                            title={`Bloqueio: ${blockItem.reason === 'manutencao' ? 'Manutenção' : 'Bloqueio'} • Clique para ver detalhes ou remover bloqueio`}
                           >
                             <div className="flex items-center gap-1.5 truncate">
-                              <Lock className="w-3 h-3 shrink-0" />
-                              <span className="truncate">{blockItem.reason === "manutencao" ? "🛠️ Manutenção" : "🔑 Bloqueio"} {blockItem.notes ? `• ${blockItem.notes}` : ""}</span>
+                              <Lock className="w-3.5 h-3.5 shrink-0 text-amber-400" />
+                              <span className="truncate">
+                                {blockItem.reason === "manutencao" ? "🛠️ Manutenção" : "🔑 Bloqueio"} {blockItem.notes ? `• ${blockItem.notes}` : ""}
+                              </span>
                             </div>
+
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteBlock(blockItem.id);
+                              }}
+                              className="opacity-0 group-hover:opacity-100 p-1 hover:bg-rose-600 rounded-lg text-white transition-all shrink-0 ml-1.5"
+                              title="Remover Bloqueio"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
                           </div>
                         );
                       })}
@@ -2066,6 +2111,75 @@ export default function PmsCalendar() {
         </Dialog>
 
 
+
+        
+        {/* ── MODAL: DETALHES E REMOÇÃO DE BLOQUEIO DE QUARTO ── */}
+        <Dialog open={blockDetailsModalOpen} onOpenChange={setBlockDetailsModalOpen}>
+          <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-base font-black">
+                <Lock className="w-5 h-5 text-amber-500" />
+                Bloqueio de Quarto - Apt {selectedBlockForDetails?.flatNumber}
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                Informações do período bloqueado no mapa de reservas.
+              </DialogDescription>
+            </DialogHeader>
+
+            {selectedBlockForDetails && (
+              <div className="space-y-4 py-2 text-xs">
+                <div className="p-3.5 bg-muted/40 border border-border rounded-2xl space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground font-semibold">Apartamento:</span>
+                    <span className="font-black text-foreground text-sm">Apt {selectedBlockForDetails.flatNumber}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground font-semibold">Motivo:</span>
+                    <span className="font-bold text-foreground capitalize">
+                      {selectedBlockForDetails.reason === "manutencao" ? "🛠️ Manutenção / Reparo" : "🔑 Bloqueio Operacional"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground font-semibold">Período Bloqueado:</span>
+                    <span className="font-bold text-foreground">
+                      {selectedBlockForDetails.startDate} até {selectedBlockForDetails.endDate}
+                    </span>
+                  </div>
+                  {selectedBlockForDetails.notes && (
+                    <div className="pt-2 border-t border-border">
+                      <span className="text-muted-foreground font-semibold block mb-0.5">Observações:</span>
+                      <p className="font-medium text-foreground bg-card p-2 rounded-xl border border-border">
+                        {selectedBlockForDetails.notes}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <DialogFooter className="gap-2 pt-2 flex items-center justify-between sm:justify-between">
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    disabled={deletingBlock}
+                    onClick={() => handleDeleteBlock(selectedBlockForDetails.id)}
+                    className="rounded-xl h-9 text-xs font-black gap-1.5"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    {deletingBlock ? "Removendo..." : "Remover Bloqueio"}
+                  </Button>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setBlockDetailsModalOpen(false)}
+                    className="rounded-xl h-9 text-xs font-bold"
+                  >
+                    Fechar
+                  </Button>
+                </DialogFooter>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
 
         {/* Modal: Room Block */}
         <Dialog open={blockModalOpen} onOpenChange={setBlockModalOpen}>
