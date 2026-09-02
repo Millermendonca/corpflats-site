@@ -144,6 +144,7 @@ export default function CrmGuests() {
     setFormDocument("")
     setFormCity("")
     setFormCompanyId("")
+    setFormIsMonthlyGuest(false)
     setFormNotes("")
     setFormPreferences({
       bedType: "casal",
@@ -163,6 +164,7 @@ export default function CrmGuests() {
     setFormDocument(g.documentNumber || g.document || "")
     setFormCity(g.city || "")
     setFormCompanyId(g.companyId ? String(g.companyId) : "")
+    setFormIsMonthlyGuest(Boolean(g.isMonthlyGuest || g.clientType === "mensalista"))
     setFormNotes(g.notes || "")
     setFormPreferences({
       bedType: g.preferences?.bedType || "casal",
@@ -567,7 +569,14 @@ export default function CrmGuests() {
                                 {(g.fullName || g.name || "H").substring(0, 2).toUpperCase()}
                               </div>
                               <div>
-                                <span className="font-bold text-foreground block">{g.fullName || g.name}</span>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-bold text-foreground block">{g.fullName || g.name}</span>
+                                  {(g.isMonthlyGuest || g.clientType === "mensalista") && (
+                                    <Badge className="text-[9px] bg-purple-600 text-white font-black px-1.5 py-0.2 rounded-md">
+                                      🏢 Mensalista
+                                    </Badge>
+                                  )}
+                                </div>
                                 {g.lastStayDate && (
                                   <span className="text-[10px] text-muted-foreground">
                                     Última visita: {new Date(g.lastStayDate).toLocaleDateString("pt-BR")}
@@ -961,6 +970,19 @@ export default function CrmGuests() {
                     <option key={c.id} value={String(c.id)}>{c.tradeName || c.corporateName}</option>
                   ))}
                 </select>
+              </div>
+
+
+              {/* Switch: Mensalista / Contrato Long Stay */}
+              <div className="p-3 bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800/60 rounded-2xl flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Building2 className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0" />
+                  <div>
+                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">Cliente Mensalista / Contrato Long Stay</span>
+                    <span className="text-[11px] text-muted-foreground">Reservas deste cliente ganham destaque no Livro de Reservas</span>
+                  </div>
+                </div>
+                <Switch checked={formIsMonthlyGuest} onCheckedChange={setFormIsMonthlyGuest} />
               </div>
 
               <div className="space-y-1">

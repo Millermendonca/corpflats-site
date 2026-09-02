@@ -814,9 +814,33 @@ export default function PmsCalendar() {
                       style={{ gridTemplateColumns: `110px repeat(${daysInView.length}, minmax(44px, 1fr))` }}
                       className="grid border-b hover:bg-muted/20 transition-colors h-12 items-center"
                     >
-                      {/* Flat Number Header */}
-                      <div className="px-2.5 font-bold text-xs border-r text-foreground flex items-center justify-between h-full bg-card sticky left-0 z-10 shadow-xs">
-                        <span>Apt {flat.number}</span>
+                      {/* Flat Number Header with Clickable Tags Management */}
+                      <div 
+                        onClick={() => handleOpenFlatTagsModal(flat)}
+                        className="px-2 py-1 font-bold text-xs border-r text-foreground flex flex-col justify-center h-full bg-card sticky left-0 z-10 shadow-xs cursor-pointer hover:bg-primary/10 transition-colors group"
+                        title="Clique para gerenciar particularidades deste quarto (Split, Janela, Camas, Micro-ondas, Tags...)"
+                      >
+                        <div className="flex items-center justify-between w-full">
+                          <span className="font-black text-slate-900 dark:text-slate-100 group-hover:text-primary transition-colors">Apt {flat.number}</span>
+                          <Tag className="w-3.5 h-3.5 text-muted-foreground/50 group-hover:text-primary transition-colors shrink-0 ml-1" />
+                        </div>
+                        {/* Tags / Símbolos Visuais do Quarto */}
+                        {flat.tags && flat.tags.length > 0 ? (
+                          <div className="flex items-center gap-0.5 flex-wrap mt-0.5 overflow-hidden max-h-4">
+                            {flat.tags.slice(0, 2).map((t: string, idx: number) => (
+                              <span key={idx} className="text-[7.5px] leading-tight px-1 py-0.2 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded font-bold truncate max-w-[42px]">
+                                {t}
+                              </span>
+                            ))}
+                            {flat.tags.length > 2 && (
+                              <span className="text-[7px] text-muted-foreground font-black">+{flat.tags.length - 2}</span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-[8px] text-primary/70 font-bold group-hover:text-primary transition-colors flex items-center gap-0.5">
+                            + particularidades
+                          </span>
+                        )}
                       </div>
 
                       {/* Days Cells */}
@@ -874,10 +898,25 @@ export default function PmsCalendar() {
 
                             {!isMobileStart && !inDragRange && resItem && (
                               <div 
-                                className={`w-full h-8 mx-0.5 rounded-md ${channelCfg?.bg} ${channelCfg?.text} flex items-center px-1 text-[10px] font-bold overflow-hidden shadow-2xs border ${channelCfg?.border}`}
+                                className={`w-full h-8 mx-0.5 rounded-md ${channelCfg?.bg} ${channelCfg?.text} flex items-center px-1 text-[10px] font-bold overflow-hidden shadow-2xs border ${channelCfg?.border} ${(resItem.isMonthlyGuest || resItem.clientType === "mensalista") ? 'ring-2 ring-purple-400 dark:ring-purple-500 shadow-md !bg-purple-900 !border-purple-600' : ''}`}
+                                title={`${resItem.guestName} (${channelCfg?.label || resItem.channel}) • ${resItem.checkinDate} a ${resItem.checkoutDate}${resItem.includeBreakfast ? ' • ☕ Café Incluso' : ''}${(resItem.isMonthlyGuest || resItem.clientType === "mensalista") ? ' • 🏢 Mensalista' : ''}`}
                               >
-                                {isCheckinDay && (
-                                  <span className="truncate">{resItem.guestName}</span>
+                                {isCheckinDay ? (
+                                  <div className="flex items-center gap-1 min-w-0 truncate w-full">
+                                    {resItem.includeBreakfast && (
+                                      <span title="Café da Manhã Incluso" className="shrink-0 text-xs">☕</span>
+                                    )}
+                                    {(resItem.isMonthlyGuest || resItem.clientType === "mensalista") && (
+                                      <span title="Cliente Mensalista / Contrato" className="shrink-0 text-[8px] uppercase tracking-wider bg-purple-950 text-purple-200 px-1 py-0.2 rounded font-black border border-purple-400/50">
+                                        🏢 Mensalista
+                                      </span>
+                                    )}
+                                    <span className="truncate">{resItem.guestName}</span>
+                                  </div>
+                                ) : (
+                                  resItem.includeBreakfast && (
+                                    <span title="Café Incluso" className="text-[10px] opacity-70 mx-auto">☕</span>
+                                  )
                                 )}
                               </div>
                             )}
@@ -973,15 +1012,49 @@ export default function PmsCalendar() {
               <div className="py-3 space-y-3.5">
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
-                    <Label className="text-xs font-semibold">Apartamento</Label>
-                    <Select value={formFlatId} onValueChange={setFormFlatId}>
-                      <SelectTrigger className="text-xs">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs font-semibold">Apartamento</Label>
+                      {fairShareResult?.bestFlatNumber && (
+                        <span className="text-[10.5px] text-amber-600 dark:text-amber-400 font-extrabold flex items-center gap-1 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 rounded-lg border border-amber-300 dark:border-amber-700">
+                          <Sparkles className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+                          Quarto da Vez: <strong>Apt {fairShareResult.bestFlatNumber}</strong>
+                        </span>
+                      )}
+                    </div>
+                    <Select value={formFlatId} onValueChange={(val) => { setFormFlatId(val); setFormForceReplace(false); }}>
+                      <SelectTrigger className="text-xs font-bold">
                         <SelectValue placeholder="Selecione o Flat" />
                       </SelectTrigger>
-                      <SelectContent>
-                        {data.flats.map(f => (
-                          <SelectItem key={f.id} value={String(f.id)}>Apt {f.number}</SelectItem>
-                        ))}
+                      <SelectContent className="max-h-60">
+                        {data.flats.map(f => {
+                          const flatStat = fairShareResult?.allStats?.find((s: any) => s.flat?.id === f.id);
+                          const isBest = fairShareResult?.bestFlatId === f.id;
+                          const isAvail = flatStat ? flatStat.isAvailable : true;
+                          const conflictName = flatStat?.conflicts?.[0]?.guestName;
+
+                          return (
+                            <SelectItem key={f.id} value={String(f.id)}>
+                              <div className="flex items-center justify-between gap-3 w-full py-0.5">
+                                <span className="font-black">Apt {f.number}</span>
+                                {isBest && (
+                                  <span className="text-[9px] bg-amber-500 text-white font-black px-1.5 py-0.5 rounded-md flex items-center gap-0.5">
+                                    ✨ Quarto da Vez
+                                  </span>
+                                )}
+                                {!isAvail && (
+                                  <span className="text-[9px] bg-rose-500/20 text-rose-600 dark:text-rose-400 font-bold px-1.5 py-0.5 rounded-md">
+                                    ⚠️ Ocupado {conflictName ? `(${conflictName})` : ''}
+                                  </span>
+                                )}
+                                {isAvail && !isBest && (
+                                  <span className="text-[9px] text-muted-foreground font-medium">
+                                    Livre ({flatStat?.monthOccupiedDays || 0}d uso)
+                                  </span>
+                                )}
+                              </div>
+                            </SelectItem>
+                          );
+                        })}
                       </SelectContent>
                     </Select>
                   </div>
