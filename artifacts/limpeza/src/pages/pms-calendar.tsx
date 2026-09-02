@@ -31,74 +31,10 @@ const CHANNEL_CONFIG: Record<string, { label: string; bg: string; text: string; 
 }
 
 import { AccessDenied } from "@/components/access-denied"
+import { FLAT_AMENITIES_CATALOG, AMENITY_CATEGORIES, renderAmenityIcon, getFlatActiveAmenities, FlatAmenityDefinition } from "@/lib/flat-amenities"
 
 
-// ── Símbolos & Emojis Pré-definidos dos Apartamentos ─────────────────────────
-const FLAT_SYMBOL_PRESETS = [
-  { id: "split", emoji: "❄️", label: "Split", desc: "Ar Condicionado Split" },
-  { id: "janela", emoji: "🪟", label: "Ar Janela", desc: "Ar Condicionado de Janela" },
-  { id: "casal", emoji: "🛏️", label: "Cama Casal", desc: "Cama de Casal" },
-  { id: "solteiro_duplo", emoji: "👥", label: "2 Solteiros", desc: "2 Camas de Solteiro" },
-  { id: "microondas", emoji: "⚡", label: "Micro-ondas", desc: "Possui Micro-ondas" },
-  { id: "reformado", emoji: "✨", label: "Reformado", desc: "Apartamento Reformado / Moderno" },
-  { id: "andar_alto", emoji: "🏙️", label: "Andar Alto", desc: "Andar Alto" },
-  { id: "andar_baixo", emoji: "🚪", label: "Andar Baixo", desc: "Andar Baixo" },
-  { id: "vista_livre", emoji: "🌅", label: "Vista Livre", desc: "Vista Panorâmica Livre" },
-  { id: "smart_tv", emoji: "📺", label: "Smart TV", desc: "Smart TV com Apps" },
-  { id: "frigobar", emoji: "🧊", label: "Frigobar", desc: "Frigobar / Geladeira" },
-  { id: "cozinha", emoji: "🍳", label: "Cozinha", desc: "Cozinha Completa" },
-  { id: "varanda", emoji: "🌿", label: "Varanda", desc: "Varanda / Sacada" },
-  { id: "garagem", emoji: "🚗", label: "Garagem", desc: "Vaga de Garagem" },
-  { id: "pet", emoji: "🐾", label: "Pet Friendly", desc: "Aceita Animais de Estimação" },
-  { id: "cafe", emoji: "☕", label: "Cafeteira", desc: "Cafeteira Nespresso / Expresso" }
-];
 
-function getFlatDisplaySymbols(flat: any): Array<{ emoji: string; label: string; desc: string }> {
-  const result: Array<{ emoji: string; label: string; desc: string }> = [];
-  const tags: string[] = Array.isArray(flat.tags) ? flat.tags : [];
-
-  // 1. Ar Condicionado
-  if (flat.airConditionerType === "janela" || tags.some(t => t.toLowerCase().includes("janela"))) {
-    result.push({ emoji: "🪟", label: "Ar Janela", desc: "Ar Condicionado de Janela" });
-  } else if (flat.airConditionerType === "split" || tags.some(t => t.toLowerCase().includes("split")) || !flat.airConditionerType) {
-    result.push({ emoji: "❄️", label: "Split", desc: "Ar Condicionado Split" });
-  }
-
-  // 2. Camas
-  if (flat.bedType === "solteiro_duplo" || tags.some(t => t.toLowerCase().includes("solteiro") || t.includes("👥"))) {
-    result.push({ emoji: "👥", label: "2 Solteiros", desc: "2 Camas de Solteiro" });
-  } else {
-    result.push({ emoji: "🛏️", label: "Cama Casal", desc: "Cama de Casal" });
-  }
-
-  // 3. Micro-ondas
-  if (flat.hasMicrowave || tags.some(t => t.toLowerCase().includes("micro") || t.includes("⚡"))) {
-    result.push({ emoji: "⚡", label: "Micro-ondas", desc: "Possui Micro-ondas" });
-  }
-
-  // 4. Reformado
-  if (tags.some(t => t.toLowerCase().includes("reform") || t.includes("✨"))) {
-    result.push({ emoji: "✨", label: "Reformado", desc: "Apartamento Reformado / Moderno" });
-  }
-
-  // 5. Outros Presets e Tags Personalizadas
-  for (const t of tags) {
-    const matchedPreset = FLAT_SYMBOL_PRESETS.find(p => p.label.toLowerCase() === t.toLowerCase() || p.emoji === t.trim().substring(0, 2));
-    if (matchedPreset && !result.some(r => r.emoji === matchedPreset.emoji)) {
-      result.push({ emoji: matchedPreset.emoji, label: matchedPreset.label, desc: matchedPreset.desc });
-    } else if (!matchedPreset && !result.some(r => r.label === t)) {
-      const firstChar = t.trim().substring(0, 2);
-      const isEmoji = /\p{Extended_Pictographic}/u.test(firstChar);
-      result.push({
-        emoji: isEmoji ? firstChar : "🏷️",
-        label: t,
-        desc: t
-      });
-    }
-  }
-
-  return result;
-}
 
 export default function PmsCalendar() {
   const [, setLocation] = useLocation()
@@ -175,6 +111,12 @@ export default function PmsCalendar() {
   const [flatHasMicrowave, setFlatHasMicrowave] = useState(true)
   const [flatCustomTagInput, setFlatCustomTagInput] = useState("")
   const [customEmojiSelected, setCustomEmojiSelected] = useState("🏷️")
+
+  // Amenities Catalog & Modal Filter State
+  const [amenitySearch, setAmenitySearch] = useState("")
+  const [amenityCategoryFilter, setAmenityCategoryFilter] = useState("all")
+  const [showFullCatalog, setShowFullCatalog] = useState(false)
+
   const [savingFlatTags, setSavingFlatTags] = useState(false)
 
   // Fair-Share & Conflito State
@@ -877,7 +819,7 @@ export default function PmsCalendar() {
                 <div className="text-center py-16 text-xs text-muted-foreground">Nenhum apartamento cadastrado.</div>
               ) : (
                 data.flats.map((flat) => {
-                  const symbols = getFlatDisplaySymbols(flat);
+                  const activeAmenities = getFlatActiveAmenities(flat);
                   const flatReservations = data.reservations.filter(r => (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)));
                   const flatBlocks = data.blocks.filter(b => (b.flatId === flat.id || String(b.flatNumber) === String(flat.number)));
 
@@ -890,12 +832,12 @@ export default function PmsCalendar() {
                       }}
                       className="grid border-b hover:bg-muted/10 transition-colors h-12 items-center relative"
                     >
-                      {/* Flat Number Header with Organized Compact Emoji Symbols */}
+                      {/* Flat Number Header with Professional Lucide Vector Badges */}
                       <div 
                         style={{ gridColumn: "1 / 2", gridRow: "1 / 2" }}
                         onClick={() => handleOpenFlatTagsModal(flat)}
-                        className="px-2.5 py-1 font-bold text-xs border-r text-foreground flex flex-col justify-center h-full bg-card sticky left-0 z-20 shadow-xs cursor-pointer hover:bg-primary/10 transition-colors group"
-                        title="Clique para gerenciar símbolos e características deste quarto"
+                        className="px-2.5 py-1 font-bold text-xs border-r text-foreground flex flex-col justify-center h-full bg-card sticky left-0 z-20 shadow-xs cursor-pointer hover:bg-primary/10 transition-colors group select-none"
+                        title="Clique para gerenciar características e tags deste quarto"
                       >
                         <div className="flex items-center justify-between w-full">
                           <span className="font-black text-slate-900 dark:text-slate-100 group-hover:text-primary transition-colors text-xs">
@@ -904,25 +846,25 @@ export default function PmsCalendar() {
                           <Tag className="w-3 h-3 text-muted-foreground/40 group-hover:text-primary transition-colors shrink-0 ml-1" />
                         </div>
 
-                        {/* Símbolos Emojis Organizados & Limpos */}
-                        <div className="flex items-center gap-1 mt-0.5 overflow-hidden">
-                          {symbols.slice(0, 4).map((sym, sIdx) => (
+                        {/* Ícones Vetoriais Lucide Compactos & Elegantes */}
+                        <div className="flex items-center gap-1 mt-1 overflow-hidden">
+                          {activeAmenities.slice(0, 4).map((amenity, aIdx) => (
                             <span 
-                              key={sIdx} 
-                              title={`${sym.emoji} ${sym.label} - ${sym.desc}`}
-                              className="text-[11px] leading-none p-0.5 bg-slate-100 dark:bg-slate-800 rounded hover:scale-125 transition-transform cursor-help"
+                              key={aIdx} 
+                              title={`${amenity.label} (${amenity.categoryLabel})`}
+                              className={`p-1 rounded-md bg-slate-100 dark:bg-slate-800/90 border border-border/40 ${amenity.colorClass || 'text-slate-700 dark:text-slate-300'} hover:scale-125 hover:z-30 transition-transform cursor-help flex items-center justify-center`}
                             >
-                              {sym.emoji}
+                              {renderAmenityIcon(amenity.iconName, "w-3 h-3")}
                             </span>
                           ))}
-                          {symbols.length > 4 && (
+                          {activeAmenities.length > 4 && (
                             <span className="text-[8px] text-muted-foreground font-black leading-none bg-slate-200 dark:bg-slate-700 px-1 py-0.5 rounded">
-                              +{symbols.length - 4}
+                              +{activeAmenities.length - 4}
                             </span>
                           )}
-                          {symbols.length === 0 && (
+                          {activeAmenities.length === 0 && (
                             <span className="text-[8px] text-primary/70 font-semibold group-hover:text-primary transition-colors">
-                              + símbolos
+                              + tags
                             </span>
                           )}
                         </div>
@@ -1683,188 +1625,182 @@ export default function PmsCalendar() {
 
 
         
-        {/* ── MODAL: GERENCIAMENTO DE SÍMBOLOS E PARTICULARIDADES DO FLAT ── */}
+        
+        {/* ── MODAL: CATÁLOGO COMPLETO DE PARTICULARIDADES & TAGS (76 OPÇÕES) ── */}
         <Dialog open={flatTagsModalOpen} onOpenChange={setFlatTagsModalOpen}>
-          <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2 text-base font-black">
-                <Sparkles className="w-4 h-4 text-primary" />
-                Símbolos & Particularidades do Apt {selectedFlatForTags?.number}
-              </DialogTitle>
-              <DialogDescription className="text-xs">
-                Selecione os símbolos e emojis para identificar as características deste flat no mapa de reservas.
-              </DialogDescription>
-            </DialogHeader>
+          <DialogContent className="sm:max-w-2xl bg-card border border-border rounded-3xl max-h-[90vh] flex flex-col p-0 overflow-hidden shadow-2xl">
+            <DialogHeader className="p-5 pb-3 border-b border-border shrink-0">
+              <div className="flex items-center justify-between">
+                <div>
+                  <DialogTitle className="flex items-center gap-2 text-base font-black">
+                    <Sparkles className="w-4 h-4 text-primary" />
+                    Características & Tags do Apt {selectedFlatForTags?.number}
+                  </DialogTitle>
+                  <DialogDescription className="text-xs">
+                    Catálogo amplo de comodidades, infraestrutura, climatização e regras.
+                  </DialogDescription>
+                </div>
 
-            <form onSubmit={handleSaveFlatTags} className="space-y-4 py-2 text-xs">
-              {/* Ar Condicionado */}
-              <div className="space-y-1.5">
-                <Label className="font-bold flex items-center gap-1.5 text-slate-900 dark:text-slate-100">
-                  <Wind className="w-3.5 h-3.5 text-sky-500" /> Ar Condicionado
-                </Label>
-                <div className="grid grid-cols-2 gap-2">
-                  <Button
-                    type="button"
-                    variant={flatAirType === "split" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setFlatAirType("split")}
-                    className="h-9 text-xs font-bold rounded-xl gap-2 justify-start px-3"
-                  >
-                    <span className="text-base">❄️</span>
-                    <span>Ar Split</span>
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={flatAirType === "janela" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setFlatAirType("janela")}
-                    className="h-9 text-xs font-bold rounded-xl gap-2 justify-start px-3"
-                  >
-                    <span className="text-base">🪟</span>
-                    <span>Ar de Janela</span>
-                  </Button>
+                {/* Opção de Esconder/Mostrar Opções Não Utilizadas */}
+                <div className="flex items-center gap-2 bg-muted/50 px-3 py-1.5 rounded-2xl border border-border">
+                  <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                    {showFullCatalog ? "Ver Catálogo Amplo (76)" : "Modo Essencial"}
+                  </span>
+                  <Switch 
+                    checked={showFullCatalog} 
+                    onCheckedChange={setShowFullCatalog}
+                    title="Alternar entre o catálogo essencial ou exibir todas as 76 tags cadastradas"
+                  />
                 </div>
               </div>
 
-              {/* Camas */}
-              <div className="space-y-1.5">
-                <Label className="font-bold flex items-center gap-1.5 text-slate-900 dark:text-slate-100">
-                  <Bed className="w-3.5 h-3.5 text-indigo-500" /> Configuração de Camas
-                </Label>
-                <div className="grid grid-cols-2 gap-2">
-                  <Button
-                    type="button"
-                    variant={flatBedType === "casal" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setFlatBedType("casal")}
-                    className="h-9 text-xs font-bold rounded-xl gap-2 justify-start px-3"
-                  >
-                    <span className="text-base">🛏️</span>
-                    <span>Cama de Casal</span>
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={flatBedType === "solteiro_duplo" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setFlatBedType("solteiro_duplo")}
-                    className="h-9 text-xs font-bold rounded-xl gap-2 justify-start px-3"
-                  >
-                    <span className="text-base">👥</span>
-                    <span>2 Camas Solteiro</span>
-                  </Button>
+              {/* Filtros e Busca de Tags */}
+              <div className="pt-3 space-y-2">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-muted-foreground" />
+                  <Input 
+                    value={amenitySearch}
+                    onChange={e => setAmenitySearch(e.target.value)}
+                    placeholder="Buscar comodidade (ex: Ar Split, Casal, Micro-ondas, Pet, Wi-Fi, Garagem, Vista...)"
+                    className="h-8.5 pl-8 text-xs rounded-xl"
+                  />
                 </div>
-              </div>
 
-              {/* Símbolos Rápidos com Emojis */}
-              <div className="space-y-1.5">
-                <Label className="font-bold flex items-center gap-1.5 text-slate-900 dark:text-slate-100">
-                  <Tag className="w-3.5 h-3.5 text-amber-500" /> Símbolos Rápidos & Comodidades
-                </Label>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
-                  {[
-                    { tag: "Micro-ondas", emoji: "⚡", label: "Micro-ondas" },
-                    { tag: "Reformado", emoji: "✨", label: "Reformado" },
-                    { tag: "Andar Alto", emoji: "🏙️", label: "Andar Alto" },
-                    { tag: "Andar Baixo", emoji: "🚪", label: "Andar Baixo" },
-                    { tag: "Vista Livre", emoji: "🌅", label: "Vista Livre" },
-                    { tag: "Smart TV", emoji: "📺", label: "Smart TV" },
-                    { tag: "Frigobar", emoji: "🧊", label: "Frigobar" },
-                    { tag: "Cozinha", emoji: "🍳", label: "Cozinha" },
-                    { tag: "Varanda", emoji: "🌿", label: "Varanda" }
-                  ].map(preset => {
-                    const active = flatTags.some(t => t.toLowerCase() === preset.tag.toLowerCase() || t.includes(preset.emoji));
-                    return (
-                      <Button
-                        key={preset.tag}
-                        type="button"
-                        variant={active ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => {
-                          if (preset.tag === "Micro-ondas") {
-                            setFlatHasMicrowave(!flatHasMicrowave);
-                          }
-                          handleTogglePresetTag(preset.tag);
-                        }}
-                        className={`h-8 text-[11px] font-bold rounded-xl gap-1.5 justify-start px-2 ${active ? 'bg-primary text-primary-foreground' : 'text-slate-700 dark:text-slate-300'}`}
-                      >
-                        <span>{preset.emoji}</span>
-                        <span>{preset.label}</span>
-                        {active && <span className="ml-auto text-[10px]">✓</span>}
-                      </Button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Criar Novo Símbolo Personalizado com Seletor de Emoji */}
-              <div className="p-3 bg-muted/40 border border-border rounded-2xl space-y-2">
-                <Label className="font-bold block text-slate-900 dark:text-slate-100">Criar Novo Símbolo Personalizado</Label>
-                <div className="flex flex-wrap gap-1 mb-1.5">
-                  {["🏷️", "☕", "🚗", "🐾", "💼", "🌊", "🛋️", "🔑", "📶", "🔇", "⭐", "🔒"].map(em => (
+                {/* Abas de Categorias */}
+                <div className="flex items-center gap-1 overflow-x-auto pb-1 text-[10.5px]">
+                  {AMENITY_CATEGORIES.map(cat => (
                     <button
-                      key={em}
+                      key={cat.id}
                       type="button"
-                      onClick={() => setCustomEmojiSelected(em)}
-                      className={`w-7 h-7 rounded-lg text-sm flex items-center justify-center transition-transform ${customEmojiSelected === em ? 'bg-primary text-primary-foreground scale-110 shadow-xs' : 'bg-background hover:bg-muted'}`}
+                      onClick={() => setAmenityCategoryFilter(cat.id)}
+                      className={`px-2.5 py-1 rounded-lg font-bold shrink-0 transition-colors ${
+                        amenityCategoryFilter === cat.id 
+                          ? 'bg-primary text-primary-foreground shadow-xs' 
+                          : 'bg-muted/40 hover:bg-muted text-muted-foreground'
+                      }`}
                     >
-                      {em}
+                      {cat.label}
                     </button>
                   ))}
                 </div>
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
-                    <span className="absolute left-2.5 top-2 text-sm">{customEmojiSelected}</span>
-                    <Input
-                      value={flatCustomTagInput}
-                      onChange={e => setFlatCustomTagInput(e.target.value)}
-                      placeholder="Nome do símbolo (Ex: Garagem, Nespresso, Pet...)"
-                      className="h-9 text-xs pl-8 rounded-xl"
-                      onKeyDown={e => { 
-                        if (e.key === "Enter") { 
-                          e.preventDefault(); 
-                          const combined = `${customEmojiSelected} ${flatCustomTagInput.trim()}`;
-                          if (flatCustomTagInput.trim() && !flatTags.includes(combined)) {
-                            setFlatTags(prev => [...prev, combined]);
-                            setFlatCustomTagInput("");
-                          }
-                        } 
-                      }}
-                    />
+              </div>
+            </DialogHeader>
+
+            {/* Conteúdo com Rolagem do Catálogo */}
+            <form onSubmit={handleSaveFlatTags} className="flex-1 overflow-y-auto p-5 space-y-4 text-xs">
+              {/* Categorias Filtradas */}
+              {AMENITY_CATEGORIES.filter(c => c.id !== "all").map(cat => {
+                if (amenityCategoryFilter !== "all" && amenityCategoryFilter !== cat.id) return null;
+
+                const categoryItems = FLAT_AMENITIES_CATALOG.filter(item => {
+                  if (item.category !== cat.id) return false;
+                  if (amenitySearch.trim()) {
+                    return item.label.toLowerCase().includes(amenitySearch.toLowerCase());
+                  }
+                  if (!showFullCatalog && !item.isStandardDefault && !flatTags.some(t => t.toLowerCase() === item.label.toLowerCase() || t.toLowerCase() === item.id)) {
+                    return false;
+                  }
+                  return true;
+                });
+
+                if (categoryItems.length === 0) return null;
+
+                return (
+                  <div key={cat.id} className="space-y-2">
+                    <div className="font-extrabold text-[11px] text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                      <span>{cat.label}</span>
+                      <span className="text-[10px] opacity-60">({categoryItems.length})</span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                      {categoryItems.map(item => {
+                        const active = flatTags.some(t => 
+                          t.toLowerCase() === item.label.toLowerCase() || 
+                          t.toLowerCase() === item.id ||
+                          (item.id === "ar_split" && flatAirType === "split") ||
+                          (item.id === "ar_janela" && flatAirType === "janela") ||
+                          (item.id === "cama_casal" && flatBedType === "casal") ||
+                          (item.id === "2_camas_solteiro" && flatBedType === "solteiro_duplo") ||
+                          (item.id === "microondas" && flatHasMicrowave)
+                        );
+
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => {
+                              if (item.id === "ar_split") setFlatAirType("split");
+                              if (item.id === "ar_janela") setFlatAirType("janela");
+                              if (item.id === "cama_casal") setFlatBedType("casal");
+                              if (item.id === "2_camas_solteiro") setFlatBedType("solteiro_duplo");
+                              if (item.id === "microondas") setFlatHasMicrowave(!flatHasMicrowave);
+                              handleTogglePresetTag(item.label);
+                            }}
+                            className={`p-2 rounded-xl border text-left flex items-center gap-2 transition-all ${
+                              active
+                                ? 'bg-primary text-primary-foreground border-primary shadow-xs font-bold'
+                                : 'bg-card border-border hover:border-primary/50 text-slate-700 dark:text-slate-300 font-medium'
+                            }`}
+                          >
+                            <span className={`p-1 rounded-lg shrink-0 ${active ? 'bg-white/20 text-white' : (item.colorClass || 'text-primary bg-muted')}`}>
+                              {renderAmenityIcon(item.iconName, "w-3.5 h-3.5")}
+                            </span>
+                            <span className="truncate text-[11px]">{item.label}</span>
+                            {active && <span className="ml-auto text-[10px] font-black">✓</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
+                );
+              })}
+
+              {/* Criar Tag Personalizada Livre */}
+              <div className="p-3.5 bg-muted/30 border border-border rounded-2xl space-y-2">
+                <Label className="font-bold text-xs text-foreground block">Adicionar Tag / Comodidade Personalizada</Label>
+                <div className="flex gap-2">
+                  <Input
+                    value={flatCustomTagInput}
+                    onChange={e => setFlatCustomTagInput(e.target.value)}
+                    placeholder="Digite uma comodidade exclusiva (ex: Cafeteira Nespresso, Mesa Escritório...)"
+                    className="h-9 text-xs rounded-xl"
+                    onKeyDown={e => { 
+                      if (e.key === "Enter") { 
+                        e.preventDefault(); 
+                        handleAddCustomTag();
+                      } 
+                    }}
+                  />
                   <Button 
                     type="button" 
-                    onClick={() => {
-                      const combined = `${customEmojiSelected} ${flatCustomTagInput.trim()}`;
-                      if (flatCustomTagInput.trim() && !flatTags.includes(combined)) {
-                        setFlatTags(prev => [...prev, combined]);
-                        setFlatCustomTagInput("");
-                      }
-                    }} 
-                    className="h-9 text-xs font-bold rounded-xl px-3"
+                    onClick={() => handleAddCustomTag()} 
+                    className="h-9 text-xs font-bold rounded-xl px-4"
                   >
-                    + Criar
+                    + Adicionar
                   </Button>
                 </div>
               </div>
 
-              {/* Símbolos Ativos no Quarto */}
+              {/* Tags Ativas no Quarto */}
               {flatTags.length > 0 && (
-                <div className="space-y-1.5 pt-1">
-                  <Label className="text-[11px] font-bold text-muted-foreground">Símbolos Ativos no Quarto ({flatTags.length}):</Label>
-                  <div className="flex flex-wrap gap-1.5 p-2.5 bg-muted/20 border border-border rounded-2xl">
+                <div className="space-y-1.5 pt-2 border-t border-border">
+                  <Label className="text-[11px] font-bold text-muted-foreground">
+                    Tags Ativas no Apt {selectedFlatForTags?.number} ({flatTags.length}):
+                  </Label>
+                  <div className="flex flex-wrap gap-1.5 p-3 bg-muted/20 border border-border rounded-2xl">
                     {flatTags.map(tag => (
-                      <span key={tag} className="inline-flex items-center gap-1 text-[11px] bg-primary/10 text-primary font-bold px-2.5 py-1 rounded-xl border border-primary/20">
-                        {tag}
-                        <button type="button" onClick={() => handleRemoveTag(tag)} className="hover:text-rose-500 ml-1 font-black">✕</button>
+                      <span key={tag} className="inline-flex items-center gap-1.5 text-[11px] bg-primary/10 text-primary font-bold px-2.5 py-1 rounded-xl border border-primary/20">
+                        <span>{tag}</span>
+                        <button type="button" onClick={() => handleRemoveTag(tag)} className="hover:text-rose-500 font-black ml-0.5">✕</button>
                       </span>
                     ))}
                   </div>
                 </div>
               )}
 
-              <DialogFooter className="gap-2 pt-3 border-t border-border">
+              <DialogFooter className="gap-2 pt-3 border-t border-border sticky bottom-0 bg-card">
                 <Button type="submit" disabled={savingFlatTags} className="rounded-xl h-10 text-xs font-black bg-primary hover:bg-primary/90 text-primary-foreground">
-                  {savingFlatTags ? "Salvando..." : "Salvar Símbolos"}
+                  {savingFlatTags ? "Salvando..." : "Salvar Características do Quarto"}
                 </Button>
                 <Button type="button" variant="outline" onClick={() => setFlatTagsModalOpen(false)} className="rounded-xl h-10 text-xs font-bold">
                   Cancelar
@@ -1873,6 +1809,7 @@ export default function PmsCalendar() {
             </form>
           </DialogContent>
         </Dialog>
+
 
 
         {/* Modal: Room Block */}
