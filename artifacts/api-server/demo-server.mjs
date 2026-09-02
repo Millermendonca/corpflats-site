@@ -3712,7 +3712,8 @@ app.get("/api/pms/calendar", (req, res) => {
     endDate: end,
     flats,
     reservations,
-    blocks
+    blocks,
+    guests: db.guests || []
   });
 });
 
@@ -3911,7 +3912,7 @@ app.put("/api/pms/reservations/:id", (req, res) => {
     "flatId", "checkinDate", "checkoutDate", "status", "channel", 
     "dailyRate", "totalAmount", "paidAmount", "paymentStatus", 
     "adults", "children", "notes", "prefersHighFloor", "twinBeds", 
-    "extraMattress", "specialRequests"
+    "extraMattress", "specialRequests", "isMonthlyGuest", "clientType", "includeBreakfast"
   ];
   for (const f of fields) {
     if (req.body[f] !== undefined) r[f] = req.body[f];

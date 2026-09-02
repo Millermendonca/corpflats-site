@@ -317,10 +317,12 @@ export default function PmsCalendar() {
 
   const scrollToToday = (behavior: "auto" | "smooth" = "smooth") => {
     if (scrollContainerRef.current) {
-      const targetDateStr = format(subDays(new Date(), 3), "yyyy-MM-dd")
-      const targetEl = scrollContainerRef.current.querySelector(`[data-header-day="${targetDateStr}"]`)
+      // Posiciona exatamente 2 dias antes de hoje na visão inicial
+      const targetDateStr = format(subDays(new Date(), 2), "yyyy-MM-dd")
+      const targetEl = scrollContainerRef.current.querySelector(`[data-header-day="${targetDateStr}"]`) as HTMLElement
       if (targetEl) {
-        targetEl.scrollIntoView({ inline: "start", behavior, block: "nearest" })
+        const leftPos = Math.max(0, targetEl.offsetLeft - 130)
+        scrollContainerRef.current.scrollTo({ left: leftPos, behavior })
       }
     }
   }
@@ -505,6 +507,7 @@ export default function PmsCalendar() {
     setFormExtraMattress(false)
     setFormIncludeBreakfast(false)
     setFormSpecialRequests("")
+    setFormIsMonthlyGuest(false)
     setResModalOpen(true)
   }
 
@@ -553,6 +556,7 @@ export default function PmsCalendar() {
     setFormExtraMattress(Boolean(resItem.extraMattress))
     setFormIncludeBreakfast(Boolean(resItem.includeBreakfast || resItem.hasBreakfast))
     setFormSpecialRequests(resItem.specialRequests || "")
+    setFormIsMonthlyGuest(Boolean(resItem.isMonthlyGuest || resItem.clientType === "mensalista"))
     setResModalOpen(true)
   }
 
@@ -631,7 +635,9 @@ export default function PmsCalendar() {
         twinBeds: formTwinBeds,
         extraMattress: formExtraMattress,
         includeBreakfast: formIncludeBreakfast,
-        specialRequests: formSpecialRequests
+        specialRequests: formSpecialRequests,
+        isMonthlyGuest: Boolean(formIsMonthlyGuest),
+        clientType: formIsMonthlyGuest ? "mensalista" : "avulso"
       }
 
       if (selectedRes) {
@@ -969,7 +975,22 @@ export default function PmsCalendar() {
 
                         const channelCfg = CHANNEL_CONFIG[resItem.channel] || CHANNEL_CONFIG.direta;
                         const nightsCount = differenceInDays(parseISO(resItem.checkoutDate), parseISO(resItem.checkinDate)) || 1;
-                        const isMensalista = resItem.isMonthlyGuest || resItem.clientType === "mensalista";
+                        
+                        // Verificação dinâmica de Mensalista (por reserva ou por cadastro no CRM)
+                        const matchedGuest = (data.guests || []).find((g: any) => 
+                          (g.id && g.id === resItem.guestId) ||
+                          (g.document && resItem.guestDocument && g.document.replace(/\D/g, '') === resItem.guestDocument.replace(/\D/g, '')) ||
+                          (g.phone && resItem.guestPhone && g.phone.replace(/\D/g, '') === resItem.guestPhone.replace(/\D/g, '')) ||
+                          (g.name && resItem.guestName && g.name.toLowerCase().trim() === resItem.guestName.toLowerCase().trim()) ||
+                          (g.fullName && resItem.guestName && g.fullName.toLowerCase().trim() === resItem.guestName.toLowerCase().trim())
+                        );
+
+                        const isMensalista = Boolean(
+                          resItem.isMonthlyGuest || 
+                          resItem.clientType === "mensalista" ||
+                          matchedGuest?.isMonthlyGuest ||
+                          matchedGuest?.clientType === "mensalista"
+                        );
 
                         return (
                           <div
@@ -983,7 +1004,7 @@ export default function PmsCalendar() {
                             } flex items-center px-2 text-[11px] font-bold overflow-hidden z-10 cursor-pointer hover:brightness-110 hover:shadow-md hover:scale-[1.01] active:scale-[0.99] transition-all`}
                             title={`${resItem.guestName} (${channelCfg?.label || resItem.channel}) • ${resItem.checkinDate} a ${resItem.checkoutDate} (${nightsCount} ${nightsCount === 1 ? 'diária' : 'diárias'})${resItem.includeBreakfast ? ' • ☕ Café Incluso' : ''}${isMensalista ? ' • 👑 Mensalista / Contrato Long Stay' : ''}`}
                           >
-                            <div className="flex items-center gap-1.5 min-w-0 w-full overflow-hidden">
+                            <div className="flex items-center gap-1.5 min-w-0 w-full overflow-hidden whitespace-nowrap">
                               {resItem.includeBreakfast && (
                                 <span title="Café da Manhã Incluso" className="shrink-0 text-xs">☕</span>
                               )}
@@ -992,7 +1013,12 @@ export default function PmsCalendar() {
                                   👑 Mensalista
                                 </span>
                               )}
-                              <span className="truncate font-black text-white text-[11.5px] flex-1 min-w-0">
+                              {/* Quantidade de diárias NA FRENTE do nome */}
+                              <span className="shrink-0 text-[9px] font-extrabold bg-black/30 text-white/95 px-1.5 py-0.2 rounded-md">
+                                {nightsCount} {nightsCount === 1 ? 'diária' : 'diárias'}
+                              </span>
+                              {/* Nome do Hóspede com truncamento automático se faltar espaço */}
+                              <span className="truncate font-black text-white text-[11.5px] min-w-0">
                                 {resItem.guestName}
                               </span>
                             </div>
