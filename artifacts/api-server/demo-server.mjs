@@ -674,6 +674,16 @@ async function loadDatabase() {
         const res = await pgPool.query("SELECT value FROM system_store WHERE key = 'db_state'");
         if (res && res.rows && res.rows[0]) {
           const pgLoaded = res.rows[0].value;
+          // Proteção mandatória: Se o PostgreSQL na nuvem estiver com periodicTasks vazias mas o arquivo local tiver as tarefas restauradas, preserva e sincroniza
+          if ((!pgLoaded.periodicTasks || pgLoaded.periodicTasks.length === 0) && (db.periodicTasks && db.periodicTasks.length > 0)) {
+            pgLoaded.periodicTasks = db.periodicTasks;
+            pgLoaded.periodicExecutions = db.periodicExecutions;
+            console.log("[PostgreSQL] Hidratando tarefas preventivas da base local para a nuvem...");
+            pgPool.query(
+              "INSERT INTO system_store (key, value, updated_at) VALUES ('db_state', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()",
+              [JSON.stringify(pgLoaded)]
+            ).catch(e => console.warn("[PostgreSQL] Erro ao sincronizar tarefas preventivas na nuvem:", e.message));
+          }
           db = { ...db, ...pgLoaded };
           console.log("[PostgreSQL] Estado restaurado da nuvem com sucesso!");
         }
@@ -2860,6 +2870,26 @@ app.delete("/api/surveys/:id", (req, res) => {
 // ── Periodic Tasks (Manutenções Preventivas & Recorrentes) ───────────────────
 app.get("/api/periodic-tasks", (req, res) => {
   res.json(db.periodicTasks || []);
+});
+
+app.post("/api/admin/restore-periodic-tasks", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (userAuth && userAuth.role !== "admin") {
+    return res.status(403).json({ error: "Apenas administradores podem restaurar tarefas preventivas." });
+  }
+  if (req.body?.tasks && Array.isArray(req.body.tasks)) {
+    db.periodicTasks = req.body.tasks;
+  }
+  if (req.body?.executions && Array.isArray(req.body.executions)) {
+    db.periodicExecutions = req.body.executions;
+  }
+  saveDatabase();
+  res.json({
+    success: true,
+    message: "Tarefas preventivas e histórico de execuções sincronizados com sucesso!",
+    tasksCount: (db.periodicTasks || []).length,
+    executionsCount: (db.periodicExecutions || []).length
+  });
 });
 
 app.post("/api/periodic-tasks", (req, res) => {
