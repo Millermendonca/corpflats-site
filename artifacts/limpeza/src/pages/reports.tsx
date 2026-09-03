@@ -615,10 +615,29 @@ export default function Reports() {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-border">
-                            {[...filteredHistory].sort((a: any, b: any) => (a.requestDate || "").localeCompare(b.requestDate || "")).map((entry: any) => (
+                            {[...filteredHistory].sort((a: any, b: any) => {
+                              const tA = new Date(a.completedAt || a.effectiveDate || a.requestDate).getTime();
+                              const tB = new Date(b.completedAt || b.effectiveDate || b.requestDate).getTime();
+                              return tB - tA;
+                            }).map((entry: any) => {
+                              const execDateStr = entry.effectiveDate || (entry.completedAt ? entry.completedAt.substring(0, 10) : entry.requestDate);
+                              const formattedDate = execDateStr ? execDateStr.split('-').reverse().join('/') : "—";
+                              const timeRange = entry.cleaningStartedAt && entry.completedAt 
+                                ? `${format(new Date(entry.cleaningStartedAt), "HH:mm")} às ${format(new Date(entry.completedAt), "HH:mm")}`
+                                : (entry.completedAt ? format(new Date(entry.completedAt), "HH:mm") : null);
+
+                              return (
                               <tr key={entry.id} className="hover:bg-muted/30 transition-colors">
                                 <td className="p-3.5 text-foreground font-semibold whitespace-nowrap">
-                                  {entry.requestDate ? entry.requestDate.split('-').reverse().join('/') : (entry.completedAt ? new Date(entry.completedAt).toLocaleDateString("pt-BR") : "—")}
+                                  <div className="flex flex-col">
+                                    <span>{formattedDate}</span>
+                                    {timeRange && (
+                                      <span className="text-[10px] text-muted-foreground font-normal flex items-center gap-1">
+                                        <Clock className="w-3 h-3 text-muted-foreground" />
+                                        {timeRange}
+                                      </span>
+                                    )}
+                                  </div>
                                 </td>
                                 <td className="p-3.5 font-bold text-foreground">
                                   Apt {entry.flatNumber}
@@ -675,9 +694,10 @@ export default function Reports() {
                                     </Button>
                                   </td>
                                 )}
-                              </tr>
-                            ))}
-                          </tbody>
+                               </tr>
+                             );
+                           })}
+                         </tbody>
                         </table>
                       </div>
 
@@ -821,7 +841,12 @@ export default function Reports() {
                         <div>
                           {/* Sub-janelinha com barra de rolagem */}
                           <div className="max-h-[380px] overflow-y-auto divide-y divide-border/60 p-4">
-                            {sortedCamareiraHistory.map((h: any, i: number) => (
+                            {sortedCamareiraHistory.map((h: any, i: number) => {
+                              const hDate = h.effectiveDate || (h.completedAt ? h.completedAt.substring(0, 10) : h.requestDate);
+                              const timeRange = h.cleaningStartedAt && h.completedAt 
+                                ? `${format(new Date(h.cleaningStartedAt), "HH:mm")} às ${format(new Date(h.completedAt), "HH:mm")}`
+                                : (h.completedAt ? format(new Date(h.completedAt), "HH:mm") : null);
+                              return (
                               <div key={i} className="py-3 flex items-center justify-between gap-2 hover:bg-muted/20 rounded-xl px-2 transition-colors">
                                 <div className="flex items-center gap-3">
                                   <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center font-black text-sm">
@@ -830,7 +855,9 @@ export default function Reports() {
                                   <div>
                                     <div className="font-bold text-sm text-foreground">Apartamento {h.flatNumber}</div>
                                     <div className="text-xs text-muted-foreground">
-                                      Data da Limpeza: <strong className="text-foreground">{h.requestDate ? h.requestDate.split('-').reverse().join('/') : "-"}</strong>
+                                      Data da Limpeza: <strong className="text-foreground">{hDate ? hDate.split('-').reverse().join('/') : "-"}</strong>
+                                      {timeRange && ` • ${timeRange}`}
+                                      {h.leavingGuest && ` (Saída: ${h.leavingGuest})`}
                                     </div>
                                   </div>
                                 </div>
@@ -841,7 +868,8 @@ export default function Reports() {
                                   </Badge>
                                 </div>
                               </div>
-                            ))}
+                            );
+                          })}
                           </div>
 
                           <div className="p-3 bg-muted/20 border-t border-border flex items-center justify-between text-[11px] text-muted-foreground font-semibold">
@@ -1121,10 +1149,17 @@ export default function Reports() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                        {([...(activeCleanerReceipt.cleanings || [])].sort((a: any, b: any) => new Date(a.requestDate).getTime() - new Date(b.requestDate).getTime())).map((c: any, idx: number) => {
-                          const dateFormatted = c.requestDate ? c.requestDate.split('-').reverse().join('/') : "-"
-                          const timeFormatted = c.completedAt ? new Date(c.completedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "12:00"
-                          const rateVal = Number(activeCleanerReceipt.ratePerRoom || report?.defaultRatePerRoom || 35).toFixed(2)
+                        {([...(activeCleanerReceipt.cleanings || [])].sort((a: any, b: any) => {
+                          const tA = new Date(a.completedAt || a.effectiveDate || a.requestDate).getTime();
+                          const tB = new Date(b.completedAt || b.effectiveDate || b.requestDate).getTime();
+                          return tA - tB;
+                        })).map((c: any, idx: number) => {
+                          const execDateStr = c.effectiveDate || (c.completedAt ? c.completedAt.substring(0, 10) : c.requestDate);
+                          const dateFormatted = execDateStr ? execDateStr.split('-').reverse().join('/') : "-";
+                          const timeFormatted = c.cleaningStartedAt && c.completedAt
+                            ? `${format(new Date(c.cleaningStartedAt), "HH:mm")} - ${format(new Date(c.completedAt), "HH:mm")}`
+                            : (c.completedAt ? format(new Date(c.completedAt), "HH:mm") : "—");
+                          const rateVal = Number(activeCleanerReceipt.ratePerRoom || report?.defaultRatePerRoom || 35).toFixed(2);
 
                           return (
                             <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
@@ -1134,11 +1169,14 @@ export default function Reports() {
                               <td className="p-2.5 font-medium whitespace-nowrap">
                                 {dateFormatted}
                               </td>
-                              <td className="p-2.5 font-mono text-slate-500">
+                              <td className="p-2.5 font-mono text-slate-500 whitespace-nowrap">
                                 {timeFormatted}
                               </td>
                               <td className="p-2.5 font-bold text-slate-900 dark:text-white whitespace-nowrap">
-                                Apartamento {c.flatNumber}
+                                <div>Apartamento {c.flatNumber}</div>
+                                {c.leavingGuest && (
+                                  <div className="text-[10px] text-slate-500 font-normal">Saída: {c.leavingGuest}</div>
+                                )}
                               </td>
                               <td className="p-2.5 text-center font-mono text-slate-500 whitespace-nowrap">
                                 {c.durationMinutes || 35} min
@@ -1147,7 +1185,7 @@ export default function Reports() {
                                 R$ {rateVal}
                               </td>
                             </tr>
-                          )
+                          );
                         })}
                       </tbody>
                       <tfoot className="bg-slate-50 dark:bg-slate-800/80 border-t-2 border-slate-300 dark:border-slate-700 font-black text-xs">

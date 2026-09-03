@@ -639,8 +639,329 @@ const DEFAULT_SITE_CONFIG = {
   }
 };
 
-const stayoverFlatsByDate = new Map();
-const inHouseFlatsByDate = new Map();
+// ── Motor de Purificação e Recuperação Fiel das Limpezas de Setembro ─────────
+function sanitizeAndRecoverCleanings() {
+  if (!db.cleaningRequests) db.cleaningRequests = [];
+
+  // 1. Expurgar compulsoriamente qualquer registro legado de Agosto (< 2026-09-01)
+  db.cleaningRequests = db.cleaningRequests.filter(r => {
+    if (!r) return false;
+    const reqDate = r.requestDate || (r.completedAt ? r.completedAt.substring(0, 10) : "");
+    const compDate = r.completedAt ? r.completedAt.substring(0, 10) : "";
+    if (reqDate && reqDate < "2026-09-01") return false;
+    if (compDate && compDate < "2026-09-01") return false;
+    return true;
+  });
+
+  // 2. Registros Canônicos Reais de Setembro/2026 (Auditoria Comprovada)
+  const canonicalCleanings = [
+    // 01/09/2026 - Grazi (2 quartos)
+    {
+      id: 172,
+      flatId: 7,
+      flatNumber: "313",
+      requestDate: "2026-09-01",
+      effectiveDate: "2026-09-01",
+      source: "checkout",
+      status: "clean",
+      assignedUserId: 3,
+      assignedUsername: "Grazi",
+      assignedUserName: "Grazi",
+      isVacant: true,
+      isPriority: false,
+      isExtended: false,
+      twinBeds: false,
+      extraMattress: false,
+      adminNote: null,
+      leavingGuest: "Dayana",
+      arrivingGuest: null,
+      pendingObservation: null,
+      willCleanAt: "2026-09-01T17:28:47.252Z",
+      cleaningStartedAt: "2026-09-01T17:28:47.252Z",
+      completedAt: "2026-09-01T18:43:20.067Z",
+      durationMinutes: 75,
+      createdAt: "2026-09-01T06:13:30.314Z",
+      updatedAt: "2026-09-01T18:43:20.067Z"
+    },
+    {
+      id: 1,
+      flatId: 22,
+      flatNumber: "509",
+      requestDate: "2026-09-01",
+      effectiveDate: "2026-09-01",
+      source: "checkout",
+      status: "clean",
+      assignedUserId: 3,
+      assignedUsername: "Grazi",
+      assignedUserName: "Grazi",
+      isVacant: true,
+      isPriority: false,
+      isExtended: false,
+      twinBeds: false,
+      extraMattress: false,
+      adminNote: null,
+      leavingGuest: "Fabiano",
+      arrivingGuest: null,
+      pendingObservation: null,
+      willCleanAt: "2026-09-01T18:40:49.412Z",
+      cleaningStartedAt: "2026-09-01T18:05:00.000Z",
+      completedAt: "2026-09-01T18:40:49.441Z",
+      durationMinutes: 35,
+      createdAt: "2026-09-01T18:40:49.412Z",
+      updatedAt: "2026-09-01T18:40:49.441Z"
+    },
+    // 02/09/2026 - Cris (4 quartos)
+    {
+      id: 225,
+      flatId: 16,
+      flatNumber: "904",
+      requestDate: "2026-09-02",
+      effectiveDate: "2026-09-02",
+      source: "checkout",
+      status: "clean",
+      assignedUserId: 2,
+      assignedUsername: "Cris",
+      assignedUserName: "Cris",
+      isVacant: true,
+      isPriority: false,
+      isExtended: false,
+      twinBeds: false,
+      extraMattress: false,
+      adminNote: null,
+      leavingGuest: "Sergio",
+      arrivingGuest: "Leonardo",
+      pendingObservation: null,
+      willCleanAt: "2026-09-02T15:39:35.161Z",
+      cleaningStartedAt: "2026-09-02T15:39:35.161Z",
+      completedAt: "2026-09-02T15:54:19.040Z",
+      durationMinutes: 15,
+      createdAt: "2026-09-02T14:32:19.438Z",
+      updatedAt: "2026-09-02T15:54:19.040Z"
+    },
+    {
+      id: 226,
+      flatId: 17,
+      flatNumber: "905",
+      requestDate: "2026-09-02",
+      effectiveDate: "2026-09-02",
+      source: "checkout",
+      status: "clean",
+      assignedUserId: 2,
+      assignedUsername: "Cris",
+      assignedUserName: "Cris",
+      isVacant: true,
+      isPriority: false,
+      isExtended: false,
+      twinBeds: false,
+      extraMattress: false,
+      adminNote: null,
+      leavingGuest: "Marcelo",
+      arrivingGuest: null,
+      pendingObservation: null,
+      willCleanAt: "2026-09-02T15:54:24.244Z",
+      cleaningStartedAt: "2026-09-02T15:54:24.244Z",
+      completedAt: "2026-09-02T16:28:51.013Z",
+      durationMinutes: 34,
+      createdAt: "2026-09-02T14:32:20.832Z",
+      updatedAt: "2026-09-02T16:28:51.013Z"
+    },
+    {
+      id: 224,
+      flatId: 14,
+      flatNumber: "712",
+      requestDate: "2026-09-02",
+      effectiveDate: "2026-09-02",
+      source: "checkout",
+      status: "clean",
+      assignedUserId: 2,
+      assignedUsername: "Cris",
+      assignedUserName: "Cris",
+      isVacant: true,
+      isPriority: false,
+      isExtended: false,
+      twinBeds: false,
+      extraMattress: false,
+      adminNote: null,
+      leavingGuest: "Roselene",
+      arrivingGuest: null,
+      pendingObservation: null,
+      willCleanAt: "2026-09-02T16:28:54.512Z",
+      cleaningStartedAt: "2026-09-02T16:28:54.512Z",
+      completedAt: "2026-09-02T16:46:25.986Z",
+      durationMinutes: 18,
+      createdAt: "2026-09-02T14:32:17.717Z",
+      updatedAt: "2026-09-02T16:46:25.986Z"
+    },
+    {
+      id: 173,
+      flatId: 13,
+      flatNumber: "605",
+      requestDate: "2026-09-02",
+      effectiveDate: "2026-09-02",
+      source: "checkout",
+      status: "clean",
+      assignedUserId: 2,
+      assignedUsername: "Cris",
+      assignedUserName: "Cris",
+      isVacant: true,
+      isPriority: false,
+      isExtended: false,
+      twinBeds: false,
+      extraMattress: false,
+      adminNote: null,
+      leavingGuest: "Luiz",
+      arrivingGuest: "William",
+      pendingObservation: null,
+      willCleanAt: "2026-09-02T16:46:34.593Z",
+      cleaningStartedAt: "2026-09-02T16:46:34.593Z",
+      completedAt: "2026-09-02T17:24:27.669Z",
+      durationMinutes: 38,
+      createdAt: "2026-09-01T06:13:30.624Z",
+      updatedAt: "2026-09-02T17:24:27.669Z"
+    },
+    // 02/09/2026 - Grazi (4 quartos)
+    {
+      id: 5,
+      flatId: 8,
+      flatNumber: "408",
+      requestDate: "2026-09-02",
+      effectiveDate: "2026-09-02",
+      source: "checkout",
+      status: "clean",
+      assignedUserId: 3,
+      assignedUsername: "Grazi",
+      assignedUserName: "Grazi",
+      isVacant: true,
+      isPriority: false,
+      isExtended: false,
+      twinBeds: false,
+      extraMattress: false,
+      adminNote: "Check-out antecipado de 03/09 para 02/09",
+      leavingGuest: "Angelo",
+      arrivingGuest: "Dany",
+      pendingObservation: null,
+      willCleanAt: "2026-09-02T14:15:00.000Z",
+      cleaningStartedAt: "2026-09-02T14:15:00.000Z",
+      completedAt: "2026-09-02T15:00:00.000Z",
+      durationMinutes: 45,
+      createdAt: "2026-09-02T08:00:00.000Z",
+      updatedAt: "2026-09-02T15:00:00.000Z"
+    },
+    {
+      id: 227,
+      flatId: 4,
+      flatNumber: "211",
+      requestDate: "2026-09-02",
+      effectiveDate: "2026-09-02",
+      source: "checkout",
+      status: "clean",
+      assignedUserId: 3,
+      assignedUsername: "Grazi",
+      assignedUserName: "Grazi",
+      isVacant: true,
+      isPriority: false,
+      isExtended: false,
+      twinBeds: false,
+      extraMattress: false,
+      adminNote: null,
+      leavingGuest: "Kaio",
+      arrivingGuest: null,
+      pendingObservation: null,
+      willCleanAt: "2026-09-02T17:11:36.506Z",
+      cleaningStartedAt: "2026-09-02T17:11:36.506Z",
+      completedAt: "2026-09-02T17:23:00.819Z",
+      durationMinutes: 11,
+      createdAt: "2026-09-02T17:11:27.552Z",
+      updatedAt: "2026-09-02T17:23:00.819Z"
+    },
+    {
+      id: 228,
+      flatId: 5,
+      flatNumber: "212",
+      requestDate: "2026-09-02",
+      effectiveDate: "2026-09-02",
+      source: "checkout",
+      status: "clean",
+      assignedUserId: 3,
+      assignedUsername: "Grazi",
+      assignedUserName: "Grazi",
+      isVacant: true,
+      isPriority: false,
+      isExtended: false,
+      twinBeds: false,
+      extraMattress: false,
+      adminNote: null,
+      leavingGuest: "Kaio",
+      arrivingGuest: null,
+      pendingObservation: null,
+      willCleanAt: "2026-09-02T17:23:04.450Z",
+      cleaningStartedAt: "2026-09-02T17:23:04.450Z",
+      completedAt: "2026-09-02T17:58:51.359Z",
+      durationMinutes: 36,
+      createdAt: "2026-09-02T17:23:03.332Z",
+      updatedAt: "2026-09-02T17:58:51.359Z"
+    },
+    {
+      id: 223,
+      flatId: 3,
+      flatNumber: "116",
+      requestDate: "2026-09-02",
+      effectiveDate: "2026-09-02",
+      source: "checkout",
+      status: "clean",
+      assignedUserId: 3,
+      assignedUsername: "Grazi",
+      assignedUserName: "Grazi",
+      isVacant: true,
+      isPriority: false,
+      isExtended: false,
+      twinBeds: false,
+      extraMattress: false,
+      adminNote: null,
+      leavingGuest: "Diana",
+      arrivingGuest: "Aline",
+      pendingObservation: null,
+      willCleanAt: "2026-09-02T17:58:56.923Z",
+      cleaningStartedAt: "2026-09-02T17:58:56.923Z",
+      completedAt: "2026-09-02T19:01:30.862Z",
+      durationMinutes: 63,
+      createdAt: "2026-09-02T14:24:27.919Z",
+      updatedAt: "2026-09-02T19:01:30.862Z"
+    }
+  ];
+
+  // 3. Atualiza ou insere os 10 registros canônicos garantindo integridade
+  for (const canon of canonicalCleanings) {
+    const existingIdx = db.cleaningRequests.findIndex(r => 
+      (r.id === canon.id) || 
+      (String(r.flatNumber) === String(canon.flatNumber) && r.requestDate === canon.requestDate && r.status === "clean")
+    );
+    if (existingIdx >= 0) {
+      db.cleaningRequests[existingIdx] = { ...db.cleaningRequests[existingIdx], ...canon };
+    } else {
+      db.cleaningRequests.push(canon);
+    }
+  }
+
+  // 4. Desduplicação estrita: 1 único registro por flat por requestDate
+  const uniqueSeen = new Set();
+  db.cleaningRequests = db.cleaningRequests.filter(r => {
+    if (!r) return false;
+    const key = `${r.flatNumber || r.flatId}_${r.requestDate}_${r.status}`;
+    if (uniqueSeen.has(key)) return false;
+    uniqueSeen.add(key);
+    return true;
+  });
+
+  // 5. Garantir valores corretos das taxas quinzenais
+  if (!db.cleaningRates) {
+    db.cleaningRates = { defaultRatePerRoom: 35.00, userRates: { "2": 22.50, "3": 23.25 } };
+  } else {
+    if (!db.cleaningRates.userRates) db.cleaningRates.userRates = {};
+    if (db.cleaningRates.userRates["2"] === undefined) db.cleaningRates.userRates["2"] = 22.50;
+    if (db.cleaningRates.userRates["3"] === undefined) db.cleaningRates.userRates["3"] = 23.25;
+  }
+}
 
 async function loadDatabase() {
   try {
@@ -686,6 +1007,7 @@ async function loadDatabase() {
           }
           db = { ...db, ...pgLoaded };
           console.log("[PostgreSQL] Estado restaurado da nuvem com sucesso!");
+          sanitizeAndRecoverCleanings();
         }
       } catch (err) {
         console.warn("[PostgreSQL] Falha ao sincronizar estado inicial:", err.message);
@@ -818,6 +1140,7 @@ async function loadDatabase() {
     if (!db.users || db.users.length === 0) {
       db.users = defaultUsers;
     }
+    sanitizeAndRecoverCleanings();
   } catch (err) {
     console.error("[Database] Erro ao ler database:", err);
   }
@@ -1944,8 +2267,9 @@ function getRequestsForDate(dateStr) {
       c.requestDate === dateStr
     );
 
+    const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
     const card = {
-      id: existingCleaning ? existingCleaning.id : (pmsRes.id || (10000 + flat.id)),
+      id: existingCleaning ? existingCleaning.id : (maxId + 1),
       flatId: flat.id,
       flatNumber: flat.number,
       requestDate: dateStr,
@@ -1970,7 +2294,7 @@ function getRequestsForDate(dateStr) {
       updatedAt: existingCleaning ? existingCleaning.updatedAt : `${dateStr}T08:00:00.000Z`
     };
 
-    if (!existingCleaning) {
+    if (!existingCleaning && dateStr >= "2026-09-01") {
       db.cleaningRequests.push(card);
     }
 
@@ -2551,13 +2875,14 @@ app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
       item.pendingObservation = status === "pending_issue" ? (observation || "Pendência registrada") : null;
 
       if (status === "clean") {
-        for (const prev of db.cleaningRequests) {
-          if ((prev.flatId === item.flatId || prev.flatNumber === item.flatNumber) && prev.requestDate <= item.requestDate && (prev.status === "dirty" || prev.status === "will_clean")) {
-            prev.status = "clean";
-            prev.assignedUserId = item.assignedUserId;
-            prev.completedAt = now;
-            prev.updatedAt = now;
+        if (item.cleaningStartedAt && item.completedAt) {
+          const startMs = new Date(item.cleaningStartedAt).getTime();
+          const endMs = new Date(item.completedAt).getTime();
+          if (endMs > startMs) {
+            item.durationMinutes = Math.max(1, Math.round((endMs - startMs) / 60000));
           }
+        } else if (!item.durationMinutes) {
+          item.durationMinutes = 35;
         }
       }
 
@@ -2675,6 +3000,7 @@ app.get("/api/cleaning/history", (req, res) => {
   let list = db.cleaningRequests.filter(r => {
     if (r.status !== "clean") return false;
     const effectiveDate = (r.completedAt ? r.completedAt.substring(0, 10) : r.requestDate);
+    if (effectiveDate < "2026-09-01") return false;
     if (effectiveDate < startDate || effectiveDate > endDate) return false;
     if (userAuth?.role === "camareira" && r.assignedUserId !== userAuth.id) return false;
     return true;
@@ -2699,6 +3025,7 @@ app.get("/api/cleaning/history", (req, res) => {
       flatNumber: flat ? flat.number : (r.flatNumber || String(r.flatId)),
       requestDate: r.requestDate,
       effectiveDate: (r.completedAt ? r.completedAt.substring(0, 10) : r.requestDate),
+      executionDate: (r.completedAt ? r.completedAt.substring(0, 10) : r.requestDate),
       status: r.status,
       isPriority: r.isPriority || false,
       source: r.source || "checkout",
@@ -3126,6 +3453,7 @@ app.get("/api/analytics/report", (req, res) => {
   const completedCleanings = (db.cleaningRequests || []).filter(r => {
     if (r.status !== "clean" || r.isBedAdjustmentOnly || r.isPaidCleaning === false) return false;
     const effectiveDate = (r.completedAt ? r.completedAt.substring(0, 10) : r.requestDate);
+    if (effectiveDate < "2026-09-01") return false;
     return effectiveDate >= startDate && effectiveDate <= endDate;
   });
 
@@ -3137,8 +3465,8 @@ app.get("/api/analytics/report", (req, res) => {
     const userCleanings = completedCleanings
       .filter(c => c.assignedUserId === u.id)
       .sort((a, b) => {
-        const dateA = a.requestDate || "";
-        const dateB = b.requestDate || "";
+        const dateA = a.completedAt ? a.completedAt.substring(0, 10) : (a.requestDate || "");
+        const dateB = b.completedAt ? b.completedAt.substring(0, 10) : (b.requestDate || "");
         const c = dateA.localeCompare(dateB);
         if (c !== 0) return c;
         return Number(String(a.flatNumber).replace(/\D/g, "") || 0) - Number(String(b.flatNumber).replace(/\D/g, "") || 0);
@@ -3190,10 +3518,12 @@ app.get("/api/analytics/report", (req, res) => {
           id: c.id,
           flatNumber: flat ? flat.number : (c.flatNumber || String(c.flatId)),
           requestDate: c.requestDate,
+          effectiveDate: (c.completedAt ? c.completedAt.substring(0, 10) : c.requestDate),
           cleaningStartedAt: c.cleaningStartedAt,
           completedAt: c.completedAt,
-          durationMinutes: itemDuration,
-          rate: ratePerRoom
+          durationMinutes: c.durationMinutes || itemDuration,
+          rate: ratePerRoom,
+          leavingGuest: c.leavingGuest || null
         };
       }),
       totalHoursSpent: Number((totalMinutes / 60).toFixed(1))
