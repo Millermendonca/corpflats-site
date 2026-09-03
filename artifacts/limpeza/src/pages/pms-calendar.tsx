@@ -14,7 +14,8 @@ import { Switch } from "@/components/ui/switch"
 import { 
   CalendarDays, Plus, ChevronLeft, ChevronRight, Search, 
   Calendar as CalendarIcon, User, Users, Phone, Mail, ShieldAlert, CheckCircle2,
-  Clock, DollarSign, BedDouble, AlertTriangle, Lock, Trash2, Edit3, MessageCircle, KeyRound, Sparkles, FileText, Tag, Coffee, Building2, Wind, Zap, Bed, Check, RotateCcw, AlertCircle, RefreshCw, SlidersHorizontal, Copy
+  Clock, DollarSign, BedDouble, AlertTriangle, Lock, Trash2, Edit3, MessageCircle, KeyRound, Sparkles, FileText, Tag, Coffee, Building2, Wind, Zap, Bed, Check, RotateCcw, AlertCircle, RefreshCw, SlidersHorizontal, Copy,
+  LogIn, LogOut, TrendingUp
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { 
@@ -52,6 +53,7 @@ export default function PmsCalendar() {
   })
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState("")
+  const [breakfastTomorrow, setBreakfastTomorrow] = useState<{ totalOrders: number; totalGuests: number } | null>(null)
 
   // Modal States
   const [resModalOpen, setResModalOpen] = useState(false)
@@ -461,6 +463,19 @@ export default function PmsCalendar() {
       const json = await res.json()
       setData(json)
       fetchCompanies()
+
+      // Busca pedidos de café da manhã para amanhã
+      try {
+        const tomorrowStr = format(addDays(new Date(), 1), "yyyy-MM-dd")
+        const bfRes = await fetch(`/api/breakfast/orders?date=${tomorrowStr}`, { credentials: "include" })
+        if (bfRes.ok) {
+          const bfJson = await bfRes.json()
+          setBreakfastTomorrow({
+            totalOrders: bfJson.totalOrders ?? 0,
+            totalGuests: bfJson.totalGuests ?? 0
+          })
+        }
+      } catch {}
     } finally {
       setLoading(false)
     }
@@ -935,19 +950,81 @@ export default function PmsCalendar() {
     } catch {}
   }
 
-  // Monthly stats
-  const totalNights = data.reservations.reduce((acc, r) => {
-    try {
-      const d1 = parseISO(r.checkinDate)
-      const d2 = parseISO(r.checkoutDate)
-      return acc + Math.max(1, differenceInDays(d2, d1))
-    } catch {
-      return acc
-    }
+  // ── Métricas Operacionais e Resumos do Dia / Mês ──
+  const todayDate = new Date()
+  const todayStr = format(todayDate, "yyyy-MM-dd")
+  const tomorrowDate = addDays(todayDate, 1)
+  const tomorrowStr = format(tomorrowDate, "yyyy-MM-dd")
+
+  // 1. Ocupação do Mês (apenas até o dia atual / Month-to-date)
+  const monthStartDate = startOfMonth(todayDate)
+  const monthDaysElapsed = eachDayOfInterval({ start: monthStartDate, end: todayDate })
+  let occupiedNightsMtd = 0
+  monthDaysElapsed.forEach(day => {
+    const dStr = format(day, "yyyy-MM-dd")
+    const occupiedOnDay = data.reservations.filter(r => 
+      r.status !== "cancelada" && r.checkinDate <= dStr && r.checkoutDate > dStr
+    ).length
+    occupiedNightsMtd += occupiedOnDay
+  })
+  const totalCapacityMtd = data.flats.length * monthDaysElapsed.length
+  const mtdOccupancyRate = totalCapacityMtd > 0 ? Math.round((occupiedNightsMtd / totalCapacityMtd) * 100) : 0
+
+  // 2. Quartos Livres no Dia (sem reserva dormindo hoje e sem bloqueio ativo)
+  const isFlatOccupiedToday = (flatId: number | string) => {
+    return data.reservations.some(r => 
+      r.status !== "cancelada" &&
+      String(r.flatId) === String(flatId) &&
+      r.checkinDate <= todayStr &&
+      r.checkoutDate > todayStr
+    )
+  }
+  const isFlatBlockedToday = (flatId: number | string) => {
+    return data.blocks.some(b => 
+      String(b.flatId) === String(flatId) &&
+      b.startDate <= todayStr &&
+      b.endDate >= todayStr
+    )
+  }
+  const freeFlatsTodayCount = data.flats.filter(f => !isFlatOccupiedToday(f.id) && !isFlatBlockedToday(f.id)).length
+
+  // 3. Check-ins no Dia
+  const checkinsToday = data.reservations.filter(r => 
+    r.status !== "cancelada" && r.checkinDate === todayStr
+  )
+  const checkinsTodayCount = checkinsToday.length
+
+  // 4. Pessoas Entrando no Dia
+  const incomingGuestsTodayCount = checkinsToday.reduce((acc, r) => {
+    const count = Number(r.guestCount) || (Array.isArray(r.guests) && r.guests.length > 0 ? r.guests.length : 1)
+    return acc + count
   }, 0)
 
-  const totalRevenue = data.reservations.reduce((acc, r) => acc + (Number(r.totalAmount) || 0), 0)
-  const occupancyRate = data.flats.length > 0 ? Math.round((totalNights / (data.flats.length * daysInView.length)) * 100) : 0
+  // 5. Check-outs no Dia
+  const checkoutsToday = data.reservations.filter(r => 
+    r.status !== "cancelada" && r.checkoutDate === todayStr
+  )
+  const checkoutsTodayCount = checkoutsToday.length
+
+  // 6. Stayovers no Dia (entraram antes de hoje e saem após hoje)
+  const stayoversToday = data.reservations.filter(r => 
+    r.status !== "cancelada" && r.checkinDate < todayStr && r.checkoutDate > todayStr
+  )
+  const stayoversTodayCount = stayoversToday.length
+
+  // 7. Pedidos com Café da Manhã para o Dia Seguinte ao Atual
+  const reservationsTomorrowWithBf = data.reservations.filter(r => 
+    r.status !== "cancelada" && 
+    r.checkinDate <= tomorrowStr && 
+    r.checkoutDate > tomorrowStr && 
+    Boolean(r.includeBreakfast || r.hasBreakfast)
+  )
+  const tomorrowBreakfastOrdersCount = breakfastTomorrow !== null 
+    ? breakfastTomorrow.totalOrders 
+    : reservationsTomorrowWithBf.length
+  const tomorrowBreakfastGuestsCount = breakfastTomorrow !== null 
+    ? breakfastTomorrow.totalGuests 
+    : reservationsTomorrowWithBf.reduce((acc, r) => acc + (Number(r.guestCount) || 1), 0)
 
   if (!loadingUser && user?.role !== "admin") {
     return <AccessDenied moduleName="o Livro de Reservas & Mapa de Ocupação" />
@@ -980,23 +1057,106 @@ export default function PmsCalendar() {
           </div>
         </div>
 
-        {/* Stats Row */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <Card className="rounded-xl border shadow-2xs p-3">
-            <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Ocupação do Mês</div>
-            <div className="text-2xl font-black text-slate-900 dark:text-slate-100 mt-1">{occupancyRate}%</div>
+        {/* Stats Row - 7 Cards Operacionais */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3">
+          {/* Card 1: Ocupação do Mês (apenas até o dia atual) */}
+          <Card className="rounded-xl border shadow-2xs p-3 flex flex-col justify-between hover:border-primary/40 transition-colors bg-card">
+            <div className="flex items-center justify-between text-muted-foreground">
+              <span className="text-[11px] font-bold uppercase tracking-wider">Ocupação do Mês</span>
+              <Building2 className="w-4 h-4 text-primary shrink-0" />
+            </div>
+            <div className="mt-1.5">
+              <div className="text-2xl font-black text-slate-900 dark:text-slate-100">{mtdOccupancyRate}%</div>
+              <div className="text-[10.5px] text-muted-foreground font-medium mt-0.5 truncate" title={`Até hoje (${occupiedNightsMtd}/${totalCapacityMtd} diárias no mês)`}>
+                Até hoje ({occupiedNightsMtd}/{totalCapacityMtd} d.)
+              </div>
+            </div>
           </Card>
-          <Card className="rounded-xl border shadow-2xs p-3">
-            <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Diárias Reservadas</div>
-            <div className="text-2xl font-black text-slate-900 dark:text-slate-100 mt-1">{totalNights} noites</div>
+
+          {/* Card 2: Quartos Livres no Dia */}
+          <Card className="rounded-xl border shadow-2xs p-3 flex flex-col justify-between hover:border-emerald-500/40 transition-colors bg-card">
+            <div className="flex items-center justify-between text-muted-foreground">
+              <span className="text-[11px] font-bold uppercase tracking-wider">Quartos Livres</span>
+              <BedDouble className="w-4 h-4 text-emerald-600 shrink-0" />
+            </div>
+            <div className="mt-1.5">
+              <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400">{freeFlatsTodayCount}</div>
+              <div className="text-[10.5px] text-muted-foreground font-medium mt-0.5 truncate" title={`${freeFlatsTodayCount} de ${data.flats.length} flats livres hoje`}>
+                de {data.flats.length} flats hoje
+              </div>
+            </div>
           </Card>
-          <Card className="rounded-xl border shadow-2xs p-3">
-            <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Faturamento Previsto</div>
-            <div className="text-2xl font-black text-emerald-600 mt-1">R$ {totalRevenue.toLocaleString("pt-BR")}</div>
+
+          {/* Card 3: Check-ins no Dia */}
+          <Card className="rounded-xl border shadow-2xs p-3 flex flex-col justify-between hover:border-emerald-500/40 transition-colors bg-card">
+            <div className="flex items-center justify-between text-muted-foreground">
+              <span className="text-[11px] font-bold uppercase tracking-wider">Check-ins</span>
+              <LogIn className="w-4 h-4 text-emerald-600 shrink-0" />
+            </div>
+            <div className="mt-1.5">
+              <div className="text-2xl font-black text-slate-900 dark:text-slate-100">{checkinsTodayCount}</div>
+              <div className="text-[10.5px] text-muted-foreground font-medium mt-0.5 truncate">
+                {checkinsTodayCount === 1 ? '1 quarto chegando' : `${checkinsTodayCount} quartos chegando`}
+              </div>
+            </div>
           </Card>
-          <Card className="rounded-xl border shadow-2xs p-3">
-            <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Reservas Ativas</div>
-            <div className="text-2xl font-black text-primary mt-1">{data.reservations.length}</div>
+
+          {/* Card 4: Pessoas Entrando no Dia */}
+          <Card className="rounded-xl border shadow-2xs p-3 flex flex-col justify-between hover:border-indigo-500/40 transition-colors bg-card">
+            <div className="flex items-center justify-between text-muted-foreground">
+              <span className="text-[11px] font-bold uppercase tracking-wider">Pessoas Entrando</span>
+              <Users className="w-4 h-4 text-indigo-600 shrink-0" />
+            </div>
+            <div className="mt-1.5">
+              <div className="text-2xl font-black text-indigo-600 dark:text-indigo-400">{incomingGuestsTodayCount}</div>
+              <div className="text-[10.5px] text-muted-foreground font-medium mt-0.5 truncate">
+                {incomingGuestsTodayCount === 1 ? '1 pessoa prevista' : `${incomingGuestsTodayCount} pessoas previstas`}
+              </div>
+            </div>
+          </Card>
+
+          {/* Card 5: Check-outs no Dia */}
+          <Card className="rounded-xl border shadow-2xs p-3 flex flex-col justify-between hover:border-rose-500/40 transition-colors bg-card">
+            <div className="flex items-center justify-between text-muted-foreground">
+              <span className="text-[11px] font-bold uppercase tracking-wider">Check-outs</span>
+              <LogOut className="w-4 h-4 text-rose-500 shrink-0" />
+            </div>
+            <div className="mt-1.5">
+              <div className="text-2xl font-black text-rose-600 dark:text-rose-400">{checkoutsTodayCount}</div>
+              <div className="text-[10.5px] text-muted-foreground font-medium mt-0.5 truncate">
+                {checkoutsTodayCount === 1 ? '1 saída hoje' : `${checkoutsTodayCount} saídas hoje`}
+              </div>
+            </div>
+          </Card>
+
+          {/* Card 6: Stayovers no Dia */}
+          <Card className="rounded-xl border shadow-2xs p-3 flex flex-col justify-between hover:border-sky-500/40 transition-colors bg-card">
+            <div className="flex items-center justify-between text-muted-foreground">
+              <span className="text-[11px] font-bold uppercase tracking-wider">Stayovers</span>
+              <RotateCcw className="w-4 h-4 text-sky-600 shrink-0" />
+            </div>
+            <div className="mt-1.5">
+              <div className="text-2xl font-black text-slate-900 dark:text-slate-100">{stayoversTodayCount}</div>
+              <div className="text-[10.5px] text-muted-foreground font-medium mt-0.5 truncate">
+                {stayoversTodayCount === 1 ? '1 estadia contínua' : `${stayoversTodayCount} estadias contínuas`}
+              </div>
+            </div>
+          </Card>
+
+          {/* Card 7: Pedidos de Café da Manhã para o Dia Seguinte */}
+          <Card className="rounded-xl border shadow-2xs p-3 flex flex-col justify-between hover:border-amber-500/40 transition-colors bg-card">
+            <div className="flex items-center justify-between text-muted-foreground">
+              <span className="text-[11px] font-bold uppercase tracking-wider">Café Amanhã</span>
+              <Coffee className="w-4 h-4 text-amber-500 shrink-0" />
+            </div>
+            <div className="mt-1.5">
+              <div className="text-2xl font-black text-amber-600 dark:text-amber-400">
+                {tomorrowBreakfastOrdersCount} {tomorrowBreakfastOrdersCount === 1 ? 'pedido' : 'pedidos'}
+              </div>
+              <div className="text-[10.5px] text-muted-foreground font-medium mt-0.5 truncate" title={`${tomorrowBreakfastOrdersCount} pedidos agendados (${tomorrowBreakfastGuestsCount} pessoas) • ${reservationsTomorrowWithBf.length} reservas com café`}>
+                {tomorrowBreakfastGuestsCount} {tomorrowBreakfastGuestsCount === 1 ? 'pessoa' : 'pessoas'} {reservationsTomorrowWithBf.length > 0 ? `(${reservationsTomorrowWithBf.length} c/ café)` : ''}
+              </div>
+            </div>
           </Card>
         </div>
 
