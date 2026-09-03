@@ -4114,7 +4114,8 @@
       "isConfigured": true,
       "sandbox": false,
       "updatedAt": "2026-08-26T00:30:00.000Z"
-    }
+    },
+    "breakfastReminderTemplate": "Olá {nome}, vimos que ainda não efetuou o seu pedido do café da manhã para o Flat {quarto} ({data}). Clique aqui e peça agora: {link}. Precisamos recebê-lo o quanto antes para programar a produção e envio no horário escolhido!"
   },
   "siteConfig": {
     "theme": {

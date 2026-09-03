@@ -399,6 +399,59 @@ export default function GuestPortal() {
           </div>
         </Card>
 
+        {/* Card: Café da Manhã no Flat (Se incluso na reserva) */}
+        {(reservation.hasBreakfast || reservation.includeBreakfast || data.hasBreakfast) && (
+          <Card className="bg-gradient-to-br from-amber-950/50 via-slate-900 to-slate-900 border-amber-600/40 text-white rounded-3xl p-5 sm:p-6 shadow-xl space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-800/40 pb-3.5">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-xl border border-amber-500/30 shadow-xs">
+                  <Coffee className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-base font-black text-white flex items-center gap-2">
+                    Café da Manhã no Flat
+                  </h2>
+                  <span className="text-[11px] text-amber-300/90 font-medium">
+                    Room service artesanal servido pontualmente no seu apartamento
+                  </span>
+                </div>
+              </div>
+              <Badge className="bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-black px-2.5 py-0.5">
+                ☕ Incluso na Diária
+              </Badge>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Sua estadia no <strong>Apt {reservation.flatNumber}</strong> conta com café da manhã incluso entregue diretamente no seu quarto das <strong>05:00 às 09:30</strong>. Você pode montar suas opções favoritas e escolher o horário ideal através do seu link exclusivo.
+            </p>
+
+            <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5 pt-1">
+              <Button
+                onClick={() => window.open(`/cafe?res=${reservation.code || reservation.breakfastToken || code}`, "_blank")}
+                className="w-full sm:w-auto bg-amber-600 hover:bg-amber-500 text-white font-black text-xs h-11 px-5 rounded-2xl shadow-lg shadow-amber-600/20 flex items-center justify-center gap-2 flex-1 transition-all"
+              >
+                <Coffee className="w-4 h-4" />
+                <span>Montar / Acompanhar Pedido de Café da Manhã</span>
+                <ArrowRight className="w-4 h-4" />
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  const url = `${window.location.origin}/cafe?res=${reservation.code || reservation.breakfastToken || code}`
+                  navigator.clipboard.writeText(url)
+                  alert("Link exclusivo do café da manhã copiado para a área de transferência!")
+                }}
+                className="h-11 px-4 rounded-2xl border-slate-700 hover:bg-slate-800 text-slate-200 font-bold text-xs shrink-0"
+              >
+                <Copy className="w-3.5 h-3.5 mr-1.5" />
+                <span>Copiar Link</span>
+              </Button>
+            </div>
+          </Card>
+        )}
+
         {/* Card: Comprovante & Detalhes Oficiais do Pagamento */}
         <Card className="bg-slate-900 border-slate-800 text-white rounded-3xl p-5 sm:p-6 shadow-xl space-y-4">
           <div className="flex items-center justify-between border-b border-slate-800 pb-3">

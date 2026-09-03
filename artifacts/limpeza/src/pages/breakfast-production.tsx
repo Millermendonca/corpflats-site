@@ -70,6 +70,63 @@ export default function BreakfastProduction() {
   const [manualNotes, setManualNotes] = useState("")
   const [savingManual, setSavingManual] = useState(false)
 
+  // Reminder Template Modal & States
+  const [reminderModalOpen, setReminderModalOpen] = useState(false)
+  const [reminderTemplate, setReminderTemplate] = useState(
+    "Olá {nome}, vimos que você ainda não efetuou o seu pedido de café da manhã para o Flat {quarto} ({data}). Clique no link a seguir para escolher seus itens e horário: {link}. Precisamos recebê-lo o quanto antes para programar a produção e envio no horário escolhido!"
+  )
+  const [savingReminderTemplate, setSavingReminderTemplate] = useState(false)
+
+  const handleSendReminder = (room: any) => {
+    const guestName = room.guestName || "Hóspede"
+    const flatNumber = room.flatNumber || ""
+    const formattedDate = labelDate(currentDate)
+    const link = `${window.location.origin}/cafe?res=${room.reservationCode || room.breakfastToken}`
+
+    let msg = reminderTemplate
+      .replace(/\{nome\}/gi, guestName)
+      .replace(/\{quarto\}/gi, flatNumber)
+      .replace(/\{data\}/gi, formattedDate)
+      .replace(/\{link\}/gi, link)
+
+    const phone = (room.guestPhone || "").replace(/\D/g, "")
+    if (!phone) {
+      navigator.clipboard.writeText(msg)
+      alert(`O hóspede ${guestName} (Flat ${flatNumber}) não possui telefone com WhatsApp cadastrado. O texto de lembrete com o link foi copiado para a sua área de transferência!`)
+      return
+    }
+
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, "_blank")
+  }
+
+  const handleCopyRoomLink = (room: any) => {
+    const link = `${window.location.origin}/cafe?res=${room.reservationCode || room.breakfastToken}`
+    navigator.clipboard.writeText(link)
+    alert(`Link exclusivo do café para o Flat ${room.flatNumber} copiado!`)
+  }
+
+  const handleSaveReminderTemplate = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setSavingReminderTemplate(true)
+    try {
+      const res = await fetch("/api/breakfast/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reminderTemplate }),
+        credentials: "include"
+      })
+      if (res.ok) {
+        setReminderModalOpen(false)
+        alert("Mensagem padrão de lembrete salva com sucesso!")
+        fetchOrders()
+      }
+    } catch {
+      alert("Erro ao salvar mensagem padrão de lembrete.")
+    } finally {
+      setSavingReminderTemplate(false)
+    }
+  }
+
   const fetchStdConfig = async () => {
     try {
       const res = await fetch("/api/breakfast/standard-config", { credentials: "include" })
@@ -86,6 +143,9 @@ export default function BreakfastProduction() {
       const res = await fetch(`/api/breakfast/orders?date=${currentDate}`, { credentials: "include" })
       const json = await res.json()
       setData(json)
+      if (json.reminderTemplate) {
+        setReminderTemplate(json.reminderTemplate)
+      }
     } finally {
       setLoading(false)
     }
@@ -402,38 +462,153 @@ export default function BreakfastProduction() {
 
             {/* Top KPIs Row */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <Card className="rounded-xl border shadow-2xs p-3.5">
-                <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Quartos com Pedido</div>
-                <div className="text-2xl font-black text-slate-900 dark:text-slate-100 mt-1">
-                  {data?.totalOrders || 0}
+              <Card className="rounded-xl border shadow-2xs p-3.5 bg-card">
+                <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Café Contratado no Dia</div>
+                <div className="text-2xl font-black text-slate-900 dark:text-slate-100 mt-1 flex items-baseline gap-1">
+                  <span>{data?.totalEligible ?? ((data?.totalOrders || 0) + (data?.pendingRooms?.length || 0))}</span>
+                  <span className="text-xs font-bold text-muted-foreground">flats</span>
                 </div>
-                <div className="text-[10px] text-muted-foreground mt-0.5">apartamentos agendados</div>
+                <div className="text-[10px] text-muted-foreground mt-0.5">com café da manhã incluso</div>
+              </Card>
+
+              <Card className="rounded-xl border shadow-2xs p-3.5 bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800">
+                <div className="text-[11px] font-semibold text-emerald-800 dark:text-emerald-300 uppercase tracking-wider">Pedidos Concluídos</div>
+                <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-1 flex items-baseline gap-1">
+                  <span>{data?.totalOrders || 0}</span>
+                  <span className="text-xs font-bold text-emerald-700/70">agendados</span>
+                </div>
+                <div className="text-[10px] text-emerald-700/80 dark:text-emerald-400/70 mt-0.5">horário & opções definidos</div>
+              </Card>
+
+              <Card className={`rounded-xl border shadow-2xs p-3.5 transition-all ${
+                (data?.pendingRooms?.length || 0) > 0 
+                  ? "bg-amber-50/60 dark:bg-amber-950/30 border-amber-300 dark:border-amber-700 ring-1 ring-amber-400/40" 
+                  : "bg-card"
+              }`}>
+                <div className={`text-[11px] font-semibold uppercase tracking-wider ${
+                  (data?.pendingRooms?.length || 0) > 0 ? "text-amber-800 dark:text-amber-300" : "text-muted-foreground"
+                }`}>
+                  Aguardando Pedido
+                </div>
+                <div className={`text-2xl font-black mt-1 flex items-baseline gap-1 ${
+                  (data?.pendingRooms?.length || 0) > 0 ? "text-amber-600 dark:text-amber-400" : "text-slate-400"
+                }`}>
+                  <span>{data?.totalPending ?? data?.pendingRooms?.length ?? 0}</span>
+                  <span className="text-xs font-bold">pendentes</span>
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-0.5">ainda não escolheram</div>
               </Card>
 
               <Card className="rounded-xl border shadow-2xs p-3.5">
                 <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Hóspedes Atendidos</div>
-                <div className="text-2xl font-black text-amber-600 mt-1">
+                <div className="text-2xl font-black text-slate-900 dark:text-slate-100 mt-1">
                   {data?.totalGuests || 0}
                 </div>
-                <div className="text-[10px] text-muted-foreground mt-0.5">pessoas no café da manhã</div>
-              </Card>
-
-              <Card className="rounded-xl border shadow-2xs p-3.5">
-                <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Horários com Entregas</div>
-                <div className="text-2xl font-black text-slate-900 dark:text-slate-100 mt-1">
-                  {data?.timeSlots?.length || 0}
-                </div>
-                <div className="text-[10px] text-muted-foreground mt-0.5">slots espaçados em 7 min</div>
-              </Card>
-
-              <Card className="rounded-xl border shadow-2xs p-3.5 bg-amber-50/50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800">
-                <div className="text-[11px] font-semibold text-amber-900 dark:text-amber-300 uppercase tracking-wider">Capacidade por Quarto</div>
-                <div className="text-xs font-bold text-amber-700 dark:text-amber-400 mt-1 truncate">
-                  1 a 3 Pessoas por Reserva
-                </div>
-                <div className="text-[10px] text-muted-foreground mt-0.5">Sem opção para 4 pessoas</div>
+                <div className="text-[10px] text-muted-foreground mt-0.5">pessoas com pedido confirmado</div>
               </Card>
             </div>
+
+            {/* Seção: Quartos com Café Aguardando Pedido */}
+            {data?.pendingRooms && data.pendingRooms.length > 0 && (
+              <Card className="rounded-2xl border-amber-300 dark:border-amber-700/60 bg-gradient-to-r from-amber-50/80 via-background to-background dark:from-amber-950/30 dark:via-background dark:to-background shadow-sm overflow-hidden">
+                <CardHeader className="p-4 sm:p-5 border-b border-amber-200 dark:border-amber-800/40 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="relative flex h-3 w-3">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500"></span>
+                      </span>
+                      <CardTitle className="text-base font-black text-amber-950 dark:text-amber-200 flex items-center gap-2">
+                        Quartos com Café Aguardando Pedido ({data.pendingRooms.length})
+                      </CardTitle>
+                      <Badge className="bg-amber-500/20 text-amber-700 dark:text-amber-300 border-amber-500/30 font-black text-[10px]">
+                        Lembrete Pendente
+                      </Badge>
+                    </div>
+                    <CardDescription className="text-xs text-amber-900/80 dark:text-amber-300/80">
+                      Estes apartamentos têm café da manhã contratado para <strong>{labelDate(currentDate)}</strong>, mas ainda não enviaram as opções e o horário. Envie o lembrete com link exclusivo pelo WhatsApp.
+                    </CardDescription>
+                  </div>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setReminderModalOpen(true)}
+                    className="h-8 text-xs font-bold gap-1.5 border-amber-500/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100/50 dark:hover:bg-amber-950 shrink-0"
+                  >
+                    <Edit2 className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Editar Mensagem Padrão</span>
+                  </Button>
+                </CardHeader>
+
+                <CardContent className="p-4 sm:p-5">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {data.pendingRooms.map((room: any, idx: number) => (
+                      <div 
+                        key={room.reservationId || idx}
+                        className="p-4 rounded-xl border border-amber-200/80 dark:border-amber-800/40 bg-card hover:shadow-md transition-all space-y-3"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-700 dark:text-amber-300 flex items-center justify-center font-black text-base border border-amber-500/30">
+                              {room.flatNumber}
+                            </div>
+                            <div>
+                              <div className="font-bold text-sm text-foreground leading-tight">
+                                {room.guestName}
+                              </div>
+                              <div className="text-[11px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
+                                <span>{room.guestCount} {room.guestCount === 1 ? "pessoa" : "pessoas"}</span>
+                                <span>•</span>
+                                <span>{room.guestPhone || "Sem telefone"}</span>
+                              </div>
+                            </div>
+                          </div>
+                          <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border-amber-300 text-[10px] font-bold">
+                            Aguardando Pedido
+                          </Badge>
+                        </div>
+
+                        <div className="pt-1 flex items-center gap-1.5">
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => handleSendReminder(room)}
+                            className="flex-1 h-8 text-xs font-bold gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs"
+                          >
+                            <MessageCircle className="w-3.5 h-3.5" />
+                            <span>Enviar Lembrete</span>
+                          </Button>
+
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleCopyRoomLink(room)}
+                            title="Copiar Link Individual do Café"
+                            className="h-8 px-2.5 text-xs font-bold border-muted-foreground/30 hover:bg-muted"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                          </Button>
+
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => window.open(room.breakfastLink || `/cafe?res=${room.reservationCode || room.breakfastToken}`, "_blank")}
+                            title="Abrir página de pedido do hóspede"
+                            className="h-8 px-2.5 text-xs text-muted-foreground hover:text-foreground"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
             {/* Daily Insumes Required */}
             {data?.itemTotals && data.itemTotals.length > 0 && (
@@ -1036,6 +1211,104 @@ export default function BreakfastProduction() {
                 <Button type="submit" disabled={savingStdConfig} className="bg-amber-600 hover:bg-amber-700 text-white font-bold">
                   {savingStdConfig ? "Salvando..." : "Salvar Configuração"}
                 </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal: Editar Mensagem Padrão de Lembrete */}
+        <Dialog open={reminderModalOpen} onOpenChange={setReminderModalOpen}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-base font-bold">
+                <MessageCircle className="w-4 h-4 text-emerald-600" />
+                <span>Editar Mensagem Padrão de Lembrete</span>
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                Esta mensagem será utilizada ao clicar em <strong>Enviar Lembrete</strong> para os hóspedes com café que ainda não enviaram o pedido.
+              </DialogDescription>
+            </DialogHeader>
+
+            <form onSubmit={handleSaveReminderTemplate} className="space-y-4 pt-1">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-bold">Texto da Mensagem</Label>
+                  <span className="text-[11px] text-muted-foreground">Clique para adicionar tags:</span>
+                </div>
+
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    { tag: "{nome}", label: "Nome do Hóspede" },
+                    { tag: "{quarto}", label: "Número do Quarto" },
+                    { tag: "{data}", label: "Data da Entrega" },
+                    { tag: "{link}", label: "Link Individual do Café" },
+                  ].map(v => (
+                    <button
+                      key={v.tag}
+                      type="button"
+                      onClick={() => setReminderTemplate(prev => prev + " " + v.tag)}
+                      className="text-[11px] px-2 py-0.5 bg-muted hover:bg-muted/80 rounded-md font-mono border border-border text-foreground transition-colors"
+                      title={v.label}
+                    >
+                      <span className="font-bold text-amber-600 dark:text-amber-400">{v.tag}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <Textarea
+                  value={reminderTemplate}
+                  onChange={(e) => setReminderTemplate(e.target.value)}
+                  rows={5}
+                  required
+                  className="text-xs font-mono leading-relaxed"
+                  placeholder="Digite a mensagem padrão..."
+                />
+              </div>
+
+              {/* Live Preview */}
+              <div className="p-3 bg-muted/40 rounded-xl border space-y-1.5">
+                <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider block">
+                  Pré-visualização do texto no WhatsApp:
+                </span>
+                <div className="text-xs text-slate-800 dark:text-slate-200 bg-background/80 p-2.5 rounded-lg border leading-relaxed break-words">
+                  {reminderTemplate
+                    .replace(/\{nome\}/gi, "Carlos Silva")
+                    .replace(/\{quarto\}/gi, "113")
+                    .replace(/\{data\}/gi, labelDate(currentDate))
+                    .replace(/\{link\}/gi, `${window.location.origin}/cafe?res=RES-113-0034`)
+                  }
+                </div>
+              </div>
+
+              <DialogFooter className="gap-2 sm:gap-0 pt-2 border-t">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setReminderTemplate("Olá {nome}, vimos que você ainda não efetuou o seu pedido de café da manhã para o Flat {quarto} ({data}). Clique no link a seguir para escolher seus itens e horário: {link}. Precisamos recebê-lo o quanto antes para programar a produção e envio no horário escolhido!")}
+                  className="text-xs text-muted-foreground hover:text-foreground mr-auto"
+                >
+                  Restaurar Padrão
+                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setReminderModalOpen(false)}
+                    className="text-xs"
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    type="submit"
+                    size="sm"
+                    disabled={savingReminderTemplate}
+                    className="text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white"
+                  >
+                    {savingReminderTemplate ? "Salvando..." : "Salvar Mensagem"}
+                  </Button>
+                </div>
               </DialogFooter>
             </form>
           </DialogContent>

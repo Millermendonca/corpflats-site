@@ -4678,6 +4678,17 @@ app.get("/api/pms/guest-portal/:code", (req, res) => {
   const totalGuests = r.guests?.length || r.guestCount || 1;
   const completedCheckins = (r.guests || []).filter(g => g.hasCompletedCheckin).length;
 
+  const hasBreakfast = Boolean(
+    r.includeBreakfast !== undefined ? r.includeBreakfast : (
+      r.hasBreakfast || 
+      r.ratePlan === "with_breakfast" ||
+      r.notes?.toLowerCase().includes("café") || 
+      r.notes?.toLowerCase().includes("cafe")
+    )
+  );
+  const breakfastToken = r.breakfastToken || `bfk_${r.id}_${crypto.randomBytes(4).toString("hex")}`;
+  const breakfastLink = `/cafe?res=${r.code || breakfastToken}`;
+
   res.json({
     reservation: {
       id: r.id,
@@ -4699,7 +4710,10 @@ app.get("/api/pms/guest-portal/:code", (req, res) => {
       pixEndToEndId: r.pixEndToEndId || null,
       mpPaymentId: r.mpPaymentId || null,
       mpPreferenceId: r.mpPreferenceId || null,
-      hasBreakfast: Boolean(r.notes?.toLowerCase().includes("café") || r.notes?.toLowerCase().includes("cafe")),
+      hasBreakfast,
+      includeBreakfast: hasBreakfast,
+      breakfastToken,
+      breakfastLink,
       earlyCheckinAuthorized: Boolean(r.earlyCheckinAuthorized),
       flatNumber: r.flatNumber,
       roomCategory: "Flat Studio Executivo Completo",
@@ -4709,6 +4723,8 @@ app.get("/api/pms/guest-portal/:code", (req, res) => {
       receptionNotes: r.receptionNotes || "",
       vehicle: r.vehicle || null
     },
+    hasBreakfast,
+    breakfastLink,
     checkinPolicy: `Check-in padrão a partir das ${checkinTimeStr} (Check-in antecipado liberado na portaria assim que o flat estiver limpo).`,
     checkinTime: checkinTimeStr,
     checkoutTime: checkoutTimeStr,
@@ -8388,14 +8404,92 @@ app.get("/api/breakfast/orders", (req, res) => {
     }))
     .sort((a, b) => a.time.localeCompare(b.time));
 
+  // Identificação de todos os quartos elegíveis com café contratado para esta data
+  const eligibleReservations = (db.reservations || []).filter(r => {
+    if (r.status === "cancelada" || r.status === "cancelado") return false;
+    const hasBf = Boolean(
+      r.includeBreakfast !== undefined ? r.includeBreakfast : (
+        r.hasBreakfast || 
+        r.ratePlan === "with_breakfast" ||
+        r.notes?.toLowerCase().includes("café") || 
+        r.notes?.toLowerCase().includes("cafe")
+      )
+    );
+    if (!hasBf) return false;
+
+    if (r.checkinDate === r.checkoutDate) {
+      return date === r.checkinDate;
+    }
+    return date > r.checkinDate && date <= r.checkoutDate;
+  });
+
+  const pendingRooms = [];
+  eligibleReservations.forEach(r => {
+    const flatObj = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
+    const flatNum = String(r.flatNumber || flatObj?.number || r.flatId || "");
+
+    const hasActiveOrder = activeDayOrders.some(o => 
+      (o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) ||
+      (o.reservationId && o.reservationId === r.id) ||
+      (String(o.roomNumber) === flatNum)
+    );
+
+    if (!hasActiveOrder) {
+      pendingRooms.push({
+        reservationId: r.id,
+        reservationCode: r.code,
+        breakfastToken: r.breakfastToken || `bfk_${r.id}_${crypto.randomBytes(4).toString("hex")}`,
+        breakfastLink: `/cafe?res=${r.code || r.breakfastToken}`,
+        flatNumber: flatNum,
+        guestName: r.guestName,
+        guestPhone: r.guestPhone || "",
+        guestCount: r.guestCount || r.adults || 1,
+        checkinDate: r.checkinDate,
+        checkoutDate: r.checkoutDate
+      });
+    }
+  });
+
+  if (!db.settings) db.settings = {};
+  const reminderTemplate = db.settings.breakfastReminderTemplate || DEFAULT_BREAKFAST_REMINDER_TEMPLATE;
+
   res.json({
     date,
     totalOrders: activeDayOrders.length,
     totalCancelled: dayOrders.length - activeDayOrders.length,
     totalGuests: activeDayOrders.reduce((acc, o) => acc + (Number(o.guestCount) || 1), 0),
+    totalEligible: eligibleReservations.length,
+    totalPending: pendingRooms.length,
+    pendingRooms,
+    reminderTemplate,
     orders: dayOrders,
     itemTotals,
     timeSlots
+  });
+});
+
+const DEFAULT_BREAKFAST_REMINDER_TEMPLATE = 
+  "Olá {nome}, vimos que você ainda não efetuou o seu pedido de café da manhã para o Flat {quarto} ({data}). Clique no link a seguir para escolher seus itens e horário: {link}. Precisamos recebê-lo o quanto antes para programar a produção e envio no horário escolhido!";
+
+// GET /api/breakfast/settings (Configurações e template de lembrete de café)
+app.get("/api/breakfast/settings", (req, res) => {
+  if (!db.settings) db.settings = {};
+  res.json({
+    reminderTemplate: db.settings.breakfastReminderTemplate || DEFAULT_BREAKFAST_REMINDER_TEMPLATE
+  });
+});
+
+// POST /api/breakfast/settings (Atualizar template de lembrete de café)
+app.post("/api/breakfast/settings", (req, res) => {
+  if (!db.settings) db.settings = {};
+  const { reminderTemplate } = req.body;
+  if (typeof reminderTemplate === "string") {
+    db.settings.breakfastReminderTemplate = reminderTemplate.trim() || DEFAULT_BREAKFAST_REMINDER_TEMPLATE;
+    saveDatabase();
+  }
+  res.json({
+    success: true,
+    reminderTemplate: db.settings.breakfastReminderTemplate || DEFAULT_BREAKFAST_REMINDER_TEMPLATE
   });
 });
 
