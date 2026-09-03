@@ -1699,20 +1699,14 @@ export default function PmsCalendar() {
               </DialogHeader>
 
               <div className="py-3 space-y-3.5">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between">
-                      <Label className="text-xs font-semibold">Apartamento</Label>
-                      {fairShareResult?.bestFlatNumber && (
-                        <span className="text-[10.5px] text-amber-600 dark:text-amber-400 font-extrabold flex items-center gap-1 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 rounded-lg border border-amber-300 dark:border-amber-700">
-                          <Sparkles className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
-                          Quarto da Vez: <strong>Apt {fairShareResult.bestFlatNumber}</strong>
-                        </span>
-                      )}
-                    </div>
+                <div className="grid grid-cols-2 gap-3 items-start">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold block leading-none h-4 flex items-center">Apartamento</Label>
                     <Select value={formFlatId} onValueChange={(val) => { setFormFlatId(val); setFormForceReplace(false); }}>
-                      <SelectTrigger className="text-xs font-bold">
-                        <SelectValue placeholder="Selecione o Flat" />
+                      <SelectTrigger className="text-xs font-bold h-9">
+                        <SelectValue placeholder="Selecione o Flat">
+                          {formFlatId ? `Apt ${data.flats.find(f => String(f.id) === String(formFlatId))?.number || formFlatId}` : "Selecione o Flat"}
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent className="max-h-60">
                         {data.flats.map(f => {
@@ -1723,21 +1717,21 @@ export default function PmsCalendar() {
 
                           return (
                             <SelectItem key={f.id} value={String(f.id)}>
-                              <div className="flex items-center justify-between gap-3 w-full py-0.5">
-                                <span className="font-black">Apt {f.number}</span>
+                              <div className="flex items-center justify-between gap-2 w-full py-0.5">
+                                <span className="font-bold">Apt {f.number}</span>
                                 {isBest && (
-                                  <span className="text-[9px] bg-amber-500 text-white font-black px-1.5 py-0.5 rounded-md flex items-center gap-0.5">
+                                  <span className="text-[9px] bg-amber-500 text-white font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5">
                                     ✨ Quarto da Vez
                                   </span>
                                 )}
                                 {!isAvail && (
-                                  <span className="text-[9px] bg-rose-500/20 text-rose-600 dark:text-rose-400 font-bold px-1.5 py-0.5 rounded-md">
+                                  <span className="text-[9px] bg-rose-500/20 text-rose-600 dark:text-rose-400 font-bold px-1.5 py-0.5 rounded">
                                     ⚠️ Ocupado {conflictName ? `(${conflictName})` : ''}
                                   </span>
                                 )}
                                 {isAvail && !isBest && (
                                   <span className="text-[9px] text-muted-foreground font-medium">
-                                    Livre ({flatStat?.monthOccupiedDays || 0}d uso)
+                                    Livre ({flatStat?.monthOccupiedDays || 0}d)
                                   </span>
                                 )}
                               </div>
@@ -1748,10 +1742,10 @@ export default function PmsCalendar() {
                     </Select>
                   </div>
 
-                  <div className="space-y-1">
-                    <Label className="text-xs font-semibold">Canal de Origem</Label>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold block leading-none h-4 flex items-center">Canal de Origem</Label>
                     <Select value={formChannel} onValueChange={setFormChannel}>
-                      <SelectTrigger className="text-xs">
+                      <SelectTrigger className="text-xs h-9">
                         <SelectValue placeholder="Canal" />
                       </SelectTrigger>
                       <SelectContent>
@@ -1764,25 +1758,33 @@ export default function PmsCalendar() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <Label className="text-xs font-semibold">Data de Entrada (Check-in)</Label>
+                {/* Banner sutil do Quarto da Vez apenas na criação de Nova Reserva */}
+                {!selectedRes && fairShareResult?.bestFlatNumber && (
+                  <div className="text-[11px] text-amber-800 dark:text-amber-200 font-medium flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-lg animate-in fade-in">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                    <span>Sugestão da vez para equilíbrio: <strong className="font-bold">Apt {fairShareResult.bestFlatNumber}</strong></span>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-3 items-start">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold block leading-none h-4 flex items-center">Data de Entrada (Check-in)</Label>
                     <Input 
                       type="date" 
                       value={formCheckin} 
                       onChange={e => setFormCheckin(e.target.value)} 
                       required 
-                      className="text-xs"
+                      className="text-xs h-9"
                     />
                   </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs font-semibold">Data de Saída (Check-out)</Label>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold block leading-none h-4 flex items-center">Data de Saída (Check-out)</Label>
                     <Input 
                       type="date" 
                       value={formCheckout} 
                       onChange={e => setFormCheckout(e.target.value)} 
                       required 
-                      className="text-xs"
+                      className="text-xs h-9"
                     />
                   </div>
                 </div>
