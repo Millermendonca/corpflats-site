@@ -8,9 +8,11 @@ import { Textarea } from "@/components/ui/textarea"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { 
   Coffee, Clock, Home as HomeIcon, CheckCircle2, 
-  Sparkles, ChevronRight, ChevronLeft, Utensils, Copy, Apple, Cookie, Milk, User, AlertTriangle, Layers
+  Sparkles, ChevronRight, ChevronLeft, Utensils, Copy, Apple, Cookie, Milk, User, 
+  AlertTriangle, Layers, MessageCircle, ArrowLeft, Check, Calendar, ArrowRight
 } from "lucide-react"
 import { format, addDays } from "date-fns"
+import { useLocation } from "wouter"
 
 interface GuestPreference {
   coffee: string
@@ -39,9 +41,12 @@ const defaultGuestPref: GuestPreference = {
 }
 
 export default function GuestBreakfast() {
+  const [, setLocation] = useLocation()
   const [availableSlots, setAvailableSlots] = useState<string[]>([])
   const [loadingSlots, setLoadingSlots] = useState(false)
   const [stdConfig, setStdConfig] = useState<any>(null)
+  const [siteConfig, setSiteConfig] = useState<any>(null)
+  const [settings, setSettings] = useState<any>(null)
 
   // Step 1: Identificação do Quarto e Agendamento Geral
   const [roomNumber, setRoomNumber] = useState("")

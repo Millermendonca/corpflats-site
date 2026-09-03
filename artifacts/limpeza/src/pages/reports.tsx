@@ -26,6 +26,537 @@ import {
 
 const COLORS = ["#6366f1", "#22c55e", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4"]
 
+// ── Geradores de Documento A4 Executivo para Impressão ───────────────────────
+function printReceiptWindow(cleaner: any, startDate: string, endDate: string) {
+  if (!cleaner) return;
+  const name = cleaner.name || cleaner.username;
+  const count = cleaner.count || 0;
+  const rate = Number(cleaner.ratePerRoom || 35).toFixed(2);
+  const total = Number(cleaner.totalToPay || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+  const startFmt = startDate.split('-').reverse().join('/');
+  const endFmt = endDate.split('-').reverse().join('/');
+  const now = new Date();
+  const nowFmt = now.toLocaleDateString('pt-BR') + ' às ' + now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const protocol = `#REC-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}-${String(cleaner.userId || 1).padStart(3, '0')}`;
+
+  const rowsHtml = (cleaner.cleanings || [])
+    .slice()
+    .sort((a: any, b: any) => new Date(a.completedAt || a.effectiveDate || a.requestDate).getTime() - new Date(b.completedAt || b.effectiveDate || b.requestDate).getTime())
+    .map((c: any, idx: number) => {
+      const execDate = c.effectiveDate || (c.completedAt ? c.completedAt.substring(0, 10) : c.requestDate);
+      const dateFmt = execDate ? execDate.split('-').reverse().join('/') : '-';
+      let timeFmt = '—';
+      if (c.cleaningStartedAt && c.completedAt) {
+        timeFmt = `${format(new Date(c.cleaningStartedAt), "HH:mm")} às ${format(new Date(c.completedAt), "HH:mm")}`;
+      } else if (c.completedAt) {
+        timeFmt = format(new Date(c.completedAt), "HH:mm");
+      }
+      const dur = c.durationMinutes || 35;
+      const guest = c.leavingGuest ? `<div style="font-size: 8pt; color: #64748b;">Saída: ${c.leavingGuest}</div>` : '';
+      return `
+        <tr>
+          <td style="text-align: center; color: #94a3b8; font-family: monospace;">${String(idx + 1).padStart(2, '0')}</td>
+          <td>${dateFmt}</td>
+          <td style="font-family: monospace; color: #475569;">${timeFmt}</td>
+          <td><strong>Apartamento ${c.flatNumber}</strong>${guest}</td>
+          <td style="text-align: center; font-family: monospace;">${dur} min</td>
+          <td style="text-align: right; font-weight: bold; color: #059669; font-family: monospace;">R$ ${rate}</td>
+        </tr>
+      `;
+    }).join('');
+
+  const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Recibo de Diárias - ${name}</title>
+  <style>
+    @page { size: A4 portrait; margin: 15mm 15mm 15mm 15mm; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #0f172a;
+      background: #ffffff;
+      margin: 0;
+      padding: 0;
+      font-size: 9.5pt;
+      line-height: 1.4;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 2px solid #0f172a;
+      padding-bottom: 12px;
+      margin-bottom: 16px;
+    }
+    .logo-box { display: flex; align-items: center; gap: 10px; }
+    .logo-badge {
+      background: #4338ca;
+      color: #ffffff;
+      font-weight: 900;
+      font-size: 13pt;
+      padding: 6px 12px;
+      border-radius: 8px;
+    }
+    .title { font-size: 13pt; font-weight: 900; text-transform: uppercase; margin: 0; }
+    .subtitle { font-size: 8.5pt; color: #64748b; margin: 2px 0 0 0; font-weight: 600; }
+    .meta-box { text-align: right; font-size: 8.5pt; font-family: monospace; color: #64748b; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+    .info-card {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 10px 14px;
+    }
+    .info-label { font-size: 8pt; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 2px; }
+    .info-val { font-size: 11pt; font-weight: 800; color: #0f172a; }
+    .total-banner {
+      background: #ecfdf5;
+      border: 1.5px solid #10b981;
+      border-radius: 10px;
+      padding: 12px 18px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    .total-val { font-size: 20pt; font-weight: 900; color: #065f46; font-family: monospace; }
+    table { width: 100%; border-collapse: collapse; font-size: 9pt; margin-bottom: 16px; }
+    th {
+      background: #f1f5f9;
+      color: #334155;
+      font-weight: 700;
+      text-align: left;
+      padding: 7px 10px;
+      border-bottom: 1.5px solid #cbd5e1;
+      text-transform: uppercase;
+      font-size: 8pt;
+    }
+    td { padding: 6px 10px; border-bottom: 1px solid #e2e8f0; }
+    tr { page-break-inside: avoid; }
+    .signatures {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 50px;
+      margin-top: 35px;
+      page-break-inside: avoid;
+    }
+    .sig-line {
+      border-top: 1px solid #64748b;
+      margin-top: 35px;
+      padding-top: 6px;
+      text-align: center;
+      font-size: 9pt;
+    }
+    .sig-name { font-weight: 700; color: #0f172a; }
+    .sig-role { font-size: 8pt; color: #64748b; }
+    .disclaimer {
+      text-align: center;
+      font-size: 8pt;
+      font-style: italic;
+      color: #64748b;
+      margin-top: 20px;
+      page-break-inside: avoid;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo-box">
+      <div class="logo-badge">CF</div>
+      <div>
+        <h1 class="title">CorpFlats Residence Service</h1>
+        <p class="subtitle">Demonstrativo Oficial de Diárias • Governança & Camareiras</p>
+      </div>
+    </div>
+    <div class="meta-box">
+      <div><strong>Protocolo:</strong> ${protocol}</div>
+      <div><strong>Emissão:</strong> ${nowFmt}</div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="info-card">
+      <div class="info-label">Colaboradora Responsável</div>
+      <div class="info-val">${name} <span style="font-size: 9pt; font-weight: normal; color: #64748b;">(${cleaner.role || 'camareira'})</span></div>
+    </div>
+    <div class="info-card">
+      <div class="info-label">Período de Apuração</div>
+      <div class="info-val">${startFmt} até ${endFmt}</div>
+    </div>
+  </div>
+
+  <div class="total-banner">
+    <div>
+      <div style="font-size: 8.5pt; font-weight: 700; color: #065f46; text-transform: uppercase;">Valor Total Líquido a Receber</div>
+      <div class="total-val">R$ ${total}</div>
+      <div style="font-size: 8.5pt; color: #047857; margin-top: 2px;">
+        Cálculo: <strong>${count} quartos</strong> × <strong>R$ ${rate}</strong> por quarto limpo
+      </div>
+    </div>
+    <div style="text-align: right;">
+      <span style="background: #10b981; color: white; padding: 4px 10px; border-radius: 20px; font-weight: 800; font-size: 8.5pt;">
+        Aprovado para Pagamento
+      </span>
+      <div style="font-size: 8.5pt; color: #64748b; margin-top: 6px; font-family: monospace;">
+        Tempo Médio: ~${cleaner.avgDurationMinutes || 35} min/quarto
+      </div>
+    </div>
+  </div>
+
+  <div style="font-weight: 800; font-size: 9pt; text-transform: uppercase; margin-bottom: 6px;">
+    Detalhamento dos Apartamentos Atendidos (${cleaner.cleanings?.length || 0} itens):
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 35px; text-align: center;">#</th>
+        <th>Data</th>
+        <th>Horário</th>
+        <th>Apartamento</th>
+        <th style="text-align: center;">Duração</th>
+        <th style="text-align: right;">Valor</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rowsHtml}
+    </tbody>
+    <tfoot>
+      <tr style="background: #f8fafc; font-weight: bold; border-top: 2px solid #cbd5e1;">
+        <td colspan="4" style="text-align: right; text-transform: uppercase; padding: 8px 10px;">Total (${count} diárias):</td>
+        <td style="text-align: center; padding: 8px 10px;">~${cleaner.avgDurationMinutes || 35} min méd.</td>
+        <td style="text-align: right; color: #059669; font-size: 11pt; font-family: monospace; padding: 8px 10px;">R$ ${total}</td>
+      </tr>
+    </tfoot>
+  </table>
+
+  <div class="disclaimer">
+    "Declaramos para os devidos fins a realização das limpezas e higienizações acima discriminadas no padrão de excelência CorpFlats."
+  </div>
+
+  <div class="signatures">
+    <div>
+      <div class="sig-line">
+        <div class="sig-name">Gestão CorpFlats</div>
+        <div class="sig-role">Administração & Governança</div>
+      </div>
+    </div>
+    <div>
+      <div class="sig-line">
+        <div class="sig-name">${name}</div>
+        <div class="sig-role">Colaboradora de Governança</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    window.onload = function() {
+      setTimeout(function() {
+        window.print();
+      }, 250);
+    };
+  </script>
+</body>
+</html>`;
+
+  const win = window.open("", "_blank");
+  if (win) {
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+  } else {
+    document.body.classList.add("printing-receipt-mode");
+    window.print();
+  }
+}
+
+function printGeneralReportWindow(report: any, history: any[], startDate: string, endDate: string, user: any, isAdmin: boolean) {
+  const startFmt = startDate.split('-').reverse().join('/');
+  const endFmt = endDate.split('-').reverse().join('/');
+  const now = new Date();
+  const nowFmt = now.toLocaleDateString('pt-BR') + ' às ' + now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const protocol = `#REL-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}-GOV`;
+
+  if (!isAdmin) {
+    const cleanerData = {
+      name: user?.name || user?.username,
+      username: user?.username,
+      role: user?.role || "camareira",
+      count: history.length,
+      ratePerRoom: report?.myRatePerRoom || report?.defaultRatePerRoom || 22.50,
+      totalToPay: (report?.myTotalToPay && report.myTotalToPay > 0) ? report.myTotalToPay : (history.length * Number(report?.myRatePerRoom || report?.defaultRatePerRoom || 22.50)),
+      avgDurationMinutes: 35,
+      cleanings: history
+    };
+    return printReceiptWindow(cleanerData, startDate, endDate);
+  }
+
+  const grandTotal = Number(report?.grandTotalToPay || (report?.cleaningsByUser || []).reduce((acc: number, c: any) => acc + (Number(c.totalToPay) || 0), 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+  const totalCleanings = report?.totalCleanings || (report?.cleaningsByUser || []).reduce((acc: number, c: any) => acc + (c.count || 0), 0);
+
+  const cleanerRowsHtml = (report?.cleaningsByUser || []).map((c: any) => `
+    <tr>
+      <td style="padding: 8px 10px;">
+        <strong>${c.name || c.username}</strong>
+        <span style="font-size: 8.5pt; color: #64748b; text-transform: capitalize;"> (${c.role})</span>
+      </td>
+      <td style="text-align: center; padding: 8px 10px; font-weight: bold;">${c.count} flats</td>
+      <td style="text-align: center; padding: 8px 10px; font-family: monospace;">R$ ${Number(c.ratePerRoom || 35).toFixed(2)}</td>
+      <td style="text-align: center; padding: 8px 10px; font-family: monospace; color: #64748b;">~${c.avgDurationMinutes || 35} min</td>
+      <td style="text-align: right; padding: 8px 10px; font-weight: 800; color: #059669; font-family: monospace; font-size: 11pt;">
+        R$ ${Number(c.totalToPay || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+      </td>
+    </tr>
+  `).join('');
+
+  const roomsRowsHtml = (history || [])
+    .slice()
+    .sort((a: any, b: any) => new Date(a.completedAt || a.effectiveDate || a.requestDate).getTime() - new Date(b.completedAt || b.effectiveDate || b.requestDate).getTime())
+    .map((entry: any, idx: number) => {
+      const execDate = entry.effectiveDate || (entry.completedAt ? entry.completedAt.substring(0, 10) : entry.requestDate);
+      const dateFmt = execDate ? execDate.split('-').reverse().join('/') : '-';
+      let timeFmt = '—';
+      if (entry.cleaningStartedAt && entry.completedAt) {
+        timeFmt = `${format(new Date(entry.cleaningStartedAt), "HH:mm")} às ${format(new Date(entry.completedAt), "HH:mm")}`;
+      } else if (entry.completedAt) {
+        timeFmt = format(new Date(entry.completedAt), "HH:mm");
+      }
+      const dur = entry.durationMinutes ? `${entry.durationMinutes} min` : '~35 min';
+      const guest = entry.leavingGuest ? `<div style="font-size: 8pt; color: #64748b;">Saída: ${entry.leavingGuest}</div>` : '';
+      const origin = entry.addedBy ? `Manual (${entry.addedBy})` : 'PMS Automático';
+
+      return `
+        <tr>
+          <td style="text-align: center; color: #94a3b8; font-family: monospace;">${String(idx + 1).padStart(2, '0')}</td>
+          <td>${dateFmt}</td>
+          <td style="font-family: monospace; color: #475569;">${timeFmt}</td>
+          <td><strong>Apartamento ${entry.flatNumber}</strong>${guest}</td>
+          <td>${entry.assignedUsername || 'Camareira'}</td>
+          <td style="text-align: center; font-family: monospace;">${dur}</td>
+          <td style="font-size: 8pt; color: #64748b;">${origin}</td>
+        </tr>
+      `;
+    }).join('');
+
+  const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Relatório de Governança - CorpFlats</title>
+  <style>
+    @page { size: A4 portrait; margin: 14mm 15mm 14mm 15mm; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #0f172a;
+      background: #ffffff;
+      margin: 0;
+      padding: 0;
+      font-size: 9pt;
+      line-height: 1.4;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 2px solid #0f172a;
+      padding-bottom: 12px;
+      margin-bottom: 16px;
+    }
+    .logo-box { display: flex; align-items: center; gap: 10px; }
+    .logo-badge {
+      background: #0284c7;
+      color: #ffffff;
+      font-weight: 900;
+      font-size: 13pt;
+      padding: 6px 12px;
+      border-radius: 8px;
+    }
+    .title { font-size: 13pt; font-weight: 900; text-transform: uppercase; margin: 0; }
+    .subtitle { font-size: 8.5pt; color: #64748b; margin: 2px 0 0 0; font-weight: 600; }
+    .meta-box { text-align: right; font-size: 8.5pt; font-family: monospace; color: #64748b; }
+    .summary-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+    .summary-box {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 10px 14px;
+      text-align: center;
+    }
+    .summary-box.highlight { background: #ecfdf5; border-color: #10b981; }
+    .summary-label { font-size: 8pt; font-weight: 700; color: #64748b; text-transform: uppercase; }
+    .summary-val { font-size: 16pt; font-weight: 900; color: #0f172a; margin-top: 2px; }
+    .summary-val.highlight { color: #065f46; font-family: monospace; }
+    .section-title {
+      font-weight: 800;
+      font-size: 9.5pt;
+      text-transform: uppercase;
+      margin: 16px 0 8px 0;
+      border-left: 3px solid #0284c7;
+      padding-left: 8px;
+      color: #0f172a;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 8.5pt; margin-bottom: 16px; }
+    th {
+      background: #f1f5f9;
+      color: #334155;
+      font-weight: 700;
+      text-align: left;
+      padding: 6px 8px;
+      border-bottom: 1.5px solid #cbd5e1;
+      text-transform: uppercase;
+      font-size: 7.5pt;
+    }
+    td { padding: 6px 8px; border-bottom: 1px solid #e2e8f0; }
+    tr { page-break-inside: avoid; }
+    .signatures {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 50px;
+      margin-top: 30px;
+      page-break-inside: avoid;
+    }
+    .sig-line {
+      border-top: 1px solid #64748b;
+      margin-top: 30px;
+      padding-top: 6px;
+      text-align: center;
+      font-size: 8.5pt;
+    }
+    .sig-name { font-weight: 700; color: #0f172a; }
+    .sig-role { font-size: 7.5pt; color: #64748b; }
+    .disclaimer {
+      text-align: center;
+      font-size: 7.5pt;
+      font-style: italic;
+      color: #64748b;
+      margin-top: 20px;
+      page-break-inside: avoid;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo-box">
+      <div class="logo-badge">CF</div>
+      <div>
+        <h1 class="title">CorpFlats Residence Service</h1>
+        <p class="subtitle">Relatório Oficial de Fechamento de Governança & Diárias</p>
+      </div>
+    </div>
+    <div class="meta-box">
+      <div><strong>Protocolo:</strong> ${protocol}</div>
+      <div><strong>Período:</strong> ${startFmt} a ${endFmt}</div>
+      <div><strong>Emissão:</strong> ${nowFmt}</div>
+    </div>
+  </div>
+
+  <div class="summary-grid">
+    <div class="summary-box highlight">
+      <div class="summary-label">Total a Pagar na Quinzena</div>
+      <div class="summary-val highlight">R$ ${grandTotal}</div>
+      <div style="font-size: 7.5pt; color: #047857; margin-top: 2px;">Cálculo auditado por quarto executado</div>
+    </div>
+    <div class="summary-box">
+      <div class="summary-label">Quartos Limpos no Período</div>
+      <div class="summary-val">${totalCleanings} flats</div>
+      <div style="font-size: 7.5pt; color: #64748b; margin-top: 2px;">Check-outs + Manuais</div>
+    </div>
+    <div class="summary-box">
+      <div class="summary-label">Camareiras com Diárias</div>
+      <div class="summary-val">${report?.cleaningsByUser?.length || 0} ativas</div>
+      <div style="font-size: 7.5pt; color: #64748b; margin-top: 2px;">Colaboradoras credenciadas</div>
+    </div>
+  </div>
+
+  <div class="section-title">1. Resumo Consolidado de Diárias por Colaboradora</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Colaboradora</th>
+        <th style="text-align: center;">Quartos Executados</th>
+        <th style="text-align: center;">Valor por Quarto</th>
+        <th style="text-align: center;">Tempo Médio</th>
+        <th style="text-align: right;">Total a Pagar</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${cleanerRowsHtml}
+    </tbody>
+    <tfoot>
+      <tr style="background: #f8fafc; font-weight: bold; border-top: 2px solid #cbd5e1;">
+        <td style="padding: 6px 8px; text-transform: uppercase;">Total Geral:</td>
+        <td style="text-align: center; padding: 6px 8px;">${totalCleanings} flats</td>
+        <td style="text-align: center; padding: 6px 8px;">—</td>
+        <td style="text-align: center; padding: 6px 8px;">—</td>
+        <td style="text-align: right; color: #059669; font-size: 11pt; font-family: monospace; padding: 6px 8px;">R$ ${grandTotal}</td>
+      </tr>
+    </tfoot>
+  </table>
+
+  <div class="section-title">2. Detalhamento Auditável de Todos os Quartos Limpos (${history?.length || 0} registros)</div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 30px; text-align: center;">#</th>
+        <th>Data</th>
+        <th>Horário</th>
+        <th>Apartamento</th>
+        <th>Camareira</th>
+        <th style="text-align: center;">Duração</th>
+        <th>Origem</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${roomsRowsHtml}
+    </tbody>
+  </table>
+
+  <div class="disclaimer">
+    "Relatório gerado automaticamente pelo Sistema Integrado CorpFlats PMS & Governança. Todos os registros foram auditados eletronicamente."
+  </div>
+
+  <div class="signatures">
+    <div>
+      <div class="sig-line">
+        <div class="sig-name">Supervisão de Governança</div>
+        <div class="sig-role">Conferência dos Apartamentos</div>
+      </div>
+    </div>
+    <div>
+      <div class="sig-line">
+        <div class="sig-name">Diretoria Administrativa / Financeiro</div>
+        <div class="sig-role">Aprovação para Liberação de Pagamento</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    window.onload = function() {
+      setTimeout(function() {
+        window.print();
+      }, 250);
+    };
+  </script>
+</body>
+</html>`;
+
+  const win = window.open("", "_blank");
+  if (win) {
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+  } else {
+    document.body.classList.add("printing-report-mode");
+    window.print();
+  }
+}
+
 export default function Reports() {
   const { data: user, isLoading: loadingUser } = useGetMe()
   const isAdmin = user?.role === "admin"
@@ -287,7 +818,7 @@ export default function Reports() {
             <Button 
               size="sm" 
               variant="outline" 
-              onClick={() => window.print()} 
+              onClick={() => printGeneralReportWindow(report, filteredHistory, startDate, endDate, user, isAdmin)} 
               className="h-9 px-3 rounded-xl text-xs font-bold gap-1.5"
             >
               <Printer className="w-4 h-4" />
@@ -601,7 +1132,7 @@ export default function Reports() {
                   ) : (
                     <div>
                       {/* Sub-janelinha com barra de rolagem e cabeçalho fixo */}
-                      <div className="max-h-[420px] overflow-y-auto overflow-x-auto">
+                      <div className="max-h-[420px] overflow-y-auto overflow-x-auto print:max-h-none print:overflow-visible">
                         <table className="w-full text-xs text-left border-collapse">
                           <thead className="bg-muted/95 backdrop-blur-md text-muted-foreground font-bold border-b border-border sticky top-0 z-10 shadow-2xs">
                             <tr>
@@ -840,7 +1371,7 @@ export default function Reports() {
                       ) : (
                         <div>
                           {/* Sub-janelinha com barra de rolagem */}
-                          <div className="max-h-[380px] overflow-y-auto divide-y divide-border/60 p-4">
+                          <div className="max-h-[380px] overflow-y-auto divide-y divide-border/60 p-4 print:max-h-none print:overflow-visible">
                             {sortedCamareiraHistory.map((h: any, i: number) => {
                               const hDate = h.effectiveDate || (h.completedAt ? h.completedAt.substring(0, 10) : h.requestDate);
                               const timeRange = h.cleaningStartedAt && h.completedAt 
@@ -977,7 +1508,7 @@ export default function Reports() {
 
         {/* ── MODAL: RECIBO EXECUTIVO DE FECHAMENTO DE DIÁRIAS (DESIGN SENIOR) ── */}
         <Dialog open={receiptModalOpen} onOpenChange={setReceiptModalOpen}>
-          <DialogContent className="w-[95vw] sm:max-w-3xl bg-slate-50 dark:bg-slate-950 border border-border rounded-3xl max-h-[92vh] overflow-y-auto p-0 overflow-x-hidden shadow-2xl">
+          <DialogContent className="w-[95vw] sm:max-w-3xl bg-slate-50 dark:bg-slate-950 border border-border rounded-3xl max-h-[92vh] overflow-y-auto p-0 overflow-x-hidden shadow-2xl print:w-full print:max-w-none print:max-h-none print:overflow-visible print:border-none print:shadow-none print:p-0 print:m-0 print:static print:bg-white print:text-slate-950">
             {/* Barra de Ações Superior (Oculta no Print) */}
             <div className="p-3.5 sm:p-4 bg-card border-b border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 sticky top-0 z-20 print:hidden">
               <div className="flex items-center justify-between w-full sm:w-auto">
@@ -1022,7 +1553,7 @@ export default function Reports() {
 
                 <Button
                   size="sm"
-                  onClick={() => window.print()}
+                  onClick={() => printReceiptWindow(activeCleanerReceipt, startDate, endDate)}
                   className="flex-1 sm:flex-none h-9 px-3 sm:px-3.5 rounded-xl text-xs font-bold gap-1.5 bg-primary text-primary-foreground shadow-sm justify-center"
                 >
                   <Printer className="w-3.5 h-3.5 shrink-0" />
@@ -1136,8 +1667,8 @@ export default function Reports() {
                     <span>Detalhamento dos Apartamentos Atendidos ({activeCleanerReceipt.cleanings?.length || 0} itens):</span>
                   </div>
 
-                  <div className="rounded-2xl border border-slate-200 dark:border-slate-800 overflow-x-auto">
-                    <table className="w-full text-left text-xs min-w-[460px] sm:min-w-0 border-collapse">
+                  <div className="rounded-2xl border border-slate-200 dark:border-slate-800 overflow-x-auto print:overflow-visible print:border-none print:rounded-none">
+                    <table className="w-full text-left text-xs min-w-[460px] sm:min-w-0 print:min-w-full border-collapse">
                       <thead className="bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 font-bold border-b border-slate-200 dark:border-slate-800">
                         <tr>
                           <th className="p-2.5 w-10 text-center">#</th>

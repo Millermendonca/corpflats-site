@@ -283,7 +283,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       )}
 
       {/* Header Fixo Mobile (Celular) */}
-      <header className="md:hidden sticky top-0 z-40 bg-card border-b border-border px-4 py-3 flex items-center justify-between shadow-xs">
+      <header className="md:hidden sticky top-0 z-40 bg-card border-b border-border px-4 py-3 flex items-center justify-between shadow-xs print:hidden">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-xl bg-primary text-primary-foreground flex items-center justify-center font-black shadow-xs">
             <Sparkles className="w-4 h-4" />
@@ -394,7 +394,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       </header>
 
       {/* Sidebar Desktop */}
-      <aside className={`hidden md:flex w-64 lg:w-72 bg-card border-r border-border flex-col shrink-0 ${alertCount > 0 ? "mt-9" : ""}`}>
+      <aside className={`hidden md:flex w-64 lg:w-72 bg-card border-r border-border flex-col shrink-0 print:hidden ${alertCount > 0 ? "mt-9" : ""}`}>
         {/* Brand Header */}
         <div className="p-4 flex items-center justify-between border-b border-border">
           <div className="flex items-center gap-2.5">
@@ -504,12 +504,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
       </aside>
       
       {/* Conteúdo Principal */}
-      <main className="flex-1 flex flex-col min-w-0 max-h-[100dvh] overflow-y-auto pb-20 md:pb-0">
+      <main className="flex-1 flex flex-col min-w-0 max-h-[100dvh] overflow-y-auto pb-20 md:pb-0 print:max-h-none print:h-auto print:overflow-visible print:pb-0 print:m-0 print:p-0">
         {children}
       </main>
 
       {/* Barra de Navegação Inferior Móvel (Bottom Bar para Celular) */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-card/95 backdrop-blur border-t border-border px-2 py-1.5 flex items-center justify-around shadow-2xl">
+      <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-card/95 backdrop-blur border-t border-border px-2 py-1.5 flex items-center justify-around shadow-2xl print:hidden">
         <Link href="/dashboard">
           <div className={`flex flex-col items-center py-1 px-2 rounded-xl transition-all ${
             location === "/dashboard" ? "text-primary font-black scale-105" : "text-muted-foreground"

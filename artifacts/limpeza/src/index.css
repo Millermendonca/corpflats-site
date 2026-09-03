@@ -279,3 +279,148 @@
     inset: -1px;
   }
 }
+
+/* ==========================================================================
+   REGRAS PROFISSIONAIS DE IMPRESSÃO (@media print) - FORMATO A4 EXECUTIVO
+   ========================================================================== */
+@media print {
+  /* 1. Configuração das Margens e Tamanho da Folha A4 */
+  @page {
+    size: A4 portrait;
+    margin: 12mm 15mm 12mm 15mm;
+  }
+
+  /* 2. Reset Global de Cores, Sombras e Elementos Fixos */
+  *, *::before, *::after {
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  html, body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    font-size: 10.5pt !important;
+    line-height: 1.4 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    position: static !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  #root, main, .min-h-\[100dvh\] {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    position: static !important;
+    display: block !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+  }
+
+  /* 3. Ocultar Todos os Elementos Interativos e de Navegação */
+  nav,
+  aside,
+  header,
+  footer,
+  .print\:hidden,
+  .no-print,
+  button,
+  input,
+  select,
+  [role="tablist"],
+  .fixed.bottom-0,
+  [data-state="closed"] {
+    display: none !important;
+  }
+
+  /* 4. Remover TODAS as Rolagens Internas e Travas de Altura */
+  div, section, article, table, tbody, 
+  .overflow-y-auto, .overflow-x-auto, 
+  .overflow-hidden,
+  [class*="max-h-"] {
+    max-height: none !important;
+    height: auto !important;
+    overflow: visible !important;
+    position: static !important;
+  }
+
+  /* 5. Comportamento Impecável para Modais (ex: Recibo de Camareira) */
+  body:has([role="dialog"]) #root,
+  body.printing-receipt-mode #root {
+    display: none !important;
+  }
+
+  [data-radix-portal] {
+    position: static !important;
+    display: block !important;
+    width: 100% !important;
+  }
+
+  /* Remove o overlay escuro de fundo da modal */
+  [data-radix-portal] > div.fixed.inset-0,
+  div[data-state][class*="bg-black"] {
+    display: none !important;
+  }
+
+  /* Transforma o conteúdo da modal em página contínua A4 */
+  [role="dialog"] {
+    position: static !important;
+    transform: none !important;
+    top: auto !important;
+    left: auto !important;
+    right: auto !important;
+    bottom: auto !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: none !important;
+    height: auto !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+    display: block !important;
+  }
+
+  /* 6. Quebra de Página Inteligente e Alinhamento de Tabelas */
+  tr, .print-avoid-break, .avoid-break {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  thead {
+    display: table-header-group !important;
+  }
+
+  tfoot {
+    display: table-footer-group !important;
+  }
+
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+  }
+
+  th, td {
+    color: #0f172a !important;
+    border-color: #cbd5e1 !important;
+  }
+
+  /* Forçar bordas visíveis e limpas em cartões e tabelas */
+  .border, [class*="border-"] {
+    border-color: #e2e8f0 !important;
+  }
+}
