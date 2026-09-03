@@ -223,7 +223,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           { href: "/relatorios-reservas", label: "Relatórios & Ocupação (PMS)", icon: TrendingUp, description: "Taxa de ocupação, diária média, RevPAR e ranking" },
           { href: "/crm", label: "Hóspedes & Empresas (CRM 360)", icon: Users, description: "LTV, fidelidade, preferências e faturamento PJ" },
           { href: "/portaria", label: "Terminal da Portaria (Tablet)", icon: Tablet, description: "Check-in presencial e liberação" },
-          { href: "/pedidos-cafe", label: "Produção de Café da Manhã", icon: Coffee, description: "Ficha técnica e montagem das cestas" },
+          { href: "/pedidos-cafe", label: "Produção de Café da Manhã", icon: Coffee, description: "Ficha técnica e montagem dos pedidos" },
           { href: "/reservar", label: "Site de Reservas Diretas", icon: Globe, description: "Página pública de vendas" },
         ]
       },

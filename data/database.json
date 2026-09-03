@@ -186,6 +186,23 @@
   ],
   "cleaningRequests": [
     {
+      "id": 229,
+      "flatId": 1,
+      "flatNumber": "113",
+      "requestDate": "2026-09-05",
+      "source": "checkout",
+      "status": "dirty",
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "isVacant": false,
+      "isPriority": false,
+      "leavingGuest": "Carlos Silva",
+      "arrivingGuest": null,
+      "adminNote": "Check-out antecipado/remarcado para 2026-09-05",
+      "createdAt": "2026-09-03T13:40:36.529Z",
+      "updatedAt": "2026-09-03T13:40:36.529Z"
+    },
+    {
       "id": 5,
       "flatId": 8,
       "flatNumber": "408",
@@ -2194,6 +2211,18 @@
       "email": "comcafe@corpflats.com.br",
       "document": "",
       "createdAt": "2026-08-25T05:33:12.134Z"
+    },
+    {
+      "id": 7,
+      "name": "Carlos Silva",
+      "phone": "22998877665",
+      "email": "",
+      "document": "",
+      "companyName": "",
+      "city": "",
+      "notes": "",
+      "tags": [],
+      "createdAt": "2026-09-03T13:40:08.662Z"
     }
   ],
   "guestAccounts": [
@@ -2368,6 +2397,103 @@
     }
   ],
   "reservations": [
+    {
+      "id": 34,
+      "code": "RES-113-0034",
+      "flatId": 1,
+      "flatNumber": "113",
+      "guestId": 7,
+      "guestName": "Carlos Silva",
+      "guestPhone": "22998877665",
+      "guestEmail": "",
+      "guestCount": 1,
+      "guests": [
+        {
+          "index": 1,
+          "name": "Carlos Silva",
+          "cpf": "",
+          "phone": "22998877665",
+          "email": "",
+          "hasCompletedCheckin": false,
+          "checkinCompletedAt": null
+        }
+      ],
+      "requesterType": "guest",
+      "requesterInfo": null,
+      "companyId": null,
+      "companyName": "",
+      "invoiceDetails": null,
+      "checkinDate": "2026-09-03",
+      "checkoutDate": "2026-09-05",
+      "status": "confirmada",
+      "channel": "booking",
+      "dailyRate": 0,
+      "totalAmount": 0,
+      "paidAmount": 0,
+      "paymentStatus": "pendente",
+      "adults": 1,
+      "children": 0,
+      "notes": "Reserva Booking com café da manhã incluso",
+      "earlyCheckinAuthorized": false,
+      "receptionNotes": "",
+      "prefersHighFloor": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "specialRequests": "",
+      "includeBreakfast": true,
+      "breakfastToken": "bfk_34_aee3db54",
+      "createdAt": "2026-09-03T13:40:36.464Z",
+      "updatedAt": "2026-09-03T13:40:36.529Z",
+      "calendarSequence": 1
+    },
+    {
+      "id": 33,
+      "code": "RES-113-0033",
+      "flatId": 1,
+      "flatNumber": "113",
+      "guestId": 7,
+      "guestName": "Carlos Silva",
+      "guestPhone": "22998877665",
+      "guestEmail": "",
+      "guestCount": 1,
+      "guests": [
+        {
+          "index": 1,
+          "name": "Carlos Silva",
+          "cpf": "",
+          "phone": "22998877665",
+          "email": "",
+          "hasCompletedCheckin": false,
+          "checkinCompletedAt": null
+        }
+      ],
+      "requesterType": "guest",
+      "requesterInfo": null,
+      "companyId": null,
+      "companyName": "",
+      "invoiceDetails": null,
+      "checkinDate": "2026-09-03",
+      "checkoutDate": "2026-09-06",
+      "status": "confirmada",
+      "channel": "booking",
+      "dailyRate": 0,
+      "totalAmount": 0,
+      "paidAmount": 0,
+      "paymentStatus": "pendente",
+      "adults": 1,
+      "children": 0,
+      "notes": "Reserva Booking com café da manhã incluso",
+      "earlyCheckinAuthorized": false,
+      "receptionNotes": "",
+      "prefersHighFloor": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "specialRequests": "",
+      "includeBreakfast": true,
+      "breakfastToken": "bfk_33_09c70715",
+      "createdAt": "2026-09-03T13:40:08.663Z",
+      "updatedAt": "2026-09-03T13:40:08.663Z"
+    },
     {
       "id": 32,
       "code": "RES-116-0032",
@@ -3591,7 +3717,8 @@
       "prefersHighFloor": false,
       "earlyCheckinAuthorized": false,
       "isMonthlyGuest": false,
-      "clientType": "avulso"
+      "clientType": "avulso",
+      "breakfastToken": "bfk_7_3b26402a"
     },
     {
       "id": 6,
@@ -3803,6 +3930,116 @@
   ],
   "roomBlocks": [],
   "notifications": [
+    {
+      "id": 1787151089984,
+      "category": "breakfast",
+      "title": "☕ Pedido de Café  - Apt 993",
+      "message": "Teste Custom 2 agendou café para 2026-09-04 às 08:35 (2 pessoas)",
+      "severity": "info",
+      "metadata": {
+        "roomNumber": "993",
+        "deliveryTime": "08:35",
+        "guestCount": 2,
+        "dates": [
+          "2026-09-04"
+        ]
+      },
+      "targetUrl": "/pedidos-cafe",
+      "read": false,
+      "createdAt": "2026-09-03T14:34:07.134Z"
+    },
+    {
+      "id": 1787151089983,
+      "category": "breakfast",
+      "title": "☕ Pedido de Café  - Apt 992",
+      "message": "Teste Custom 1 agendou café para 2026-09-04 às 08:28 (1 pessoa)",
+      "severity": "info",
+      "metadata": {
+        "roomNumber": "992",
+        "deliveryTime": "08:28",
+        "guestCount": 1,
+        "dates": [
+          "2026-09-04"
+        ]
+      },
+      "targetUrl": "/pedidos-cafe",
+      "read": false,
+      "createdAt": "2026-09-03T14:34:07.119Z"
+    },
+    {
+      "id": 1787151089982,
+      "category": "breakfast",
+      "title": "☕ Pedido de Café  - Apt 991",
+      "message": "Teste Padrão agendou café para 2026-09-04 às 08:21 (2 pessoas)",
+      "severity": "info",
+      "metadata": {
+        "roomNumber": "991",
+        "deliveryTime": "08:21",
+        "guestCount": 2,
+        "dates": [
+          "2026-09-04"
+        ]
+      },
+      "targetUrl": "/pedidos-cafe",
+      "read": false,
+      "createdAt": "2026-09-03T14:34:07.086Z"
+    },
+    {
+      "id": 1787151089981,
+      "category": "breakfast",
+      "title": "☕ Pedido de Café  - Apt 992",
+      "message": "Teste Custom 1 agendou café para 2026-09-04 às 08:07 (1 pessoa)",
+      "severity": "info",
+      "metadata": {
+        "roomNumber": "992",
+        "deliveryTime": "08:07",
+        "guestCount": 1,
+        "dates": [
+          "2026-09-04"
+        ]
+      },
+      "targetUrl": "/pedidos-cafe",
+      "read": false,
+      "createdAt": "2026-09-03T14:32:41.447Z"
+    },
+    {
+      "id": 1787151089980,
+      "category": "breakfast",
+      "title": "☕ Pedido de Café  - Apt 991",
+      "message": "Teste Padrão agendou café para 2026-09-04 às 08:00 (2 pessoas)",
+      "severity": "info",
+      "metadata": {
+        "roomNumber": "991",
+        "deliveryTime": "08:00",
+        "guestCount": 2,
+        "dates": [
+          "2026-09-04"
+        ]
+      },
+      "targetUrl": "/pedidos-cafe",
+      "read": false,
+      "createdAt": "2026-09-03T14:32:41.431Z"
+    },
+    {
+      "id": 1787151089979,
+      "category": "breakfast",
+      "title": "☕ Pedido de Café (3 dias) - Apt 113",
+      "message": "Carlos Silva agendou café para 2026-09-04, 2026-09-05, 2026-09-06 às 08:14 (2 pessoas)",
+      "severity": "info",
+      "metadata": {
+        "roomNumber": "113",
+        "deliveryTime": "08:14",
+        "guestCount": 2,
+        "dates": [
+          "2026-09-04",
+          "2026-09-05",
+          "2026-09-06"
+        ]
+      },
+      "targetUrl": "/pedidos-cafe",
+      "read": false,
+      "createdAt": "2026-09-03T13:40:36.510Z"
+    },
     {
       "id": 1787151089978,
       "type": "garagem",
@@ -4226,6 +4463,170 @@
   ],
   "auditLogs": [
     {
+      "id": 14,
+      "timestamp": "2026-09-03T14:34:07.134Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_BREAKFAST",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "☕ Pedido de Café  - Apt 993",
+        "message": "Teste Custom 2 agendou café para 2026-09-04 às 08:35 (2 pessoas)",
+        "metadata": {
+          "roomNumber": "993",
+          "deliveryTime": "08:35",
+          "guestCount": 2,
+          "dates": [
+            "2026-09-04"
+          ]
+        },
+        "targetUrl": "/pedidos-cafe"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": 13,
+      "timestamp": "2026-09-03T14:34:07.118Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_BREAKFAST",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "☕ Pedido de Café  - Apt 992",
+        "message": "Teste Custom 1 agendou café para 2026-09-04 às 08:28 (1 pessoa)",
+        "metadata": {
+          "roomNumber": "992",
+          "deliveryTime": "08:28",
+          "guestCount": 1,
+          "dates": [
+            "2026-09-04"
+          ]
+        },
+        "targetUrl": "/pedidos-cafe"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": 12,
+      "timestamp": "2026-09-03T14:34:07.085Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_BREAKFAST",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "☕ Pedido de Café  - Apt 991",
+        "message": "Teste Padrão agendou café para 2026-09-04 às 08:21 (2 pessoas)",
+        "metadata": {
+          "roomNumber": "991",
+          "deliveryTime": "08:21",
+          "guestCount": 2,
+          "dates": [
+            "2026-09-04"
+          ]
+        },
+        "targetUrl": "/pedidos-cafe"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": 11,
+      "timestamp": "2026-09-03T14:32:41.446Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_BREAKFAST",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "☕ Pedido de Café  - Apt 992",
+        "message": "Teste Custom 1 agendou café para 2026-09-04 às 08:07 (1 pessoa)",
+        "metadata": {
+          "roomNumber": "992",
+          "deliveryTime": "08:07",
+          "guestCount": 1,
+          "dates": [
+            "2026-09-04"
+          ]
+        },
+        "targetUrl": "/pedidos-cafe"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": 10,
+      "timestamp": "2026-09-03T14:32:41.431Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_BREAKFAST",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "☕ Pedido de Café  - Apt 991",
+        "message": "Teste Padrão agendou café para 2026-09-04 às 08:00 (2 pessoas)",
+        "metadata": {
+          "roomNumber": "991",
+          "deliveryTime": "08:00",
+          "guestCount": 2,
+          "dates": [
+            "2026-09-04"
+          ]
+        },
+        "targetUrl": "/pedidos-cafe"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": 9,
+      "timestamp": "2026-09-03T13:40:36.509Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_BREAKFAST",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "☕ Pedido de Café (3 dias) - Apt 113",
+        "message": "Carlos Silva agendou café para 2026-09-04, 2026-09-05, 2026-09-06 às 08:14 (2 pessoas)",
+        "metadata": {
+          "roomNumber": "113",
+          "deliveryTime": "08:14",
+          "guestCount": 2,
+          "dates": [
+            "2026-09-04",
+            "2026-09-05",
+            "2026-09-06"
+          ]
+        },
+        "targetUrl": "/pedidos-cafe"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
       "id": 8,
       "timestamp": "2026-09-02T13:45:43.915Z",
       "level": "info",
@@ -4401,5 +4802,291 @@
       "ip": "",
       "userAgent": ""
     }
-  ]
+  ],
+  "breakfastOrders": [
+    {
+      "id": 3,
+      "date": "2026-09-06",
+      "deliveryTime": "08:14",
+      "roomNumber": "113",
+      "clientName": "Carlos Silva",
+      "guestCount": 2,
+      "isStandard": true,
+      "orderMode": "unified",
+      "guestOrders": null,
+      "items": [
+        {
+          "name": "Café com leite",
+          "quantity": 2
+        },
+        {
+          "name": "Suco de laranja",
+          "quantity": 2
+        },
+        {
+          "name": "Pão francês",
+          "quantity": 2
+        },
+        {
+          "name": "Pão de queijo",
+          "quantity": 2
+        },
+        {
+          "name": "Queijo mussarela",
+          "quantity": 2
+        },
+        {
+          "name": "Presunto",
+          "quantity": 2
+        },
+        {
+          "name": "Manteiga",
+          "quantity": 2
+        },
+        {
+          "name": "Bolo do dia",
+          "quantity": 2
+        },
+        {
+          "name": "Banana",
+          "quantity": 2
+        },
+        {
+          "name": "Açúcar",
+          "quantity": 2
+        }
+      ],
+      "notes": "",
+      "status": "cancelled",
+      "phone": "",
+      "reservationCode": "RES-113-0034",
+      "reservationId": 34,
+      "createdAt": "2026-09-03T13:40:36.504Z",
+      "cancelReason": "Hóspede antecipou o check-out (novo check-out: 2026-09-05)"
+    },
+    {
+      "id": 2,
+      "date": "2026-09-05",
+      "deliveryTime": "08:14",
+      "roomNumber": "113",
+      "clientName": "Carlos Silva",
+      "guestCount": 2,
+      "isStandard": true,
+      "orderMode": "unified",
+      "guestOrders": null,
+      "items": [
+        {
+          "name": "Café com leite",
+          "quantity": 2
+        },
+        {
+          "name": "Suco de laranja",
+          "quantity": 2
+        },
+        {
+          "name": "Pão francês",
+          "quantity": 2
+        },
+        {
+          "name": "Pão de queijo",
+          "quantity": 2
+        },
+        {
+          "name": "Queijo mussarela",
+          "quantity": 2
+        },
+        {
+          "name": "Presunto",
+          "quantity": 2
+        },
+        {
+          "name": "Manteiga",
+          "quantity": 2
+        },
+        {
+          "name": "Bolo do dia",
+          "quantity": 2
+        },
+        {
+          "name": "Banana",
+          "quantity": 2
+        },
+        {
+          "name": "Açúcar",
+          "quantity": 2
+        }
+      ],
+      "notes": "",
+      "status": "cancelled",
+      "phone": "",
+      "reservationCode": "RES-113-0034",
+      "reservationId": 34,
+      "createdAt": "2026-09-03T13:40:36.504Z",
+      "cancelReason": "Hóspede antecipou o check-out (novo check-out: 2026-09-05)"
+    },
+    {
+      "id": 1,
+      "date": "2026-09-04",
+      "deliveryTime": "08:14",
+      "roomNumber": "113",
+      "clientName": "Carlos Silva",
+      "guestCount": 2,
+      "isStandard": true,
+      "orderMode": "unified",
+      "guestOrders": null,
+      "items": [
+        {
+          "name": "Café com leite",
+          "quantity": 2
+        },
+        {
+          "name": "Suco de laranja",
+          "quantity": 2
+        },
+        {
+          "name": "Pão francês",
+          "quantity": 2
+        },
+        {
+          "name": "Pão de queijo",
+          "quantity": 2
+        },
+        {
+          "name": "Queijo mussarela",
+          "quantity": 2
+        },
+        {
+          "name": "Presunto",
+          "quantity": 2
+        },
+        {
+          "name": "Manteiga",
+          "quantity": 2
+        },
+        {
+          "name": "Bolo do dia",
+          "quantity": 2
+        },
+        {
+          "name": "Banana",
+          "quantity": 2
+        },
+        {
+          "name": "Açúcar",
+          "quantity": 2
+        }
+      ],
+      "notes": "",
+      "status": "pending",
+      "phone": "",
+      "reservationCode": "RES-113-0034",
+      "reservationId": 34,
+      "createdAt": "2026-09-03T13:40:36.504Z"
+    }
+  ],
+  "breakfastMenu": {
+    "availableTimes": [
+      "05:00",
+      "05:30",
+      "06:00",
+      "06:30",
+      "07:00",
+      "07:30",
+      "08:00",
+      "08:30",
+      "09:00",
+      "09:30"
+    ],
+    "categories": [
+      {
+        "id": "bebidas",
+        "name": "☕ Cafés & Bebidas",
+        "items": [
+          "Café",
+          "Café duplo",
+          "Café com leite",
+          "Leite",
+          "Suco de laranja",
+          "Achocolatado gelado",
+          "Água mineral",
+          "Vitamina de banana com iogurte de morango"
+        ]
+      },
+      {
+        "id": "paes",
+        "name": "🍞 Pães Tradicionais",
+        "items": [
+          "Pão francês",
+          "Pão de queijo"
+        ]
+      },
+      {
+        "id": "acompanhamentos",
+        "name": "🧀 Frios & Acompanhamentos",
+        "items": [
+          "Queijo mussarela",
+          "Presunto",
+          "Queijo prato",
+          "Queijo Minas frescal",
+          "Peito de Peru",
+          "Ovos mexidos"
+        ]
+      },
+      {
+        "id": "complementos",
+        "name": "🧈 Complementos",
+        "items": [
+          "Manteiga",
+          "Requeijão"
+        ]
+      },
+      {
+        "id": "doces",
+        "name": "🍰 Doces & Biscoitos",
+        "items": [
+          "Bolo do dia",
+          "Torradas amanteigadas",
+          "Casadinho (biscoito com goiabada)"
+        ]
+      },
+      {
+        "id": "frutas",
+        "name": "🍎 Frutas Selecionadas",
+        "items": [
+          "Banana",
+          "Maçã",
+          "Mamão",
+          "Salada de frutas"
+        ]
+      }
+    ]
+  },
+  "standardBreakfastConfig": {
+    "coffee": "Café com leite",
+    "otherBeverage": "Suco de laranja",
+    "breads": [
+      "Pão francês",
+      "Pão de queijo"
+    ],
+    "accompaniments": [
+      "Queijo mussarela",
+      "Presunto"
+    ],
+    "complements": [
+      "Manteiga"
+    ],
+    "sweets": [
+      "Bolo do dia"
+    ],
+    "fruit": "Banana",
+    "fruitSelected": "Banana",
+    "fruitAvailableOptions": [
+      "Banana",
+      "Maçã",
+      "Mamão",
+      "Salada de frutas"
+    ],
+    "sweetener": "Açúcar",
+    "description": "Café com leite, Suco de laranja, Pão francês, Pão de queijo, Queijo mussarela, Presunto, Manteiga, Bolo do dia e Banana."
+  }
 }

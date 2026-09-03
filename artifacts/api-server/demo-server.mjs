@@ -1432,6 +1432,28 @@ function getTodayStr() {
   return BRAZIL_DATE_FORMATTER.format(new Date());
 }
 
+function getBrasiliaNow() {
+  const now = new Date();
+  const dateStr = BRAZIL_DATE_FORMATTER.format(now);
+  const timeParts = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  }).formatToParts(now);
+  const hour = Number(timeParts.find(p => p.type === "hour")?.value || "0");
+  const minute = Number(timeParts.find(p => p.type === "minute")?.value || "0");
+  const second = Number(timeParts.find(p => p.type === "second")?.value || "0");
+  return {
+    date: dateStr,
+    hour,
+    minute,
+    second,
+    timeStr: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+  };
+}
+
 function getOffsetDateStr(offsetDays = 0) {
   if (offsetDays === 0) return getTodayStr();
   const todayStr = getTodayStr();
@@ -4226,7 +4248,8 @@ app.get("/api/pms/calendar", (req, res) => {
       ...r,
       isMonthlyGuest: isMonthly,
       clientType: isMonthly ? "mensalista" : (r.clientType || "avulso"),
-      includeBreakfast: Boolean(r.includeBreakfast || r.hasBreakfast)
+      includeBreakfast: Boolean(r.includeBreakfast || r.hasBreakfast || r.ratePlan === "with_breakfast" || r.notes?.toLowerCase().includes("café") || r.notes?.toLowerCase().includes("cafe")),
+      breakfastToken: r.breakfastToken || (r.code ? `bfk_${r.code.toLowerCase().replace(/[^a-z0-9]/g, '')}` : `bfk_${r.id}`)
     };
   });
   const blocks = (db.roomBlocks || []).filter(b => {
@@ -4415,6 +4438,7 @@ app.post("/api/pms/reservations", (req, res) => {
     extraMattress: Boolean(extraMattress),
     specialRequests: specialRequests || "",
     includeBreakfast: Boolean(includeBreakfast),
+    breakfastToken: `bfk_${resId}_${crypto.randomBytes(4).toString("hex")}`,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
@@ -4501,6 +4525,30 @@ app.put("/api/pms/reservations/:id", (req, res) => {
         });
       }
     }
+  }
+
+  // Sincronização automática de pedidos de café da manhã caso a reserva seja cancelada ou check-out antecipado/estendido
+  if (!db.breakfastOrders) db.breakfastOrders = [];
+  if (r.status === "cancelada" || r.status === "cancelado") {
+    db.breakfastOrders.forEach(o => {
+      if ((o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) || o.reservationId === r.id || (String(o.roomNumber) === String(r.flatNumber) && o.date >= r.checkinDate && o.date <= r.checkoutDate)) {
+        o.status = "cancelled";
+        o.cancelReason = "Reserva cancelada no calendário";
+      }
+    });
+  } else if (oldCheckout !== r.checkoutDate) {
+    db.breakfastOrders.forEach(o => {
+      if ((o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) || o.reservationId === r.id || (String(o.roomNumber) === String(r.flatNumber))) {
+        if (o.date >= r.checkoutDate) {
+          o.status = "cancelled";
+          o.cancelReason = `Hóspede antecipou o check-out (novo check-out: ${r.checkoutDate})`;
+        } else if (o.date >= r.checkinDate && o.status === "cancelled" && o.cancelReason?.includes("antecipou")) {
+          // Reativa caso o check-out tenha sido estendido novamente
+          o.status = "pending";
+          o.cancelReason = null;
+        }
+      }
+    });
   }
 
   r.updatedAt = new Date().toISOString();
@@ -5075,6 +5123,16 @@ app.delete("/api/pms/reservations/:id", (req, res) => {
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
   r.status = "cancelada";
   r.calendarSequence = (r.calendarSequence || 0) + 1;
+
+  // Marca pedidos de café da manhã vinculados como cancelados
+  if (!db.breakfastOrders) db.breakfastOrders = [];
+  db.breakfastOrders.forEach(o => {
+    if ((o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) || o.reservationId === r.id || (String(o.roomNumber) === String(r.flatNumber) && o.date >= r.checkinDate && o.date <= r.checkoutDate)) {
+      o.status = "cancelled";
+      o.cancelReason = "Reserva cancelada no calendário";
+    }
+  });
+
   r.updatedAt = new Date().toISOString();
   saveDatabase();
   res.json({ success: true, message: "Reserva cancelada com sucesso.", calendarSequence: r.calendarSequence });
@@ -7882,17 +7940,113 @@ app.get("/api/lookup-cep/:cep", async (req, res) => {
 });
 
 // ── Breakfast System (Café da Manhã dos Hóspedes & Produção da Cozinha) ─────
+
+// Normalizador Canônico de Itens do Café da Manhã
+// Garante que pedidos Padrão e Personalizados usem exatamente os mesmos nomes canônicos
+// e que a produção diária consolide itens idênticos (ex: Café duplo, Pão francês, etc.) sem duplicidade.
+const CANONICAL_BREAKFAST_ALIASES = [
+  // Cafés
+  { pattern: /^caf[eé](\s+(puro|preto|tradicional|simples|quente))?$/i, canonical: "Café" },
+  { pattern: /^caf[eé]\s+duplo$/i, canonical: "Café duplo" },
+  { pattern: /^caf[eé]\s+(com|c\/|e)\s*leite$/i, canonical: "Café com leite" },
+  { pattern: /^leite(\s+(puro|quente|frio|gelado))?$/i, canonical: "Leite" },
+  { pattern: /^leite\s+duplo$/i, canonical: "Leite duplo" },
+
+  // Outras Bebidas
+  { pattern: /^suco\s+de\s+laranja$/i, canonical: "Suco de laranja" },
+  { pattern: /^suco\s+de\s+uva$/i, canonical: "Suco de uva" },
+  { pattern: /^achocolatado(\s+gelado)?$/i, canonical: "Achocolatado gelado" },
+  { pattern: /^vitamina\s+de\s+banana(\s+com\s+iogurte\s+de\s+morango)?$/i, canonical: "Vitamina de banana com iogurte de morango" },
+  { pattern: /^([aá]gua|agua)(\s+mineral)?(\s+500ml)?$/i, canonical: "Água mineral" },
+
+  // Pães
+  { pattern: /^p[aã]o\s+franc[eê]s$/i, canonical: "Pão francês" },
+  { pattern: /^p[aã]o\s+de\s+queijo$/i, canonical: "Pão de queijo" },
+  { pattern: /^p[aã]o\s+integral$/i, canonical: "Pão integral" },
+
+  // Acompanhamentos / Frios / Ovos
+  { pattern: /^(queijo\s+)?mussarela$/i, canonical: "Queijo mussarela" },
+  { pattern: /^(queijo\s+)?prato$/i, canonical: "Queijo prato" },
+  { pattern: /^(queijo\s+)?minas(\s+frescal)?$/i, canonical: "Queijo Minas frescal" },
+  { pattern: /^presunto(\s+cozido)?$/i, canonical: "Presunto" },
+  { pattern: /^peito\s+de\s+peru(\s+defumado)?$/i, canonical: "Peito de Peru" },
+  { pattern: /^ovos?\s+mexidos?$/i, canonical: "Ovos mexidos" },
+  { pattern: /^ovos?\s+cozidos?$/i, canonical: "Ovos cozidos" },
+  { pattern: /^omelete(\s+completo)?$/i, canonical: "Omelete completo" },
+
+  // Complementos
+  { pattern: /^manteiga(\s+(com|c\/)\s*sal)?$/i, canonical: "Manteiga" },
+  { pattern: /^manteiga\s+dupla$/i, canonical: "Manteiga dupla" },
+  { pattern: /^requeij[aã]o(\s+cremoso)?$/i, canonical: "Requeijão" },
+  { pattern: /^requeij[aã]o\s+duplo$/i, canonical: "Requeijão duplo" },
+
+  // Doces & Biscoitos
+  { pattern: /^bolo(\s+do\s+dia)?$/i, canonical: "Bolo do dia" },
+  { pattern: /^torradas?(\s+amanteigadas?)?$/i, canonical: "Torradas amanteigadas" },
+  { pattern: /^torradas?\s+duplas?$/i, canonical: "Torradas duplas" },
+  { pattern: /^casadinhos?(\s*\(biscoito\s+com\s+goiabada\))?$/i, canonical: "Casadinho (biscoito com goiabada)" },
+  { pattern: /^casadinhos?\s+duplos?$/i, canonical: "Casadinhos duplos" },
+
+  // Frutas
+  { pattern: /^banana(\s+prata)?$/i, canonical: "Banana" },
+  { pattern: /^ma[cç][aã](\s+fuji|\s+gala)?$/i, canonical: "Maçã" },
+  { pattern: /^mam[aã]o(\s+papaya|\s+formosa)?(\s+(com|c\/)\s*mel)?$/i, canonical: "Mamão" },
+  { pattern: /^salada\s+de\s+frutas?(\s*\(.*\))?$/i, canonical: "Salada de frutas" },
+  { pattern: /^fruta\s+do\s+dia$/i, canonical: "Fruta do dia" },
+
+  // Adoçamento
+  { pattern: /^a[cç][uú]car(\s+sach[eê])?$/i, canonical: "Açúcar" },
+  { pattern: /^ado[cç]ante(\s+sach[eê])?$/i, canonical: "Adoçante" },
+  { pattern: /^ambos(\s*\(.*\))?$/i, canonical: "Ambos (Açúcar + Adoçante)" }
+];
+
+function normalizeBreakfastItem(name) {
+  if (!name || typeof name !== "string") return "";
+  const cleaned = name.trim();
+  for (const entry of CANONICAL_BREAKFAST_ALIASES) {
+    if (entry.pattern.test(cleaned)) {
+      return entry.canonical;
+    }
+  }
+  return cleaned;
+}
+
+function splitLegacyCompoundItem(name) {
+  if (!name || typeof name !== "string") return [];
+  const lower = name.trim().toLowerCase();
+  if (lower === "café e leite" || lower === "cafe e leite") {
+    return ["Café", "Leite"];
+  }
+  if (lower === "manteiga e requeijão" || lower === "manteiga e requeijao") {
+    return ["Manteiga", "Requeijão"];
+  }
+  return [normalizeBreakfastItem(name)];
+}
+
+function isExcludedBreakfastItem(name) {
+  if (!name) return true;
+  const lower = name.trim().toLowerCase();
+  return (
+    lower.startsWith("não quero") ||
+    lower.startsWith("nao quero") ||
+    lower.startsWith("nenhum") ||
+    lower.startsWith("sem ") ||
+    lower === "nenhuma outra bebida" ||
+    lower === "nenhuma fruta"
+  );
+}
+
 const STANDARD_BREAKFAST_ITEMS = [
-  "Café e Leite",
-  "Suco de Laranja",
-  "Bolo do Dia",
-  "Salada de Frutas",
+  "Café com leite",
+  "Suco de laranja",
+  "Pão francês",
+  "Pão de queijo",
+  "Queijo mussarela",
   "Presunto",
-  "Mussarela",
-  "Pão Francês",
-  "Pão de Queijo",
-  "Ovos Mexidos",
-  "Manteiga e Requeijão"
+  "Manteiga",
+  "Bolo do dia",
+  "Banana",
+  "Açúcar"
 ];
 
 function initBreakfastData() {
@@ -7902,32 +8056,37 @@ function initBreakfastData() {
 
   if (!db.breakfastMenu) {
     db.breakfastMenu = {
-      availableTimes: ["06:30", "07:00", "07:30", "08:00", "08:30", "09:00", "09:30", "10:00"],
+      availableTimes: ["05:00", "05:30", "06:00", "06:30", "07:00", "07:30", "08:00", "08:30", "09:00", "09:30"],
       categories: [
         {
           id: "bebidas",
-          name: "☕ Bebidas",
-          items: ["Café Puro", "Leite Quente", "Leite Frio", "Café com Leite", "Suco de Laranja", "Suco de Uva", "Água Mineral", "Chá", "Iogurte Natural"]
+          name: "☕ Cafés & Bebidas",
+          items: ["Café", "Café duplo", "Café com leite", "Leite", "Suco de laranja", "Achocolatado gelado", "Água mineral", "Vitamina de banana com iogurte de morango"]
         },
         {
-          id: "paes_frios",
-          name: "🥖 Pães & Frios",
-          items: ["Pão Francês", "Pão de Queijo", "Pão Integral", "Presunto", "Mussarela", "Peito de Peru", "Queijo Minas"]
-        },
-        {
-          id: "quentes",
-          name: "🍳 Pratos Quentes",
-          items: ["Ovos Mexidos", "Ovos Cozidos", "Omelete Completo", "Misto Quente"]
-        },
-        {
-          id: "frutas_doces",
-          name: "🍉 Frutas & Doces",
-          items: ["Salada de Frutas", "Banana", "Mamão Papaya", "Melancia", "Bolo do Dia", "Mel", "Geleia"]
+          id: "paes",
+          name: "🍞 Pães Tradicionais",
+          items: ["Pão francês", "Pão de queijo"]
         },
         {
           id: "acompanhamentos",
-          name: "🧈 Acompanhamentos",
-          items: ["Manteiga", "Requeijão", "Torradas", "Biscoito Casadinho"]
+          name: "🧀 Frios & Acompanhamentos",
+          items: ["Queijo mussarela", "Presunto", "Queijo prato", "Queijo Minas frescal", "Peito de Peru", "Ovos mexidos"]
+        },
+        {
+          id: "complementos",
+          name: "🧈 Complementos",
+          items: ["Manteiga", "Requeijão"]
+        },
+        {
+          id: "doces",
+          name: "🍰 Doces & Biscoitos",
+          items: ["Bolo do dia", "Torradas amanteigadas", "Casadinho (biscoito com goiabada)"]
+        },
+        {
+          id: "frutas",
+          name: "🍎 Frutas Selecionadas",
+          items: ["Banana", "Maçã", "Mamão", "Salada de frutas"]
         }
       ]
     };
@@ -7943,11 +8102,11 @@ function getStandardBreakfastConfig() {
       accompaniments: ["Queijo mussarela", "Presunto"],
       complements: ["Manteiga"],
       sweets: ["Bolo do dia"],
-      fruit: "Fruta do dia",
-      fruitSelected: "Fruta do dia",
-      fruitAvailableOptions: ["Banana", "Maçã", "Mamão"],
+      fruit: "Banana",
+      fruitSelected: "Banana",
+      fruitAvailableOptions: ["Banana", "Maçã", "Mamão", "Salada de frutas"],
       sweetener: "Açúcar",
-      description: "Café com leite, Suco de laranja, Pão francês, Pão de queijo, Queijo mussarela, Presunto, Manteiga, Bolo do dia e Fruta do dia (mamão, banana ou maçã)."
+      description: "Café com leite, Suco de laranja, Pão francês, Pão de queijo, Queijo mussarela, Presunto, Manteiga, Bolo do dia e Banana."
     };
   }
   return db.standardBreakfastConfig;
@@ -7986,19 +8145,206 @@ app.get("/api/breakfast/menu", (req, res) => {
   });
 });
 
+// GET /api/breakfast/reservation-context?res=CODE
+app.get("/api/breakfast/reservation-context", (req, res) => {
+  initBreakfastData();
+  const resParam = (req.query.res || req.query.code || req.query.token || "").trim();
+  if (!resParam) {
+    return res.status(400).json({ error: "Parâmetro de reserva não informado." });
+  }
+
+  if (!db.reservations) db.reservations = [];
+  const r = db.reservations.find(x => 
+    (x.breakfastToken && x.breakfastToken === resParam) ||
+    (x.code && x.code.toUpperCase() === resParam.toUpperCase()) ||
+    (x.reservationCode && x.reservationCode.toUpperCase() === resParam.toUpperCase()) ||
+    String(x.id) === resParam
+  );
+
+  if (!r) {
+    return res.status(404).json({ error: "Reserva não encontrada no calendário do hotel." });
+  }
+
+  // Check if cancelled
+  const isCancelled = r.status === "cancelada" || r.status === "cancelado";
+
+  // Check if breakfast is included
+  const hasBreakfast = Boolean(
+    r.includeBreakfast !== undefined ? r.includeBreakfast : (
+      r.hasBreakfast || 
+      r.ratePlan === "with_breakfast" ||
+      r.notes?.toLowerCase().includes("café") || 
+      r.notes?.toLowerCase().includes("cafe")
+    )
+  );
+
+  // Ensure breakfastToken exists
+  if (!r.breakfastToken) {
+    r.breakfastToken = `bfk_${r.id}_${crypto.randomBytes(4).toString("hex")}`;
+    saveDatabase();
+  }
+
+  const nowBrl = getBrasiliaNow();
+  const todayStr = nowBrl.date;
+
+  // Calculate breakfast dates for the stay: from day after check-in through checkout day
+  const bDates = [];
+  const checkinStr = r.checkinDate;
+  const checkoutStr = r.checkoutDate;
+
+  if (checkinStr && checkoutStr) {
+    let startD = new Date(checkinStr + "T12:00:00Z");
+    const endD = new Date(checkoutStr + "T12:00:00Z");
+
+    if (checkinStr === checkoutStr) {
+      bDates.push(checkinStr);
+    } else {
+      startD.setDate(startD.getDate() + 1);
+      while (startD <= endD) {
+        bDates.push(startD.toISOString().substring(0, 10));
+        startD.setDate(startD.getDate() + 1);
+      }
+    }
+  }
+
+  // Fetch all orders matching this reservation
+  const reservationOrders = (db.breakfastOrders || []).filter(o => 
+    (o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) ||
+    (o.reservationId && o.reservationId === r.id) ||
+    (String(o.roomNumber) === String(r.flatNumber) && o.date >= r.checkinDate && o.date <= r.checkoutDate)
+  );
+
+  // Map each breakfast date with its live status and cutoff
+  const daysInfo = bDates.map(dateStr => {
+    const isPast = dateStr < todayStr;
+    const isToday = dateStr === todayStr;
+    const isClosedTodayAfter5am = isToday && (nowBrl.hour >= 5);
+    const isOpen = !isCancelled && !isPast && (!isToday || nowBrl.hour < 5);
+
+    const existing = reservationOrders.find(o => o.date === dateStr);
+
+    let status = "pending";
+    let cancelReason = null;
+
+    if (isCancelled) {
+      status = "cancelled";
+      cancelReason = "Reserva cancelada no calendário";
+    } else if (existing) {
+      if (existing.status === "cancelled") {
+        status = "cancelled";
+        cancelReason = existing.cancelReason || "Pedido cancelado";
+      } else {
+        status = "scheduled";
+      }
+    } else if (!isOpen) {
+      status = "closed";
+    }
+
+    return {
+      date: dateStr,
+      isToday,
+      isPast,
+      isClosedTodayAfter5am,
+      isOpen,
+      status,
+      cancelReason,
+      existingOrder: existing || null
+    };
+  });
+
+  const flatObj = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
+
+  res.json({
+    reservation: {
+      id: r.id,
+      code: r.code,
+      breakfastToken: r.breakfastToken,
+      guestName: r.guestName,
+      guestPhone: r.guestPhone,
+      guestCount: r.guestCount || r.adults || 1,
+      flatId: r.flatId,
+      flatNumber: r.flatNumber || flatObj?.number || "",
+      checkinDate: r.checkinDate,
+      checkoutDate: r.checkoutDate,
+      status: r.status,
+      isCancelled,
+      hasBreakfast,
+      notes: r.notes
+    },
+    breakfastDates: daysInfo,
+    nowBrasilia: nowBrl
+  });
+});
+
 // GET /api/breakfast/orders?date=YYYY-MM-DD
 app.get("/api/breakfast/orders", (req, res) => {
   initBreakfastData();
   const date = req.query.date || getTodayStr();
   const allOrders = db.breakfastOrders || [];
-  const dayOrders = allOrders.filter(o => o.date === date);
 
-  // Compile summary of items needed for the whole day
+  // Reconciliação em tempo real com o calendário PMS
+  allOrders.forEach(order => {
+    if (!order.status) order.status = "pending";
+    let matchingRes = null;
+    if (order.reservationCode || order.reservationId) {
+      matchingRes = (db.reservations || []).find(r => 
+        (order.reservationCode && (r.code === order.reservationCode || r.reservationCode === order.reservationCode)) ||
+        (order.reservationId && r.id === order.reservationId)
+      );
+      if (!matchingRes) {
+        order.status = "cancelled";
+        order.cancelReason = "Reserva não consta no calendário";
+      }
+    } else if (order.roomNumber) {
+      matchingRes = (db.reservations || []).find(r => 
+        (String(r.flatNumber) === String(order.roomNumber) || r.flatId === Number(order.roomNumber)) &&
+        r.checkinDate <= order.date && r.checkoutDate >= order.date
+      );
+    }
+
+    if (matchingRes) {
+      if (matchingRes.status === "cancelada" || matchingRes.status === "cancelado") {
+        order.status = "cancelled";
+        order.cancelReason = "Reserva cancelada no calendário";
+      } else if (order.date >= matchingRes.checkoutDate) {
+        order.status = "cancelled";
+        order.cancelReason = `Hóspede antecipou o check-out (novo check-out: ${matchingRes.checkoutDate})`;
+      } else if (order.date < matchingRes.checkinDate) {
+        order.status = "cancelled";
+        order.cancelReason = `Data anterior ao check-in (${matchingRes.checkinDate})`;
+      } else {
+        const hasBf = Boolean(
+          matchingRes.includeBreakfast !== undefined ? matchingRes.includeBreakfast : (
+            matchingRes.hasBreakfast || 
+            matchingRes.ratePlan === "with_breakfast" ||
+            matchingRes.notes?.toLowerCase().includes("café") || 
+            matchingRes.notes?.toLowerCase().includes("cafe")
+          )
+        );
+        if (!hasBf) {
+          order.status = "cancelled";
+          order.cancelReason = "Café da manhã desmarcado na reserva";
+        }
+      }
+    }
+  });
+
+  const dayOrders = allOrders.filter(o => o.date === date);
+  const activeDayOrders = dayOrders.filter(o => o.status !== "cancelled");
+
+  // Compile summary of items needed for the whole day (Apenas para pedidos ativos!)
   const itemMap = {};
-  dayOrders.forEach(order => {
+  activeDayOrders.forEach(order => {
     (order.items || []).forEach(it => {
-      const q = Number(it.quantity) || 1;
-      itemMap[it.name] = (itemMap[it.name] || 0) + q;
+      const rawName = it.name || "";
+      const splitItems = splitLegacyCompoundItem(rawName);
+      splitItems.forEach(single => {
+        const canonical = normalizeBreakfastItem(single);
+        if (canonical && !isExcludedBreakfastItem(canonical)) {
+          const q = Number(it.quantity) || 1;
+          itemMap[canonical] = (itemMap[canonical] || 0) + q;
+        }
+      });
     });
   });
 
@@ -8015,10 +8361,19 @@ app.get("/api/breakfast/orders", (req, res) => {
     }
     timeSlotsMap[time].orders.push(order);
 
-    (order.items || []).forEach(it => {
-      const q = Number(it.quantity) || 1;
-      timeSlotsMap[time].itemTotals[it.name] = (timeSlotsMap[time].itemTotals[it.name] || 0) + q;
-    });
+    if (order.status !== "cancelled") {
+      (order.items || []).forEach(it => {
+        const rawName = it.name || "";
+        const splitItems = splitLegacyCompoundItem(rawName);
+        splitItems.forEach(single => {
+          const canonical = normalizeBreakfastItem(single);
+          if (canonical && !isExcludedBreakfastItem(canonical)) {
+            const q = Number(it.quantity) || 1;
+            timeSlotsMap[time].itemTotals[canonical] = (timeSlotsMap[time].itemTotals[canonical] || 0) + q;
+          }
+        });
+      });
+    }
   });
 
   const timeSlots = Object.values(timeSlotsMap)
@@ -8033,8 +8388,9 @@ app.get("/api/breakfast/orders", (req, res) => {
 
   res.json({
     date,
-    totalOrders: dayOrders.length,
-    totalGuests: dayOrders.reduce((acc, o) => acc + (Number(o.guestCount) || 1), 0),
+    totalOrders: activeDayOrders.length,
+    totalCancelled: dayOrders.length - activeDayOrders.length,
+    totalGuests: activeDayOrders.reduce((acc, o) => acc + (Number(o.guestCount) || 1), 0),
     orders: dayOrders,
     itemTotals,
     timeSlots
@@ -8281,78 +8637,77 @@ app.get("/api/breakfast/consumption-summary", (req, res) => {
   dayOrders.forEach(order => {
     const count = Number(order.guestCount) || 1;
     (order.items || []).forEach(it => {
-      const itName = it.name || "";
+      const canonical = normalizeBreakfastItem(it.name || "");
       const itQty = Number(it.quantity) || count;
 
-      // Mapeamento automático para ficha técnica de insumos
-      if (itName.includes("Café")) {
+      if (!canonical || isExcludedBreakfastItem(canonical)) return;
+
+      // Mapeamento preciso para ficha técnica de insumos com base nos nomes canônicos
+      if (canonical === "Café") {
         usageMap["Pó de Café Torrado"] = (usageMap["Pó de Café Torrado"] || 0) + (0.02 * itQty);
-      }
-      if (itName.includes("leite") || itName.includes("Leite")) {
+      } else if (canonical === "Café duplo") {
+        usageMap["Pó de Café Torrado"] = (usageMap["Pó de Café Torrado"] || 0) + (0.035 * itQty);
+      } else if (canonical === "Café com leite") {
+        usageMap["Pó de Café Torrado"] = (usageMap["Pó de Café Torrado"] || 0) + (0.02 * itQty);
         usageMap["Leite Integral UHT"] = (usageMap["Leite Integral UHT"] || 0) + (0.15 * itQty);
-      }
-      if (itName.includes("Pão Francês")) {
+      } else if (canonical === "Leite") {
+        usageMap["Leite Integral UHT"] = (usageMap["Leite Integral UHT"] || 0) + (0.20 * itQty);
+      } else if (canonical === "Leite duplo") {
+        usageMap["Leite Integral UHT"] = (usageMap["Leite Integral UHT"] || 0) + (0.35 * itQty);
+      } else if (canonical === "Pão francês") {
         usageMap["Pão Francês"] = (usageMap["Pão Francês"] || 0) + itQty;
-      }
-      if (itName.includes("Pão de Queijo")) {
+      } else if (canonical === "Pão de queijo") {
         usageMap["Pão de Queijo Congelado"] = (usageMap["Pão de Queijo Congelado"] || 0) + (0.03 * itQty);
-      }
-      if (itName.includes("Ovos")) {
+      } else if (canonical === "Ovos mexidos" || canonical === "Ovos cozidos") {
         usageMap["Ovos Brancos Tipo A"] = (usageMap["Ovos Brancos Tipo A"] || 0) + (2 * itQty);
-      }
-      if (itName.includes("Mussarela")) {
+      } else if (canonical === "Queijo mussarela") {
         usageMap["Queijo Mussarela Fatiado"] = (usageMap["Queijo Mussarela Fatiado"] || 0) + (0.04 * itQty);
-      }
-      if (itName.includes("Prato")) {
+      } else if (canonical === "Queijo prato") {
         usageMap["Queijo Prato Fatiado"] = (usageMap["Queijo Prato Fatiado"] || 0) + (0.04 * itQty);
-      }
-      if (itName.includes("Minas")) {
+      } else if (canonical === "Queijo Minas frescal") {
         usageMap["Queijo Minas Frescal"] = (usageMap["Queijo Minas Frescal"] || 0) + (0.05 * itQty);
-      }
-      if (itName.includes("Presunto")) {
+      } else if (canonical === "Presunto") {
         usageMap["Presunto Cozido Fatiado"] = (usageMap["Presunto Cozido Fatiado"] || 0) + (0.04 * itQty);
-      }
-      if (itName.includes("Peru")) {
+      } else if (canonical === "Peito de Peru") {
         usageMap["Peito de Peru Defumado"] = (usageMap["Peito de Peru Defumado"] || 0) + (0.035 * itQty);
-      }
-      if (itName.includes("Manteiga")) {
+      } else if (canonical === "Manteiga") {
         usageMap["Manteiga com Sal (bloco/pote)"] = (usageMap["Manteiga com Sal (bloco/pote)"] || 0) + (15 * itQty);
-      }
-      if (itName.includes("Requeijão")) {
+      } else if (canonical === "Manteiga dupla") {
+        usageMap["Manteiga com Sal (bloco/pote)"] = (usageMap["Manteiga com Sal (bloco/pote)"] || 0) + (25 * itQty);
+      } else if (canonical === "Requeijão") {
         usageMap["Requeijão Cremoso"] = (usageMap["Requeijão Cremoso"] || 0) + (20 * itQty);
-      }
-      if (itName.includes("Torrada")) {
+      } else if (canonical === "Requeijão duplo") {
+        usageMap["Requeijão Cremoso"] = (usageMap["Requeijão Cremoso"] || 0) + (35 * itQty);
+      } else if (canonical === "Torradas amanteigadas") {
         usageMap["Torradas Amanteigadas"] = (usageMap["Torradas Amanteigadas"] || 0) + (2 * itQty);
-      }
-      if (itName.includes("Casadinho")) {
+      } else if (canonical === "Torradas duplas") {
+        usageMap["Torradas Amanteigadas"] = (usageMap["Torradas Amanteigadas"] || 0) + (4 * itQty);
+      } else if (canonical === "Casadinho (biscoito com goiabada)") {
         usageMap["Biscoito Casadinho c/ Goiabada"] = (usageMap["Biscoito Casadinho c/ Goiabada"] || 0) + (3 * itQty);
-      }
-      if (itName.includes("Bolo")) {
+      } else if (canonical === "Casadinhos duplos") {
+        usageMap["Biscoito Casadinho c/ Goiabada"] = (usageMap["Biscoito Casadinho c/ Goiabada"] || 0) + (6 * itQty);
+      } else if (canonical === "Bolo do dia") {
         usageMap["Bolo do Dia (Fatias)"] = (usageMap["Bolo do Dia (Fatias)"] || 0) + itQty;
-      }
-      if (itName.includes("Maçã")) {
+      } else if (canonical === "Maçã") {
         usageMap["Maçã Fuji/Gala"] = (usageMap["Maçã Fuji/Gala"] || 0) + itQty;
-      }
-      if (itName.includes("Banana")) {
+      } else if (canonical === "Banana" || canonical === "Fruta do dia") {
         usageMap["Banana Prata"] = (usageMap["Banana Prata"] || 0) + itQty;
-      }
-      if (itName.includes("Mamão")) {
+      } else if (canonical === "Mamão") {
         usageMap["Mamão Papaya/Formosa"] = (usageMap["Mamão Papaya/Formosa"] || 0) + (0.5 * itQty);
-      }
-      if (itName.includes("Salada de Fruta") || itName.includes("Salada de Frutas")) {
+      } else if (canonical === "Salada de frutas") {
         usageMap["Salada de Frutas Mista"] = (usageMap["Salada de Frutas Mista"] || 0) + itQty;
-      }
-      if (itName.includes("Suco de Laranja")) {
+      } else if (canonical === "Suco de laranja") {
         usageMap["Suco de Laranja Integral"] = (usageMap["Suco de Laranja Integral"] || 0) + (300 * itQty);
-      }
-      if (itName.includes("Água")) {
+      } else if (canonical === "Água mineral") {
         usageMap["Água Mineral 500ml"] = (usageMap["Água Mineral 500ml"] || 0) + itQty;
-      }
-      if (itName.includes("Achocolatado")) {
+      } else if (canonical === "Achocolatado gelado") {
         usageMap["Achocolatado Pronto/Líquido"] = (usageMap["Achocolatado Pronto/Líquido"] || 0) + (250 * itQty);
-      }
-      if (itName.includes("Vitamina")) {
+      } else if (canonical === "Vitamina de banana com iogurte de morango") {
         usageMap["Vitamina de Banana c/ Iogurte Morango"] = (usageMap["Vitamina de Banana c/ Iogurte Morango"] || 0) + (300 * itQty);
+      } else if (canonical === "Açúcar") {
+        usageMap["Açúcar Sachê 5g"] = (usageMap["Açúcar Sachê 5g"] || 0) + itQty;
+      } else if (canonical === "Adoçante") {
+        usageMap["Adoçante Sachê 0.8g"] = (usageMap["Adoçante Sachê 0.8g"] || 0) + itQty;
       }
     });
   });
@@ -8383,7 +8738,7 @@ app.get("/api/breakfast/consumption-summary", (req, res) => {
   });
 });
 
-// POST /api/breakfast/orders (Suporta 1 a 3 pessoas, slots de 7 min, e pedidos individuais)
+// POST /api/breakfast/orders (Suporta 1 a 3 pessoas, slots de 7 min, unificação e normalização canônica)
 app.post("/api/breakfast/orders", (req, res) => {
   initBreakfastData();
   const { 
@@ -8405,12 +8760,18 @@ app.post("/api/breakfast/orders", (req, res) => {
 
   // Validação Estrita de Elegibilidade de Café da Manhã
   const activeRes = (db.reservations || []).find(r => 
-    (reservationCode && (r.code === reservationCode || String(r.id) === reservationCode)) ||
+    (reservationCode && (r.code === reservationCode || r.reservationCode === reservationCode || String(r.id) === reservationCode || r.breakfastToken === reservationCode)) ||
     (String(r.flatNumber) === String(roomNumber) && r.status !== "cancelada" && r.status !== "cancelado")
   );
 
   if (activeRes) {
-    const isIncluded = Boolean(activeRes.includeBreakfast !== undefined ? activeRes.includeBreakfast : (activeRes.hasBreakfast || activeRes.notes?.toLowerCase().includes("café") || activeRes.notes?.toLowerCase().includes("cafe")));
+    if (activeRes.status === "cancelada" || activeRes.status === "cancelado") {
+      return res.status(400).json({
+        error: "Esta reserva foi cancelada no calendário do hotel. Não é possível realizar pedidos de café."
+      });
+    }
+
+    const isIncluded = Boolean(activeRes.includeBreakfast !== undefined ? activeRes.includeBreakfast : (activeRes.hasBreakfast || activeRes.ratePlan === "with_breakfast" || activeRes.notes?.toLowerCase().includes("café") || activeRes.notes?.toLowerCase().includes("cafe")));
     if (!isIncluded) {
       return res.status(403).json({
         error: "Esta reserva foi contratada sem café da manhã incluso. O serviço de pedidos está desabilitado para este quarto."
@@ -8422,140 +8783,226 @@ app.post("/api/breakfast/orders", (req, res) => {
     return res.status(400).json({ error: "Quarto, Nome do Hóspede e Horário de Entrega são obrigatórios." });
   }
 
-  const targetDate = req.body.deliveryDate || date || getTodayStr();
-  const gCount = Math.min(Math.max(Number(guestCount) || 1, 1), 3); // 1, 2 ou 3 apenas
+  const nowBrl = getBrasiliaNow();
+  const todayStr = nowBrl.date;
 
-  // Validar se o horário respeita 7 minutos de intervalo de outros pedidos na mesma data
+  // Lista de datas solicitadas (suporte a lote / repetição em múltiplos dias)
+  const rawDates = Array.isArray(req.body.deliveryDates) && req.body.deliveryDates.length > 0
+    ? req.body.deliveryDates
+    : [req.body.deliveryDate || date || getTodayStr()];
+
+  const targetDates = [...new Set(rawDates)].filter(Boolean);
+
+  // Validação de horário limite das 05:00
+  for (const tDate of targetDates) {
+    if (tDate < todayStr) {
+      return res.status(400).json({ error: `A data ${tDate} já passou. Não é possível realizar pedidos para datas retroativas.` });
+    }
+    if (tDate === todayStr && nowBrl.hour >= 5) {
+      return res.status(400).json({ 
+        error: `O horário limite para pedidos de hoje (${todayStr}) foi encerrado às 05:00. O próximo café da manhã disponível é para amanhã.` 
+      });
+    }
+    if (activeRes && tDate > activeRes.checkoutDate) {
+      return res.status(400).json({
+        error: `A data ${tDate} é posterior ao check-out da reserva (${activeRes.checkoutDate}).`
+      });
+    }
+  }
+
+  const gCount = Math.min(Math.max(Number(guestCount) || 1, 1), 3); // 1, 2 ou 3 apenas
   const proposedMinutes = timeToMinutes(deliveryTime || guestOrders?.[0]?.deliveryTime);
-  const dayOrders = (db.breakfastOrders || []).filter(o => o.date === targetDate);
-  const conflict = dayOrders.find(o => Math.abs(timeToMinutes(o.deliveryTime) - proposedMinutes) < 7 && o.roomNumber !== String(roomNumber));
-  
-  if (conflict) {
-    return res.status(400).json({
-      error: `O horário ${deliveryTime || ''} não está mais disponível para agendamento. Por favor, selecione outro horário disponível na lista.`
-    });
+
+  // Validar se o horário respeita 7 minutos de intervalo de outros pedidos em cada data solicitada
+  for (const tDate of targetDates) {
+    const dayOrders = (db.breakfastOrders || []).filter(o => o.date === tDate && o.status !== "cancelled");
+    const conflict = dayOrders.find(o => Math.abs(timeToMinutes(o.deliveryTime) - proposedMinutes) < 7 && String(o.roomNumber) !== String(roomNumber));
+    if (conflict) {
+      return res.status(400).json({
+        error: `O horário ${deliveryTime || ''} no dia ${tDate} não está mais disponível (conflito de 7 min com outro quarto). Por favor, selecione outro horário.`
+      });
+    }
   }
 
   let finalItems = [];
   const map = {};
 
-  if (isStandard || req.body.orderType === "standard") {
-    // Café Padrão CorpFlats Dinâmico por pessoa
-    const std = getStandardBreakfastConfig();
-    if (std.coffee && std.coffee !== "Não quero café") map[std.coffee] = (map[std.coffee] || 0) + gCount;
-    if (std.otherBeverage && std.otherBeverage !== "Nenhuma outra bebida") map[std.otherBeverage] = (map[std.otherBeverage] || 0) + gCount;
-    (std.breads || []).forEach(b => { map[b] = (map[b] || 0) + gCount; });
-    (std.accompaniments || []).forEach(a => { map[a] = (map[a] || 0) + gCount; });
-    (std.complements || []).forEach(c => { map[c] = (map[c] || 0) + gCount; });
-    (std.sweets || []).forEach(s => { if (s !== "Não quero nenhum desses") map[s] = (map[s] || 0) + gCount; });
-    
-    // Fruta do dia / selecionada
-    const fruitChosen = req.body.fruitSelected || std.fruitSelected || std.fruit || "Fruta do dia";
-    map[fruitChosen] = (map[fruitChosen] || 0) + gCount;
+  const addCanonicalItem = (rawName, qty = 1) => {
+    if (!rawName || typeof rawName !== "string") return;
+    const splitList = splitLegacyCompoundItem(rawName);
+    splitList.forEach(single => {
+      const canonical = normalizeBreakfastItem(single);
+      if (canonical && !isExcludedBreakfastItem(canonical)) {
+        map[canonical] = (map[canonical] || 0) + qty;
+      }
+    });
+  };
 
-    if (std.sweetener && std.sweetener !== "Nenhum") map[std.sweetener] = (map[std.sweetener] || 0) + gCount;
+  if (isStandard || req.body.orderType === "standard") {
+    // Café Padrão CorpFlats: utiliza exatamente os mesmos itens canônicos do café personalizado
+    const std = getStandardBreakfastConfig();
+    addCanonicalItem(std.coffee, gCount);
+    addCanonicalItem(std.otherBeverage, gCount);
+    (std.breads || []).forEach(b => addCanonicalItem(b, gCount));
+    (std.accompaniments || []).forEach(a => addCanonicalItem(a, gCount));
+    (std.complements || []).forEach(c => addCanonicalItem(c, gCount));
+    (std.sweets || []).forEach(s => addCanonicalItem(s, gCount));
+    
+    // Fruta selecionada (Banana, Maçã, Mamão, etc.) ou padrão configurado
+    const fruitChosen = req.body.fruitSelected || std.fruitSelected || std.fruit || "Banana";
+    addCanonicalItem(fruitChosen, gCount);
+
+    if (std.sweetener) {
+      addCanonicalItem(std.sweetener, gCount);
+    }
   } else if (Array.isArray(guestChoices) && guestChoices.length > 0) {
-    // Extrai e calcula porções de cada hóspede individualmente
+    // Pedido Personalizado: normaliza escolhas de cada hóspede para os mesmos itens canônicos
     guestChoices.forEach(go => {
-      if (go.coffee && go.coffee !== "Não quero café") {
-        map[go.coffee] = (map[go.coffee] || 0) + 1;
-      }
-      if (go.otherBeverage && go.otherBeverage !== "Nenhuma outra bebida") {
-        map[go.otherBeverage] = (map[go.otherBeverage] || 0) + 1;
-      }
-      // Pães
-      const breads = go.breads || [];
-      const hasFrench = breads.includes("Pão francês");
-      const hasCheese = breads.includes("Pão de queijo");
+      if (go.coffee) addCanonicalItem(go.coffee, 1);
+      if (go.otherBeverage) addCanonicalItem(go.otherBeverage, 1);
+
+      // Pães: regra de porção personalizada (se ambos, 1 de cada; se apenas 1 tipo, 2 unidades)
+      const rawBreads = (go.breads || []).map(normalizeBreakfastItem).filter(b => !isExcludedBreakfastItem(b));
+      const hasFrench = rawBreads.includes("Pão francês");
+      const hasCheese = rawBreads.includes("Pão de queijo");
       if (hasFrench && hasCheese) {
-        map["Pão francês"] = (map["Pão francês"] || 0) + 1;
-        map["Pão de queijo"] = (map["Pão de queijo"] || 0) + 1;
+        addCanonicalItem("Pão francês", 1);
+        addCanonicalItem("Pão de queijo", 1);
       } else if (hasFrench) {
-        map["Pão francês"] = (map["Pão francês"] || 0) + 2;
+        addCanonicalItem("Pão francês", 2);
       } else if (hasCheese) {
-        map["Pão de queijo"] = (map["Pão de queijo"] || 0) + 2;
+        addCanonicalItem("Pão de queijo", 2);
+      } else {
+        rawBreads.forEach(b => addCanonicalItem(b, 1));
       }
-      // Acompanhamentos
-      (go.accompaniments || []).forEach(acc => {
-        map[acc] = (map[acc] || 0) + 1;
-      });
-      // Complementos
-      (go.complements || []).forEach(comp => {
-        map[comp] = (map[comp] || 0) + 1;
-      });
-      // Doces
-      (go.sweets || []).forEach(sw => {
-        if (sw !== "Não quero nenhum desses") {
-          map[sw] = (map[sw] || 0) + 1;
-        }
-      });
-      // Frutas
-      if (go.fruit && go.fruit !== "Nenhuma fruta") {
-        let fruitDesc = go.fruit;
-        if (go.fruit === "Mamão" && go.fruitHoney) fruitDesc = "Mamão c/ mel";
-        if (go.fruit === "Salada de frutas" && go.fruitSaladOption) fruitDesc = `Salada de frutas (${go.fruitSaladOption})`;
-        map[fruitDesc] = (map[fruitDesc] || 0) + 1;
-      }
-      // Adoçante
-      if (go.sweetener && go.sweetener !== "Nenhum") {
-        map[go.sweetener] = (map[go.sweetener] || 0) + 1;
-      }
+
+      // Acompanhamentos, Complementos, Doces
+      (go.accompaniments || []).forEach(acc => addCanonicalItem(acc, 1));
+      (go.complements || []).forEach(comp => addCanonicalItem(comp, 1));
+      (go.sweets || []).forEach(sw => addCanonicalItem(sw, 1));
+
+      // Frutas: normaliza para fruta canônica (ex: Banana, Maçã, Mamão, Salada de frutas)
+      if (go.fruit) addCanonicalItem(go.fruit, 1);
+
+      // Adoçante / Açúcar
+      if (go.sweetener) addCanonicalItem(go.sweetener, 1);
     });
   } else if (preferences) {
     const p = preferences;
-    if (p.coffee && p.coffee !== "Não quero café") map[p.coffee] = (map[p.coffee] || 0) + gCount;
-    if (p.otherBeverage && p.otherBeverage !== "Nenhuma outra bebida") map[p.otherBeverage] = (map[p.otherBeverage] || 0) + gCount;
-    (p.breads || []).forEach(b => { map[b] = (map[b] || 0) + gCount; });
-    (p.accompaniments || []).forEach(a => { map[a] = (map[a] || 0) + gCount; });
-    (p.complements || []).forEach(c => { map[c] = (map[c] || 0) + gCount; });
-    (p.sweets || []).forEach(s => { if (s !== "Não quero nenhum desses") map[s] = (map[s] || 0) + gCount; });
-    if (p.fruit && p.fruit !== "Nenhuma fruta") map[p.fruit] = (map[p.fruit] || 0) + gCount;
+    if (p.coffee) addCanonicalItem(p.coffee, gCount);
+    if (p.otherBeverage) addCanonicalItem(p.otherBeverage, gCount);
+    (p.breads || []).forEach(b => addCanonicalItem(b, gCount));
+    (p.accompaniments || []).forEach(a => addCanonicalItem(a, gCount));
+    (p.complements || []).forEach(c => addCanonicalItem(c, gCount));
+    (p.sweets || []).forEach(s => addCanonicalItem(s, gCount));
+    if (p.fruit) addCanonicalItem(p.fruit, gCount);
+    if (p.sweetener) addCanonicalItem(p.sweetener, gCount);
+  } else if (Array.isArray(items) && items.length > 0) {
+    items.forEach(it => {
+      const rawName = typeof it === "string" ? it : it.name;
+      const q = typeof it === "object" && it.quantity ? Number(it.quantity) : 1;
+      addCanonicalItem(rawName, q);
+    });
+  } else {
+    // Pedido manual lançado sem detalhamento: expandir automaticamente para os itens do Café Padrão Canônico
+    const std = getStandardBreakfastConfig();
+    addCanonicalItem(std.coffee, gCount);
+    addCanonicalItem(std.otherBeverage, gCount);
+    (std.breads || []).forEach(b => addCanonicalItem(b, gCount));
+    (std.accompaniments || []).forEach(a => addCanonicalItem(a, gCount));
+    (std.complements || []).forEach(c => addCanonicalItem(c, gCount));
+    (std.sweets || []).forEach(s => addCanonicalItem(s, gCount));
+    addCanonicalItem(std.fruitSelected || std.fruit || "Banana", gCount);
+    if (std.sweetener) addCanonicalItem(std.sweetener, gCount);
   }
 
   if (Object.keys(map).length > 0) {
     finalItems = Object.entries(map).map(([name, quantity]) => ({ name, quantity }));
-  } else if (Array.isArray(items) && items.length > 0) {
-    finalItems = items.map(it => ({
-      name: typeof it === "string" ? it : it.name,
-      quantity: typeof it === "object" && it.quantity ? Number(it.quantity) : 1
-    }));
   } else {
-    finalItems = [{ name: "Café da Manhã Completo", quantity: gCount }];
+    const std = getStandardBreakfastConfig();
+    finalItems = [
+      { name: normalizeBreakfastItem(std.coffee), quantity: gCount },
+      { name: normalizeBreakfastItem(std.otherBeverage), quantity: gCount },
+      { name: "Pão francês", quantity: gCount },
+      { name: "Pão de queijo", quantity: gCount },
+      { name: "Queijo mussarela", quantity: gCount },
+      { name: "Presunto", quantity: gCount },
+      { name: "Manteiga", quantity: gCount },
+      { name: "Bolo do dia", quantity: gCount },
+      { name: normalizeBreakfastItem(std.fruitSelected || "Banana"), quantity: gCount },
+      { name: "Açúcar", quantity: gCount }
+    ].filter(i => i.name && !isExcludedBreakfastItem(i.name));
   }
 
-  const newOrder = {
-    id: db.breakfastOrders.length > 0 ? Math.max(...db.breakfastOrders.map(o => o.id)) + 1 : 1,
-    date: targetDate,
-    deliveryTime: deliveryTime || guestOrders?.[0]?.deliveryTime || "08:00",
-    roomNumber: String(roomNumber),
-    clientName: clientName.trim(),
-    guestCount: gCount,
-    isStandard: Boolean(isStandard),
-    orderMode,
-    guestOrders: Array.isArray(guestOrders) ? guestOrders : null,
-    items: finalItems,
-    notes: notes ? notes.trim() : "",
-    status: "pending",
-    phone: phone ? phone.trim() : "",
-    createdAt: new Date().toISOString()
-  };
+  const savedOrders = [];
 
-  db.breakfastOrders.unshift(newOrder);
+  for (const tDate of targetDates) {
+    const existingIndex = (db.breakfastOrders || []).findIndex(o => 
+      o.date === tDate && (
+        (activeRes && (o.reservationCode === activeRes.code || o.reservationId === activeRes.id)) ||
+        (String(o.roomNumber) === String(roomNumber))
+      )
+    );
+
+    if (existingIndex >= 0) {
+      const existing = db.breakfastOrders[existingIndex];
+      existing.deliveryTime = deliveryTime || guestOrders?.[0]?.deliveryTime || "08:00";
+      existing.roomNumber = String(roomNumber);
+      existing.clientName = clientName.trim();
+      existing.guestCount = gCount;
+      existing.isStandard = Boolean(isStandard);
+      existing.orderMode = orderMode;
+      existing.guestOrders = Array.isArray(guestOrders) ? guestOrders : null;
+      existing.items = finalItems;
+      existing.notes = notes ? notes.trim() : "";
+      existing.phone = phone ? phone.trim() : "";
+      existing.status = "pending";
+      existing.cancelReason = null;
+      existing.reservationCode = activeRes?.code || reservationCode || existing.reservationCode || null;
+      existing.reservationId = activeRes?.id || existing.reservationId || null;
+      existing.updatedAt = new Date().toISOString();
+      savedOrders.push(existing);
+    } else {
+      const newOrder = {
+        id: db.breakfastOrders.length > 0 ? Math.max(...db.breakfastOrders.map(o => o.id)) + 1 : 1,
+        date: tDate,
+        deliveryTime: deliveryTime || guestOrders?.[0]?.deliveryTime || "08:00",
+        roomNumber: String(roomNumber),
+        clientName: clientName.trim(),
+        guestCount: gCount,
+        isStandard: Boolean(isStandard),
+        orderMode,
+        guestOrders: Array.isArray(guestOrders) ? guestOrders : null,
+        items: finalItems,
+        notes: notes ? notes.trim() : "",
+        status: "pending",
+        phone: phone ? phone.trim() : "",
+        reservationCode: activeRes?.code || reservationCode || null,
+        reservationId: activeRes?.id || null,
+        createdAt: new Date().toISOString()
+      };
+      db.breakfastOrders.unshift(newOrder);
+      savedOrders.push(newOrder);
+    }
+  }
+
   saveDatabase();
 
   createNotification({
     category: "breakfast",
-    title: `☕ Novo Pedido de Café - Apt ${newOrder.roomNumber}`,
-    message: `${newOrder.clientName} pediu café para entrega às ${newOrder.deliveryTime} (${newOrder.guestCount} ${newOrder.guestCount === 1 ? 'pessoa' : 'pessoas'})`,
+    title: `☕ Pedido de Café ${targetDates.length > 1 ? `(${targetDates.length} dias)` : ''} - Apt ${roomNumber}`,
+    message: `${clientName} agendou café para ${targetDates.join(", ")} às ${deliveryTime || '08:00'} (${gCount} ${gCount === 1 ? 'pessoa' : 'pessoas'})`,
     severity: "info",
-    metadata: { orderId: newOrder.id, roomNumber: newOrder.roomNumber, deliveryTime: newOrder.deliveryTime, guestCount: newOrder.guestCount },
+    metadata: { roomNumber, deliveryTime, guestCount: gCount, dates: targetDates },
     targetUrl: "/pedidos-cafe"
   });
 
   res.status(201).json({
     success: true,
-    message: `Pedido de café da manhã para o Apt ${roomNumber} agendado com sucesso para as ${newOrder.deliveryTime}!`,
-    order: newOrder
+    message: `Café da manhã agendado com sucesso para ${targetDates.length} ${targetDates.length === 1 ? 'dia' : 'dias'} às ${deliveryTime || '08:00'}!`,
+    count: savedOrders.length,
+    orders: savedOrders,
+    order: savedOrders[0]
   });
 });
 

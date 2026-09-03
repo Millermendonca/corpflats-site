@@ -14,8 +14,9 @@ import { Switch } from "@/components/ui/switch"
 import { 
   CalendarDays, Plus, ChevronLeft, ChevronRight, Search, 
   Calendar as CalendarIcon, User, Users, Phone, Mail, ShieldAlert, CheckCircle2,
-  Clock, DollarSign, BedDouble, AlertTriangle, Lock, Trash2, Edit3, MessageCircle, KeyRound, Sparkles, FileText, Tag, Coffee, Building2, Wind, Zap, Bed, Check, RotateCcw, AlertCircle, RefreshCw, SlidersHorizontal
+  Clock, DollarSign, BedDouble, AlertTriangle, Lock, Trash2, Edit3, MessageCircle, KeyRound, Sparkles, FileText, Tag, Coffee, Building2, Wind, Zap, Bed, Check, RotateCcw, AlertCircle, RefreshCw, SlidersHorizontal, Copy
 } from "lucide-react"
+import { useToast } from "@/hooks/use-toast"
 import { 
   format, addDays, subDays, startOfMonth, endOfMonth, eachDayOfInterval, 
   isSameDay, isToday, isYesterday, parseISO, differenceInDays 
@@ -38,6 +39,7 @@ import { FLAT_AMENITIES_CATALOG, AMENITY_CATEGORIES, renderAmenityIcon, getFlatA
 
 export default function PmsCalendar() {
   const [, setLocation] = useLocation()
+  const { toast } = useToast()
   const { data: user, isLoading: loadingUser } = useGetMe()
 
   const [currentDate, setCurrentDate] = useState(new Date())
@@ -1756,6 +1758,74 @@ export default function PmsCalendar() {
                         <span className="text-[10px] text-slate-400">Sem Café</span>
                       )}
                     </button>
+
+                    {/* Link Exclusivo do Café da Manhã */}
+                    {formIncludeBreakfast && (
+                      <div className="p-3.5 bg-amber-50/90 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 rounded-2xl space-y-2.5 sm:col-span-3 animate-in fade-in">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="text-base">☕</span>
+                            <div>
+                              <h4 className="text-xs font-black text-amber-950 dark:text-amber-100">Link Exclusivo do Café da Manhã</h4>
+                              <p className="text-[10px] text-amber-800 dark:text-amber-300/80">O hóspede acessa sem precisar preencher dados (quarto e hóspedes já vinculados).</p>
+                            </div>
+                          </div>
+                          <Badge className="bg-amber-600 text-white font-bold text-[10px]">Link Ativo</Badge>
+                        </div>
+
+                        <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
+                          <Input
+                            readOnly
+                            value={`${window.location.origin}/cafe?res=${selectedRes?.code || selectedRes?.breakfastToken || formGuestName || 'reserva'}`}
+                            className="text-xs h-8 bg-white dark:bg-slate-900 select-all font-mono font-bold flex-1"
+                          />
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => {
+                              const resCode = selectedRes?.code || selectedRes?.breakfastToken || formGuestName || 'reserva'
+                              const url = `${window.location.origin}/cafe?res=${resCode}`
+                              navigator.clipboard.writeText(url)
+                              toast({ title: "Link copiado!", description: "Link do café da manhã copiado para a área de transferência." })
+                            }}
+                            className="h-8 text-xs font-bold gap-1 bg-amber-600 hover:bg-amber-700 text-white shrink-0"
+                          >
+                            <Copy className="w-3.5 h-3.5" /> Copiar Link
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              const resCode = selectedRes?.code || selectedRes?.breakfastToken || formGuestName || 'reserva'
+                              const url = `${window.location.origin}/cafe?res=${resCode}`
+                              const phone = (formGuestPhone || selectedRes?.guestPhone || "").replace(/\D/g, "")
+                              const guestName = formGuestName || selectedRes?.guestName || "Hóspede"
+                              const flatNum = formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || formFlatId) : (selectedRes?.flatNumber || "seu flat")
+                              const msg = encodeURIComponent(`Olá ${guestName}! Aqui é da equipe da CorpFlats. Segue o seu link exclusivo para montar e agendar o seu café da manhã no Flat ${flatNum}: ${url}`)
+                              window.open(`https://wa.me/${phone}?text=${msg}`, "_blank")
+                            }}
+                            className="h-8 text-xs font-bold gap-1 border-emerald-500 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950 shrink-0"
+                          >
+                            <MessageCircle className="w-3.5 h-3.5" /> Enviar WhatsApp
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              const resCode = selectedRes?.code || selectedRes?.breakfastToken || formGuestName || 'reserva'
+                              const url = `/cafe?res=${resCode}`
+                              window.open(url, "_blank")
+                            }}
+                            className="h-8 text-xs font-bold gap-1 text-slate-700 dark:text-slate-300 shrink-0"
+                            title="Abrir página de pedidos"
+                          >
+                            Abrir ↗
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <div className="space-y-1">

@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { 
   Coffee, Clock, Home as HomeIcon, Users, CheckCircle2, 
   Package, MessageCircle, Plus, ChevronRight, RefreshCw, AlertTriangle, Trash2, ExternalLink,
-  Edit2, Scale, DollarSign, Layers, Check
+  Edit2, Scale, DollarSign, Layers, Check, Copy
 } from "lucide-react"
 import { format, addDays } from "date-fns"
 import { ptBR } from "date-fns/locale"
@@ -32,6 +32,7 @@ export default function BreakfastProduction() {
   const [data, setData] = useState<any>(null)
   const [ingredients, setIngredients] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [copiedSummary, setCopiedSummary] = useState(false)
 
   // Ingredient Modal
   const [ingredientModalOpen, setIngredientModalOpen] = useState(false)
@@ -116,7 +117,7 @@ export default function BreakfastProduction() {
       })
       if (res.ok) {
         setStdModalOpen(false)
-        alert("Configuração da Cesta de Café da Manhã Padrão atualizada com sucesso!")
+        alert("Configuração do Pedido de Café da Manhã Padrão atualizada com sucesso!")
         fetchOrders()
       }
     } finally {
@@ -197,6 +198,41 @@ export default function BreakfastProduction() {
     }
   }
 
+  const handleCopyKitchenSummary = () => {
+    if (!data) return
+    const lines: string[] = []
+    lines.push(`☕ *CAFÉ DA MANHÃ CORPFLATS — ${labelDate(currentDate)}*`)
+    lines.push(`📅 Data: ${fullDate(currentDate)}`)
+    lines.push("")
+    lines.push("📊 *PANORAMA GERAL:*")
+    lines.push(`• Total de Apartamentos com Pedido: ${data.totalOrders || 0}`)
+    lines.push(`• Total de Hóspedes: ${data.totalGuests || 0} pessoas`)
+    lines.push("")
+    lines.push("🍳 *ITENS PARA PRODUÇÃO CONSOLIDADA (MISE EN PLACE):*")
+    if (data.itemTotals && data.itemTotals.length > 0) {
+      data.itemTotals.forEach((it: any) => {
+        lines.push(`• ${it.name}: *${it.totalQuantity}×*`)
+      })
+    } else {
+      lines.push("• Nenhum item pendente para produção.")
+    }
+    lines.push("")
+    lines.push("⏱️ *CRONOGRAMA DE ENTREGAS POR HORÁRIO:*")
+    if (data.timeSlots && data.timeSlots.length > 0) {
+      data.timeSlots.forEach((slot: any) => {
+        lines.push(`\n*Horário: ${slot.time}* (${slot.orders?.length || 0} quarto${(slot.orders?.length || 0) > 1 ? 's' : ''})`)
+        slot.orders?.forEach((o: any) => {
+          lines.push(`  → Apt ${o.roomNumber} (${o.guestCount} ${o.guestCount === 1 ? 'pessoa' : 'pessoas'}) - ${o.isStandard ? '☕ Padrão' : '🎨 Personalizado'} - ${o.clientName}`)
+        })
+      })
+    }
+    lines.push("\n_CorpFlats Room Service Gastronomia_")
+
+    navigator.clipboard.writeText(lines.join("\n"))
+    setCopiedSummary(true)
+    setTimeout(() => setCopiedSummary(false), 2500)
+  }
+
   const handleSaveManualOrder = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!manualRoom || !manualName) return
@@ -213,6 +249,8 @@ export default function BreakfastProduction() {
           guestCount: Number(manualGuests) || 1,
           deliveryTime: manualTime,
           deliveryDate: currentDate,
+          isStandard: true,
+          orderType: "standard",
           notes: manualNotes
         }),
         credentials: "include"
@@ -400,14 +438,25 @@ export default function BreakfastProduction() {
             {/* Daily Insumes Required */}
             {data?.itemTotals && data.itemTotals.length > 0 && (
               <Card className="rounded-2xl border shadow-2xs overflow-hidden">
-                <CardHeader className="bg-muted/10 pb-3">
-                  <CardTitle className="text-sm font-bold flex items-center gap-2">
-                    <Package className="w-4 h-4 text-amber-600" />
-                    <span>Consumo Consolidado de Insumos para a Cozinha ({data.date})</span>
-                  </CardTitle>
-                  <CardDescription className="text-xs">
-                    Total calculado conforme regras de porções por pessoa (Pão francês, queijo, manteiga, café, leite, etc.).
-                  </CardDescription>
+                <CardHeader className="bg-muted/10 pb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <div>
+                    <CardTitle className="text-sm font-bold flex items-center gap-2">
+                      <Package className="w-4 h-4 text-amber-600" />
+                      <span>Consumo Consolidado de Insumos para a Cozinha ({data.date})</span>
+                    </CardTitle>
+                    <CardDescription className="text-xs mt-0.5">
+                      Itens unificados e normalizados sem duplicidades (Pedido Padrão e Personalizados somados).
+                    </CardDescription>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCopyKitchenSummary}
+                    className="self-start sm:self-auto text-xs font-bold gap-1.5 border-amber-500/40 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950"
+                  >
+                    {copiedSummary ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-amber-600" />}
+                    <span>{copiedSummary ? "Copiado!" : "Copiar Resumo da Cozinha"}</span>
+                  </Button>
                 </CardHeader>
                 <CardContent className="p-4">
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
@@ -449,37 +498,53 @@ export default function BreakfastProduction() {
                           Entrega às {slot.time}
                         </h2>
                         <Badge variant="outline" className="text-xs font-mono font-bold">
-                          {slot.orders.length} {slot.orders.length > 1 ? "quartos" : "quarto"}
+                          {slot.orders.filter((o: any) => o.status !== "cancelled").length} {slot.orders.filter((o: any) => o.status !== "cancelled").length === 1 ? "quarto" : "quartos"}
                         </Badge>
+                        {slot.orders.some((o: any) => o.status === "cancelled") && (
+                          <Badge variant="destructive" className="text-[10px] font-bold">
+                            {slot.orders.filter((o: any) => o.status === "cancelled").length} cancelado(s)
+                          </Badge>
+                        )}
                       </div>
                     </div>
 
                     {/* Slot Orders List */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {slot.orders.map((order: any) => {
+                        const isCancelled = order.status === "cancelled"
                         const isReady = order.status === "ready" || order.status === "delivered"
                         return (
                           <Card 
                             key={order.id} 
                             className={`rounded-2xl border transition-all shadow-sm ${
-                              isReady 
-                                ? "bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-800" 
-                                : "bg-card hover:border-amber-400"
+                              isCancelled
+                                ? "bg-rose-50/70 dark:bg-rose-950/20 border-rose-300 dark:border-rose-800 opacity-85"
+                                : isReady 
+                                  ? "bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-800" 
+                                  : "bg-card hover:border-amber-400"
                             }`}
                           >
                             <CardHeader className="p-4 pb-2">
                               <div className="flex items-start justify-between gap-2">
                                 <div>
                                   <div className="flex items-center gap-2">
-                                    <span className="text-xl font-black text-slate-900 dark:text-slate-100">
+                                    <span className={`text-xl font-black ${isCancelled ? 'line-through text-rose-700 dark:text-rose-400' : 'text-slate-900 dark:text-slate-100'}`}>
                                       Apt {order.roomNumber}
                                     </span>
-                                    <Badge className="bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300 text-[10px] font-bold">
-                                      👥 {order.guestCount} {order.guestCount === 1 ? 'Pessoa' : 'Pessoas'}
-                                    </Badge>
-                                    <Badge variant="outline" className={`text-[10px] font-bold ${order.isStandard ? 'bg-amber-500/10 text-amber-600 border-amber-500/30' : 'bg-blue-500/10 text-blue-600 border-blue-500/30'}`}>
-                                      {order.isStandard ? '☕ Café Padrão' : '🎨 Personalizado'}
-                                    </Badge>
+                                    {isCancelled ? (
+                                      <Badge variant="destructive" className="text-[10px] font-black">
+                                        🚫 CANCELADO
+                                      </Badge>
+                                    ) : (
+                                      <>
+                                        <Badge className="bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300 text-[10px] font-bold">
+                                          👥 {order.guestCount} {order.guestCount === 1 ? 'Pessoa' : 'Pessoas'}
+                                        </Badge>
+                                        <Badge variant="outline" className={`text-[10px] font-bold ${order.isStandard ? 'bg-amber-500/10 text-amber-600 border-amber-500/30' : 'bg-blue-500/10 text-blue-600 border-blue-500/30'}`}>
+                                          {order.isStandard ? '☕ Café Padrão' : '🎨 Personalizado'}
+                                        </Badge>
+                                      </>
+                                    )}
                                   </div>
                                   <div className="font-semibold text-xs text-slate-700 dark:text-slate-300 mt-0.5">
                                     {order.clientName}
@@ -487,42 +552,56 @@ export default function BreakfastProduction() {
                                 </div>
 
                                 <div className="flex items-center gap-1.5">
-                                  <Button 
-                                    size="sm" 
-                                    onClick={() => handleToggleStatus(order.id, order.status)}
-                                    className={`h-8 text-xs font-bold px-2.5 rounded-lg ${
-                                      isReady 
-                                        ? "bg-emerald-600 hover:bg-emerald-700 text-white" 
-                                        : "bg-slate-800 hover:bg-slate-700 text-slate-200"
-                                    }`}
-                                  >
-                                    {isReady ? (
-                                      <>
-                                        <Check className="w-3.5 h-3.5 mr-1" />
-                                        <span>Pronto / Entregue</span>
-                                      </>
-                                    ) : (
-                                      <span>Marcar Pronto</span>
-                                    )}
-                                  </Button>
+                                  {isCancelled ? (
+                                    <Badge variant="outline" className="border-rose-400 text-rose-700 dark:text-rose-300 text-[10px] font-bold bg-rose-100/60">
+                                      Não Produzir
+                                    </Badge>
+                                  ) : (
+                                    <Button 
+                                      size="sm" 
+                                      onClick={() => handleToggleStatus(order.id, order.status)}
+                                      className={`h-8 text-xs font-bold px-2.5 rounded-lg ${
+                                        isReady 
+                                          ? "bg-emerald-600 hover:bg-emerald-700 text-white" 
+                                          : "bg-slate-800 hover:bg-slate-700 text-slate-200"
+                                      }`}
+                                    >
+                                      {isReady ? (
+                                        <>
+                                          <Check className="w-3.5 h-3.5 mr-1" />
+                                          <span>Pronto / Entregue</span>
+                                        </>
+                                      ) : (
+                                        <span>Marcar Pronto</span>
+                                      )}
+                                    </Button>
+                                  )}
 
                                   <Button 
                                     variant="ghost" 
                                     size="icon" 
                                     onClick={() => handleDeleteOrder(order.id)}
                                     className="h-8 w-8 text-muted-foreground hover:text-rose-600"
+                                    title="Excluir pedido"
                                   >
                                     <Trash2 className="w-3.5 h-3.5" />
                                   </Button>
                                 </div>
                               </div>
+
+                              {isCancelled && (
+                                <div className="mt-2 p-2 rounded-xl bg-rose-100 dark:bg-rose-900/40 border border-rose-300 dark:border-rose-800 text-rose-900 dark:text-rose-200 text-xs font-bold flex items-center gap-1.5">
+                                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                                  <span>MOTIVO: {order.cancelReason || "Reserva cancelada ou check-out antecipado"} (NÃO PREPARAR)</span>
+                                </div>
+                              )}
                             </CardHeader>
 
                             <CardContent className="p-4 pt-2 space-y-3">
                               {/* Items list */}
                               <div className="space-y-1.5">
                                 <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
-                                  Itens Totais da Cesta:
+                                  Itens Totais do Pedido:
                                 </span>
                                 <div className="flex flex-wrap gap-1">
                                   {order.items?.map((it: any, idx: number) => (
@@ -649,7 +728,7 @@ export default function BreakfastProduction() {
                         <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground pt-0.5">
                           <span>Custo Unitário: <strong className="text-slate-800 dark:text-slate-200">R$ {Number(ing.costPerUnit || 0).toFixed(2)}</strong></span>
                           <span>Estoque Atual: <strong className="text-slate-800 dark:text-slate-200">{ing.stock || 0} {ing.unit}</strong></span>
-                          <span>Regra de Porção: <strong className="text-slate-800 dark:text-slate-200">{ing.portionRule === "multiplied" ? "Multiplicado por Pessoa" : "Porção Única por Cesta"}</strong></span>
+                          <span>Regra de Porção: <strong className="text-slate-800 dark:text-slate-200">{ing.portionRule === "multiplied" ? "Multiplicado por Pessoa" : "Porção Única por Pedido/Quarto"}</strong></span>
                         </div>
                       </div>
 
@@ -747,7 +826,7 @@ export default function BreakfastProduction() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="multiplied">Multiplicado pela Qtd. de Pessoas</SelectItem>
-                      <SelectItem value="fixed_basket">Porção Única por Cesta/Quarto</SelectItem>
+                      <SelectItem value="fixed_basket">Porção Única por Pedido/Quarto</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -840,7 +919,7 @@ export default function BreakfastProduction() {
                   Configurar Café da Manhã Padrão CorpFlats
                 </DialogTitle>
                 <DialogDescription className="text-xs">
-                  Defina os itens que compõem a cesta rápida recomendada entregue aos hóspedes.
+                  Defina os itens que compõem o pedido padrão recomendado entregue aos hóspedes.
                 </DialogDescription>
               </DialogHeader>
 
@@ -868,7 +947,7 @@ export default function BreakfastProduction() {
 
                 <div className="grid grid-cols-2 gap-2">
                   <div className="space-y-1">
-                    <Label className="text-xs font-bold">Pães da Cesta</Label>
+                    <Label className="text-xs font-bold">Pães do Pedido Padrão</Label>
                     <Input 
                       value={Array.isArray(stdConfig?.breads) ? stdConfig.breads.join(", ") : (stdConfig?.breads || "")} 
                       onChange={e => setStdConfig({ ...stdConfig, breads: e.target.value.split(",").map((s: string) => s.trim()).filter(Boolean) })} 
@@ -915,7 +994,7 @@ export default function BreakfastProduction() {
                 <div className="space-y-2 p-3 bg-amber-500/10 border border-amber-500/20 rounded-2xl">
                   <div className="flex items-center justify-between">
                     <Label className="text-xs font-bold text-amber-900 dark:text-amber-300">
-                      Fruta da Cesta Padrão (Fruta do Dia)
+                      Fruta do Pedido Padrão (Fruta do Dia)
                     </Label>
                   </div>
                   
