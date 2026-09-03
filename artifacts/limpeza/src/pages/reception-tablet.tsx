@@ -230,56 +230,32 @@ export default function ReceptionTablet() {
                       key={item.id}
                       className="bg-slate-800/80 border border-slate-700/80 hover:border-slate-600 rounded-2xl p-4 flex flex-col justify-between gap-3.5 transition-all shadow-lg"
                     >
-                      {/* Top: Flat number, Guest Count and Photo */}
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-center gap-3">
-                          {/* Photo / Avatar */}
-                          <div className="w-14 h-14 rounded-2xl bg-slate-700 border border-slate-600 flex items-center justify-center text-slate-300 font-black text-lg overflow-hidden shrink-0 shadow-inner">
-                            {item.guestPhoto ? (
-                              <img src={item.guestPhoto} alt={item.guestName} className="w-full h-full object-cover" />
-                            ) : (
-                              <span>{item.guestName?.substring(0, 2).toUpperCase()}</span>
-                            )}
-                          </div>
-
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-2xl font-black text-white tracking-tight">Apt {item.flatNumber}</span>
-                              <Badge className="bg-sky-950 text-sky-400 border border-sky-800 text-[10px] font-black">
-                                👥 {item.guestCount || (item.guests?.length || 1)} {item.guestCount === 1 ? 'Hóspede' : 'Hóspedes'}
-                              </Badge>
-                            </div>
-                            <div className="font-bold text-sm text-slate-200 truncate max-w-[170px]">{item.guestName}</div>
-                            <div className="text-[11px] text-slate-400 flex items-center gap-1.5 mt-0.5">
-                              <span className="capitalize font-semibold text-primary">{item.channel}</span>
-                              {item.guestPhone && (
-                                <a
-                                  href={`https://wa.me/55${(item.guestPhone || "").replace(/\D/g, "")}?text=${encodeURIComponent(`Olá, ${item.guestName}! Falamos da recepção da CorpFlats referente à sua reserva no Flat ${item.flatNumber}.`)}`}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="inline-flex items-center gap-1 text-emerald-400 hover:text-emerald-300 font-semibold hover:underline"
-                                >
-                                  • <MessageCircle className="w-3 h-3 text-emerald-400 inline" /> {item.guestPhone}
-                                </a>
-                              )}
-                            </div>
-                          </div>
+                      {/* Top: Flat number, Guest Info and Channel */}
+                      <div className="border-b border-slate-700/60 pb-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+                            Apt {item.flatNumber}
+                          </span>
+                          <span className="text-xs font-semibold capitalize px-2.5 py-0.5 rounded-full bg-slate-700/80 text-sky-400 border border-slate-600/60">
+                            {item.channel}
+                          </span>
                         </div>
-
-                        {/* Pre-Checkin Status Badge */}
-                        {item.allCheckinDone ? (
-                          <Badge className="bg-emerald-950 text-emerald-400 border border-emerald-800 text-[10px] font-bold">
-                            ✅ 100% Liberado
-                          </Badge>
-                        ) : item.someCheckinDone ? (
-                          <Badge className="bg-amber-950 text-amber-400 border border-amber-800 text-[10px] font-bold">
-                            ⚠️ Parcial ({item.guests?.filter((g: any) => g.hasCompletedCheckin).length}/{item.guestCount})
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="bg-slate-900 text-amber-400 border-amber-800/60 text-[10px] font-bold">
-                            ⏳ Aguardando Ficha
-                          </Badge>
+                        <div className="font-bold text-base text-slate-100 mt-1 truncate">
+                          {item.guestName}
+                        </div>
+                        {item.guestPhone && (
+                          <div className="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5">
+                            <a
+                              href={`https://wa.me/55${(item.guestPhone || "").replace(/\D/g, "")}?text=${encodeURIComponent(`Olá, ${item.guestName}! Falamos da recepção da CorpFlats referente à sua reserva no Flat ${item.flatNumber}.`)}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="inline-flex items-center gap-1 text-emerald-400 hover:text-emerald-300 font-medium hover:underline"
+                            >
+                              <MessageCircle className="w-3.5 h-3.5 text-emerald-400 inline shrink-0" />
+                              <span>{item.guestPhone}</span>
+                            </a>
+                          </div>
                         )}
                       </div>
 
@@ -317,47 +293,6 @@ export default function ReceptionTablet() {
                           )}
                         </div>
                       </div>
-
-                      {/* Aviso de Cortesia de 1ª Reserva OTA */}
-                      {item.isFirstStayCourtesy && (
-                        <div className="p-2.5 bg-gradient-to-r from-amber-950/60 to-slate-900 border border-amber-500/50 rounded-xl space-y-1.5 text-xs">
-                          <div className="flex items-center justify-between">
-                            <span className="font-bold text-amber-300 flex items-center gap-1 text-[11px]">
-                              <Gift className="w-3.5 h-3.5 text-amber-400" />
-                              Cortesia de 1ª Reserva ({item.channel})
-                            </span>
-                            <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/40 text-[9px]">1ª Estadia</Badge>
-                          </div>
-                          <p className="text-[10px] text-slate-300 leading-tight">
-                            Check-in antecipado liberado! Avise o hóspede que nas próximas estadias, para ter check-in antecipado gratuito, ele deve reservar pelo nosso site.
-                          </p>
-                          {item.guestPhone && (
-                            <a
-                              href={`https://wa.me/55${(item.guestPhone || "").replace(/\D/g, "")}?text=${encodeURIComponent(
-                                `Olá, ${item.guestName}! 🏨✨ Seu Flat ${item.flatNumber} já está pronto e higienizado e liberamos seu check-in antecipado como cortesia especial de primeira hospedagem!\n\n💡 Dica importante: Nas suas próximas viagens, faça sua reserva direto em nosso site oficial https://corpflats.com.br para garantir check-in antecipado gratuito e as melhores tarifas sem taxas.`
-                              )}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 hover:text-emerald-300 underline pt-0.5"
-                            >
-                              <MessageCircle className="w-3 h-3" />
-                              Enviar mensagem de boas-vindas no WhatsApp
-                            </a>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Aviso de Hóspede Recorrente OTA Não Liberado */}
-                      {item.earlyCheckinStatus === "Não liberado" && item.channel !== "site" && !item.isFirstTimeGuest && (
-                        <div className="p-2.5 bg-slate-900/90 border border-slate-800 rounded-xl text-[10px] text-slate-400 space-y-0.5">
-                          <div className="font-bold text-slate-300">
-                            🔒 Hóspede recorrente via {item.channel} ({item.priorStayCount + 1}ª reserva)
-                          </div>
-                          <p>
-                            Entrada regular às 14:00. O benefício de check-in antecipado gratuito é exclusivo para reservas diretas pelo site.
-                          </p>
-                        </div>
-                      )}
 
                       {/* Lista de Hóspedes Autorizados a Subir (1, 2 ou 3) */}
                       <div className="bg-slate-900/90 border border-slate-700/70 rounded-xl p-2.5 space-y-1.5">
