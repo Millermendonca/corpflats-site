@@ -1880,21 +1880,7 @@ export default function PmsCalendar() {
                     </Badge>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                    {/* Prefere quartos altos */}
-                    <button
-                      type="button"
-                      onClick={() => setFormPrefersHighFloor(!formPrefersHighFloor)}
-                      className={`p-2.5 rounded-xl border text-left transition-all text-xs font-bold flex items-center justify-between ${
-                        formPrefersHighFloor 
-                          ? "bg-amber-600 text-white border-amber-600 shadow-xs" 
-                          : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-amber-400"
-                      }`}
-                    >
-                      <span>🏢 Andar Alto</span>
-                      {formPrefersHighFloor && <CheckCircle2 className="w-3.5 h-3.5" />}
-                    </button>
-
+                  <div className="grid grid-cols-2 gap-2">
                     {/* 2 Camas de solteiro */}
                     <button
                       type="button"
@@ -1922,85 +1908,6 @@ export default function PmsCalendar() {
                       <span>➕ Colchão Extra</span>
                       {formExtraMattress && <CheckCircle2 className="w-3.5 h-3.5" />}
                     </button>
-
-                    {/* Café da manhã incluso */}
-                    <button
-                      type="button"
-                      onClick={() => setFormIncludeBreakfast(!formIncludeBreakfast)}
-                      className={`p-2.5 rounded-xl border text-left transition-all text-xs font-bold flex items-center justify-between sm:col-span-3 ${
-                        formIncludeBreakfast 
-                          ? "bg-amber-600 text-white border-amber-600 shadow-xs" 
-                          : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-amber-400"
-                      }`}
-                    >
-                      <span className="flex items-center gap-1.5">
-                        <span>☕ Café da Manhã Incluso na Diária</span>
-                      </span>
-                      {formIncludeBreakfast && <CheckCircle2 className="w-4 h-4 shrink-0" />}
-                    </button>
-
-                    {/* Link Exclusivo do Café da Manhã */}
-                    {formIncludeBreakfast && (
-                      <div className="p-3 bg-amber-500/5 dark:bg-amber-950/20 border border-amber-500/25 dark:border-amber-800/40 rounded-xl space-y-2 sm:col-span-3 animate-in fade-in">
-                        <div className="flex items-center gap-2">
-                          <Coffee className="w-4 h-4 text-amber-600 shrink-0" />
-                          <div>
-                            <h4 className="text-xs font-bold text-foreground">Link de Agendamento do Café</h4>
-                            <p className="text-[10.5px] text-muted-foreground">O hóspede escolhe os itens e horários com dados já vinculados ao quarto.</p>
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-0.5">
-                          <Button
-                            type="button"
-                            size="sm"
-                            onClick={() => {
-                              const resCode = selectedRes?.code || selectedRes?.breakfastToken || formGuestName || 'reserva'
-                              const url = `${window.location.origin}/cafe?res=${resCode}`
-                              const phone = (formGuestPhone || selectedRes?.guestPhone || "").replace(/\D/g, "")
-                              const guestName = formGuestName || selectedRes?.guestName || "Hóspede"
-                              const flatNum = formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || formFlatId) : (selectedRes?.flatNumber || "seu flat")
-                              const msg = encodeURIComponent(`Olá ${guestName}! Aqui é da equipe da CorpFlats. Segue o seu link exclusivo para montar e agendar o seu café da manhã no Flat ${flatNum}: ${url}`)
-                              window.open(`https://wa.me/${phone}?text=${msg}`, "_blank")
-                            }}
-                            className="w-full h-8 text-xs font-bold gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs"
-                          >
-                            <MessageCircle className="w-3.5 h-3.5" /> Enviar WhatsApp
-                          </Button>
-
-                          <div className="flex items-center gap-1.5">
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={() => {
-                                const resCode = selectedRes?.code || selectedRes?.breakfastToken || formGuestName || 'reserva'
-                                const url = `${window.location.origin}/cafe?res=${resCode}`
-                                navigator.clipboard.writeText(url)
-                                toast({ title: "Link copiado!", description: "Link do café da manhã copiado para a área de transferência." })
-                              }}
-                              className="flex-1 h-8 text-xs font-bold gap-1.5 bg-background hover:bg-muted border-border"
-                            >
-                              <Copy className="w-3.5 h-3.5" /> Copiar Link
-                            </Button>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => {
-                                const resCode = selectedRes?.code || selectedRes?.breakfastToken || formGuestName || 'reserva'
-                                const url = `/cafe?res=${resCode}`
-                                window.open(url, "_blank")
-                              }}
-                              className="h-8 px-2.5 text-xs font-bold text-muted-foreground hover:text-foreground"
-                              title="Abrir página de pedidos"
-                            >
-                              Abrir ↗
-                            </Button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
                   </div>
 
                   <div className="space-y-1">
@@ -2014,6 +1921,81 @@ export default function PmsCalendar() {
                       className="text-xs"
                     />
                   </div>
+                </div>
+
+                {/* Seção Própria: Serviço de Café da Manhã */}
+                <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Coffee className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                      <div>
+                        <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
+                          Café da Manhã Incluso na Diária
+                        </span>
+                        <span className="text-[11px] text-muted-foreground">
+                          Habilita link de cardápio e agendamento de café para este hóspede
+                        </span>
+                      </div>
+                    </div>
+                    <Switch checked={formIncludeBreakfast} onCheckedChange={setFormIncludeBreakfast} />
+                  </div>
+
+                  {formIncludeBreakfast && (
+                    <div className="pt-2 border-t border-amber-500/20 space-y-2 animate-in fade-in">
+                      <div className="text-[11px] text-muted-foreground">
+                        Link exclusivo para escolha de itens e horários pelo hóspede:
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => {
+                            const resCode = selectedRes?.code || selectedRes?.breakfastToken || formGuestName || 'reserva'
+                            const url = `${window.location.origin}/cafe?res=${resCode}`
+                            const phone = (formGuestPhone || selectedRes?.guestPhone || "").replace(/\D/g, "")
+                            const guestName = formGuestName || selectedRes?.guestName || "Hóspede"
+                            const flatNum = formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || formFlatId) : (selectedRes?.flatNumber || "seu flat")
+                            const msg = encodeURIComponent(`Olá ${guestName}! Aqui é da equipe da CorpFlats. Segue o seu link exclusivo para montar e agendar o seu café da manhã no Flat ${flatNum}: ${url}`)
+                            window.open(`https://wa.me/${phone}?text=${msg}`, "_blank")
+                          }}
+                          className="w-full h-8 text-xs font-bold gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs"
+                        >
+                          <MessageCircle className="w-3.5 h-3.5" /> Enviar WhatsApp
+                        </Button>
+
+                        <div className="flex items-center gap-1.5">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              const resCode = selectedRes?.code || selectedRes?.breakfastToken || formGuestName || 'reserva'
+                              const url = `${window.location.origin}/cafe?res=${resCode}`
+                              navigator.clipboard.writeText(url)
+                              toast({ title: "Link copiado!", description: "Link do café da manhã copiado para a área de transferência." })
+                            }}
+                            className="flex-1 h-8 text-xs font-bold gap-1.5 bg-background hover:bg-muted border-border"
+                          >
+                            <Copy className="w-3.5 h-3.5" /> Copiar Link
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              const resCode = selectedRes?.code || selectedRes?.breakfastToken || formGuestName || 'reserva'
+                              const url = `/cafe?res=${resCode}`
+                              window.open(url, "_blank")
+                            }}
+                            className="h-8 px-2.5 text-xs font-bold text-muted-foreground hover:text-foreground"
+                            title="Abrir página de pedidos"
+                          >
+                            Abrir ↗
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* 1. Quantidade de Hóspedes Autorizados (1, 2 ou 3) */}
