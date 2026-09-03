@@ -53,7 +53,12 @@ export default function PmsCalendar() {
   })
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState("")
-  const [breakfastTomorrow, setBreakfastTomorrow] = useState<{ totalOrders: number; totalGuests: number } | null>(null)
+  const [breakfastStats, setBreakfastStats] = useState<{
+    todayOrders: number;
+    todayGuests: number;
+    tomorrowOrders: number;
+    tomorrowGuests: number;
+  } | null>(null)
 
   // Modal States
   const [resModalOpen, setResModalOpen] = useState(false)
@@ -464,17 +469,22 @@ export default function PmsCalendar() {
       setData(json)
       fetchCompanies()
 
-      // Busca pedidos de café da manhã para amanhã
+      // Busca pedidos de café da manhã para hoje e amanhã
       try {
+        const todayStr = format(new Date(), "yyyy-MM-dd")
         const tomorrowStr = format(addDays(new Date(), 1), "yyyy-MM-dd")
-        const bfRes = await fetch(`/api/breakfast/orders?date=${tomorrowStr}`, { credentials: "include" })
-        if (bfRes.ok) {
-          const bfJson = await bfRes.json()
-          setBreakfastTomorrow({
-            totalOrders: bfJson.totalOrders ?? 0,
-            totalGuests: bfJson.totalGuests ?? 0
-          })
-        }
+        const [bfTodayRes, bfTomRes] = await Promise.all([
+          fetch(`/api/breakfast/orders?date=${todayStr}`, { credentials: "include" }),
+          fetch(`/api/breakfast/orders?date=${tomorrowStr}`, { credentials: "include" })
+        ])
+        const bfTodayJson = bfTodayRes.ok ? await bfTodayRes.json() : null
+        const bfTomJson = bfTomRes.ok ? await bfTomRes.json() : null
+        setBreakfastStats({
+          todayOrders: bfTodayJson?.totalOrders ?? 0,
+          todayGuests: bfTodayJson?.totalGuests ?? 0,
+          tomorrowOrders: bfTomJson?.totalOrders ?? 0,
+          tomorrowGuests: bfTomJson?.totalGuests ?? 0,
+        })
       } catch {}
     } finally {
       setLoading(false)
@@ -1012,19 +1022,24 @@ export default function PmsCalendar() {
   )
   const stayoversTodayCount = stayoversToday.length
 
-  // 7. Pedidos com Café da Manhã para o Dia Seguinte ao Atual
+  // 7. Pedidos com Café da Manhã (Hoje e Amanhã)
+  const reservationsTodayWithBf = data.reservations.filter(r => 
+    r.status !== "cancelada" && 
+    r.checkinDate <= todayStr && 
+    r.checkoutDate >= todayStr && 
+    Boolean(r.includeBreakfast || r.hasBreakfast)
+  )
+  const todayReservationsWithBfCount = reservationsTodayWithBf.length
+  const todayBreakfastOrdersCount = breakfastStats !== null ? breakfastStats.todayOrders : 0
+
   const reservationsTomorrowWithBf = data.reservations.filter(r => 
     r.status !== "cancelada" && 
     r.checkinDate <= tomorrowStr && 
-    r.checkoutDate > tomorrowStr && 
+    r.checkoutDate >= tomorrowStr && 
     Boolean(r.includeBreakfast || r.hasBreakfast)
   )
-  const tomorrowBreakfastOrdersCount = breakfastTomorrow !== null 
-    ? breakfastTomorrow.totalOrders 
-    : reservationsTomorrowWithBf.length
-  const tomorrowBreakfastGuestsCount = breakfastTomorrow !== null 
-    ? breakfastTomorrow.totalGuests 
-    : reservationsTomorrowWithBf.reduce((acc, r) => acc + (Number(r.guestCount) || 1), 0)
+  const tomorrowReservationsWithBfCount = reservationsTomorrowWithBf.length
+  const tomorrowBreakfastOrdersCount = breakfastStats !== null ? breakfastStats.tomorrowOrders : 0
 
   if (!loadingUser && user?.role !== "admin") {
     return <AccessDenied moduleName="o Livro de Reservas & Mapa de Ocupação" />
@@ -1143,18 +1158,28 @@ export default function PmsCalendar() {
             </div>
           </Card>
 
-          {/* Card 7: Pedidos de Café da Manhã para o Dia Seguinte */}
-          <Card className="rounded-xl border shadow-2xs p-3 flex flex-col justify-between hover:border-amber-500/40 transition-colors bg-card">
+          {/* Card 7: Pedidos de Café da Manhã (Hoje e Amanhã) */}
+          <Card 
+            onClick={() => setLocation("/pedidos-cafe")}
+            className="rounded-xl border shadow-2xs p-3 flex flex-col justify-between hover:border-amber-500/60 hover:shadow-xs transition-all bg-card cursor-pointer group"
+            title="Clique para gerenciar os pedidos de café da manhã"
+          >
             <div className="flex items-center justify-between text-muted-foreground">
-              <span className="text-[11px] font-bold uppercase tracking-wider">Café Amanhã</span>
-              <Coffee className="w-4 h-4 text-amber-500 shrink-0" />
+              <span className="text-[11px] font-bold uppercase tracking-wider group-hover:text-amber-600 transition-colors">Café Hoje</span>
+              <Coffee className="w-4 h-4 text-amber-500 shrink-0 group-hover:scale-110 transition-transform" />
             </div>
             <div className="mt-1.5">
-              <div className="text-2xl font-black text-amber-600 dark:text-amber-400">
-                {tomorrowBreakfastOrdersCount} {tomorrowBreakfastOrdersCount === 1 ? 'pedido' : 'pedidos'}
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-2xl font-black text-amber-600 dark:text-amber-400">
+                  {todayBreakfastOrdersCount}/{todayReservationsWithBfCount}
+                </span>
+                <span className="text-[10px] font-bold text-muted-foreground uppercase">pedidos</span>
               </div>
-              <div className="text-[10.5px] text-muted-foreground font-medium mt-0.5 truncate" title={`${tomorrowBreakfastOrdersCount} pedidos agendados (${tomorrowBreakfastGuestsCount} pessoas) • ${reservationsTomorrowWithBf.length} reservas com café`}>
-                {tomorrowBreakfastGuestsCount} {tomorrowBreakfastGuestsCount === 1 ? 'pessoa' : 'pessoas'} {reservationsTomorrowWithBf.length > 0 ? `(${reservationsTomorrowWithBf.length} c/ café)` : ''}
+              <div className="text-[10.5px] text-muted-foreground font-medium mt-0.5 truncate" title={`Hoje: ${todayBreakfastOrdersCount} pedidos de ${todayReservationsWithBfCount} reservas com café • Amanhã: ${tomorrowBreakfastOrdersCount}/${tomorrowReservationsWithBfCount}`}>
+                {todayBreakfastOrdersCount} de {todayReservationsWithBfCount} c/ café hoje
+              </div>
+              <div className="text-[9.5px] text-amber-600/90 dark:text-amber-400/90 font-semibold mt-0.5 truncate">
+                Amanhã: {tomorrowBreakfastOrdersCount}/{tomorrowReservationsWithBfCount} pedidos
               </div>
             </div>
           </Card>
