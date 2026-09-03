@@ -4225,7 +4225,32 @@ app.get("/api/pms/calendar", (req, res) => {
   const start = startDate || getOffsetDateStr(-3);
   const end = endDate || getOffsetDateStr(30);
 
-  const flats = [...db.flats].filter(f => String(f.number) !== "502" && f.id !== 9).sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true }));
+  const todayStr = getTodayStr();
+  const cleaningRequestsToday = getRequestsForDate(todayStr);
+
+  const flats = [...db.flats].filter(f => String(f.number) !== "502" && f.id !== 9).sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true })).map(f => {
+    const fNum = String(f.number);
+    const req = cleaningRequestsToday.find(r => String(r.flatNumber) === fNum || r.flatId === f.id);
+    let cleaningStatus = "clean";
+    let cleaningLabel = "Limpo";
+    if (req) {
+      if (req.status === "cleaning_now" || req.status === "in_progress") {
+        cleaningStatus = "cleaning_now";
+        cleaningLabel = "Limpando";
+      } else if (req.status === "dirty" || req.status === "pending") {
+        cleaningStatus = "dirty";
+        cleaningLabel = "Sujo";
+      } else if (req.status === "clean") {
+        cleaningStatus = "clean";
+        cleaningLabel = "Limpo";
+      }
+    }
+    return {
+      ...f,
+      cleaningStatus,
+      cleaningLabel
+    };
+  });
   const rawReservations = (db.reservations || []).filter(r => {
     return r.checkinDate <= end && r.checkoutDate >= start && r.status !== "cancelada";
   });

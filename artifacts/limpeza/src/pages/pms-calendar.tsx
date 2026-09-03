@@ -53,6 +53,7 @@ export default function PmsCalendar() {
   })
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState("")
+  const [cleaningFilter, setCleaningFilter] = useState<"all" | "dirty" | "clean">("all")
   const [breakfastStats, setBreakfastStats] = useState<{
     todayOrders: number;
     todayGuests: number;
@@ -1041,6 +1042,24 @@ export default function PmsCalendar() {
   const tomorrowReservationsWithBfCount = reservationsTomorrowWithBf.length
   const tomorrowBreakfastOrdersCount = breakfastStats !== null ? breakfastStats.tomorrowOrders : 0
 
+  // Regra das 09:00 para o Café da Manhã: até 08:59 foca em HOJE; a partir das 09:00 foca em AMANHÃ
+  const brasiliaHour = Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/Sao_Paulo", hour: "numeric", hour12: false }).format(new Date()))
+  const isAfter9Am = brasiliaHour >= 9
+
+  // Contagem e filtro de quartos sujos vs. limpos
+  const dirtyFlatsCount = data.flats.filter(f => (f as any).cleaningStatus === "dirty" || (f as any).cleaningStatus === "cleaning_now").length
+  const cleanFlatsCount = data.flats.filter(f => (f as any).cleaningStatus === "clean" || !(f as any).cleaningStatus).length
+
+  const displayedFlats = data.flats.filter(f => {
+    if (cleaningFilter === "dirty") {
+      return (f as any).cleaningStatus === "dirty" || (f as any).cleaningStatus === "cleaning_now"
+    }
+    if (cleaningFilter === "clean") {
+      return (f as any).cleaningStatus === "clean" || !(f as any).cleaningStatus
+    }
+    return true
+  })
+
   if (!loadingUser && user?.role !== "admin") {
     return <AccessDenied moduleName="o Livro de Reservas & Mapa de Ocupação" />
   }
@@ -1158,28 +1177,49 @@ export default function PmsCalendar() {
             </div>
           </Card>
 
-          {/* Card 7: Pedidos de Café da Manhã (Hoje e Amanhã) */}
+          {/* Card 7: Pedidos de Café da Manhã (Regra das 09h: até 08:59 foca em HOJE; a partir das 09:00 foca em AMANHÃ) */}
           <Card 
             onClick={() => setLocation("/pedidos-cafe")}
             className="rounded-xl border shadow-2xs p-3 flex flex-col justify-between hover:border-amber-500/60 hover:shadow-xs transition-all bg-card cursor-pointer group"
-            title="Clique para gerenciar os pedidos de café da manhã"
+            title={`Clique para gerenciar pedidos • Regra das 09h: ${isAfter9Am ? 'Exibindo foco em AMANHÃ (após as 09:00)' : 'Exibindo foco em HOJE (até as 08:59)'}`}
           >
             <div className="flex items-center justify-between text-muted-foreground">
-              <span className="text-[11px] font-bold uppercase tracking-wider group-hover:text-amber-600 transition-colors">Café Hoje</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] font-bold uppercase tracking-wider group-hover:text-amber-600 transition-colors">
+                  {isAfter9Am ? "Café Amanhã" : "Café Hoje"}
+                </span>
+                {isAfter9Am ? (
+                  <span className="text-[8.5px] font-black bg-amber-500 text-white px-1.5 py-0.2 rounded uppercase tracking-wider shadow-2xs">
+                    AMANHÃ
+                  </span>
+                ) : (
+                  <span className="text-[8.5px] font-black bg-emerald-600 text-white px-1.5 py-0.2 rounded uppercase tracking-wider shadow-2xs">
+                    HOJE
+                  </span>
+                )}
+              </div>
               <Coffee className="w-4 h-4 text-amber-500 shrink-0 group-hover:scale-110 transition-transform" />
             </div>
             <div className="mt-1.5">
               <div className="flex items-baseline gap-1.5">
                 <span className="text-2xl font-black text-amber-600 dark:text-amber-400">
-                  {todayBreakfastOrdersCount}/{todayReservationsWithBfCount}
+                  {isAfter9Am 
+                    ? `${tomorrowBreakfastOrdersCount}/${tomorrowReservationsWithBfCount}` 
+                    : `${todayBreakfastOrdersCount}/${todayReservationsWithBfCount}`}
                 </span>
-                <span className="text-[10px] font-bold text-muted-foreground uppercase">pedidos</span>
+                <span className="text-[10px] font-bold text-muted-foreground uppercase">
+                  {isAfter9Am ? "p/ amanhã" : "p/ hoje"}
+                </span>
               </div>
-              <div className="text-[10.5px] text-muted-foreground font-medium mt-0.5 truncate" title={`Hoje: ${todayBreakfastOrdersCount} pedidos de ${todayReservationsWithBfCount} reservas com café • Amanhã: ${tomorrowBreakfastOrdersCount}/${tomorrowReservationsWithBfCount}`}>
-                {todayBreakfastOrdersCount} de {todayReservationsWithBfCount} c/ café hoje
+              <div className="text-[10.5px] font-semibold text-slate-800 dark:text-slate-200 mt-0.5 truncate">
+                {isAfter9Am 
+                  ? `${tomorrowBreakfastOrdersCount} de ${tomorrowReservationsWithBfCount} c/ café amanhã` 
+                  : `${todayBreakfastOrdersCount} de ${todayReservationsWithBfCount} c/ café hoje`}
               </div>
-              <div className="text-[9.5px] text-amber-600/90 dark:text-amber-400/90 font-semibold mt-0.5 truncate">
-                Amanhã: {tomorrowBreakfastOrdersCount}/{tomorrowReservationsWithBfCount} pedidos
+              <div className="text-[9.5px] text-muted-foreground font-medium mt-0.5 truncate">
+                {isAfter9Am 
+                  ? `Hoje foi: ${todayBreakfastOrdersCount}/${todayReservationsWithBfCount} pedidos` 
+                  : `Amanhã: ${tomorrowBreakfastOrdersCount}/${tomorrowReservationsWithBfCount} pedidos`}
               </div>
             </div>
           </Card>
@@ -1188,7 +1228,7 @@ export default function PmsCalendar() {
         {/* Navigation & Controls */}
         <Card className="rounded-xl border shadow-2xs">
           <div className="p-3 bg-muted/20 border-b flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Button 
                 variant="outline" 
                 size="sm" 
@@ -1214,28 +1254,80 @@ export default function PmsCalendar() {
               >
                 <ChevronRight className="w-4 h-4" />
               </Button>
-              <span className="font-bold text-xs text-muted-foreground ml-2">
-                Linha do Tempo Contínua (Rolar para o lado)
-              </span>
+
+              {/* Filtro Rápido de Status de Limpeza */}
+              <div className="flex items-center gap-0.5 bg-background border rounded-lg p-0.5 ml-1 shadow-2xs">
+                <button
+                  type="button"
+                  onClick={() => setCleaningFilter("all")}
+                  className={`px-2 py-1 rounded-md text-[11px] font-bold transition-all ${
+                    cleaningFilter === "all" 
+                      ? "bg-slate-800 text-white dark:bg-slate-200 dark:text-slate-900 shadow-xs" 
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  title="Exibir todos os apartamentos"
+                >
+                  Todos ({data.flats.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCleaningFilter("dirty")}
+                  className={`px-2 py-1 rounded-md text-[11px] font-bold transition-all flex items-center gap-1 ${
+                    cleaningFilter === "dirty" 
+                      ? "bg-rose-600 text-white shadow-xs" 
+                      : "text-rose-600 dark:text-rose-400 hover:bg-rose-500/10"
+                  }`}
+                  title="Filtrar apenas quartos sujos / aguardando limpeza"
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
+                  Sujos ({dirtyFlatsCount})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCleaningFilter("clean")}
+                  className={`px-2 py-1 rounded-md text-[11px] font-bold transition-all flex items-center gap-1 ${
+                    cleaningFilter === "clean" 
+                      ? "bg-emerald-600 text-white shadow-xs" 
+                      : "text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10"
+                  }`}
+                  title="Filtrar apenas quartos limpos"
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                  Limpos ({cleanFlatsCount})
+                </button>
+              </div>
             </div>
 
-            {/* Channels Legend */}
-            <div className="flex flex-wrap items-center gap-2.5 text-[11px]">
-              <span className="flex items-center gap-1 font-medium">
-                <span className="w-2.5 h-2.5 rounded-full bg-indigo-600" /> Site Próprio
-              </span>
-              <span className="flex items-center gap-1 font-medium">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-600" /> WhatsApp
-              </span>
-              <span className="flex items-center gap-1 font-medium">
-                <span className="w-2.5 h-2.5 rounded-full bg-sky-700" /> Booking.com
-              </span>
-              <span className="flex items-center gap-1 font-medium">
-                <span className="w-2.5 h-2.5 rounded-full bg-rose-600" /> Airbnb
-              </span>
-              <span className="flex items-center gap-1 font-medium">
-                <span className="w-2.5 h-2.5 rounded-full bg-slate-700" /> Bloqueio
-              </span>
+            {/* Channels & Cleaning Legend */}
+            <div className="flex flex-wrap items-center gap-3 text-[11px]">
+              {/* Legenda de Limpeza */}
+              <div className="flex items-center gap-2 pr-2 border-r">
+                <span className="flex items-center gap-1 font-bold text-emerald-600 dark:text-emerald-400">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" /> Limpo
+                </span>
+                <span className="flex items-center gap-1 font-bold text-rose-600 dark:text-rose-400">
+                  <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" /> Sujo
+                </span>
+              </div>
+
+              {/* Legenda de Canais */}
+              <div className="flex items-center gap-2">
+                <span className="flex items-center gap-1 font-medium">
+                  <span className="w-2.5 h-2.5 rounded-full bg-indigo-600" /> Site
+                </span>
+                <span className="flex items-center gap-1 font-medium">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-600" /> WhatsApp
+                </span>
+                <span className="flex items-center gap-1 font-medium">
+                  <span className="w-2.5 h-2.5 rounded-full bg-sky-700" /> Booking
+                </span>
+                <span className="flex items-center gap-1 font-medium">
+                  <span className="w-2.5 h-2.5 rounded-full bg-rose-600" /> Airbnb
+                </span>
+                <span className="flex items-center gap-1 font-medium">
+                  <span className="w-2.5 h-2.5 rounded-full bg-slate-700" /> Bloqueio
+                </span>
+              </div>
             </div>
           </div>
 
@@ -1346,10 +1438,13 @@ export default function PmsCalendar() {
               ) : data.flats.length === 0 ? (
                 <div className="text-center py-16 text-xs text-muted-foreground">Nenhum apartamento cadastrado.</div>
               ) : (
-                data.flats.map((flat) => {
+                displayedFlats.map((flat) => {
                   const activeAmenities = getFlatActiveAmenities(flat);
                   const flatReservations = data.reservations.filter(r => (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)));
                   const flatBlocks = data.blocks.filter(b => (b.flatId === flat.id || String(b.flatNumber) === String(flat.number)));
+                  const cleaningStatus = (flat as any).cleaningStatus || "clean";
+                  const isDirty = cleaningStatus === "dirty";
+                  const isCleaningNow = cleaningStatus === "cleaning_now";
 
                   return (
                     <div 
@@ -1360,18 +1455,41 @@ export default function PmsCalendar() {
                       }}
                       className="grid border-b hover:bg-muted/10 transition-colors h-12 items-center relative"
                     >
-                      {/* Flat Number Header with Professional Lucide Vector Badges */}
+                      {/* Flat Number Header with Cleaning Status Indicator & Vector Badges */}
                       <div 
                         style={{ gridColumn: "1 / 2", gridRow: "1 / 2" }}
                         onClick={() => handleOpenFlatTagsModal(flat)}
-                        className="px-2.5 py-1 font-bold text-xs border-r text-foreground flex flex-col justify-center h-full bg-card sticky left-0 z-20 shadow-xs cursor-pointer hover:bg-primary/10 transition-colors group select-none"
-                        title="Clique para gerenciar características e tags deste quarto"
+                        className={`px-2 py-1 font-bold text-xs border-r text-foreground flex flex-col justify-center h-full bg-card sticky left-0 z-20 shadow-xs cursor-pointer hover:bg-primary/10 transition-colors group select-none border-l-4 ${
+                          isDirty 
+                            ? "border-l-rose-500 bg-rose-500/5 dark:bg-rose-950/20" 
+                            : isCleaningNow
+                              ? "border-l-amber-500 bg-amber-500/5 dark:bg-amber-950/20"
+                              : "border-l-emerald-500 bg-emerald-500/5 dark:bg-emerald-950/20"
+                        }`}
+                        title={`Apt ${flat.number} • Status: ${isDirty ? "Sujo / Aguardando Limpeza" : isCleaningNow ? "Em Limpeza" : "Limpo"}`}
                       >
-                        <div className="flex items-center justify-between w-full">
-                          <span className="font-black text-slate-900 dark:text-slate-100 group-hover:text-primary transition-colors text-xs">
+                        <div className="flex items-center justify-between w-full gap-1">
+                          <span className="font-black text-slate-900 dark:text-slate-100 group-hover:text-primary transition-colors text-xs truncate">
                             Apt {flat.number}
                           </span>
-                          <Tag className="w-3 h-3 text-muted-foreground/40 group-hover:text-primary transition-colors shrink-0 ml-1" />
+                          <div className="flex items-center gap-1 shrink-0">
+                            {isDirty ? (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[8.5px] font-black bg-rose-600 text-white shadow-2xs">
+                                <span className="w-1 h-1 rounded-full bg-white animate-ping shrink-0" />
+                                Sujo
+                              </span>
+                            ) : isCleaningNow ? (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[8.5px] font-black bg-amber-500 text-white shadow-2xs animate-pulse">
+                                Limpando
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[8.5px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/80 border border-emerald-300 dark:border-emerald-800">
+                                <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
+                                Limpo
+                              </span>
+                            )}
+                            <Tag className="w-3 h-3 text-muted-foreground/40 group-hover:text-primary transition-colors shrink-0" />
+                          </div>
                         </div>
 
                         {/* Ícones Vetoriais Lucide Compactos & Elegantes */}
