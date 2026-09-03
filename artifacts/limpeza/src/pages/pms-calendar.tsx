@@ -446,7 +446,7 @@ export default function PmsCalendar() {
   // Configuração de larguras das colunas da agenda
   const EXPANDED_COL_WIDTH = 100 // Coluna de 100px no dia atual e dia anterior
   const NORMAL_COL_WIDTH = 48    // Largura padrão dos demais dias
-  const FLAT_COL_WIDTH = 130     // Largura da coluna fixa de apartamentos
+  const FLAT_COL_WIDTH = 145     // Largura da coluna fixa de apartamentos
 
   const getDayColWidth = (day: Date) => (isToday(day) || isYesterday(day) ? EXPANDED_COL_WIDTH : NORMAL_COL_WIDTH)
   const gridTemplateColumns = `${FLAT_COL_WIDTH}px ${daysInView.map(day => `${getDayColWidth(day)}px`).join(" ")}`
@@ -586,7 +586,7 @@ export default function PmsCalendar() {
       const targetDateStr = format(subDays(new Date(), 2), "yyyy-MM-dd")
       const targetEl = scrollContainerRef.current.querySelector(`[data-header-day="${targetDateStr}"]`) as HTMLElement
       if (targetEl) {
-        const leftPos = Math.max(0, targetEl.offsetLeft - 130)
+        const leftPos = Math.max(0, targetEl.offsetLeft - 145)
         scrollContainerRef.current.scrollTo({ left: leftPos, behavior })
       }
     }
@@ -1344,7 +1344,7 @@ export default function PmsCalendar() {
                 style={{ gridTemplateColumns }}
                 className="grid border-b bg-muted/40 text-center font-bold text-xs sticky top-0 z-20 shadow-2xs"
               >
-                <div className="p-2.5 text-left border-r bg-card/95 backdrop-blur-md sticky left-0 z-30 font-black text-foreground shadow-xs">
+                <div className="px-3 py-2.5 text-left border-r-2 border-r-border/80 bg-slate-100 dark:bg-slate-900 sticky left-0 z-30 font-black text-xs text-foreground shadow-[2px_0_6px_-2px_rgba(0,0,0,0.1)] select-none">
                   Apartamento
                 </div>
                 {daysInView.map((day) => {
@@ -1455,40 +1455,46 @@ export default function PmsCalendar() {
                       }}
                       className="grid border-b hover:bg-muted/10 transition-colors h-12 items-center relative"
                     >
-                      {/* Flat Number Header with Cleaning Status Indicator & Vector Badges */}
+                      {/* Flat Number Header with 100% Solid Opaque Background */}
                       <div 
                         style={{ gridColumn: "1 / 2", gridRow: "1 / 2" }}
                         onClick={() => handleOpenFlatTagsModal(flat)}
-                        className={`px-2 py-1 font-bold text-xs border-r text-foreground flex flex-col justify-center h-full bg-card sticky left-0 z-20 shadow-xs cursor-pointer hover:bg-primary/10 transition-colors group select-none border-l-4 ${
+                        className={`px-3 py-1 font-bold text-xs border-r-2 border-r-border/70 text-foreground flex flex-col justify-center h-full bg-white dark:bg-slate-900 sticky left-0 z-20 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.08)] cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-850 transition-colors group select-none border-l-[3.5px] ${
                           isDirty 
-                            ? "border-l-rose-500 bg-rose-500/5 dark:bg-rose-950/20" 
+                            ? "border-l-rose-500" 
                             : isCleaningNow
-                              ? "border-l-amber-500 bg-amber-500/5 dark:bg-amber-950/20"
-                              : "border-l-emerald-500 bg-emerald-500/5 dark:bg-emerald-950/20"
+                              ? "border-l-amber-500"
+                              : "border-l-emerald-500"
                         }`}
-                        title={`Apt ${flat.number} • Status: ${isDirty ? "Sujo / Aguardando Limpeza" : isCleaningNow ? "Em Limpeza" : "Limpo"}`}
+                        title={`Apt ${flat.number} • Status: ${isDirty ? "Sujo / Aguardando Limpeza" : isCleaningNow ? "Em Limpeza Agora" : "Limpo & Pronto"}`}
                       >
-                        <div className="flex items-center justify-between w-full gap-1">
-                          <span className="font-black text-slate-900 dark:text-slate-100 group-hover:text-primary transition-colors text-xs truncate">
-                            Apt {flat.number}
-                          </span>
-                          <div className="flex items-center gap-1 shrink-0">
+                        <div className="flex items-center justify-between w-full">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            {/* Status Indicator Dot */}
                             {isDirty ? (
-                              <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[8.5px] font-black bg-rose-600 text-white shadow-2xs">
-                                <span className="w-1 h-1 rounded-full bg-white animate-ping shrink-0" />
+                              <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0 ring-2 ring-rose-200 dark:ring-rose-900 animate-pulse" title="Sujo" />
+                            ) : isCleaningNow ? (
+                              <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0 ring-2 ring-amber-200 dark:ring-amber-900 animate-pulse" title="Limpando" />
+                            ) : (
+                              <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" title="Limpo" />
+                            )}
+                            <span className="font-black text-slate-900 dark:text-slate-100 text-xs tracking-tight whitespace-nowrap">
+                              Apt {flat.number}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-1 shrink-0 ml-1">
+                            {isDirty ? (
+                              <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[8.5px] font-black bg-rose-500 text-white shadow-2xs">
                                 Sujo
                               </span>
                             ) : isCleaningNow ? (
-                              <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[8.5px] font-black bg-amber-500 text-white shadow-2xs animate-pulse">
+                              <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[8.5px] font-black bg-amber-500 text-white shadow-2xs animate-pulse">
                                 Limpando
                               </span>
                             ) : (
-                              <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[8.5px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/80 border border-emerald-300 dark:border-emerald-800">
-                                <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
-                                Limpo
-                              </span>
+                              <Tag className="w-3 h-3 text-muted-foreground/30 group-hover:text-primary transition-colors shrink-0" />
                             )}
-                            <Tag className="w-3 h-3 text-muted-foreground/40 group-hover:text-primary transition-colors shrink-0" />
                           </div>
                         </div>
 
@@ -1498,9 +1504,9 @@ export default function PmsCalendar() {
                             <span 
                               key={aIdx} 
                               title={`${amenity.label} (${amenity.categoryLabel})`}
-                              className={`p-1 rounded-md bg-slate-100 dark:bg-slate-800/90 border border-border/40 ${amenity.colorClass || 'text-slate-700 dark:text-slate-300'} hover:scale-125 hover:z-30 transition-transform cursor-help flex items-center justify-center`}
+                              className={`p-0.5 px-1 rounded bg-slate-100 dark:bg-slate-800 border border-border/40 ${amenity.colorClass || 'text-slate-700 dark:text-slate-300'} hover:scale-125 hover:z-30 transition-transform cursor-help flex items-center justify-center`}
                             >
-                              {renderAmenityIcon(amenity.iconName, "w-3 h-3")}
+                              {renderAmenityIcon(amenity.iconName, "w-2.5 h-2.5")}
                             </span>
                           ))}
                           {activeAmenities.length > 4 && (
