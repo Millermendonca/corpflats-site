@@ -2251,11 +2251,11 @@ function getRequestsForDate(dateStr) {
   const existingFlatNumbersForDate = new Set();
 
   // 1. Identifica flats que estão com hóspede contínuo (STAYOVER) na data consultada
-  // Se o hóspede entrou antes/em dateStr e só sai DEPOIS de dateStr (checkoutDate > dateStr),
-  // o flat é um stayover e NÃO tem checkout na data dateStr!
+  // Se o hóspede entrou ANTES de dateStr (checkinDate < dateStr) e só sai DEPOIS de dateStr (checkoutDate > dateStr),
+  // o flat é um stayover. Hóspedes entrando hoje (checkinDate === dateStr) são novos check-ins / turnovers, não stayover!
   const stayoverFlatNumbers = new Set(
     (db.reservations || [])
-      .filter(r => r.status !== "cancelada" && r.checkinDate <= dateStr && r.checkoutDate > dateStr)
+      .filter(r => r.status !== "cancelada" && r.checkinDate < dateStr && r.checkoutDate > dateStr)
       .map(r => String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || "")))
   );
 
@@ -2312,6 +2312,7 @@ function getRequestsForDate(dateStr) {
       willCleanAt: existingCleaning ? existingCleaning.willCleanAt : null,
       cleaningStartedAt: existingCleaning ? existingCleaning.cleaningStartedAt : null,
       completedAt: existingCleaning ? existingCleaning.completedAt : null,
+      durationMinutes: existingCleaning ? existingCleaning.durationMinutes : null,
       createdAt: existingCleaning ? existingCleaning.createdAt : `${dateStr}T08:00:00.000Z`,
       updatedAt: existingCleaning ? existingCleaning.updatedAt : `${dateStr}T08:00:00.000Z`
     };
@@ -2324,10 +2325,10 @@ function getRequestsForDate(dateStr) {
     existingFlatNumbersForDate.add(flatNumber);
   }
 
-  // 4. Adiciona solicitações manuais ou administrativas adicionadas diretamente
+  // 4. Garante que qualquer solicitação existente no banco de dados para a data apareça na listagem
   for (const r of (db.cleaningRequests || [])) {
     const fNumber = String(r.flatNumber || "");
-    if (r.requestDate === dateStr && (r.source === "manual" || r.source === "admin_manual" || r.source === "guest_checkout") && !existingFlatNumbersForDate.has(fNumber)) {
+    if (r.requestDate === dateStr && !existingFlatNumbersForDate.has(fNumber)) {
       requestsForDate.push(r);
       existingFlatNumbersForDate.add(fNumber);
     }
@@ -2451,7 +2452,7 @@ app.get("/api/reservations/checkouts", (req, res) => {
     const activeResToday = (db.reservations || []).find(r => 
       (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
       r.status !== "cancelada" && r.status !== "cancelado" &&
-      r.checkinDate <= dateStr && r.checkoutDate > dateStr
+      r.checkinDate < dateStr && r.checkoutDate > dateStr
     );
     const hasFutureCheckoutOnly = Boolean(activeResToday && activeResToday.checkoutDate > dateStr && !req_.leavingGuest && req_.source !== "guest_checkout" && !req_.isVacant);
 
@@ -2496,6 +2497,7 @@ app.get("/api/reservations/checkouts", (req, res) => {
         willCleanAt: req_.willCleanAt,
         cleaningStartedAt: req_.cleaningStartedAt,
         completedAt: req_.completedAt,
+        durationMinutes: req_.durationMinutes || null,
         createdAt: req_.createdAt,
         updatedAt: req_.updatedAt,
       }
