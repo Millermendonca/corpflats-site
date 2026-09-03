@@ -20,7 +20,8 @@ import { ptBR } from "date-fns/locale"
 import { 
   CheckCircle2, Clock, Sparkles, User, Calendar, BarChart3, Printer, 
   DollarSign, Users, FileText, Check, Sliders, ChevronLeft, ChevronRight,
-  Receipt, MessageSquare, Building2, CheckCheck, Star, ArrowRight, RefreshCw, ListFilter
+  Receipt, MessageSquare, Building2, CheckCheck, Star, ArrowRight, RefreshCw, ListFilter,
+  Plus, Trash2, AlertTriangle, Info
 } from "lucide-react"
 
 const COLORS = ["#6366f1", "#22c55e", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4"]
@@ -60,6 +61,91 @@ export default function Reports() {
   const [receiptModalOpen, setReceiptModalOpen] = useState(false)
   const [activeCleanerReceipt, setActiveCleanerReceipt] = useState<any | null>(null)
 
+  // Gerenciamento de Limpezas pelo ADM (Adicionar / Remover diárias com auditoria)
+  const [flatsList, setFlatsList] = useState<any[]>([])
+  const [addCleaningModalOpen, setAddCleaningModalOpen] = useState(false)
+  const [addFlatNumber, setAddFlatNumber] = useState("")
+  const [addRequestDate, setAddRequestDate] = useState(format(new Date(), "yyyy-MM-dd"))
+  const [addCleanerId, setAddCleanerId] = useState("")
+  const [addDurationMinutes, setAddDurationMinutes] = useState("35")
+  const [addAdminNote, setAddAdminNote] = useState("")
+  const [isSubmittingAddCleaning, setIsSubmittingAddCleaning] = useState(false)
+
+  // Confirmação de Exclusão de Limpeza pelo ADM
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [cleaningToDelete, setCleaningToDelete] = useState<any | null>(null)
+  const [isDeletingCleaning, setIsDeletingCleaning] = useState(false)
+
+  const handleOpenAddCleaningModal = () => {
+    setAddFlatNumber(flatsList[0]?.number || "101")
+    setAddRequestDate(startDate || format(new Date(), "yyyy-MM-dd"))
+    const defaultCleaner = cleanersList.find(c => c.username?.toLowerCase() === "grazi") || cleanersList[0]
+    setAddCleanerId(defaultCleaner ? String(defaultCleaner.userId || defaultCleaner.id) : "3")
+    setAddDurationMinutes("35")
+    setAddAdminNote("")
+    setAddCleaningModalOpen(true)
+  }
+
+  const handleSubmitAddCleaning = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!addFlatNumber || !addRequestDate) return
+    setIsSubmittingAddCleaning(true)
+    try {
+      const res = await fetch("/api/cleaning/admin/record", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          flatNumber: addFlatNumber,
+          requestDate: addRequestDate,
+          assignedUserId: addCleanerId ? Number(addCleanerId) : null,
+          status: "clean",
+          durationMinutes: Number(addDurationMinutes) || 35,
+          adminNote: addAdminNote.trim() || null
+        }),
+        credentials: "include"
+      })
+      if (res.ok) {
+        setAddCleaningModalOpen(false)
+        fetchReport()
+      } else {
+        const err = await res.json()
+        alert(err.error || "Erro ao adicionar diária de limpeza.")
+      }
+    } catch (err) {
+      alert("Erro ao conectar com o servidor.")
+    } finally {
+      setIsSubmittingAddCleaning(false)
+    }
+  }
+
+  const handleConfirmDelete = (cleaning: any) => {
+    setCleaningToDelete(cleaning)
+    setDeleteConfirmOpen(true)
+  }
+
+  const executeDeleteCleaning = async () => {
+    if (!cleaningToDelete?.id) return
+    setIsDeletingCleaning(true)
+    try {
+      const res = await fetch(`/api/cleaning/admin/record/${cleaningToDelete.id}`, {
+        method: "DELETE",
+        credentials: "include"
+      })
+      if (res.ok) {
+        setDeleteConfirmOpen(false)
+        setCleaningToDelete(null)
+        fetchReport()
+      } else {
+        const err = await res.json()
+        alert(err.error || "Erro ao remover registro de limpeza.")
+      }
+    } catch (err) {
+      alert("Erro ao conectar com o servidor.")
+    } finally {
+      setIsDeletingCleaning(false)
+    }
+  }
+
   // ── Aplicador de Quinzenas ──────────────────────────────────────────────────
   const applyQuinzena = (type: "q1" | "q2" | "month", targetMonth: Date = currentMonthDate) => {
     setSelectedQuinzena(type)
@@ -98,13 +184,17 @@ export default function Reports() {
   const fetchReport = async () => {
     setLoading(true)
     try {
-      const [repRes, histRes, ratesRes] = await Promise.all([
+      const [repRes, histRes, ratesRes, flatsRes] = await Promise.all([
         fetch(`/api/analytics/report?startDate=${startDate}&endDate=${endDate}`, { credentials: "include" }).then(r => r.json()),
         fetch(`/api/cleaning/history?startDate=${startDate}&endDate=${endDate}`, { credentials: "include" }).then(r => r.json()),
-        fetch("/api/cleaning/rates", { credentials: "include" }).then(r => r.json()).catch(() => null)
+        fetch("/api/cleaning/rates", { credentials: "include" }).then(r => r.json()).catch(() => null),
+        fetch("/api/flats", { credentials: "include" }).then(r => r.json()).catch(() => [])
       ])
       setReport(repRes)
       setHistory(Array.isArray(histRes) ? histRes : [])
+      if (Array.isArray(flatsRes) && flatsRes.length > 0) {
+        setFlatsList(flatsRes)
+      }
       if (ratesRes) {
         if (ratesRes.defaultRatePerRoom) setDefaultRateInput(String(ratesRes.defaultRatePerRoom))
         if (Array.isArray(ratesRes.cleaners)) {
@@ -479,7 +569,7 @@ export default function Reports() {
                     <CardDescription className="text-xs">Registro detalhado com data, flat, camareira e tempo de execução</CardDescription>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <select
                       value={selectedCleanerFilter}
                       onChange={e => setSelectedCleanerFilter(e.target.value)}
@@ -490,6 +580,18 @@ export default function Reports() {
                         <option key={u.userId} value={String(u.userId)}>{u.name || u.username}</option>
                       ))}
                     </select>
+
+                    {isAdmin && (
+                      <Button
+                        type="button"
+                        onClick={handleOpenAddCleaningModal}
+                        size="sm"
+                        className="h-8.5 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-xs gap-1.5 shadow-xs"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Adicionar Limpeza Manual</span>
+                      </Button>
+                    )}
                   </div>
                 </CardHeader>
 
@@ -503,11 +605,13 @@ export default function Reports() {
                         <table className="w-full text-xs text-left border-collapse">
                           <thead className="bg-muted/95 backdrop-blur-md text-muted-foreground font-bold border-b border-border sticky top-0 z-10 shadow-2xs">
                             <tr>
-                              <th className="p-3.5">Data / Hora</th>
+                              <th className="p-3.5">Data da Limpeza</th>
                               <th className="p-3.5">Flat</th>
                               <th className="p-3.5">Camareira Responsável</th>
                               <th className="p-3.5">Duração</th>
                               <th className="p-3.5">Status</th>
+                              <th className="p-3.5">Origem / Auditoria</th>
+                              {isAdmin && <th className="p-3.5 text-right">Ações</th>}
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-border">
@@ -530,6 +634,47 @@ export default function Reports() {
                                     Concluído
                                   </Badge>
                                 </td>
+                                <td className="p-3.5">
+                                  {entry.addedBy ? (
+                                    <div className="flex flex-col gap-0.5">
+                                      <Badge variant="outline" className="text-[10px] bg-primary/10 text-primary border-primary/20 w-fit font-bold">
+                                        Manual (ADM: {entry.addedBy})
+                                      </Badge>
+                                      <span className="text-[10px] text-muted-foreground">
+                                        Adicionado em {entry.addedAt ? format(new Date(entry.addedAt), "dd/MM 'às' HH:mm") : "-"}
+                                      </span>
+                                      {entry.adminNote && (
+                                        <span className="text-[10px] text-slate-500 dark:text-slate-400 italic">
+                                          "{entry.adminNote}"
+                                        </span>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <div className="flex flex-col gap-0.5">
+                                      <Badge variant="secondary" className="text-[10px] w-fit font-medium">
+                                        Automático (PMS)
+                                      </Badge>
+                                      {entry.leavingGuest && (
+                                        <span className="text-[10px] text-muted-foreground">
+                                          Saída: {entry.leavingGuest}
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                </td>
+                                {isAdmin && (
+                                  <td className="p-3.5 text-right">
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => handleConfirmDelete(entry)}
+                                      className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
+                                      title="Remover diária do relatório"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </Button>
+                                  </td>
+                                )}
                               </tr>
                             ))}
                           </tbody>
@@ -1041,6 +1186,167 @@ export default function Reports() {
                 </div>
               </div>
             )}
+          </DialogContent>
+        </Dialog>
+
+        {/* ── MODAL: ADICIONAR LIMPEZA MANUAL / RETROATIVA PELO ADM ── */}
+        <Dialog open={addCleaningModalOpen} onOpenChange={setAddCleaningModalOpen}>
+          <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl">
+            <DialogHeader>
+              <DialogTitle className="text-base font-black text-foreground flex items-center gap-2">
+                <Plus className="w-5 h-5 text-primary" />
+                <span>Lançar Diária de Limpeza Manualmente</span>
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                Insira uma diária de limpeza (incluindo datas retroativas) no relatório da equipe.
+              </DialogDescription>
+            </DialogHeader>
+
+            <form onSubmit={handleSubmitAddCleaning} className="space-y-4 pt-2">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-bold text-foreground">Apartamento *</Label>
+                  <select
+                    value={addFlatNumber}
+                    onChange={e => setAddFlatNumber(e.target.value)}
+                    className="w-full h-10 rounded-xl border border-border bg-background px-3 text-xs font-bold"
+                    required
+                  >
+                    {flatsList.map(f => (
+                      <option key={f.id} value={String(f.number)}>Flat {f.number}</option>
+                    ))}
+                    {!flatsList.some(f => f.number === "408") && (
+                      <option value="408">Flat 408</option>
+                    )}
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-bold text-foreground">Data da Limpeza *</Label>
+                  <Input
+                    type="date"
+                    value={addRequestDate}
+                    onChange={e => setAddRequestDate(e.target.value)}
+                    className="rounded-xl h-10 text-xs font-semibold"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-bold text-foreground">Camareira Responsável *</Label>
+                  <select
+                    value={addCleanerId}
+                    onChange={e => setAddCleanerId(e.target.value)}
+                    className="w-full h-10 rounded-xl border border-border bg-background px-3 text-xs font-bold"
+                    required
+                  >
+                    {cleanersList.map(c => (
+                      <option key={c.userId || c.id} value={String(c.userId || c.id)}>
+                        {c.name || c.username}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-bold text-foreground">Duração (minutos)</Label>
+                  <Input
+                    type="number"
+                    min="10"
+                    max="180"
+                    value={addDurationMinutes}
+                    onChange={e => setAddDurationMinutes(e.target.value)}
+                    className="rounded-xl h-10 text-xs font-semibold"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold text-foreground">Motivo / Observação da Administração</Label>
+                <Input
+                  type="text"
+                  placeholder="Ex: Check-out antecipado / Lançamento retroativo"
+                  value={addAdminNote}
+                  onChange={e => setAddAdminNote(e.target.value)}
+                  className="rounded-xl h-10 text-xs"
+                />
+              </div>
+
+              <div className="p-3 bg-muted/40 rounded-2xl border border-border flex items-start gap-2.5 text-[11px] text-muted-foreground">
+                <Info className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+                <span>
+                  O lançamento será registrado no histórico com auditoria (seu usuário, data e hora) e integrará imediatamente o cálculo de diárias a pagar da camareira.
+                </span>
+              </div>
+
+              <DialogFooter className="gap-2 sm:justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setAddCleaningModalOpen(false)}
+                  className="rounded-xl"
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={isSubmittingAddCleaning}
+                  className="rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground font-bold"
+                >
+                  {isSubmittingAddCleaning ? "Salvando..." : "Confirmar Diária"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+
+        {/* ── MODAL: CONFIRMAÇÃO DE EXCLUSÃO DE DIÁRIA PELO ADM ── */}
+        <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+          <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl">
+            <DialogHeader>
+              <DialogTitle className="text-base font-black text-destructive flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-destructive" />
+                <span>Remover Diária de Limpeza</span>
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                Tem certeza de que deseja remover esta diária do relatório?
+              </DialogDescription>
+            </DialogHeader>
+
+            {cleaningToDelete && (
+              <div className="p-4 bg-muted/40 rounded-2xl border border-border space-y-2 text-xs">
+                <div>Flat: <strong className="text-foreground">Apt {cleaningToDelete.flatNumber}</strong></div>
+                <div>Data: <strong className="text-foreground">{cleaningToDelete.requestDate ? cleaningToDelete.requestDate.split('-').reverse().join('/') : "-"}</strong></div>
+                <div>Camareira: <strong className="text-foreground">{cleaningToDelete.assignedUsername || "Camareira"}</strong></div>
+                {cleaningToDelete.adminNote && <div>Observação: <span className="italic">{cleaningToDelete.adminNote}</span></div>}
+              </div>
+            )}
+
+            <DialogFooter className="gap-2 sm:justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setDeleteConfirmOpen(false)}
+                className="rounded-xl"
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                disabled={isDeletingCleaning}
+                onClick={executeDeleteCleaning}
+                className="rounded-xl font-bold"
+              >
+                {isDeletingCleaning ? "Excluindo..." : "Sim, Excluir Diária"}
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>

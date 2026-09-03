@@ -117,6 +117,37 @@ app.get("/api/system/db-status", async (req, res) => {
   });
 });
 
+app.get("/api/system/postgres-tables", async (req, res) => {
+  if (!pgPool) return res.json({ error: "No pgPool" });
+  try {
+    const tablesQ = await pgPool.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public'");
+    const tables = tablesQ.rows.map(r => r.table_name);
+    const result = { tables, data: {} };
+    for (const t of tables) {
+      try {
+        if (t === 'system_store') {
+          const s = await pgPool.query("SELECT key, updated_at, length(value::text) as size FROM system_store");
+          result.data[t] = s.rows;
+        } else if (t.includes('task') || t.includes('periodic') || t.includes('execut')) {
+          const d = await pgPool.query(`SELECT * FROM "${t}" LIMIT 100`);
+          result.data[t] = d.rows;
+        }
+      } catch (e) {
+        result.data[t] = { error: e.message };
+      }
+    }
+    try {
+      const a = await pgPool.query("SELECT * FROM system_audit_logs WHERE details::text ILIKE '%task%' OR action ILIKE '%task%' OR details::text ILIKE '%periodic%' LIMIT 50");
+      result.taskAuditLogs = a.rows;
+    } catch (e) {
+      result.taskAuditLogsError = e.message;
+    }
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── No Show (Admin only) ───────────────────────────────────────────────────
 app.post("/api/cleaning/assignments/:requestId/no-show", (req, res) => {
   const userAuth = getAuthUser(req);
@@ -1328,8 +1359,13 @@ function parseSpreadsheetBuffer(buf) {
       }
     }
 
-    // Preserva requisições manuais adicionadas pelos usuários / administradores
-    const manualRequests = (db.cleaningRequests || []).filter(r => r.source === "manual");
+    // Preserva requisições manuais/administrativas e limpezas concluídas adicionadas pelos usuários
+    const manualRequests = (db.cleaningRequests || []).filter(r => 
+      r.source === "manual" || 
+      r.source === "admin_manual" || 
+      r.status === "clean" || 
+      Boolean(r.addedBy)
+    );
     for (const mReq of manualRequests) {
       const alreadyInDeduplicated = deduplicatedRequests.some(r => 
         (r.flatId === mReq.flatId || String(r.flatNumber) === String(mReq.flatNumber)) && 
@@ -1924,14 +1960,18 @@ function getRequestsForDate(dateStr) {
       updatedAt: existingCleaning ? existingCleaning.updatedAt : `${dateStr}T08:00:00.000Z`
     };
 
+    if (!existingCleaning) {
+      db.cleaningRequests.push(card);
+    }
+
     requestsForDate.push(card);
     existingFlatNumbersForDate.add(flatNumber);
   }
 
-  // 4. Adiciona solicitações manuais adicionadas diretamente pela administração
+  // 4. Adiciona solicitações manuais ou administrativas adicionadas diretamente
   for (const r of (db.cleaningRequests || [])) {
     const fNumber = String(r.flatNumber || "");
-    if (r.requestDate === dateStr && r.source === "manual" && !existingFlatNumbersForDate.has(fNumber)) {
+    if (r.requestDate === dateStr && (r.source === "manual" || r.source === "admin_manual" || r.source === "guest_checkout") && !existingFlatNumbersForDate.has(fNumber)) {
       requestsForDate.push(r);
       existingFlatNumbersForDate.add(fNumber);
     }
@@ -1942,7 +1982,7 @@ function getRequestsForDate(dateStr) {
     const previousUncleaned = (db.cleaningRequests || []).filter(r => {
       const fNumber = String(r.flatNumber || "");
       if (!r.requestDate || r.requestDate < "2026-09-01" || r.requestDate >= dateStr || r.status === "clean" || r.status === "extended" || r.status === "no_show") return false;
-      if (!r.leavingGuest && r.source !== "manual") return false;
+      if (!r.leavingGuest && r.source !== "manual" && r.source !== "admin_manual" && r.source !== "guest_checkout") return false;
       if (stayoverFlatNumbers.has(fNumber)) return false;
       if (existingFlatNumbersForDate.has(fNumber)) return false;
       return true;
@@ -2657,7 +2697,11 @@ app.get("/api/cleaning/history", (req, res) => {
       pendingObservation: r.pendingObservation || r.adminNote || null,
       cleaningStartedAt: r.cleaningStartedAt,
       completedAt: r.completedAt,
-      durationMinutes,
+      durationMinutes: r.durationMinutes || durationMinutes,
+      addedBy: r.addedBy || null,
+      addedAt: r.addedAt || null,
+      adminNote: r.adminNote || null,
+      leavingGuest: r.leavingGuest || null,
       createdAt: r.createdAt,
     };
   });
@@ -2670,6 +2714,106 @@ app.get("/api/cleaning/history", (req, res) => {
   });
 
   res.json(result);
+});
+
+// ── Admin Housekeeping Report Management (Add/Remove records with Audit) ────
+app.post("/api/cleaning/admin/record", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (userAuth?.role !== "admin") {
+    return res.status(403).json({ error: "Apenas administradores podem adicionar diárias de limpeza." });
+  }
+
+  const { flatNumber, flatId, requestDate, assignedUserId, status = "clean", durationMinutes = 35, adminNote = "", observation = "" } = req.body || {};
+  if (!requestDate) {
+    return res.status(400).json({ error: "A data da limpeza é obrigatória." });
+  }
+
+  const targetFlat = db.flats.find(f => (flatNumber && String(f.number) === String(flatNumber)) || (flatId && f.id === Number(flatId)));
+  const finalFlatNumber = targetFlat ? String(targetFlat.number) : String(flatNumber || "101");
+  const finalFlatId = targetFlat ? targetFlat.id : Number(flatId || 1);
+  const targetUser = assignedUserId ? db.users.find(u => u.id === Number(assignedUserId)) : null;
+
+  if (!db.cleaningRequests) db.cleaningRequests = [];
+  const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
+  const nowIso = new Date().toISOString();
+  const completedTimeIso = status === "clean" ? `${requestDate}T18:00:00.000Z` : null;
+
+  const newReq = {
+    id: maxId + 1,
+    flatId: finalFlatId,
+    flatNumber: finalFlatNumber,
+    requestDate: requestDate,
+    source: "admin_manual",
+    status: status || "clean",
+    assignedUserId: targetUser ? targetUser.id : (assignedUserId ? Number(assignedUserId) : null),
+    assignedUsername: targetUser ? targetUser.username : null,
+    assignedUserName: targetUser ? targetUser.username : null,
+    isVacant: true,
+    isPriority: false,
+    adminNote: adminNote || observation || "Lançamento manual pelo ADM",
+    pendingObservation: observation || adminNote || null,
+    durationMinutes: Number(durationMinutes) || 35,
+    cleaningStartedAt: status === "clean" ? `${requestDate}T17:15:00.000Z` : null,
+    completedAt: completedTimeIso,
+    addedBy: userAuth.username || "admin",
+    addedAt: nowIso,
+    createdAt: nowIso,
+    updatedAt: nowIso
+  };
+
+  db.cleaningRequests.unshift(newReq);
+  saveDatabase();
+
+  logAuditEvent({
+    level: "info",
+    category: "cleaning",
+    action: "CLEANING_RECORD_ADDED_BY_ADMIN",
+    actor: { name: userAuth.username || "admin", role: "admin" },
+    details: {
+      requestId: newReq.id,
+      flatNumber: finalFlatNumber,
+      requestDate,
+      assignedMaidName: targetUser ? targetUser.username : "Sem camareira",
+      addedBy: userAuth.username || "admin",
+      addedAt: nowIso
+    }
+  });
+
+  res.status(201).json({ success: true, message: "Diária de limpeza adicionada com sucesso!", record: newReq });
+});
+
+app.delete("/api/cleaning/admin/record/:id", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (userAuth?.role !== "admin") {
+    return res.status(403).json({ error: "Apenas administradores podem remover diárias do relatório." });
+  }
+
+  const id = Number(req.params.id);
+  const targetIndex = (db.cleaningRequests || []).findIndex(r => r.id === id);
+  if (targetIndex === -1) {
+    return res.status(404).json({ error: "Registro de limpeza não encontrado." });
+  }
+
+  const removed = db.cleaningRequests[targetIndex];
+  db.cleaningRequests.splice(targetIndex, 1);
+  saveDatabase();
+
+  logAuditEvent({
+    level: "info",
+    category: "cleaning",
+    action: "CLEANING_RECORD_REMOVED_BY_ADMIN",
+    actor: { name: userAuth.username || "admin", role: "admin" },
+    details: {
+      requestId: id,
+      flatNumber: removed.flatNumber,
+      requestDate: removed.requestDate,
+      assignedMaidName: removed.assignedUsername || "Sem camareira",
+      removedBy: userAuth.username || "admin",
+      removedAt: new Date().toISOString()
+    }
+  });
+
+  res.json({ success: true, message: `Diária do Flat ${removed.flatNumber} em ${removed.requestDate} removida com sucesso.` });
 });
 
 // ── Surveys Endpoints ───────────────────────────────────────────────────────
@@ -3950,6 +4094,53 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   // RFC 5546: Incrementa SEQUENCE ao remarcar datas ou alterar flat/status
   if (oldCheckin !== r.checkinDate || oldCheckout !== r.checkoutDate || oldFlatId !== r.flatId || oldStatus !== r.status) {
     r.calendarSequence = (r.calendarSequence || 0) + 1;
+  }
+
+  // Sincronização automática com a Governança / Limpeza quando muda a data de check-out ou flat:
+  if (oldCheckout !== r.checkoutDate || oldFlatId !== r.flatId) {
+    if (!db.cleaningRequests) db.cleaningRequests = [];
+    const flatNum = r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number);
+
+    // 1. Procura solicitação não-concluída na data antiga para este flat e atualiza para a nova data
+    const oldReq = db.cleaningRequests.find(c => 
+      (c.flatId === oldFlatId || String(c.flatNumber) === String(flatNum)) && 
+      c.requestDate === oldCheckout && 
+      c.status !== "clean"
+    );
+
+    if (oldReq) {
+      oldReq.requestDate = r.checkoutDate;
+      oldReq.flatId = r.flatId;
+      oldReq.flatNumber = flatNum;
+      oldReq.leavingGuest = r.guestName;
+      oldReq.updatedAt = new Date().toISOString();
+    } else {
+      // 2. Se não havia pendência ou já estava limpa, garante que exista a nova pendência na nova data de checkout
+      const hasNewReq = db.cleaningRequests.some(c => 
+        (c.flatId === r.flatId || String(c.flatNumber) === String(flatNum)) && 
+        c.requestDate === r.checkoutDate
+      );
+      if (!hasNewReq && r.status !== "cancelada") {
+        const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(x => Number(x.id) || 0)) : 0;
+        db.cleaningRequests.unshift({
+          id: maxId + 1,
+          flatId: r.flatId,
+          flatNumber: flatNum,
+          requestDate: r.checkoutDate,
+          source: "checkout",
+          status: "dirty",
+          assignedUserId: null,
+          assignedUsername: null,
+          isVacant: false,
+          isPriority: false,
+          leavingGuest: r.guestName,
+          arrivingGuest: null,
+          adminNote: `Check-out antecipado/remarcado para ${r.checkoutDate}`,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+      }
+    }
   }
 
   r.updatedAt = new Date().toISOString();
