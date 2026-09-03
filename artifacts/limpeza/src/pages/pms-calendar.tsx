@@ -1934,53 +1934,24 @@ export default function PmsCalendar() {
                       <span className="flex items-center gap-1.5">
                         <span>☕ Café da Manhã Incluso na Diária</span>
                       </span>
-                      {formIncludeBreakfast ? (
-                        <span className="flex items-center gap-1 text-[11px] bg-amber-700 px-2 py-0.5 rounded-md">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          <span>Habilitado</span>
-                        </span>
-                      ) : (
-                        <span className="text-[10px] text-slate-400">Sem Café</span>
-                      )}
+                      {formIncludeBreakfast && <CheckCircle2 className="w-4 h-4 shrink-0" />}
                     </button>
 
                     {/* Link Exclusivo do Café da Manhã */}
                     {formIncludeBreakfast && (
-                      <div className="p-3.5 bg-amber-50/90 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 rounded-2xl space-y-2.5 sm:col-span-3 animate-in fade-in">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <span className="text-base">☕</span>
-                            <div>
-                              <h4 className="text-xs font-black text-amber-950 dark:text-amber-100">Link Exclusivo do Café da Manhã</h4>
-                              <p className="text-[10px] text-amber-800 dark:text-amber-300/80">O hóspede acessa sem precisar preencher dados (quarto e hóspedes já vinculados).</p>
-                            </div>
+                      <div className="p-3 bg-amber-500/5 dark:bg-amber-950/20 border border-amber-500/25 dark:border-amber-800/40 rounded-xl space-y-2 sm:col-span-3 animate-in fade-in">
+                        <div className="flex items-center gap-2">
+                          <Coffee className="w-4 h-4 text-amber-600 shrink-0" />
+                          <div>
+                            <h4 className="text-xs font-bold text-foreground">Link de Agendamento do Café</h4>
+                            <p className="text-[10.5px] text-muted-foreground">O hóspede escolhe os itens e horários com dados já vinculados ao quarto.</p>
                           </div>
-                          <Badge className="bg-amber-600 text-white font-bold text-[10px]">Link Ativo</Badge>
                         </div>
 
-                        <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
-                          <Input
-                            readOnly
-                            value={`${window.location.origin}/cafe?res=${selectedRes?.code || selectedRes?.breakfastToken || formGuestName || 'reserva'}`}
-                            className="text-xs h-8 bg-white dark:bg-slate-900 select-all font-mono font-bold flex-1"
-                          />
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-0.5">
                           <Button
                             type="button"
                             size="sm"
-                            onClick={() => {
-                              const resCode = selectedRes?.code || selectedRes?.breakfastToken || formGuestName || 'reserva'
-                              const url = `${window.location.origin}/cafe?res=${resCode}`
-                              navigator.clipboard.writeText(url)
-                              toast({ title: "Link copiado!", description: "Link do café da manhã copiado para a área de transferência." })
-                            }}
-                            className="h-8 text-xs font-bold gap-1 bg-amber-600 hover:bg-amber-700 text-white shrink-0"
-                          >
-                            <Copy className="w-3.5 h-3.5" /> Copiar Link
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
                             onClick={() => {
                               const resCode = selectedRes?.code || selectedRes?.breakfastToken || formGuestName || 'reserva'
                               const url = `${window.location.origin}/cafe?res=${resCode}`
@@ -1990,24 +1961,41 @@ export default function PmsCalendar() {
                               const msg = encodeURIComponent(`Olá ${guestName}! Aqui é da equipe da CorpFlats. Segue o seu link exclusivo para montar e agendar o seu café da manhã no Flat ${flatNum}: ${url}`)
                               window.open(`https://wa.me/${phone}?text=${msg}`, "_blank")
                             }}
-                            className="h-8 text-xs font-bold gap-1 border-emerald-500 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950 shrink-0"
+                            className="w-full h-8 text-xs font-bold gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs"
                           >
                             <MessageCircle className="w-3.5 h-3.5" /> Enviar WhatsApp
                           </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => {
-                              const resCode = selectedRes?.code || selectedRes?.breakfastToken || formGuestName || 'reserva'
-                              const url = `/cafe?res=${resCode}`
-                              window.open(url, "_blank")
-                            }}
-                            className="h-8 text-xs font-bold gap-1 text-slate-700 dark:text-slate-300 shrink-0"
-                            title="Abrir página de pedidos"
-                          >
-                            Abrir ↗
-                          </Button>
+
+                          <div className="flex items-center gap-1.5">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                const resCode = selectedRes?.code || selectedRes?.breakfastToken || formGuestName || 'reserva'
+                                const url = `${window.location.origin}/cafe?res=${resCode}`
+                                navigator.clipboard.writeText(url)
+                                toast({ title: "Link copiado!", description: "Link do café da manhã copiado para a área de transferência." })
+                              }}
+                              className="flex-1 h-8 text-xs font-bold gap-1.5 bg-background hover:bg-muted border-border"
+                            >
+                              <Copy className="w-3.5 h-3.5" /> Copiar Link
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => {
+                                const resCode = selectedRes?.code || selectedRes?.breakfastToken || formGuestName || 'reserva'
+                                const url = `/cafe?res=${resCode}`
+                                window.open(url, "_blank")
+                              }}
+                              className="h-8 px-2.5 text-xs font-bold text-muted-foreground hover:text-foreground"
+                              title="Abrir página de pedidos"
+                            >
+                              Abrir ↗
+                            </Button>
+                          </div>
                         </div>
                       </div>
                     )}
