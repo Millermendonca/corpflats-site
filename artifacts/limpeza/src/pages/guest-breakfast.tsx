@@ -58,8 +58,16 @@ export default function GuestBreakfast() {
   const [deliveryTime, setDeliveryTime] = useState("08:00")
   const [notes, setNotes] = useState("")
 
-  // Tipo de Pedido: "standard" (Café Padrão Completo) | "custom" (Personalizado)
+  // Tipo de Pedido quando unificado / mesmo para todos: "standard" (Café Padrão) | "custom" (Personalizado)
   const [breakfastType, setBreakfastType] = useState<"standard" | "custom">("standard")
+
+  // Distribuição do pedido quando guestCount > 1: "same_for_all" (o mesmo para todos) | "individual" (personalizar por hóspede)
+  const [orderDistribution, setOrderDistribution] = useState<"same_for_all" | "individual">("same_for_all")
+
+  // Tipo individual quando no modo personalizado por hóspede ("standard" ou "custom")
+  const [guest1Type, setGuest1Type] = useState<"standard" | "custom">("standard")
+  const [guest2Type, setGuest2Type] = useState<"standard" | "custom">("standard")
+  const [guest3Type, setGuest3Type] = useState<"standard" | "custom">("standard")
 
   // Nomes individuais de cada hóspede
   const [guest1Name, setGuest1Name] = useState("")
@@ -74,7 +82,7 @@ export default function GuestBreakfast() {
   const [guest2Pref, setGuest2Pref] = useState<GuestPreference>({ ...defaultGuestPref })
   const [guest3Pref, setGuest3Pref] = useState<GuestPreference>({ ...defaultGuestPref })
 
-  // Controle da Aba / Etapa Ativa no modo personalizado (1, 2 ou 3)
+  // Controle da Aba Ativa no modo individual (1, 2 ou 3)
   const [activeGuestTab, setActiveGuestTab] = useState<1 | 2 | 3>(1)
 
   const [submitting, setSubmitting] = useState(false)
@@ -115,6 +123,11 @@ export default function GuestBreakfast() {
         if (r.guestCount) {
           const count = Math.min(3, Math.max(1, Number(r.guestCount || 1))) as 1 | 2 | 3
           setGuestCount(count)
+        }
+        if (r.guests && Array.isArray(r.guests)) {
+          if (r.guests[0]?.name) setGuest1Name(r.guests[0].name)
+          if (r.guests[1]?.name) setGuest2Name(r.guests[1].name)
+          if (r.guests[2]?.name) setGuest3Name(r.guests[2].name)
         }
 
         const dates: any[] = data.breakfastDates || []
@@ -215,6 +228,10 @@ export default function GuestBreakfast() {
       .catch(() => {})
   }, [deliveryDate])
 
+  const g1Label = guest1Name.trim() ? guest1Name.trim().split(" ")[0] : "1º Hóspede"
+  const g2Label = guest2Name.trim() ? guest2Name.trim().split(" ")[0] : "2º Hóspede"
+  const g3Label = guest3Name.trim() ? guest3Name.trim().split(" ")[0] : "3º Hóspede"
+
   const getCurrentGuestName = () => {
     if (activeGuestTab === 1) return guest1Name
     if (activeGuestTab === 2) return guest2Name
@@ -225,6 +242,23 @@ export default function GuestBreakfast() {
     if (activeGuestTab === 1) setGuest1Name(val)
     else if (activeGuestTab === 2) setGuest2Name(val)
     else setGuest3Name(val)
+  }
+
+  const getCurrentType = () => {
+    if (orderDistribution === "same_for_all" || guestCount === 1) return breakfastType
+    if (activeGuestTab === 1) return guest1Type
+    if (activeGuestTab === 2) return guest2Type
+    return guest3Type
+  }
+
+  const setCurrentType = (type: "standard" | "custom") => {
+    if (orderDistribution === "same_for_all" || guestCount === 1) {
+      setBreakfastType(type)
+    } else {
+      if (activeGuestTab === 1) setGuest1Type(type)
+      else if (activeGuestTab === 2) setGuest2Type(type)
+      else setGuest3Type(type)
+    }
   }
 
   const getCurrentPref = () => {
@@ -260,25 +294,10 @@ export default function GuestBreakfast() {
     }
   }
 
-  const handleNextStep = () => {
-    if (!roomNumber.trim()) {
-      alert("Por favor, informe o número do seu apartamento.")
-      return
-    }
-    if (activeGuestTab === 1 && !guest1Name.trim()) {
-      alert("Por favor, informe o nome do 1º hóspede.")
-      return
-    }
-    if (!deliveryTime) {
-      alert("Por favor, selecione o horário para a entrega do café.")
-      return
-    }
-
-    if (activeGuestTab < guestCount) {
-      const next = (activeGuestTab + 1) as 2 | 3
-      setActiveGuestTab(next)
-      window.scrollTo({ top: 220, behavior: "smooth" })
-    }
+  const handleCopyGuest1To2 = () => {
+    setGuest2Type(guest1Type)
+    setGuest2Pref({ ...guest1Pref })
+    alert(`As escolhas de ${g1Label} foram copiadas para ${g2Label}!`)
   }
 
   // Executa o envio final consolidado
@@ -291,21 +310,25 @@ export default function GuestBreakfast() {
         fruit: "Fruta do dia" 
       }
 
+      const isUnified = orderDistribution === "same_for_all" || guestCount === 1
+
       const guestChoices = [
         { 
           guestIndex: 1, 
           guestName: g1, 
           deliveryTime,
-          ...(isStd ? stdItemPref : p1)
+          isStandard: isUnified ? isStd : guest1Type === "standard",
+          ...(isUnified ? (isStd ? stdItemPref : p1) : (guest1Type === "standard" ? stdItemPref : p1))
         }
       ]
 
       if (guestCount >= 2) {
         guestChoices.push({ 
           guestIndex: 2, 
-          guestName: g2 || "Hóspede 2", 
+          guestName: g2 || "2º Hóspede", 
           deliveryTime,
-          ...(isStd ? stdItemPref : p2)
+          isStandard: isUnified ? isStd : guest2Type === "standard",
+          ...(isUnified ? (isStd ? stdItemPref : p2) : (guest2Type === "standard" ? stdItemPref : p2))
         })
       }
 
@@ -314,7 +337,8 @@ export default function GuestBreakfast() {
           guestIndex: 3, 
           guestName: g3 || "Hóspede 3", 
           deliveryTime,
-          ...(isStd ? stdItemPref : p3)
+          isStandard: isUnified ? isStd : guest3Type === "standard",
+          ...(isUnified ? (isStd ? stdItemPref : p3) : (guest3Type === "standard" ? stdItemPref : p3))
         })
       }
 
@@ -335,7 +359,7 @@ export default function GuestBreakfast() {
           isStandard: isStd,
           fruitSelected: isStd ? "Fruta do dia" : undefined,
           orderType: isStd ? "standard" : "custom",
-          orderMode: isStd ? "unified" : "individual",
+          orderMode: isUnified ? "unified" : "individual",
           preferences: isStd ? stdItemPref : p1,
           guestChoices,
           notes
@@ -365,7 +389,7 @@ export default function GuestBreakfast() {
     }
   }
 
-  const handleStandardSubmit = async () => {
+  const handleSubmitOrder = async () => {
     if (!roomNumber.trim()) {
       alert("Por favor, informe o número do seu apartamento.")
       return
@@ -383,60 +407,37 @@ export default function GuestBreakfast() {
     const g2 = guest2Name.trim() || (guestCount >= 2 ? "2º Hóspede" : "")
     const g3 = guest3Name.trim() || (guestCount === 3 ? "3º Hóspede" : "")
 
-    const stdPref = { ...defaultGuestPref, coffee: "Café, Leite", fruit: "Fruta do dia" }
-    await executeSubmit(g1, g2, g3, true, stdPref, stdPref, stdPref)
-  }
-
-  const handleCustomFinalSubmit = async () => {
-    if (!roomNumber.trim()) {
-      alert("Por favor, informe o número do apartamento.")
-      return
-    }
-    if (!guest1Name.trim()) {
-      alert("Por favor, informe o nome do titular (1º Hóspede).")
-      return
-    }
-    if (!deliveryTime) {
-      alert("Por favor, selecione o horário de entrega.")
-      return
+    const stdItemPref: GuestPreference = { 
+      ...defaultGuestPref, 
+      coffee: "Café, Leite", 
+      fruit: "Fruta do dia" 
     }
 
-    const g1 = guest1Name.trim()
-    const g2 = guest2Name.trim() || "Hóspede 2"
-    const g3 = guest3Name.trim() || "Hóspede 3"
+    let isOverallStandard = false
+    let p1 = guest1Pref
+    let p2 = guest2Pref
+    let p3 = guest3Pref
 
-    await executeSubmit(g1, g2, g3, false, guest1Pref, guest2Pref, guest3Pref)
-  }
-
-  // Handler para Repetir Pedido do 1º Hóspede e Enviar Imediatamente
-  const handleConfirmRepeatAndSubmit = async () => {
-    if (!roomNumber.trim()) {
-      alert("Por favor, informe o número do apartamento.")
-      return
-    }
-    if (!guest1Name.trim()) {
-      alert("Por favor, informe o nome do 1º hóspede.")
-      return
-    }
-    if (!guest2Name.trim()) {
-      alert("Por favor, informe o nome do 2º hóspede.")
-      return
-    }
-    if (guestCount === 3 && !guest3Name.trim()) {
-      alert("Por favor, informe o nome do 3º hóspede.")
-      return
+    if (orderDistribution === "same_for_all" || guestCount === 1) {
+      if (breakfastType === "standard") {
+        isOverallStandard = true
+        p1 = stdItemPref
+        p2 = stdItemPref
+        p3 = stdItemPref
+      } else {
+        isOverallStandard = false
+        p1 = guest1Pref
+        p2 = guest1Pref
+        p3 = guest1Pref
+      }
+    } else {
+      isOverallStandard = (guest1Type === "standard" && guest2Type === "standard" && (guestCount < 3 || guest3Type === "standard"))
+      p1 = guest1Type === "standard" ? stdItemPref : guest1Pref
+      p2 = guest2Type === "standard" ? stdItemPref : guest2Pref
+      p3 = guest3Type === "standard" ? stdItemPref : guest3Pref
     }
 
-    setRepeatModalOpen(false)
-
-    setGuest2Pref({ ...guest1Pref })
-    setGuest3Pref({ ...guest1Pref })
-
-    const g1 = guest1Name.trim()
-    const g2 = guest2Name.trim()
-    const g3 = guest3Name.trim() || "Hóspede 3"
-
-    await executeSubmit(g1, g2, g3, false, guest1Pref, guest1Pref, guest1Pref)
+    await executeSubmit(g1, g2, g3, isOverallStandard, p1, p2, p3)
   }
 
   // Tela de Bloqueio se a Reserva foi Cancelada
@@ -1025,6 +1026,575 @@ export default function GuestBreakfast() {
           </Card>
         )}
 
+        {/* ── Distribuição do Pedido (Apenas quando a reserva for para mais de 1 pessoa) ── */}
+        {guestCount > 1 && (
+          <Card className="bg-white shadow-xl shadow-slate-200/60 border border-slate-200/80 rounded-3xl p-5 sm:p-7 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3.5">
+              <span className="text-xs sm:text-sm font-black uppercase text-slate-800 tracking-wider flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold">
+                  <Users className="w-4 h-4" />
+                </div>
+                Como deseja montar o café para os {guestCount} hóspedes?
+              </span>
+              <Badge className="bg-sky-50 text-sky-700 border-sky-200 text-[10px] font-bold">
+                {guestCount} Hóspedes no Flat
+              </Badge>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Opção A: O mesmo pedido para os dois */}
+              <div
+                onClick={() => {
+                  setOrderDistribution("same_for_all")
+                  setActiveGuestTab(1)
+                }}
+                className={`cursor-pointer p-4 rounded-2xl border-2 transition-all flex items-start gap-3.5 relative ${
+                  orderDistribution === "same_for_all"
+                    ? "border-sky-600 bg-sky-50/70 text-slate-900 ring-2 ring-sky-500/20 shadow-xs"
+                    : "border-slate-200 hover:border-slate-300 bg-white text-slate-700 hover:bg-slate-50/50"
+                }`}
+              >
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 font-bold ${
+                  orderDistribution === "same_for_all" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-500"
+                }`}>
+                  <Copy className="w-5 h-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <span className="font-black text-xs sm:text-sm text-slate-900 block">
+                    O mesmo pedido para os {guestCount}
+                  </span>
+                  <p className="text-[11px] text-slate-600 leading-snug mt-1 font-medium">
+                    Prático e rápido: monte uma única vez e ambos receberão o mesmo cardápio.
+                  </p>
+                </div>
+              </div>
+
+              {/* Opção B: Personalizar por hóspede */}
+              <div
+                onClick={() => setOrderDistribution("individual")}
+                className={`cursor-pointer p-4 rounded-2xl border-2 transition-all flex items-start gap-3.5 relative ${
+                  orderDistribution === "individual"
+                    ? "border-sky-600 bg-sky-50/70 text-slate-900 ring-2 ring-sky-500/20 shadow-xs"
+                    : "border-slate-200 hover:border-slate-300 bg-white text-slate-700 hover:bg-slate-50/50"
+                }`}
+              >
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 font-bold ${
+                  orderDistribution === "individual" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-500"
+                }`}>
+                  <User className="w-5 h-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <span className="font-black text-xs sm:text-sm text-slate-900 block">
+                    Personalizar por hóspede
+                  </span>
+                  <p className="text-[11px] text-slate-600 leading-snug mt-1 font-medium">
+                    Escolha itens sob medida para cada hóspede.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </Card>
+        )}
+
+        {/* ── Opções de Café da Manhã & Cardápio (ANTES DO HORÁRIO!) ───────── */}
+        <Card id="breakfast-options-section" className="bg-white shadow-xl shadow-slate-200/60 border border-slate-200/80 rounded-3xl p-5 sm:p-7 space-y-5">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3.5">
+            <span className="text-xs sm:text-sm font-black uppercase text-slate-800 tracking-wider flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold">
+                <Utensils className="w-4 h-4" />
+              </div>
+              Opções de Café da Manhã
+            </span>
+            {guestCount > 1 && orderDistribution === "individual" ? (
+              <Badge variant="outline" className="text-[10px] text-sky-700 border-sky-200 bg-sky-50 font-bold">
+                Configurando: {getCurrentGuestName() ? getCurrentGuestName().split(' ')[0] : `Hóspede ${activeGuestTab}`}
+              </Badge>
+            ) : null}
+          </div>
+
+          {/* Abas para alternar entre os hóspedes quando modo individual */}
+          {guestCount > 1 && orderDistribution === "individual" && (
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-700">
+                  Selecione para qual hóspede está montando o pedido:
+                </span>
+                <span className="text-[10px] text-slate-500 font-medium">
+                  {activeGuestTab} de {guestCount}
+                </span>
+              </div>
+
+              <div className="p-1.5 bg-slate-100 rounded-2xl flex gap-1.5">
+                {Array.from({ length: guestCount }).map((_, i) => {
+                  const idx = (i + 1) as 1 | 2 | 3
+                  const isActive = activeGuestTab === idx
+                  const curType = idx === 1 ? guest1Type : idx === 2 ? guest2Type : guest3Type
+                  const nameLabel = idx === 1 ? g1Label : idx === 2 ? g2Label : g3Label
+                  
+                  return (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => setActiveGuestTab(idx)}
+                      className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex flex-col sm:flex-row items-center justify-center gap-1.5 ${
+                        isActive
+                          ? "bg-white text-sky-900 shadow-xs border border-slate-200 font-black ring-2 ring-sky-500/20"
+                          : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 truncate">
+                        <User className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+                        <span className="truncate">{nameLabel}</span>
+                      </div>
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                        curType === 'standard' ? 'bg-amber-100 text-amber-800' : 'bg-sky-100 text-sky-800'
+                      }`}>
+                        {curType === 'standard' ? '☕ Padrão' : '🎨 Personalizado'}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* Botão para copiar escolhas do 1º hóspede se estiver no 2º */}
+              {activeGuestTab > 1 && (
+                <div className="flex items-center justify-between p-2.5 bg-sky-50/80 border border-sky-100 rounded-xl text-xs">
+                  <span className="text-sky-900 font-medium text-[11px]">
+                    Deseja copiar o mesmo café escolhido para {g1Label}?
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleCopyGuest1To2}
+                    className="text-sky-700 hover:text-sky-900 hover:bg-sky-100 font-bold text-xs h-7 px-2.5 rounded-lg flex items-center gap-1 shrink-0"
+                  >
+                    <Copy className="w-3 h-3" />
+                    <span>Copiar de {g1Label}</span>
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Escolha entre Café Padrão CorpFlats vs Personalizado */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+            {/* Opção 1: Café Padrão CorpFlats */}
+            <div 
+              onClick={() => setCurrentType("standard")}
+              className={`cursor-pointer p-4 rounded-2xl border-2 transition-all flex items-start gap-3.5 relative ${
+                getCurrentType() === "standard"
+                  ? "border-sky-600 bg-sky-50/70 text-slate-900 ring-2 ring-sky-500/20 shadow-xs"
+                  : "border-slate-200 hover:border-slate-300 bg-white text-slate-700 hover:bg-slate-50/50"
+              }`}
+            >
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 font-bold ${
+                getCurrentType() === "standard" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-500"
+              }`}>
+                <Coffee className="w-5 h-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-1">
+                  <span className="font-black text-xs sm:text-sm text-slate-900 block">
+                    Café Padrão CorpFlats
+                  </span>
+                  <Badge className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-[9px] px-1.5 py-0 shadow-2xs">
+                    Recomendado ⭐
+                  </Badge>
+                </div>
+                <p className="text-[11px] text-slate-600 leading-snug mt-1 font-medium">
+                  Café completo tradicional pronto com: <strong>{stdConfig?.description || "Café, Leite, Suco de laranja, Pão francês, Pão de queijo, Queijo mussarela, Presunto, Manteiga, Bolo do dia e Fruta do dia (Mamão, maçã ou banana)."}</strong>
+                </p>
+              </div>
+            </div>
+
+            {/* Opção 2: Personalizar Itens */}
+            <div 
+              onClick={() => setCurrentType("custom")}
+              className={`cursor-pointer p-4 rounded-2xl border-2 transition-all flex items-start gap-3.5 relative ${
+                getCurrentType() === "custom"
+                  ? "border-sky-600 bg-sky-50/70 text-slate-900 ring-2 ring-sky-500/20 shadow-xs"
+                  : "border-slate-200 hover:border-slate-300 bg-white text-slate-700 hover:bg-slate-50/50"
+              }`}
+            >
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 font-bold ${
+                getCurrentType() === "custom" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-500"
+              }`}>
+                <Layers className="w-5 h-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-1">
+                  <span className="font-black text-xs sm:text-sm text-slate-900 block">
+                    Montar / Personalizar Itens
+                  </span>
+                  <Badge variant="outline" className="text-slate-600 border-slate-300 text-[9px] px-1.5 py-0 font-bold">
+                    Sob Medida
+                  </Badge>
+                </div>
+                <p className="text-[11px] text-slate-600 leading-snug mt-1 font-medium">
+                  Escolha individualmente as bebidas, pães, acompanhamentos, frutas e doces de cada hóspede.
+                </p>
+              </div>
+            </div>
+          </div>
+        </Card>
+
+        {/* Bloco quando selecionado: Café Personalizado */}
+        {getCurrentType() === "custom" && (
+          <Card id="menu-section" className="bg-white shadow-xl shadow-slate-200/60 border border-slate-200/80 rounded-3xl p-5 sm:p-7 space-y-6">
+            <div className="border-b border-slate-100 pb-3.5 flex items-center justify-between">
+              <span className="text-xs sm:text-sm font-black uppercase text-slate-800 tracking-wider flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold">
+                  <Utensils className="w-4 h-4" />
+                </div>
+                Itens do Cardápio {guestCount > 1 ? `(Hóspede ${activeGuestTab} de ${guestCount})` : ''}
+              </span>
+              <Badge variant="outline" className="text-[10px] text-sky-700 border-sky-200 bg-sky-50 font-bold uppercase tracking-wider">
+                {guestCount > 1 ? `Etapa ${activeGuestTab} de ${guestCount}` : 'Cardápio'}
+              </Badge>
+            </div>
+
+            {/* Campo de Nome do Hóspede da Aba Ativa */}
+            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-1.5">
+              <Label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                <User className="w-3.5 h-3.5 text-sky-600" />
+                Nome do {activeGuestTab}º Hóspede {activeGuestTab === 1 ? '(Titular)' : '(Acompanhante)'} *
+              </Label>
+              <Input 
+                value={getCurrentGuestName()} 
+                onChange={e => setCurrentGuestName(e.target.value)} 
+                placeholder={activeGuestTab === 1 ? "Nome completo do titular" : `Nome do ${activeGuestTab}º hóspede`} 
+                required 
+                className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs font-bold h-10 rounded-xl focus-visible:ring-sky-500" 
+              />
+            </div>
+
+            {/* 1. Café (1 opção) */}
+            <div className="space-y-2">
+              <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <Coffee className="w-3.5 h-3.5 text-amber-600" /> Café (Escolha 1 opção)
+              </Label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {[
+                  "Café",
+                  "Café com leite",
+                  "Não quero café"
+                ].map(opt => (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => updateCurrentPref({ coffee: opt })}
+                    className={`p-3 rounded-xl text-xs font-bold border transition-all text-left truncate ${
+                      currentPref.coffee === opt
+                        ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-1 ring-sky-400"
+                        : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
+                    }`}
+                  >
+                    {currentPref.coffee === opt ? "✓ " : ""}{opt}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 2. Outras Bebidas (1 opção) */}
+            <div className="space-y-2 pt-3 border-t border-slate-100">
+              <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <Milk className="w-3.5 h-3.5 text-sky-600" /> Outras Bebidas (Escolha 1 opção)
+              </Label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {[
+                  "Achocolatado gelado",
+                  "Água",
+                  "Suco de laranja",
+                  "Vitamina de banana com iogurte de morango",
+                  "Nenhuma outra bebida"
+                ].map(opt => (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => updateCurrentPref({ otherBeverage: opt })}
+                    className={`p-3 rounded-xl text-xs font-bold border transition-all text-left truncate ${
+                      currentPref.otherBeverage === opt
+                        ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-1 ring-sky-400"
+                        : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
+                    }`}
+                  >
+                    {currentPref.otherBeverage === opt ? "✓ " : ""}{opt}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 3. Pães (até 2 opções) */}
+            <div className="space-y-2 pt-3 border-t border-slate-100">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  🍞 Pães (Escolha até 2 opções)
+                </Label>
+                <Badge variant="outline" className="text-[10px] text-sky-700 border-sky-200 bg-sky-50 font-bold">
+                  {currentPref.breads.length}/2 selecionados
+                </Badge>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  "Pão francês",
+                  "Pão de queijo"
+                ].map(opt => {
+                  const isChecked = currentPref.breads.includes(opt)
+                  return (
+                    <button
+                      key={opt}
+                      type="button"
+                      onClick={() => toggleArrayItem("breads", opt, 2)}
+                      className={`p-3 rounded-xl text-xs font-bold border transition-all text-left truncate ${
+                        isChecked
+                          ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-1 ring-sky-400"
+                          : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
+                      }`}
+                    >
+                      {isChecked ? "✓ " : ""}{opt}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* 4. Acompanhamentos (até 4 opções) */}
+            <div className="space-y-2 pt-3 border-t border-slate-100">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  🧈 Acompanhamentos (Escolha até 4 opções)
+                </Label>
+                <Badge variant="outline" className="text-[10px] text-sky-700 border-sky-200 bg-sky-50 font-bold">
+                  {currentPref.accompaniments.length}/4 selecionados
+                </Badge>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {[
+                  "Queijo prato",
+                  "Queijo mussarela",
+                  "Queijo Minas frescal",
+                  "Peito de Peru",
+                  "Presunto",
+                  "Ovos mexidos"
+                ].map(opt => {
+                  const isChecked = currentPref.accompaniments.includes(opt)
+                  return (
+                    <button
+                      key={opt}
+                      type="button"
+                      onClick={() => toggleArrayItem("accompaniments", opt, 4)}
+                      className={`p-3 rounded-xl text-xs font-bold border transition-all text-left truncate ${
+                        isChecked
+                          ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-1 ring-sky-400"
+                          : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
+                      }`}
+                    >
+                      {isChecked ? "✓ " : ""}{opt}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* 5. Complementos (até 2 opções) */}
+            <div className="space-y-2 pt-3 border-t border-slate-100">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  Complementos (Escolha até 2 opções)
+                </Label>
+                <Badge variant="outline" className="text-[10px] text-sky-700 border-sky-200 bg-sky-50 font-bold">
+                  {currentPref.complements.length}/2 selecionados
+                </Badge>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  "Manteiga",
+                  "Requeijão"
+                ].map(opt => {
+                  const isChecked = currentPref.complements.includes(opt)
+                  return (
+                    <button
+                      key={opt}
+                      type="button"
+                      onClick={() => toggleArrayItem("complements", opt, 2)}
+                      className={`p-3 rounded-xl text-xs font-bold border transition-all text-left truncate ${
+                        isChecked
+                          ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-1 ring-sky-400"
+                          : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
+                      }`}
+                    >
+                      {isChecked ? "✓ " : ""}{opt}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* 6. Doces e Biscoitos (até 2 opções) */}
+            <div className="space-y-2 pt-3 border-t border-slate-100">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <Cookie className="w-3.5 h-3.5 text-amber-600" /> Doces e Biscoitos (Escolha até 2 opções)
+                </Label>
+                <Badge variant="outline" className="text-[10px] text-sky-700 border-sky-200 bg-sky-50 font-bold">
+                  {currentPref.sweets.length}/2 selecionados
+                </Badge>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {[
+                  "Bolo do dia",
+                  "Torradas amanteigadas",
+                  "Casadinho (biscoito com goiabada)",
+                  "Não quero nenhum desses"
+                ].map(opt => {
+                  const isChecked = currentPref.sweets.includes(opt)
+                  return (
+                    <button
+                      key={opt}
+                      type="button"
+                      onClick={() => toggleArrayItem("sweets", opt, 2)}
+                      className={`p-3 rounded-xl text-xs font-bold border transition-all text-left truncate ${
+                        isChecked
+                          ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-1 ring-sky-400"
+                          : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
+                      }`}
+                    >
+                      {isChecked ? "✓ " : ""}{opt}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* 7. Frutas (1 opção + Condicionais) */}
+            <div className="space-y-2 pt-3 border-t border-slate-100">
+              <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <Apple className="w-3.5 h-3.5 text-emerald-600" /> Frutas (Escolha 1 opção)
+              </Label>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {[
+                  "Maçã",
+                  "Banana",
+                  "Mamão",
+                  "Salada de frutas",
+                  "Nenhuma fruta"
+                ].map(opt => (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => updateCurrentPref({ fruit: opt })}
+                    className={`p-3 rounded-xl text-xs font-bold border transition-all text-left truncate ${
+                      currentPref.fruit === opt
+                        ? "bg-emerald-600 text-white border-emerald-600 shadow-xs ring-1 ring-emerald-400"
+                        : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
+                    }`}
+                  >
+                    {currentPref.fruit === opt ? "✓ " : ""}{opt}
+                  </button>
+                ))}
+              </div>
+
+              {/* Condicional Mamão: Deseja Mel? */}
+              {currentPref.fruit === "Mamão" && (
+                <div className="p-3.5 bg-amber-50/80 border border-amber-200/80 rounded-2xl space-y-2 animate-in fade-in">
+                  <span className="text-xs font-bold text-amber-900 block">Deseja mel no seu Mamão?</span>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => updateCurrentPref({ fruitHoney: true })}
+                      className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-all ${
+                        currentPref.fruitHoney 
+                          ? "bg-amber-500 text-white border-amber-500 shadow-xs" 
+                          : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+                      }`}
+                    >
+                      🍯 Sim, com mel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateCurrentPref({ fruitHoney: false })}
+                      className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-all ${
+                        !currentPref.fruitHoney 
+                          ? "bg-amber-500 text-white border-amber-500 shadow-xs" 
+                          : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+                      }`}
+                    >
+                      Sem mel
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Condicional Salada de Frutas: Opções */}
+              {currentPref.fruit === "Salada de frutas" && (
+                <div className="p-3.5 bg-sky-50/80 border border-sky-200/80 rounded-2xl space-y-2 animate-in fade-in">
+                  <span className="text-xs font-bold text-sky-900 block">Como prefere sua Salada de Frutas?</span>
+                  <div className="grid grid-cols-3 gap-2">
+                    {["Salada pura", "Mel", "Leite condensado"].map(opt => (
+                      <button
+                        key={opt}
+                        type="button"
+                        onClick={() => updateCurrentPref({ fruitSaladOption: opt })}
+                        className={`p-2.5 rounded-xl text-xs font-bold border truncate transition-all ${
+                          currentPref.fruitSaladOption === opt 
+                            ? "bg-sky-600 text-white border-sky-600 shadow-xs" 
+                            : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+                        }`}
+                      >
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 8. Açúcar ou Adoçante */}
+            <div className="space-y-2 pt-3 border-t border-slate-100">
+              <Label className="text-xs font-bold text-slate-800">Açúcar ou Adoçante</Label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {[
+                  "Açúcar",
+                  "Adoçante",
+                  "Ambos",
+                  "Nenhum"
+                ].map(opt => (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => updateCurrentPref({ sweetener: opt })}
+                    className={`p-3 rounded-xl text-xs font-bold border transition-all text-left truncate ${
+                      currentPref.sweetener === opt
+                        ? "bg-slate-800 text-white border-slate-800 shadow-xs ring-1 ring-slate-700 font-bold"
+                        : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
+                    }`}
+                  >
+                    {currentPref.sweetener === opt ? "✓ " : ""}{opt}
+                  </button>
+                ))}
+              </div>
+            </div>
+            
+            {/* Ação Rápida: Repetir o Mesmo Pedido do 1º Hóspede para Todos e Finalizar */}
+            {guestCount > 1 && (
+              <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-2.5">
+                <span className="text-xs text-slate-500 text-center sm:text-left font-medium">
+                  Deseja o mesmo café do 1º hóspede para todos?
+                </span>
+                <Button
+                  type="button"
+                  onClick={() => setRepeatModalOpen(true)}
+                  className="w-full sm:w-auto bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs h-9 px-3.5 rounded-xl shadow-xs gap-1.5"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>Repetir Pedido do 1º e Finalizar</span>
+                </Button>
+              </div>
+            )}
+          </Card>
+        )}
+
         {/* Card 2: Horário Único de Entrega para o Apartamento */}
         <Card className="bg-white shadow-xl shadow-slate-200/60 border border-slate-200/80 rounded-3xl p-5 sm:p-7 space-y-4">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3.5">
@@ -1065,477 +1635,6 @@ export default function GuestBreakfast() {
           )}
         </Card>
 
-        {/* Card 3: Escolha entre Café Padrão CorpFlats vs Personalizado */}
-        <Card className="bg-white shadow-xl shadow-slate-200/60 border border-slate-200/80 rounded-3xl p-5 sm:p-7 space-y-5">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3.5">
-            <span className="text-xs sm:text-sm font-black uppercase text-slate-800 tracking-wider flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold">
-                <Utensils className="w-4 h-4" />
-              </div>
-              3. Opção de Café da Manhã
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-            {/* Opção 1: Café Padrão CorpFlats */}
-            <div 
-              onClick={() => setBreakfastType("standard")}
-              className={`cursor-pointer p-4 rounded-2xl border-2 transition-all flex items-start gap-3.5 relative ${
-                breakfastType === "standard"
-                  ? "border-sky-600 bg-sky-50/70 text-slate-900 ring-2 ring-sky-500/20 shadow-xs"
-                  : "border-slate-200 hover:border-slate-300 bg-white text-slate-700 hover:bg-slate-50/50"
-              }`}
-            >
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 font-bold ${
-                breakfastType === "standard" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-500"
-              }`}>
-                <Coffee className="w-5 h-5" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between gap-1">
-                  <span className="font-black text-xs sm:text-sm text-slate-900 block">
-                    Café Padrão CorpFlats
-                  </span>
-                  <Badge className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-[9px] px-1.5 py-0 shadow-2xs">
-                    Recomendado ⭐
-                  </Badge>
-                </div>
-                <p className="text-[11px] text-slate-600 leading-snug mt-1 font-medium">
-                  Café completo tradicional pronto com: <strong>{stdConfig?.description || "Café, Leite, Suco de laranja, Pão francês, Pão de queijo, Queijo mussarela, Presunto, Manteiga, Bolo do dia e Fruta do dia (Mamão, maçã ou banana)."}</strong>
-                </p>
-              </div>
-            </div>
-
-            {/* Opção 2: Personalizar Itens */}
-            <div 
-              onClick={() => setBreakfastType("custom")}
-              className={`cursor-pointer p-4 rounded-2xl border-2 transition-all flex items-start gap-3.5 relative ${
-                breakfastType === "custom"
-                  ? "border-sky-600 bg-sky-50/70 text-slate-900 ring-2 ring-sky-500/20 shadow-xs"
-                  : "border-slate-200 hover:border-slate-300 bg-white text-slate-700 hover:bg-slate-50/50"
-              }`}
-            >
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 font-bold ${
-                breakfastType === "custom" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-500"
-              }`}>
-                <Layers className="w-5 h-5" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between gap-1">
-                  <span className="font-black text-xs sm:text-sm text-slate-900 block">
-                    Montar / Personalizar Itens
-                  </span>
-                  <Badge variant="outline" className="text-slate-600 border-slate-300 text-[9px] px-1.5 py-0 font-bold">
-                    Sob Medida
-                  </Badge>
-                </div>
-                <p className="text-[11px] text-slate-600 leading-snug mt-1 font-medium">
-                  Escolha individualmente as bebidas, pães, acompanhamentos, frutas e doces de cada hóspede.
-                </p>
-              </div>
-            </div>
-          </div>
-        </Card>
-
-        {/* Bloco quando selecionado: Café Personalizado */}
-        {breakfastType === "custom" && (
-          <>
-            {/* Barra de Abas de Hóspedes (Se for 2 ou 3 pessoas) */}
-            {guestCount > 1 && (
-              <Card className="bg-white shadow-xl shadow-slate-200/60 border border-slate-200/80 rounded-3xl p-5 space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-700">
-                    Personalizar café por hóspede:
-                  </span>
-                  <span className="text-xs font-black text-sky-600">
-                    Hóspede {activeGuestTab} de {guestCount}
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                  {Array.from({ length: guestCount }).map((_, i) => {
-                    const idx = (i + 1) as 1 | 2 | 3
-                    const isActive = activeGuestTab === idx
-                    const nameLabel = idx === 1 
-                      ? (guest1Name ? guest1Name.split(' ')[0] : '1º Hóspede (Titular)') 
-                      : idx === 2 
-                        ? (guest2Name ? guest2Name.split(' ')[0] : '2º Hóspede') 
-                        : (guest3Name ? guest3Name.split(' ')[0] : '3º Hóspede')
-
-                    return (
-                      <button
-                        key={idx}
-                        type="button"
-                        onClick={() => setActiveGuestTab(idx)}
-                        className={`py-3 px-3 rounded-2xl border text-xs font-bold transition-all flex items-center justify-center gap-2 ${
-                          isActive
-                            ? "bg-sky-600 text-white border-sky-600 shadow-xs font-black ring-2 ring-sky-500/20"
-                            : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
-                        }`}
-                      >
-                        <User className="w-3.5 h-3.5" />
-                        <span className="truncate">{nameLabel}</span>
-                      </button>
-                    )
-                  })}
-                </div>
-
-                {/* Ação Rápida: Repetir o Mesmo Pedido do 1º Hóspede para Todos e Finalizar */}
-                <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-2.5">
-                  <span className="text-xs text-slate-500 text-center sm:text-left font-medium">
-                    Deseja o mesmo café do 1º hóspede para todos?
-                  </span>
-                  <Button
-                    type="button"
-                    onClick={() => setRepeatModalOpen(true)}
-                    className="w-full sm:w-auto bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs h-9 px-3.5 rounded-xl shadow-xs gap-1.5"
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                    <span>Repetir Pedido do 1º e Finalizar</span>
-                  </Button>
-                </div>
-              </Card>
-            )}
-
-            {/* Cardápio do Hóspede Selecionado */}
-            <Card id="menu-section" className="bg-white shadow-xl shadow-slate-200/60 border border-slate-200/80 rounded-3xl p-5 sm:p-7 space-y-6">
-              <div className="border-b border-slate-100 pb-3.5 flex items-center justify-between">
-                <span className="text-xs sm:text-sm font-black uppercase text-slate-800 tracking-wider flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold">
-                    <Utensils className="w-4 h-4" />
-                  </div>
-                  Itens do Cardápio {guestCount > 1 ? `(Hóspede ${activeGuestTab} de ${guestCount})` : ''}
-                </span>
-                <Badge variant="outline" className="text-[10px] text-sky-700 border-sky-200 bg-sky-50 font-bold uppercase tracking-wider">
-                  {guestCount > 1 ? `Etapa ${activeGuestTab} de ${guestCount}` : 'Cardápio'}
-                </Badge>
-              </div>
-
-              {/* Campo de Nome do Hóspede da Aba Ativa */}
-              <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-1.5">
-                <Label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                  <User className="w-3.5 h-3.5 text-sky-600" />
-                  Nome do {activeGuestTab}º Hóspede {activeGuestTab === 1 ? '(Titular)' : '(Acompanhante)'} *
-                </Label>
-                <Input 
-                  value={getCurrentGuestName()} 
-                  onChange={e => setCurrentGuestName(e.target.value)} 
-                  placeholder={activeGuestTab === 1 ? "Nome completo do titular" : `Nome do ${activeGuestTab}º hóspede`} 
-                  required 
-                  className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs font-bold h-10 rounded-xl focus-visible:ring-sky-500" 
-                />
-              </div>
-
-              {/* 1. Café (1 opção) */}
-              <div className="space-y-2">
-                <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                  <Coffee className="w-3.5 h-3.5 text-amber-600" /> Café (Escolha 1 opção)
-                </Label>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  {[
-                    "Café",
-                    "Café com leite",
-                    "Não quero café"
-                  ].map(opt => (
-                    <button
-                      key={opt}
-                      type="button"
-                      onClick={() => updateCurrentPref({ coffee: opt })}
-                      className={`p-3 rounded-xl text-xs font-bold border transition-all text-left truncate ${
-                        currentPref.coffee === opt
-                          ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-1 ring-sky-400"
-                          : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
-                      }`}
-                    >
-                      {currentPref.coffee === opt ? "✓ " : ""}{opt}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* 2. Outras Bebidas (1 opção) */}
-              <div className="space-y-2 pt-3 border-t border-slate-100">
-                <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                  <Milk className="w-3.5 h-3.5 text-sky-600" /> Outras Bebidas (Escolha 1 opção)
-                </Label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {[
-                    "Achocolatado gelado",
-                    "Água",
-                    "Suco de laranja",
-                    "Vitamina de banana com iogurte de morango",
-                    "Nenhuma outra bebida"
-                  ].map(opt => (
-                    <button
-                      key={opt}
-                      type="button"
-                      onClick={() => updateCurrentPref({ otherBeverage: opt })}
-                      className={`p-3 rounded-xl text-xs font-bold border transition-all text-left truncate ${
-                        currentPref.otherBeverage === opt
-                          ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-1 ring-sky-400"
-                          : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
-                      }`}
-                    >
-                      {currentPref.otherBeverage === opt ? "✓ " : ""}{opt}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* 3. Pães (até 2 opções) */}
-              <div className="space-y-2 pt-3 border-t border-slate-100">
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                    🍞 Pães (Escolha até 2 opções)
-                  </Label>
-                  <Badge variant="outline" className="text-[10px] text-sky-700 border-sky-200 bg-sky-50 font-bold">
-                    {currentPref.breads.length}/2 selecionados
-                  </Badge>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  {[
-                    "Pão francês",
-                    "Pão de queijo"
-                  ].map(opt => {
-                    const isChecked = currentPref.breads.includes(opt)
-                    return (
-                      <button
-                        key={opt}
-                        type="button"
-                        onClick={() => toggleArrayItem("breads", opt, 2)}
-                        className={`p-3 rounded-xl text-xs font-bold border transition-all text-left truncate ${
-                          isChecked
-                            ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-1 ring-sky-400"
-                            : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
-                        }`}
-                      >
-                        {isChecked ? "✓ " : ""}{opt}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-
-              {/* 4. Acompanhamentos (até 4 opções) */}
-              <div className="space-y-2 pt-3 border-t border-slate-100">
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                    🧈 Acompanhamentos (Escolha até 4 opções)
-                  </Label>
-                  <Badge variant="outline" className="text-[10px] text-sky-700 border-sky-200 bg-sky-50 font-bold">
-                    {currentPref.accompaniments.length}/4 selecionados
-                  </Badge>
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                  {[
-                    "Queijo prato",
-                    "Queijo mussarela",
-                    "Queijo Minas frescal",
-                    "Peito de Peru",
-                    "Presunto",
-                    "Ovos mexidos"
-                  ].map(opt => {
-                    const isChecked = currentPref.accompaniments.includes(opt)
-                    return (
-                      <button
-                        key={opt}
-                        type="button"
-                        onClick={() => toggleArrayItem("accompaniments", opt, 4)}
-                        className={`p-3 rounded-xl text-xs font-bold border transition-all text-left truncate ${
-                          isChecked
-                            ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-1 ring-sky-400"
-                            : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
-                        }`}
-                      >
-                        {isChecked ? "✓ " : ""}{opt}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-
-              {/* 5. Complementos (até 2 opções) */}
-              <div className="space-y-2 pt-3 border-t border-slate-100">
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                    Complementos (Escolha até 2 opções)
-                  </Label>
-                  <Badge variant="outline" className="text-[10px] text-sky-700 border-sky-200 bg-sky-50 font-bold">
-                    {currentPref.complements.length}/2 selecionados
-                  </Badge>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  {[
-                    "Manteiga",
-                    "Requeijão"
-                  ].map(opt => {
-                    const isChecked = currentPref.complements.includes(opt)
-                    return (
-                      <button
-                        key={opt}
-                        type="button"
-                        onClick={() => toggleArrayItem("complements", opt, 2)}
-                        className={`p-3 rounded-xl text-xs font-bold border transition-all text-left truncate ${
-                          isChecked
-                            ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-1 ring-sky-400"
-                            : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
-                        }`}
-                      >
-                        {isChecked ? "✓ " : ""}{opt}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-
-              {/* 6. Doces e Biscoitos (até 2 opções) */}
-              <div className="space-y-2 pt-3 border-t border-slate-100">
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                    <Cookie className="w-3.5 h-3.5 text-amber-600" /> Doces e Biscoitos (Escolha até 2 opções)
-                  </Label>
-                  <Badge variant="outline" className="text-[10px] text-sky-700 border-sky-200 bg-sky-50 font-bold">
-                    {currentPref.sweets.length}/2 selecionados
-                  </Badge>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {[
-                    "Bolo do dia",
-                    "Torradas amanteigadas",
-                    "Casadinho (biscoito com goiabada)",
-                    "Não quero nenhum desses"
-                  ].map(opt => {
-                    const isChecked = currentPref.sweets.includes(opt)
-                    return (
-                      <button
-                        key={opt}
-                        type="button"
-                        onClick={() => toggleArrayItem("sweets", opt, 2)}
-                        className={`p-3 rounded-xl text-xs font-bold border transition-all text-left truncate ${
-                          isChecked
-                            ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-1 ring-sky-400"
-                            : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
-                        }`}
-                      >
-                        {isChecked ? "✓ " : ""}{opt}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-
-              {/* 7. Frutas (1 opção + Condicionais) */}
-              <div className="space-y-2 pt-3 border-t border-slate-100">
-                <Label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                  <Apple className="w-3.5 h-3.5 text-emerald-600" /> Frutas (Escolha 1 opção)
-                </Label>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                  {[
-                    "Maçã",
-                    "Banana",
-                    "Mamão",
-                    "Salada de frutas",
-                    "Nenhuma fruta"
-                  ].map(opt => (
-                    <button
-                      key={opt}
-                      type="button"
-                      onClick={() => updateCurrentPref({ fruit: opt })}
-                      className={`p-3 rounded-xl text-xs font-bold border transition-all text-left truncate ${
-                        currentPref.fruit === opt
-                          ? "bg-emerald-600 text-white border-emerald-600 shadow-xs ring-1 ring-emerald-400"
-                          : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
-                      }`}
-                    >
-                      {currentPref.fruit === opt ? "✓ " : ""}{opt}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Condicional Mamão: Deseja Mel? */}
-                {currentPref.fruit === "Mamão" && (
-                  <div className="p-3.5 bg-amber-50/80 border border-amber-200/80 rounded-2xl space-y-2 animate-in fade-in">
-                    <span className="text-xs font-bold text-amber-900 block">Deseja mel no seu Mamão?</span>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => updateCurrentPref({ fruitHoney: true })}
-                        className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-all ${
-                          currentPref.fruitHoney 
-                            ? "bg-amber-500 text-white border-amber-500 shadow-xs" 
-                            : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
-                        }`}
-                      >
-                        🍯 Sim, com mel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => updateCurrentPref({ fruitHoney: false })}
-                        className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-all ${
-                          !currentPref.fruitHoney 
-                            ? "bg-amber-500 text-white border-amber-500 shadow-xs" 
-                            : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
-                        }`}
-                      >
-                        Sem mel
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Condicional Salada de Frutas: Opções */}
-                {currentPref.fruit === "Salada de frutas" && (
-                  <div className="p-3.5 bg-sky-50/80 border border-sky-200/80 rounded-2xl space-y-2 animate-in fade-in">
-                    <span className="text-xs font-bold text-sky-900 block">Como prefere sua Salada de Frutas?</span>
-                    <div className="grid grid-cols-3 gap-2">
-                      {["Salada pura", "Mel", "Leite condensado"].map(opt => (
-                        <button
-                          key={opt}
-                          type="button"
-                          onClick={() => updateCurrentPref({ fruitSaladOption: opt })}
-                          className={`p-2.5 rounded-xl text-xs font-bold border truncate transition-all ${
-                            currentPref.fruitSaladOption === opt 
-                              ? "bg-sky-600 text-white border-sky-600 shadow-xs" 
-                              : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
-                          }`}
-                        >
-                          {opt}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* 8. Açúcar ou Adoçante */}
-              <div className="space-y-2 pt-3 border-t border-slate-100">
-                <Label className="text-xs font-bold text-slate-800">Açúcar ou Adoçante</Label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {[
-                    "Açúcar",
-                    "Adoçante",
-                    "Ambos",
-                    "Nenhum"
-                  ].map(opt => (
-                    <button
-                      key={opt}
-                      type="button"
-                      onClick={() => updateCurrentPref({ sweetener: opt })}
-                      className={`p-3 rounded-xl text-xs font-bold border transition-all text-left truncate ${
-                        currentPref.sweetener === opt
-                          ? "bg-slate-800 text-white border-slate-800 shadow-xs ring-1 ring-slate-700 font-bold"
-                          : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
-                      }`}
-                    >
-                      {currentPref.sweetener === opt ? "✓ " : ""}{opt}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </Card>
-          </>
-        )}
-
         {/* Card 4: Observações Gerais */}
         <Card className="bg-white shadow-xl shadow-slate-200/60 border border-slate-200/80 rounded-3xl p-5 sm:p-7 space-y-2.5">
           <Label className="text-xs font-bold text-slate-800 block">
@@ -1560,84 +1659,27 @@ export default function GuestBreakfast() {
           </p>
         </Card>
 
-        {/* Botão de Envio: Modo Padrão vs Modo Personalizado */}
-        {breakfastType === "standard" ? (
-          <div className="space-y-2.5 pt-2">
-            <Button 
-              type="button" 
-              onClick={handleStandardSubmit}
-              disabled={submitting}
-              className="w-full bg-sky-600 hover:bg-sky-700 text-white font-black text-sm h-14 rounded-2xl shadow-lg shadow-sky-600/25 gap-2 tracking-wide uppercase transition-all transform active:scale-98"
-            >
-              {submitting ? (
-                <span>Agendando com a cozinha...</span>
-              ) : (
-                <>
-                  <Coffee className="w-5 h-5 text-white" />
-                  <span>Confirmar Café Padrão CorpFlats ({guestCount} {guestCount === 1 ? 'Pessoa' : 'Pessoas'}) 🚀</span>
-                </>
-              )}
-            </Button>
-            <p className="text-xs text-slate-500 text-center font-medium">
-              O café da manhã completo será entregue no Flat {roomNumber || '...'} às {deliveryTime} do dia {deliveryDate}.
-            </p>
-          </div>
-        ) : (
-          /* Modo Personalizado */
-          guestCount > 1 && activeGuestTab < guestCount ? (
-            <div className="space-y-2.5 pt-2">
-              <Button 
-                type="button" 
-                onClick={handleNextStep}
-                className="w-full bg-sky-600 hover:bg-sky-700 text-white font-black text-sm sm:text-base h-13 sm:h-14 px-4 rounded-2xl shadow-lg shadow-sky-600/25 gap-2 transition-all transform active:scale-98 flex items-center justify-center text-center"
-              >
-                <span>Avançar para o {activeGuestTab + 1}º Hóspede</span>
-                <ChevronRight className="w-5 h-5 shrink-0" />
-              </Button>
-              <p className="text-xs text-slate-500 text-center font-medium">
-                Você está na etapa {activeGuestTab} de {guestCount}. O pedido só será enviado após preencher todos os hóspedes.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-2.5 pt-2">
-              <div className="flex gap-2.5">
-                {guestCount > 1 && activeGuestTab > 1 && (
-                  <Button 
-                    type="button" 
-                    onClick={() => {
-                      setActiveGuestTab((activeGuestTab - 1) as 1 | 2)
-                      window.scrollTo({ top: 320, behavior: "smooth" })
-                    }}
-                    className="bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold text-xs h-14 px-5 rounded-2xl shrink-0"
-                  >
-                    <ChevronLeft className="w-4 h-4 mr-1 text-slate-500" />
-                    <span>Voltar</span>
-                  </Button>
-                )}
-                <Button 
-                  type="button" 
-                  onClick={handleCustomFinalSubmit}
-                  disabled={submitting}
-                  className="flex-1 bg-sky-600 hover:bg-sky-700 text-white font-black text-sm h-14 rounded-2xl shadow-lg shadow-sky-600/25 gap-2 tracking-wide uppercase transition-all transform active:scale-98"
-                >
-                  {submitting ? (
-                    <span>Agendando com a cozinha...</span>
-                  ) : (
-                    <>
-                      <Coffee className="w-5 h-5 text-white" />
-                      <span>Confirmar & Agendar Café ({guestCount} {guestCount === 1 ? 'Pessoa' : 'Pessoas'})</span>
-                    </>
-                  )}
-                </Button>
-              </div>
-              {guestCount > 1 && (
-                <p className="text-xs text-slate-500 text-center font-medium">
-                  Etapa final ({activeGuestTab}/{guestCount}). Clique acima para confirmar os pedidos de todos os hóspedes.
-                </p>
-              )}
-            </div>
-          )
-        )}
+        {/* ── Botão de Envio Consolidado ── */}
+        <div className="space-y-2.5 pt-2">
+          <Button 
+            type="button" 
+            onClick={handleSubmitOrder}
+            disabled={submitting}
+            className="w-full bg-sky-600 hover:bg-sky-700 text-white font-black text-sm sm:text-base h-14 rounded-2xl shadow-lg shadow-sky-600/25 gap-2 tracking-wide uppercase transition-all transform active:scale-98"
+          >
+            {submitting ? (
+              <span>Agendando com a cozinha...</span>
+            ) : (
+              <>
+                <Coffee className="w-5 h-5 text-white" />
+                <span>Confirmar Pedido de Café da Manhã ({guestCount} {guestCount === 1 ? 'Pessoa' : 'Pessoas'}) 🚀</span>
+              </>
+            )}
+          </Button>
+          <p className="text-xs text-slate-500 text-center font-medium">
+            O café será entregue no Flat {roomNumber || '...'} às {deliveryTime || '...'} no dia {formatDateDisplay(deliveryDate)}.
+          </p>
+        </div>
       </main>
 
       {/* ── Footer Corporativo / Hospitalidade ────────────────────────── */}
