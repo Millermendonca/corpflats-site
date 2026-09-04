@@ -4942,12 +4942,12 @@
         }
       ],
       "notes": "",
-      "status": "cancelled",
+      "status": "pending",
       "phone": "",
       "reservationCode": "RES-113-0034",
       "reservationId": 34,
       "createdAt": "2026-09-03T13:40:36.504Z",
-      "cancelReason": "Hóspede antecipou o check-out (novo check-out: 2026-09-05)"
+      "cancelReason": null
     },
     {
       "id": 1,
@@ -5087,7 +5087,7 @@
     ]
   },
   "standardBreakfastConfig": {
-    "coffee": "Café com leite",
+    "coffee": "Café, Leite",
     "otherBeverage": "Suco de laranja",
     "breads": [
       "Pão francês",
@@ -5103,15 +5103,12 @@
     "sweets": [
       "Bolo do dia"
     ],
-    "fruit": "Banana",
-    "fruitSelected": "Banana",
+    "fruit": "Fruta do dia",
+    "fruitSelected": "Fruta do dia",
     "fruitAvailableOptions": [
-      "Banana",
-      "Maçã",
-      "Mamão",
-      "Salada de frutas"
+      "Fruta do dia (Mamão, maçã ou banana)"
     ],
     "sweetener": "Açúcar",
-    "description": "Café com leite, Suco de laranja, Pão francês, Pão de queijo, Queijo mussarela, Presunto, Manteiga, Bolo do dia e Banana."
+    "description": "Café, Leite, Suco de laranja, Pão francês, Pão de queijo, Queijo mussarela, Presunto, Manteiga, Bolo do dia e Fruta do dia (Mamão, maçã ou banana)."
   }
 }

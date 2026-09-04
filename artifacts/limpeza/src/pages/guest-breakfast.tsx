@@ -46,7 +46,7 @@ export default function GuestBreakfast() {
   const [availableSlots, setAvailableSlots] = useState<string[]>([])
   const [loadingSlots, setLoadingSlots] = useState(false)
   const [stdConfig, setStdConfig] = useState<any>(null)
-  const [stdFruitOption, setStdFruitOption] = useState("Banana")
+  const [stdFruitOption, setStdFruitOption] = useState("Fruta do dia")
   const [siteConfig, setSiteConfig] = useState<any>(null)
   const [settings, setSettings] = useState<any>(null)
 
@@ -285,12 +285,18 @@ export default function GuestBreakfast() {
   const executeSubmit = async (g1: string, g2: string, g3: string, isStd: boolean, p1: GuestPreference, p2: GuestPreference, p3: GuestPreference) => {
     setSubmitting(true)
     try {
+      const stdItemPref: GuestPreference = { 
+        ...defaultGuestPref, 
+        coffee: "Café, Leite", 
+        fruit: "Fruta do dia" 
+      }
+
       const guestChoices = [
         { 
           guestIndex: 1, 
           guestName: g1, 
           deliveryTime,
-          ...(isStd ? defaultGuestPref : p1)
+          ...(isStd ? stdItemPref : p1)
         }
       ]
 
@@ -299,7 +305,7 @@ export default function GuestBreakfast() {
           guestIndex: 2, 
           guestName: g2 || "Hóspede 2", 
           deliveryTime,
-          ...(isStd ? defaultGuestPref : p2)
+          ...(isStd ? stdItemPref : p2)
         })
       }
 
@@ -308,7 +314,7 @@ export default function GuestBreakfast() {
           guestIndex: 3, 
           guestName: g3 || "Hóspede 3", 
           deliveryTime,
-          ...(isStd ? defaultGuestPref : p3)
+          ...(isStd ? stdItemPref : p3)
         })
       }
 
@@ -327,10 +333,10 @@ export default function GuestBreakfast() {
           deliveryDate,
           deliveryTime,
           isStandard: isStd,
-          fruitSelected: isStd ? stdFruitOption : undefined,
+          fruitSelected: isStd ? "Fruta do dia" : undefined,
           orderType: isStd ? "standard" : "custom",
           orderMode: isStd ? "unified" : "individual",
-          preferences: isStd ? { ...defaultGuestPref, fruit: stdFruitOption } : p1,
+          preferences: isStd ? stdItemPref : p1,
           guestChoices,
           notes
         })
@@ -377,7 +383,7 @@ export default function GuestBreakfast() {
     const g2 = guest2Name.trim() || (guestCount >= 2 ? "2º Hóspede" : "")
     const g3 = guest3Name.trim() || (guestCount === 3 ? "3º Hóspede" : "")
 
-    const stdPref = { ...defaultGuestPref, fruit: stdFruitOption }
+    const stdPref = { ...defaultGuestPref, coffee: "Café, Leite", fruit: "Fruta do dia" }
     await executeSubmit(g1, g2, g3, true, stdPref, stdPref, stdPref)
   }
 
@@ -1121,32 +1127,8 @@ export default function GuestBreakfast() {
                   </Badge>
                 </div>
                 <p className="text-[11px] text-slate-600 leading-snug mt-1 font-medium">
-                  Café completo tradicional pronto com: <strong>{stdConfig?.description || "Café com leite, Suco de laranja, Pão francês, Pão de queijo, Queijo mussarela, Presunto, Manteiga, Bolo do dia e Fruta selecionada"}</strong>.
+                  Café completo tradicional pronto com: <strong>{stdConfig?.description || "Café, Leite, Suco de laranja, Pão francês, Pão de queijo, Queijo mussarela, Presunto, Manteiga, Bolo do dia e Fruta do dia (Mamão, maçã ou banana)."}</strong>
                 </p>
-
-                {breakfastType === "standard" && (
-                  <div className="mt-3 pt-2.5 border-t border-sky-200/80 space-y-1.5" onClick={e => e.stopPropagation()}>
-                    <span className="text-[10px] font-bold text-sky-900 uppercase tracking-wider block">
-                      Fruta do Café Padrão:
-                    </span>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-                      {(stdConfig?.fruitAvailableOptions || ["Banana", "Maçã", "Mamão", "Salada de frutas"]).map((f: string) => (
-                        <button
-                          key={f}
-                          type="button"
-                          onClick={() => setStdFruitOption(f)}
-                          className={`py-1.5 px-2 rounded-xl text-[11px] font-bold border transition-all truncate ${
-                            stdFruitOption === f
-                              ? "bg-sky-600 text-white border-sky-600 shadow-2xs font-black"
-                              : "bg-white text-slate-700 border-slate-200 hover:bg-sky-50"
-                          }`}
-                        >
-                          {stdFruitOption === f ? "✓ " : ""}{f}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
 
@@ -1583,12 +1565,12 @@ export default function GuestBreakfast() {
         {/* Card 4: Observações Gerais */}
         <Card className="bg-white shadow-xl shadow-slate-200/60 border border-slate-200/80 rounded-3xl p-5 sm:p-7 space-y-2.5">
           <Label className="text-xs font-bold text-slate-800 block">
-            Observações ou Restrições Alimentares:
+            Observações
           </Label>
           <Textarea 
             value={notes} 
             onChange={e => setNotes(e.target.value)} 
-            placeholder="Ex: Sem lactose, intolerância a glúten, café bem quente..." 
+            placeholder="" 
             className="bg-slate-50 border-slate-200 text-xs font-medium text-slate-900 placeholder:text-slate-400 resize-none h-20 rounded-2xl focus-visible:ring-sky-500" 
           />
         </Card>

@@ -48,14 +48,14 @@ export default function BreakfastProduction() {
   // Standard Breakfast Config Modal
   const [stdModalOpen, setStdModalOpen] = useState(false)
   const [stdConfig, setStdConfig] = useState<any>({
-    coffee: "Café com leite",
+    coffee: "Café, Leite",
     otherBeverage: "Suco de laranja",
     breads: ["Pão francês", "Pão de queijo"],
     accompaniments: ["Queijo mussarela", "Presunto"],
     complements: ["Manteiga"],
     sweets: ["Bolo do dia"],
     fruit: "Fruta do dia",
-    fruitAvailableOptions: ["Banana", "Maçã", "Mamão"],
+    fruitAvailableOptions: ["Fruta do dia (Mamão, maçã ou banana)"],
     sweetener: "Açúcar"
   })
   const [savingStdConfig, setSavingStdConfig] = useState(false)
@@ -837,7 +837,7 @@ export default function BreakfastProduction() {
 
                               {order.notes && (
                                 <div className="p-2 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 rounded-xl text-xs text-rose-800 dark:text-rose-300">
-                                  <span className="font-bold block text-[10px] uppercase">Restrição / Observação:</span>
+                                  <span className="font-bold block text-[10px] uppercase">Observação:</span>
                                   {order.notes}
                                 </div>
                               )}
@@ -1069,8 +1069,8 @@ export default function BreakfastProduction() {
                 </div>
 
                 <div className="space-y-1">
-                  <Label className="text-xs">Observações / Restrições</Label>
-                  <Textarea value={manualNotes} onChange={e => setManualNotes(e.target.value)} placeholder="Sem lactose, ovos mexidos, café puro..." className="text-xs resize-none" rows={2} />
+                  <Label className="text-xs">Observações</Label>
+                  <Textarea value={manualNotes} onChange={e => setManualNotes(e.target.value)} placeholder="" className="text-xs resize-none" rows={2} />
                 </div>
               </div>
 
@@ -1105,7 +1105,7 @@ export default function BreakfastProduction() {
                     <Input 
                       value={stdConfig?.coffee || ""} 
                       onChange={e => setStdConfig({ ...stdConfig, coffee: e.target.value })} 
-                      placeholder="Ex: Café com leite" 
+                      placeholder="Ex: Café, Leite" 
                       className="text-xs" 
                     />
                   </div>

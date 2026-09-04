@@ -4566,11 +4566,11 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   } else if (oldCheckout !== r.checkoutDate) {
     db.breakfastOrders.forEach(o => {
       if ((o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) || o.reservationId === r.id || (String(o.roomNumber) === String(r.flatNumber))) {
-        if (o.date >= r.checkoutDate) {
+        if (o.date > r.checkoutDate) {
           o.status = "cancelled";
           o.cancelReason = `Hóspede antecipou o check-out (novo check-out: ${r.checkoutDate})`;
-        } else if (o.date >= r.checkinDate && o.status === "cancelled" && o.cancelReason?.includes("antecipou")) {
-          // Reativa caso o check-out tenha sido estendido novamente
+        } else if (o.date >= r.checkinDate && o.date <= r.checkoutDate && o.status === "cancelled" && o.cancelReason?.includes("antecipou")) {
+          // Reativa caso o check-out tenha sido estendido novamente ou o pedido seja no dia do check-out
           o.status = "pending";
           o.cancelReason = null;
         }
@@ -8035,7 +8035,7 @@ const CANONICAL_BREAKFAST_ALIASES = [
   { pattern: /^ma[cç][aã](\s+fuji|\s+gala)?$/i, canonical: "Maçã" },
   { pattern: /^mam[aã]o(\s+papaya|\s+formosa)?(\s+(com|c\/)\s*mel)?$/i, canonical: "Mamão" },
   { pattern: /^salada\s+de\s+frutas?(\s*\(.*\))?$/i, canonical: "Salada de frutas" },
-  { pattern: /^fruta\s+do\s+dia$/i, canonical: "Fruta do dia" },
+  { pattern: /^fruta\s+do\s+dia(\s*\(.*\))?$/i, canonical: "Fruta do dia" },
 
   // Adoçamento
   { pattern: /^a[cç][uú]car(\s+sach[eê])?$/i, canonical: "Açúcar" },
@@ -8057,7 +8057,16 @@ function normalizeBreakfastItem(name) {
 function splitLegacyCompoundItem(name) {
   if (!name || typeof name !== "string") return [];
   const lower = name.trim().toLowerCase();
-  if (lower === "café e leite" || lower === "cafe e leite") {
+  if (
+    lower === "café e leite" || 
+    lower === "cafe e leite" || 
+    lower === "café com leite" || 
+    lower === "cafe com leite" ||
+    lower === "café, leite" ||
+    lower === "cafe, leite" ||
+    lower === "café / leite" ||
+    lower === "cafe / leite"
+  ) {
     return ["Café", "Leite"];
   }
   if (lower === "manteiga e requeijão" || lower === "manteiga e requeijao") {
@@ -8080,7 +8089,8 @@ function isExcludedBreakfastItem(name) {
 }
 
 const STANDARD_BREAKFAST_ITEMS = [
-  "Café com leite",
+  "Café",
+  "Leite",
   "Suco de laranja",
   "Pão francês",
   "Pão de queijo",
@@ -8088,7 +8098,7 @@ const STANDARD_BREAKFAST_ITEMS = [
   "Presunto",
   "Manteiga",
   "Bolo do dia",
-  "Banana",
+  "Fruta do dia",
   "Açúcar"
 ];
 
@@ -8139,18 +8149,30 @@ function initBreakfastData() {
 function getStandardBreakfastConfig() {
   if (!db.standardBreakfastConfig) {
     db.standardBreakfastConfig = {
-      coffee: "Café com leite",
+      coffee: "Café, Leite",
+      milk: "Leite",
       otherBeverage: "Suco de laranja",
       breads: ["Pão francês", "Pão de queijo"],
       accompaniments: ["Queijo mussarela", "Presunto"],
       complements: ["Manteiga"],
       sweets: ["Bolo do dia"],
-      fruit: "Banana",
-      fruitSelected: "Banana",
-      fruitAvailableOptions: ["Banana", "Maçã", "Mamão", "Salada de frutas"],
+      fruit: "Fruta do dia",
+      fruitSelected: "Fruta do dia",
+      fruitAvailableOptions: ["Fruta do dia (Mamão, maçã ou banana)"],
       sweetener: "Açúcar",
-      description: "Café com leite, Suco de laranja, Pão francês, Pão de queijo, Queijo mussarela, Presunto, Manteiga, Bolo do dia e Banana."
+      description: "Café, Leite, Suco de laranja, Pão francês, Pão de queijo, Queijo mussarela, Presunto, Manteiga, Bolo do dia e Fruta do dia (Mamão, maçã ou banana)."
     };
+  } else {
+    if (db.standardBreakfastConfig.coffee === "Café com leite") {
+      db.standardBreakfastConfig.coffee = "Café, Leite";
+    }
+    if (db.standardBreakfastConfig.fruit === "Banana" || !db.standardBreakfastConfig.fruit) {
+      db.standardBreakfastConfig.fruit = "Fruta do dia";
+      db.standardBreakfastConfig.fruitSelected = "Fruta do dia";
+    }
+    if (!db.standardBreakfastConfig.description || db.standardBreakfastConfig.description.includes("Café com leite") || db.standardBreakfastConfig.description.includes("Fruta selecionada")) {
+      db.standardBreakfastConfig.description = "Café, Leite, Suco de laranja, Pão francês, Pão de queijo, Queijo mussarela, Presunto, Manteiga, Bolo do dia e Fruta do dia (Mamão, maçã ou banana).";
+    }
   }
   return db.standardBreakfastConfig;
 }
@@ -8349,7 +8371,7 @@ app.get("/api/breakfast/orders", (req, res) => {
       if (matchingRes.status === "cancelada" || matchingRes.status === "cancelado") {
         order.status = "cancelled";
         order.cancelReason = "Reserva cancelada no calendário";
-      } else if (order.date >= matchingRes.checkoutDate) {
+      } else if (order.date > matchingRes.checkoutDate) {
         order.status = "cancelled";
         order.cancelReason = `Hóspede antecipou o check-out (novo check-out: ${matchingRes.checkoutDate})`;
       } else if (order.date < matchingRes.checkinDate) {
@@ -8367,6 +8389,10 @@ app.get("/api/breakfast/orders", (req, res) => {
         if (!hasBf) {
           order.status = "cancelled";
           order.cancelReason = "Café da manhã desmarcado na reserva";
+        } else if (order.status === "cancelled" && order.cancelReason?.includes("antecipou")) {
+          // Reativa caso o pedido seja no dia do check-out ou data válida dentro da estadia
+          order.status = "pending";
+          order.cancelReason = null;
         }
       }
     }
@@ -8961,17 +8987,18 @@ app.post("/api/breakfast/orders", (req, res) => {
 
   if (isStandard || req.body.orderType === "standard") {
     // Café Padrão CorpFlats: utiliza exatamente os mesmos itens canônicos do café personalizado
+    // Café e leite enviados separadamente, fruta do dia fixa
     const std = getStandardBreakfastConfig();
-    addCanonicalItem(std.coffee, gCount);
-    addCanonicalItem(std.otherBeverage, gCount);
-    (std.breads || []).forEach(b => addCanonicalItem(b, gCount));
-    (std.accompaniments || []).forEach(a => addCanonicalItem(a, gCount));
-    (std.complements || []).forEach(c => addCanonicalItem(c, gCount));
-    (std.sweets || []).forEach(s => addCanonicalItem(s, gCount));
+    addCanonicalItem("Café", gCount);
+    addCanonicalItem("Leite", gCount);
+    addCanonicalItem(std.otherBeverage || "Suco de laranja", gCount);
+    (std.breads || ["Pão francês", "Pão de queijo"]).forEach(b => addCanonicalItem(b, gCount));
+    (std.accompaniments || ["Queijo mussarela", "Presunto"]).forEach(a => addCanonicalItem(a, gCount));
+    (std.complements || ["Manteiga"]).forEach(c => addCanonicalItem(c, gCount));
+    (std.sweets || ["Bolo do dia"]).forEach(s => addCanonicalItem(s, gCount));
     
-    // Fruta selecionada (Banana, Maçã, Mamão, etc.) ou padrão configurado
-    const fruitChosen = req.body.fruitSelected || std.fruitSelected || std.fruit || "Banana";
-    addCanonicalItem(fruitChosen, gCount);
+    // Fruta do dia (Mamão, maçã ou banana)
+    addCanonicalItem("Fruta do dia", gCount);
 
     if (std.sweetener) {
       addCanonicalItem(std.sweetener, gCount);
@@ -9027,14 +9054,26 @@ app.post("/api/breakfast/orders", (req, res) => {
   } else {
     // Pedido manual lançado sem detalhamento: expandir automaticamente para os itens do Café Padrão Canônico
     const std = getStandardBreakfastConfig();
-    addCanonicalItem(std.coffee, gCount);
-    addCanonicalItem(std.otherBeverage, gCount);
-    (std.breads || []).forEach(b => addCanonicalItem(b, gCount));
-    (std.accompaniments || []).forEach(a => addCanonicalItem(a, gCount));
-    (std.complements || []).forEach(c => addCanonicalItem(c, gCount));
-    (std.sweets || []).forEach(s => addCanonicalItem(s, gCount));
-    addCanonicalItem(std.fruitSelected || std.fruit || "Banana", gCount);
+    addCanonicalItem("Café", gCount);
+    addCanonicalItem("Leite", gCount);
+    addCanonicalItem(std.otherBeverage || "Suco de laranja", gCount);
+    (std.breads || ["Pão francês", "Pão de queijo"]).forEach(b => addCanonicalItem(b, gCount));
+    (std.accompaniments || ["Queijo mussarela", "Presunto"]).forEach(a => addCanonicalItem(a, gCount));
+    (std.complements || ["Manteiga"]).forEach(c => addCanonicalItem(c, gCount));
+    (std.sweets || ["Bolo do dia"]).forEach(s => addCanonicalItem(s, gCount));
+    addCanonicalItem("Fruta do dia", gCount);
     if (std.sweetener) addCanonicalItem(std.sweetener, gCount);
+  }
+
+  // Regra especial: quando o pedido tiver 2 cafés e/ou 2 leites (ex: 2 pessoas pedindo café com leite ou café padrão para 2)
+  // Como café e leite são enviados separados, para 2 pessoas consolida em Café duplo e Leite duplo
+  if (map["Café"] === 2) {
+    delete map["Café"];
+    map["Café duplo"] = 1;
+  }
+  if (map["Leite"] === 2) {
+    delete map["Leite"];
+    map["Leite duplo"] = 1;
   }
 
   if (Object.keys(map).length > 0) {
@@ -9042,15 +9081,16 @@ app.post("/api/breakfast/orders", (req, res) => {
   } else {
     const std = getStandardBreakfastConfig();
     finalItems = [
-      { name: normalizeBreakfastItem(std.coffee), quantity: gCount },
-      { name: normalizeBreakfastItem(std.otherBeverage), quantity: gCount },
+      gCount === 2 ? { name: "Café duplo", quantity: 1 } : { name: "Café", quantity: gCount },
+      gCount === 2 ? { name: "Leite duplo", quantity: 1 } : { name: "Leite", quantity: gCount },
+      { name: normalizeBreakfastItem(std.otherBeverage || "Suco de laranja"), quantity: gCount },
       { name: "Pão francês", quantity: gCount },
       { name: "Pão de queijo", quantity: gCount },
       { name: "Queijo mussarela", quantity: gCount },
       { name: "Presunto", quantity: gCount },
       { name: "Manteiga", quantity: gCount },
       { name: "Bolo do dia", quantity: gCount },
-      { name: normalizeBreakfastItem(std.fruitSelected || "Banana"), quantity: gCount },
+      { name: "Fruta do dia", quantity: gCount },
       { name: "Açúcar", quantity: gCount }
     ].filter(i => i.name && !isExcludedBreakfastItem(i.name));
   }
@@ -11968,11 +12008,47 @@ process.on("unhandledRejection", (reason, promise) => {
 const distPath = path.resolve(__dirname, "../limpeza/dist/public");
 const fallbackDistPath = path.resolve(__dirname, "../limpeza/dist");
 
+function serveSpaWithMetadata(distFolder, req, res) {
+  const indexPath = path.join(distFolder, "index.html");
+  if (!fs.existsSync(indexPath)) return res.status(404).send("index.html not found");
+
+  try {
+    let html = fs.readFileSync(indexPath, "utf-8");
+
+    if (req.path.startsWith("/cafe")) {
+      const cafeTitle = "☕ Pedido de Café da Manhã • CorpFlats";
+      const cafeDesc = "Monte e agende o seu café da manhã artesanal servido com todo o carinho diretamente no seu flat.";
+      html = html
+        .replace(/<title>.*?<\/title>/i, `<title>${cafeTitle}</title>`)
+        .replace(/<meta property="og:title" content=".*?" \/>/i, `<meta property="og:title" content="${cafeTitle}" />`)
+        .replace(/<meta name="twitter:title" content=".*?" \/>/i, `<meta name="twitter:title" content="${cafeTitle}" />`)
+        .replace(/<meta name="description" content=".*?" \/>/i, `<meta name="description" content="${cafeDesc}" />`)
+        .replace(/<meta property="og:description" content=".*?" \/>/i, `<meta property="og:description" content="${cafeDesc}" />`)
+        .replace(/<meta name="twitter:description" content=".*?" \/>/i, `<meta name="twitter:description" content="${cafeDesc}" />`);
+    } else if (req.path.startsWith("/minha-reserva") || req.path.startsWith("/portal-hospede") || req.path.startsWith("/guest-portal")) {
+      const portalTitle = "🏨 Área do Hóspede • CorpFlats";
+      const portalDesc = "Acesse os detalhes da sua acomodação, horário de check-in, regras do flat e agendamento de café da manhã.";
+      html = html
+        .replace(/<title>.*?<\/title>/i, `<title>${portalTitle}</title>`)
+        .replace(/<meta property="og:title" content=".*?" \/>/i, `<meta property="og:title" content="${portalTitle}" />`)
+        .replace(/<meta name="twitter:title" content=".*?" \/>/i, `<meta name="twitter:title" content="${portalTitle}" />`)
+        .replace(/<meta name="description" content=".*?" \/>/i, `<meta name="description" content="${portalDesc}" />`)
+        .replace(/<meta property="og:description" content=".*?" \/>/i, `<meta property="og:description" content="${portalDesc}" />`)
+        .replace(/<meta name="twitter:description" content=".*?" \/>/i, `<meta name="twitter:description" content="${portalDesc}" />`);
+    }
+
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    return res.send(html);
+  } catch {
+    return res.sendFile(indexPath);
+  }
+}
+
 if (fs.existsSync(distPath)) {
   app.use(express.static(distPath));
   app.use((req, res, next) => {
     if (req.method === "GET" && !req.path.startsWith("/api")) {
-      return res.sendFile(path.join(distPath, "index.html"));
+      return serveSpaWithMetadata(distPath, req, res);
     }
     next();
   });
@@ -11981,7 +12057,7 @@ if (fs.existsSync(distPath)) {
   app.use(express.static(fallbackDistPath));
   app.use((req, res, next) => {
     if (req.method === "GET" && !req.path.startsWith("/api")) {
-      return res.sendFile(path.join(fallbackDistPath, "index.html"));
+      return serveSpaWithMetadata(fallbackDistPath, req, res);
     }
     next();
   });
