@@ -5,7 +5,6 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { 
   Coffee, Clock, Home as HomeIcon, CheckCircle2, 
   Sparkles, ChevronRight, ChevronLeft, Utensils, Copy, Apple, Cookie, Milk, User, Users,
@@ -73,9 +72,6 @@ export default function GuestBreakfast() {
   const [guest1Name, setGuest1Name] = useState("")
   const [guest2Name, setGuest2Name] = useState("")
   const [guest3Name, setGuest3Name] = useState("")
-
-  // Modal para Repetir Pedido Rapidamente
-  const [repeatModalOpen, setRepeatModalOpen] = useState(false)
 
   // Preferências por hóspede
   const [guest1Pref, setGuest1Pref] = useState<GuestPreference>({ ...defaultGuestPref })
@@ -1575,23 +1571,6 @@ export default function GuestBreakfast() {
                 ))}
               </div>
             </div>
-            
-            {/* Ação Rápida: Repetir o Mesmo Pedido do 1º Hóspede para Todos e Finalizar */}
-            {guestCount > 1 && (
-              <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-2.5">
-                <span className="text-xs text-slate-500 text-center sm:text-left font-medium">
-                  Deseja o mesmo café do 1º hóspede para todos?
-                </span>
-                <Button
-                  type="button"
-                  onClick={() => setRepeatModalOpen(true)}
-                  className="w-full sm:w-auto bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs h-9 px-3.5 rounded-xl shadow-xs gap-1.5"
-                >
-                  <Copy className="w-3.5 h-3.5" />
-                  <span>Repetir Pedido do 1º e Finalizar</span>
-                </Button>
-              </div>
-            )}
           </Card>
         )}
 
@@ -1696,66 +1675,6 @@ export default function GuestBreakfast() {
           © {new Date().getFullYear()} {brandName}. Todos os direitos reservados.
         </p>
       </footer>
-
-      {/* Modal: Repetir Pedido do 1º Hóspede para Todos e Finalizar */}
-      <Dialog open={repeatModalOpen} onOpenChange={setRepeatModalOpen}>
-        <DialogContent className="sm:max-w-md bg-white border border-slate-200 text-slate-900 rounded-3xl p-6 shadow-2xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-slate-900 font-black text-lg">
-              <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold">
-                <Copy className="w-4 h-4" />
-              </div>
-              Repetir Pedido do 1º Hóspede
-            </DialogTitle>
-            <DialogDescription className="text-slate-500 text-xs leading-relaxed">
-              Os mesmos itens e horário de entrega de <strong>{guest1Name || '1º Hóspede'}</strong> serão preparados para todos. Informe o nome dos demais hóspedes para finalizarmos:
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-3.5 py-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs font-bold text-slate-700">Nome do 2º Hóspede (Acompanhante) *</Label>
-              <Input 
-                value={guest2Name}
-                onChange={e => setGuest2Name(e.target.value)}
-                placeholder="Ex: Maria da Silva"
-                className="bg-slate-50 border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs font-bold h-11 rounded-xl focus-visible:ring-sky-500"
-              />
-            </div>
-
-            {guestCount === 3 && (
-              <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-slate-700">Nome do 3º Hóspede *</Label>
-                <Input 
-                  value={guest3Name}
-                  onChange={e => setGuest3Name(e.target.value)}
-                  placeholder="Ex: João da Silva"
-                  className="bg-slate-50 border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs font-bold h-11 rounded-xl focus-visible:ring-sky-500"
-                />
-              </div>
-            )}
-          </div>
-
-          <DialogFooter className="flex flex-col sm:flex-row gap-2 pt-2">
-            <Button 
-              type="button" 
-              variant="outline" 
-              onClick={() => setRepeatModalOpen(false)}
-              className="border-slate-200 text-slate-600 hover:bg-slate-100 rounded-xl"
-            >
-              Cancelar
-            </Button>
-            <Button 
-              type="button" 
-              onClick={handleConfirmRepeatAndSubmit}
-              disabled={submitting}
-              className="bg-sky-600 hover:bg-sky-700 text-white font-black text-xs h-10 rounded-xl uppercase tracking-wider flex-1 shadow-md shadow-sky-600/20"
-            >
-              {submitting ? "Confirmando..." : "Confirmar & Finalizar Pedido 🚀"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }
