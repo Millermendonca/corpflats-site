@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { 
   Coffee, Clock, Home as HomeIcon, CheckCircle2, 
-  Sparkles, ChevronRight, ChevronLeft, Utensils, Copy, Apple, Cookie, Milk, User, 
+  Sparkles, ChevronRight, ChevronLeft, Utensils, Copy, Apple, Cookie, Milk, User, Users,
   AlertTriangle, Layers, MessageCircle, ArrowLeft, Check, Calendar, ArrowRight, RotateCcw
 } from "lucide-react"
 import { format, addDays, parseISO } from "date-fns"
