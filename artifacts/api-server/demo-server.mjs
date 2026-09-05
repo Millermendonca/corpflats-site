@@ -4546,7 +4546,7 @@ app.put("/api/pms/reservations/:id", (req, res) => {
           isPriority: false,
           leavingGuest: r.guestName,
           arrivingGuest: null,
-          adminNote: `Check-out antecipado/remarcado para ${r.checkoutDate}`,
+          adminNote: null,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         });
