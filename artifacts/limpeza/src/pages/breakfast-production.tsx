@@ -81,7 +81,7 @@ export default function BreakfastProduction() {
     const guestName = room.guestName || "Hóspede"
     const flatNumber = room.flatNumber || ""
     const formattedDate = labelDate(currentDate)
-    const link = `${window.location.origin}/cafe?res=${room.reservationCode || room.breakfastToken}`
+    const link = `${window.location.origin}/cafe?res=${room.reservationCode || room.breakfastToken}&v=1`
 
     let msg = reminderTemplate
       .replace(/\{nome\}/gi, guestName)
@@ -100,7 +100,7 @@ export default function BreakfastProduction() {
   }
 
   const handleCopyRoomLink = (room: any) => {
-    const link = `${window.location.origin}/cafe?res=${room.reservationCode || room.breakfastToken}`
+    const link = `${window.location.origin}/cafe?res=${room.reservationCode || room.breakfastToken}&v=1`
     navigator.clipboard.writeText(link)
     alert(`Link exclusivo do café para o Flat ${room.flatNumber} copiado!`)
   }
@@ -1275,7 +1275,7 @@ export default function BreakfastProduction() {
                     .replace(/\{nome\}/gi, "Carlos Silva")
                     .replace(/\{quarto\}/gi, "113")
                     .replace(/\{data\}/gi, labelDate(currentDate))
-                    .replace(/\{link\}/gi, `${window.location.origin}/cafe?res=RES-113-0034`)
+                    .replace(/\{link\}/gi, `${window.location.origin}/cafe?res=RES-113-0034&v=1`)
                   }
                 </div>
               </div>

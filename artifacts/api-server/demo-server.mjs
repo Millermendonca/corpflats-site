@@ -4340,6 +4340,7 @@ app.post("/api/pms/reservations", (req, res) => {
   // Guest Upsert no CRM
   if (!db.guests) db.guests = [];
   let guest = db.guests.find(g => 
+    (req.body.guestId && g.id === Number(req.body.guestId)) ||
     (primaryPhone && g.phone === primaryPhone) || 
     (primaryDoc && g.document === primaryDoc) || 
     (g.name.toLowerCase() === primaryName.toLowerCase())
@@ -12016,15 +12017,34 @@ function serveSpaWithMetadata(distFolder, req, res) {
     let html = fs.readFileSync(indexPath, "utf-8");
 
     if (req.path.startsWith("/cafe")) {
-      const cafeTitle = "☕ Pedido de Café da Manhã • CorpFlats";
-      const cafeDesc = "Monte e agende o seu café da manhã artesanal servido com todo o carinho diretamente no seu flat.";
+      const resCode = req.query.res || "";
+      let guestFirstName = "";
+      let flatNumber = "";
+      if (resCode) {
+        const found = (db.reservations || []).find(r => r.code === resCode || r.breakfastToken === resCode || String(r.id) === resCode);
+        if (found) {
+          guestFirstName = (found.guestName || "").trim().split(" ")[0];
+          flatNumber = found.flatNumber || "";
+        }
+      }
+
+      const cafeTitle = flatNumber 
+        ? `☕ Café da Manhã • Flat ${flatNumber} • CorpFlats`
+        : "☕ Pedido de Café da Manhã • CorpFlats";
+      const cafeDesc = guestFirstName 
+        ? `Olá ${guestFirstName}, monte e agende o seu café da manhã artesanal servido com carinho diretamente no seu flat.`
+        : "Monte e agende o seu café da manhã artesanal servido com todo o carinho diretamente no seu flat.";
+      const cafeImg = "https://images.unsplash.com/photo-1533089860892-a7c6f0a88666?auto=format&fit=crop&w=1200&h=630&q=80";
+
       html = html
         .replace(/<title>.*?<\/title>/i, `<title>${cafeTitle}</title>`)
         .replace(/<meta property="og:title" content=".*?" \/>/i, `<meta property="og:title" content="${cafeTitle}" />`)
         .replace(/<meta name="twitter:title" content=".*?" \/>/i, `<meta name="twitter:title" content="${cafeTitle}" />`)
         .replace(/<meta name="description" content=".*?" \/>/i, `<meta name="description" content="${cafeDesc}" />`)
         .replace(/<meta property="og:description" content=".*?" \/>/i, `<meta property="og:description" content="${cafeDesc}" />`)
-        .replace(/<meta name="twitter:description" content=".*?" \/>/i, `<meta name="twitter:description" content="${cafeDesc}" />`);
+        .replace(/<meta name="twitter:description" content=".*?" \/>/i, `<meta name="twitter:description" content="${cafeDesc}" />`)
+        .replace(/<meta property="og:image" content=".*?" \/>/i, `<meta property="og:image" content="${cafeImg}" />`)
+        .replace(/<meta name="twitter:image" content=".*?" \/>/i, `<meta name="twitter:image" content="${cafeImg}" />`);
     } else if (req.path.startsWith("/minha-reserva") || req.path.startsWith("/portal-hospede") || req.path.startsWith("/guest-portal")) {
       const portalTitle = "🏨 Área do Hóspede • CorpFlats";
       const portalDesc = "Acesse os detalhes da sua acomodação, horário de check-in, regras do flat e agendamento de café da manhã.";

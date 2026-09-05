@@ -104,6 +104,10 @@ export default function PmsCalendar() {
   }
 
   useEffect(() => {
+    if (resModalOpen) {
+      fetchCrmGuests()
+      fetchCompanies()
+    }
     if (resModalOpen && formCheckin && formCheckout) {
       fetchFairShare(formCheckin, formCheckout, selectedRes?.id).then((result) => {
         if (!selectedRes && result?.bestFlatId && (!formFlatId || formFlatId === "auto")) {
@@ -190,6 +194,9 @@ export default function PmsCalendar() {
   const [formCompanyId, setFormCompanyId] = useState("")
   const [formCompanyName, setFormCompanyName] = useState("")
   const [companies, setCompanies] = useState<any[]>([])
+  const [crmGuests, setCrmGuests] = useState<any[]>([])
+  const [formGuestId, setFormGuestId] = useState("")
+  const [guestSearchFilter, setGuestSearchFilter] = useState("")
 
   // Guests individual fields
   const [formGuest1Cpf, setFormGuest1Cpf] = useState("")
@@ -460,6 +467,14 @@ export default function PmsCalendar() {
     } catch {}
   }
 
+  const fetchCrmGuests = async () => {
+    try {
+      const res = await fetch("/api/pms/guests", { credentials: "include" })
+      const json = await res.json()
+      if (Array.isArray(json)) setCrmGuests(json)
+    } catch {}
+  }
+
   const fetchData = async () => {
     setLoading(true)
     try {
@@ -469,6 +484,7 @@ export default function PmsCalendar() {
       const json = await res.json()
       setData(json)
       fetchCompanies()
+      fetchCrmGuests()
 
       // Busca pedidos de café da manhã para hoje e amanhã
       try {
@@ -628,6 +644,8 @@ export default function PmsCalendar() {
     setFormRequesterCpf("")
     setFormCompanyId("")
     setFormCompanyName("")
+    setFormGuestId("")
+    setGuestSearchFilter("")
     setFormGuestName("")
     setFormGuest1Cpf("")
     setFormGuestPhone("")
@@ -747,6 +765,8 @@ export default function PmsCalendar() {
     setFormRequesterCpf("")
     setFormCompanyId("")
     setFormCompanyName("")
+    setFormGuestId("")
+    setGuestSearchFilter("")
     setFormGuestName("")
     setFormGuest1Cpf("")
     setFormGuestPhone("")
@@ -789,6 +809,8 @@ export default function PmsCalendar() {
     setFormRequesterCpf(resItem.requesterInfo?.cpf || "")
     setFormCompanyId(resItem.companyId ? String(resItem.companyId) : "")
     setFormCompanyName(resItem.companyName || "")
+    setFormGuestId(resItem.guestId ? String(resItem.guestId) : "")
+    setGuestSearchFilter("")
 
     const g1 = resItem.guests?.[0]
     setFormGuestName(g1?.name || resItem.guestName || "")
@@ -824,6 +846,49 @@ export default function PmsCalendar() {
     setFormIsMonthlyGuest(Boolean(resItem.isMonthlyGuest || resItem.clientType === "mensalista"))
     setResModalOpen(true)
   }
+
+  const handleSelectGuest = (val: string) => {
+    setFormGuestId(val)
+    if (!val || val === "manual") {
+      return
+    }
+    const g = crmGuests.find(guest => String(guest.id) === val)
+    if (g) {
+      setFormGuestName(g.name || g.fullName || "")
+      setFormGuest1Cpf(g.documentNumber || g.document || "")
+      setFormGuestPhone(g.phone || "")
+      setFormGuestEmail(g.email || "")
+
+      if (g.floorPreference === "alto" || g.prefersHighFloor) {
+        setFormPrefersHighFloor(true)
+      }
+      if (g.bedType === "2 Solteiro" || g.twinBeds) {
+        setFormTwinBeds(true)
+      }
+      if (g.isMonthlyGuest || g.clientType === "mensalista") {
+        setFormIsMonthlyGuest(true)
+      }
+      if (g.companyId && !formCompanyId) {
+        setFormCompanyId(String(g.companyId))
+        const comp = companies.find(c => c.id === Number(g.companyId))
+        if (comp) setFormCompanyName(comp.tradeName || comp.corporateName)
+      }
+      toast({
+        title: "Hóspede Selecionado do CRM",
+        description: `${g.name || g.fullName} carregado com sucesso.`
+      })
+    }
+  }
+
+  const filteredGuests = crmGuests.filter(g => {
+    if (!guestSearchFilter.trim()) return true
+    const q = guestSearchFilter.toLowerCase().trim()
+    const name = (g.name || g.fullName || "").toLowerCase()
+    const doc = (g.documentNumber || g.document || "").replace(/\D/g, "")
+    const phone = (g.phone || "").replace(/\D/g, "")
+    const cleanQ = q.replace(/\D/g, "")
+    return name.includes(q) || (cleanQ && doc.includes(cleanQ)) || (cleanQ && phone.includes(cleanQ))
+  })
 
   const calculateTotal = () => {
     try {
@@ -870,6 +935,7 @@ export default function PmsCalendar() {
 
       const payload = {
         flatId: Number(formFlatId),
+        guestId: formGuestId && formGuestId !== "manual" ? Number(formGuestId) : (selectedRes?.guestId || null),
         guestName: formGuestName.trim(),
         guestPhone: formGuestPhone.trim(),
         guestEmail: formGuestEmail.trim(),
@@ -2193,6 +2259,67 @@ export default function PmsCalendar() {
                     </button>
                   </div>
 
+                  {/* Detalhes do Solicitante Próprio Hóspede */}
+                  {formRequesterType === "guest" && (
+                    <div className="p-2.5 bg-background border border-primary/20 rounded-xl space-y-2 mt-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] uppercase font-black text-primary block">
+                          Selecione o Hóspede Cadastrado (CRM 360°)
+                        </span>
+                        {formGuestId && formGuestId !== "manual" && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFormGuestId("")
+                              setFormGuestName("")
+                              setFormGuest1Cpf("")
+                              setFormGuestPhone("")
+                              setFormGuestEmail("")
+                            }}
+                            className="text-[10px] text-muted-foreground hover:text-rose-600 underline font-semibold transition-colors"
+                          >
+                            Limpar seleção
+                          </button>
+                        )}
+                      </div>
+
+                      {crmGuests.length > 5 && (
+                        <div className="relative">
+                          <Input
+                            value={guestSearchFilter}
+                            onChange={e => setGuestSearchFilter(e.target.value)}
+                            placeholder="🔍 Filtrar por nome, CPF ou WhatsApp..."
+                            className="text-xs h-7 mb-1 bg-muted/40"
+                          />
+                        </div>
+                      )}
+
+                      <Select value={formGuestId} onValueChange={handleSelectGuest}>
+                        <SelectTrigger className="text-xs h-8">
+                          <SelectValue placeholder="Selecione um Hóspede Cadastrado no CRM..." />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-64">
+                          <SelectItem value="manual" className="text-primary font-bold">
+                            ➕ Novo Hóspede (Digitar manualmente)
+                          </SelectItem>
+                          {filteredGuests.map((g: any) => (
+                            <SelectItem key={g.id} value={String(g.id)}>
+                              <span className="font-semibold">{g.name || g.fullName}</span>
+                              {g.documentNumber || g.document ? ` • CPF: ${g.documentNumber || g.document}` : ""}
+                              {g.phone ? ` • Tel: ${g.phone}` : ""}
+                              {g.companyName ? ` • (${g.companyName})` : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {formGuestId && formGuestId !== "manual" && (
+                        <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1 mt-0.5">
+                          <CheckCircle2 className="w-3 h-3" /> Hóspede carregado do CRM. Dados preenchidos abaixo.
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* Detalhes do Solicitante Terceiro */}
                   {formRequesterType === "other_person" && (
                     <div className="p-2.5 bg-background border border-primary/20 rounded-xl space-y-2 mt-2">
@@ -2237,7 +2364,29 @@ export default function PmsCalendar() {
                         <User className="w-3.5 h-3.5 text-primary" />
                         <span>Hóspede 1 (Titular)</span>
                       </span>
-                      <Badge variant="outline" className="text-[9px]">Check-in Principal</Badge>
+                      <div className="flex items-center gap-2">
+                        {formRequesterType !== "guest" && (
+                          <div className="w-56">
+                            <Select value={formGuestId} onValueChange={handleSelectGuest}>
+                              <SelectTrigger className="text-[10px] h-6 px-2">
+                                <SelectValue placeholder="Puxar do CRM..." />
+                              </SelectTrigger>
+                              <SelectContent className="max-h-60">
+                                <SelectItem value="manual" className="text-primary font-bold text-xs">
+                                  Digitar manualmente
+                                </SelectItem>
+                                {crmGuests.map((g: any) => (
+                                  <SelectItem key={g.id} value={String(g.id)} className="text-xs">
+                                    {g.name || g.fullName}
+                                    {g.phone ? ` • ${g.phone}` : ""}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        )}
+                        <Badge variant="outline" className="text-[9px]">Check-in Principal</Badge>
+                      </div>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       <Input value={formGuestName} onChange={e => setFormGuestName(e.target.value)} placeholder="Nome Completo *" required className="text-xs h-8" />
