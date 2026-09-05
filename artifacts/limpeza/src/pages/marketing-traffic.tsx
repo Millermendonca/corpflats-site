@@ -22,7 +22,8 @@ export default function MarketingTraffic() {
   const [, setLocation] = useLocation()
   const { data: user, isLoading: loadingUser } = useGetMe()
 
-  const [activeTab, setActiveTab] = useState<"carts" | "campaigns" | "studio" | "settings">("carts")
+  const [activeTab, setActiveTab] = useState<"funnel" | "carts" | "campaigns" | "studio" | "settings">("funnel")
+  const [funnelData, setFunnelData] = useState<any>(null)
   const [cartsData, setCartsData] = useState<any>(null)
   const [campaignsData, setCampaignsData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
@@ -44,14 +45,17 @@ export default function MarketingTraffic() {
   const fetchData = async () => {
     setLoading(true)
     try {
-      const [resCarts, resCamps] = await Promise.all([
+      const [resFunnel, resCarts, resCamps] = await Promise.all([
+        fetch("/api/funnel/analytics", { credentials: "include" }),
         fetch("/api/marketing/abandoned-carts", { credentials: "include" }),
         fetch("/api/marketing/ad-campaigns", { credentials: "include" })
       ])
-      const [jsonCarts, jsonCamps] = await Promise.all([
+      const [jsonFunnel, jsonCarts, jsonCamps] = await Promise.all([
+        resFunnel.json(),
         resCarts.json(),
         resCamps.json()
       ])
+      setFunnelData(jsonFunnel)
       setCartsData(jsonCarts)
       setCampaignsData(jsonCamps)
     } finally {
@@ -215,6 +219,18 @@ export default function MarketingTraffic() {
         {/* Tab Navigation */}
         <div className="flex border-b border-border gap-2 overflow-x-auto">
           <button
+            onClick={() => setActiveTab("funnel")}
+            className={`pb-3 px-3 text-xs font-bold transition-all border-b-2 flex items-center gap-1.5 ${
+              activeTab === "funnel" 
+                ? "border-primary text-primary" 
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <TrendingUp className="w-4 h-4 text-indigo-600" />
+            <span>0. Funil de Vendas do Motor</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab("carts")}
             className={`pb-3 px-3 text-xs font-bold transition-all border-b-2 flex items-center gap-1.5 ${
               activeTab === "carts" 
@@ -223,7 +239,7 @@ export default function MarketingTraffic() {
             }`}
           >
             <ShoppingCart className="w-4 h-4" />
-            <span>1. Carrinhos Abandonados ({cartsData.stats.totalAbandoned})</span>
+            <span>1. Carrinhos Abandonados ({cartsData?.stats?.totalAbandoned || 0})</span>
           </button>
 
           <button
@@ -262,6 +278,191 @@ export default function MarketingTraffic() {
             <span>4. Meta CAPI & Pixel</span>
           </button>
         </div>
+
+        {/* Tab 0: Sales Funnel Dashboard */}
+        {activeTab === "funnel" && funnelData && (
+          <div className="space-y-6 animate-in fade-in">
+            {/* Visual Funnel Pipeline */}
+            <Card className="rounded-2xl border shadow-2xs p-5 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-3">
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                    <TrendingUp className="w-5 h-5 text-indigo-600" />
+                    Pipeline do Funil de Conversão do Motor de Reservas
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    Acompanhamento em tempo real das etapas de compra dos hóspedes no site oficial.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-bold text-xs">
+                    Taxa de Conversão Geral: {funnelData.funnel?.overallConversionRate || "0.0"}%
+                  </Badge>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={fetchData}
+                    className="h-8 text-xs font-semibold gap-1.5"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Atualizar</span>
+                  </Button>
+                </div>
+              </div>
+
+              {/* 5 Funnel Stages Graphic */}
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-3 pt-2">
+                {funnelData.funnel?.steps?.map((s: any, idx: number) => {
+                  const colors = [
+                    "from-sky-500 to-blue-600",
+                    "from-blue-600 to-indigo-600",
+                    "from-indigo-600 to-violet-600",
+                    "from-violet-600 to-purple-600",
+                    "from-purple-600 to-emerald-600"
+                  ]
+                  const bgLight = [
+                    "bg-sky-50 dark:bg-sky-950/40 border-sky-200 dark:border-sky-800",
+                    "bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800",
+                    "bg-indigo-50 dark:bg-indigo-950/40 border-indigo-200 dark:border-indigo-800",
+                    "bg-purple-50 dark:bg-purple-950/40 border-purple-200 dark:border-purple-800",
+                    "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800"
+                  ]
+                  return (
+                    <div
+                      key={s.step}
+                      className={`p-4 rounded-2xl border ${bgLight[idx]} flex flex-col justify-between space-y-3 relative shadow-xs`}
+                    >
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-mono font-black text-muted-foreground text-[10px] uppercase">
+                          Etapa {s.step}
+                        </span>
+                        {idx > 0 && s.dropOffRate > 0 && (
+                          <span className="text-[10px] text-rose-500 font-bold">
+                            -{s.dropOffRate}% perda
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="space-y-1">
+                        <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 leading-tight">
+                          {s.name}
+                        </h4>
+                        <div className="text-2xl font-black text-slate-900 dark:text-white">
+                          {s.count}
+                        </div>
+                        <span className="text-[10px] text-muted-foreground block">
+                          visitantes nesta fase
+                        </span>
+                      </div>
+
+                      <div className="space-y-1 pt-1 border-t border-border/50">
+                        <div className="flex justify-between text-[10px] font-bold">
+                          <span>Conversão:</span>
+                          <span className="text-emerald-600 dark:text-emerald-400">{s.convRate}%</span>
+                        </div>
+                        <div className="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full bg-gradient-to-r ${colors[idx]} rounded-full`}
+                            style={{ width: `${Math.max(10, Math.min(100, s.convRate))}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </Card>
+
+            {/* Live Funnel Sessions Table */}
+            <Card className="rounded-2xl border shadow-2xs overflow-hidden">
+              <CardHeader className="bg-muted/10 border-b pb-3">
+                <CardTitle className="text-base flex items-center justify-between">
+                  <span>Sessões Ativas no Funil & Leads de Alta Intenção</span>
+                  <Badge variant="outline" className="text-xs font-mono">
+                    {funnelData.sessions?.length || 0} sessões registradas
+                  </Badge>
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  Hóspedes que iniciaram o processo no motor de reservas. Dispare o resgate para fechar vendas pendentes.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="divide-y divide-border text-xs">
+                  {funnelData.sessions && funnelData.sessions.length > 0 ? (
+                    funnelData.sessions.map((sess: any) => {
+                      const isCompleted = sess.status === "concluido"
+                      const hasContact = Boolean(sess.guestPhone)
+                      return (
+                        <div key={sess.id} className="p-4 flex flex-wrap items-center justify-between gap-3 hover:bg-muted/10 transition-colors">
+                          <div className="space-y-1.5 min-w-[220px]">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-sm text-slate-900 dark:text-slate-100">
+                                {sess.guestName || (hasContact ? "Hóspede c/ Contato" : "Visitante Anônimo")}
+                              </span>
+                              <Badge className={`text-[9px] font-bold ${
+                                isCompleted
+                                  ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+                                  : (sess.status === "recuperado" 
+                                    ? "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300" 
+                                    : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300")
+                              }`}>
+                                {isCompleted ? "✓ Reserva Confirmada" : (sess.status === "recuperado" ? "Mensagem Enviada" : `Etapa ${sess.currentStep || 1}: ${sess.currentStepName || "Navegando"}`)}
+                              </Badge>
+                            </div>
+
+                            <div className="text-[11px] text-muted-foreground flex flex-wrap gap-2">
+                              {sess.guestPhone && <span>📱 {sess.guestPhone}</span>}
+                              {sess.guestEmail && <span>✉️ {sess.guestEmail}</span>}
+                              {sess.checkinDate && (
+                                <span>📅 {sess.checkinDate} a {sess.checkoutDate}</span>
+                              )}
+                              <span>🏨 {sess.flatsCount || 1} {sess.flatsCount === 1 ? "flat" : "flats"}</span>
+                              {sess.ratePlan && (
+                                <span>☕ {sess.ratePlan === "with_breakfast" ? "Com Café" : "Sem Café"}</span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-3">
+                            <div className="text-right">
+                              <div className="font-black text-sm text-slate-900 dark:text-slate-100 font-mono">
+                                R$ {Number(sess.totalAmount || 0).toLocaleString("pt-BR")}
+                              </div>
+                              <div className="text-[10px] text-muted-foreground">Valor Estimado</div>
+                            </div>
+
+                            {sess.recoveryWhatsappUrl && !isCompleted ? (
+                              <Button
+                                size="sm"
+                                onClick={() => {
+                                  window.open(sess.recoveryWhatsappUrl, "_blank")
+                                }}
+                                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5 shadow-2xs rounded-xl"
+                              >
+                                <MessageCircle className="w-3.5 h-3.5" />
+                                <span>Resgatar no WhatsApp</span>
+                              </Button>
+                            ) : (
+                              isCompleted && (
+                                <Badge className="bg-emerald-600 text-white font-bold text-xs py-1 px-3 rounded-xl">
+                                  {sess.reservationCode || "Pago"}
+                                </Badge>
+                              )
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })
+                  ) : (
+                    <div className="p-8 text-center text-muted-foreground text-xs">
+                      Nenhuma sessão registrada no funil ainda hoje. As buscas no site aparecerão aqui automaticamente.
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
         {/* Tab 1: Abandoned Carts */}
         {activeTab === "carts" && (

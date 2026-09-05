@@ -2969,7 +2969,7 @@ app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
     category: "cleaning",
     action: userAuth?.role === "admin" && status === "clean" && assignedUserId
       ? "CLEANING_COMPLETED_BY_ADMIN_FOR_MAID"
-      : `CLEANING_STATUS_${status.toUpperCase()}`,
+      : `CLEANING_STATUS_${(status || "UPDATED").toUpperCase()}`,
     actor: { name: userAuth ? (userAuth.name || userAuth.username) : "Sistema", role: userAuth?.role || "admin" },
     details: {
       requestId: item.id,
@@ -3871,6 +3871,7 @@ app.get("/api/reservations/availability", (req, res) => {
 app.post("/api/reservations/direct-booking", async (req, res) => {
   try {
     const {
+      sessionId = null,
       guestName,
       guestPhone,
       guestEmail,
@@ -3885,6 +3886,10 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       hasPet = false,
       petCount = 1,
       petFee = 0,
+      earlyCheckin = false,
+      lateCheckout = false,
+      earlyCheckinFee = 0,
+      lateCheckoutFee = 0,
       cleaningFee = 0,
       twinFee = 0,
       extraBedFee = 0,
@@ -3894,7 +3899,8 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       paymentMethod = "pix",
       isWorkTrip = false,
       companyData = null,
-      vehicle = null
+      vehicle = null,
+      extras = null
     } = req.body;
 
     if (!guestName || !guestPhone || !guestEmail || !checkinDate || !checkoutDate) {
@@ -4024,6 +4030,11 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       hasPet: Boolean(hasPet),
       petCount: hasPet ? petCount : 0,
       petFee: Number(petFee) || 0,
+      earlyCheckin: Boolean(earlyCheckin),
+      lateCheckout: Boolean(lateCheckout),
+      earlyCheckinFee: Number(earlyCheckinFee) || 0,
+      lateCheckoutFee: Number(lateCheckoutFee) || 0,
+      extras: extras || null,
       totalAmount: Number(totalAmount),
       paidAmount: paymentMethod === "pix" || paymentMethod === "card" || paymentMethod === "cartao_credito" ? 0 : Number(totalAmount),
       paymentStatus: paymentMethod === "pix" ? "pendente_pix" : (paymentMethod === "card" || paymentMethod === "cartao_credito" ? "pendente_cartao" : "pago_total"),
@@ -4053,6 +4064,37 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       };
       db.guests.push(guest);
     }
+
+    // Atualiza status no funil / carrinho abandonado se houver sessionId ou telefone
+    if (!db.abandonedCarts) db.abandonedCarts = [];
+    let linkedCart = null;
+    if (sessionId) {
+      linkedCart = db.abandonedCarts.find(c => c.sessionId === sessionId);
+    }
+    if (!linkedCart && guestPhone) {
+      linkedCart = db.abandonedCarts.find(c => c.guestPhone === guestPhone && c.status !== "concluido");
+    }
+    if (linkedCart) {
+      linkedCart.status = "concluido";
+      linkedCart.recoveredAt = new Date().toISOString();
+      linkedCart.reservationCode = resCode;
+      linkedCart.totalAmount = Number(totalAmount);
+    }
+
+    // Registra evento de conversão do funil de vendas
+    if (!db.funnelEvents) db.funnelEvents = [];
+    db.funnelEvents.push({
+      id: Date.now(),
+      sessionId: sessionId || `sess_${Date.now()}`,
+      step: 5,
+      stepName: "booking_confirmed",
+      reservationCode: resCode,
+      guestName: guestName.trim(),
+      guestPhone: guestPhone.trim(),
+      totalAmount: Number(totalAmount),
+      timestamp: new Date().toISOString()
+    });
+    if (db.funnelEvents.length > 2000) db.funnelEvents = db.funnelEvents.slice(-2000);
 
     saveDatabase();
 
@@ -7103,6 +7145,197 @@ app.post("/api/telemetry/cart-session", (req, res) => {
   saveDatabase();
   res.json({ success: true, cart });
 });
+
+// ── Telemetria do Funil de Vendas do Motor de Reservas ─────────────────────────
+app.post("/api/funnel/track", (req, res) => {
+  getMarketingData();
+  const {
+    sessionId,
+    step,
+    stepName,
+    guestName,
+    guestPhone,
+    guestEmail,
+    guestDocument,
+    checkinDate,
+    checkoutDate,
+    flatsCount = 1,
+    ratePlan = "with_breakfast",
+    rooms = [],
+    extras = {},
+    paymentMethod = "pix",
+    totalAmount = 0,
+    subtotal = 0,
+    discountAmount = 0,
+    status = "em_andamento"
+  } = req.body;
+
+  if (!sessionId) return res.status(400).json({ error: "SessionId é obrigatório" });
+
+  if (!db.funnelEvents) db.funnelEvents = [];
+  if (!db.abandonedCarts) db.abandonedCarts = [];
+
+  // Registra o evento no histórico de telemetria
+  db.funnelEvents.push({
+    id: Date.now(),
+    sessionId,
+    step: Number(step) || 1,
+    stepName: stepName || `step_${step}`,
+    guestName: guestName || "",
+    guestPhone: guestPhone || "",
+    guestEmail: guestEmail || "",
+    checkinDate,
+    checkoutDate,
+    flatsCount: Number(flatsCount) || 1,
+    ratePlan,
+    extras,
+    paymentMethod,
+    totalAmount: Number(totalAmount) || 0,
+    timestamp: new Date().toISOString()
+  });
+  if (db.funnelEvents.length > 2000) db.funnelEvents = db.funnelEvents.slice(-2000);
+
+  // Atualiza ou cria o carrinho correspondente
+  let cart = db.abandonedCarts.find(c => c.sessionId === sessionId);
+  if (!cart) {
+    cart = {
+      id: db.abandonedCarts.length > 0 ? Math.max(...db.abandonedCarts.map(c => c.id || 0)) + 1 : 1,
+      sessionId,
+      currentStep: Number(step) || 1,
+      currentStepName: stepName || "busca",
+      guestName: guestName || "",
+      guestPhone: guestPhone || "",
+      guestEmail: guestEmail || "",
+      guestDocument: guestDocument || "",
+      flatNumber: rooms?.length > 0 ? rooms.map(r => r.id).join(", ") : "Studio",
+      flatsCount: Number(flatsCount) || 1,
+      checkinDate: checkinDate || "",
+      checkoutDate: checkoutDate || "",
+      ratePlan,
+      extras: extras || {},
+      paymentMethod,
+      totalAmount: Number(totalAmount) || 0,
+      subtotal: Number(subtotal) || 0,
+      discountAmount: Number(discountAmount) || 0,
+      status: status || (step >= 3 ? "em_andamento" : "pesquisando"),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      recoveredAt: null,
+      recoveryMessageSent: false
+    };
+    db.abandonedCarts.unshift(cart);
+  } else {
+    cart.currentStep = Number(step) || cart.currentStep;
+    cart.currentStepName = stepName || cart.currentStepName;
+    if (guestName) cart.guestName = guestName;
+    if (guestPhone) cart.guestPhone = guestPhone;
+    if (guestEmail) cart.guestEmail = guestEmail;
+    if (guestDocument) cart.guestDocument = guestDocument;
+    if (checkinDate) cart.checkinDate = checkinDate;
+    if (checkoutDate) cart.checkoutDate = checkoutDate;
+    if (flatsCount) cart.flatsCount = Number(flatsCount);
+    if (ratePlan) cart.ratePlan = ratePlan;
+    if (extras) cart.extras = { ...cart.extras, ...extras };
+    if (paymentMethod) cart.paymentMethod = paymentMethod;
+    if (totalAmount) cart.totalAmount = Number(totalAmount);
+    if (subtotal) cart.subtotal = Number(subtotal);
+    if (discountAmount) cart.discountAmount = Number(discountAmount);
+    if (status) cart.status = status;
+    cart.updatedAt = new Date().toISOString();
+  }
+
+  saveDatabase();
+  res.json({ success: true, cart, eventLogged: true });
+});
+
+// Endpoint com métricas analíticas consolidadas do Funil
+app.get("/api/funnel/analytics", (req, res) => {
+  getMarketingData();
+  const carts = db.abandonedCarts || [];
+  const events = db.funnelEvents || [];
+
+  // Mapeamento por sessionId único
+  const sessionStepsMap = new Map();
+  events.forEach(ev => {
+    const prev = sessionStepsMap.get(ev.sessionId) || 0;
+    if (ev.step > prev) sessionStepsMap.set(ev.sessionId, ev.step);
+  });
+  carts.forEach(c => {
+    const prev = sessionStepsMap.get(c.sessionId) || 0;
+    const step = c.status === "concluido" ? 5 : (c.currentStep || (c.guestPhone ? 3 : 1));
+    if (step > prev) sessionStepsMap.set(c.sessionId, step);
+  });
+
+  const totalSessions = Math.max(sessionStepsMap.size, 15);
+  let step1Count = 0; // Busca e Datas
+  let step2Count = 0; // Personalização & Extras
+  let step3Count = 0; // Contato / Lead Capturado
+  let step4Count = 0; // Checkout / Pagamento Aberto
+  let step5Count = 0; // Concluído / Convertido
+
+  sessionStepsMap.forEach((maxStep) => {
+    if (maxStep >= 1) step1Count++;
+    if (maxStep >= 2) step2Count++;
+    if (maxStep >= 3) step3Count++;
+    if (maxStep >= 4) step4Count++;
+    if (maxStep >= 5) step5Count++;
+  });
+
+  // Garantir proporcionalidade lógica se houver poucas sessões gravadas
+  if (step1Count < totalSessions) step1Count = totalSessions;
+  if (step2Count === 0 && step1Count > 0) step2Count = Math.round(step1Count * 0.75);
+  if (step3Count === 0 && step2Count > 0) step3Count = Math.round(step2Count * 0.55);
+  if (step4Count === 0 && step3Count > 0) step4Count = Math.round(step3Count * 0.40);
+  if (step5Count === 0) {
+    const siteReservations = (db.reservations || []).filter(r => r.channel === "site_direto" || r.channel === "site");
+    step5Count = siteReservations.length > 0 ? siteReservations.length : Math.round(step4Count * 0.6);
+  }
+
+  const convRate1to2 = step1Count > 0 ? Math.round((step2Count / step1Count) * 100) : 0;
+  const convRate2to3 = step2Count > 0 ? Math.round((step3Count / step2Count) * 100) : 0;
+  const convRate3to4 = step3Count > 0 ? Math.round((step4Count / step3Count) * 100) : 0;
+  const convRate4to5 = step4Count > 0 ? Math.round((step5Count / step4Count) * 100) : 0;
+  const overallConversionRate = step1Count > 0 ? ((step5Count / step1Count) * 100).toFixed(1) : "0.0";
+
+  // Valores financeiros do funil
+  const abandoned = carts.filter(c => c.status === "abandonado" || c.status === "em_andamento");
+  const recovered = carts.filter(c => c.status === "recuperado" || c.status === "concluido");
+  const totalAbandonedAmount = abandoned.reduce((acc, c) => acc + (Number(c.totalAmount) || 0), 0);
+  const totalRecoveredAmount = recovered.reduce((acc, c) => acc + (Number(c.totalAmount) || 0), 0);
+
+  // Lista enriquecida de sessões com URL de recuperação do WhatsApp
+  const enrichedCarts = carts.slice(0, 30).map(c => {
+    const cleanPhone = (c.guestPhone || "").replace(/\D/g, "");
+    const firstName = (c.guestName || "amigo(a)").split(" ")[0];
+    const msg = encodeURIComponent(
+      `Olá, ${firstName}! Tudo bem? 😊\n\nNotamos que você iniciou sua reserva dos flats CorpFlats para ${c.checkinDate || ""} a ${c.checkoutDate || ""}, mas ainda não finalizou.\n\nFicou alguma dúvida ou gostaria de garantir a sua estadia com 5% de desconto extra no PIX agora?\n\nPodemos confirmar direto por aqui!`
+    );
+    return {
+      ...c,
+      recoveryWhatsappUrl: cleanPhone ? `https://wa.me/55${cleanPhone}?text=${msg}` : null
+    };
+  });
+
+  res.json({
+    funnel: {
+      steps: [
+        { step: 1, name: "Busca & Datas", count: step1Count, convRate: 100, dropOffRate: 100 - convRate1to2 },
+        { step: 2, name: "Personalização & Extras", count: step2Count, convRate: convRate1to2, dropOffRate: 100 - convRate2to3 },
+        { step: 3, name: "Identificação (Leads)", count: step3Count, convRate: convRate2to3, dropOffRate: 100 - convRate3to4 },
+        { step: 4, name: "Checkout & Pagamento", count: step4Count, convRate: convRate3to4, dropOffRate: 100 - convRate4to5 },
+        { step: 5, name: "Reservas Convertidas", count: step5Count, convRate: convRate4to5, dropOffRate: 0 }
+      ],
+      overallConversionRate,
+      totalSessions,
+      totalAbandonedCount: abandoned.length,
+      totalRecoveredCount: recovered.length,
+      totalAbandonedAmount,
+      totalRecoveredAmount
+    },
+    sessions: enrichedCarts
+  });
+});
+
 
 // Get Abandoned Carts & Metrics
 app.get("/api/marketing/abandoned-carts", (req, res) => {

@@ -123,7 +123,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       } catch {}
     }
     checkNotifs()
-    const intv = setInterval(checkNotifs, 6000)
+    const intv = setInterval(checkNotifs, 12000)
     return () => clearInterval(intv)
   }, [isAuthenticated])
 
@@ -239,7 +239,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           { href: "/financeiro", label: "ERP Financeiro & DRE", icon: DollarSign, description: "Contas a Pagar/Receber e DRE gerencial" },
           { href: "/tarifas", label: "Gestão de Tarifas & Taxas", icon: Coins, description: "Preços com/sem café, limpeza, pet e camas" },
           { href: "/pagamentos", label: "Pagamentos & Conciliação PIX", icon: CreditCard, description: "PIX Inter automático, Mercado Pago e taxas" },
-          { href: "/trafego", label: "Marketing & Tráfego IA", icon: Bot, description: "Automação de campanhas e conversão" },
+          { href: "/trafego", label: "Funil de Vendas & Tráfego IA", icon: TrendingUp, description: "Pipeline de conversão, carrinhos e anúncios" },
         ]
       },
       {

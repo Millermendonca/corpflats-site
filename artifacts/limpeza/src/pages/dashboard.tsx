@@ -66,17 +66,17 @@ export default function Dashboard() {
 
   const { data: checkouts, isLoading: loadingCheckouts } = useListCheckouts(
     { date: selectedDateStr },
-    { query: { refetchInterval: 1500, refetchOnWindowFocus: true, queryKey: getListCheckoutsQueryKey({ date: selectedDateStr }) } }
+    { query: { refetchInterval: 12000, refetchOnWindowFocus: true, queryKey: getListCheckoutsQueryKey({ date: selectedDateStr }) } }
   )
   
   const { data: checkins, isLoading: loadingCheckins } = useListCheckins(
     { date: selectedDateStr },
-    { query: { refetchInterval: 1500, refetchOnWindowFocus: true, queryKey: getListCheckinsQueryKey({ date: selectedDateStr }) } }
+    { query: { refetchInterval: 12000, refetchOnWindowFocus: true, queryKey: getListCheckinsQueryKey({ date: selectedDateStr }) } }
   )
   
   const { data: summary } = useGetDashboardSummary(
     { date: selectedDateStr },
-    { query: { refetchInterval: 1500, refetchOnWindowFocus: true, queryKey: getGetDashboardSummaryQueryKey({ date: selectedDateStr }) } }
+    { query: { refetchInterval: 12000, refetchOnWindowFocus: true, queryKey: getGetDashboardSummaryQueryKey({ date: selectedDateStr }) } }
   )
 
   const [availableFlats, setAvailableFlats] = useState<any[]>([])

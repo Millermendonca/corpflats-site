@@ -5110,5 +5110,100 @@
     ],
     "sweetener": "Açúcar",
     "description": "Café, Leite, Suco de laranja, Pão francês, Pão de queijo, Queijo mussarela, Presunto, Manteiga, Bolo do dia e Fruta do dia (Mamão, maçã ou banana)."
-  }
+  },
+  "abandonedCarts": [
+    {
+      "id": 1,
+      "sessionId": "sess_sample_1",
+      "guestName": "Renata Vasconcelos",
+      "guestPhone": "(21) 98844-2211",
+      "guestEmail": "renata.v@gmail.com",
+      "flatNumber": "113",
+      "checkinDate": "2026-08-22",
+      "checkoutDate": "2026-08-25",
+      "totalAmount": 750,
+      "status": "abandonado",
+      "createdAt": "2026-09-04T23:52:09.994Z",
+      "recoveredAt": null,
+      "recoveryMessageSent": false
+    },
+    {
+      "id": 2,
+      "sessionId": "sess_sample_2",
+      "guestName": "Eduardo Mendes",
+      "guestPhone": "(21) 99777-3322",
+      "guestEmail": "eduardo.m@outlook.com",
+      "flatNumber": "511",
+      "checkinDate": "2026-08-28",
+      "checkoutDate": "2026-08-30",
+      "totalAmount": 500,
+      "status": "abandonado",
+      "createdAt": "2026-09-04T22:37:09.994Z",
+      "recoveredAt": null,
+      "recoveryMessageSent": false
+    }
+  ],
+  "adCampaigns": [
+    {
+      "id": 1,
+      "name": "🔥 Urgência Fim de Semana - Ocupação",
+      "targetAudience": "urgencia_baixa_ocupacao",
+      "platform": "meta",
+      "dailyBudget": 40,
+      "status": "ativa",
+      "impressions": 4820,
+      "clicks": 342,
+      "spent": 120,
+      "conversions": 3,
+      "revenue": 1650,
+      "roas": 13.75,
+      "creativeTitle": "Fim de Semana em Flat com Vista!",
+      "creativeCopy": "Ainda temos 2 flats disponíveis para este fim de semana com desconto exclusivo de reserva direta no PIX!",
+      "createdAt": "2026-09-02T00:37:09.994Z"
+    },
+    {
+      "id": 2,
+      "name": "💼 Executivos & Trabalho Remoto",
+      "targetAudience": "executivos",
+      "platform": "meta",
+      "dailyBudget": 30,
+      "status": "ativa",
+      "impressions": 3150,
+      "clicks": 198,
+      "spent": 90,
+      "conversions": 2,
+      "revenue": 900,
+      "roas": 10,
+      "creativeTitle": "Hospede-se com Wi-Fi 500MB e Conforto",
+      "creativeCopy": "Flat completo com bancada de trabalho, cozinha prática e check-in digital em 1 minuto. Garanta diária direta com NF!",
+      "createdAt": "2026-08-31T00:37:09.994Z"
+    },
+    {
+      "id": 3,
+      "name": "💑 Escapada a Dois - Casais",
+      "targetAudience": "casais",
+      "platform": "meta",
+      "dailyBudget": 25,
+      "status": "pausada",
+      "impressions": 2100,
+      "clicks": 110,
+      "spent": 50,
+      "conversions": 1,
+      "revenue": 550,
+      "roas": 11,
+      "creativeTitle": "Descanso Perfeito a Dois",
+      "creativeCopy": "Flats modernos com cama queen, ar silencioso e opção de café da manhã. Reserve direto sem taxas!",
+      "createdAt": "2026-08-29T00:37:09.994Z"
+    }
+  ],
+  "adSettings": {
+    "autoPilotEnabled": true,
+    "lowOccupancyThresholdPct": 60,
+    "highOccupancyPausePct": 85,
+    "defaultDailyBudget": 35,
+    "metaPixelId": "7489123891023",
+    "metaApiToken": "EAABwz...",
+    "googleAdsId": "AW-9481923"
+  },
+  "funnelEvents": []
 }
