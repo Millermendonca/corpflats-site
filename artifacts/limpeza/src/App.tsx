@@ -39,6 +39,7 @@ import SiteEditor from '@/pages/site-editor';
 import TarifasEditor from '@/pages/tarifas';
 import SystemLogsPage from '@/pages/system-logs';
 import MyAccount from '@/pages/my-account';
+import WhatsappAutomation from '@/pages/whatsapp-automation';
 import NotFound from '@/pages/not-found';
 
 const queryClient = new QueryClient({
@@ -115,6 +116,9 @@ function Router() {
         {/* Staff & Admin Routes */}
         <Route path="/login" component={Login} />
         <Route path="/dashboard" component={Dashboard} />
+        <Route path="/whatsapp" component={WhatsappAutomation} />
+        <Route path="/zapi" component={WhatsappAutomation} />
+        <Route path="/automacao-whatsapp" component={WhatsappAutomation} />
         <Route path="/notificacoes" component={NotificationsHub} />
         <Route path="/notifications" component={NotificationsHub} />
         <Route path="/alertas" component={NotificationsHub} />

@@ -9,7 +9,7 @@ import {
   LogOut, LayoutDashboard, History, Settings, UserCircle, ClipboardList, 
   MessageSquareWarning, BarChart3, Bell, ClipboardCheck, Sparkles, Key, Check, AlertCircle,
   CalendarDays, Users, Tablet, Globe, DollarSign, Bot, FileText, Coffee, Menu, X, Search, ChevronRight,
-  CreditCard, Palette, Coins, ScrollText, Building2, Package, TrendingUp, Car, ThumbsUp
+  CreditCard, Palette, Coins, ScrollText, Building2, Package, TrendingUp, Car, ThumbsUp, MessageSquare
 } from "lucide-react"
 import { Button } from "./ui/button"
 import { Skeleton } from "./ui/skeleton"
@@ -230,6 +230,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           { href: "/crm", label: "Hóspedes & Empresas (CRM 360)", icon: Users, description: "LTV, fidelidade, preferências e faturamento PJ" },
           { href: "/portaria", label: "Terminal da Portaria (Tablet)", icon: Tablet, description: "Check-in presencial e liberação" },
           { href: "/pedidos-cafe", label: "Produção de Café da Manhã", icon: Coffee, description: "Ficha técnica e montagem dos pedidos" },
+          { href: "/whatsapp", label: "Automação WhatsApp (Z-API)", icon: MessageSquare, description: "Gatilhos automáticos, botões interativos e disparos" },
           { href: "/reservar", label: "Site de Reservas Diretas", icon: Globe, description: "Página pública de vendas" },
         ]
       },
@@ -261,6 +262,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         title: "⚙️ Sistema & Integrações",
         items: [
           { href: "/configuracoes", label: "Integrações Técnicas & Nuvem", icon: Settings, description: "Cloudflare R2, Microsoft Graph, usuários" },
+          { href: "/whatsapp", label: "Central WhatsApp & Z-API", icon: MessageSquare, description: "Instância, templates de botões e réguas" },
           { href: "/notificacoes", label: "Central de Notificações", icon: Bell, badge: unreadNotifications > 0 ? unreadNotifications : null, description: "Alertas de pedidos e chamados" },
           { href: "/logs", label: "Logs & Auditoria Fail-Safe", icon: ScrollText, description: "Auditoria fail-safe de eventos e erros" },
         ]

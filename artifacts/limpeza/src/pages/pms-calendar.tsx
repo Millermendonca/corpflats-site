@@ -34,6 +34,7 @@ const CHANNEL_CONFIG: Record<string, { label: string; bg: string; text: string; 
 
 import { AccessDenied } from "@/components/access-denied"
 import { FLAT_AMENITIES_CATALOG, AMENITY_CATEGORIES, renderAmenityIcon, getFlatActiveAmenities, FlatAmenityDefinition } from "@/lib/flat-amenities"
+import { ReservationHoverCard } from "@/components/reservation-hover-card"
 
 
 
@@ -1677,52 +1678,61 @@ export default function PmsCalendar() {
                         );
 
                         return (
-                          <div
+                          <ReservationHoverCard
                             key={`res-${resItem.id}`}
-                            style={{ gridColumn: `${colStart} / span ${colSpan}`, gridRow: "1 / 2" }}
-                            onMouseDown={(e) => handleStartResDrag(resItem, flat, "move", e)}
-                            className={`h-8.5 mx-0.5 rounded-xl relative select-none ${
-                              isMensalista 
-                                ? 'bg-gradient-to-r from-purple-800 via-indigo-900 to-purple-800 text-white border-2 border-purple-300 shadow-md ring-2 ring-purple-500/80' 
-                                : `${channelCfg?.bg} ${channelCfg?.text} border ${channelCfg?.border} shadow-xs`
-                            } flex items-center px-2 text-[11px] font-bold overflow-hidden z-10 cursor-grab active:cursor-grabbing hover:brightness-110 hover:shadow-md transition-all ${
-                              isBeingDragged && resDragState?.hasMoved ? 'opacity-30 border-dashed scale-95' : ''
-                            }`}
-                            title={`${resItem.guestName} (${channelCfg?.label || resItem.channel}) • ${resItem.checkinDate} a ${resItem.checkoutDate} • Clique para abrir ou arraste para mover/redimensionar`}
+                            resItem={resItem}
+                            flat={flat}
+                            isBeingDragged={Boolean(isBeingDragged && resDragState?.hasMoved)}
+                            onOpenDetails={handleOpenEditRes}
+                            channelCfg={channelCfg}
+                            isMensalista={isMensalista}
                           >
-                            {/* Handle Esquerdo: Redimensionar Início (Check-in) */}
                             <div
-                              className="absolute left-0 top-0 bottom-0 w-3 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-l"
-                              onMouseDown={(e) => handleStartResDrag(resItem, flat, "resize-left", e)}
-                              title="Arraste para alterar a data de Check-in"
+                              style={{ gridColumn: `${colStart} / span ${colSpan}`, gridRow: "1 / 2" }}
+                              onMouseDown={(e) => handleStartResDrag(resItem, flat, "move", e)}
+                              className={`h-8.5 mx-0.5 rounded-xl relative select-none ${
+                                isMensalista 
+                                  ? 'bg-gradient-to-r from-purple-800 via-indigo-900 to-purple-800 text-white border-2 border-purple-300 shadow-md ring-2 ring-purple-500/80' 
+                                  : `${channelCfg?.bg} ${channelCfg?.text} border ${channelCfg?.border} shadow-xs`
+                              } flex items-center px-2 text-[11px] font-bold overflow-hidden z-10 cursor-grab active:cursor-grabbing hover:brightness-110 hover:shadow-md transition-all ${
+                                isBeingDragged && resDragState?.hasMoved ? 'opacity-30 border-dashed scale-95' : ''
+                              }`}
+                              title={`${resItem.guestName} (${channelCfg?.label || resItem.channel}) • ${resItem.checkinDate} a ${resItem.checkoutDate} • Clique para abrir ou arraste para mover/redimensionar`}
                             >
-                              <div className="w-0.5 h-3.5 bg-white/50 rounded-full group-hover/resize-l:bg-white" />
-                            </div>
+                              {/* Handle Esquerdo: Redimensionar Início (Check-in) */}
+                              <div
+                                className="absolute left-0 top-0 bottom-0 w-3 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-l"
+                                onMouseDown={(e) => handleStartResDrag(resItem, flat, "resize-left", e)}
+                                title="Arraste para alterar a data de Check-in"
+                              >
+                                <div className="w-0.5 h-3.5 bg-white/50 rounded-full group-hover/resize-l:bg-white" />
+                              </div>
 
-                            {/* Conteúdo Central com Nome e Diárias Contínuos */}
-                            <div className="flex items-center gap-1.5 min-w-0 w-full overflow-hidden whitespace-nowrap px-1.5 pointer-events-none">
-                              {resItem.includeBreakfast && (
-                                <span title="Café da Manhã Incluso" className="shrink-0 text-xs">☕</span>
-                              )}
-                              {isMensalista && (
-                                <span title="Cliente Mensalista / Contrato Long Stay" className="shrink-0 text-[8.5px] uppercase font-black px-1.5 py-0.2 bg-amber-400 text-slate-950 rounded shadow-xs tracking-wider">
-                                  👑 Mensalista
+                              {/* Conteúdo Central com Nome e Diárias Contínuos */}
+                              <div className="flex items-center gap-1.5 min-w-0 w-full overflow-hidden whitespace-nowrap px-1.5 pointer-events-none">
+                                {resItem.includeBreakfast && (
+                                  <span title="Café da Manhã Incluso" className="shrink-0 text-xs">☕</span>
+                                )}
+                                {isMensalista && (
+                                  <span title="Cliente Mensalista / Contrato Long Stay" className="shrink-0 text-[8.5px] uppercase font-black px-1.5 py-0.2 bg-amber-400 text-slate-950 rounded shadow-xs tracking-wider">
+                                    👑 Mensalista
+                                  </span>
+                                )}
+                                <span className="truncate font-black text-white text-[11.5px] min-w-0">
+                                  {resItem.guestName} • {nightsCount} {nightsCount === 1 ? 'diária' : 'diárias'}
                                 </span>
-                              )}
-                              <span className="truncate font-black text-white text-[11.5px] min-w-0">
-                                {resItem.guestName} • {nightsCount} {nightsCount === 1 ? 'diária' : 'diárias'}
-                              </span>
-                            </div>
+                              </div>
 
-                            {/* Handle Direito: Redimensionar Fim (Check-out) */}
-                            <div
-                              className="absolute right-0 top-0 bottom-0 w-3 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-r"
-                              onMouseDown={(e) => handleStartResDrag(resItem, flat, "resize-right", e)}
-                              title="Arraste para alterar a data de Check-out"
-                            >
-                              <div className="w-0.5 h-3.5 bg-white/50 rounded-full group-hover/resize-r:bg-white" />
+                              {/* Handle Direito: Redimensionar Fim (Check-out) */}
+                              <div
+                                className="absolute right-0 top-0 bottom-0 w-3 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-r"
+                                onMouseDown={(e) => handleStartResDrag(resItem, flat, "resize-right", e)}
+                                title="Arraste para alterar a data de Check-out"
+                              >
+                                <div className="w-0.5 h-3.5 bg-white/50 rounded-full group-hover/resize-r:bg-white" />
+                              </div>
                             </div>
-                          </div>
+                          </ReservationHoverCard>
                         );
                       })}
 
@@ -2548,6 +2558,124 @@ export default function PmsCalendar() {
                         </span>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {selectedRes && selectedRes.guestPhone && (
+                  <div className="p-3 bg-emerald-50/80 dark:bg-emerald-950/30 rounded-2xl border border-emerald-200 dark:border-emerald-800 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-emerald-900 dark:text-emerald-300 flex items-center gap-1.5">
+                        <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+                        Disparar WhatsApp (Z-API com Botões)
+                      </span>
+                      <span className="text-[10px] text-muted-foreground font-mono">Destino: {selectedRes.guestPhone}</span>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-emerald-300 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100"
+                        onClick={async () => {
+                          try {
+                            const res = await fetch("/api/whatsapp/dispatch-reservation", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ templateId: "tpl_new_reservation", reservationCode: selectedRes.code })
+                            });
+                            const d = await res.json();
+                            if (res.ok && d.success) {
+                              toast({ title: "✓ WhatsApp enviado!", description: `Confirmação e Pré-Checkin enviados para ${selectedRes.guestName}.` });
+                            } else {
+                              toast({ title: "Falha ao enviar", description: d.error || "Verifique as configurações Z-API.", variant: "destructive" });
+                            }
+                          } catch (e: any) {
+                            toast({ title: "Erro de disparo", description: e.message, variant: "destructive" });
+                          }
+                        }}
+                      >
+                        📝 Enviar Resumo + Check-in
+                      </Button>
+
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-emerald-300 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100"
+                        onClick={async () => {
+                          try {
+                            const res = await fetch("/api/whatsapp/dispatch-reservation", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ templateId: "tpl_breakfast_reminder", reservationCode: selectedRes.code })
+                            });
+                            const d = await res.json();
+                            if (res.ok && d.success) {
+                              toast({ title: "✓ WhatsApp enviado!", description: `Link do café enviado para ${selectedRes.guestName}.` });
+                            } else {
+                              toast({ title: "Falha ao enviar", description: d.error || "Verifique as configurações Z-API.", variant: "destructive" });
+                            }
+                          } catch (e: any) {
+                            toast({ title: "Erro de disparo", description: e.message, variant: "destructive" });
+                          }
+                        }}
+                      >
+                        🥐 Link do Café
+                      </Button>
+
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-emerald-300 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100"
+                        onClick={async () => {
+                          try {
+                            const res = await fetch("/api/whatsapp/dispatch-reservation", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ templateId: "tpl_checkin_day_instructions", reservationCode: selectedRes.code })
+                            });
+                            const d = await res.json();
+                            if (res.ok && d.success) {
+                              toast({ title: "✓ WhatsApp enviado!", description: `Acesso, GPS e Wi-Fi enviados para ${selectedRes.guestName}.` });
+                            } else {
+                              toast({ title: "Falha ao enviar", description: d.error || "Verifique as configurações Z-API.", variant: "destructive" });
+                            }
+                          } catch (e: any) {
+                            toast({ title: "Erro de disparo", description: e.message, variant: "destructive" });
+                          }
+                        }}
+                      >
+                        📍 Acesso & Wi-Fi
+                      </Button>
+
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-emerald-300 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100"
+                        onClick={async () => {
+                          try {
+                            const res = await fetch("/api/whatsapp/dispatch-reservation", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ templateId: "tpl_checkout_reminder", reservationCode: selectedRes.code })
+                            });
+                            const d = await res.json();
+                            if (res.ok && d.success) {
+                              toast({ title: "✓ WhatsApp enviado!", description: `Orientações de check-out enviadas para ${selectedRes.guestName}.` });
+                            } else {
+                              toast({ title: "Falha ao enviar", description: d.error || "Verifique as configurações Z-API.", variant: "destructive" });
+                            }
+                          } catch (e: any) {
+                            toast({ title: "Erro de disparo", description: e.message, variant: "destructive" });
+                          }
+                        }}
+                      >
+                        🚪 Lembrete Check-out
+                      </Button>
+                    </div>
                   </div>
                 )}
               </div>

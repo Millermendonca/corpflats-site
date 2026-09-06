@@ -36,6 +36,7 @@ import { fileURLToPath } from "url";
 import pg from "pg";
 import { uploadImageToStorage } from "./storage-service.mjs";
 import { MicrosoftGraphService } from "./microsoft-graph-service.mjs";
+import { initWhatsAppEngine, triggerImmediateWhatsApp } from "./zapi-service.mjs";
 
 const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
@@ -1313,6 +1314,7 @@ function createNotification({ category, title, message, severity = "info", metad
 
 loadDatabase();
 ensureUniqueRequestIds();
+initWhatsAppEngine(app, db, saveDatabase);
 
 let checkinsList = [];
 let existingManualRequests = [];
@@ -4133,6 +4135,8 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       }
     }
 
+    triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", reservation);
+
     res.json({
       success: true,
       message: "Reserva realizada com sucesso!",
@@ -4515,6 +4519,7 @@ app.post("/api/pms/reservations", (req, res) => {
 
   db.reservations.unshift(newReservation);
   saveDatabase();
+  triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", newReservation);
   res.status(201).json(newReservation);
 });
 
@@ -4623,6 +4628,7 @@ app.put("/api/pms/reservations/:id", (req, res) => {
 
   r.updatedAt = new Date().toISOString();
   saveDatabase();
+  triggerImmediateWhatsApp(db, saveDatabase, "reservation_updated", r);
   res.json(r);
 });
 
@@ -5221,6 +5227,7 @@ app.delete("/api/pms/reservations/:id", (req, res) => {
 
   r.updatedAt = new Date().toISOString();
   saveDatabase();
+  triggerImmediateWhatsApp(db, saveDatabase, "reservation_cancelled", r);
   res.json({ success: true, message: "Reserva cancelada com sucesso.", calendarSequence: r.calendarSequence });
 });
 
@@ -6021,6 +6028,7 @@ app.post("/api/reception/checkin/:reservationId", (req, res) => {
   }
 
   saveDatabase();
+  triggerImmediateWhatsApp(db, saveDatabase, "checkin_completed", r);
   res.json({ success: true, message: `Check-in do Apt ${r.flatNumber} realizado com sucesso!`, reservation: r });
 });
 
