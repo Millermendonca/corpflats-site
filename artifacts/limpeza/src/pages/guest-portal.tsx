@@ -11,7 +11,7 @@ import {
   Sparkles, CheckCircle2, ArrowRight, Clock, KeyRound, 
   MessageCircle, FileText, Ban, AlertTriangle, ChevronRight,
   Wifi, HelpCircle, Check, Copy, Phone, UserCheck, ShieldAlert,
-  MapPin, Navigation, ExternalLink, Car, ArrowLeft
+  MapPin, Navigation, ExternalLink, Car, ArrowLeft, Search
 } from "lucide-react"
 import { format, parseISO, differenceInDays } from "date-fns"
 import { ptBR } from "date-fns/locale"
@@ -37,10 +37,12 @@ export default function GuestPortal() {
   const [, paramsGuest] = useRoute("/guest-portal/:code")
   const [, setLocation] = useLocation()
   
-  const code = params?.code || paramsAlt?.code || paramsGuest?.code || ""
+  const rawCode = params?.code || paramsAlt?.code || paramsGuest?.code || ""
+  const [searchQuery, setSearchQuery] = useState(rawCode)
+  const [code, setCode] = useState(rawCode)
   
   const [data, setData] = useState<any | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(Boolean(rawCode))
   const [error, setError] = useState<string | null>(null)
   const [copiedKey, setCopiedKey] = useState(false)
   const [copiedWifi, setCopiedWifi] = useState(false)
@@ -110,15 +112,16 @@ export default function GuestPortal() {
     }
   }
 
-  const fetchPortalData = async () => {
-    if (!code) {
+  const fetchPortalData = async (targetCode = code) => {
+    const q = (targetCode || "").trim()
+    if (!q) {
       setLoading(false)
-      setError("Código de reserva não fornecido.")
       return
     }
     try {
       setLoading(true)
-      const res = await fetch(`/api/pms/guest-portal/${code}`)
+      setError(null)
+      const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(q)}`)
       if (!res.ok) {
         const err = await res.json()
         setError(err.error || "Reserva não encontrada.")
@@ -126,12 +129,11 @@ export default function GuestPortal() {
       }
       const json = await res.json()
       setData(json)
-      if (code) {
-        try {
-          localStorage.setItem("corpflats_guest_session", code);
-          localStorage.setItem("corpflats_guest_name", json.reservation?.guestName || "");
-        } catch {}
-      }
+      const effectiveCode = json.reservation?.code || q
+      try {
+        localStorage.setItem("corpflats_guest_session", effectiveCode)
+        localStorage.setItem("corpflats_guest_name", json.reservation?.guestName || "")
+      } catch {}
       setError(null)
     } catch (e: any) {
       setError(e.message || "Erro ao carregar dados da reserva.")
@@ -141,8 +143,19 @@ export default function GuestPortal() {
   }
 
   useEffect(() => {
-    fetchPortalData()
-  }, [code])
+    if (rawCode) {
+      setCode(rawCode)
+      setSearchQuery(rawCode)
+      fetchPortalData(rawCode)
+    } else {
+      const savedCode = localStorage.getItem("corpflats_guest_session")
+      if (savedCode) {
+        setLocation(`/minha-reserva/${savedCode}`)
+      } else {
+        setLoading(false)
+      }
+    }
+  }, [rawCode])
 
   const handleClaimEarlyCheckin = async () => {
     try {
@@ -207,19 +220,116 @@ export default function GuestPortal() {
 
   if (error || !data) {
     return (
-      <div className="min-h-screen bg-slate-50/70 text-slate-800 flex flex-col items-center justify-center p-4 text-center">
-        <Card className="max-w-md w-full bg-white border border-slate-200/80 p-6 rounded-3xl space-y-4 shadow-xl">
-          <div className="w-14 h-14 rounded-full bg-rose-50 text-rose-500 border border-rose-200 flex items-center justify-center mx-auto">
-            <AlertTriangle className="w-8 h-8" />
+      <div className="min-h-screen bg-slate-50/70 text-slate-900 flex flex-col font-sans pb-16">
+        {/* Header Clean */}
+        <nav className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-4 sm:px-8 py-3 shadow-2xs">
+          <div className="max-w-4xl mx-auto flex items-center justify-between gap-3">
+            <div 
+              onClick={() => setLocation("/reservar")}
+              className="flex items-center gap-2 cursor-pointer hover:opacity-90 transition-opacity"
+            >
+              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-sm sm:text-base shadow-sm">
+                CF
+              </div>
+              <span className="font-extrabold text-base sm:text-lg tracking-tight text-slate-900">CorpFlats</span>
+            </div>
+
+            <a
+              href="https://wa.me/5522997124021?text=Ol%C3%A1!%20Gostaria%20de%20ajuda%20para%20localizar%20minha%20reserva."
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-emerald-200 bg-emerald-50/90 hover:bg-emerald-100/90 text-emerald-800 text-xs font-bold transition-all shadow-2xs"
+            >
+              <MessageCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span>WhatsApp Recepção</span>
+            </a>
           </div>
-          <h2 className="text-xl font-black text-slate-900">Reserva Não Encontrada</h2>
-          <p className="text-xs text-slate-500 leading-relaxed">
-            {error || "Verifique o código localizador informado no link ou confirme com nossa recepção pelo WhatsApp."}
-          </p>
-          <Button onClick={() => setLocation("/reservar")} className="w-full bg-sky-600 hover:bg-sky-700 font-bold text-xs rounded-xl h-10">
-            Ir para Motor de Reservas
-          </Button>
-        </Card>
+        </nav>
+
+        {/* Content */}
+        <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-6 max-w-lg mx-auto w-full">
+          <Card className="w-full bg-white border border-slate-200/90 rounded-3xl p-6 sm:p-8 shadow-xl space-y-6">
+            <div className="text-center space-y-2">
+              <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center justify-center mx-auto shadow-2xs">
+                <KeyRound className="w-7 h-7" />
+              </div>
+              <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+                Consultar Minha Reserva
+              </h1>
+              <p className="text-xs sm:text-sm text-slate-500 leading-relaxed">
+                Acesse sua fechadura digital, Wi-Fi e Room Service sem necessidade de senha ou cadastro.
+              </p>
+            </div>
+
+            {error && (
+              <div className="p-4 rounded-2xl bg-rose-50/90 border border-rose-200/90 text-rose-800 flex items-start gap-3 text-xs leading-relaxed text-left">
+                <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                <div>
+                  <strong className="block font-bold text-rose-900">Reserva não localizada</strong>
+                  <span>{error}</span>
+                </div>
+              </div>
+            )}
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                const q = searchQuery.trim()
+                if (!q) return
+                setLocation(`/minha-reserva/${encodeURIComponent(q)}`)
+                fetchPortalData(q)
+              }}
+              className="space-y-4"
+            >
+              <div className="space-y-1.5 text-left">
+                <Label htmlFor="searchQuery" className="text-xs font-bold text-slate-700">
+                  Localizador da Reserva, CPF ou WhatsApp:
+                </Label>
+                <div className="relative">
+                  <Input
+                    id="searchQuery"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Ex: RES-211-0045, CPF ou 22997124021"
+                    className="pl-10 h-11 text-xs sm:text-sm rounded-xl border-slate-200 focus-visible:ring-sky-500"
+                    autoFocus
+                  />
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
+                </div>
+              </div>
+
+              <Button
+                type="submit"
+                disabled={!searchQuery.trim()}
+                className="w-full h-11 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm rounded-xl shadow-md gap-2"
+              >
+                <Search className="w-4 h-4" />
+                <span>Localizar Minha Reserva</span>
+              </Button>
+            </form>
+
+            <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setLocation("/reservar")}
+                className="text-slate-500 hover:text-slate-800 text-xs font-semibold p-0 h-auto"
+              >
+                ← Fazer uma nova reserva
+              </Button>
+
+              <a
+                href="https://wa.me/5522997124021?text=Ol%C3%A1!%20Preciso%20de%20ajuda%20para%20encontrar%20minha%20reserva%20na%20CorpFlats."
+                target="_blank"
+                rel="noreferrer"
+                className="text-emerald-700 hover:text-emerald-800 font-bold flex items-center gap-1 text-xs"
+              >
+                <MessageCircle className="w-3.5 h-3.5" />
+                <span>Falar com a Recepção</span>
+              </a>
+            </div>
+          </Card>
+        </div>
       </div>
     )
   }

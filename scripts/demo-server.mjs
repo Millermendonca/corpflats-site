@@ -4706,14 +4706,65 @@ Cláusula 6 – Dos Procedimentos de Encerramento (Check-out)
 6.1. O horário máximo para desocupação da unidade é às 12:00h.
 6.2. Antes da saída, o HÓSPEDE compromete-se a: desligar os aparelhos de ar-condicionado, televisão, ferro e fogão; fechar todas as janelas; certificar-se do fechamento de torneiras e registros de duchas higiênicas; e entregar o cartão magnético diretamente na recepção.`;
 
-const DEFAULT_TERMS_AND_RULES = `${DEFAULT_HOUSE_RULES}\n\n=========================================\n\n${DEFAULT_CONTRACT_TERMS}`;
+function findReservationByLocatorOrContact(query) {
+  if (!query || !db.reservations) return null;
+  const raw = String(query).trim();
+  if (!raw) return null;
+
+  // 1. Código exato ou ID numérico
+  let r = db.reservations.find(resItem => 
+    (resItem.code && resItem.code.toUpperCase() === raw.toUpperCase()) || 
+    String(resItem.id) === raw
+  );
+  if (r) return r;
+
+  // 2. Código normalizado (sem caracteres especiais/hífens)
+  const norm = raw.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+  if (norm.length >= 3) {
+    r = db.reservations.find(resItem => 
+      (resItem.code || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase() === norm
+    );
+    if (r) return r;
+  }
+
+  // 3. Telefone / WhatsApp ou CPF / Documento (se tiver 8 ou mais dígitos)
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length >= 8) {
+    r = db.reservations.slice().reverse().find(resItem => {
+      const phone = (resItem.guestPhone || "").replace(/\D/g, "");
+      const doc = (resItem.guestDocument || resItem.document || "").replace(/\D/g, "");
+      const guestsPhones = (resItem.guests || []).map(g => (g.phone || "").replace(/\D/g, ""));
+      const guestsDocs = (resItem.guests || []).map(g => (g.document || "").replace(/\D/g, ""));
+
+      return (
+        (phone && (phone.includes(digits) || digits.includes(phone))) ||
+        (doc && doc === digits) ||
+        guestsPhones.some(p => p && (p.includes(digits) || digits.includes(p))) ||
+        guestsDocs.some(d => d && d === digits)
+      );
+    });
+    if (r) return r;
+  }
+
+  // 4. E-mail
+  if (raw.includes("@")) {
+    const email = raw.toLowerCase();
+    r = db.reservations.slice().reverse().find(resItem => 
+      (resItem.guestEmail || "").trim().toLowerCase() === email ||
+      (resItem.guests || []).some(g => (g.email || "").trim().toLowerCase() === email)
+    );
+    if (r) return r;
+  }
+
+  return null;
+}
 
 app.get("/api/pms/guest-portal/:code", (req, res) => {
   const code = (req.params.code || "").trim();
   if (!db.reservations) db.reservations = [];
-  const r = db.reservations.find(resItem => resItem.code?.toUpperCase() === code.toUpperCase() || String(resItem.id) === code);
+  const r = findReservationByLocatorOrContact(code);
   if (!r) {
-    return res.status(404).json({ error: "Reserva não encontrada com o localizador informado." });
+    return res.status(404).json({ error: "Reserva não encontrada com os dados informados. Verifique o localizador, CPF ou telefone." });
   }
 
   // Data e hora atual no fuso horário do Brasil
@@ -4828,7 +4879,7 @@ app.get("/api/pms/guest-portal/:code", (req, res) => {
 app.post("/api/pms/guest-portal/:code/claim-early-checkin", (req, res) => {
   const code = (req.params.code || "").trim();
   if (!db.reservations) db.reservations = [];
-  const r = db.reservations.find(resItem => resItem.code?.toUpperCase() === code.toUpperCase() || String(resItem.id) === code);
+  const r = findReservationByLocatorOrContact(code);
   if (!r) {
     return res.status(404).json({ error: "Reserva não encontrada." });
   }
@@ -4848,7 +4899,7 @@ app.post("/api/pms/guest-portal/:code/claim-early-checkin", (req, res) => {
 app.post("/api/pms/guest-portal/:code/request-breakfast-later", (req, res) => {
   const code = (req.params.code || "").trim();
   if (!db.reservations) db.reservations = [];
-  const r = db.reservations.find(resItem => resItem.code?.toUpperCase() === code.toUpperCase() || String(resItem.id) === code);
+  const r = findReservationByLocatorOrContact(code);
   if (!r) {
     return res.status(404).json({ error: "Reserva não encontrada." });
   }
@@ -4867,7 +4918,7 @@ app.post("/api/pms/guest-portal/:code/request-breakfast-later", (req, res) => {
 app.get("/api/pms/guest-portal/:code/cancellation-quote", (req, res) => {
   const code = (req.params.code || "").trim();
   if (!db.reservations) db.reservations = [];
-  const r = db.reservations.find(resItem => resItem.code?.toUpperCase() === code.toUpperCase() || String(resItem.id) === code);
+  const r = findReservationByLocatorOrContact(code);
   if (!r) {
     return res.status(404).json({ error: "Reserva não encontrada." });
   }
@@ -4920,7 +4971,7 @@ app.get("/api/pms/guest-portal/:code/cancellation-quote", (req, res) => {
 app.post("/api/pms/guest-portal/:code/cancel", (req, res) => {
   const code = (req.params.code || "").trim();
   if (!db.reservations) db.reservations = [];
-  const r = db.reservations.find(resItem => resItem.code?.toUpperCase() === code.toUpperCase() || String(resItem.id) === code);
+  const r = findReservationByLocatorOrContact(code);
   if (!r) {
     return res.status(404).json({ error: "Reserva não encontrada." });
   }

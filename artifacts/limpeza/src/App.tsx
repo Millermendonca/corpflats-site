@@ -178,7 +178,7 @@ function Router() {
         <Route path="/auditoria" component={SystemLogsPage} />
         <Route path="/system-logs" component={SystemLogsPage} />
         <Route path="/audit" component={SystemLogsPage} />
-        <Route path="/"><Redirect to="/login" /></Route>
+        <Route path="/"><Redirect to="/reservar" /></Route>
         <Route component={NotFound} />
       </Switch>
     </RoutedErrorBoundary>
@@ -210,14 +210,10 @@ function VersionGuard({ children }: { children: ReactNode }) {
         const currentVersion = localStorage.getItem("gfm_app_version");
 
         if (currentVersion && currentVersion !== serverVersion) {
-          console.warn(`[Deploy Detector] Nova versão (${serverVersion}) detectada! Limpando cache e forçando reautenticação...`);
-          try {
-            await fetch("/api/auth/logout", { method: "POST" });
-          } catch {}
-          localStorage.clear();
-          sessionStorage.clear();
+          console.log(`[Deploy Detector] Nova versão (${serverVersion}) detectada. Atualizando versão local...`);
           localStorage.setItem("gfm_app_version", serverVersion);
-          window.location.replace("/login");
+          // Recarrega a página atual para obter os novos scripts e CSS sem deslogar ninguém nem redirecionar para /login
+          window.location.reload();
           return;
         }
 
@@ -228,7 +224,7 @@ function VersionGuard({ children }: { children: ReactNode }) {
     };
 
     checkAppVersion();
-    const timer = setInterval(checkAppVersion, 15000);
+    const timer = setInterval(checkAppVersion, 30000);
     window.addEventListener("focus", checkAppVersion);
     return () => {
       isMounted = false;
