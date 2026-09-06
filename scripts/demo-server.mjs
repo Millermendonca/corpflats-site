@@ -2969,7 +2969,7 @@ app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
     category: "cleaning",
     action: userAuth?.role === "admin" && status === "clean" && assignedUserId
       ? "CLEANING_COMPLETED_BY_ADMIN_FOR_MAID"
-      : `CLEANING_STATUS_${status.toUpperCase()}`,
+      : `CLEANING_STATUS_${(status || "UPDATED").toUpperCase()}`,
     actor: { name: userAuth ? (userAuth.name || userAuth.username) : "Sistema", role: userAuth?.role || "admin" },
     details: {
       requestId: item.id,
@@ -9140,10 +9140,34 @@ app.post("/api/breakfast/orders", (req, res) => {
   } = req.body;
 
   // Validação Estrita de Elegibilidade de Café da Manhã
-  const activeRes = (db.reservations || []).find(r => 
-    (reservationCode && (r.code === reservationCode || r.reservationCode === reservationCode || String(r.id) === reservationCode || r.breakfastToken === reservationCode)) ||
-    (String(r.flatNumber) === String(roomNumber) && r.status !== "cancelada" && r.status !== "cancelado")
-  );
+  let activeRes = null;
+  if (reservationCode) {
+    activeRes = (db.reservations || []).find(r => 
+      r.code === reservationCode || 
+      r.reservationCode === reservationCode || 
+      String(r.id) === reservationCode || 
+      r.breakfastToken === reservationCode
+    );
+  }
+
+  // Se não foi encontrada por código de reserva, busca pelo apartamento e período de entrega
+  if (!activeRes && roomNumber) {
+    const rawDeliveryDate = req.body.deliveryDate || (Array.isArray(req.body.deliveryDates) ? req.body.deliveryDates[0] : null) || getTodayStr();
+    activeRes = (db.reservations || []).find(r => 
+      String(r.flatNumber) === String(roomNumber) && 
+      r.status !== "cancelada" && 
+      r.status !== "cancelado" &&
+      (!rawDeliveryDate || (rawDeliveryDate >= r.checkinDate && rawDeliveryDate <= r.checkoutDate))
+    );
+
+    if (!activeRes) {
+      activeRes = (db.reservations || []).find(r => 
+        String(r.flatNumber) === String(roomNumber) && 
+        r.status !== "cancelada" && 
+        r.status !== "cancelado"
+      );
+    }
+  }
 
   if (activeRes) {
     if (activeRes.status === "cancelada" || activeRes.status === "cancelado") {
@@ -9152,7 +9176,13 @@ app.post("/api/breakfast/orders", (req, res) => {
       });
     }
 
-    const isIncluded = Boolean(activeRes.includeBreakfast !== undefined ? activeRes.includeBreakfast : (activeRes.hasBreakfast || activeRes.ratePlan === "with_breakfast" || activeRes.notes?.toLowerCase().includes("café") || activeRes.notes?.toLowerCase().includes("cafe")));
+    const isIncluded = Boolean(
+      activeRes.includeBreakfast === true || 
+      activeRes.hasBreakfast === true || 
+      activeRes.ratePlan === "with_breakfast" || 
+      activeRes.notes?.toLowerCase().includes("café") || 
+      activeRes.notes?.toLowerCase().includes("cafe")
+    );
     if (!isIncluded) {
       return res.status(403).json({
         error: "Esta reserva foi contratada sem café da manhã incluso. O serviço de pedidos está desabilitado para este quarto."
@@ -12267,7 +12297,7 @@ function serveSpaWithMetadata(distFolder, req, res) {
       const cafeDesc = guestFirstName 
         ? `Olá ${guestFirstName}, monte e agende o seu café da manhã artesanal servido com carinho diretamente no seu flat.`
         : "Monte e agende o seu café da manhã artesanal servido com todo o carinho diretamente no seu flat.";
-      const cafeImg = "https://images.unsplash.com/photo-1533089860892-a7c6f0a88666?auto=format&fit=crop&w=1200&h=630&q=80";
+      const cafeImg = "https://corpflats.onrender.com/breakfast-preview.jpg";
 
       html = html
         .replace(/<title>.*?<\/title>/i, `<title>${cafeTitle}</title>`)
@@ -12277,7 +12307,9 @@ function serveSpaWithMetadata(distFolder, req, res) {
         .replace(/<meta property="og:description" content=".*?" \/>/i, `<meta property="og:description" content="${cafeDesc}" />`)
         .replace(/<meta name="twitter:description" content=".*?" \/>/i, `<meta name="twitter:description" content="${cafeDesc}" />`)
         .replace(/<meta property="og:image" content=".*?" \/>/i, `<meta property="og:image" content="${cafeImg}" />`)
-        .replace(/<meta name="twitter:image" content=".*?" \/>/i, `<meta name="twitter:image" content="${cafeImg}" />`);
+        .replace(/<meta property="og:image:secure_url" content=".*?" \/>/i, `<meta property="og:image:secure_url" content="${cafeImg}" />`)
+        .replace(/<meta name="twitter:image" content=".*?" \/>/i, `<meta name="twitter:image" content="${cafeImg}" />`)
+        .replace(/<link rel="image_src" href=".*?" \/>/i, `<link rel="image_src" href="${cafeImg}" />`);
     } else if (req.path.startsWith("/minha-reserva") || req.path.startsWith("/portal-hospede") || req.path.startsWith("/guest-portal")) {
       const portalTitle = "🏨 Área do Hóspede • CorpFlats";
       const portalDesc = "Acesse os detalhes da sua acomodação, horário de check-in, regras do flat e agendamento de café da manhã.";

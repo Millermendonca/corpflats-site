@@ -9140,10 +9140,34 @@ app.post("/api/breakfast/orders", (req, res) => {
   } = req.body;
 
   // Validação Estrita de Elegibilidade de Café da Manhã
-  const activeRes = (db.reservations || []).find(r => 
-    (reservationCode && (r.code === reservationCode || r.reservationCode === reservationCode || String(r.id) === reservationCode || r.breakfastToken === reservationCode)) ||
-    (String(r.flatNumber) === String(roomNumber) && r.status !== "cancelada" && r.status !== "cancelado")
-  );
+  let activeRes = null;
+  if (reservationCode) {
+    activeRes = (db.reservations || []).find(r => 
+      r.code === reservationCode || 
+      r.reservationCode === reservationCode || 
+      String(r.id) === reservationCode || 
+      r.breakfastToken === reservationCode
+    );
+  }
+
+  // Se não foi encontrada por código de reserva, busca pelo apartamento e período de entrega
+  if (!activeRes && roomNumber) {
+    const rawDeliveryDate = req.body.deliveryDate || (Array.isArray(req.body.deliveryDates) ? req.body.deliveryDates[0] : null) || getTodayStr();
+    activeRes = (db.reservations || []).find(r => 
+      String(r.flatNumber) === String(roomNumber) && 
+      r.status !== "cancelada" && 
+      r.status !== "cancelado" &&
+      (!rawDeliveryDate || (rawDeliveryDate >= r.checkinDate && rawDeliveryDate <= r.checkoutDate))
+    );
+
+    if (!activeRes) {
+      activeRes = (db.reservations || []).find(r => 
+        String(r.flatNumber) === String(roomNumber) && 
+        r.status !== "cancelada" && 
+        r.status !== "cancelado"
+      );
+    }
+  }
 
   if (activeRes) {
     if (activeRes.status === "cancelada" || activeRes.status === "cancelado") {
@@ -9152,7 +9176,13 @@ app.post("/api/breakfast/orders", (req, res) => {
       });
     }
 
-    const isIncluded = Boolean(activeRes.includeBreakfast !== undefined ? activeRes.includeBreakfast : (activeRes.hasBreakfast || activeRes.ratePlan === "with_breakfast" || activeRes.notes?.toLowerCase().includes("café") || activeRes.notes?.toLowerCase().includes("cafe")));
+    const isIncluded = Boolean(
+      activeRes.includeBreakfast === true || 
+      activeRes.hasBreakfast === true || 
+      activeRes.ratePlan === "with_breakfast" || 
+      activeRes.notes?.toLowerCase().includes("café") || 
+      activeRes.notes?.toLowerCase().includes("cafe")
+    );
     if (!isIncluded) {
       return res.status(403).json({
         error: "Esta reserva foi contratada sem café da manhã incluso. O serviço de pedidos está desabilitado para este quarto."
