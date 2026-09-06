@@ -117,8 +117,12 @@ export async function loginWithGooglePopup(onSuccess: (user: UserProfile) => voi
         }
       }
 
-      if (!clientId) {
-        clientId = "415372338786-m41g9g4g0h6e5q745h5k1k9r4p0a9n.apps.googleusercontent.com"
+      if (!clientId || clientId.includes("m41g9g4g0h6e5q745h5k1k9r4p0a9n") || clientId.includes("corpflats.apps.googleusercontent.com")) {
+        resolve({
+          success: false,
+          error: "O Login com Google requer a ativação da credencial (Google Client ID). Por favor, faça login com seu E-mail e Senha ou cadastre-se ao lado."
+        })
+        return
       }
 
       const launchOAuthPopup = () => {
@@ -434,8 +438,8 @@ export async function initGoogleOneTap(
       }
     }
 
-    if (!clientId) {
-      clientId = "415372338786-m41g9g4g0h6e5q745h5k1k9r4p0a9n.apps.googleusercontent.com"
+    if (!clientId || clientId.includes("m41g9g4g0h6e5q745h5k1k9r4p0a9n") || clientId.includes("corpflats.apps.googleusercontent.com")) {
+      return
     }
 
     const setupGoogle = () => {
