@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import { useRoute, useLocation } from "wouter"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
@@ -11,13 +11,25 @@ import {
   Sparkles, CheckCircle2, ArrowRight, Clock, KeyRound, 
   MessageCircle, FileText, Ban, AlertTriangle, ChevronRight,
   Wifi, HelpCircle, Check, Copy, Phone, UserCheck, ShieldAlert,
-  MapPin, Navigation, ExternalLink, Car
+  MapPin, Navigation, ExternalLink, Car, ArrowLeft
 } from "lucide-react"
 import { format, parseISO, differenceInDays } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { AddToCalendar } from "@/components/add-to-calendar"
 import { generateLodgingJsonLd } from "@/lib/calendar-helper"
 import { calculateCancellationPolicy } from "@/lib/cancellation-helper"
+
+function formatPhoneDisplay(phone: string): string {
+  if (!phone) return "(22) 99712-4021"
+  const digits = phone.replace(/\D/g, "")
+  if (digits.length === 13 && digits.startsWith("55")) {
+    return `(${digits.slice(2, 4)}) ${digits.slice(4, 9)}-${digits.slice(9)}`
+  }
+  if (digits.length === 11) {
+    return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`
+  }
+  return phone
+}
 
 export default function GuestPortal() {
   const [, params] = useRoute("/minha-reserva/:code")
@@ -30,6 +42,8 @@ export default function GuestPortal() {
   const [data, setData] = useState<any | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [copiedKey, setCopiedKey] = useState(false)
+  const [copiedWifi, setCopiedWifi] = useState(false)
   
   // Modals & Action States
   const [termsModalOpen, setTermsModalOpen] = useState(false)
@@ -95,7 +109,6 @@ export default function GuestPortal() {
       setIsRepeatingOrder(false)
     }
   }
-
 
   const fetchPortalData = async () => {
     if (!code) {
@@ -183,37 +196,27 @@ export default function GuestPortal() {
     }
   }
 
-  const handleRequestBreakfastLater = async () => {
-    try {
-      const res = await fetch(`/api/pms/guest-portal/${code}/request-breakfast-later`, {
-        method: "POST"
-      })
-      if (res.ok) {
-        setReminderSaved(true)
-        setTimeout(() => setReminderSaved(false), 4000)
-      }
-    } catch {}
-  }
-
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-4">
-        <div className="animate-spin w-10 h-10 border-4 border-primary border-t-transparent rounded-full mb-4" />
-        <p className="text-sm font-medium text-slate-400">Carregando detalhes da sua reserva...</p>
+      <div className="min-h-screen bg-slate-50/70 text-slate-800 flex flex-col items-center justify-center p-4">
+        <div className="animate-spin w-10 h-10 border-4 border-sky-600 border-t-transparent rounded-full mb-4" />
+        <p className="text-sm font-semibold text-slate-600">Carregando detalhes da sua reserva...</p>
       </div>
     )
   }
 
   if (error || !data) {
     return (
-      <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-4 text-center">
-        <Card className="max-w-md w-full bg-slate-900 border-slate-800 text-white p-6 rounded-3xl space-y-4">
-          <div className="w-14 h-14 rounded-full bg-rose-500/20 text-rose-400 flex items-center justify-center mx-auto">
+      <div className="min-h-screen bg-slate-50/70 text-slate-800 flex flex-col items-center justify-center p-4 text-center">
+        <Card className="max-w-md w-full bg-white border border-slate-200/80 p-6 rounded-3xl space-y-4 shadow-xl">
+          <div className="w-14 h-14 rounded-full bg-rose-50 text-rose-500 border border-rose-200 flex items-center justify-center mx-auto">
             <AlertTriangle className="w-8 h-8" />
           </div>
-          <h2 className="text-xl font-bold">Reserva Não Encontrada</h2>
-          <p className="text-xs text-slate-400">{error || "Verifique o código localizador informado no link ou confirme com nossa recepção."}</p>
-          <Button onClick={() => setLocation("/reservar")} className="w-full bg-primary font-bold text-xs">
+          <h2 className="text-xl font-black text-slate-900">Reserva Não Encontrada</h2>
+          <p className="text-xs text-slate-500 leading-relaxed">
+            {error || "Verifique o código localizador informado no link ou confirme com nossa recepção pelo WhatsApp."}
+          </p>
+          <Button onClick={() => setLocation("/reservar")} className="w-full bg-sky-600 hover:bg-sky-700 font-bold text-xs rounded-xl h-10">
             Ir para Motor de Reservas
           </Button>
         </Card>
@@ -221,499 +224,407 @@ export default function GuestPortal() {
     )
   }
 
-  const { reservation, isFlatRevealed, revealTimeMessage, canClaimFreeEarlyCheckin, breakfastOrder, preCheckinStatus, termsAndRules, adminWhatsApp } = data
+  const { reservation, isFlatClean, canClaimFreeEarlyCheckin, breakfastOrder, preCheckinStatus, termsAndRules, adminWhatsApp } = data
 
   const checkinFormatted = reservation.checkinDate ? format(parseISO(reservation.checkinDate), "dd 'de' MMMM 'de' yyyy", { locale: ptBR }) : ""
   const checkoutFormatted = reservation.checkoutDate ? format(parseISO(reservation.checkoutDate), "dd 'de' MMMM 'de' yyyy", { locale: ptBR }) : ""
   const nights = reservation.checkinDate && reservation.checkoutDate ? Math.max(1, differenceInDays(parseISO(reservation.checkoutDate), parseISO(reservation.checkinDate))) : 1
 
-  // WhatsApp Link formatado
-  const rawAdminPhone = (adminWhatsApp || "5522999999999").replace(/\D/g, "")
-  const whatsappUrl = `https://wa.me/${rawAdminPhone}?text=${encodeURIComponent(`Olá, tenho uma reserva número ${reservation.code} feita pelo site e gostaria de tirar uma dúvida.`)}`
+  const guestName = reservation.guestName || reservation.guests?.[0]?.name || "Hóspede"
+  const rawAdminPhone = (adminWhatsApp || "5522997124021").replace(/\D/g, "")
+  const finalWaNumber = rawAdminPhone.length === 10 || rawAdminPhone.length === 11 ? `55${rawAdminPhone}` : rawAdminPhone
+  const whatsappUrl = `https://wa.me/${finalWaNumber}?text=${encodeURIComponent(`Olá! Tenho uma reserva (${reservation.code}) no Flat ${reservation.flatNumber} e gostaria de tirar uma dúvida.`)}`
+  const accessCode = reservation.doorPassword || reservation.accessCode || ""
+  const hasBreakfast = Boolean(data.hasBreakfast || reservation.includeBreakfast || reservation.hasBreakfast)
+
+  const handleCopyKey = () => {
+    if (!accessCode) return
+    navigator.clipboard.writeText(accessCode)
+    setCopiedKey(true)
+    setTimeout(() => setCopiedKey(false), 2500)
+  }
+
+  const handleCopyWifi = () => {
+    const wifiPass = data?.wifiPassword || "soho2026"
+    navigator.clipboard.writeText(wifiPass)
+    setCopiedWifi(true)
+    setTimeout(() => setCopiedWifi(false), 2500)
+  }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans pb-20">
-      {/* Header */}
-      <header className="bg-slate-900 border-b border-slate-800/80 px-4 sm:px-8 py-6">
-        <div className="max-w-4xl mx-auto flex flex-wrap items-center justify-between gap-4">
+    <div className="min-h-screen bg-slate-50/70 text-slate-900 flex flex-col font-sans selection:bg-sky-500 selection:text-white pb-20 w-full max-w-full overflow-x-hidden">
+      {/* ── Top Navigation Bar (Header Clean & Sofisticado) ──────────────── */}
+      <nav className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-4 sm:px-8 py-3 shadow-2xs w-full max-w-full">
+        <div className="max-w-4xl mx-auto flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-2xl bg-primary/20 text-primary flex items-center justify-center font-black text-xl border border-primary/30">
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-sm sm:text-base shadow-sm">
               CF
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-lg font-black text-white">CorpFlats</h1>
-                <Badge className="bg-emerald-950 text-emerald-400 border border-emerald-800 text-[10px] font-bold">
+                <span className="font-bold text-base sm:text-lg tracking-tight text-slate-900 leading-none">
+                  CorpFlats
+                </span>
+                <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200/90 text-[10px] font-bold py-0.5 px-2">
                   Reserva Confirmada
                 </Badge>
               </div>
-              <p className="text-xs text-slate-400">Localizador: <span className="font-mono font-bold text-slate-200">{reservation.code}</span></p>
+              <span className="text-[11px] text-slate-500 font-mono font-medium block mt-0.5">
+                Localizador: <strong className="text-slate-800 font-bold">{reservation.code}</strong>
+              </span>
             </div>
           </div>
 
-          <a 
-            href={whatsappUrl} 
-            target="_blank" 
-            rel="noreferrer"
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition-colors shadow-sm"
-          >
-            <MessageCircle className="w-4 h-4" />
-            <span>WhatsApp</span>
-          </a>
+          <div className="flex items-center gap-2">
+            <a
+              href={whatsappUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs hover:shadow-sm active:scale-95 transition-all"
+            >
+              <MessageCircle className="w-3.5 h-3.5 fill-white/20" />
+              <span>WhatsApp</span>
+            </a>
+          </div>
         </div>
-      </header>
+      </nav>
 
-      {/* Main Container */}
-      <main className="max-w-4xl w-full mx-auto px-4 py-6 space-y-6">
+      {/* ── Main Container ──────────────────────────────────────────────── */}
+      <main className="max-w-4xl w-full mx-auto px-4 py-6 sm:py-8 space-y-6">
         
-        {/* Banner 100% Não Fumante */}
-        <div className="p-3.5 bg-rose-950/40 border border-rose-800/60 rounded-2xl flex items-center gap-3 text-xs text-rose-200">
-          <div className="w-9 h-9 rounded-xl bg-rose-900/80 text-rose-300 flex items-center justify-center shrink-0">
-            <Ban className="w-5 h-5" />
-          </div>
-          <div>
-            <span className="font-bold text-white block">Flats 100% Não Fumantes 🚭</span>
-            <span className="text-[11px] text-rose-300/90">
-              É estritamente proibido fumar dentro dos apartamentos e sacadas. Sujeito a taxa de higienização de R$ 350,00.
-            </span>
-          </div>
-        </div>
-
-        {/* Card: Adicionar ao Calendário (Google Agenda, Outlook, Apple .ICS) */}
-        <AddToCalendar
-          reservation={{
-            id: reservation.id || reservation.code,
-            reservationCode: reservation.code,
-            guestName: reservation.guestName || "Hóspede",
-            guestEmail: reservation.guestEmail,
-            guestPhone: reservation.guestPhone,
-            flatNumber: reservation.flatNumber,
-            flatName: reservation.roomCategory,
-            checkinDate: reservation.checkinDate,
-            checkoutDate: reservation.checkoutDate,
-            numGuests: reservation.guestCount || 2,
-            accessCode: reservation.doorPassword || reservation.accessCode,
-            manageUrl: `https://corpflats.onrender.com/minha-reserva/${reservation.code}`
-          }}
-        />
-
-        {/* Script JSON-LD Schema.org LodgingReservation para Gmail e Google */}
-        <script
-          type="application/ld+json"
-          dangerouslySetInnerHTML={{
-            __html: JSON.stringify(generateLodgingJsonLd({
-              id: reservation.id || reservation.code,
-              reservationCode: reservation.code,
-              guestName: reservation.guestName || "Hóspede",
-              guestEmail: reservation.guestEmail,
-              guestPhone: reservation.guestPhone,
-              flatNumber: reservation.flatNumber,
-              checkinDate: reservation.checkinDate,
-              checkoutDate: reservation.checkoutDate,
-              numGuests: reservation.guestCount || 2,
-              manageUrl: `https://corpflats.onrender.com/minha-reserva/${reservation.code}`
-            }))
-          }}
-        />
-
-        {/* Card: Acomodação & Chave de Acesso */}
-        <Card className="bg-slate-900 border-slate-800 text-white rounded-3xl p-5 sm:p-6 shadow-xl space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-4">
+        {/* ── 1. Hero / Saudação e Resumo da Estadia ─────────────────────── */}
+        <Card className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-6 sm:p-8 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
             <div>
-              <span className="text-xs font-bold text-primary uppercase tracking-wider block">Sua Acomodação</span>
-              <h2 className="text-xl font-black text-white">{reservation.roomCategory || "Flat Studio Executivo Completo"}</h2>
+              <span className="text-[11px] font-bold text-sky-600 uppercase tracking-wider block">
+                Área do Hóspede • Minha Reserva
+              </span>
+              <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight mt-0.5">
+                Olá, {guestName}! 👋
+              </h1>
+              <p className="text-xs sm:text-sm text-slate-500 mt-1">
+                Sua estadia no <strong>Edifício Soho Residence Service</strong> • Centro, Campos dos Goytacazes - RJ.
+              </p>
             </div>
-            <Badge variant="outline" className="border-slate-700 text-slate-300 text-xs">
-              {reservation.guestCount} {reservation.guestCount === 1 ? "Hóspede" : "Hóspedes"} • {nights} {nights === 1 ? "Diária" : "Diárias"}
-            </Badge>
-          </div>
 
-          {/* Número do Apartamento & Status de Prontidão */}
-          <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-slate-400">Número do seu Apartamento</span>
-              <Badge className={
-                data.isCheckinToday 
-                  ? (data.isFlatClean ? "bg-emerald-600 text-white font-black text-xs" : "bg-amber-600/90 text-white font-bold text-xs")
-                  : "bg-emerald-950 text-emerald-300 border border-emerald-800 font-bold text-xs"
-              }>
-                {data.isCheckinToday 
-                  ? (data.isFlatClean ? "✨ Flat Pronto e Limpo" : "🧹 Em Higienização")
-                  : "✨ Flat Confirmado & Preparado"
-                }
+            <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+              <Badge variant="outline" className="bg-slate-50 text-slate-700 border-slate-200 text-xs font-bold py-1 px-2.5">
+                Flat {reservation.flatNumber}
               </Badge>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-primary/20 text-primary flex items-center justify-center font-black text-xl border border-primary/40">
-                {reservation.flatNumber}
-              </div>
-              <div>
-                <span className="text-base font-black text-white block">Apartamento {reservation.flatNumber}</span>
-                <span className="text-xs text-slate-300">
-                  Dirija-se à <strong>portaria</strong> e informe seu <strong>nome</strong> e o número do flat: <strong>Apt {reservation.flatNumber}</strong>.
-                </span>
-              </div>
-            </div>
-
-            {/* Aviso Dinâmico de Check-in / Antecipação */}
-            {data.isCheckinToday ? (
-              data.isFlatClean ? (
-                <div className="p-3 bg-emerald-950/40 border border-emerald-800/60 rounded-xl flex items-start gap-2.5 text-xs text-emerald-300">
-                  <Sparkles className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                  <div>
-                    <span className="font-bold text-emerald-200 block">Check-in Antecipado Liberado! 🎉</span>
-                    <span>Seu apartamento já foi limpo e inspecionado. Você já pode se dirigir à portaria e dar entrada agora mesmo.</span>
-                  </div>
-                </div>
+              <Badge variant="outline" className="bg-slate-50 text-slate-700 border-slate-200 text-xs font-bold py-1 px-2.5">
+                {nights} {nights === 1 ? "diária" : "diárias"}
+              </Badge>
+              <Badge variant="outline" className="bg-slate-50 text-slate-700 border-slate-200 text-xs font-bold py-1 px-2.5">
+                {reservation.guestCount || 1} {reservation.guestCount === 1 ? "hóspede" : "hóspedes"}
+              </Badge>
+              {hasBreakfast ? (
+                <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs font-bold py-1 px-2.5">
+                  ☕ Café Incluso
+                </Badge>
               ) : (
-                <div className="p-3 bg-amber-950/30 border border-amber-800/50 rounded-xl flex items-start gap-2.5 text-xs text-amber-300">
-                  <Clock className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                  <div>
-                    <span className="font-bold text-amber-200 block">Quarto em Preparação</span>
-                    <span>Nossa equipe de governança está higienizando o apartamento. Check-in regular a partir das 14:00 (assim que for finalizado, a entrada antecipada é liberada automaticamente).</span>
-                  </div>
-                </div>
-              )
-            ) : null}
-
-            {reservation.receptionNotes && (
-              <div className="p-2.5 bg-indigo-950/30 border border-indigo-800/50 rounded-xl text-xs text-indigo-300">
-                <span className="font-bold">Aviso da Recepção:</span> {reservation.receptionNotes}
-              </div>
-            )}
+                <Badge variant="outline" className="bg-slate-50 text-slate-500 border-slate-200 text-xs font-medium py-1 px-2.5">
+                  Café Opcional
+                </Badge>
+              )}
+            </div>
           </div>
 
-          {/* Período da Estadia */}
+          {/* Grid de Entrada e Saída */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-            <div className="p-3.5 bg-slate-950/60 rounded-xl border border-slate-800">
-              <span className="text-slate-500 font-semibold block">Check-in (Entrada)</span>
-              <span className="text-sm font-bold text-slate-200 mt-0.5 block">{checkinFormatted}</span>
-              <span className="text-[11px] text-emerald-400 font-medium">A partir das {data?.checkinTime || "14:00"} (antecipado assim que limpo)</span>
+            <div className="p-4 rounded-2xl bg-slate-50/80 border border-slate-100 space-y-1">
+              <span className="text-slate-400 font-bold uppercase text-[10px] tracking-wider block">
+                Check-in (Entrada)
+              </span>
+              <span className="text-sm sm:text-base font-bold text-slate-900 block">
+                {checkinFormatted}
+              </span>
+              <span className="text-[11px] text-emerald-700 font-semibold flex items-center gap-1">
+                <Clock className="w-3.5 h-3.5" />
+                <span>A partir das {data?.checkinTime || "14:00"} (antecipado assim que limpo)</span>
+              </span>
             </div>
-            <div className="p-3.5 bg-slate-950/60 rounded-xl border border-slate-800">
-              <span className="text-slate-500 font-semibold block">Check-out (Saída)</span>
-              <span className="text-sm font-bold text-slate-200 mt-0.5 block">{checkoutFormatted}</span>
-              <span className="text-[11px] text-slate-400">Até as {data?.checkoutTime || "12:00"}</span>
+
+            <div className="p-4 rounded-2xl bg-slate-50/80 border border-slate-100 space-y-1">
+              <span className="text-slate-400 font-bold uppercase text-[10px] tracking-wider block">
+                Check-out (Saída)
+              </span>
+              <span className="text-sm sm:text-base font-bold text-slate-900 block">
+                {checkoutFormatted}
+              </span>
+              <span className="text-[11px] text-slate-500 font-semibold flex items-center gap-1">
+                <Clock className="w-3.5 h-3.5" />
+                <span>Até as {data?.checkoutTime || "12:00"}</span>
+              </span>
             </div>
           </div>
         </Card>
 
-        {/* Card: Café da Manhã (Se incluso na reserva) */}
-        {(reservation.hasBreakfast || reservation.includeBreakfast || data.hasBreakfast) && (
-          <Card className="bg-gradient-to-br from-amber-950/50 via-slate-900 to-slate-900 border-amber-600/40 text-white rounded-3xl p-5 sm:p-6 shadow-xl space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-800/40 pb-3.5">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-xl border border-amber-500/30 shadow-xs">
-                  <Coffee className="w-5 h-5" />
+        {/* ── 2. Card: Acomodação & Chave de Acesso / Portaria ───────────── */}
+        <Card className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-5 sm:p-7 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-sky-50 text-sky-600 border border-sky-200 flex items-center justify-center font-black text-sm">
+                <Building2 className="w-4 h-4" />
+              </div>
+              <div>
+                <h2 className="text-base font-black text-slate-900">
+                  {reservation.roomCategory || "Flat Studio Executivo Soho"}
+                </h2>
+                <span className="text-xs text-slate-500">
+                  Unidade privativa completa, climatizada e com cozinha compacta
+                </span>
+              </div>
+            </div>
+
+            <Badge className={
+              data.isCheckinToday 
+                ? (isFlatClean ? "bg-emerald-50 text-emerald-700 border-emerald-200 font-bold text-xs" : "bg-amber-50 text-amber-700 border-amber-200 font-bold text-xs")
+                : "bg-emerald-50 text-emerald-700 border-emerald-200 font-bold text-xs"
+            }>
+              {data.isCheckinToday 
+                ? (isFlatClean ? "✨ Flat Pronto e Limpo" : "🧹 Em Higienização")
+                : "✨ Flat Confirmado & Preparado"
+              }
+            </Badge>
+          </div>
+
+          <div className="p-4 sm:p-5 rounded-2xl bg-slate-50/80 border border-slate-100 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-sky-600 text-white flex items-center justify-center font-black text-xl shadow-xs">
+                  {reservation.flatNumber}
                 </div>
                 <div>
-                  <h2 className="text-base font-black text-white flex items-center gap-2">
-                    Room Service & Café da Manhã
-                  </h2>
-                  <span className="text-[11px] text-amber-300/90 font-medium">
-                    Entregas diárias das 05h às 09h30
+                  <span className="text-base font-black text-slate-900 block">
+                    Apartamento {reservation.flatNumber}
+                  </span>
+                  <span className="text-xs text-slate-500">
+                    Dirija-se à <strong>portaria 24h</strong> e informe seu <strong>nome</strong> e o número do flat.
                   </span>
                 </div>
               </div>
-              <Badge className="bg-emerald-950 text-emerald-300 border border-emerald-800 text-xs font-black px-2.5 py-0.5">
-                ☕ Incluso na Diária
-              </Badge>
+
+              {accessCode && (
+                <div className="p-3 bg-white rounded-xl border border-slate-200 flex items-center gap-3 shadow-2xs">
+                  <div>
+                    <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">
+                      Senha Fechadura / Portaria
+                    </span>
+                    <span className="font-mono text-base font-black text-slate-900">
+                      {accessCode}
+                    </span>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={handleCopyKey}
+                    className="h-8 px-2.5 rounded-xl text-xs font-bold border-slate-200 hover:bg-slate-50 text-slate-700 flex items-center gap-1.5"
+                  >
+                    {copiedKey ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <KeyRound className="w-3.5 h-3.5 text-amber-500" />}
+                    <span>{copiedKey ? "Copiada!" : "Copiar"}</span>
+                  </Button>
+                </div>
+              )}
             </div>
 
-            <p className="text-xs text-slate-300 leading-relaxed">
-              Sua estadia conta com café da manhã incluso com entregas diárias das <strong>05h às 09h30</strong>. Você pode personalizar suas opções favoritas e selecionar o horário ideal através do link do cardápio.
-            </p>
-
-            <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5 pt-1">
-              <Button
-                onClick={() => setLocation(`/minha-reserva/${reservation.code || code}/cafe`)}
-                className="w-full sm:w-auto bg-amber-600 hover:bg-amber-500 text-white font-black text-xs h-11 px-5 rounded-2xl shadow-lg shadow-amber-600/20 flex items-center justify-center gap-2 flex-1 transition-all"
-              >
-                <Coffee className="w-4 h-4" />
-                <span>Montar / Acompanhar Pedido de Café da Manhã</span>
-                <ArrowRight className="w-4 h-4" />
-              </Button>
-
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  const url = `${window.location.origin}/minha-reserva/${reservation.code || code}/cafe`
-                  navigator.clipboard.writeText(url)
-                  alert("Link exclusivo do café da manhã copiado para a área de transferência!")
-                }}
-                className="h-11 px-4 rounded-2xl border-slate-700 hover:bg-slate-800 text-slate-200 font-bold text-xs shrink-0"
-              >
-                <Copy className="w-3.5 h-3.5 mr-1.5" />
-                <span>Copiar Link</span>
-              </Button>
-            </div>
-          </Card>
-        )}
-
-        {/* Card: Comprovante & Detalhes Oficiais do Pagamento */}
-        <Card className="bg-slate-900 border-slate-800 text-white rounded-3xl p-5 sm:p-6 shadow-xl space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <div className="flex items-center gap-2">
-              <span className="text-emerald-400 font-bold text-lg">💰</span>
-              <h2 className="text-base font-bold text-white">Comprovante & Detalhes do Pagamento</h2>
-            </div>
-            <Badge className={reservation.paymentStatus === "pago_total" || reservation.paymentStatus === "pago" ? "bg-emerald-950 text-emerald-300 border border-emerald-800 text-xs font-bold" : "bg-amber-950 text-amber-300 border border-amber-800 text-xs font-bold"}>
-              {reservation.paymentStatus === "pago_total" || reservation.paymentStatus === "pago" ? "✓ Pago Integralmente" : "Aguardando Confirmação"}
-            </Badge>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-            <div className="p-3.5 bg-slate-950/80 rounded-2xl border border-slate-800 space-y-1">
-              <span className="text-slate-400 text-[11px] block font-medium">Forma de Pagamento</span>
-              <span className="text-sm font-bold text-white flex items-center gap-1.5">
-                {reservation.pixTxId ? "⚡ PIX Instantâneo (Banco Inter)" : (reservation.mpPaymentId ? "💳 Cartão de Crédito (Mercado Pago)" : "PIX Oficial")}
-              </span>
-            </div>
-
-            <div className="p-3.5 bg-slate-950/80 rounded-2xl border border-slate-800 space-y-1">
-              <span className="text-slate-400 text-[11px] block font-medium">Valor Total Pago</span>
-              <span className="text-base font-black text-emerald-400">
-                R$ {(reservation.paidAmount || reservation.totalAmount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-              </span>
-            </div>
-          </div>
-
-          <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800/80 space-y-2 text-xs text-slate-300">
-            {reservation.paidAt && (
-              <div className="flex flex-wrap justify-between border-b border-slate-800/60 pb-2">
-                <span className="text-slate-400 font-medium">Data e Hora da Liquidação:</span>
-                <span className="font-semibold text-slate-200">
-                  {format(parseISO(reservation.paidAt), "dd/MM/yyyy 'às' HH:mm:ss", { locale: ptBR })}
-                </span>
+            {/* Aviso de Antecipação Liberada */}
+            {data.isCheckinToday && isFlatClean && (
+              <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-start gap-2.5 text-xs text-emerald-800">
+                <Sparkles className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold block text-emerald-950">Check-in Antecipado Liberado! 🎉</span>
+                  <span>Seu apartamento já foi limpo e inspecionado. Você já pode se dirigir à portaria e entrar agora mesmo.</span>
+                </div>
               </div>
             )}
-
-            {reservation.pixEndToEndId && (
-              <div className="flex flex-col sm:flex-row sm:justify-between border-b border-slate-800/60 pb-2 gap-1">
-                <span className="text-slate-400 font-medium">ID da Transação (EndToEnd BCB):</span>
-                <span className="font-mono text-[11px] text-emerald-400 font-bold break-all select-all">
-                  {reservation.pixEndToEndId}
-                </span>
-              </div>
-            )}
-
-            {reservation.pixTxId && (
-              <div className="flex flex-col sm:flex-row sm:justify-between border-b border-slate-800/60 pb-2 gap-1">
-                <span className="text-slate-400 font-medium">Identificador TxId (Banco Inter):</span>
-                <span className="font-mono text-[11px] text-slate-300 break-all select-all">
-                  {reservation.pixTxId}
-                </span>
-              </div>
-            )}
-
-            <div className="flex justify-between pt-1">
-              <span className="text-slate-400 font-medium">Favorecido / Titular:</span>
-              <span className="font-semibold text-slate-200">CorpFlats Hospedagens • CNPJ 47.964.813/0001-65</span>
-            </div>
           </div>
         </Card>
 
-        {/* Card: Café da Manhã Integrado na Área Logada */}
-        <Card className="bg-slate-900 border-slate-800 text-white rounded-3xl p-5 sm:p-6 shadow-xl space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <div className="flex items-center gap-2">
-              <Coffee className="w-5 h-5 text-amber-500" />
-              <h2 className="text-base font-bold text-white">Café da Manhã no Quarto</h2>
+        {/* ── 3. Card: Room Service & Café da Manhã ──────────────────────── */}
+        <Card className="bg-gradient-to-br from-amber-50/90 via-white to-amber-50/30 border border-amber-200/80 rounded-3xl p-5 sm:p-7 shadow-md space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-200/60 pb-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center font-bold text-xl border border-amber-300 shadow-2xs">
+                <Coffee className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-base font-black text-slate-900 flex items-center gap-2">
+                  Room Service & Café da Manhã
+                </h2>
+                <span className="text-xs text-amber-800/90 font-medium">
+                  Entregas diárias das 05h às 09h30 servidas pontualmente no flat
+                </span>
+              </div>
             </div>
-            <Badge className={reservation.includeBreakfast || reservation.hasBreakfast ? "bg-amber-950 text-amber-400 border border-amber-800 text-[10px] font-bold" : "bg-slate-800 text-slate-400 text-[10px]"}>
-              {reservation.includeBreakfast || reservation.hasBreakfast ? "☕ Incluso na Estadia" : "Não Incluso"}
+
+            <Badge variant="outline" className={`text-xs font-black px-2.5 py-0.5 ${
+              hasBreakfast ? "bg-amber-100 text-amber-900 border-amber-300" : "bg-slate-100 text-slate-500 border-slate-200"
+            }`}>
+              {hasBreakfast ? "☕ Incluso na Diária" : "Serviço Disponível"}
             </Badge>
           </div>
 
-          {!(reservation.includeBreakfast || reservation.hasBreakfast) ? (
-            <div className="p-4 bg-slate-950/60 rounded-2xl border border-slate-800 space-y-2 text-xs">
-              <div className="flex items-center gap-2 text-slate-300 font-bold">
-                <Ban className="w-4 h-4 text-slate-400" />
-                <span>Café da Manhã não incluso nesta reserva</span>
+          <p className="text-xs text-slate-600 leading-relaxed">
+            Monte o seu pedido selecionando frutas frescas, pães artesanais, bebidas quentes e geladas de sua preferência, além do horário exato de sua entrega.
+          </p>
+
+          {/* Se houver pedido já agendado para a data */}
+          {breakfastOrder && (
+            <div className="p-4 bg-white/95 rounded-2xl border border-amber-200 space-y-3 shadow-2xs">
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-1.5 font-bold text-amber-900 text-xs sm:text-sm">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  <span>Pedido Agendado ({breakfastOrder.deliveryDate === format(new Date(), "yyyy-MM-dd") ? "Hoje" : "Próxima Entrega"})</span>
+                </span>
+                <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-200 text-[10px] font-bold">
+                  ⏰ Entrega às {breakfastOrder.deliveryTime || "08:00"}
+                </Badge>
               </div>
-              <p className="text-slate-400 text-[11px] leading-relaxed">
-                Sua reserva atual foi contratada sem o serviço de café da manhã. Para reservas futuras, selecione uma tarifa com café da manhã incluso.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-4 text-xs">
-              {/* Pedido Ativo / Agendado */}
-              {breakfastOrder && (
-                <div className="p-4 bg-slate-950 rounded-2xl border border-emerald-900/60 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="flex items-center gap-1.5 font-bold text-emerald-400 text-sm">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                      <span>Pedido Agendado ({breakfastOrder.deliveryDate === format(new Date(), "yyyy-MM-dd") ? "Hoje" : "Próxima Entrega"})</span>
+
+              {breakfastOrder.items && Array.isArray(breakfastOrder.items) && (
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {breakfastOrder.items.map((it: any, idx: number) => (
+                    <span key={idx} className="inline-block bg-amber-50/80 border border-amber-200/80 text-amber-900 px-2.5 py-0.5 rounded-lg text-[10.5px] font-medium">
+                      {it.quantity > 1 ? `${it.quantity}x ` : ""}{it.name}
                     </span>
-                    <Badge className="bg-emerald-950 text-emerald-300 border-emerald-800 text-[10px]">
-                      ⏰ Entrega às {breakfastOrder.deliveryTime || "08:00"}
-                    </Badge>
-                  </div>
-
-                  <div className="text-[11px] text-slate-300 bg-slate-900/80 p-3 rounded-xl border border-slate-800 space-y-1.5">
-                    <div className="flex justify-between text-slate-400">
-                      <span>Apartamento: <strong>Apt {breakfastOrder.roomNumber || reservation.flatNumber}</strong></span>
-                      <span>Data: <strong>{breakfastOrder.deliveryDate}</strong></span>
-                    </div>
-                    {breakfastOrder.items && Array.isArray(breakfastOrder.items) && (
-                      <div className="pt-1 text-slate-200">
-                        <span className="text-[10px] text-slate-400 font-bold uppercase block mb-1">Itens Selecionados:</span>
-                        <div className="flex flex-wrap gap-1.5">
-                          {breakfastOrder.items.map((it: any, idx: number) => (
-                            <span key={idx} className="inline-block bg-slate-800 px-2 py-0.5 rounded-md text-[10px]">
-                              {it.quantity > 1 ? `${it.quantity}x ` : ""}{it.name}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-2 pt-1">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleToggleFavorite(breakfastOrder.id)}
-                      disabled={favoriteTogglingId === breakfastOrder.id}
-                      className="text-xs h-8 bg-slate-900 border-amber-800/60 text-amber-300 hover:bg-amber-950/40 flex items-center gap-1.5"
-                    >
-                      <Star className={`w-3.5 h-3.5 ${breakfastOrder.isFavorite ? "fill-amber-400 text-amber-400" : ""}`} />
-                      <span>{breakfastOrder.isFavorite ? "Favoritado ⭐" : "Favoritar este Pedido"}</span>
-                    </Button>
-
-                    <Button
-                      type="button"
-                      size="sm"
-                      onClick={() => setLocation(`/cafe?code=${code}`)}
-                      className="text-xs h-8 bg-slate-800 hover:bg-slate-700 text-white ml-auto"
-                    >
-                      Alterar Opções
-                    </Button>
-                  </div>
+                  ))}
                 </div>
               )}
 
-              {/* Botão de Repetir Último Pedido & Pedidos Favoritos */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div className="flex items-center gap-2 pt-2 border-t border-amber-100">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleToggleFavorite(breakfastOrder.id)}
+                  disabled={favoriteTogglingId === breakfastOrder.id}
+                  className="text-xs h-8 bg-white border-amber-200 text-amber-800 hover:bg-amber-50 flex items-center gap-1.5 rounded-xl font-semibold"
+                >
+                  <Star className={`w-3.5 h-3.5 ${breakfastOrder.isFavorite ? "fill-amber-500 text-amber-500" : ""}`} />
+                  <span>{breakfastOrder.isFavorite ? "Favoritado ⭐" : "Favoritar este Pedido"}</span>
+                </Button>
+
                 {(reservation.lastBreakfastOrder || breakfastOrder) && (
                   <Button
                     type="button"
+                    variant="outline"
+                    size="sm"
                     onClick={() => handleOpenRepeatModal(reservation.lastBreakfastOrder || breakfastOrder)}
-                    className="w-full bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-white font-bold text-xs h-10 rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-amber-900/20"
+                    className="text-xs h-8 bg-white border-amber-200 text-amber-800 hover:bg-amber-50 flex items-center gap-1.5 rounded-xl font-semibold ml-auto"
                   >
-                    <RotateCcw className="w-4 h-4" />
-                    <span>⚡ Repetir Último Pedido</span>
+                    <RotateCcw className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Repetir para Amanhã</span>
                   </Button>
                 )}
-
-                <Button
-                  type="button"
-                  onClick={() => setLocation(`/cafe?code=${code}`)}
-                  className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs h-10 rounded-2xl flex items-center justify-center gap-2 border border-slate-700"
-                >
-                  <Coffee className="w-4 h-4 text-amber-400" />
-                  <span>{breakfastOrder ? "Fazer Novo Pedido" : "Montar Café da Manhã"}</span>
-                </Button>
               </div>
-
-              {/* Lista de Favoritos Salvos */}
-              {Array.isArray(reservation.favoriteBreakfastOrders) && reservation.favoriteBreakfastOrders.length > 0 && (
-                <div className="pt-2 border-t border-slate-800 space-y-2">
-                  <span className="text-[11px] font-bold text-amber-400 flex items-center gap-1">
-                    <Star className="w-3.5 h-3.5 fill-amber-400" />
-                    <span>Seus Pedidos Favoritos:</span>
-                  </span>
-                  <div className="space-y-1.5">
-                    {reservation.favoriteBreakfastOrders.map((fav: any) => (
-                      <div key={fav.id} className="flex items-center justify-between p-2.5 bg-slate-950 rounded-xl border border-slate-800 text-[11px]">
-                        <div className="min-w-0">
-                          <span className="font-bold text-slate-200 block truncate">
-                            {fav.items?.map((i: any) => i.name).slice(0, 3).join(", ") || "Combinação Favorita"}
-                          </span>
-                          <span className="text-[10px] text-slate-400">Horário habitual: {fav.deliveryTime || "08:00"}</span>
-                        </div>
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => handleOpenRepeatModal(fav)}
-                          className="h-7 text-[10px] font-bold bg-amber-600 hover:bg-amber-500 text-white rounded-lg shrink-0 ml-2"
-                        >
-                          Usar Este
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
           )}
+
+          {/* Botões de Ação do Café */}
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5 pt-1">
+            <Button
+              onClick={() => setLocation(`/minha-reserva/${reservation.code || code}/cafe`)}
+              className="w-full sm:w-auto bg-amber-600 hover:bg-amber-500 active:scale-[0.98] text-white font-black text-xs h-11 px-6 rounded-2xl shadow-md shadow-amber-600/20 flex items-center justify-center gap-2 flex-1 transition-all"
+            >
+              <Coffee className="w-4 h-4" />
+              <span>{breakfastOrder ? "Alterar ou Agendar Outros Dias" : "Personalizar Cardápio & Horário do Café"}</span>
+              <ArrowRight className="w-4 h-4 ml-1" />
+            </Button>
+
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                const url = `${window.location.origin}/minha-reserva/${reservation.code || code}/cafe`
+                navigator.clipboard.writeText(url)
+                alert("Link exclusivo do café da manhã copiado para a área de transferência!")
+              }}
+              className="h-11 px-4 rounded-2xl border-amber-200 bg-white hover:bg-amber-50 text-amber-900 font-bold text-xs shrink-0"
+            >
+              <Copy className="w-3.5 h-3.5 mr-1.5 text-amber-600" />
+              <span>Copiar Link do Café</span>
+            </Button>
+          </div>
         </Card>
 
-        {/* Card: Pré-Check-in Digital (FNHR) */}
-        <Card className="bg-slate-900 border-slate-800 text-white rounded-3xl p-5 sm:p-6 shadow-xl space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <div className="flex items-center gap-2">
-              <UserCheck className="w-5 h-5 text-indigo-400" />
-              <h2 className="text-base font-bold text-white">Pré-Check-in & Cadastro dos Hóspedes</h2>
+        {/* ── 4. Card: Wi-Fi Fibra 500 Mega ──────────────────────────────── */}
+        <Card className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-5 sm:p-6 space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-200 flex items-center justify-center font-black text-sm">
+                <Wifi className="w-4 h-4" />
+              </div>
+              <div>
+                <h2 className="text-base font-black text-slate-900">Wi-Fi Fibra 500 Mega Ultra Rápido</h2>
+                <span className="text-xs text-slate-500">Conexão estável e ilimitada para home office e streaming em 4K</span>
+              </div>
             </div>
-            <Badge className={preCheckinStatus?.isFullyCompleted ? "bg-emerald-950 text-emerald-400 border-emerald-800 text-[10px]" : "bg-amber-950 text-amber-400 border-amber-800 text-[10px]"}>
-              {preCheckinStatus?.isFullyCompleted ? "Cadastro Concluído" : "Pendente de Preenchimento"}
+            <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-bold">
+              ✓ Liberado
             </Badge>
           </div>
 
-          <div className="space-y-2 text-xs text-slate-300 leading-relaxed">
-            <p>
-              <strong>É necessário ter feito o check-in digital</strong> para agilizar a liberação do seu acesso. Caso não tenha feito com antecedência, também é possível realizá-lo na hora na portaria preenchendo a ficha manualmente.
-            </p>
-            <div className="p-3 bg-indigo-950/40 border border-indigo-800/50 rounded-xl flex items-start gap-2 text-indigo-200">
-              <Sparkles className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
-              <span>
-                <strong>Praticidade para futuras estadias:</strong> O check-in digital, uma vez realizado, fica salvo com segurança para que nas suas próximas vindas não seja necessário preencher tudo novamente!
-              </span>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between">
+              <div>
+                <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Rede Wi-Fi (SSID)</span>
+                <span className="font-bold text-slate-900 text-sm">{data?.wifiSSID || `CorpFlats_${reservation.flatNumber}`}</span>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between">
+              <div>
+                <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Senha de Acesso</span>
+                <span className="font-mono font-bold text-slate-900 text-sm">{data?.wifiPassword || "soho2026"}</span>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={handleCopyWifi}
+                className="h-8 px-2.5 rounded-xl text-xs font-bold border-slate-200 hover:bg-white text-slate-700 flex items-center gap-1.5"
+              >
+                {copiedWifi ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-slate-600" />}
+                <span>{copiedWifi ? "Copiada!" : "Copiar"}</span>
+              </Button>
             </div>
           </div>
-
-          <Button 
-            onClick={() => setLocation(`/pre-checkin/${reservation.code}`)}
-            className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center justify-center gap-2 py-3"
-          >
-            <FileText className="w-4 h-4" />
-            <span>{preCheckinStatus?.isFullyCompleted ? "Revisar Dados do Pré-Check-in" : "Preencher Pré-Check-in Digital Agora"}</span>
-            <ArrowRight className="w-4 h-4" />
-          </Button>
         </Card>
 
-        {/* Card: Estacionamento & Garagem Soho */}
-        <Card className="bg-slate-900 border-slate-800 text-white rounded-3xl p-5 sm:p-6 shadow-xl space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <div className="flex items-center gap-2">
-              <Car className="w-5 h-5 text-blue-400" />
-              <h2 className="text-base font-bold text-white">Estacionamento & Garagem</h2>
+        {/* ── 5. Card: Estacionamento & Garagem Privativa ────────────────── */}
+        <Card className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-5 sm:p-6 space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 border border-blue-200 flex items-center justify-center font-black text-sm">
+                <Car className="w-4 h-4" />
+              </div>
+              <div>
+                <h2 className="text-base font-black text-slate-900">Garagem Coberta Privativa</h2>
+                <span className="text-xs text-slate-500">Vaga demarcada e portão eletrônico com segurança 24h</span>
+              </div>
             </div>
-            <Badge className={reservation.vehicle?.plate ? "bg-blue-950 text-blue-300 border-blue-800 text-[10px]" : "bg-slate-800 text-slate-400 text-[10px]"}>
-              {reservation.vehicle?.plate ? "Vaga Autorizada" : "1 Vaga Gratuita"}
+            <Badge variant="outline" className={reservation.vehicle?.plate ? "bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-bold" : "bg-slate-50 text-slate-500 border-slate-200 text-[10px]"}>
+              {reservation.vehicle?.plate ? "✓ Vaga Autorizada" : "1 Vaga Inclusa"}
             </Badge>
           </div>
 
           {portalCarSuccess && (
-            <div className="p-3 bg-emerald-950/40 border border-emerald-800/60 rounded-xl text-xs text-emerald-300 font-bold flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 font-bold flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
               <span>✓ Veículo salvo e autorizado na portaria do condomínio com sucesso!</span>
             </div>
           )}
 
           {reservation.vehicle?.plate && !portalCarEditing ? (
-            <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800 flex items-center justify-between">
+            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between">
               <div>
-                <span className="text-[10px] text-slate-400 font-bold uppercase block">Veículo Liberado na Portaria</span>
-                <span className="text-base font-black font-mono text-amber-400 tracking-wider">
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Veículo Liberado na Portaria</span>
+                <span className="text-base font-black font-mono text-slate-900 tracking-wider">
                   {reservation.vehicle.plate}
                 </span>
-                <span className="text-xs text-slate-300 block">
-                  {reservation.vehicle.brand} {reservation.vehicle.model} {reservation.vehicle.color ? `• ${reservation.vehicle.color}` : ''}
+                <span className="text-xs text-slate-500 block">
+                  {reservation.vehicle.brand} {reservation.vehicle.model} {reservation.vehicle.color ? `• ${reservation.vehicle.color}` : ""}
                 </span>
               </div>
               <Button
@@ -726,56 +637,56 @@ export default function GuestPortal() {
                   setPortalColor(reservation.vehicle?.color || "")
                   setPortalCarEditing(true)
                 }}
-                className="text-xs font-bold border-slate-700 text-slate-300"
+                className="text-xs font-bold border-slate-200 text-slate-700 hover:bg-white rounded-xl"
               >
                 Alterar Carro
               </Button>
             </div>
           ) : (
             <form onSubmit={handleSaveVehicle} className="space-y-3 text-xs">
-              <p className="text-slate-300">
+              <p className="text-slate-600">
                 Informe a placa do seu veículo para que a portaria do Edifício Soho libere a sua entrada na garagem:
               </p>
 
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
-                  <Label className="text-slate-300 font-bold text-[11px]">Placa do Veículo *</Label>
+                  <Label className="text-slate-700 font-bold text-[11px]">Placa do Veículo *</Label>
                   <Input
                     value={portalPlate}
                     onChange={e => setPortalPlate(e.target.value.toUpperCase())}
                     required
                     placeholder="ABC1D23"
-                    className="bg-slate-950 border-slate-700 text-white font-mono font-bold uppercase text-xs"
+                    className="bg-white border-slate-200 text-slate-900 font-mono font-bold uppercase text-xs rounded-xl"
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-slate-300 text-[11px]">Modelo do Carro</Label>
+                  <Label className="text-slate-700 text-[11px]">Modelo do Carro</Label>
                   <Input
                     value={portalModel}
                     onChange={e => setPortalModel(e.target.value)}
                     placeholder="Ex: Corolla, Civic"
-                    className="bg-slate-950 border-slate-700 text-white text-xs"
+                    className="bg-white border-slate-200 text-slate-900 text-xs rounded-xl"
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
-                  <Label className="text-slate-300 text-[11px]">Marca</Label>
+                  <Label className="text-slate-700 text-[11px]">Marca</Label>
                   <Input
                     value={portalBrand}
                     onChange={e => setPortalBrand(e.target.value)}
                     placeholder="Ex: Toyota"
-                    className="bg-slate-950 border-slate-700 text-white text-xs"
+                    className="bg-white border-slate-200 text-slate-900 text-xs rounded-xl"
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-slate-300 text-[11px]">Cor</Label>
+                  <Label className="text-slate-700 text-[11px]">Cor</Label>
                   <Input
                     value={portalColor}
                     onChange={e => setPortalColor(e.target.value)}
                     placeholder="Ex: Prata"
-                    className="bg-slate-950 border-slate-700 text-white text-xs"
+                    className="bg-white border-slate-200 text-slate-900 text-xs rounded-xl"
                   />
                 </div>
               </div>
@@ -787,7 +698,7 @@ export default function GuestPortal() {
                     variant="outline"
                     size="sm"
                     onClick={() => setPortalCarEditing(false)}
-                    className="border-slate-700 text-slate-400 text-xs"
+                    className="border-slate-200 text-slate-600 text-xs rounded-xl"
                   >
                     Cancelar
                   </Button>
@@ -795,7 +706,7 @@ export default function GuestPortal() {
                 <Button
                   type="submit"
                   disabled={savingCar}
-                  className="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs"
+                  className="flex-1 bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs rounded-xl h-10"
                 >
                   {savingCar ? "Salvando..." : "Salvar e Autorizar Garagem"}
                 </Button>
@@ -804,73 +715,98 @@ export default function GuestPortal() {
           )}
         </Card>
 
-        {/* Card: Localização & Como Chegar */}
-        <Card className="bg-slate-900 border-slate-800 text-white rounded-3xl p-5 sm:p-6 shadow-xl space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <div className="flex items-center gap-2">
-              <MapPin className="w-5 h-5 text-rose-400" />
-              <h2 className="text-base font-bold text-white">Localização & Como Chegar</h2>
+        {/* ── 6. Card: Adicionar ao Calendário ────────────────────────────── */}
+        <AddToCalendar
+          reservation={{
+            id: reservation.id || reservation.code,
+            reservationCode: reservation.code,
+            guestName: guestName,
+            guestEmail: reservation.guestEmail,
+            guestPhone: reservation.guestPhone,
+            flatNumber: reservation.flatNumber,
+            flatName: reservation.roomCategory,
+            checkinDate: reservation.checkinDate,
+            checkoutDate: reservation.checkoutDate,
+            numGuests: reservation.guestCount || 2,
+            accessCode: accessCode,
+            manageUrl: `https://corpflats.onrender.com/minha-reserva/${reservation.code}`
+          }}
+        />
+
+        {/* Script JSON-LD Schema.org LodgingReservation para Google */}
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify(generateLodgingJsonLd({
+              id: reservation.id || reservation.code,
+              reservationCode: reservation.code,
+              guestName: guestName,
+              guestEmail: reservation.guestEmail,
+              guestPhone: reservation.guestPhone,
+              flatNumber: reservation.flatNumber,
+              checkinDate: reservation.checkinDate,
+              checkoutDate: reservation.checkoutDate,
+              numGuests: reservation.guestCount || 2,
+              manageUrl: `https://corpflats.onrender.com/minha-reserva/${reservation.code}`
+            }))
+          }}
+        />
+
+        {/* ── 7. Card: Localização & Como Chegar ──────────────────────────── */}
+        <Card className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-5 sm:p-6 space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-rose-50 text-rose-600 border border-rose-200 flex items-center justify-center font-black text-sm">
+                <MapPin className="w-4 h-4" />
+              </div>
+              <div>
+                <h2 className="text-base font-black text-slate-900">Localização & Como Chegar</h2>
+                <span className="text-xs text-slate-500">Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ</span>
+              </div>
             </div>
-            <Badge variant="outline" className="border-rose-900/60 bg-rose-950/40 text-rose-300 text-[10px]">
-              GPS & Navegação
+            <Badge variant="outline" className="bg-sky-50 text-sky-700 border-sky-200 text-[10px] font-bold">
+              Soho Residence Service
             </Badge>
           </div>
 
-          <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800 space-y-3">
-            <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-xl bg-rose-950/60 text-rose-400 flex items-center justify-center shrink-0 mt-0.5 border border-rose-800/40">
-                <Navigation className="w-5 h-5" />
-              </div>
-              <div className="space-y-1">
-                <span className="font-bold text-white text-sm block">CorpFlats</span>
-                <p className="text-xs text-slate-300">
-                  {data?.hotelAddress || "CorpFlats - Localização e Recepção"}
-                </p>
-                <p className="text-[11px] text-slate-500">
-                  Abra diretamente no seu aplicativo de navegação favorito para traçar a melhor rota.
-                </p>
-              </div>
-            </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+            <a
+              href={data?.googleMapsUrl || "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ"}
+              target="_blank"
+              rel="noreferrer"
+              className="py-2.5 px-3 rounded-2xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition-colors"
+            >
+              <MapPin className="w-4 h-4" />
+              <span>Abrir no Google Maps</span>
+              <ExternalLink className="w-3.5 h-3.5 opacity-70" />
+            </a>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-slate-800/80">
-              <a
-                href={data?.googleMapsUrl || "https://www.google.com/maps/search/?api=1&query=CorpFlats"}
-                target="_blank"
-                rel="noreferrer"
-                className="py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors"
-              >
-                <MapPin className="w-4 h-4" />
-                <span>Abrir no Google Maps</span>
-                <ExternalLink className="w-3.5 h-3.5 opacity-70" />
-              </a>
-
-              <a
-                href={`https://waze.com/ul?q=${encodeURIComponent(data?.hotelAddress || "CorpFlats")}`}
-                target="_blank"
-                rel="noreferrer"
-                className="py-2.5 px-3 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors"
-              >
-                <Navigation className="w-4 h-4" />
-                <span>Abrir no Waze</span>
-                <ExternalLink className="w-3.5 h-3.5 opacity-70" />
-              </a>
-            </div>
+            <a
+              href={`https://waze.com/ul?q=${encodeURIComponent(data?.hotelAddress || "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ")}`}
+              target="_blank"
+              rel="noreferrer"
+              className="py-2.5 px-3 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition-colors"
+            >
+              <Navigation className="w-4 h-4 text-sky-400" />
+              <span>Abrir no Waze</span>
+              <ExternalLink className="w-3.5 h-3.5 opacity-70" />
+            </a>
           </div>
         </Card>
 
-        {/* Card: Contrato & Regras de Convivência */}
-        <Card className="bg-slate-900 border-slate-800 text-white rounded-3xl p-5 sm:p-6 shadow-xl space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
+        {/* ── 8. Card: Regras de Convivência & Contrato ───────────────────── */}
+        <Card className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-5 sm:p-6 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2">
-              <ShieldCheck className="w-5 h-5 text-primary" />
-              <h2 className="text-base font-bold text-white">Regras dos Flats & Contrato</h2>
+              <ShieldCheck className="w-5 h-5 text-emerald-600" />
+              <h2 className="text-base font-bold text-slate-900">Regras dos Flats & Contrato</h2>
             </div>
             <div className="flex items-center gap-1.5">
               <Button 
                 variant="outline" 
                 size="sm" 
                 onClick={() => { setTermsModalTab("rules"); setTermsModalOpen(true); }}
-                className="text-xs bg-slate-950 border-amber-900/60 text-amber-300 hover:bg-slate-800"
+                className="text-xs bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100 rounded-xl"
               >
                 🏡 Regras da Casa
               </Button>
@@ -878,32 +814,61 @@ export default function GuestPortal() {
                 variant="outline" 
                 size="sm" 
                 onClick={() => { setTermsModalTab("contract"); setTermsModalOpen(true); }}
-                className="text-xs bg-slate-950 border-indigo-900/60 text-indigo-300 hover:bg-slate-800"
+                className="text-xs bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100 rounded-xl"
               >
                 📜 Contrato Completo
               </Button>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs text-slate-400">
-            <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
-              <span className="font-bold text-white block mb-1">🚭 100% Não Fumante</span>
-              <span>Proibido fumar nos quartos e sacadas. Multa de higienização.</span>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs text-slate-600">
+            <div className="p-3 bg-rose-50/70 border border-rose-200/70 rounded-2xl">
+              <span className="font-bold text-rose-900 block mb-1">🚭 100% Não Fumante</span>
+              <span className="text-rose-800">Proibido fumar nos quartos e sacadas. Sujeito a taxa de higienização.</span>
             </div>
-            <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
-              <span className="font-bold text-white block mb-1">🐾 Pet de Pequeno Porte</span>
-              <span>Até 10 kg, taxa de R$ 40, elevador de serviço e no colo.</span>
+            <div className="p-3 bg-slate-50 border border-slate-100 rounded-2xl">
+              <span className="font-bold text-slate-900 block mb-1">🐾 Pet de Pequeno Porte</span>
+              <span>Até 10 kg, taxa fixa, transporte pelo elevador de serviço e no colo.</span>
             </div>
-            <div className="p-3 bg-slate-950 rounded-xl border border-slate-800">
-              <span className="font-bold text-white block mb-1">👥 Capacidade Máxima</span>
+            <div className="p-3 bg-slate-50 border border-slate-100 rounded-2xl">
+              <span className="font-bold text-slate-900 block mb-1">👥 Capacidade Máxima</span>
               <span>
-                {reservation.guestCount} {reservation.guestCount === 1 ? "pessoa autorizada (conforme contratado)" : "pessoas autorizadas (conforme contratado)"}.
+                {reservation.guestCount || 1} {reservation.guestCount === 1 ? "pessoa autorizada (conforme contratado)" : "pessoas autorizadas (conforme contratado)"}.
               </span>
             </div>
           </div>
         </Card>
 
-        {/* Card: Política de Cancelamento & Autoatendimento */}
+        {/* ── 9. Card: Comprovante & Detalhes do Pagamento ────────────────── */}
+        <Card className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-5 sm:p-6 space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div className="flex items-center gap-2">
+              <span className="text-emerald-600 font-bold text-lg">💰</span>
+              <h2 className="text-base font-bold text-slate-900">Comprovante de Pagamento</h2>
+            </div>
+            <Badge variant="outline" className={reservation.paymentStatus === "pago_total" || reservation.paymentStatus === "pago" ? "bg-emerald-50 text-emerald-700 border-emerald-200 text-xs font-bold" : "bg-amber-50 text-amber-700 border-amber-200 text-xs font-bold"}>
+              {reservation.paymentStatus === "pago_total" || reservation.paymentStatus === "pago" ? "✓ Pago Integralmente" : "Aguardando Confirmação"}
+            </Badge>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 space-y-1">
+              <span className="text-slate-400 text-[11px] block font-medium">Forma de Liquidação</span>
+              <span className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                {reservation.pixTxId ? "⚡ PIX Instantâneo (Banco Inter)" : (reservation.mpPaymentId ? "💳 Cartão de Crédito" : "PIX Oficial")}
+              </span>
+            </div>
+
+            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 space-y-1">
+              <span className="text-slate-400 text-[11px] block font-medium">Valor Total</span>
+              <span className="text-base font-black text-emerald-600">
+                R$ {(reservation.paidAmount || reservation.totalAmount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+              </span>
+            </div>
+          </div>
+        </Card>
+
+        {/* ── 10. Card: Política de Cancelamento & Estorno ────────────────── */}
         {(() => {
           const cancelPol = calculateCancellationPolicy(
             reservation.createdAt || reservation.checkinDate,
@@ -913,43 +878,35 @@ export default function GuestPortal() {
           const isCancelled = reservation.status === "cancelada" || reservation.status === "CANCELLED"
 
           return (
-            <Card className="bg-slate-900 border-slate-800 text-white rounded-3xl p-5 sm:p-6 shadow-xl space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+            <Card className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-5 sm:p-6 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <div className="flex items-center gap-2">
-                  <ShieldAlert className="w-5 h-5 text-sky-400" />
-                  <h2 className="text-base font-bold text-white">Política de Cancelamento & Estorno</h2>
+                  <ShieldAlert className="w-5 h-5 text-sky-600" />
+                  <h2 className="text-base font-bold text-slate-900">Política de Cancelamento & Estorno</h2>
                 </div>
-                <Badge className={isCancelled ? "bg-rose-950 text-rose-300 border border-rose-800 text-[10px]" : cancelPol.policyType === "flexivel" ? "bg-emerald-950 text-emerald-300 border border-emerald-800 text-[10px]" : "bg-amber-950 text-amber-300 border border-amber-800 text-[10px]"}>
+                <Badge variant="outline" className={isCancelled ? "bg-rose-50 text-rose-700 border-rose-200 text-[10px] font-bold" : cancelPol.policyType === "flexivel" ? "bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-bold" : "bg-amber-50 text-amber-700 border-amber-200 text-[10px] font-bold"}>
                   {isCancelled ? "✕ Reserva Cancelada" : cancelPol.badgeText}
                 </Badge>
               </div>
 
-              <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3 text-xs">
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 space-y-3 text-xs">
                 {isCancelled ? (
                   <div className="space-y-2">
-                    <p className="text-rose-400 font-bold">Esta reserva foi cancelada.</p>
-                    <p className="text-slate-400 text-[11px]">
+                    <p className="text-rose-600 font-bold">Esta reserva foi cancelada.</p>
+                    <p className="text-slate-500 text-[11px]">
                       {reservation.refundAmount > 0 
                         ? `Estorno de R$ ${Number(reservation.refundAmount).toFixed(2)} processado com sucesso.`
                         : "Cancelamento efetuado sem estorno conforme as políticas contratadas."}
                     </p>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => window.open(`/api/reservations/${reservation.code || reservation.id}/calendar.ics?action=cancel`, "_blank")}
-                      className="text-xs font-bold gap-1.5 h-8 rounded-xl border-slate-700 bg-slate-900 text-slate-200"
-                    >
-                      <span>Atualizar Minha Agenda (.ICS de Remoção)</span>
-                    </Button>
                   </div>
                 ) : (
                   <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                     <div className="space-y-1">
-                      <p className="text-slate-300 font-medium leading-relaxed">
+                      <p className="text-slate-600 font-medium leading-relaxed">
                         {cancelPol.explanation}
                       </p>
                       {cancelPol.isEligibleForRefund && (
-                        <p className="text-emerald-400 font-bold text-[11px]">
+                        <p className="text-emerald-600 font-bold text-[11px]">
                           ✓ Elegível a 100% de estorno integral (R$ {Number(reservation.paidAmount || reservation.totalAmount || 0).toFixed(2)})
                         </p>
                       )}
@@ -970,31 +927,31 @@ export default function GuestPortal() {
           )
         })()}
 
-        {/* Footer WhatsApp Support */}
-        <div className="text-center pt-4 space-y-2">
+        {/* ── Footer WhatsApp Support ─────────────────────────────────────── */}
+        <div className="text-center pt-4 pb-8 space-y-2">
           <p className="text-xs text-slate-500">Dúvidas ou solicitações especiais durante sua estadia?</p>
           <a 
             href={whatsappUrl} 
             target="_blank" 
             rel="noreferrer"
-            className="inline-flex items-center gap-2 text-xs font-bold text-emerald-400 hover:text-emerald-300"
+            className="inline-flex items-center gap-2 text-xs font-bold text-emerald-600 hover:text-emerald-700"
           >
             <MessageCircle className="w-4 h-4" />
-            <span>Falar com a Administradora do Flat pelo WhatsApp</span>
+            <span>Falar com o Atendimento CorpFlats no WhatsApp • {formatPhoneDisplay(adminWhatsApp)}</span>
           </a>
         </div>
 
       </main>
 
-      {/* Modal: Confirmação de Cancelamento e Cotação de Reembolso */}
+      {/* ── Modal: Confirmação de Cancelamento ──────────────────────────── */}
       <Dialog open={cancelModalOpen} onOpenChange={setCancelModalOpen}>
-        <DialogContent className="sm:max-w-md bg-slate-900 border-slate-800 text-white rounded-3xl p-6">
+        <DialogContent className="sm:max-w-md bg-white border border-slate-200 text-slate-900 rounded-3xl p-6 shadow-2xl">
           <DialogHeader>
-            <DialogTitle className="text-lg font-black text-rose-400 flex items-center gap-2">
+            <DialogTitle className="text-lg font-black text-rose-600 flex items-center gap-2">
               <AlertTriangle className="w-5 h-5" />
               Confirmar Cancelamento da Reserva
             </DialogTitle>
-            <DialogDescription className="text-xs text-slate-400">
+            <DialogDescription className="text-xs text-slate-500">
               Revise o valor do estorno calculado pelo sistema de acordo com a política vigente.
             </DialogDescription>
           </DialogHeader>
@@ -1010,8 +967,8 @@ export default function GuestPortal() {
               <div className="space-y-4 py-2">
                 <div className={`p-4 rounded-2xl border text-xs space-y-2 ${
                   cancelPol.isEligibleForRefund 
-                    ? "bg-emerald-950/40 border-emerald-800 text-emerald-200" 
-                    : "bg-rose-950/40 border-rose-800 text-rose-200"
+                    ? "bg-emerald-50 border-emerald-200 text-emerald-900" 
+                    : "bg-rose-50 border-rose-200 text-rose-900"
                 }`}>
                   <div className="flex items-center justify-between font-bold text-sm">
                     <span>Reembolso Estimado:</span>
@@ -1021,23 +978,23 @@ export default function GuestPortal() {
                         : "R$ 0,00 (Sem Reembolso)"}
                     </span>
                   </div>
-                  <p className="text-[11px] leading-relaxed text-slate-300">
+                  <p className="text-[11px] leading-relaxed text-slate-600">
                     {cancelPol.explanation}
                   </p>
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-bold text-slate-300">Motivo do cancelamento (opcional):</Label>
+                  <Label className="text-xs font-bold text-slate-700">Motivo do cancelamento (opcional):</Label>
                   <Input
                     value={cancelReason}
                     onChange={e => setCancelReason(e.target.value)}
                     placeholder="Ex: Imprevisto de trabalho, remarcação..."
-                    className="bg-slate-950 border-slate-800 text-xs h-9 rounded-xl text-white"
+                    className="bg-white border-slate-200 text-xs h-9 rounded-xl text-slate-900"
                   />
                 </div>
 
                 <DialogFooter className="gap-2 sm:gap-0 pt-2">
-                  <Button variant="outline" onClick={() => setCancelModalOpen(false)} className="rounded-xl border-slate-700 text-slate-200">
+                  <Button variant="outline" onClick={() => setCancelModalOpen(false)} className="rounded-xl border-slate-200 text-slate-700">
                     Manter Reserva
                   </Button>
                   <Button
@@ -1075,46 +1032,45 @@ export default function GuestPortal() {
         </DialogContent>
       </Dialog>
 
-      {/* Modal: Regras da Casa & Contrato (Com Abas) */}
+      {/* ── Modal: Regras da Casa & Contrato ────────────────────────────── */}
       <Dialog open={termsModalOpen} onOpenChange={setTermsModalOpen}>
-        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto bg-slate-900 border-slate-800 text-white">
+        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto bg-white border border-slate-200 text-slate-900 rounded-3xl p-6 shadow-2xl">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-lg font-bold text-white">
-              <ShieldCheck className="w-5 h-5 text-primary" />
+            <DialogTitle className="flex items-center gap-2 text-lg font-bold text-slate-900">
+              <ShieldCheck className="w-5 h-5 text-sky-600" />
               Regras dos Flats & Contrato de Hospedagem
             </DialogTitle>
-            <DialogDescription className="text-xs text-slate-400">
+            <DialogDescription className="text-xs text-slate-500">
               Termos aceitos no momento da reserva para a garantia de uma excelente estadia.
             </DialogDescription>
           </DialogHeader>
 
-          {/* Abas */}
-          <div className="flex gap-2 border-b border-slate-800 pb-2">
+          <div className="flex gap-2 border-b border-slate-100 pb-2">
             <button
               type="button"
               onClick={() => setTermsModalTab("rules")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${
                 termsModalTab === "rules"
-                  ? "bg-amber-600 text-white shadow-xs"
-                  : "bg-slate-950 text-slate-400 hover:text-white"
+                  ? "bg-amber-500 text-white shadow-xs"
+                  : "bg-slate-100 text-slate-600 hover:text-slate-900"
               }`}
             >
-              🏡 1. Regras do Imóvel e Conveniência
+              🏡 1. Regras do Imóvel e Convivência
             </button>
             <button
               type="button"
               onClick={() => setTermsModalTab("contract")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${
                 termsModalTab === "contract"
                   ? "bg-indigo-600 text-white shadow-xs"
-                  : "bg-slate-950 text-slate-400 hover:text-white"
+                  : "bg-slate-100 text-slate-600 hover:text-slate-900"
               }`}
             >
               📜 2. Termos e Condições Contratuais
             </button>
           </div>
 
-          <div className="py-3 text-xs leading-relaxed text-slate-300 whitespace-pre-line bg-slate-950 p-4 rounded-2xl border border-slate-800 font-sans max-h-96 overflow-y-auto">
+          <div className="py-3 text-xs leading-relaxed text-slate-600 whitespace-pre-line bg-slate-50 p-4 rounded-2xl border border-slate-100 font-sans max-h-96 overflow-y-auto">
             {termsModalTab === "rules" ? (
               data?.houseRules || termsAndRules
             ) : (
@@ -1123,7 +1079,7 @@ export default function GuestPortal() {
           </div>
 
           <DialogFooter>
-            <Button onClick={() => setTermsModalOpen(false)} className="w-full bg-primary font-bold text-xs">
+            <Button onClick={() => setTermsModalOpen(false)} className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl h-10">
               Fechar
             </Button>
           </DialogFooter>
