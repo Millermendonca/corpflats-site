@@ -751,33 +751,34 @@ export default function BookingEngine() {
         </div>
       )}
 
-      {/* ── Top Announcement Bar ────────────────────────────────────────── */}
-      <div className="bg-sky-600 text-white text-[11px] font-bold py-1.5 px-4 text-center tracking-wide flex items-center justify-center gap-1.5 shadow-2xs">
+      {/* ── Top Announcement Bar (Discreta & Elegante) ────────────────── */}
+      <div className="bg-slate-100/90 text-slate-500 border-b border-slate-200/50 text-[11px] sm:text-xs py-1.5 px-4 text-center tracking-normal font-medium flex items-center justify-center gap-1.5">
         <span
           contentEditable={isVisualEditMode}
           suppressContentEditableWarning={true}
           onBlur={(e) => updateNestedConfig("branding.badgeTop", e.currentTarget.innerText)}
           className={isVisualEditMode ? "outline-dashed outline-1 outline-amber-300 hover:bg-white/20 cursor-text rounded px-1" : ""}
         >
-          {siteConfig?.branding?.badgeTop || "⭐ Melhor Tarifa Garantida Sempre pelo Nosso Site Oficial"}
+          {siteConfig?.branding?.badgeTop || "⭐ Melhor tarifa garantida no site oficial"}
         </span>
       </div>
 
-      {/* ── Top Navigation Bar (Clean & Arejado) ─────────────────────────── */}
-      <nav className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-3 sm:px-8 py-2.5 sm:py-3.5 shadow-2xs w-full max-w-full">
-        <div className="max-w-6xl mx-auto flex items-center justify-between gap-2 sm:gap-4">
+      {/* ── Top Navigation Bar (Hotel Boutique: Limpo & Reduzido) ───────── */}
+      <nav className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/70 px-4 sm:px-8 py-2.5 sm:py-3 w-full max-w-full">
+        <div className="max-w-5xl mx-auto flex items-center justify-between gap-3">
+          {/* Logo CorpFlats */}
           <div 
             onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-            className="flex items-center gap-2 sm:gap-3 cursor-pointer group shrink-0"
+            className="flex items-center gap-2.5 cursor-pointer group shrink-0"
           >
             {siteConfig?.branding?.logoImage ? (
               <img 
                 src={siteConfig.branding.logoImage} 
                 alt={brandName} 
-                className="w-8 h-8 sm:w-9 sm:h-9 object-contain rounded-xl"
+                className="w-8 h-8 object-contain rounded-lg"
               />
             ) : (
-              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-sky-600 group-hover:bg-sky-700 text-white flex items-center justify-center font-black text-sm sm:text-base shadow-sm transition-colors">
+              <div className="w-8 h-8 rounded-lg bg-sky-600 group-hover:bg-sky-700 text-white flex items-center justify-center font-bold text-xs tracking-wider shadow-xs transition-colors">
                 CF
               </div>
             )}
@@ -786,7 +787,7 @@ export default function BookingEngine() {
                 contentEditable={isVisualEditMode}
                 suppressContentEditableWarning={true}
                 onBlur={(e) => updateNestedConfig("branding.brandName", e.currentTarget.innerText)}
-                className={`font-black text-base sm:text-lg tracking-tight text-slate-900 group-hover:text-sky-600 transition-colors block leading-none ${
+                className={`font-bold text-base sm:text-lg tracking-tight text-slate-900 group-hover:text-sky-600 transition-colors block leading-none ${
                   isVisualEditMode ? "outline-dashed outline-1 outline-sky-500 cursor-text rounded px-1" : ""
                 }`}
               >
@@ -796,721 +797,494 @@ export default function BookingEngine() {
                 contentEditable={isVisualEditMode}
                 suppressContentEditableWarning={true}
                 onBlur={(e) => updateNestedConfig("branding.logoSubtext", e.currentTarget.innerText)}
-                className={`text-[9px] sm:text-[10px] text-sky-600 font-bold uppercase tracking-wider block mt-0.5 ${
+                className={`text-[9.5px] sm:text-[10px] text-slate-500 font-medium tracking-wide block mt-0.5 ${
                   isVisualEditMode ? "outline-dashed outline-1 outline-sky-500 cursor-text rounded px-1" : ""
                 }`}
               >
-                {siteConfig?.branding?.logoSubtext || "Campos dos Goytacazes"}
+                {siteConfig?.branding?.logoSubtext || "Soho Residence"}
               </span>
             </div>
           </div>
 
-          <div className="hidden lg:flex items-center gap-6 text-xs font-bold text-slate-600">
-            <a href="#flats" className="hover:text-sky-600 transition-colors">Nossos Flats</a>
-            <a href="#tarifas" className="hover:text-sky-600 transition-colors">Planos & Tarifas</a>
-            <a href="#comodidades" className="hover:text-sky-600 transition-colors">Comodidades</a>
-            <a href="#galeria" className="hover:text-sky-600 transition-colors">Galeria</a>
-            <a href="#avaliacoes" className="hover:text-sky-600 transition-colors">Avaliações</a>
+          {/* Links desktop discretos */}
+          <div className="hidden md:flex items-center gap-6 text-xs font-medium text-slate-600">
+            <a href="#tarifas" className="hover:text-sky-600 transition-colors">Tarifas</a>
+            <a href="#beneficios" className="hover:text-sky-600 transition-colors">Comodidades</a>
+            <a href="#galeria" className="hover:text-sky-600 transition-colors">Fotos</a>
+            <a href="#detalhes" className="hover:text-sky-600 transition-colors">O Flat</a>
+            <a href="#localizacao" className="hover:text-sky-600 transition-colors">Localização</a>
             <a href="#faq" className="hover:text-sky-600 transition-colors">Dúvidas</a>
           </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {isVisualEditMode && (
-              <Button
-                type="button"
-                size="sm"
-                onClick={handleSaveVisualEdits}
-                disabled={isSavingSite}
-                className="h-8 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs flex items-center gap-1"
-              >
-                <Check className="w-3.5 h-3.5" />
-                <span>{isSavingSite ? "Salvando..." : "Salvar Edições"}</span>
-              </Button>
-            )}
-
+          {/* Ações: Entrar discreto + Reservar destacado */}
+          <div className="flex items-center gap-2 shrink-0">
             {guestAccount || guestName ? (
               <Button
                 type="button"
+                variant="ghost"
                 onClick={() => setLocation("/minha-conta")}
-                className="h-8 sm:h-9 px-2.5 sm:px-3 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 font-bold text-xs rounded-xl flex items-center gap-1 sm:gap-1.5 shadow-2xs shrink-0"
+                className="h-8 px-2.5 text-slate-700 font-medium text-xs hover:bg-slate-100 rounded-lg flex items-center gap-1.5 shrink-0"
               >
                 <UserCheck className="w-3.5 h-3.5 text-emerald-600" />
-                <span className="max-w-[80px] sm:max-w-[120px] truncate">{guestAccount?.name?.split(" ")[0] || guestName?.split(" ")[0] || "Conta"}</span>
-                <ChevronRight className="w-3 h-3 text-slate-400 hidden xs:inline" />
+                <span className="max-w-[90px] truncate">{guestAccount?.name?.split(" ")[0] || guestName?.split(" ")[0] || "Conta"}</span>
               </Button>
             ) : (
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
                 onClick={() => setAuthModalOpen(true)}
-                className="h-8 sm:h-9 px-2.5 sm:px-3.5 bg-white hover:bg-slate-50 border-slate-200 text-slate-700 font-bold text-xs rounded-xl flex items-center gap-1 sm:gap-1.5 shadow-2xs shrink-0"
+                className="h-8 px-2.5 sm:px-3 text-slate-600 hover:text-slate-900 font-medium text-xs hover:bg-slate-100 rounded-lg flex items-center gap-1.5 shrink-0"
               >
-                <User className="w-3.5 h-3.5 text-sky-600" />
+                <User className="w-3.5 h-3.5 text-slate-500" />
                 <span>Entrar</span>
               </Button>
             )}
 
-            <a
-              href={whatsappUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="hidden md:inline-flex items-center gap-1.5 py-2 px-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-xs border border-emerald-200 transition-colors shrink-0"
-            >
-              <MessageCircle className="w-4 h-4 text-emerald-600" />
-              <span>WhatsApp</span>
-            </a>
-
             <Button
               onClick={() => {
-                const el = document.getElementById("search-box")
+                const el = document.getElementById("reserva-rapida")
                 if (el) el.scrollIntoView({ behavior: "smooth" })
               }}
-              className="bg-sky-600 hover:bg-sky-700 text-white font-black text-xs h-8 sm:h-9 px-3 sm:px-4 rounded-xl shadow-md shadow-sky-600/20 transition-all shrink-0 flex items-center gap-1"
+              className="bg-sky-600 hover:bg-sky-700 text-white font-semibold text-xs h-8 px-3.5 rounded-lg shadow-xs transition-all shrink-0"
             >
-              <span className="hidden sm:inline">Ver Disponibilidade</span>
-              <span className="sm:hidden">Reservar</span>
-              <ArrowRight className="w-3.5 h-3.5" />
+              Reservar
             </Button>
           </div>
         </div>
       </nav>
 
-      {/* ── Hero Section (Luz Natural & Arejado) ─────────────────────────── */}
-      <header className="relative min-h-[460px] sm:min-h-[520px] flex items-center justify-center px-4 sm:px-8 py-16 text-center overflow-hidden">
+      {/* ── Hero Section (Protagonista Absoluta: A Imagem e a Experiência) ─ */}
+      <header className="relative h-[360px] sm:h-[440px] lg:h-[480px] flex items-end justify-center px-4 sm:px-8 pb-12 sm:pb-16 text-center overflow-hidden">
         <div className="absolute inset-0 z-0">
           <img
             src={heroBg}
-            alt="Flat Arejado"
-            className="w-full h-full object-cover object-center scale-105 transition-transform duration-1000"
+            alt="CorpFlats Soho Residence"
+            className="w-full h-full object-cover object-center"
           />
-          <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-900/40 to-slate-950/30 backdrop-blur-[0.5px]" />
+          {/* Overlay sutil apenas para contraste da tipografia */}
+          <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/30 to-slate-950/10" />
         </div>
 
-        {/* Botão de Troca de Imagem de Fundo no Modo Editor Visual */}
         {isVisualEditMode && (
           <div className="absolute top-4 right-4 z-20">
             <Button
               type="button"
+              size="sm"
               onClick={() => {
-                const newUrl = prompt("Insira a nova URL da foto de fundo do Hero:", heroBg)
+                const newUrl = prompt("Insira a nova URL da foto do Hero:", heroBg)
                 if (newUrl && newUrl.trim()) {
                   updateNestedConfig("hero.backgroundImage", newUrl.trim())
                 }
               }}
-              className="bg-black/60 hover:bg-black/80 text-white font-bold text-xs rounded-xl backdrop-blur-md border border-white/20 shadow-md"
+              className="bg-black/60 hover:bg-black/80 text-white text-xs rounded-lg backdrop-blur-md border border-white/20 shadow-xs"
             >
-              <ImageIcon className="w-3.5 h-3.5 mr-1.5" />
-              Trocar Foto de Fundo
+              <ImageIcon className="w-3.5 h-3.5 mr-1" />
+              Trocar Foto
             </Button>
           </div>
         )}
 
-        <div className="relative z-10 max-w-3xl mx-auto space-y-4 text-white">
-          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/20 backdrop-blur-md text-white border border-white/30 text-xs font-bold shadow-sm">
-            <Sparkles className="w-3.5 h-3.5 text-sky-300" />
-            <span
-              contentEditable={isVisualEditMode}
-              suppressContentEditableWarning={true}
-              onBlur={(e) => updateNestedConfig("branding.tagline", e.currentTarget.innerText)}
-              className={isVisualEditMode ? "outline-dashed outline-1 outline-amber-300 hover:bg-white/20 cursor-text rounded px-1" : ""}
-            >
-              {siteConfig?.branding?.tagline || "Hospitalidade Premium & Decoração Contemporânea em Campos dos Goytacazes"}
-            </span>
-          </div>
-
+        <div className="relative z-10 max-w-xl mx-auto space-y-2 text-white">
           <h1
             contentEditable={isVisualEditMode}
             suppressContentEditableWarning={true}
             onBlur={(e) => updateNestedConfig("hero.title", e.currentTarget.innerText)}
-            className={`text-3xl sm:text-5xl lg:text-6xl font-black tracking-tight leading-tight drop-shadow-md ${
-              isVisualEditMode ? "outline-dashed outline-2 outline-amber-400 hover:bg-white/10 cursor-text rounded-lg p-1" : ""
+            className={`text-2xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight leading-tight drop-shadow-sm whitespace-pre-line ${
+              isVisualEditMode ? "outline-dashed outline-1 outline-amber-400 cursor-text rounded p-1" : ""
             }`}
           >
-            {heroTitle}
+            {siteConfig?.hero?.title && !siteConfig.hero.title.includes("Sua Estadia com Conforto") ? siteConfig.hero.title : "Conforto e estilo em\nCampos dos Goytacazes"}
           </h1>
 
           <p
             contentEditable={isVisualEditMode}
             suppressContentEditableWarning={true}
             onBlur={(e) => updateNestedConfig("hero.highlightText", e.currentTarget.innerText)}
-            className={`text-base sm:text-xl font-bold text-sky-200 max-w-xl mx-auto drop-shadow-sm ${
-              isVisualEditMode ? "outline-dashed outline-2 outline-amber-400 hover:bg-white/10 cursor-text rounded-lg p-1" : ""
+            className={`text-sm sm:text-base font-medium text-slate-200 tracking-wide drop-shadow-xs ${
+              isVisualEditMode ? "outline-dashed outline-1 outline-amber-400 cursor-text rounded p-1" : ""
             }`}
           >
-            {heroHighlight}
+            {siteConfig?.hero?.highlightText && !siteConfig.hero.highlightText.includes("Luz Natural e Sofisticação") ? siteConfig.hero.highlightText : "Flats sofisticados no Soho Residence"}
           </p>
-
-          <p
-            contentEditable={isVisualEditMode}
-            suppressContentEditableWarning={true}
-            onBlur={(e) => updateNestedConfig("hero.description", e.currentTarget.innerText)}
-            className={`text-xs sm:text-sm text-slate-100/90 max-w-xl mx-auto font-medium leading-relaxed drop-shadow-xs ${
-              isVisualEditMode ? "outline-dashed outline-2 outline-amber-400 hover:bg-white/10 cursor-text rounded-lg p-1" : ""
-            }`}
-          >
-            {heroDesc}
-          </p>
-
-          <div className="flex flex-wrap items-center justify-center gap-2 pt-2 text-xs font-bold text-white">
-            <span className="flex items-center gap-1.5 bg-white/15 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/25">
-              <Check className="w-3.5 h-3.5 text-emerald-400" /> Sem taxas ocultas
-            </span>
-            <span className="flex items-center gap-1.5 bg-white/15 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/25">
-              <Check className="w-3.5 h-3.5 text-emerald-400" /> Check-in 100% Digital
-            </span>
-            <span className="flex items-center gap-1.5 bg-white/15 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/25">
-              <Check className="w-3.5 h-3.5 text-emerald-400" /> Wi-Fi 500MB & Garagem
-            </span>
-          </div>
         </div>
       </header>
 
-      {/* ── Barra Flutuante de Busca com Seleção de Regime de Hospedagem ───── */}
-      <div id="search-box" className="max-w-5xl w-full mx-auto px-4 -mt-10 z-20">
-        <Card className="bg-white shadow-xl shadow-slate-200/60 border border-slate-200/80 rounded-3xl p-5 sm:p-6 space-y-4">
-          {/* Seletor de Regime de Hospedagem / Tarifa */}
-          <div className="space-y-2">
-            <Label className="text-xs font-bold text-slate-800 block">
-              Selecione a sua Tarifa de Hospedagem:
-            </Label>
-            
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {/* Opção 1: Tarifa com Café da Manhã Incluso */}
-              <div
-                onClick={() => setRatePlan("with_breakfast")}
-                className={`cursor-pointer p-3.5 rounded-2xl border-2 transition-all flex items-start gap-3 relative ${
-                  ratePlan === "with_breakfast"
-                    ? "border-sky-600 bg-sky-50/70 text-slate-900 ring-2 ring-sky-500/20 shadow-xs"
-                    : "border-slate-200 hover:border-slate-300 bg-white text-slate-700"
-                }`}
-              >
-                <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 font-bold ${
-                  ratePlan === "with_breakfast" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-500"
-                }`}>
-                  <Coffee className="w-5 h-5" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-1">
-                    <span className="font-black text-xs sm:text-sm text-slate-900 block">
-                      {withBreakfastConfig.name || "Com Café da Manhã Incluso"}
-                    </span>
-                    {ratePlan === "with_breakfast" && (
-                      <Badge className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-[9px] px-1.5 py-0 shadow-2xs">
-                        R$ {withBreakfastConfig.dailyRate}/noite
-                      </Badge>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-slate-600 leading-snug mt-0.5 font-medium">
-                    {withBreakfastConfig.description || "Diária com Café da Manhã servido exclusivamente no flat"}
-                  </p>
-                </div>
-              </div>
-
-              {/* Opção 2: Tarifa Sem Café (Apenas Hospedagem) */}
-              <div
-                onClick={() => setRatePlan("room_only")}
-                className={`cursor-pointer p-3.5 rounded-2xl border-2 transition-all flex items-start gap-3 ${
-                  ratePlan === "room_only"
-                    ? "border-sky-600 bg-sky-50/70 text-slate-900 ring-2 ring-sky-500/20 shadow-xs"
-                    : "border-slate-200 hover:border-slate-300 bg-white text-slate-700"
-                }`}
-              >
-                <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 font-bold ${
-                  ratePlan === "room_only" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-500"
-                }`}>
-                  <Building2 className="w-5 h-5" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-1">
-                    <span className="font-black text-xs sm:text-sm text-slate-900 block">
-                      {roomOnlyConfig.name || "Apenas Hospedagem (Sem Café)"}
-                    </span>
-                    {ratePlan === "room_only" && (
-                      <Badge className="bg-slate-800 text-white font-bold text-[9px] px-1.5 py-0 shadow-2xs">
-                        R$ {roomOnlyConfig.dailyRate}/noite
-                      </Badge>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-slate-600 leading-snug mt-0.5 font-medium">
-                    {roomOnlyConfig.description || "Tarifa econômica sem café da manhã"}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Linha de Datas e Ação */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 pt-2 border-t border-slate-100 items-end">
-            <div className="space-y-1.5">
-              <Label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                <Calendar className="w-3.5 h-3.5 text-sky-600" />
-                Check-in (Entrada)
-              </Label>
+      {/* ── Primeira Tela: Card de Reserva Minimalista (Imagem -> Experiência -> Tarifa -> Reserva) ── */}
+      <main id="reserva-rapida" className="max-w-md sm:max-w-lg w-full mx-auto px-4 -mt-8 sm:-mt-12 relative z-20">
+        <div className="bg-white rounded-3xl shadow-xl shadow-slate-900/5 border border-slate-200/80 p-5 sm:p-7 space-y-4">
+          {/* Seletor Compacto de Datas */}
+          <div className="grid grid-cols-2 gap-2.5 pb-3.5 border-b border-slate-100">
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold text-slate-500 flex items-center gap-1">
+                <Calendar className="w-3 h-3 text-sky-600" />
+                <span>Entrada</span>
+              </label>
               <Input 
                 type="date" 
                 value={checkin} 
                 onChange={e => setCheckin(e.target.value)} 
-                className="bg-slate-50 border-slate-200 text-xs text-slate-900 h-10 font-bold rounded-xl"
+                className="bg-slate-50/80 border-slate-200 text-xs text-slate-900 h-9 font-bold rounded-xl"
               />
-              <span className="text-[10px] text-slate-400 block font-medium">A partir das {settings?.checkinTime || "14:00"}</span>
             </div>
 
-            <div className="space-y-1.5">
-              <Label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                <Calendar className="w-3.5 h-3.5 text-sky-600" />
-                Check-out (Saída)
-              </Label>
+            <div className="space-y-1">
+              <label className="text-[11px] font-semibold text-slate-500 flex items-center gap-1">
+                <Calendar className="w-3 h-3 text-sky-600" />
+                <span>Saída</span>
+              </label>
               <Input 
                 type="date" 
                 value={checkout} 
                 onChange={e => setCheckout(e.target.value)} 
-                className="bg-slate-50 border-slate-200 text-xs text-slate-900 h-10 font-bold rounded-xl"
+                className="bg-slate-50/80 border-slate-200 text-xs text-slate-900 h-9 font-bold rounded-xl"
               />
-              <span className="text-[10px] text-slate-400 block font-medium">{nights} {nights === 1 ? "diária" : "diárias"} (Até as {settings?.checkoutTime || "12:00"})</span>
+            </div>
+          </div>
+
+          {/* Seletor de Tarifas */}
+          <div id="tarifas" className="space-y-2.5">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xs sm:text-sm font-bold text-slate-900">
+                Escolha sua tarifa
+              </h2>
+              <span className="text-[11px] text-slate-500 font-medium">
+                {nights} {nights === 1 ? "noite" : "noites"}
+              </span>
             </div>
 
-            <div>
-              <Button 
-                onClick={() => {
-                  searchAvailability()
-                  const el = document.getElementById("flats")
-                  if (el) el.scrollIntoView({ behavior: "smooth" })
-                }}
-                className="w-full h-10 bg-sky-600 hover:bg-sky-700 text-white font-black text-xs rounded-xl shadow-md shadow-sky-600/20 transition-all flex items-center justify-center gap-1.5"
+            <div className="space-y-2">
+              {/* Opção 1: COM CAFÉ */}
+              <div
+                onClick={() => setRatePlan("with_breakfast")}
+                className={`cursor-pointer p-4 rounded-2xl border transition-all flex items-center justify-between ${
+                  ratePlan === "with_breakfast"
+                    ? "border-sky-600 bg-sky-50/50 text-slate-900 ring-2 ring-sky-600/20 shadow-xs"
+                    : "border-slate-200 hover:border-slate-300 bg-white text-slate-700"
+                }`}
               >
-                <Sparkles className="w-4 h-4" />
-                <span>Checar Disponibilidade</span>
-              </Button>
-            </div>
-          </div>
-        </Card>
-      </div>
-
-      {/* ── Apresentação Unificada da Acomodação Master com Seletor de Camas ──── */}
-      <main id="flats" className="max-w-6xl w-full mx-auto px-4 sm:px-8 py-16 space-y-8">
-        <div className="text-center space-y-2">
-          <div className="inline-flex items-center gap-1.5 bg-sky-100 text-sky-800 border border-sky-200 text-xs font-bold px-3 py-1 rounded-full">
-            <Sparkles className="w-3.5 h-3.5 text-sky-600" />
-            <span>Padrão Único de Excelência & Alocação Inteligente</span>
-          </div>
-          <h2 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
-            Flat Studio Executivo Completo
-          </h2>
-          <p className="text-xs sm:text-sm text-slate-500 max-w-lg mx-auto">
-            Todos os nossos flats possuem a mesma metragem, conforto e decoração de alto padrão. Sua reserva é alocada automaticamente em um apartamento perfeitamente higienizado e preparado.
-          </p>
-        </div>
-
-        {/* Card Master da Acomodação */}
-        <div className="bg-white border border-slate-200/90 rounded-3xl shadow-xl overflow-hidden grid grid-cols-1 lg:grid-cols-12 gap-0">
-          {/* Coluna Esquerda: Galeria de Fotos Interativa */}
-          <div className="lg:col-span-7 p-6 sm:p-8 space-y-4 bg-slate-50/50 flex flex-col justify-between border-b lg:border-b-0 lg:border-r border-slate-200">
-            <div className="space-y-3">
-              <div className="relative h-72 sm:h-96 rounded-2xl overflow-hidden bg-slate-200 shadow-inner group">
-                <img
-                  src={galleryList[activePhotoIdx]?.imageUrl || "https://images.unsplash.com/photo-1590490360182-c33d57733427?auto=format&fit=crop&w=1200&q=80"}
-                  alt={galleryList[activePhotoIdx]?.title || "Flat CorpFlats"}
-                  className="w-full h-full object-cover group-hover:scale-102 transition-transform duration-500"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-transparent to-transparent pointer-events-none" />
-                
-                <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between text-white text-xs font-bold">
-                  <span className="bg-black/60 backdrop-blur-md px-3 py-1 rounded-xl">
-                    {galleryList[activePhotoIdx]?.title || "Ambiente Arejado & Confortável"}
-                  </span>
-                  <span className="bg-sky-600 px-2.5 py-1 rounded-xl">
-                    Foto {activePhotoIdx + 1} de {galleryList.length}
-                  </span>
-                </div>
-              </div>
-
-              {/* Miniaturas Navegáveis */}
-              <div className="flex gap-2 overflow-x-auto pb-1 sm:grid sm:grid-cols-6 no-scrollbar">
-                {galleryList.map((photo: any, idx: number) => (
-                  <button
-                    key={photo.id || idx}
-                    type="button"
-                    onClick={() => setActivePhotoIdx(idx)}
-                    className={`min-w-[64px] sm:min-w-0 h-14 flex-1 rounded-xl overflow-hidden border-2 transition-all shrink-0 ${
-                      activePhotoIdx === idx ? "border-sky-600 ring-2 ring-sky-500/30 scale-102" : "border-transparent opacity-70 hover:opacity-100"
-                    }`}
-                  >
-                    <img src={photo.imageUrl} alt={photo.title} className="w-full h-full object-cover" />
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Destaques Rápidos da Acomodação */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-slate-200/80 text-xs text-slate-700">
-              <div className="p-2.5 rounded-xl bg-white border border-slate-200/60 font-semibold flex items-center gap-2">
-                <Wind className="w-4 h-4 text-sky-600 shrink-0" />
-                <span>Ar Split Silent</span>
-              </div>
-              <div className="p-2.5 rounded-xl bg-white border border-slate-200/60 font-semibold flex items-center gap-2">
-                <Wifi className="w-4 h-4 text-sky-600 shrink-0" />
-                <span>Wi-Fi 500MB</span>
-              </div>
-              <div className="p-2.5 rounded-xl bg-white border border-slate-200/60 font-semibold flex items-center gap-2">
-                <Car className="w-4 h-4 text-sky-600 shrink-0" />
-                <span>Garagem Coberta</span>
-              </div>
-              <div className="p-2.5 rounded-xl bg-white border border-slate-200/60 font-semibold flex items-center gap-2">
-                <Utensils className="w-4 h-4 text-sky-600 shrink-0" />
-                <span>Cozinha Equipada</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Coluna Direita: Configurador da Estadia (Camas, Tarifas e Reserva) */}
-          <div className="lg:col-span-5 p-6 sm:p-8 space-y-6 flex flex-col justify-between">
-            <div className="space-y-5">
-              {/* Status de Disponibilidade das Datas */}
-              <div className="flex items-center justify-between">
-                <Badge className={availabilityData?.available !== false ? "bg-emerald-100 text-emerald-800 border-emerald-200 font-bold" : "bg-rose-100 text-rose-800 border-rose-200 font-bold"}>
-                  {availabilityData?.available !== false ? "🟢 Flats Disponíveis para suas Datas" : "🔴 Esgotado para as datas"}
-                </Badge>
-                <span className="text-xs font-bold text-slate-500">
-                  {nights} {nights === 1 ? "diária" : "diárias"} • {rooms.length} {rooms.length === 1 ? "flat" : "flats"}
-                </span>
-              </div>
-
-              {/* 1. SELETOR DE REGIME DE HOSPEDAGEM */}
-              <div className="space-y-2">
-                <Label className="text-xs font-bold text-slate-800">
-                  1. Regime de Hospedagem:
-                </Label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setRatePlan("with_breakfast")}
-                    className={`p-2.5 rounded-2xl border-2 text-left transition-all ${
-                      ratePlan === "with_breakfast"
-                        ? "border-sky-600 bg-sky-50/70 text-slate-900 ring-2 ring-sky-500/20 shadow-xs"
-                        : "border-slate-200 bg-white text-slate-700"
-                    }`}
-                  >
-                    <div className="flex items-center gap-1.5 font-bold text-xs text-amber-900">
-                      <Coffee className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                      <span className="truncate">Com Café Incluso</span>
-                    </div>
-                    {ratePlan === "with_breakfast" ? (
-                      <span className="text-[10px] text-amber-700 block mt-0.5 font-bold">R$ {withBreakfastConfig.dailyRate}/noite</span>
-                    ) : (
-                      <span className="text-[10px] text-slate-500 block mt-0.5 font-medium">Servido no flat</span>
-                    )}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setRatePlan("room_only")}
-                    className={`p-2.5 rounded-2xl border-2 text-left transition-all ${
-                      ratePlan === "room_only"
-                        ? "border-sky-600 bg-sky-50/70 text-slate-900 ring-2 ring-sky-500/20 shadow-xs"
-                        : "border-slate-200 bg-white text-slate-700"
-                    }`}
-                  >
-                    <div className="flex items-center gap-1.5 font-bold text-xs text-slate-900">
-                      <Building2 className="w-3.5 h-3.5 text-slate-600 shrink-0" />
-                      <span className="truncate">Sem Café</span>
-                    </div>
-                    {ratePlan === "room_only" ? (
-                      <span className="text-[10px] text-slate-900 block mt-0.5 font-bold">R$ {roomOnlyConfig.dailyRate}/noite</span>
-                    ) : (
-                      <span className="text-[10px] text-slate-500 block mt-0.5 font-medium">Tarifa econômica</span>
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              {/* 2. CONFIGURADOR DE FLATS, CAMAS E HÓSPEDES */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs font-bold text-slate-800">
-                    2. Flats & Configuração dos Quartos ({rooms.length}):
-                  </Label>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={addRoom}
-                    className="h-6 text-[11px] font-bold text-sky-600 hover:text-sky-700 border-sky-200 hover:bg-sky-50 rounded-lg px-2"
-                  >
-                    + Adicionar flat
-                  </Button>
-                </div>
-
-                {/* Aviso de Corte de Horário após 12:00 */}
-                {isCutoffActive && (
-                  <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-[11px] font-medium leading-tight">
-                    ⏰ <strong>Horário de Corte (12:00):</strong> Para reservas com check-in hoje após as 12:00, os serviços de montagem de camas de solteiro e colchonete extra não estão disponíveis (apenas cama Queen para até 2 hóspedes por flat).
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                    ratePlan === "with_breakfast" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-600"
+                  }`}>
+                    <Coffee className="w-4 h-4" />
                   </div>
-                )}
-
-                <div className="space-y-2.5">
-                  {rooms.map((room, idx) => (
-                    <div key={room.id} className="p-3 rounded-2xl bg-slate-50 border border-slate-200/90 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-xs text-slate-900 flex items-center gap-1.5">
-                          <span className="w-4 h-4 rounded-full bg-sky-600 text-white flex items-center justify-center text-[9px] font-bold">
-                            {idx + 1}
-                          </span>
-                          Flat #{idx + 1}
-                        </span>
-                        {rooms.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => removeRoom(room.id)}
-                            className="text-[10px] text-rose-600 hover:text-rose-700 font-bold hover:underline"
-                          >
-                            Remover
-                          </button>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2">
-                        {/* Cama */}
-                        <div className="space-y-1">
-                          <Label className="text-[10px] font-bold text-slate-600">Cama:</Label>
-                          <select
-                            value={room.bedType}
-                            onChange={e => updateRoom(room.id, "bedType", e.target.value as any)}
-                            className="w-full h-8 rounded-xl border border-slate-200 bg-white px-2 text-[11px] text-slate-900 font-bold focus:ring-2 focus:ring-sky-500 focus:outline-hidden"
-                          >
-                            <option value="queen">👑 Cama Queen Casal</option>
-                            {!isCutoffActive && (
-                              <option value="twin">🛏️ 2 Camas Solteiro (+R${siteConfig?.bedConfig?.twinFeeAmount || 30})</option>
-                            )}
-                          </select>
-                        </div>
-
-                        {/* Hóspedes */}
-                        <div className="space-y-1">
-                          <Label className="text-[10px] font-bold text-slate-600">Hóspedes:</Label>
-                          <select
-                            value={room.adults}
-                            onChange={e => updateRoom(room.id, "adults", Number(e.target.value))}
-                            className="w-full h-8 rounded-xl border border-slate-200 bg-white px-2 text-[11px] text-slate-900 font-bold focus:ring-2 focus:ring-sky-500 focus:outline-hidden"
-                          >
-                            <option value="1">1 Hóspede</option>
-                            <option value="2">2 Hóspedes (Ideal)</option>
-                            {!isCutoffActive && (
-                              <option value="3">3 Hósp. (Colchonete)</option>
-                            )}
-                          </select>
-                        </div>
-                      </div>
-
-                      {/* Aviso Explicativo para 3 Hóspedes */}
-                      {!isCutoffActive && room.adults === 3 && (
-                        <div className="p-2 rounded-xl bg-sky-50 border border-sky-200 text-sky-950 text-[10px] font-medium leading-tight">
-                          ℹ️ Flat #{idx + 1}: flats projetados para 2 pessoas. Para o 3º hóspede, montamos 1 colchonete extra com enxoval completo (+ R$ {siteConfig?.extraBedConfig?.feeAmount || 60}).
-                        </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-bold text-xs sm:text-sm text-slate-900">COM CAFÉ</span>
+                      {ratePlan === "with_breakfast" && (
+                        <span className="text-[9px] font-bold text-sky-700 bg-sky-100 px-1.5 py-0.5 rounded-md">Ativa</span>
                       )}
                     </div>
-                  ))}
+                    <p className="text-[11px] text-slate-500 truncate">Café da manhã no flat</p>
+                  </div>
+                </div>
+                <div className="text-right shrink-0 pl-2">
+                  <div className="font-extrabold text-sm sm:text-base text-slate-900">
+                    R$ {withBreakfastConfig.dailyRate}
+                  </div>
+                  <span className="text-[10px] text-slate-400 block -mt-0.5">/ noite</span>
                 </div>
               </div>
 
-              {/* Resumo Financeiro Consolidado */}
-              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-1.5 text-xs">
-                <div className="flex items-center justify-between text-slate-600">
-                  <span>Diárias ({nights}x • {rooms.length} {rooms.length === 1 ? "flat" : "flats"}):</span>
-                  <span>R$ {subtotal}</span>
-                </div>
-                <div className="flex items-center justify-between text-emerald-700 font-bold">
-                  <span>Desconto Reserva Direta ({discountPercent}%):</span>
-                  <span>- R$ {discountAmount}</span>
-                </div>
-                {twinFee > 0 && (
-                  <div className="flex items-center justify-between text-slate-700 font-bold">
-                    <span>Acréscimo 2 Camas Solteiro:</span>
-                    <span>+ R$ {twinFee}</span>
+              {/* Opção 2: SEM CAFÉ */}
+              <div
+                onClick={() => setRatePlan("room_only")}
+                className={`cursor-pointer p-4 rounded-2xl border transition-all flex items-center justify-between ${
+                  ratePlan === "room_only"
+                    ? "border-sky-600 bg-sky-50/50 text-slate-900 ring-2 ring-sky-600/20 shadow-xs"
+                    : "border-slate-200 hover:border-slate-300 bg-white text-slate-700"
+                }`}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                    ratePlan === "room_only" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-600"
+                  }`}>
+                    <Building2 className="w-4 h-4" />
                   </div>
-                )}
-                {extraBedFee > 0 && (
-                  <div className="flex items-center justify-between text-slate-700 font-bold">
-                    <span>Acréscimo Colchonete 3º Hóspede:</span>
-                    <span>+ R$ {extraBedFee}</span>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-bold text-xs sm:text-sm text-slate-900">SEM CAFÉ</span>
+                      {ratePlan === "room_only" && (
+                        <span className="text-[9px] font-bold text-sky-700 bg-sky-100 px-1.5 py-0.5 rounded-md">Ativa</span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-500 truncate">Tarifa econômica</p>
                   </div>
-                )}
-                <div className="pt-2 border-t border-slate-200 flex items-center justify-between font-black text-sm text-slate-900">
-                  <span>Total da Estadia:</span>
-                  <span className="text-sky-600 text-lg">R$ {totalAmount}</span>
+                </div>
+                <div className="text-right shrink-0 pl-2">
+                  <div className="font-extrabold text-sm sm:text-base text-slate-900">
+                    R$ {roomOnlyConfig.dailyRate}
+                  </div>
+                  <span className="text-[10px] text-slate-400 block -mt-0.5">/ noite</span>
                 </div>
               </div>
             </div>
+          </div>
 
+          {/* Botão de Ação Principal (CTA) */}
+          <div className="pt-2 space-y-2.5">
             <Button
               onClick={() => handleStartBooking()}
               disabled={availabilityData?.available === false}
-              className="w-full bg-sky-600 hover:bg-sky-700 text-white font-black text-sm h-12 rounded-2xl shadow-lg shadow-sky-600/25 transition-all flex items-center justify-center gap-2 mt-4"
+              className="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold text-sm h-12 rounded-xl shadow-md shadow-sky-600/20 transition-all flex items-center justify-center gap-2"
             >
-              <Sparkles className="w-4 h-4" />
-              <span>Garantir Reserva ({rooms.length} {rooms.length === 1 ? "Flat" : "Flats"}) por R$ {totalAmount}</span>
+              <span>Reservar agora</span>
               <ArrowRight className="w-4 h-4" />
             </Button>
+
+            <div className="flex items-center justify-center gap-2 text-[11px] text-slate-500 font-medium">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span>Confirmação imediata • Cancelamento gratuito</span>
+            </div>
           </div>
         </div>
       </main>
 
-      {/* ── Seção de Comodidades (Grid Clean) ─────────────────────────────── */}
-      <section id="comodidades" className="bg-white border-y border-slate-200/80 py-16 px-4 sm:px-8">
-        <div className="max-w-6xl mx-auto space-y-10">
-          <div className="text-center space-y-1.5">
-            <Badge className="bg-sky-100 text-sky-800 border-sky-200 text-xs font-bold">
-              Estrutura & Conforto
-            </Badge>
-            <h2 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
-              Tudo o que você precisa para uma estadia perfeita
-            </h2>
-            <p className="text-xs sm:text-sm text-slate-500 max-w-md mx-auto">
-              Ambientes preparados para seu descanso, lazer e trabalho com o mais alto padrão.
-            </p>
+      {/* ── Benefícios (Apresentados após a reserva, discretos & naturais) ── */}
+      <section id="beneficios" className="max-w-md sm:max-w-lg mx-auto px-4 py-8 sm:py-10">
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 text-slate-700">
+          <div className="flex items-center gap-2.5">
+            <Wifi className="w-4 h-4 text-sky-600 shrink-0" />
+            <span className="text-xs sm:text-sm font-medium">Wi-Fi 500 MB</span>
           </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-            {amenitiesList.map((amenity: any, idx: number) => (
-              <div
-                key={amenity.id || idx}
-                className="p-5 rounded-2xl bg-slate-50/80 border border-slate-200/70 hover:border-sky-300 hover:bg-sky-50/30 transition-all duration-300 space-y-3"
-              >
-                <div className="w-10 h-10 rounded-xl bg-sky-100 text-sky-700 flex items-center justify-center font-bold">
-                  {renderAmenityIcon(amenity.icon)}
-                </div>
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between gap-1">
-                    <h4 className="font-bold text-sm text-slate-900">{amenity.title}</h4>
-                    {amenity.badge && (
-                      <span className="text-[10px] font-bold text-sky-700 bg-sky-100 px-2 py-0.5 rounded-md">
-                        {amenity.badge}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs text-slate-500 leading-relaxed font-medium">
-                    {amenity.description}
-                  </p>
-                </div>
-              </div>
-            ))}
+          <div className="flex items-center gap-2.5">
+            <KeyRound className="w-4 h-4 text-sky-600 shrink-0" />
+            <span className="text-xs sm:text-sm font-medium">Check-in digital</span>
+          </div>
+          <div className="flex items-center gap-2.5">
+            <Wind className="w-4 h-4 text-sky-600 shrink-0" />
+            <span className="text-xs sm:text-sm font-medium">Ar-condicionado</span>
+          </div>
+          <div className="flex items-center gap-2.5">
+            <Car className="w-4 h-4 text-sky-600 shrink-0" />
+            <span className="text-xs sm:text-sm font-medium">Garagem privativa</span>
           </div>
         </div>
       </section>
 
       {/* ── Galeria de Fotos dos Ambientes ───────────────────────────────── */}
-      <section id="galeria" className="py-16 px-4 sm:px-8 max-w-6xl mx-auto space-y-8">
-        <div className="text-center space-y-1.5">
-          <Badge className="bg-sky-100 text-sky-800 border-sky-200 text-xs font-bold">
-            Tour Fotográfico
-          </Badge>
-          <h2 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
-            Conheça nossos Ambientes Arejados
-          </h2>
+      <section id="galeria" className="max-w-4xl mx-auto px-4 sm:px-8 py-10 space-y-6">
+        <div className="text-center space-y-1">
+          <h3 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
+            O Flat Soho Residence
+          </h3>
           <p className="text-xs sm:text-sm text-slate-500 max-w-md mx-auto">
-            Apartamentos decorados com sofisticação, amplitude e muita luz natural.
+            Apartamentos arejados, decorados com sofisticação, conforto e muita luz natural.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {galleryList.map((item: any, idx: number) => (
+        <div className="space-y-3">
+          <div className="relative h-64 sm:h-96 rounded-2xl overflow-hidden bg-slate-200 shadow-sm">
+            <img
+              src={galleryList[activePhotoIdx]?.imageUrl || galleryList[0]?.imageUrl}
+              alt={galleryList[activePhotoIdx]?.title || "Flat CorpFlats"}
+              className="w-full h-full object-cover transition-all duration-500"
+            />
+            <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between text-white text-xs font-semibold">
+              <span className="bg-slate-900/75 backdrop-blur-md px-3 py-1 rounded-lg">
+                {galleryList[activePhotoIdx]?.title || "Ambiente Arejado"}
+              </span>
+              <span className="bg-slate-900/75 backdrop-blur-md px-2.5 py-1 rounded-lg text-[11px]">
+                {activePhotoIdx + 1} / {galleryList.length}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar sm:grid sm:grid-cols-6">
+            {galleryList.map((photo: any, idx: number) => (
+              <button
+                key={photo.id || idx}
+                type="button"
+                onClick={() => setActivePhotoIdx(idx)}
+                className={`h-14 flex-1 min-w-[64px] sm:min-w-0 rounded-xl overflow-hidden border-2 transition-all shrink-0 ${
+                  activePhotoIdx === idx ? "border-sky-600 ring-2 ring-sky-600/20" : "border-transparent opacity-60 hover:opacity-100"
+                }`}
+              >
+                <img src={photo.imageUrl} alt={photo.title} className="w-full h-full object-cover" />
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── Detalhes do Flat & Estrutura ─────────────────────────────────── */}
+      <section id="detalhes" className="max-w-4xl mx-auto px-4 sm:px-8 py-10 border-t border-slate-200/60 space-y-6">
+        <div className="space-y-1">
+          <h3 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
+            Flats Sofisticados no Soho Residence
+          </h3>
+          <p className="text-xs sm:text-sm text-slate-500 max-w-xl">
+            Flats sofisticados no Soho Residence, no coração de Campos dos Goytacazes. Projetados para unir o conforto de casa à praticidade de um hotel moderno.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="p-4 rounded-2xl bg-white border border-slate-200/70 space-y-2">
+            <h4 className="font-bold text-xs sm:text-sm text-slate-900 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-sky-600"></span>
+              Acomodação & Conforto
+            </h4>
+            <ul className="text-xs text-slate-600 space-y-1.5 font-normal">
+              <li>• Cama Queen Casal com colchão ortopédico de alta densidade</li>
+              <li>• Enxoval completo em percal e toalhas felpudas higienizadas</li>
+              <li>• Ar-condicionado split silencioso com controle térmico</li>
+              <li>• Armários planejados e espaço de apoio para malas</li>
+            </ul>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-white border border-slate-200/70 space-y-2">
+            <h4 className="font-bold text-xs sm:text-sm text-slate-900 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-sky-600"></span>
+              Praticidade & Home Office
+            </h4>
+            <ul className="text-xs text-slate-600 space-y-1.5 font-normal">
+              <li>• Cozinha compacta com frigobar, micro-ondas, cooktop e cafeteira</li>
+              <li>• Bancada dedicada de trabalho com tomadas acessíveis</li>
+              <li>• Fibra óptica dedicada de 500 MB com alta estabilidade</li>
+              <li>• Smart TV com canais digitais e aplicativos de streaming</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Comodidades do Condomínio ─────────────────────────────────────── */}
+      <section id="comodidades" className="max-w-4xl mx-auto px-4 sm:px-8 py-10 border-t border-slate-200/60 space-y-6">
+        <div className="space-y-1">
+          <h3 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
+            Comodidades da Hospedagem
+          </h3>
+          <p className="text-xs sm:text-sm text-slate-500">
+            Tudo o que você precisa para uma estadia impecável em Campos dos Goytacazes.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {amenitiesList.map((amenity: any, idx: number) => (
             <div
-              key={item.id || idx}
-              className="group relative h-64 rounded-3xl overflow-hidden shadow-xs border border-slate-200/80 bg-slate-100"
+              key={amenity.id || idx}
+              className="p-4 rounded-2xl bg-white border border-slate-200/70 space-y-2 hover:border-slate-300 transition-colors"
             >
-              <img
-                src={item.imageUrl}
-                alt={item.title}
-                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-slate-950/20 to-transparent flex flex-col justify-end p-5 text-white space-y-1">
-                <Badge className="bg-white/90 text-slate-900 font-bold text-[10px] w-fit">
-                  {item.category || "Ambiente"}
-                </Badge>
-                <h4 className="font-bold text-sm drop-shadow-sm">{item.title}</h4>
+              <div className="w-8 h-8 rounded-lg bg-sky-50 text-sky-600 flex items-center justify-center">
+                {renderAmenityIcon(amenity.icon)}
+              </div>
+              <div>
+                <h4 className="font-bold text-xs sm:text-sm text-slate-900">{amenity.title}</h4>
+                <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">{amenity.description}</p>
               </div>
             </div>
           ))}
         </div>
       </section>
 
-      {/* ── Depoimentos de Hóspedes Reais ────────────────────────────────── */}
-      <section id="avaliacoes" className="bg-slate-100/70 border-y border-slate-200/80 py-16 px-4 sm:px-8">
-        <div className="max-w-6xl mx-auto space-y-10">
-          <div className="text-center space-y-1.5">
-            <Badge className="bg-amber-100 text-amber-800 border-amber-200 text-xs font-bold flex items-center gap-1 w-fit mx-auto">
-              <Star className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
-              <span>Avaliação Média 4.9 ★</span>
-            </Badge>
-            <h2 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
-              O que dizem os nossos Hóspedes
-            </h2>
-            <p className="text-xs sm:text-sm text-slate-500 max-w-md mx-auto">
-              Depoimentos reais de quem já viveu a experiência CorpFlats.
+      {/* ── Localização Privilegiada ─────────────────────────────────────── */}
+      <section id="localizacao" className="max-w-4xl mx-auto px-4 sm:px-8 py-10 border-t border-slate-200/60 space-y-4">
+        <div className="space-y-1">
+          <h3 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
+            Localização Privilegiada
+          </h3>
+          <p className="text-xs sm:text-sm text-slate-500">
+            Flats no Edifício Soho Residence Service, no coração de Campos dos Goytacazes.
+          </p>
+        </div>
+
+        <div className="p-5 rounded-2xl bg-white border border-slate-200/70 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center shrink-0 mt-0.5">
+              <MapPin className="w-5 h-5" />
+            </div>
+            <div className="space-y-0.5">
+              <p className="font-bold text-xs sm:text-sm text-slate-900">
+                Edifício Soho Residence Service
+              </p>
+              <p className="text-xs text-slate-500">
+                {siteConfig?.branding?.address || "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ"}
+              </p>
+            </div>
+          </div>
+
+          <a
+            href={siteConfig?.branding?.googleMapsUrl || "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ"}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-sky-600 hover:text-sky-700 bg-sky-50 hover:bg-sky-100 px-3.5 py-2 rounded-xl transition-colors shrink-0"
+          >
+            <span>Abrir no Google Maps</span>
+            <ExternalLink className="w-3.5 h-3.5" />
+          </a>
+        </div>
+      </section>
+
+      {/* ── Avaliações dos Hóspedes ───────────────────────────────────────── */}
+      <section id="avaliacoes" className="max-w-4xl mx-auto px-4 sm:px-8 py-10 border-t border-slate-200/60 space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
+              Experiências dos Hóspedes
+            </h3>
+            <p className="text-xs sm:text-sm text-slate-500">
+              Avaliação média 4.9 ★ com conforto e excelência.
             </p>
           </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {testimonialsList.map((t: any, idx: number) => (
-              <div
-                key={t.id || idx}
-                className="p-6 rounded-3xl bg-white border border-slate-200/80 shadow-xs space-y-4 flex flex-col justify-between"
-              >
-                <div className="space-y-3">
-                  <div className="flex items-center gap-1 text-amber-400">
-                    {[...Array(t.rating || 5)].map((_, i) => (
-                      <Star key={i} className="w-4 h-4 fill-amber-400" />
-                    ))}
-                  </div>
-                  <p className="text-xs sm:text-sm text-slate-700 leading-relaxed italic">
-                    "{t.comment}"
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-3 pt-3 border-t border-slate-100">
-                  <img
-                    src={t.avatar || "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=200&q=80"}
-                    alt={t.name}
-                    className="w-10 h-10 rounded-full object-cover border border-slate-200 shrink-0"
-                  />
-                  <div>
-                    <h5 className="font-bold text-xs text-slate-900">{t.name}</h5>
-                    <span className="text-[11px] text-slate-500 block">{t.city} • {t.date}</span>
-                  </div>
-                </div>
-              </div>
+          <div className="flex items-center gap-1 text-amber-400">
+            {[...Array(5)].map((_, i) => (
+              <Star key={i} className="w-4 h-4 fill-amber-400" />
             ))}
           </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {testimonialsList.map((t: any, idx: number) => (
+            <div
+              key={t.id || idx}
+              className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200/70 space-y-3 flex flex-col justify-between"
+            >
+              <p className="text-xs text-slate-600 leading-relaxed italic">
+                "{t.comment}"
+              </p>
+              <div className="flex items-center gap-2.5 pt-2 border-t border-slate-100">
+                <img
+                  src={t.avatar || "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=200&q=80"}
+                  alt={t.name}
+                  className="w-8 h-8 rounded-full object-cover border border-slate-200 shrink-0"
+                />
+                <div>
+                  <span className="font-bold text-xs text-slate-900 block">{t.name}</span>
+                  <span className="text-[10px] text-slate-400 block">{t.city}</span>
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       </section>
 
       {/* ── Perguntas Frequentes (FAQ) ───────────────────────────────────── */}
-      <section id="faq" className="py-16 px-4 sm:px-8 max-w-4xl mx-auto space-y-8">
-        <div className="text-center space-y-1.5">
-          <Badge className="bg-sky-100 text-sky-800 border-sky-200 text-xs font-bold">
-            Tire suas Dúvidas
-          </Badge>
-          <h2 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
-            Perguntas Frequentes
-          </h2>
+      <section id="faq" className="max-w-4xl mx-auto px-4 sm:px-8 py-10 border-t border-slate-200/60 space-y-6">
+        <div className="space-y-1">
+          <h3 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
+            Dúvidas Frequentes
+          </h3>
+          <p className="text-xs sm:text-sm text-slate-500">
+            Respostas sobre sua reserva e estadia.
+          </p>
         </div>
 
-        <div className="space-y-3">
+        <div className="space-y-2">
           {faqList.map((item: any, idx: number) => {
             const isOpen = faqOpen === idx
             return (
               <div
                 key={idx}
-                className="bg-white rounded-2xl border border-slate-200/80 shadow-2xs overflow-hidden transition-all"
+                className="bg-white rounded-xl border border-slate-200/70 overflow-hidden"
               >
                 <button
                   onClick={() => setFaqOpen(isOpen ? null : idx)}
-                  className="w-full p-4 sm:p-5 text-left flex items-center justify-between gap-3 font-bold text-xs sm:text-sm text-slate-900 hover:text-sky-600 transition-colors"
+                  className="w-full p-4 text-left flex items-center justify-between gap-3 font-semibold text-xs sm:text-sm text-slate-900 hover:text-sky-600 transition-colors"
                 >
                   <span>{item.q}</span>
                   <ChevronDown className={`w-4 h-4 text-slate-400 shrink-0 transition-transform ${isOpen ? "rotate-180 text-sky-600" : ""}`} />
                 </button>
                 {isOpen && (
-                  <div className="px-5 pb-5 pt-0 text-xs sm:text-sm text-slate-600 leading-relaxed font-medium border-t border-slate-50">
+                  <div className="px-4 pb-4 text-xs text-slate-600 leading-relaxed font-normal border-t border-slate-50">
                     {item.a}
                   </div>
                 )}
@@ -1520,94 +1294,64 @@ export default function BookingEngine() {
         </div>
       </section>
 
-      {/* ── Rodapé Clean & Moderno ───────────────────────────────────────── */}
-      <footer className="bg-white border-t border-slate-200/80 py-12 px-4 sm:px-8 text-xs text-slate-600">
-        <div className="max-w-6xl mx-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg bg-sky-600 text-white font-black flex items-center justify-center text-xs">
+      {/* ── Rodapé Clean ─────────────────────────────────────────────────── */}
+      <footer className="bg-white border-t border-slate-200/80 py-10 px-4 sm:px-8 text-xs text-slate-600 mt-12 pb-24 sm:pb-10">
+        <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-center sm:text-left">
+          <div className="space-y-1">
+            <div className="flex items-center justify-center sm:justify-start gap-2">
+              <div className="w-6 h-6 rounded-md bg-sky-600 text-white font-bold flex items-center justify-center text-[10px]">
                 CF
               </div>
-              <span className="font-black text-base text-slate-900">{brandName}</span>
+              <span className="font-bold text-sm text-slate-900">{brandName}</span>
             </div>
-            <p className="text-xs text-slate-500 leading-relaxed">
-              {siteConfig?.branding?.tagline || "Hospitalidade contemporânea, flats arejados e conforto total."}
+            <p className="text-[11px] text-slate-500">
+              Edifício Soho Residence Service • Centro, Campos dos Goytacazes - RJ
             </p>
           </div>
 
-          <div className="space-y-2">
-            <h5 className="font-bold text-slate-900 text-xs uppercase tracking-wider">Links Rápidos</h5>
-            <ul className="space-y-1.5">
-              <li><a href="#flats" className="hover:text-sky-600">Acomodações</a></li>
-              <li><a href="#comodidades" className="hover:text-sky-600">Comodidades</a></li>
-              <li><a href="#galeria" className="hover:text-sky-600">Galeria de Fotos</a></li>
-              <li><a href="#avaliacoes" className="hover:text-sky-600">Avaliações</a></li>
-            </ul>
-          </div>
-
-          <div className="space-y-3">
-            <h5 className="font-bold text-slate-900 text-xs uppercase tracking-wider">Contato & Localização</h5>
-            
-            <div className="space-y-1 text-slate-600 text-xs">
-              <p className="font-medium text-slate-700">
-                {siteConfig?.branding?.address || "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ"}
-              </p>
-              <p className="text-slate-500 text-[11px]">Edifício Soho Residence Service</p>
-              <div>
-                <a 
-                  href={siteConfig?.branding?.googleMapsUrl || "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ"} 
-                  target="_blank" 
-                  rel="noreferrer"
-                  className="text-sky-600 font-semibold hover:underline inline-flex items-center gap-1 text-[11px] pt-0.5"
-                >
-                  <MapPin className="w-3.5 h-3.5 shrink-0" />
-                  <span>Ver no Google Maps</span>
-                </a>
-              </div>
-            </div>
-
-            <div className="pt-2 flex flex-col gap-2">
-              <a
-                href={whatsappUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-2.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-xs hover:shadow-md active:scale-95 transition-all w-fit group"
-              >
-                <div className="w-5 h-5 rounded-lg bg-emerald-500/80 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
-                  <MessageCircle className="w-3.5 h-3.5 fill-white/20 text-white" />
-                </div>
-                <div className="flex flex-col text-left leading-tight">
-                  <span className="font-bold text-xs">Falar no WhatsApp</span>
-                  <span className="text-[10.5px] text-emerald-100 font-normal">{formatPhoneNumber(whatsappNumber)}</span>
-                </div>
-              </a>
-
-              <a
-                href={`mailto:${siteConfig?.branding?.email || "reservas@corpflats.com.br"}`}
-                className="inline-flex items-center gap-2 text-slate-500 hover:text-sky-600 text-xs transition-colors py-0.5 w-fit group"
-              >
-                <Mail className="w-3.5 h-3.5 text-slate-400 group-hover:text-sky-600 shrink-0" />
-                <span>{siteConfig?.branding?.email || "reservas@corpflats.com.br"}</span>
-              </a>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <h5 className="font-bold text-slate-900 text-xs uppercase tracking-wider">Segurança & Garantia</h5>
-            <p className="text-slate-500 leading-relaxed">
-              Reserva direta 100% segura com confirmação instantânea via PIX Banco Inter ou Cartão.
-            </p>
-            <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-bold">
-              ✓ Pagamento Blindado
-            </Badge>
+          <div className="flex items-center gap-4 text-xs">
+            <a
+              href={whatsappUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="text-emerald-700 font-semibold hover:underline flex items-center gap-1"
+            >
+              <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+              <span>WhatsApp ({formatPhoneNumber(whatsappNumber)})</span>
+            </a>
+            <a
+              href={`mailto:${siteConfig?.branding?.email || "reservas@corpflats.com.br"}`}
+              className="text-slate-600 hover:text-sky-600"
+            >
+              {siteConfig?.branding?.email || "reservas@corpflats.com.br"}
+            </a>
           </div>
         </div>
 
-        <div className="max-w-6xl mx-auto pt-8 mt-8 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 text-slate-400 text-[11px]">
-          <p>© {new Date().getFullYear()} {brandName} • Campos dos Goytacazes - RJ. Todos os direitos reservados.</p>
-          <p>Plataforma Desenvolvida com Tecnologia de Alta Performance.</p>
+        <div className="max-w-5xl mx-auto pt-6 mt-6 border-t border-slate-100 text-center text-slate-400 text-[11px]">
+          © {new Date().getFullYear()} {brandName}. Todos os direitos reservados.
         </div>
       </footer>
+
+      {/* ── Mobile Sticky Bottom CTA Bar ─────────────────────────────────── */}
+      <div className="sm:hidden fixed bottom-0 left-0 right-0 z-30 bg-white/95 backdrop-blur-md border-t border-slate-200 px-4 py-2.5 flex items-center justify-between shadow-lg">
+        <div>
+          <span className="text-[10px] text-slate-500 font-medium block">
+            {ratePlan === "with_breakfast" ? "Com café da manhã" : "Sem café da manhã"}
+          </span>
+          <div className="text-xs font-bold text-slate-900">
+            R$ {ratePlan === "with_breakfast" ? withBreakfastConfig.dailyRate : roomOnlyConfig.dailyRate}
+            <span className="text-[10px] font-normal text-slate-500"> / noite</span>
+          </div>
+        </div>
+
+        <Button
+          onClick={() => handleStartBooking()}
+          className="bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs h-9 px-4 rounded-xl shadow-xs"
+        >
+          Reservar agora
+        </Button>
+      </div>
 
       {/* ── Funil de Vendas Interativo do Motor de Reservas (5 Etapas) ─────── */}
       <BookingFunnelModal
