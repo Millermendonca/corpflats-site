@@ -242,7 +242,7 @@ export default function GuestPortal() {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-lg font-black text-white">CorpFlats • Área do Hóspede</h1>
+                <h1 className="text-lg font-black text-white">CorpFlats</h1>
                 <Badge className="bg-emerald-950 text-emerald-400 border border-emerald-800 text-[10px] font-bold">
                   Reserva Confirmada
                 </Badge>
@@ -255,10 +255,10 @@ export default function GuestPortal() {
             href={whatsappUrl} 
             target="_blank" 
             rel="noreferrer"
-            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition-colors shadow-sm"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition-colors shadow-sm"
           >
             <MessageCircle className="w-4 h-4" />
-            <span>Falar com a Administradora do Flat</span>
+            <span>WhatsApp</span>
           </a>
         </div>
       </header>
@@ -399,7 +399,7 @@ export default function GuestPortal() {
           </div>
         </Card>
 
-        {/* Card: Café da Manhã no Flat (Se incluso na reserva) */}
+        {/* Card: Café da Manhã (Se incluso na reserva) */}
         {(reservation.hasBreakfast || reservation.includeBreakfast || data.hasBreakfast) && (
           <Card className="bg-gradient-to-br from-amber-950/50 via-slate-900 to-slate-900 border-amber-600/40 text-white rounded-3xl p-5 sm:p-6 shadow-xl space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-800/40 pb-3.5">
@@ -409,25 +409,25 @@ export default function GuestPortal() {
                 </div>
                 <div>
                   <h2 className="text-base font-black text-white flex items-center gap-2">
-                    Café da Manhã no Flat
+                    Room Service & Café da Manhã
                   </h2>
                   <span className="text-[11px] text-amber-300/90 font-medium">
-                    Room service artesanal servido pontualmente no seu apartamento
+                    Entregas diárias das 05h às 09h30
                   </span>
                 </div>
               </div>
-              <Badge className="bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-black px-2.5 py-0.5">
+              <Badge className="bg-emerald-950 text-emerald-300 border border-emerald-800 text-xs font-black px-2.5 py-0.5">
                 ☕ Incluso na Diária
               </Badge>
             </div>
 
             <p className="text-xs text-slate-300 leading-relaxed">
-              Sua estadia no <strong>Apt {reservation.flatNumber}</strong> conta com café da manhã incluso entregue diretamente no seu quarto das <strong>05:00 às 09:30</strong>. Você pode montar suas opções favoritas e escolher o horário ideal através do seu link exclusivo.
+              Sua estadia conta com café da manhã incluso com entregas diárias das <strong>05h às 09h30</strong>. Você pode personalizar suas opções favoritas e selecionar o horário ideal através do link do cardápio.
             </p>
 
             <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5 pt-1">
               <Button
-                onClick={() => window.open(`/cafe?res=${reservation.code || reservation.breakfastToken || code}`, "_blank")}
+                onClick={() => setLocation(`/minha-reserva/${reservation.code || code}/cafe`)}
                 className="w-full sm:w-auto bg-amber-600 hover:bg-amber-500 text-white font-black text-xs h-11 px-5 rounded-2xl shadow-lg shadow-amber-600/20 flex items-center justify-center gap-2 flex-1 transition-all"
               >
                 <Coffee className="w-4 h-4" />
@@ -439,7 +439,7 @@ export default function GuestPortal() {
                 type="button"
                 variant="outline"
                 onClick={() => {
-                  const url = `${window.location.origin}/cafe?res=${reservation.code || reservation.breakfastToken || code}`
+                  const url = `${window.location.origin}/minha-reserva/${reservation.code || code}/cafe`
                   navigator.clipboard.writeText(url)
                   alert("Link exclusivo do café da manhã copiado para a área de transferência!")
                 }}

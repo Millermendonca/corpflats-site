@@ -67,6 +67,10 @@ function Router() {
         <Route path="/minhaconta" component={MyAccount} />
         <Route path="/perfil" component={MyAccount} />
         <Route path="/my-account" component={MyAccount} />
+        <Route path="/minha-reserva/:code/cafe" component={GuestBreakfast} />
+        <Route path="/minha-reserva/:code/room-service" component={GuestBreakfast} />
+        <Route path="/portal-hospede/:code/cafe" component={GuestBreakfast} />
+        <Route path="/guest-portal/:code/cafe" component={GuestBreakfast} />
         <Route path="/minha-reserva/:code" component={GuestPortal} />
         <Route path="/minha-reserva" component={GuestPortal} />
         <Route path="/portal-hospede/:code" component={GuestPortal} />
@@ -90,8 +94,11 @@ function Router() {
         <Route path="/reception" component={ReceptionCheckout} />
 
         {/* Public Breakfast Order Portal */}
+        <Route path="/cafe/:code" component={GuestBreakfast} />
         <Route path="/cafe" component={GuestBreakfast} />
+        <Route path="/cafe-da-manha/:code" component={GuestBreakfast} />
         <Route path="/cafe-da-manha" component={GuestBreakfast} />
+        <Route path="/breakfast/:code" component={GuestBreakfast} />
         <Route path="/breakfast" component={GuestBreakfast} />
 
         {/* Live 27" Command Operations Panel */}

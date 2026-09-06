@@ -12,7 +12,7 @@ import {
 } from "lucide-react"
 import { format, addDays, parseISO } from "date-fns"
 import { ptBR } from "date-fns/locale"
-import { useLocation } from "wouter"
+import { useLocation, useRoute } from "wouter"
 
 interface GuestPreference {
   coffee: string
@@ -42,6 +42,13 @@ const defaultGuestPref: GuestPreference = {
 
 export default function GuestBreakfast() {
   const [, setLocation] = useLocation()
+  const [, paramsMinhaReserva] = useRoute("/minha-reserva/:code/cafe")
+  const [, paramsMinhaReservaAlt] = useRoute("/minha-reserva/:code/room-service")
+  const [, paramsPortal] = useRoute("/portal-hospede/:code/cafe")
+  const [, paramsGuest] = useRoute("/guest-portal/:code/cafe")
+  const [, paramsCafeCode] = useRoute("/cafe/:code")
+  const [, paramsCafeDaManhaCode] = useRoute("/cafe-da-manha/:code")
+  const [, paramsBreakfastCode] = useRoute("/breakfast/:code")
   const [availableSlots, setAvailableSlots] = useState<string[]>([])
   const [loadingSlots, setLoadingSlots] = useState(false)
   const [stdConfig, setStdConfig] = useState<any>(null)
@@ -164,7 +171,8 @@ export default function GuestBreakfast() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
-    const resCode = params.get("res") || params.get("code") || params.get("token") || params.get("reserva")
+    const routeCode = paramsMinhaReserva?.code || paramsMinhaReservaAlt?.code || paramsPortal?.code || paramsGuest?.code || paramsCafeCode?.code || paramsCafeDaManhaCode?.code || paramsBreakfastCode?.code
+    const resCode = routeCode || params.get("res") || params.get("code") || params.get("token") || params.get("reserva")
     const roomParam = params.get("room") || params.get("quarto")
     const nameParam = params.get("nome") || params.get("name")
 
@@ -174,7 +182,7 @@ export default function GuestBreakfast() {
       if (roomParam) setRoomNumber(roomParam)
       if (nameParam) setGuest1Name(nameParam)
     }
-  }, [])
+  }, [paramsMinhaReserva?.code, paramsMinhaReservaAlt?.code, paramsPortal?.code, paramsGuest?.code, paramsCafeCode?.code, paramsCafeDaManhaCode?.code, paramsBreakfastCode?.code])
 
   // Gera horários padrão das 05:00 às 09:30 a cada 7 minutos
   const generateDefaultSlots = () => {
@@ -524,7 +532,7 @@ export default function GuestBreakfast() {
               Café da Manhã Agendado!
             </h1>
             <p className="text-xs sm:text-sm text-slate-500 max-w-sm mx-auto leading-relaxed">
-              Seu café da manhã {orderSuccess.isStandard ? 'Padrão Completo' : 'Personalizado'} será preparado com todo o carinho para {orderSuccess.guestCount} {orderSuccess.guestCount === 1 ? 'pessoa' : 'pessoas'} e entregue pontualmente no seu flat.
+              Seu café da manhã {orderSuccess.isStandard ? 'Padrão Completo' : 'Personalizado'} será preparado com todo o carinho para {orderSuccess.guestCount} {orderSuccess.guestCount === 1 ? 'pessoa' : 'pessoas'} e entregue pontualmente no horário agendado.
             </p>
           </div>
 
@@ -543,7 +551,7 @@ export default function GuestBreakfast() {
                     : `${formatDateDisplay(orderSuccess.deliveryDate)} às ${orderSuccess.deliveryTime}`}
                 </span>
               </span>
-              <span className="text-[10px] text-slate-400 block mt-0.5 font-medium">Variação de até ±10 min</span>
+              <span className="text-[10px] text-slate-400 block mt-0.5 font-medium">Tolerância de até ±10 min</span>
             </div>
             <div className="pt-2.5 border-t border-slate-200/80">
               <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Hóspede Titular</span>
@@ -642,7 +650,7 @@ export default function GuestBreakfast() {
       <nav className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-4 sm:px-8 py-3 shadow-2xs w-full max-w-full">
         <div className="max-w-4xl mx-auto flex items-center justify-between gap-2 sm:gap-4">
           <div 
-            onClick={() => setLocation(loadedFromReservation && reservationData?.code ? `/minha-reserva/${reservationData.code}` : "/reservar")}
+            onClick={() => setLocation(loadedFromReservation && reservationData?.code ? `/minha-reserva/${reservationData.code}` : "/minha-reserva")}
             className="flex items-center gap-2.5 sm:gap-3 cursor-pointer group shrink-0"
           >
             {siteConfig?.branding?.logoImage ? (
@@ -652,12 +660,12 @@ export default function GuestBreakfast() {
                 className="w-8 h-8 sm:w-9 sm:h-9 object-contain rounded-xl"
               />
             ) : (
-              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-sky-600 group-hover:bg-sky-700 text-white flex items-center justify-center font-black text-sm sm:text-base shadow-sm transition-colors">
+              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-sm sm:text-base shadow-sm group-hover:bg-slate-800 transition-colors">
                 CF
               </div>
             )}
             <div>
-              <span className="font-black text-base sm:text-lg tracking-tight text-slate-900 group-hover:text-sky-600 transition-colors block leading-none">
+              <span className="font-bold text-base sm:text-lg tracking-tight text-slate-900 group-hover:text-slate-700 transition-colors block leading-none">
                 {brandName}
               </span>
             </div>
@@ -670,7 +678,7 @@ export default function GuestBreakfast() {
                 variant="ghost"
                 size="sm"
                 onClick={() => setLocation(`/minha-reserva/${reservationData.code}`)}
-                className="h-8 sm:h-9 px-2.5 sm:px-3 text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-bold text-xs rounded-xl flex items-center gap-1.5"
+                className="h-8 sm:h-9 px-2.5 sm:px-3 text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-semibold text-xs rounded-xl flex items-center gap-1.5 transition-colors"
               >
                 <ArrowLeft className="w-3.5 h-3.5" />
                 <span>Voltar</span>
@@ -681,7 +689,7 @@ export default function GuestBreakfast() {
               href={whatsappUrl}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1.5 py-2 px-3.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-xs border border-emerald-200 transition-colors shrink-0"
+              className="inline-flex items-center gap-1.5 py-1.5 sm:py-2 px-3 sm:px-3.5 rounded-xl bg-emerald-50/90 hover:bg-emerald-100/90 text-emerald-700 font-semibold text-xs border border-emerald-200 transition-colors shrink-0"
             >
               <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
               <span>WhatsApp</span>
@@ -690,71 +698,63 @@ export default function GuestBreakfast() {
         </div>
       </nav>
 
-      {/* ── Hero Section (Banner Suave & Sofisticado) ────────────────────── */}
-      <header className="relative min-h-[170px] sm:min-h-[200px] flex items-center justify-center px-4 sm:px-8 py-8 sm:py-10 text-center overflow-hidden">
+      {/* ── Hero Section (Capa) ────────────────────── */}
+      <header className="relative min-h-[150px] sm:min-h-[180px] flex items-center justify-center px-4 sm:px-8 py-6 sm:py-8 text-center overflow-hidden">
         <div className="absolute inset-0 z-0">
           <img
             src="https://images.unsplash.com/photo-1533089860892-a7c6f0a88666?auto=format&fit=crop&w=1920&q=80"
             alt="Café da Manhã CorpFlats"
             className="w-full h-full object-cover object-center"
           />
-          <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-950/55 to-slate-950/45" />
+          {/* Overlay escuro calibrado (rgba(0,0,0,0.45) a rgba(0,0,0,0.60)) para legibilidade impecável */}
+          <div className="absolute inset-0 bg-gradient-to-b from-black/45 via-black/50 to-black/60" />
         </div>
 
-        <div className="relative z-10 max-w-xl mx-auto space-y-1.5 text-white">
-          <h1 className="text-2xl sm:text-4xl font-black tracking-tight drop-shadow-md text-white">
+        <div className="relative z-10 max-w-xl mx-auto space-y-1 text-white">
+          <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight drop-shadow-md text-white">
             Café da Manhã
           </h1>
-          <p className="text-xs sm:text-sm font-medium text-slate-200 drop-shadow-sm">
+          <p className="text-xs sm:text-sm font-normal text-white/90 drop-shadow-sm tracking-normal">
             Entregas diárias das 05h às 09h30
           </p>
         </div>
       </header>
 
       {/* ── Main Form Container ─────────────────────────────────────────── */}
-      <main className="max-w-3xl w-full mx-auto px-4 -mt-8 sm:-mt-10 z-20 space-y-5 pb-20">
+      <main className="max-w-3xl w-full mx-auto px-4 -mt-6 sm:-mt-8 z-20 space-y-4 sm:space-y-5 pb-20">
         
-        {/* Quando acessado com link de reserva: Boas-vindas Acolhedora + Hub de Dias de Café da Estadia */}
+        {/* Quando acessado com link de reserva: Card de Identificação da Estada / Hóspede */}
         {loadedFromReservation && reservationData ? (
           <>
-            {/* Card de Boas-Vindas Sofisticado */}
-            <Card className="bg-white border border-slate-200/90 rounded-3xl p-5 sm:p-7 shadow-xl shadow-slate-200/60 space-y-3.5">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
-                <h2 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
+            {/* Card de Identificação da Estada / Hóspede */}
+            <Card className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-6 shadow-md space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
                   Olá, {(guest1Name || reservationData?.guestName || "Hóspede").trim().split(" ")[0]}!
                 </h2>
-                <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 font-bold text-xs py-1 px-3">
-                  ✓ Incluso na estadia
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-semibold text-xs">
+                  Flat {roomNumber}
+                </span>
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-semibold text-xs">
+                  {guestCount} {guestCount === 1 ? 'Pessoa' : 'Pessoas'}
+                </span>
+                <Badge className="bg-emerald-50 hover:bg-emerald-50 text-emerald-700 border border-emerald-200/80 font-semibold text-xs px-2.5 py-1 rounded-lg shadow-none">
+                  Café da Manhã Incluso
                 </Badge>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-600">
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-slate-100 text-slate-800 font-bold">
-                  Flat {roomNumber}
-                </span>
-                <span className="text-slate-300">•</span>
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-slate-100 text-slate-800 font-bold">
-                  {guestCount} {guestCount === 1 ? 'pessoa' : 'pessoas'}
-                </span>
-                {breakfastDays.length > 0 && (
-                  <>
-                    <span className="text-slate-300">•</span>
-                    <span className="text-slate-500 font-medium">
-                      {breakfastDays.length} {breakfastDays.length === 1 ? 'manhã' : 'manhãs'} de café
-                    </span>
-                  </>
-                )}
-              </div>
-
-              <p className="text-xs sm:text-sm text-slate-600 font-medium leading-relaxed">
-                Monte o seu café da manhã selecionando as opções desejadas para a sua estadia.
+              <p className="text-xs sm:text-sm text-slate-500 font-normal leading-relaxed">
+                Selecione os itens desejados para a sua entrega de amanhã.
               </p>
             </Card>
 
             {/* Hub Interativo dos Dias de Café da Estadia */}
-            <Card className="bg-white shadow-xl shadow-slate-200/60 border border-slate-200/80 rounded-3xl p-5 sm:p-7 space-y-4">
+            <Card className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-6 shadow-md space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                <span className="text-xs sm:text-sm font-black uppercase text-slate-800 tracking-wider flex items-center gap-2">
+                <span className="text-xs sm:text-sm font-bold uppercase text-slate-800 tracking-wider flex items-center gap-2">
                   <Calendar className="w-4 h-4 text-sky-600" />
                   1. Dias de Café da Manhã da sua Estadia
                 </span>
@@ -816,7 +816,7 @@ export default function GuestBreakfast() {
                       <span className="text-[10px] text-slate-500 font-medium">
                         {d.isToday 
                           ? (d.isClosedTodayAfter5am ? "Hoje (pedidos encerrados às 05:00)" : "Hoje (pedir até 05:00)")
-                          : d.isPast ? "Dia finalizado" : "Manhã no Flat"}
+                          : d.isPast ? "Dia finalizado" : "Dia de café"}
                       </span>
                     </button>
                   )
@@ -922,9 +922,9 @@ export default function GuestBreakfast() {
           </>
         ) : (
           /* Card 1: Identificação Manual (Fallback para pedidos avulsos sem reserva vinculada) */
-          <Card className="bg-white shadow-xl shadow-slate-200/60 border border-slate-200/80 rounded-3xl p-5 sm:p-7 space-y-5">
+          <Card className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-6 shadow-md space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3.5">
-              <span className="text-xs sm:text-sm font-black uppercase text-slate-800 tracking-wider flex items-center gap-2.5">
+              <span className="text-xs sm:text-sm font-bold uppercase text-slate-800 tracking-wider flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold">
                   <HomeIcon className="w-4 h-4" />
                 </div>
@@ -1024,16 +1024,16 @@ export default function GuestBreakfast() {
 
         {/* ── Distribuição do Pedido (Apenas quando a reserva for para mais de 1 pessoa) ── */}
         {guestCount > 1 && (
-          <Card className="bg-white shadow-xl shadow-slate-200/60 border border-slate-200/80 rounded-3xl p-5 sm:p-7 space-y-4">
+          <Card className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-6 shadow-md space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3.5">
-              <span className="text-xs sm:text-sm font-black uppercase text-slate-800 tracking-wider flex items-center gap-2.5">
+              <span className="text-xs sm:text-sm font-bold uppercase text-slate-800 tracking-wider flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold">
                   <Users className="w-4 h-4" />
                 </div>
                 Como deseja montar o café para os {guestCount} hóspedes?
               </span>
               <Badge className="bg-sky-50 text-sky-700 border-sky-200 text-[10px] font-bold">
-                {guestCount} Hóspedes no Flat
+                {guestCount} Hóspedes na Reserva
               </Badge>
             </div>
 
@@ -1060,7 +1060,7 @@ export default function GuestBreakfast() {
                     O mesmo pedido para os {guestCount}
                   </span>
                   <p className="text-[11px] text-slate-600 leading-snug mt-1 font-medium">
-                    Prático e rápido: monte uma única vez e ambos receberão o mesmo cardápio.
+                    Prático e rápido: monte uma única vez e todos receberão o mesmo cardápio.
                   </p>
                 </div>
               </div>
@@ -1093,9 +1093,9 @@ export default function GuestBreakfast() {
         )}
 
         {/* ── Opções de Café da Manhã & Cardápio (ANTES DO HORÁRIO!) ───────── */}
-        <Card id="breakfast-options-section" className="bg-white shadow-xl shadow-slate-200/60 border border-slate-200/80 rounded-3xl p-5 sm:p-7 space-y-5">
+        <Card id="breakfast-options-section" className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-6 shadow-md space-y-5">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3.5">
-            <span className="text-xs sm:text-sm font-black uppercase text-slate-800 tracking-wider flex items-center gap-2.5">
+            <span className="text-xs sm:text-sm font-bold uppercase text-slate-800 tracking-wider flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold">
                 <Utensils className="w-4 h-4" />
               </div>
@@ -1237,9 +1237,9 @@ export default function GuestBreakfast() {
 
         {/* Bloco quando selecionado: Café Personalizado */}
         {getCurrentType() === "custom" && (
-          <Card id="menu-section" className="bg-white shadow-xl shadow-slate-200/60 border border-slate-200/80 rounded-3xl p-5 sm:p-7 space-y-6">
+          <Card id="menu-section" className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-6 shadow-md space-y-6">
             <div className="border-b border-slate-100 pb-3.5 flex items-center justify-between">
-              <span className="text-xs sm:text-sm font-black uppercase text-slate-800 tracking-wider flex items-center gap-2.5">
+              <span className="text-xs sm:text-sm font-bold uppercase text-slate-800 tracking-wider flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold">
                   <Utensils className="w-4 h-4" />
                 </div>
@@ -1574,16 +1574,16 @@ export default function GuestBreakfast() {
           </Card>
         )}
 
-        {/* Card 2: Horário Único de Entrega para o Apartamento */}
-        <Card className="bg-white shadow-xl shadow-slate-200/60 border border-slate-200/80 rounded-3xl p-5 sm:p-7 space-y-4">
+        {/* Card 2: Horário Único de Entrega */}
+        <Card className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-6 shadow-md space-y-4">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3.5">
-            <span className="text-xs sm:text-sm font-black uppercase text-slate-800 tracking-wider flex items-center gap-2.5">
+            <span className="text-xs sm:text-sm font-bold uppercase text-slate-800 tracking-wider flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold">
                 <Clock className="w-4 h-4" />
               </div>
-              2. Horário de Entrega no Apartamento
+              2. Horário de Entrega
             </span>
-            <span className="text-[10px] text-slate-500 font-medium">05:00 às 09:30 (±10 min)</span>
+            <span className="text-[11px] text-slate-500 font-medium">05:00 às 09:30</span>
           </div>
 
           {loadingSlots ? (
@@ -1595,27 +1595,32 @@ export default function GuestBreakfast() {
               Sem horários disponíveis para esta data. Por favor, contate a recepção pelo WhatsApp.
             </div>
           ) : (
-            <div className="grid grid-cols-4 sm:grid-cols-6 gap-2 max-h-48 overflow-y-auto p-1 pr-2">
-              {availableSlots.map(t => (
-                <button
-                  type="button"
-                  key={t}
-                  onClick={() => setDeliveryTime(t)}
-                  className={`py-2 px-1 rounded-xl text-xs font-bold border transition-all text-center ${
-                    deliveryTime === t
-                      ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-2 ring-sky-500/20 font-black"
-                      : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
-                  }`}
-                >
-                  {t}
-                </button>
-              ))}
+            <div className="space-y-2">
+              <div className="grid grid-cols-4 sm:grid-cols-6 gap-2 max-h-48 overflow-y-auto p-1 pr-2">
+                {availableSlots.map(t => (
+                  <button
+                    type="button"
+                    key={t}
+                    onClick={() => setDeliveryTime(t)}
+                    className={`py-2 px-1 rounded-xl text-xs font-bold border transition-all text-center ${
+                      deliveryTime === t
+                        ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-2 ring-sky-500/20 font-black"
+                        : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700"
+                    }`}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-slate-400 text-center pt-2 font-medium">
+                * Horários sujeitos a tolerância de até ±10 min conforme a rota de entrega.
+              </p>
             </div>
           )}
         </Card>
 
         {/* Card 4: Observações Gerais */}
-        <Card className="bg-white shadow-xl shadow-slate-200/60 border border-slate-200/80 rounded-3xl p-5 sm:p-7 space-y-2.5">
+        <Card className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-6 shadow-md space-y-2.5">
           <Label className="text-xs font-bold text-slate-800 block">
             Observações
           </Label>
@@ -1623,12 +1628,12 @@ export default function GuestBreakfast() {
             value={notes} 
             onChange={e => setNotes(e.target.value)} 
             placeholder="" 
-            className="bg-slate-50 border-slate-200 text-xs font-medium text-slate-900 placeholder:text-slate-400 resize-none h-20 rounded-2xl focus-visible:ring-sky-500" 
+            className="bg-slate-50 border-slate-200 text-xs font-medium text-slate-900 placeholder:text-slate-400 resize-none h-20 rounded-xl focus-visible:ring-sky-500" 
           />
         </Card>
 
         {/* Card 5: Aviso Importante de Louças & Porcelanas */}
-        <Card className="bg-amber-50/90 border border-amber-200/90 rounded-3xl p-5 sm:p-6 shadow-md space-y-2">
+        <Card className="bg-amber-50/80 border border-amber-200/80 rounded-2xl p-4 sm:p-5 shadow-xs space-y-2">
           <div className="flex items-center gap-2 text-amber-900 font-bold text-xs uppercase tracking-wider">
             <Sparkles className="w-4 h-4 text-amber-600 shrink-0" />
             <span>Aviso Importante: Louças & Porcelanas CorpFlats</span>
@@ -1656,21 +1661,18 @@ export default function GuestBreakfast() {
             )}
           </Button>
           <p className="text-xs text-slate-500 text-center font-medium">
-            O café será entregue no Flat {roomNumber || '...'} às {deliveryTime || '...'} no dia {formatDateDisplay(deliveryDate)}.
+            Entrega agendada para às {deliveryTime || '...'} no dia {formatDateDisplay(deliveryDate)}.
           </p>
         </div>
       </main>
 
       {/* ── Footer Corporativo / Hospitalidade ────────────────────────── */}
-      <footer className="bg-white border-t border-slate-200/80 py-8 px-4 text-center text-xs text-slate-500 space-y-2 mt-auto">
-        <div className="flex items-center justify-center gap-2 font-black text-sm text-slate-800">
+      <footer className="bg-white border-t border-slate-200/80 py-6 px-4 text-center text-xs text-slate-500 space-y-1.5 mt-auto">
+        <div className="flex items-center justify-center gap-2 font-bold text-sm text-slate-800">
           <span>{brandName}</span>
           <span className="text-slate-300">•</span>
-          <span className="text-sky-600 font-bold text-xs">Room Service & Hospitalidade</span>
+          <span className="text-slate-500 font-semibold text-xs">Room Service</span>
         </div>
-        <p className="text-[11px] text-slate-400">
-          Edifício Soho Residence Service • Campos dos Goytacazes, RJ
-        </p>
         <p className="text-[10px] text-slate-400">
           © {new Date().getFullYear()} {brandName}. Todos os direitos reservados.
         </p>
