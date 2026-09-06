@@ -247,6 +247,7 @@ export default function PmsCalendar() {
   ) => {
     if (e.button !== 0) return;
     e.stopPropagation();
+    e.preventDefault();
 
     const nights = differenceInDays(parseISO(resItem.checkoutDate), parseISO(resItem.checkinDate)) || 1;
 
@@ -329,7 +330,9 @@ export default function PmsCalendar() {
       if (!resDragState) return;
 
       if (!resDragState.hasMoved) {
-        handleOpenEditRes(resDragState.res);
+        if (resDragState.mode === "move") {
+          handleOpenEditRes(resDragState.res);
+        }
         setResDragState(null);
         return;
       }
@@ -1682,7 +1685,7 @@ export default function PmsCalendar() {
                             key={`res-${resItem.id}`}
                             resItem={resItem}
                             flat={flat}
-                            isBeingDragged={Boolean(isBeingDragged && resDragState?.hasMoved)}
+                            isBeingDragged={Boolean(resDragState)}
                             onOpenDetails={handleOpenEditRes}
                             channelCfg={channelCfg}
                             isMensalista={isMensalista}
@@ -1695,17 +1698,21 @@ export default function PmsCalendar() {
                                   ? 'bg-gradient-to-r from-purple-800 via-indigo-900 to-purple-800 text-white border-2 border-purple-300 shadow-md ring-2 ring-purple-500/80' 
                                   : `${channelCfg?.bg} ${channelCfg?.text} border ${channelCfg?.border} shadow-xs`
                               } flex items-center px-2 text-[11px] font-bold overflow-hidden z-10 cursor-grab active:cursor-grabbing hover:brightness-110 hover:shadow-md transition-all ${
+                                resDragState ? 'pointer-events-none' : ''
+                              } ${
                                 isBeingDragged && resDragState?.hasMoved ? 'opacity-30 border-dashed scale-95' : ''
                               }`}
                               title={`${resItem.guestName} (${channelCfg?.label || resItem.channel}) • ${resItem.checkinDate} a ${resItem.checkoutDate} • Clique para abrir ou arraste para mover/redimensionar`}
                             >
                               {/* Handle Esquerdo: Redimensionar Início (Check-in) */}
                               <div
-                                className="absolute left-0 top-0 bottom-0 w-3 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-l"
+                                className="absolute left-0 top-0 bottom-0 w-3.5 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-l"
                                 onMouseDown={(e) => handleStartResDrag(resItem, flat, "resize-left", e)}
+                                onPointerEnter={(e) => e.stopPropagation()}
+                                onMouseEnter={(e) => e.stopPropagation()}
                                 title="Arraste para alterar a data de Check-in"
                               >
-                                <div className="w-0.5 h-3.5 bg-white/50 rounded-full group-hover/resize-l:bg-white" />
+                                <div className="w-0.5 h-3.5 bg-white/50 rounded-full group-hover/resize-l:bg-white pointer-events-none" />
                               </div>
 
                               {/* Conteúdo Central com Nome e Diárias Contínuos */}
@@ -1725,11 +1732,13 @@ export default function PmsCalendar() {
 
                               {/* Handle Direito: Redimensionar Fim (Check-out) */}
                               <div
-                                className="absolute right-0 top-0 bottom-0 w-3 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-r"
+                                className="absolute right-0 top-0 bottom-0 w-3.5 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-r"
                                 onMouseDown={(e) => handleStartResDrag(resItem, flat, "resize-right", e)}
+                                onPointerEnter={(e) => e.stopPropagation()}
+                                onMouseEnter={(e) => e.stopPropagation()}
                                 title="Arraste para alterar a data de Check-out"
                               >
-                                <div className="w-0.5 h-3.5 bg-white/50 rounded-full group-hover/resize-r:bg-white" />
+                                <div className="w-0.5 h-3.5 bg-white/50 rounded-full group-hover/resize-r:bg-white pointer-events-none" />
                               </div>
                             </div>
                           </ReservationHoverCard>

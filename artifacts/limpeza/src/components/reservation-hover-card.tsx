@@ -129,11 +129,19 @@ export function ReservationHoverCard({
     setTimeout(() => setCopiedKey(false), 2000)
   }
 
+  // Se houver qualquer operação de arraste ou redimensionamento ativa no calendário,
+  // ignora completamente o HoverCard para não interferir na captura de ponteiro
+  if (isBeingDragged) {
+    return <>{children}</>
+  }
+
   return (
     <HoverCard 
-      open={isBeingDragged ? false : isOpen} 
-      onOpenChange={setIsOpen}
-      openDelay={350} 
+      open={isOpen} 
+      onOpenChange={(open) => {
+        if (!isBeingDragged) setIsOpen(open)
+      }}
+      openDelay={400} 
       closeDelay={200}
     >
       <HoverCardTrigger asChild>
