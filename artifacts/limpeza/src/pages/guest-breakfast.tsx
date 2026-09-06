@@ -1178,24 +1178,25 @@ export default function GuestBreakfast() {
             {/* Opção 1: Café Padrão CorpFlats */}
             <div 
               onClick={() => setCurrentType("standard")}
-              className={`cursor-pointer p-4 rounded-2xl border-2 transition-all flex items-start gap-3.5 relative ${
+              className={`cursor-pointer p-3.5 sm:p-4 rounded-2xl border-2 transition-all flex items-start gap-3 sm:gap-3.5 relative ${
                 getCurrentType() === "standard"
                   ? "border-sky-600 bg-sky-50/70 text-slate-900 ring-2 ring-sky-500/20 shadow-xs"
                   : "border-slate-200 hover:border-slate-300 bg-white text-slate-700 hover:bg-slate-50/50"
               }`}
             >
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 font-bold ${
+              <div className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center shrink-0 font-bold ${
                 getCurrentType() === "standard" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-500"
               }`}>
-                <Coffee className="w-5 h-5" />
+                <Coffee className="w-4 h-4 sm:w-5 sm:h-5" />
               </div>
               <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between gap-1">
-                  <span className="font-black text-xs sm:text-sm text-slate-900 block">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-black text-xs sm:text-sm text-slate-900 leading-snug">
                     Café Padrão CorpFlats
                   </span>
-                  <Badge className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-[9px] px-1.5 py-0 shadow-2xs">
-                    Recomendado ⭐
+                  <Badge className="shrink-0 whitespace-nowrap bg-amber-500 hover:bg-amber-600 text-white font-extrabold text-[10px] px-2.5 py-0.5 rounded-full shadow-2xs inline-flex items-center justify-center gap-1 leading-none">
+                    <span>Recomendado</span>
+                    <span className="text-[10px]">⭐</span>
                   </Badge>
                 </div>
                 <p className="text-[11px] text-slate-600 leading-snug mt-1 font-medium">
@@ -1207,23 +1208,23 @@ export default function GuestBreakfast() {
             {/* Opção 2: Personalizar Itens */}
             <div 
               onClick={() => setCurrentType("custom")}
-              className={`cursor-pointer p-4 rounded-2xl border-2 transition-all flex items-start gap-3.5 relative ${
+              className={`cursor-pointer p-3.5 sm:p-4 rounded-2xl border-2 transition-all flex items-start gap-3 sm:gap-3.5 relative ${
                 getCurrentType() === "custom"
                   ? "border-sky-600 bg-sky-50/70 text-slate-900 ring-2 ring-sky-500/20 shadow-xs"
                   : "border-slate-200 hover:border-slate-300 bg-white text-slate-700 hover:bg-slate-50/50"
               }`}
             >
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 font-bold ${
+              <div className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center shrink-0 font-bold ${
                 getCurrentType() === "custom" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-500"
               }`}>
-                <Layers className="w-5 h-5" />
+                <Layers className="w-4 h-4 sm:w-5 sm:h-5" />
               </div>
               <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between gap-1">
-                  <span className="font-black text-xs sm:text-sm text-slate-900 block">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-black text-xs sm:text-sm text-slate-900 leading-snug">
                     Montar / Personalizar Itens
                   </span>
-                  <Badge variant="outline" className="text-slate-600 border-slate-300 text-[9px] px-1.5 py-0 font-bold">
+                  <Badge variant="outline" className="shrink-0 whitespace-nowrap text-slate-700 border-slate-300 bg-slate-50 font-extrabold text-[10px] px-2.5 py-0.5 rounded-full shadow-2xs inline-flex items-center justify-center leading-none">
                     Sob Medida
                   </Badge>
                 </div>
