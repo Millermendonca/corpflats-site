@@ -298,16 +298,43 @@ export default function WhatsappAutomation() {
     }
   }
 
-  const checkStatus = async () => {
+  const checkStatus = async (showToast = false) => {
     setLoadingStatus(true)
     try {
       const res = await fetch("/api/whatsapp/status")
       if (res.ok) {
         const data = await res.json()
         setStatusInfo(data)
+        if (showToast) {
+          if (data.connected) {
+            toast({
+              title: "🟢 WhatsApp Conectado com Sucesso!",
+              description: data.phone 
+                ? `Instância Z-API online no aparelho ${data.phone}. Pronta para envios!`
+                : "Instância Z-API online e pronta para disparos com botões."
+            })
+          } else {
+            toast({
+              title: "Atenção: Instância Desconectada",
+              description: data.error || data.message || "Aguardando leitura do QR Code na Z-API.",
+              variant: "destructive"
+            })
+          }
+        }
+      } else {
+        if (showToast) {
+          toast({
+            title: "Falha na Verificação",
+            description: "Não foi possível contactar a Z-API. Verifique as credenciais.",
+            variant: "destructive"
+          })
+        }
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e)
+      if (showToast) {
+        toast({ title: "Erro de Conexão", description: e.message, variant: "destructive" })
+      }
     } finally {
       setLoadingStatus(false)
     }
@@ -446,7 +473,7 @@ export default function WhatsappAutomation() {
       })
       if (res.ok) {
         toast({ title: "Configurações salvas com sucesso!", description: "Credenciais e dados atualizados." })
-        checkStatus()
+        checkStatus(true)
       } else {
         toast({ title: "Erro ao salvar", variant: "destructive" })
       }
@@ -1568,7 +1595,7 @@ export default function WhatsappAutomation() {
                   <Button 
                     variant="outline" 
                     size="sm" 
-                    onClick={checkStatus} 
+                    onClick={() => checkStatus(true)} 
                     disabled={loadingStatus}
                     className="text-xs h-8 gap-1.5"
                   >

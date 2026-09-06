@@ -511,11 +511,12 @@ export async function getZapiStatus(config) {
     const res = await fetch(statusUrl, { headers });
     const data = await res.json();
     return {
-      connected: Boolean(data.connected),
+      connected: Boolean(data.connected || data.smartphoneConnected),
       configured: true,
       smartphone: data.smartphone || null,
       phone: data.phone || data.smartphone?.phone || "",
       battery: data.battery || data.smartphone?.battery || null,
+      error: (data.connected || data.smartphoneConnected) ? null : (data.error || data.message || null),
       details: data
     };
   } catch (err) {

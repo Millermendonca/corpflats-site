@@ -5205,5 +5205,12 @@
     "metaApiToken": "EAABwz...",
     "googleAdsId": "AW-9481923"
   },
-  "funnelEvents": []
+  "funnelEvents": [],
+  "zapiConfig": {
+    "instanceId": "3F8BEFCB96709186C854260BF05B3023",
+    "token": "9F303A38EAEAEF8B071A32CA",
+    "clientToken": "F3b5f4fa69f004c008e3730f341fdda8eS",
+    "enabled": true,
+    "fallbackToText": true
+  }
 }
