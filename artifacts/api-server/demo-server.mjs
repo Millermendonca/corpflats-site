@@ -964,6 +964,51 @@ function sanitizeAndRecoverCleanings() {
   }
 }
 
+// ── Correção Automática e Higienização de Achados & Perdidos ───────────────
+function sanitizeLostAndFound() {
+  if (!db.lostAndFound || !Array.isArray(db.lostAndFound)) return;
+
+  for (const item of db.lostAndFound) {
+    // Corrige item do Flat 1304 que foi erroneamente associado à Thaiza em vez do Pablo
+    if (String(item.flatNumber) === "1304" && item.lastGuestName === "Thaiza") {
+      const itemDate = item.createdAt ? item.createdAt.substring(0, 10) : "2026-09-06";
+      const checkoutRes = (db.reservations || []).find(r => 
+        (String(r.flatNumber) === "1304" || r.allocatedFlatNumbers?.includes("1304")) &&
+        r.checkoutDate === itemDate &&
+        r.status !== "cancelada" &&
+        r.status !== "CANCELLED"
+      );
+      if (checkoutRes) {
+        console.log(`[LostAndFound] Reparando hóspede do item ${item.id} (1304) para ${checkoutRes.guestName}`);
+        item.lastGuestName = checkoutRes.guestName;
+        item.lastGuestPhone = checkoutRes.guestPhone || item.lastGuestPhone;
+        item.lastGuestEmail = checkoutRes.guestEmail || item.lastGuestEmail;
+        item.lastCheckoutDate = checkoutRes.checkoutDate;
+      } else {
+        const checkoutClean = (db.cleaningRequests || []).find(c => 
+          String(c.flatNumber) === "1304" && 
+          (c.requestDate === itemDate || c.effectiveDate === itemDate) && 
+          c.leavingGuest && c.leavingGuest !== "Thaiza"
+        );
+        if (checkoutClean) {
+          console.log(`[LostAndFound] Reparando hóspede via limpeza para item ${item.id}: ${checkoutClean.leavingGuest}`);
+          item.lastGuestName = checkoutClean.leavingGuest;
+          const rByName = (db.reservations || []).find(r => r.guestName === checkoutClean.leavingGuest);
+          if (rByName && rByName.guestPhone) item.lastGuestPhone = rByName.guestPhone;
+        } else {
+          console.log(`[LostAndFound] Atribuindo Pablo ao item ${item.id} (Flat 1304)`);
+          item.lastGuestName = "Pablo";
+          const pabloRes = (db.reservations || []).find(r => (r.guestName || "").toLowerCase().includes("pablo"));
+          if (pabloRes && pabloRes.guestPhone) {
+            item.lastGuestPhone = pabloRes.guestPhone;
+            item.lastGuestEmail = pabloRes.guestEmail || "";
+          }
+        }
+      }
+    }
+  }
+}
+
 async function loadDatabase() {
   try {
     if (fs.existsSync(DB_FILE)) {
@@ -1009,6 +1054,7 @@ async function loadDatabase() {
           db = { ...db, ...pgLoaded };
           console.log("[PostgreSQL] Estado restaurado da nuvem com sucesso!");
           sanitizeAndRecoverCleanings();
+          sanitizeLostAndFound();
         }
       } catch (err) {
         console.warn("[PostgreSQL] Falha ao sincronizar estado inicial:", err.message);
@@ -4708,6 +4754,83 @@ Cláusula 6 – Dos Procedimentos de Encerramento (Check-out)
 
 const DEFAULT_TERMS_AND_RULES = `${DEFAULT_HOUSE_RULES}\n\n=========================================\n\n${DEFAULT_CONTRACT_TERMS}`;
 
+function matchBrazilianPhone(searchDigits, targetPhone) {
+  if (!targetPhone) return false;
+  const tDigits = String(targetPhone).replace(/\D/g, "");
+  if (!tDigits || tDigits.length < 8) return false;
+  if (tDigits === searchDigits) return true;
+  if (tDigits.includes(searchDigits) || searchDigits.includes(tDigits)) return true;
+
+  const strip55 = (d) => (d.startsWith("55") && (d.length === 12 || d.length === 13) ? d.slice(2) : d);
+  const sNorm = strip55(searchDigits);
+  const tNorm = strip55(tDigits);
+
+  if (sNorm === tNorm) return true;
+  if (sNorm.includes(tNorm) || tNorm.includes(sNorm)) return true;
+
+  // Comparação dos 8 dígitos finais (equaliza telefones com ou sem o nono dígito '9')
+  if (sNorm.length >= 8 && tNorm.length >= 8) {
+    if (sNorm.slice(-8) === tNorm.slice(-8)) {
+      if (sNorm.length >= 10 && tNorm.length >= 10) {
+        return sNorm.slice(0, 2) === tNorm.slice(0, 2);
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+function getAllReservationPhones(resItem) {
+  const phones = [];
+  if (resItem.guestPhone) phones.push(resItem.guestPhone);
+  if (resItem.phone) phones.push(resItem.phone);
+  if (resItem.whatsapp) phones.push(resItem.whatsapp);
+  if (resItem.telephone) phones.push(resItem.telephone);
+  if (resItem.requesterInfo && resItem.requesterInfo.phone) phones.push(resItem.requesterInfo.phone);
+  if (resItem.requesterInfo && resItem.requesterInfo.whatsapp) phones.push(resItem.requesterInfo.whatsapp);
+  if (Array.isArray(resItem.guests)) {
+    for (const g of resItem.guests) {
+      if (g.phone) phones.push(g.phone);
+      if (g.whatsapp) phones.push(g.whatsapp);
+    }
+  }
+  const notesText = `${resItem.notes || ""} ${resItem.receptionNotes || ""} ${resItem.specialRequests || ""}`;
+  const foundInNotes = notesText.match(/(?:\+?55\s?)?(?:\(?\d{2}\)?\s?)?(?:9\s?)?\d{4}[-\s]?\d{4}/g);
+  if (foundInNotes) {
+    for (const p of foundInNotes) phones.push(p);
+  }
+  return phones;
+}
+
+function getAllReservationDocuments(resItem) {
+  const docs = [];
+  if (resItem.guestDocument) docs.push(resItem.guestDocument);
+  if (resItem.document) docs.push(resItem.document);
+  if (resItem.cpf) docs.push(resItem.cpf);
+  if (resItem.guestCpf) docs.push(resItem.guestCpf);
+  if (resItem.requesterInfo && resItem.requesterInfo.cpf) docs.push(resItem.requesterInfo.cpf);
+  if (resItem.requesterInfo && resItem.requesterInfo.document) docs.push(resItem.requesterInfo.document);
+  if (Array.isArray(resItem.guests)) {
+    for (const g of resItem.guests) {
+      if (g.cpf) docs.push(g.cpf);
+      if (g.document) docs.push(g.document);
+    }
+  }
+  return docs.map(d => String(d).replace(/\D/g, "")).filter(Boolean);
+}
+
+function getAllReservationNames(resItem) {
+  const names = [];
+  if (resItem.guestName) names.push(resItem.guestName);
+  if (resItem.requesterInfo && resItem.requesterInfo.name) names.push(resItem.requesterInfo.name);
+  if (Array.isArray(resItem.guests)) {
+    for (const g of resItem.guests) {
+      if (g.name) names.push(g.name);
+    }
+  }
+  return names;
+}
+
 function findReservationByLocatorOrContact(query) {
   if (!query || !db.reservations) return null;
   const raw = String(query).trim();
@@ -4733,17 +4856,13 @@ function findReservationByLocatorOrContact(query) {
   const digits = raw.replace(/\D/g, "");
   if (digits.length >= 8) {
     r = db.reservations.slice().reverse().find(resItem => {
-      const phone = (resItem.guestPhone || "").replace(/\D/g, "");
-      const doc = (resItem.guestDocument || resItem.document || "").replace(/\D/g, "");
-      const guestsPhones = (resItem.guests || []).map(g => (g.phone || "").replace(/\D/g, ""));
-      const guestsDocs = (resItem.guests || []).map(g => (g.document || "").replace(/\D/g, ""));
+      const phones = getAllReservationPhones(resItem);
+      const docs = getAllReservationDocuments(resItem);
 
-      return (
-        (phone && (phone.includes(digits) || digits.includes(phone))) ||
-        (doc && doc === digits) ||
-        guestsPhones.some(p => p && (p.includes(digits) || digits.includes(p))) ||
-        guestsDocs.some(d => d && d === digits)
-      );
+      const hasPhoneMatch = phones.some(p => matchBrazilianPhone(digits, p));
+      const hasDocMatch = docs.some(d => d === digits || d.includes(digits) || digits.includes(d));
+
+      return hasPhoneMatch || hasDocMatch;
     });
     if (r) return r;
   }
@@ -4753,8 +4872,22 @@ function findReservationByLocatorOrContact(query) {
     const email = raw.toLowerCase();
     r = db.reservations.slice().reverse().find(resItem => 
       (resItem.guestEmail || "").trim().toLowerCase() === email ||
+      (resItem.requesterInfo?.email || "").trim().toLowerCase() === email ||
       (resItem.guests || []).some(g => (g.email || "").trim().toLowerCase() === email)
     );
+    if (r) return r;
+  }
+
+  // 5. Nome do hóspede ou solicitante (se tiver 3 ou mais letras)
+  const normQuery = raw.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  if (normQuery.length >= 3 && /[a-zA-Z]/.test(normQuery)) {
+    r = db.reservations.slice().reverse().find(resItem => {
+      const names = getAllReservationNames(resItem);
+      return names.some(n => {
+        const normN = String(n).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+        return normN.includes(normQuery) || normQuery.includes(normN);
+      });
+    });
     if (r) return r;
   }
 
@@ -5017,9 +5150,165 @@ app.post("/api/pms/guest-portal/:code/cancel", (req, res) => {
   });
 });
 
+app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
+  const code = (req.params.code || "").trim();
+  if (!db.reservations) db.reservations = [];
+  const r = findReservationByLocatorOrContact(code);
+  if (!r) {
+    return res.status(404).json({ error: "Reserva não encontrada." });
+  }
+
+  if (r.status === "cancelada" || r.status === "CANCELLED") {
+    return res.status(400).json({ error: "Esta reserva está cancelada e não pode ser modificada." });
+  }
+
+  const directChannels = ["whatsapp", "site", "site_direto", "direto", "balcao"];
+  const channel = (r.channel || "").toLowerCase();
+  if (!directChannels.includes(channel)) {
+    return res.status(403).json({
+      error: `Modificação pelo portal não permitida para reservas do canal ${r.channel || "externo"}. Por favor, solicite a alteração diretamente pela plataforma de origem (Booking.com, Airbnb, etc.).`
+    });
+  }
+
+  const { newCheckinDate, newCheckoutDate, newGuestCount, reason } = req.body || {};
+
+  if (!newCheckinDate || !newCheckoutDate) {
+    return res.status(400).json({ error: "Datas de check-in e check-out são obrigatórias." });
+  }
+
+  if (newCheckoutDate <= newCheckinDate) {
+    return res.status(400).json({ error: "A data de check-out deve ser posterior à data de check-in." });
+  }
+
+  const guestsNum = Math.max(1, Math.min(6, Number(newGuestCount) || r.guestCount || 1));
+
+  // Verificar disponibilidade do flat para as novas datas (evitar sobreposição de reservas)
+  const flatNumberStr = String(r.flatNumber || r.flatId);
+  const hasConflict = (db.reservations || []).some(other => {
+    if (other.id === r.id || other.code === r.code) return false;
+    if (other.status === "cancelada" || other.status === "CANCELLED") return false;
+    const otherFlat = String(other.flatNumber || other.flatId);
+    if (otherFlat !== flatNumberStr) return false;
+    return (newCheckinDate < other.checkoutDate) && (newCheckoutDate > other.checkinDate);
+  });
+
+  if (hasConflict) {
+    return res.status(409).json({
+      error: `O Flat ${r.flatNumber} não possui disponibilidade para o período solicitado (${newCheckinDate} a ${newCheckoutDate}). Por favor, selecione outras datas ou entre em contato com nossa recepção.`
+    });
+  }
+
+  // Cálculo de diárias
+  const parseDate = (dStr) => new Date(dStr + "T00:00:00Z");
+  const oldNights = Math.max(1, Math.round((parseDate(r.checkoutDate) - parseDate(r.checkinDate)) / (1000 * 3600 * 24)));
+  const newNights = Math.max(1, Math.round((parseDate(newCheckoutDate) - parseDate(newCheckinDate)) / (1000 * 3600 * 24)));
+  const dailyRate = Number(r.dailyRate) || (oldNights > 0 ? (Number(r.totalAmount || 0) / oldNights) : 160);
+
+  // Regra das 24h antes do check-in (14:00 do dia anterior ao check-in original)
+  const originalCheckin = new Date(r.checkinDate + "T14:00:00-03:00");
+  const cutoff24h = new Date(originalCheckin.getTime() - 24 * 3600 * 1000);
+  const now = new Date();
+  const isUnder24h = now.getTime() >= cutoff24h.getTime();
+
+  const isReducingNights = newNights < oldNights;
+  const isReducingGuests = guestsNum < (r.guestCount || 1);
+  const isIncreasingNights = newNights > oldNights;
+  const isIncreasingGuests = guestsNum > (r.guestCount || 1);
+
+  let refundAmount = 0;
+  let additionalAmountToPay = 0;
+  let nonRefundableReduction = false;
+  let policyNotice = "";
+
+  if (isIncreasingNights) {
+    const extraNights = newNights - oldNights;
+    additionalAmountToPay += extraNights * dailyRate;
+    r.totalAmount = Number(r.totalAmount || 0) + additionalAmountToPay;
+    policyNotice = `Acréscimo de ${extraNights} ${extraNights === 1 ? 'diária' : 'diárias'} (+R$ ${additionalAmountToPay.toFixed(2)}).`;
+  } else if (isReducingNights) {
+    const reducedNights = oldNights - newNights;
+    const valueOfReducedNights = reducedNights * dailyRate;
+
+    if (isUnder24h) {
+      nonRefundableReduction = true;
+      policyNotice = `Redução de ${reducedNights} ${reducedNights === 1 ? 'diária' : 'diárias'} efetuada com menos de 24h do início (limite: 14h do dia anterior). Não há direito a estorno ou reembolso conforme o Contrato de Hospedagem.`;
+    } else {
+      refundAmount += valueOfReducedNights;
+      r.totalAmount = Math.max(0, Number(r.totalAmount || 0) - valueOfReducedNights);
+      policyNotice = `Redução de ${reducedNights} ${reducedNights === 1 ? 'diária' : 'diárias'} com estorno/crédito elegível de R$ ${valueOfReducedNights.toFixed(2)}.`;
+    }
+  }
+
+  if (isReducingGuests && isUnder24h) {
+    nonRefundableReduction = true;
+  }
+
+  // Histórico de Modificação
+  if (!r.modificationHistory) r.modificationHistory = [];
+  r.modificationHistory.push({
+    modifiedAt: new Date().toISOString(),
+    oldCheckin: r.checkinDate,
+    newCheckin: newCheckinDate,
+    oldCheckout: r.checkoutDate,
+    newCheckout: newCheckoutDate,
+    oldNights,
+    newNights,
+    oldGuests: r.guestCount || 1,
+    newGuests: guestsNum,
+    additionalAmountToPay,
+    refundAmount,
+    isUnder24h,
+    nonRefundableReduction,
+    reason: reason || "Modificação solicitada pelo hóspede via autoatendimento"
+  });
+
+  // Salvar novos parâmetros
+  r.checkinDate = newCheckinDate;
+  r.checkoutDate = newCheckoutDate;
+  r.guestCount = guestsNum;
+  r.adults = guestsNum;
+  r.calendarSequence = (r.calendarSequence || 0) + 1;
+  r.updatedAt = new Date().toISOString();
+
+  // Se houver solicitação de limpeza correspondente, sincroniza as datas
+  if (Array.isArray(db.cleaningRequests)) {
+    const reqItem = db.cleaningRequests.find(c => 
+      (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) && 
+      c.requestDate === r.checkinDate
+    );
+    if (reqItem) {
+      reqItem.requestDate = newCheckinDate;
+      reqItem.effectiveDate = newCheckinDate;
+    }
+  }
+
+  saveDatabase();
+
+  res.json({
+    success: true,
+    message: (isUnder24h && (isReducingNights || isReducingGuests))
+      ? "Reserva modificada com sucesso! Conforme os termos do contrato, a redução de diárias/hóspedes a menos de 24h do início não confere direito a estorno financeiro."
+      : "Reserva modificada com sucesso!",
+    policyNotice,
+    isUnder24h,
+    nonRefundableReduction,
+    additionalAmountToPay,
+    refundAmount,
+    newCheckinDate,
+    newCheckoutDate,
+    newNights,
+    newGuestCount: guestsNum,
+    reservation: {
+      ...r,
+      nights: newNights
+    }
+  });
+});
+
 // ── Achados & Perdidos (Lost and Found / Item Encontrado no Quarto) ──────────
 app.get("/api/lost-and-found", (req, res) => {
   if (!db.lostAndFound) db.lostAndFound = [];
+  sanitizeLostAndFound();
   const { flatId, flatNumber, status } = req.query;
   let items = [...db.lostAndFound];
   if (flatId) items = items.filter(i => i.flatId === Number(flatId));
@@ -5031,7 +5320,21 @@ app.get("/api/lost-and-found", (req, res) => {
 
 app.post("/api/lost-and-found", (req, res) => {
   try {
-    const { flatId, flatNumber, description, locationInRoom = "", photoBase64 = "", notes = "" } = req.body;
+    const { 
+      flatId, 
+      flatNumber, 
+      description, 
+      locationInRoom = "", 
+      photoBase64 = "", 
+      notes = "",
+      date = "",
+      requestDate = "",
+      timestamp = "",
+      guestName = "",
+      guestPhone = "",
+      guestEmail = ""
+    } = req.body;
+
     if (!description || !description.trim()) {
       return res.status(400).json({ error: "Descrição do item encontrado é obrigatória." });
     }
@@ -5067,26 +5370,85 @@ app.post("/api/lost-and-found", (req, res) => {
       finalPhotoUrl = photoBase64;
     }
 
-    // 2. Auto-identificação do Último Hóspede que ocupou o quarto
-    let lastGuestName = "Hóspede Anterior";
-    let lastGuestPhone = "";
-    let lastGuestEmail = "";
-    let lastCheckoutDate = "";
-
-    const recentRequest = (db.cleaningRequests || []).find(cr => String(cr.flatNumber) === String(targetFlat) && cr.leavingGuest);
-    if (recentRequest) {
-      lastGuestName = recentRequest.leavingGuest;
+    // 2. Data em que o item está sendo cadastrado / encontrado
+    let registrationDate = date || requestDate;
+    if (!registrationDate && timestamp) {
+      try {
+        registrationDate = new Intl.DateTimeFormat("sv-SE", { timeZone: "America/Sao_Paulo" }).format(new Date(timestamp));
+      } catch {}
+    }
+    if (!registrationDate) {
+      registrationDate = new Intl.DateTimeFormat("sv-SE", { timeZone: "America/Sao_Paulo" }).format(new Date());
     }
 
-    const recentReservation = (db.reservations || []).find(r => 
-      (String(r.flatNumber) === String(targetFlat) || r.allocatedFlatNumbers?.includes(String(targetFlat))) &&
+    // 3. Auto-identificação do Hóspede que fez CHECK-OUT no dia em que o item foi cadastrado
+    let lastGuestName = (guestName && String(guestName).trim()) ? String(guestName).trim() : "Hóspede Anterior";
+    let lastGuestPhone = guestPhone || "";
+    let lastGuestEmail = guestEmail || "";
+    let lastCheckoutDate = registrationDate;
+
+    // Regra A: Se já veio nome do card de limpeza daquele dia (leavingGuest), respeita e busca telefone se faltar
+    // Regra B: Busca reserva que teve checkout exatamente na data do cadastro (checkoutDate === registrationDate)
+    const checkoutReservation = (db.reservations || []).find(r => 
+      (String(r.flatNumber) === String(targetFlat) || (flatId && r.flatId === Number(flatId)) || r.allocatedFlatNumbers?.includes(String(targetFlat))) &&
+      r.status !== "cancelada" &&
+      r.status !== "CANCELLED" &&
+      r.checkoutDate === registrationDate &&
       r.guestName
     );
-    if (recentReservation) {
-      if (!lastGuestName || lastGuestName === "Hóspede Anterior") lastGuestName = recentReservation.guestName;
-      lastGuestPhone = recentReservation.guestPhone || "";
-      lastGuestEmail = recentReservation.guestEmail || "";
-      lastCheckoutDate = recentReservation.checkoutDate || "";
+
+    if (checkoutReservation) {
+      if (!lastGuestName || lastGuestName === "Hóspede Anterior") {
+        lastGuestName = checkoutReservation.guestName;
+      }
+      if (!lastGuestPhone) lastGuestPhone = checkoutReservation.guestPhone || "";
+      if (!lastGuestEmail) lastGuestEmail = checkoutReservation.guestEmail || "";
+      lastCheckoutDate = checkoutReservation.checkoutDate;
+    }
+
+    // Regra C: Busca na lista de solicitações de limpeza para aquele flat na data do cadastro
+    if (!lastGuestName || lastGuestName === "Hóspede Anterior") {
+      const checkoutCleaning = (db.cleaningRequests || []).find(cr => 
+        (String(cr.flatNumber) === String(targetFlat) || (flatId && cr.flatId === Number(flatId))) &&
+        (cr.requestDate === registrationDate || cr.effectiveDate === registrationDate) &&
+        cr.leavingGuest
+      );
+      if (checkoutCleaning) {
+        lastGuestName = checkoutCleaning.leavingGuest;
+        lastCheckoutDate = checkoutCleaning.requestDate || registrationDate;
+      }
+    }
+
+    // Regra D: Fallback de segurança caso não haja checkout na data exata (busca a reserva com checkout mais recente <= registrationDate)
+    if (!lastGuestName || lastGuestName === "Hóspede Anterior") {
+      const priorReservations = (db.reservations || [])
+        .filter(r => 
+          (String(r.flatNumber) === String(targetFlat) || (flatId && r.flatId === Number(flatId)) || r.allocatedFlatNumbers?.includes(String(targetFlat))) &&
+          r.status !== "cancelada" &&
+          r.status !== "CANCELLED" &&
+          r.guestName &&
+          r.checkoutDate && r.checkoutDate <= registrationDate
+        )
+        .sort((a, b) => b.checkoutDate.localeCompare(a.checkoutDate));
+
+      if (priorReservations.length > 0) {
+        const mostRecent = priorReservations[0];
+        lastGuestName = mostRecent.guestName;
+        if (!lastGuestPhone) lastGuestPhone = mostRecent.guestPhone || "";
+        if (!lastGuestEmail) lastGuestEmail = mostRecent.guestEmail || "";
+        lastCheckoutDate = mostRecent.checkoutDate;
+      }
+    }
+
+    // Regra E: Se tiver o nome do hóspede mas não tiver telefone, busca telefone nas reservas ou no cadastro de hóspedes
+    if (lastGuestName && lastGuestName !== "Hóspede Anterior" && !lastGuestPhone) {
+      const guestMatch = (db.reservations || []).find(r => 
+        (r.guestName || "").toLowerCase().trim() === lastGuestName.toLowerCase().trim() &&
+        r.guestPhone
+      );
+      if (guestMatch) {
+        lastGuestPhone = guestMatch.guestPhone;
+      }
     }
 
     const newItem = {
@@ -5110,7 +5472,7 @@ app.post("/api/lost-and-found", (req, res) => {
     db.lostAndFound.unshift(newItem);
     saveDatabase();
 
-    // 3. Registro de Auditoria Fail-Safe
+    // 4. Registro de Auditoria Fail-Safe
     logAuditEvent({
       level: "info",
       category: "cleaning",
@@ -5128,7 +5490,7 @@ app.post("/api/lost-and-found", (req, res) => {
       ip: req.ip || req.headers["x-forwarded-for"] || ""
     });
 
-    // 4. Notificação Central para a Equipe de Gestão
+    // 5. Notificação Central para a Equipe de Gestão
     createNotification({
       category: "lost_item",
       title: `📦 Item Encontrado - Flat ${newItem.flatNumber}`,
@@ -5155,6 +5517,11 @@ app.patch("/api/lost-and-found/:id", (req, res) => {
   if (req.body.status) item.status = req.body.status;
   if (req.body.notes !== undefined) item.notes = req.body.notes;
   if (req.body.returnedTo) item.returnedTo = req.body.returnedTo;
+  if (req.body.lastGuestName !== undefined) item.lastGuestName = req.body.lastGuestName;
+  if (req.body.lastGuestPhone !== undefined) item.lastGuestPhone = req.body.lastGuestPhone;
+  if (req.body.lastGuestEmail !== undefined) item.lastGuestEmail = req.body.lastGuestEmail;
+  if (req.body.description !== undefined) item.description = req.body.description;
+  if (req.body.locationInRoom !== undefined) item.locationInRoom = req.body.locationInRoom;
   if (req.body.status === "devolvido") {
     item.returnedAt = new Date().toISOString();
     item.returnedBy = user ? (user.name || user.username) : "Recepção";

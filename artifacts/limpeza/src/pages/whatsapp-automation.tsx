@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react"
+import { useLocation } from "wouter"
 import { useGetMe } from "@workspace/api-client-react"
 import { Shell } from "@/components/layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -168,6 +169,7 @@ const TAG_GROUPS = [
 ]
 
 export default function WhatsappAutomation() {
+  const [, setLocation] = useLocation()
   const { data: user, isLoading: loadingUser } = useGetMe()
   const { toast } = useToast()
 
@@ -211,12 +213,6 @@ export default function WhatsappAutomation() {
   })
   const [statusInfo, setStatusInfo] = useState<any>(null)
   const [loadingStatus, setLoadingStatus] = useState<boolean>(false)
-  const [savingConfig, setSavingConfig] = useState<boolean>(false)
-
-  // State: QR Code Modal
-  const [qrModalOpen, setQrModalOpen] = useState<boolean>(false)
-  const [qrImageData, setQrImageData] = useState<string | null>(null)
-  const [loadingQr, setLoadingQr] = useState<boolean>(false)
 
   // State: Quick Test Modal
   const [testModalOpen, setTestModalOpen] = useState<boolean>(false)
@@ -463,47 +459,6 @@ export default function WhatsappAutomation() {
     }
   }
 
-  // Save Z-API Config
-  const handleSaveConfig = async () => {
-    setSavingConfig(true)
-    try {
-      const res = await fetch("/api/whatsapp/config", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(config)
-      })
-      if (res.ok) {
-        toast({ title: "Configurações salvas com sucesso!", description: "Credenciais e dados atualizados." })
-        checkStatus(true)
-      } else {
-        toast({ title: "Erro ao salvar", variant: "destructive" })
-      }
-    } catch (err: any) {
-      toast({ title: "Erro de rede", description: err.message, variant: "destructive" })
-    } finally {
-      setSavingConfig(false)
-    }
-  }
-
-  // Open QR Code Modal
-  const handleShowQrCode = async () => {
-    setLoadingQr(true)
-    setQrModalOpen(true)
-    try {
-      const res = await fetch("/api/whatsapp/qr-code")
-      if (res.ok) {
-        const data = await res.json()
-        setQrImageData(data.qrImage || null)
-      } else {
-        toast({ title: "Não foi possível carregar o QR Code", variant: "destructive" })
-      }
-    } catch (e) {
-      console.error(e)
-    } finally {
-      setLoadingQr(false)
-    }
-  }
-
   // Immediate "Send Now" (Antecipar Disparo)
   const handleSendNow = async (queueId: string, guestName: string) => {
     try {
@@ -677,7 +632,7 @@ export default function WhatsappAutomation() {
   }
 
   if (!loadingUser && user?.role !== "admin") {
-    return <AccessDenied message="Apenas a administração tem acesso à automação de WhatsApp." />
+    return <AccessDenied moduleName="Automação de WhatsApp" />
   }
 
   const filteredQueue = queue.filter(q => 
@@ -700,7 +655,7 @@ export default function WhatsappAutomation() {
               </div>
               <div>
                 <h1 className="text-2xl font-black tracking-tight text-foreground flex items-center gap-2">
-                  Automação WhatsApp & Gatilhos (Z-API)
+                  Automação WhatsApp & Gatilhos
                   <Badge variant="outline" className="border-emerald-500 text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 text-xs">
                     Botões Interativos Ativos
                   </Badge>
@@ -715,7 +670,8 @@ export default function WhatsappAutomation() {
           <div className="flex items-center gap-2 flex-wrap">
             {/* Status Z-API Badge */}
             <div 
-              onClick={() => setActiveTab("settings")}
+              onClick={() => setLocation("/zapi-conexao")}
+              title="Clique para gerenciar a Conexão Z-API em Sistema & Integrações"
               className="cursor-pointer flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-semibold shadow-xs hover:bg-muted/50 transition-colors"
             >
               {loadingStatus ? (
@@ -746,6 +702,16 @@ export default function WhatsappAutomation() {
               variant="outline" 
               size="sm" 
               className="gap-1.5 text-xs rounded-xl"
+              onClick={() => setLocation("/zapi-conexao")}
+            >
+              <Smartphone className="w-3.5 h-3.5 text-emerald-600" />
+              Conexão Z-API
+            </Button>
+
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="gap-1.5 text-xs rounded-xl"
               onClick={() => {
                 setTestMessage(editingMessage)
                 setTestModalOpen(true)
@@ -754,22 +720,12 @@ export default function WhatsappAutomation() {
               <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
               Disparo de Teste
             </Button>
-
-            <Button 
-              variant="default" 
-              size="sm" 
-              className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 text-xs rounded-xl shadow-xs"
-              onClick={() => setActiveTab("rules")}
-            >
-              <Sliders className="w-3.5 h-3.5" />
-              Ver Réguas
-            </Button>
           </div>
         </div>
 
         {/* Tabs Principais */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid grid-cols-2 md:grid-cols-5 w-full md:w-auto rounded-xl p-1 bg-muted/60">
+          <TabsList className="grid grid-cols-2 md:grid-cols-4 w-full md:w-auto rounded-xl p-1 bg-muted/60">
             <TabsTrigger value="rules" className="rounded-lg text-xs font-bold gap-1.5">
               <Zap className="w-3.5 h-3.5 text-amber-500" />
               Régua de Gatilhos
@@ -790,10 +746,6 @@ export default function WhatsappAutomation() {
             <TabsTrigger value="history" className="rounded-lg text-xs font-bold gap-1.5">
               <CheckCheck className="w-3.5 h-3.5 text-emerald-500" />
               Histórico
-            </TabsTrigger>
-            <TabsTrigger value="settings" className="rounded-lg text-xs font-bold gap-1.5">
-              <Sliders className="w-3.5 h-3.5 text-neutral-500" />
-              Conexão Z-API
             </TabsTrigger>
           </TabsList>
 
@@ -1578,182 +1530,6 @@ export default function WhatsappAutomation() {
             </Card>
           </TabsContent>
 
-          {/* ════════════════════════════════════════════════════════════════════
-              ABA 5: CONFIGURAÇÕES DA Z-API & CONEXÃO
-          ════════════════════════════════════════════════════════════════════ */}
-          <TabsContent value="settings" className="space-y-4">
-            <Card className="rounded-2xl border shadow-xs">
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="text-base font-bold flex items-center gap-2">
-                      <Key className="w-4 h-4 text-emerald-600" />
-                      Credenciais da Z-API
-                    </CardTitle>
-                    <CardDescription className="text-xs">
-                      Obtenha em seu painel no site da Z-API (developer.z-api.io) para habilitar envio real.
-                    </CardDescription>
-                  </div>
-
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    onClick={() => checkStatus(true)} 
-                    disabled={loadingStatus}
-                    className="text-xs h-8 gap-1.5"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${loadingStatus ? 'animate-spin' : ''}`} />
-                    Testar Conexão
-                  </Button>
-                </div>
-              </CardHeader>
-
-              <CardContent className="space-y-4">
-                {/* Status do Dispositivo Conectado */}
-                {statusInfo?.connected && (
-                  <div className="p-4 rounded-xl border bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 space-y-2">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-                        <span className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
-                          Dispositivo WhatsApp Conectado: {statusInfo.name ? `${statusInfo.name}` : "Aparelho"}
-                        </span>
-                        {statusInfo.phone && (
-                          <Badge variant="outline" className="font-mono text-[11px] bg-background">
-                            +{statusInfo.phone}
-                          </Badge>
-                        )}
-                      </div>
-                      <Badge className={statusInfo.isBusiness ? "bg-emerald-600 text-white text-[10px]" : "bg-amber-600 text-white text-[10px]"}>
-                        {statusInfo.isBusiness ? "WhatsApp Business (Botões Nativos)" : "Conta Pessoal (Modo Texto com Links)"}
-                      </Badge>
-                    </div>
-
-                    <p className="text-[11px] text-muted-foreground leading-relaxed">
-                      {statusInfo.isBusiness 
-                        ? "Esta conta é um WhatsApp Business oficial e suporta envio com botões interativos." 
-                        : "Você conectou uma conta pessoal do WhatsApp para testes. Mensagens automáticas e testes são entregues com links diretos de acesso (Check-in, Portaria, Café) formatados no corpo da mensagem para garantir 100% de entrega sem bloqueios da Meta."}
-                    </p>
-                  </div>
-                )}
-
-                {/* Switch de ativação geral */}
-                <div className="flex items-center justify-between p-3.5 rounded-xl border bg-muted/40">
-                  <div className="space-y-0.5">
-                    <span className="text-xs font-bold text-foreground">Habilitar Motor de Envio WhatsApp</span>
-                    <p className="text-[11px] text-muted-foreground">Ative para permitir o envio em tempo real aos hóspedes.</p>
-                  </div>
-                  <Switch 
-                    checked={config.enabled}
-                    onCheckedChange={(checked) => setConfig({ ...config, enabled: checked })}
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-bold">Instance ID (ID da Instância)</Label>
-                    <Input 
-                      placeholder="Ex: 3B4C5D6E7F8G9H0"
-                      value={config.instanceId}
-                      onChange={(e) => setConfig({ ...config, instanceId: e.target.value })}
-                      className="text-xs font-mono"
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-bold">Token da Instância</Label>
-                    <Input 
-                      type="password"
-                      placeholder="Ex: 8A7B6C5D4E3F2G1"
-                      value={config.token}
-                      onChange={(e) => setConfig({ ...config, token: e.target.value })}
-                      className="text-xs font-mono"
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-bold">Client-Token (Token de Segurança da Conta Z-API)</Label>
-                    <Input 
-                      type="password"
-                      placeholder="Opcional se não ativado no painel Z-API"
-                      value={config.clientToken}
-                      onChange={(e) => setConfig({ ...config, clientToken: e.target.value })}
-                      className="text-xs font-mono"
-                    />
-                  </div>
-
-                  <div className="space-y-1.5 flex flex-col justify-center">
-                    <div className="flex items-center justify-between p-2.5 rounded-lg border bg-muted/20">
-                      <div>
-                        <span className="text-xs font-semibold block">Fallback Automático para Texto</span>
-                        <span className="text-[10px] text-muted-foreground">Se os botões falharem no aparelho, envia links no corpo.</span>
-                      </div>
-                      <Switch 
-                        checked={config.fallbackToText}
-                        onCheckedChange={(c) => setConfig({ ...config, fallbackToText: c })}
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Parâmetros da Propriedade para preenchimento de tags */}
-                <div className="p-4 rounded-xl border bg-muted/20 space-y-3 pt-4">
-                  <span className="text-xs font-bold text-foreground block">
-                    Informações Fixas do Hotel (Puxadas automaticamente pelas tags):
-                  </span>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <div className="space-y-1">
-                      <Label className="text-[11px]">Nome da Rede Wi-Fi</Label>
-                      <Input 
-                        value={config.wifiNetwork}
-                        onChange={(e) => setConfig({ ...config, wifiNetwork: e.target.value })}
-                        className="text-xs h-8"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[11px]">Senha do Wi-Fi</Label>
-                      <Input 
-                        value={config.wifiPassword}
-                        onChange={(e) => setConfig({ ...config, wifiPassword: e.target.value })}
-                        className="text-xs h-8"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[11px]">Link de Avaliação Google Maps</Label>
-                      <Input 
-                        value={config.googleReviewUrl}
-                        onChange={(e) => setConfig({ ...config, googleReviewUrl: e.target.value })}
-                        className="text-xs h-8"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between pt-2">
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={handleShowQrCode}
-                    className="text-xs gap-1.5"
-                  >
-                    <QrCode className="w-3.5 h-3.5 text-emerald-600" />
-                    Ler QR Code da Z-API
-                  </Button>
-
-                  <Button 
-                    onClick={handleSaveConfig}
-                    disabled={savingConfig}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold gap-1.5 shadow-xs"
-                  >
-                    <Check className="w-3.5 h-3.5" />
-                    {savingConfig ? "Salvando..." : "Salvar Configurações"}
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
         </Tabs>
 
         {/* ════════════════════════════════════════════════════════════════════
@@ -1931,44 +1707,6 @@ export default function WhatsappAutomation() {
               >
                 <Send className="w-3.5 h-3.5" />
                 {sendingTest ? "Enviando..." : "Disparar Agora"}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        {/* ════════════════════════════════════════════════════════════════════
-            MODAL DE QR CODE
-        ════════════════════════════════════════════════════════════════════ */}
-        <Dialog open={qrModalOpen} onOpenChange={setQrModalOpen}>
-          <DialogContent className="max-w-sm rounded-2xl text-center">
-            <DialogHeader>
-              <DialogTitle className="text-base font-bold">Escanear QR Code Z-API</DialogTitle>
-              <DialogDescription className="text-xs">
-                Abra o WhatsApp no celular &gt; Aparelhos conectados &gt; Conectar aparelho.
-              </DialogDescription>
-            </DialogHeader>
-
-            <div className="py-4 flex flex-col items-center justify-center">
-              {loadingQr ? (
-                <div className="py-8 text-muted-foreground flex flex-col items-center gap-2">
-                  <RefreshCw className="w-6 h-6 animate-spin text-emerald-600" />
-                  <span className="text-xs">Gerando QR Code na Z-API...</span>
-                </div>
-              ) : qrImageData ? (
-                <div className="p-3 bg-white rounded-2xl shadow-md border inline-block">
-                  <img src={qrImageData} alt="QR Code WhatsApp" className="w-56 h-56 object-contain" />
-                </div>
-              ) : (
-                <div className="py-8 text-muted-foreground text-xs space-y-2">
-                  <p>Não foi possível obter a imagem do QR Code.</p>
-                  <p className="text-[11px]">Certifique-se de que a Instância e o Token estão corretos.</p>
-                </div>
-              )}
-            </div>
-
-            <DialogFooter className="sm:justify-center">
-              <Button variant="outline" size="sm" onClick={() => setQrModalOpen(false)}>
-                Fechar
               </Button>
             </DialogFooter>
           </DialogContent>

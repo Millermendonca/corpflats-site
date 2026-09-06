@@ -23,7 +23,8 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { 
   RefreshCw, Check, Users, Key, ShieldCheck, UserPlus, AlertCircle, Cloud, 
-  HardDrive, Zap, Sparkles, Database, Lock, Trash2, Edit2, CreditCard
+  HardDrive, Zap, Sparkles, Database, Lock, Trash2, Edit2, CreditCard,
+  Smartphone, ChevronRight
 } from "lucide-react"
 
 import { AccessDenied } from "@/components/access-denied"
@@ -119,6 +120,10 @@ export default function SystemSettings() {
   const [savingMp, setSavingMp] = useState(false)
   const [mpSuccessMsg, setMpSuccessMsg] = useState<string | null>(null)
 
+  // Z-API WhatsApp states
+  const [zapiStatus, setZapiStatus] = useState<any>(null)
+  const [zapiConfig, setZapiConfig] = useState<any>(null)
+
   const fetchUsers = async () => {
     try {
       const res = await fetch("/api/admin/users")
@@ -129,6 +134,17 @@ export default function SystemSettings() {
     } finally {
       setLoadingUsers(false)
     }
+  }
+
+  const fetchZapiInfo = async () => {
+    try {
+      const [resConf, resStat] = await Promise.all([
+        fetch("/api/whatsapp/config"),
+        fetch("/api/whatsapp/status")
+      ])
+      if (resConf.ok) setZapiConfig(await resConf.json())
+      if (resStat.ok) setZapiStatus(await resStat.json())
+    } catch {}
   }
 
   const fetchStorageConfig = async () => {
@@ -188,6 +204,7 @@ export default function SystemSettings() {
     fetchMsGraphConfig()
     fetchInterConfig()
     fetchMpConfig()
+    fetchZapiInfo()
   }, [])
 
   if (loadingUser) return null
@@ -365,7 +382,7 @@ export default function SystemSettings() {
         </div>
 
         {/* ── SEÇÃO 1: NUVEM E SINCRONIZAÇÃO ── */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {/* Cloudflare R2 */}
           <Card className="rounded-3xl border border-border shadow-sm flex flex-col justify-between">
             <div>
@@ -457,6 +474,56 @@ export default function SystemSettings() {
               >
                 <Database className="w-3.5 h-3.5" />
                 <span>Configurar API</span>
+              </Button>
+            </div>
+          </Card>
+
+          {/* Conexão Z-API (WhatsApp) */}
+          <Card className="rounded-3xl border border-border shadow-sm flex flex-col justify-between">
+            <div>
+              <CardHeader className="p-5 border-b border-border pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm font-black text-foreground flex items-center gap-2">
+                    <Smartphone className="w-4 h-4 text-emerald-600" />
+                    <span>Conexão Z-API (WhatsApp)</span>
+                  </CardTitle>
+                  <Badge variant={zapiStatus?.connected ? "default" : "outline"} className={`text-[10px] ${zapiStatus?.connected ? "bg-emerald-600 text-white" : ""}`}>
+                    {zapiStatus?.connected ? "✓ Conectado" : zapiConfig?.instanceId ? "QR Pendente" : "Pendente"}
+                  </Badge>
+                </div>
+                <CardDescription className="text-xs">Instância Z-API, status do WhatsApp, QR Code e credenciais</CardDescription>
+              </CardHeader>
+
+              <CardContent className="p-5 space-y-2 text-xs">
+                <div className="flex justify-between py-1 border-b border-border/40">
+                  <span className="text-muted-foreground">Motor de Envio:</span>
+                  <span className={`font-bold ${zapiConfig?.enabled ? "text-emerald-600" : "text-amber-600"}`}>
+                    {zapiConfig?.enabled ? "Habilitado" : "Desabilitado"}
+                  </span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-border/40">
+                  <span className="text-muted-foreground">Aparelho Registrado:</span>
+                  <span className="font-mono text-foreground font-semibold truncate max-w-[170px]">
+                    {zapiStatus?.phone ? `+${zapiStatus.phone}` : "Aguardando conexão"}
+                  </span>
+                </div>
+                <div className="flex justify-between py-1">
+                  <span className="text-muted-foreground">Tipo de Conta:</span>
+                  <span className="font-bold text-foreground">
+                    {zapiStatus?.isBusiness ? "WhatsApp Business" : zapiStatus?.connected ? "Pessoal (Links)" : "—"}
+                  </span>
+                </div>
+              </CardContent>
+            </div>
+
+            <div className="p-4 border-t border-border bg-muted/20 rounded-b-3xl">
+              <Button 
+                onClick={() => setLocation("/zapi-conexao")}
+                className="w-full text-xs font-bold rounded-xl h-9.5 bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 shadow-xs"
+              >
+                <Smartphone className="w-3.5 h-3.5" />
+                <span>Gerenciar Conexão Z-API</span>
+                <ChevronRight className="w-3.5 h-3.5 ml-auto" />
               </Button>
             </div>
           </Card>

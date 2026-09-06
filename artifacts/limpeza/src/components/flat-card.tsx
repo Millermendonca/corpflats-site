@@ -340,6 +340,9 @@ export function FlatCard({
       locationInRoom: lostLocation.trim(),
       photoBase64: lostPhotoBase64,
       notes: lostNotes.trim(),
+      date: date || flat.requestDate,
+      guestName: flat.leavingGuest || "",
+      guestPhone: flat.activeReservation?.guestPhone || flat.leavingGuestPhone || flat.guestPhone || "",
       timestamp: new Date().toISOString()
     }
 

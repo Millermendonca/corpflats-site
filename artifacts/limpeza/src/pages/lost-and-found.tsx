@@ -14,7 +14,7 @@ import {
 import { 
   Package, Search, PlusCircle, CheckCircle2, Clock, MapPin, User, 
   Phone, MessageSquare, Trash2, Camera, ExternalLink, RefreshCw, 
-  AlertCircle, Sparkles, Check, Filter, Image as ImageIcon, Eye, PackageOpen
+  AlertCircle, Sparkles, Check, Filter, Image as ImageIcon, Eye, PackageOpen, Pencil
 } from "lucide-react"
 import { format, parseISO } from "date-fns"
 import { ptBR } from "date-fns/locale"
@@ -66,6 +66,13 @@ export default function LostAndFoundPage() {
   const [returnNotesInput, setReturnNotesInput] = useState("")
   const [submittingReturn, setSubmittingReturn] = useState(false)
 
+  // Modal Editar Hóspede Associado
+  const [editGuestModalOpen, setEditGuestModalOpen] = useState(false)
+  const [selectedItemForGuestEdit, setSelectedItemForGuestEdit] = useState<LostItem | null>(null)
+  const [editGuestNameInput, setEditGuestNameInput] = useState("")
+  const [editGuestPhoneInput, setEditGuestPhoneInput] = useState("")
+  const [submittingGuestEdit, setSubmittingGuestEdit] = useState(false)
+
   // Lista de Flats para o Select
   const [flats, setFlats] = useState<any[]>([])
 
@@ -99,6 +106,38 @@ export default function LostAndFoundPage() {
     loadData()
   }, [])
 
+  const handleOpenEditGuest = (item: LostItem) => {
+    setSelectedItemForGuestEdit(item)
+    setEditGuestNameInput(item.lastGuestName || "")
+    setEditGuestPhoneInput(item.lastGuestPhone || "")
+    setEditGuestModalOpen(true)
+  }
+
+  const handleSaveEditGuest = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedItemForGuestEdit) return
+    setSubmittingGuestEdit(true)
+    try {
+      const res = await fetch(`/api/lost-and-found/${selectedItemForGuestEdit.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lastGuestName: editGuestNameInput.trim(),
+          lastGuestPhone: editGuestPhoneInput.trim()
+        }),
+        credentials: "include"
+      })
+      if (res.ok) {
+        setEditGuestModalOpen(false)
+        fetchItems()
+      }
+    } catch (err) {
+      console.error("Erro ao salvar hóspede associado:", err)
+    } finally {
+      setSubmittingGuestEdit(false)
+    }
+  }
+
   // Upload e Compressão de Foto
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -110,13 +149,17 @@ export default function LostAndFoundPage() {
       img.onload = () => {
         const canvas = document.createElement("canvas")
         const ctx = canvas.getContext("2d")
-        const maxWidth = 1200
         let w = img.width
         let h = img.height
-
-        if (w > maxWidth) {
-          h = Math.round((h * maxWidth) / w)
-          w = maxWidth
+        const maxDim = 1200
+        if (w > maxDim || h > maxDim) {
+          if (w > h) {
+            h = Math.round((h * maxDim) / w)
+            w = maxDim
+          } else {
+            w = Math.round((w * maxDim) / h)
+            h = maxDim
+          }
         }
 
         canvas.width = w
@@ -144,7 +187,8 @@ export default function LostAndFoundPage() {
           description: descriptionInput.trim(),
           locationInRoom: locationInput.trim(),
           notes: notesInput.trim(),
-          photoBase64
+          photoBase64,
+          date: new Intl.DateTimeFormat("sv-SE", { timeZone: "America/Sao_Paulo" }).format(new Date())
         }),
         credentials: "include"
       })
@@ -494,6 +538,14 @@ export default function LostAndFoundPage() {
                           <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
                             <User className="w-3 h-3" /> Hóspede Associado
                           </span>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditGuest(item)}
+                            className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-background/80 transition-colors"
+                            title="Editar hóspede associado"
+                          >
+                            <Pencil className="w-3 h-3" />
+                          </button>
                         </div>
                         <div className="font-bold text-foreground">
                           {item.lastGuestName || "Hóspede Anterior"}
@@ -756,6 +808,50 @@ export default function LostAndFoundPage() {
             >
               Fechar Visualização
             </Button>
+          </DialogContent>
+        </Dialog>
+
+        {/* ── MODAL: EDITAR HÓSPEDE ASSOCIADO ── */}
+        <Dialog open={editGuestModalOpen} onOpenChange={setEditGuestModalOpen}>
+          <DialogContent className="sm:max-w-md rounded-3xl">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <User className="w-5 h-5 text-primary" />
+                <span>Editar Hóspede Associado</span>
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                Atualize o hóspede ou WhatsApp associado a este item esquecido no Flat {selectedItemForGuestEdit?.flatNumber}.
+              </DialogDescription>
+            </DialogHeader>
+            <form onSubmit={handleSaveEditGuest} className="space-y-4 pt-2">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold">Nome do Hóspede</Label>
+                <Input 
+                  value={editGuestNameInput} 
+                  onChange={e => setEditGuestNameInput(e.target.value)} 
+                  placeholder="Nome do hóspede..." 
+                  required 
+                  className="rounded-xl text-xs h-9.5"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold">Telefone / WhatsApp</Label>
+                <Input 
+                  value={editGuestPhoneInput} 
+                  onChange={e => setEditGuestPhoneInput(e.target.value)} 
+                  placeholder="Ex: 22999998888 ou (22) 99999-8888" 
+                  className="rounded-xl text-xs h-9.5"
+                />
+              </div>
+              <DialogFooter className="gap-2 sm:gap-0 pt-2">
+                <Button type="button" variant="outline" onClick={() => setEditGuestModalOpen(false)} className="rounded-xl h-9 text-xs">
+                  Cancelar
+                </Button>
+                <Button type="submit" disabled={submittingGuestEdit} className="rounded-xl h-9 text-xs font-bold bg-primary text-primary-foreground">
+                  {submittingGuestEdit ? "Salvando..." : "Salvar Alterações"}
+                </Button>
+              </DialogFooter>
+            </form>
           </DialogContent>
         </Dialog>
       </div>

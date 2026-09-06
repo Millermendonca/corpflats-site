@@ -40,6 +40,7 @@ import TarifasEditor from '@/pages/tarifas';
 import SystemLogsPage from '@/pages/system-logs';
 import MyAccount from '@/pages/my-account';
 import WhatsappAutomation from '@/pages/whatsapp-automation';
+import ZapiConnection from '@/pages/zapi-connection';
 import NotFound from '@/pages/not-found';
 
 const queryClient = new QueryClient({
@@ -116,9 +117,13 @@ function Router() {
         {/* Staff & Admin Routes */}
         <Route path="/login" component={Login} />
         <Route path="/dashboard" component={Dashboard} />
+        {/* WhatsApp Automation & Z-API Connection Routes */}
         <Route path="/whatsapp" component={WhatsappAutomation} />
-        <Route path="/zapi" component={WhatsappAutomation} />
         <Route path="/automacao-whatsapp" component={WhatsappAutomation} />
+        <Route path="/zapi-conexao" component={ZapiConnection} />
+        <Route path="/conexao-zapi" component={ZapiConnection} />
+        <Route path="/sistema/zapi" component={ZapiConnection} />
+        <Route path="/zapi" component={ZapiConnection} />
         <Route path="/notificacoes" component={NotificationsHub} />
         <Route path="/notifications" component={NotificationsHub} />
         <Route path="/alertas" component={NotificationsHub} />

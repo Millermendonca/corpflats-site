@@ -37,7 +37,18 @@ export default function GuestPortal() {
   const [, paramsGuest] = useRoute("/guest-portal/:code")
   const [, setLocation] = useLocation()
   
-  const rawCode = params?.code || paramsAlt?.code || paramsGuest?.code || ""
+  const getInitialQuery = () => {
+    if (params?.code) return params.code
+    if (paramsAlt?.code) return paramsAlt.code
+    if (paramsGuest?.code) return paramsGuest.code
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search)
+      return sp.get("whatsapp") || sp.get("phone") || sp.get("tel") || sp.get("code") || sp.get("q") || sp.get("reserva") || ""
+    }
+    return ""
+  }
+
+  const rawCode = getInitialQuery()
   const [searchQuery, setSearchQuery] = useState(rawCode)
   const [code, setCode] = useState(rawCode)
   
@@ -52,6 +63,16 @@ export default function GuestPortal() {
   const [termsModalTab, setTermsModalTab] = useState<"rules" | "contract">("rules")
   const [claimingEarly, setClaimingEarly] = useState(false)
   const [reminderSaved, setReminderSaved] = useState(false)
+
+  // Modificar Reserva States
+  const [modifyModalOpen, setModifyModalOpen] = useState(false)
+  const [modCheckinDate, setModCheckinDate] = useState("")
+  const [modCheckoutDate, setModCheckoutDate] = useState("")
+  const [modGuestCount, setModGuestCount] = useState(1)
+  const [modReason, setModReason] = useState("")
+  const [modifying, setModifying] = useState(false)
+  const [modifyError, setModifyError] = useState<string | null>(null)
+  const [modifySuccess, setModifySuccess] = useState<string | null>(null)
 
   // Cancelamento Self-Service States
   const [cancelModalOpen, setCancelModalOpen] = useState(false)
@@ -169,6 +190,54 @@ export default function GuestPortal() {
     } catch {}
     finally {
       setClaimingEarly(false)
+    }
+  }
+
+  const handleOpenModifyModal = () => {
+    if (!data?.reservation) return
+    const r = data.reservation
+    setModCheckinDate(r.checkinDate || "")
+    setModCheckoutDate(r.checkoutDate || "")
+    setModGuestCount(r.guestCount || 1)
+    setModReason("")
+    setModifyError(null)
+    setModifySuccess(null)
+    setModifyModalOpen(true)
+  }
+
+  const handleConfirmModify = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!data?.reservation) return
+    const currentCode = data.reservation.code || code
+    setModifying(true)
+    setModifyError(null)
+    setModifySuccess(null)
+    try {
+      const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(currentCode)}/modify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          newCheckinDate: modCheckinDate,
+          newCheckoutDate: modCheckoutDate,
+          newGuestCount: modGuestCount,
+          reason: modReason
+        })
+      })
+      const json = await res.json()
+      if (res.ok) {
+        setModifySuccess(json.message || "Reserva modificada com sucesso!")
+        fetchPortalData(currentCode)
+        setTimeout(() => {
+          setModifyModalOpen(false)
+          setModifySuccess(null)
+        }, 3000)
+      } else {
+        setModifyError(json.error || "Não foi possível alterar a reserva.")
+      }
+    } catch (err: any) {
+      setModifyError(err.message || "Erro ao conectar com o servidor.")
+    } finally {
+      setModifying(false)
     }
   }
 
@@ -427,13 +496,9 @@ export default function GuestPortal() {
               <Badge variant="outline" className="bg-slate-50 text-slate-700 border-slate-200 text-xs font-bold py-1 px-2.5">
                 {reservation.guestCount || 1} {reservation.guestCount === 1 ? "hóspede" : "hóspedes"}
               </Badge>
-              {hasBreakfast ? (
+              {hasBreakfast && (
                 <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs font-bold py-1 px-2.5">
                   ☕ Café Incluso
-                </Badge>
-              ) : (
-                <Badge variant="outline" className="bg-slate-50 text-slate-500 border-slate-200 text-xs font-medium py-1 px-2.5">
-                  Café Opcional
                 </Badge>
               )}
             </div>
@@ -467,6 +532,39 @@ export default function GuestPortal() {
               </span>
             </div>
           </div>
+
+          {/* Ações da Reserva (Modificação de Datas e Hóspedes) */}
+          {(() => {
+            const directChannels = ["whatsapp", "site", "site_direto", "direto", "balcao"]
+            const isDirect = directChannels.includes((reservation.channel || "").toLowerCase())
+            const isCancelled = reservation.status === "cancelada" || reservation.status === "CANCELLED"
+            const canModify = isDirect && !isCancelled
+
+            if (!canModify) return null
+
+            return (
+              <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                <div className="text-xs text-slate-500 flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-lg bg-sky-50 text-sky-600 flex items-center justify-center shrink-0">
+                    <Calendar className="w-3.5 h-3.5" />
+                  </div>
+                  <span>
+                    Reserva confirmada via <strong>{reservation.channel === "whatsapp" ? "WhatsApp" : "Site CorpFlats"}</strong> • Precisa ajustar sua estadia?
+                  </span>
+                </div>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleOpenModifyModal}
+                  className="h-9 px-4 rounded-xl border border-sky-300 bg-sky-50/70 hover:bg-sky-100 text-sky-800 font-bold text-xs flex items-center justify-center gap-1.5 shadow-2xs transition-all active:scale-95 shrink-0"
+                >
+                  <Calendar className="w-3.5 h-3.5 text-sky-600" />
+                  <span>Modificar Reserva</span>
+                </Button>
+              </div>
+            )
+          })()}
         </Card>
 
         {/* ── 2. Card: Acomodação & Chave de Acesso / Portaria ───────────── */}
@@ -551,112 +649,112 @@ export default function GuestPortal() {
           </div>
         </Card>
 
-        {/* ── 3. Card: Room Service & Café da Manhã ──────────────────────── */}
-        <Card className="bg-gradient-to-br from-amber-50/90 via-white to-amber-50/30 border border-amber-200/80 rounded-3xl p-5 sm:p-7 shadow-md space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-200/60 pb-3">
-            <div className="flex items-center gap-2.5">
-              <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center font-bold text-xl border border-amber-300 shadow-2xs">
-                <Coffee className="w-5 h-5" />
+        {/* ── 3. Card: Room Service & Café da Manhã (Exibido apenas quando contratado) ── */}
+        {hasBreakfast && (
+          <Card className="bg-gradient-to-br from-amber-50/90 via-white to-amber-50/30 border border-amber-200/80 rounded-3xl p-5 sm:p-7 shadow-md space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-200/60 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center font-bold text-xl border border-amber-300 shadow-2xs">
+                  <Coffee className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-base font-black text-slate-900 flex items-center gap-2">
+                    Room Service & Café da Manhã
+                  </h2>
+                  <span className="text-xs text-amber-800/90 font-medium">
+                    Entregas diárias das 05h às 09h30 servidas pontualmente no flat
+                  </span>
+                </div>
               </div>
-              <div>
-                <h2 className="text-base font-black text-slate-900 flex items-center gap-2">
-                  Room Service & Café da Manhã
-                </h2>
-                <span className="text-xs text-amber-800/90 font-medium">
-                  Entregas diárias das 05h às 09h30 servidas pontualmente no flat
-                </span>
-              </div>
+
+              <Badge variant="outline" className="text-xs font-black px-2.5 py-0.5 bg-amber-100 text-amber-900 border-amber-300">
+                ☕ Incluso na Diária
+              </Badge>
             </div>
 
-            <Badge variant="outline" className={`text-xs font-black px-2.5 py-0.5 ${
-              hasBreakfast ? "bg-amber-100 text-amber-900 border-amber-300" : "bg-slate-100 text-slate-500 border-slate-200"
-            }`}>
-              {hasBreakfast ? "☕ Incluso na Diária" : "Serviço Disponível"}
-            </Badge>
-          </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Monte o seu pedido selecionando frutas frescas, pães artesanais, bebidas quentes e geladas de sua preferência, além do horário exato de sua entrega.
+            </p>
 
-          <p className="text-xs text-slate-600 leading-relaxed">
-            Monte o seu pedido selecionando frutas frescas, pães artesanais, bebidas quentes e geladas de sua preferência, além do horário exato de sua entrega.
-          </p>
-
-          {/* Se houver pedido já agendado para a data */}
-          {breakfastOrder && (
-            <div className="p-4 bg-white/95 rounded-2xl border border-amber-200 space-y-3 shadow-2xs">
-              <div className="flex items-center justify-between">
-                <span className="flex items-center gap-1.5 font-bold text-amber-900 text-xs sm:text-sm">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  <span>Pedido Agendado ({breakfastOrder.deliveryDate === format(new Date(), "yyyy-MM-dd") ? "Hoje" : "Próxima Entrega"})</span>
-                </span>
-                <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-200 text-[10px] font-bold">
-                  ⏰ Entrega às {breakfastOrder.deliveryTime || "08:00"}
-                </Badge>
-              </div>
-
-              {breakfastOrder.items && Array.isArray(breakfastOrder.items) && (
-                <div className="flex flex-wrap gap-1.5 pt-1">
-                  {breakfastOrder.items.map((it: any, idx: number) => (
-                    <span key={idx} className="inline-block bg-amber-50/80 border border-amber-200/80 text-amber-900 px-2.5 py-0.5 rounded-lg text-[10.5px] font-medium">
-                      {it.quantity > 1 ? `${it.quantity}x ` : ""}{it.name}
-                    </span>
-                  ))}
+            {/* Se houver pedido já agendado para a data */}
+            {breakfastOrder && (
+              <div className="p-4 bg-white/95 rounded-2xl border border-amber-200 space-y-3 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 font-bold text-amber-900 text-xs sm:text-sm">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <span>Pedido Agendado ({breakfastOrder.deliveryDate === format(new Date(), "yyyy-MM-dd") ? "Hoje" : "Próxima Entrega"})</span>
+                  </span>
+                  <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-200 text-[10px] font-bold">
+                    ⏰ Entrega às {breakfastOrder.deliveryTime || "08:00"}
+                  </Badge>
                 </div>
-              )}
 
-              <div className="flex items-center gap-2 pt-2 border-t border-amber-100">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleToggleFavorite(breakfastOrder.id)}
-                  disabled={favoriteTogglingId === breakfastOrder.id}
-                  className="text-xs h-8 bg-white border-amber-200 text-amber-800 hover:bg-amber-50 flex items-center gap-1.5 rounded-xl font-semibold"
-                >
-                  <Star className={`w-3.5 h-3.5 ${breakfastOrder.isFavorite ? "fill-amber-500 text-amber-500" : ""}`} />
-                  <span>{breakfastOrder.isFavorite ? "Favoritado ⭐" : "Favoritar este Pedido"}</span>
-                </Button>
+                {breakfastOrder.items && Array.isArray(breakfastOrder.items) && (
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {breakfastOrder.items.map((it: any, idx: number) => (
+                      <span key={idx} className="inline-block bg-amber-50/80 border border-amber-200/80 text-amber-900 px-2.5 py-0.5 rounded-lg text-[10.5px] font-medium">
+                        {it.quantity > 1 ? `${it.quantity}x ` : ""}{it.name}
+                      </span>
+                    ))}
+                  </div>
+                )}
 
-                {(reservation.lastBreakfastOrder || breakfastOrder) && (
+                <div className="flex items-center gap-2 pt-2 border-t border-amber-100">
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => handleOpenRepeatModal(reservation.lastBreakfastOrder || breakfastOrder)}
-                    className="text-xs h-8 bg-white border-amber-200 text-amber-800 hover:bg-amber-50 flex items-center gap-1.5 rounded-xl font-semibold ml-auto"
+                    onClick={() => handleToggleFavorite(breakfastOrder.id)}
+                    disabled={favoriteTogglingId === breakfastOrder.id}
+                    className="text-xs h-8 bg-white border-amber-200 text-amber-800 hover:bg-amber-50 flex items-center gap-1.5 rounded-xl font-semibold"
                   >
-                    <RotateCcw className="w-3.5 h-3.5 text-amber-600" />
-                    <span>Repetir para Amanhã</span>
+                    <Star className={`w-3.5 h-3.5 ${breakfastOrder.isFavorite ? "fill-amber-500 text-amber-500" : ""}`} />
+                    <span>{breakfastOrder.isFavorite ? "Favoritado ⭐" : "Favoritar este Pedido"}</span>
                   </Button>
-                )}
+
+                  {(reservation.lastBreakfastOrder || breakfastOrder) && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleOpenRepeatModal(reservation.lastBreakfastOrder || breakfastOrder)}
+                      className="text-xs h-8 bg-white border-amber-200 text-amber-800 hover:bg-amber-50 flex items-center gap-1.5 rounded-xl font-semibold ml-auto"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Repetir para Amanhã</span>
+                    </Button>
+                  )}
+                </div>
               </div>
+            )}
+
+            {/* Botões de Ação do Café */}
+            <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5 pt-1">
+              <Button
+                onClick={() => setLocation(`/minha-reserva/${reservation.code || code}/cafe`)}
+                className="w-full sm:w-auto bg-amber-600 hover:bg-amber-500 active:scale-[0.98] text-white font-black text-xs h-11 px-6 rounded-2xl shadow-md shadow-amber-600/20 flex items-center justify-center gap-2 flex-1 transition-all"
+              >
+                <Coffee className="w-4 h-4" />
+                <span>{breakfastOrder ? "Alterar ou Agendar Outros Dias" : "Personalizar Cardápio & Horário do Café"}</span>
+                <ArrowRight className="w-4 h-4 ml-1" />
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  const url = `${window.location.origin}/minha-reserva/${reservation.code || code}/cafe`
+                  navigator.clipboard.writeText(url)
+                  alert("Link exclusivo do café da manhã copiado para a área de transferência!")
+                }}
+                className="h-11 px-4 rounded-2xl border-amber-200 bg-white hover:bg-amber-50 text-amber-900 font-bold text-xs shrink-0"
+              >
+                <Copy className="w-3.5 h-3.5 mr-1.5 text-amber-600" />
+                <span>Copiar Link do Café</span>
+              </Button>
             </div>
-          )}
-
-          {/* Botões de Ação do Café */}
-          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5 pt-1">
-            <Button
-              onClick={() => setLocation(`/minha-reserva/${reservation.code || code}/cafe`)}
-              className="w-full sm:w-auto bg-amber-600 hover:bg-amber-500 active:scale-[0.98] text-white font-black text-xs h-11 px-6 rounded-2xl shadow-md shadow-amber-600/20 flex items-center justify-center gap-2 flex-1 transition-all"
-            >
-              <Coffee className="w-4 h-4" />
-              <span>{breakfastOrder ? "Alterar ou Agendar Outros Dias" : "Personalizar Cardápio & Horário do Café"}</span>
-              <ArrowRight className="w-4 h-4 ml-1" />
-            </Button>
-
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                const url = `${window.location.origin}/minha-reserva/${reservation.code || code}/cafe`
-                navigator.clipboard.writeText(url)
-                alert("Link exclusivo do café da manhã copiado para a área de transferência!")
-              }}
-              className="h-11 px-4 rounded-2xl border-amber-200 bg-white hover:bg-amber-50 text-amber-900 font-bold text-xs shrink-0"
-            >
-              <Copy className="w-3.5 h-3.5 mr-1.5 text-amber-600" />
-              <span>Copiar Link do Café</span>
-            </Button>
-          </div>
-        </Card>
+          </Card>
+        )}
 
         {/* ── 4. Card: Wi-Fi Fibra 500 Mega ──────────────────────────────── */}
         <Card className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-5 sm:p-6 space-y-4">
@@ -1022,14 +1120,28 @@ export default function GuestPortal() {
                       )}
                     </div>
 
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={() => setCancelModalOpen(true)}
-                      className="shrink-0 text-xs font-bold rounded-xl h-9 px-4"
-                    >
-                      Cancelar Reserva
-                    </Button>
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      {["whatsapp", "site", "site_direto", "direto", "balcao"].includes((reservation.channel || "").toLowerCase()) && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleOpenModifyModal}
+                          className="text-xs font-bold rounded-xl h-9 px-3.5 border-sky-300 bg-sky-50/70 hover:bg-sky-100 text-sky-800 flex items-center gap-1.5"
+                        >
+                          <Calendar className="w-3.5 h-3.5 text-sky-600" />
+                          <span>Modificar Reserva</span>
+                        </Button>
+                      )}
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => setCancelModalOpen(true)}
+                        className="text-xs font-bold rounded-xl h-9 px-4"
+                      >
+                        Cancelar Reserva
+                      </Button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -1052,6 +1164,215 @@ export default function GuestPortal() {
         </div>
 
       </main>
+
+      {/* ── Modal: Modificar Reserva ────────────────────────────────────── */}
+      <Dialog open={modifyModalOpen} onOpenChange={setModifyModalOpen}>
+        <DialogContent className="sm:max-w-lg bg-white border border-slate-200 text-slate-900 rounded-3xl p-6 shadow-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-black text-slate-900 flex items-center gap-2">
+              <Calendar className="w-5 h-5 text-sky-600" />
+              Modificar Estadia ou Hóspedes
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-500">
+              Altere o período da estadia ou a quantidade de pessoas para o Flat {reservation?.flatNumber}.
+            </DialogDescription>
+          </DialogHeader>
+
+          {(() => {
+            if (!reservation) return null
+
+            const origNights = reservation.checkinDate && reservation.checkoutDate 
+              ? Math.max(1, differenceInDays(parseISO(reservation.checkoutDate), parseISO(reservation.checkinDate))) 
+              : 1
+            const newNights = modCheckinDate && modCheckoutDate 
+              ? differenceInDays(parseISO(modCheckoutDate), parseISO(modCheckinDate)) 
+              : origNights
+            const origGuests = reservation.guestCount || 1
+            const dailyRate = Number(reservation.dailyRate) || (origNights > 0 ? (Number(reservation.totalAmount || 0) / origNights) : 160)
+
+            // Limite de 24h antes do check-in original (14:00 do dia anterior ao check-in)
+            const checkinDateObj = reservation.checkinDate ? parseISO(reservation.checkinDate) : new Date()
+            const officialCheckinTime = new Date(checkinDateObj)
+            officialCheckinTime.setHours(14, 0, 0, 0)
+            const cutoff24h = new Date(officialCheckinTime.getTime() - 24 * 3600 * 1000)
+            const isUnder24h = new Date().getTime() >= cutoff24h.getTime()
+
+            const isReducingNights = newNights < origNights
+            const isReducingGuests = modGuestCount < origGuests
+            const isIncreasingNights = newNights > origNights
+            const isIncreasingGuests = modGuestCount > origGuests
+            const nightsDiff = newNights - origNights
+            const addAmount = isIncreasingNights ? nightsDiff * dailyRate : 0
+            const refundAmountEstimate = isReducingNights && !isUnder24h ? (origNights - newNights) * dailyRate : 0
+
+            return (
+              <form onSubmit={handleConfirmModify} className="space-y-4 py-2 text-xs">
+                {modifyError && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                    <span>{modifyError}</span>
+                  </div>
+                )}
+
+                {modifySuccess && (
+                  <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl flex items-start gap-2 font-bold">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                    <span>{modifySuccess}</span>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-slate-700 font-bold text-[11px]">Nova Data de Entrada (Check-in)</Label>
+                    <Input
+                      type="date"
+                      value={modCheckinDate}
+                      onChange={e => setModCheckinDate(e.target.value)}
+                      required
+                      className="bg-white border-slate-200 text-slate-900 rounded-xl text-xs h-10"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-slate-700 font-bold text-[11px]">Nova Data de Saída (Check-out)</Label>
+                    <Input
+                      type="date"
+                      value={modCheckoutDate}
+                      onChange={e => setModCheckoutDate(e.target.value)}
+                      required
+                      min={modCheckinDate || undefined}
+                      className="bg-white border-slate-200 text-slate-900 rounded-xl text-xs h-10"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-slate-700 font-bold text-[11px]">Quantidade de Hóspedes</Label>
+                  <div className="flex items-center gap-2">
+                    {[1, 2, 3, 4].map(num => (
+                      <Button
+                        key={num}
+                        type="button"
+                        variant={modGuestCount === num ? "default" : "outline"}
+                        onClick={() => setModGuestCount(num)}
+                        className={`flex-1 h-9 rounded-xl text-xs font-bold ${
+                          modGuestCount === num 
+                            ? "bg-slate-900 text-white shadow-xs" 
+                            : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                        }`}
+                      >
+                        <Users className="w-3.5 h-3.5 mr-1" />
+                        {num} {num === 1 ? "Pessoa" : "Pessoas"}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Resumo Dinâmico das Alterações */}
+                <div className="p-3.5 bg-slate-50 border border-slate-100 rounded-2xl space-y-2">
+                  <div className="flex items-center justify-between text-slate-600">
+                    <span>Diárias:</span>
+                    <span className="font-bold text-slate-900">
+                      {origNights} {origNights === 1 ? "diária" : "diárias"} → {newNights} {newNights === 1 ? "diária" : "diárias"}
+                      {nightsDiff !== 0 && (
+                        <span className={`ml-1 font-bold ${nightsDiff > 0 ? "text-sky-600" : "text-amber-600"}`}>
+                          ({nightsDiff > 0 ? `+${nightsDiff}` : nightsDiff})
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-slate-600">
+                    <span>Hóspedes:</span>
+                    <span className="font-bold text-slate-900">
+                      {origGuests} {origGuests === 1 ? "pessoa" : "pessoas"} → {modGuestCount} {modGuestCount === 1 ? "pessoa" : "pessoas"}
+                    </span>
+                  </div>
+                </div>
+
+                {/* ALERTA DE MENOS DE 24H CONFORME REGRA E CONTRATO */}
+                {(isReducingNights || isReducingGuests) && isUnder24h && (
+                  <div className="p-4 rounded-2xl bg-amber-50/90 border border-amber-200 text-amber-900 text-xs space-y-2 shadow-2xs">
+                    <div className="flex items-start gap-2.5">
+                      <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                      <div className="space-y-1.5">
+                        <strong className="block text-amber-950 font-bold text-xs">
+                          Aviso de Política de Alteração (Menos de 24h para o início)
+                        </strong>
+                        <p className="text-[11.5px] leading-relaxed text-amber-900">
+                          Atenção: como faltam menos de 24 horas para o início da sua reserva (limite: 14:00 do dia anterior ao check-in), a diminuição na quantidade de diárias ou de hóspedes <strong>não gerará estorno ou reembolso</strong> de valores, conforme as condições do{" "}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTermsModalTab("contract")
+                              setTermsModalOpen(true)
+                            }}
+                            className="font-bold underline text-indigo-700 hover:text-indigo-900 inline-flex items-center gap-0.5 cursor-pointer bg-amber-100/80 hover:bg-amber-100 px-1 py-0.5 rounded transition-colors"
+                          >
+                            Contrato de Hospedagem (Cláusula 5)
+                          </button>.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Informativo de acréscimo de noites */}
+                {isIncreasingNights && (
+                  <div className="p-3.5 rounded-2xl bg-sky-50 border border-sky-200 text-sky-900 text-xs space-y-1">
+                    <div className="flex items-center justify-between font-bold">
+                      <span>Acréscimo de {nightsDiff} {nightsDiff === 1 ? "diária" : "diárias"}:</span>
+                      <span className="text-sm font-black text-sky-950">+ R$ {addAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                    </div>
+                    <p className="text-[11px] text-sky-700">
+                      O valor adicional poderá ser liquidado via PIX ou diretamente na recepção.
+                    </p>
+                  </div>
+                )}
+
+                {/* Informativo de redução com mais de 24h */}
+                {isReducingNights && !isUnder24h && (
+                  <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs space-y-1">
+                    <div className="flex items-center justify-between font-bold">
+                      <span>Redução com mais de 24h de antecedência:</span>
+                      <span className="text-sm font-black text-emerald-950">Estorno elegível: R$ {refundAmountEstimate.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                    </div>
+                    <p className="text-[11px] text-emerald-700">
+                      O estorno proporcional será creditado na mesma modalidade de liquidação original.
+                    </p>
+                  </div>
+                )}
+
+                <div className="space-y-1">
+                  <Label className="text-slate-700 text-[11px]">Motivo da alteração (opcional):</Label>
+                  <Input
+                    value={modReason}
+                    onChange={e => setModReason(e.target.value)}
+                    placeholder="Ex: Ajuste de compromisso de trabalho..."
+                    className="bg-white border-slate-200 text-xs h-9 rounded-xl text-slate-900"
+                  />
+                </div>
+
+                <DialogFooter className="gap-2 sm:gap-0 pt-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setModifyModalOpen(false)}
+                    className="rounded-xl border-slate-200 text-slate-700"
+                  >
+                    Fechar
+                  </Button>
+                  <Button
+                    type="submit"
+                    disabled={modifying || newNights <= 0}
+                    className="font-bold text-xs rounded-xl bg-sky-600 hover:bg-sky-700 text-white"
+                  >
+                    {modifying ? "Processando Alteração..." : "Confirmar Modificação"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            )
+          })()}
+        </DialogContent>
+      </Dialog>
 
       {/* ── Modal: Confirmação de Cancelamento ──────────────────────────── */}
       <Dialog open={cancelModalOpen} onOpenChange={setCancelModalOpen}>
