@@ -5212,5 +5212,317 @@
     "clientToken": "F3b5f4fa69f004c008e3730f341fdda8eS",
     "enabled": true,
     "fallbackToText": true
-  }
+  },
+  "whatsappTemplates": [
+    {
+      "id": "tpl_new_reservation",
+      "triggerEvent": "reservation_created",
+      "title": "Nova Reserva • Confirmação & Resumo",
+      "description": "Enviado imediatamente quando uma nova reserva é criada ou confirmada no sistema/site.",
+      "enabled": true,
+      "triggerTiming": "immediate",
+      "offsetValue": 0,
+      "offsetUnit": "minutes",
+      "fixedTime": "",
+      "message": "Olá, *{{nome_hospede}}*! 🌟\nSua reserva no *{{nome_hotel}}* está confirmada!\n\n📋 *Resumo da sua Estadia:*\n• Código da Reserva: *{{numero_reserva}}*\n• Acomodação: *Flat {{quarto}}*\n• Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*\n• Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*\n• Total de Hóspedes: *{{num_hospedes}}*\n• Valor Total: *{{valor_total}}* ({{status_pagamento}})\n\n📍 *Endereço:*\n{{endereco_hotel}}\n\nPara agilizar sua entrada na portaria sem filas, realize com antecedência o seu *Pré-Check-in Digital* pelo botão abaixo:",
+      "footer": "CorpFlats • Hospedagem Contemporânea",
+      "buttons": [
+        {
+          "id": "btn_chk",
+          "type": "URL",
+          "label": "📝 Fazer Check-in Online",
+          "url": "{{link_checkin_digital}}"
+        },
+        {
+          "id": "btn_portal",
+          "type": "URL",
+          "label": "🏨 Ver Detalhes da Reserva",
+          "url": "{{link_portal_hospede}}"
+        }
+      ]
+    },
+    {
+      "id": "tpl_reservation_updated",
+      "triggerEvent": "reservation_updated",
+      "title": "Modificação de Reserva • Dados Atualizados",
+      "description": "Enviado quando datas, quarto ou número de hóspedes forem alterados.",
+      "enabled": true,
+      "triggerTiming": "immediate",
+      "offsetValue": 0,
+      "offsetUnit": "minutes",
+      "fixedTime": "",
+      "message": "Olá, *{{primeiro_nome}}*! 🔄\nInformamos que sua reserva *{{numero_reserva}}* no *{{nome_hotel}}* foi atualizada com sucesso:\n\n• Quarto: *Flat {{quarto}}*\n• Período: *{{data_checkin}} às {{horario_checkin}}* até *{{data_checkout}} às {{horario_checkout}}*\n• Total de Hóspedes: *{{num_hospedes}}*\n• Situação do Pagamento: *{{status_pagamento}}*\n\nQualquer dúvida, estamos à inteira disposição!",
+      "footer": "CorpFlats • Central de Reservas",
+      "buttons": [
+        {
+          "id": "btn_portal",
+          "type": "URL",
+          "label": "🏨 Acessar Minha Reserva",
+          "url": "{{link_portal_hospede}}"
+        }
+      ]
+    },
+    {
+      "id": "tpl_pre_checkin_reminder",
+      "triggerEvent": "pre_checkin_reminder",
+      "title": "Lembrete de Pré-Check-in Digital",
+      "description": "Enviado 24 horas antes do check-in para agilizar o cadastro de portaria.",
+      "enabled": true,
+      "triggerTiming": "before_event",
+      "offsetValue": 24,
+      "offsetUnit": "hours",
+      "fixedTime": "",
+      "message": "Olá, *{{primeiro_nome}}*! Tudo bem? ⏳\nSua chegada ao *{{nome_hotel}}* está próxima (*{{data_checkin}}*)!\n\nPara que a portaria do Edifício Soho libere sua entrada imediatamente na chegada, pedimos que adiante o cadastro dos hóspedes pelo link abaixo:",
+      "footer": "CorpFlats • Entrada Rápida & Segura",
+      "buttons": [
+        {
+          "id": "btn_pre",
+          "type": "URL",
+          "label": "📝 Preencher Ficha Digital",
+          "url": "{{link_checkin_digital}}"
+        }
+      ]
+    },
+    {
+      "id": "tpl_checkin_day_instructions",
+      "triggerEvent": "checkin_day_instructions",
+      "title": "Dia do Check-in • Instruções de Chegada",
+      "description": "Enviado no dia do check-in às 09:00 com localização, regras e senha de Wi-Fi.",
+      "enabled": true,
+      "triggerTiming": "fixed_time_day_of",
+      "offsetValue": 0,
+      "offsetUnit": "hours",
+      "fixedTime": "09:00",
+      "message": "Bom dia, *{{primeiro_nome}}*! ☀️\nHoje é o dia da sua chegada ao *{{nome_hotel}}*!\n\n🔑 *Seu Flat:* {{quarto}}\n⏰ *Horário de Check-in:* A partir das {{horario_checkin}}\n📍 *Endereço:* {{endereco_hotel}}\n\nAo chegar, dirija-se à portaria 24h e informe seu nome e o número do seu flat.\n\n📶 *Wi-Fi do Flat:*\n• Rede: *{{wifi_rede}}*\n• Senha: *{{wifi_senha}}*\n\nDesejamos uma ótima viagem até aqui! Se precisar de suporte, estamos à disposição.",
+      "footer": "CorpFlats • Boas-vindas!",
+      "buttons": [
+        {
+          "id": "btn_maps",
+          "type": "URL",
+          "label": "📍 Abrir no Google Maps",
+          "url": "{{link_maps}}"
+        },
+        {
+          "id": "btn_portal",
+          "type": "URL",
+          "label": "🏨 Portal do Hóspede",
+          "url": "{{link_portal_hospede}}"
+        }
+      ]
+    },
+    {
+      "id": "tpl_checkin_completed",
+      "triggerEvent": "checkin_completed",
+      "title": "Check-in Realizado • Boas-vindas ao Quarto",
+      "description": "Enviado assim que o hóspede entra e o check-in é concluído no tablet ou sistema.",
+      "enabled": true,
+      "triggerTiming": "immediate",
+      "offsetValue": 0,
+      "offsetUnit": "minutes",
+      "fixedTime": "",
+      "message": "Olá, *{{primeiro_nome}}*! Seja muito bem-vindo(a) ao *Flat {{quarto}}*! 🏡✨\n\nEsperamos que encontre tudo limpo, fresco e perfeito para o seu conforto.\n\n📱 *Central do Hóspede:*\nNo portal abaixo você confere senhas, instruções dos aparelhos e regras de convivência do condomínio.\n\nTenha uma estadia incrível!",
+      "footer": "CorpFlats • Soho Residence Service",
+      "buttons": [
+        {
+          "id": "btn_portal",
+          "type": "URL",
+          "label": "🌐 Abrir Portal do Flat",
+          "url": "{{link_portal_hospede}}"
+        },
+        {
+          "id": "btn_call",
+          "type": "CALL",
+          "label": "📞 Ligar Recepção",
+          "phone": "{{telefone_hotel}}"
+        }
+      ]
+    },
+    {
+      "id": "tpl_breakfast_reminder",
+      "triggerEvent": "breakfast_reminder",
+      "title": "Café da Manhã • Montagem da Bandeja",
+      "description": "Enviado às 18:00 da véspera para hóspedes com café agendarem a bandeja.",
+      "enabled": true,
+      "triggerTiming": "fixed_time_day_before",
+      "offsetValue": 0,
+      "offsetUnit": "hours",
+      "fixedTime": "18:00",
+      "message": "Olá, *{{primeiro_nome}}*! ☕🥐\nEstá na hora de montar a sua bandeja de café da manhã para amanhã no *Flat {{quarto}}*!\n\nPreparamos tudo fresquinho com frutas, pães e café quente no horário de sua preferência. Escolha seus itens favoritos clicando no botão abaixo:",
+      "footer": "CorpFlats • Café Artesanal no Quarto",
+      "buttons": [
+        {
+          "id": "btn_cafe",
+          "type": "URL",
+          "label": "🥐 Montar Café da Manhã",
+          "url": "{{link_cafe_manha}}"
+        }
+      ]
+    },
+    {
+      "id": "tpl_checkout_reminder",
+      "triggerEvent": "checkout_reminder",
+      "title": "Dia do Check-out • Orientações de Saída",
+      "description": "Enviado no dia de saída às 09:30 relembrando o horário limite das 12:00.",
+      "enabled": true,
+      "triggerTiming": "fixed_time_day_of",
+      "offsetValue": 0,
+      "offsetUnit": "hours",
+      "fixedTime": "09:30",
+      "message": "Bom dia, *{{primeiro_nome}}*! ☀️\nLembramos que hoje é a data de encerramento da sua estadia no *Flat {{quarto}}*.\n\n⏰ *Horário limite de saída:* Até às *{{horario_checkout}}*.\n\nAo sair, por favor certifique-se de desligar luzes e ar-condicionado e entregue as chaves/cartão na portaria.\nCaso necessite estender o horário (Late Check-out), solicite diretamente à recepção.",
+      "footer": "CorpFlats • Agradecemos a visita",
+      "buttons": [
+        {
+          "id": "btn_out",
+          "type": "URL",
+          "label": "🚪 Check-out Expresso",
+          "url": "{{link_checkout}}"
+        }
+      ]
+    },
+    {
+      "id": "tpl_post_checkout_review",
+      "triggerEvent": "post_checkout_review",
+      "title": "Pós Check-out • Agradecimento & Avaliação Google",
+      "description": "Enviado 2 horas após a saída convidando para avaliação 5 estrelas no Google.",
+      "enabled": true,
+      "triggerTiming": "after_event",
+      "offsetValue": 2,
+      "offsetUnit": "hours",
+      "fixedTime": "",
+      "message": "Olá, *{{primeiro_nome}}*! 💙\nFoi um prazer imenso ter você conosco no *{{nome_hotel}}*!\n\nEsperamos que sua hospedagem tenha sido nota 10. Você poderia nos dedicar 30 segundos deixando sua avaliação no Google?\n\nSua opinião ajuda outros hóspedes e motiva nossa equipe a evoluir sempre:",
+      "footer": "CorpFlats • Até a próxima!",
+      "buttons": [
+        {
+          "id": "btn_rev",
+          "type": "URL",
+          "label": "⭐ Avaliar no Google (5 Estrelas)",
+          "url": "{{link_avaliacao_google}}"
+        }
+      ]
+    },
+    {
+      "id": "tpl_reservation_cancelled",
+      "triggerEvent": "reservation_cancelled",
+      "title": "Cancelamento de Reserva",
+      "description": "Enviado imediatamente quando uma reserva for cancelada no sistema.",
+      "enabled": true,
+      "triggerTiming": "immediate",
+      "offsetValue": 0,
+      "offsetUnit": "minutes",
+      "fixedTime": "",
+      "message": "Olá, *{{nome_hospede}}*.\nConfirmamos o cancelamento da sua reserva *{{numero_reserva}}* no *{{nome_hotel}}*.\n\nLamentamos que não possa se hospedar conosco nesta ocasião e estaremos de braços abertos para recebê-lo em suas próximas viagens a Campos!",
+      "footer": "CorpFlats • Central de Reservas",
+      "buttons": [
+        {
+          "id": "btn_site",
+          "type": "URL",
+          "label": "🌐 Reservar Novas Datas",
+          "url": "https://corpflats.onrender.com/reservar"
+        }
+      ]
+    }
+  ],
+  "whatsappQueue": [
+    {
+      "id": "q_1788680781904_zcyq4",
+      "reservationId": 33,
+      "reservationCode": "RES-113-0033",
+      "guestName": "Carlos Silva",
+      "guestPhone": "22998877665",
+      "triggerEvent": "checkout_reminder",
+      "templateId": "tpl_checkout_reminder",
+      "title": "Dia do Check-out • Orientações de Saída",
+      "footer": "CorpFlats • Agradecemos a visita",
+      "scheduledFor": "2026-09-06T12:30:00.000Z",
+      "status": "scheduled",
+      "sentAt": null,
+      "error": null,
+      "renderedMessage": "Bom dia, *Carlos*! ☀️\nLembramos que hoje é a data de encerramento da sua estadia no *Flat 113*.\n\n⏰ *Horário limite de saída:* Até às *12:00*.\n\nAo sair, por favor certifique-se de desligar luzes e ar-condicionado e entregue as chaves/cartão na portaria.\nCaso necessite estender o horário (Late Check-out), solicite diretamente à recepção.",
+      "renderedButtons": [
+        {
+          "id": "btn_out",
+          "type": "URL",
+          "label": "🚪 Check-out Expresso",
+          "url": "https://corpflats.onrender.com/checkout?code=RES-113-0033"
+        }
+      ],
+      "createdAt": "2026-09-06T07:46:21.896Z"
+    },
+    {
+      "id": "q_1788680781904_t5t6l",
+      "reservationId": 33,
+      "reservationCode": "RES-113-0033",
+      "guestName": "Carlos Silva",
+      "guestPhone": "22998877665",
+      "triggerEvent": "post_checkout_review",
+      "templateId": "tpl_post_checkout_review",
+      "title": "Pós Check-out • Agradecimento & Avaliação Google",
+      "footer": "CorpFlats • Até a próxima!",
+      "scheduledFor": "2026-09-06T17:00:00.000Z",
+      "status": "scheduled",
+      "sentAt": null,
+      "error": null,
+      "renderedMessage": "Olá, *Carlos*! 💙\nFoi um prazer imenso ter você conosco no *CorpFlats*!\n\nEsperamos que sua hospedagem tenha sido nota 10. Você poderia nos dedicar 30 segundos deixando sua avaliação no Google?\n\nSua opinião ajuda outros hóspedes e motiva nossa equipe a evoluir sempre:",
+      "renderedButtons": [
+        {
+          "id": "btn_rev",
+          "type": "URL",
+          "label": "⭐ Avaliar no Google (5 Estrelas)",
+          "url": "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ"
+        }
+      ],
+      "createdAt": "2026-09-06T07:46:21.896Z"
+    },
+    {
+      "id": "q_1788680781906_dzxc9",
+      "reservationId": 6,
+      "reservationCode": "RES-114-0006",
+      "guestName": "Hiago Santana",
+      "guestPhone": "38991146406",
+      "triggerEvent": "checkout_reminder",
+      "templateId": "tpl_checkout_reminder",
+      "title": "Dia do Check-out • Orientações de Saída",
+      "footer": "CorpFlats • Agradecemos a visita",
+      "scheduledFor": "2026-09-20T12:30:00.000Z",
+      "status": "scheduled",
+      "sentAt": null,
+      "error": null,
+      "renderedMessage": "Bom dia, *Hiago*! ☀️\nLembramos que hoje é a data de encerramento da sua estadia no *Flat 114*.\n\n⏰ *Horário limite de saída:* Até às *12:00*.\n\nAo sair, por favor certifique-se de desligar luzes e ar-condicionado e entregue as chaves/cartão na portaria.\nCaso necessite estender o horário (Late Check-out), solicite diretamente à recepção.",
+      "renderedButtons": [
+        {
+          "id": "btn_out",
+          "type": "URL",
+          "label": "🚪 Check-out Expresso",
+          "url": "https://corpflats.onrender.com/checkout?code=RES-114-0006"
+        }
+      ],
+      "createdAt": "2026-09-06T07:46:21.896Z"
+    },
+    {
+      "id": "q_1788680781906_nilu4",
+      "reservationId": 6,
+      "reservationCode": "RES-114-0006",
+      "guestName": "Hiago Santana",
+      "guestPhone": "38991146406",
+      "triggerEvent": "post_checkout_review",
+      "templateId": "tpl_post_checkout_review",
+      "title": "Pós Check-out • Agradecimento & Avaliação Google",
+      "footer": "CorpFlats • Até a próxima!",
+      "scheduledFor": "2026-09-20T17:00:00.000Z",
+      "status": "scheduled",
+      "sentAt": null,
+      "error": null,
+      "renderedMessage": "Olá, *Hiago*! 💙\nFoi um prazer imenso ter você conosco no *CorpFlats*!\n\nEsperamos que sua hospedagem tenha sido nota 10. Você poderia nos dedicar 30 segundos deixando sua avaliação no Google?\n\nSua opinião ajuda outros hóspedes e motiva nossa equipe a evoluir sempre:",
+      "renderedButtons": [
+        {
+          "id": "btn_rev",
+          "type": "URL",
+          "label": "⭐ Avaliar no Google (5 Estrelas)",
+          "url": "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ"
+        }
+      ],
+      "createdAt": "2026-09-06T07:46:21.896Z"
+    }
+  ],
+  "whatsappHistory": []
 }

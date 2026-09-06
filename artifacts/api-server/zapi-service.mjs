@@ -338,8 +338,35 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   return rendered;
 }
 
+// ── Formatador de Mensagem com Links Clicáveis (100% compatível com qualquer WhatsApp) ──
+export function formatMessageWithLinks(message, footer = "", buttons = []) {
+  let text = (message || "").trim();
+  const validButtons = (buttons || []).filter(b => b && b.label && (b.url || b.phone || b.type === "REPLY"));
+
+  if (validButtons.length > 0) {
+    const linkItems = validButtons
+      .filter(b => b.url || b.phone)
+      .map(b => {
+        if (b.type === "CALL" || b.phone) {
+          return `📞 *${b.label}:* ${b.phone}`;
+        }
+        return `👉 *${b.label}:*\n${b.url}`;
+      });
+
+    if (linkItems.length > 0) {
+      text += `\n\n🔗 *Links de Acesso Rápido:*\n` + linkItems.join("\n\n");
+    }
+  }
+
+  if (footer) {
+    text += `\n\n_${footer}_`;
+  }
+
+  return text;
+}
+
 // ── Disparo Oficial Z-API ──────────────────────────────────────────────────────
-export async function sendZapiMessage(config, { phone, message, title = "", footer = "", buttons = [] }) {
+export async function sendZapiMessage(config, { phone, message, title = "", footer = "", buttons = [], sendMode = "auto" }) {
   const cleanPhone = cleanWhatsAppPhone(phone);
   if (!cleanPhone) {
     return { success: false, error: "Número de WhatsApp do destinatário inválido ou ausente." };
@@ -349,6 +376,7 @@ export async function sendZapiMessage(config, { phone, message, title = "", foot
   const token = config?.token?.trim();
   const clientToken = config?.clientToken?.trim();
   const fallbackToText = config?.fallbackToText !== false;
+  const configuredDeliveryMode = config?.deliveryMode || "auto"; // "auto", "text_links", "buttons"
 
   // Se não configurado, simula sucesso em ambiente de desenvolvimento/teste sem travar
   if (!instanceId || !token) {
@@ -372,118 +400,111 @@ export async function sendZapiMessage(config, { phone, message, title = "", foot
 
   const validButtons = (buttons || []).filter(b => b && b.label && (b.url || b.phone || b.type === "REPLY"));
 
-  // 1. Tentativa com Botões Interativos (/send-button-actions)
-  if (validButtons.length > 0) {
-    const buttonActionsUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-button-actions`;
-    const buttonActionsPayload = {
-      phone: cleanPhone,
-      message: message,
-      ...(title ? { title } : {}),
-      ...(footer ? { footer } : {}),
-      buttonActions: validButtons.slice(0, 3).map((b, idx) => ({
-        id: b.id || `btn_${idx + 1}`,
-        type: b.type || "URL",
-        label: b.label.substring(0, 20), // Z-API recomenda labels concisos
-        ...(b.type === "URL" ? { url: b.url } : {}),
-        ...(b.type === "CALL" ? { phone: cleanWhatsAppPhone(b.phone || config.adminWhatsApp || "5522997124021") } : {})
-      }))
-    };
+  // Determina se deve enviar direto por texto com links (garantido) ou tentar botões
+  const shouldSendText = sendMode === "text" || 
+                         configuredDeliveryMode === "text_links" || 
+                         validButtons.length === 0;
+
+  // 1. Envio Direto via Texto Formatado com Links (/send-text)
+  if (shouldSendText) {
+    const textWithLinks = formatMessageWithLinks(message, footer, validButtons);
+    const textUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-text`;
 
     try {
-      console.log(`[Z-API] Enviando mensagem com botões para ${cleanPhone}...`);
-      const res = await fetch(buttonActionsUrl, {
+      console.log(`[Z-API] Enviando mensagem em texto formatado para ${cleanPhone}...`);
+      const res = await fetch(textUrl, {
         method: "POST",
         headers,
-        body: JSON.stringify(buttonActionsPayload)
+        body: JSON.stringify({ phone: cleanPhone, message: textWithLinks })
       });
       const data = await res.json().catch(() => ({}));
 
-      if (res.ok && (data.zaapId || data.id || data.messageId || data.value)) {
-        console.log(`[Z-API ✓] Mensagem com botões entregue para ${cleanPhone}. ID: ${data.zaapId || data.id}`);
+      if (res.ok && (data.zaapId || data.id || data.messageId)) {
+        console.log(`[Z-API ✓] Texto entregue para ${cleanPhone}. ID: ${data.zaapId || data.id}`);
         return {
           success: true,
-          method: "buttons",
-          messageId: data.zaapId || data.id || "ok",
+          method: "text_links",
+          messageId: data.zaapId || data.id,
           data
         };
       }
 
-      console.warn(`[Z-API] Falha ao enviar com botões (HTTP ${res.status}):`, data);
-
-      // Se der erro nos botões e fallback de texto estiver ativo, converte para texto normal com links
-      if (fallbackToText) {
-        console.log(`[Z-API Fallback] Reenviando como texto formatado para ${cleanPhone}...`);
-        let textWithLinks = message;
-        
-        const linksList = validButtons
-          .filter(b => b.url)
-          .map(b => `👉 *${b.label}:* ${b.url}`)
-          .join("\n");
-        
-        if (linksList) {
-          textWithLinks += `\n\n📌 *Acesse pelos links:*\n${linksList}`;
-        }
-        if (footer) {
-          textWithLinks += `\n\n_${footer}_`;
-        }
-
-        const textUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-text`;
-        const textRes = await fetch(textUrl, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ phone: cleanPhone, message: textWithLinks })
-        });
-        const textData = await textRes.json().catch(() => ({}));
-
-        if (textRes.ok && (textData.zaapId || textData.id)) {
-          return {
-            success: true,
-            method: "fallback_text",
-            warning: "Destinatário ou conta não suporta botões interativos. Mensagem entregue via texto tradicional com os links integrados.",
-            messageId: textData.zaapId || textData.id,
-            data: textData
-          };
-        }
-      }
-
       return {
         success: false,
-        error: data.message || data.error || `Erro HTTP ${res.status} na Z-API`
+        error: data.message || data.error || `Erro HTTP ${res.status} ao enviar texto via Z-API`
       };
     } catch (err) {
-      console.error(`[Z-API] Exceção no envio:`, err.message);
+      console.error(`[Z-API] Exceção ao enviar texto:`, err.message);
       return { success: false, error: err.message };
     }
   }
 
-  // 2. Envio de Texto Simples (/send-text)
-  const sendTextUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-text`;
-  try {
-    let finalMessage = message;
-    if (footer) {
-      finalMessage += `\n\n_${footer}_`;
-    }
+  // 2. Tentativa com Botões Interativos (/send-button-actions)
+  const buttonActionsUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-button-actions`;
+  const buttonActionsPayload = {
+    phone: cleanPhone,
+    message: message,
+    ...(title ? { title } : {}),
+    ...(footer ? { footer } : {}),
+    buttonActions: validButtons.slice(0, 3).map((b, idx) => ({
+      id: b.id || `btn_${idx + 1}`,
+      type: b.type || "URL",
+      label: b.label.substring(0, 20), // Z-API recomenda labels concisos
+      ...(b.type === "URL" ? { url: b.url } : {}),
+      ...(b.type === "CALL" ? { phone: cleanWhatsAppPhone(b.phone || config.adminWhatsApp || "5522997124021") } : {})
+    }))
+  };
 
-    const res = await fetch(sendTextUrl, {
+  try {
+    console.log(`[Z-API] Enviando mensagem com botões para ${cleanPhone}...`);
+    const res = await fetch(buttonActionsUrl, {
       method: "POST",
       headers,
-      body: JSON.stringify({ phone: cleanPhone, message: finalMessage })
+      body: JSON.stringify(buttonActionsPayload)
     });
     const data = await res.json().catch(() => ({}));
 
-    if (res.ok && (data.zaapId || data.id)) {
+    if (res.ok && (data.zaapId || data.id || data.messageId || data.value)) {
+      console.log(`[Z-API ✓] Mensagem com botões aceita para ${cleanPhone}. ID: ${data.zaapId || data.id}`);
       return {
         success: true,
-        method: "text",
-        messageId: data.zaapId || data.id,
+        method: "buttons",
+        messageId: data.zaapId || data.id || "ok",
         data
       };
     }
+
+    console.warn(`[Z-API] Falha ao enviar com botões (HTTP ${res.status}):`, data);
+
+    // Se der erro nos botões e fallback de texto estiver ativo, converte para texto normal com links
+    if (fallbackToText) {
+      console.log(`[Z-API Fallback] Reenviando como texto formatado para ${cleanPhone}...`);
+      const textWithLinks = formatMessageWithLinks(message, footer, validButtons);
+      const textUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-text`;
+      const textRes = await fetch(textUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ phone: cleanPhone, message: textWithLinks })
+      });
+      const textData = await textRes.json().catch(() => ({}));
+
+      if (textRes.ok && (textData.zaapId || textData.id)) {
+        return {
+          success: true,
+          method: "fallback_text",
+          warning: "Destinatário ou conta não suporta botões interativos. Mensagem entregue via texto tradicional com os links integrados.",
+          messageId: textData.zaapId || textData.id,
+          data: textData
+        };
+      }
+    }
+
     return {
       success: false,
-      error: data.message || data.error || `Erro HTTP ${res.status}`
+      error: data.message || data.error || `Erro HTTP ${res.status} na Z-API`
     };
   } catch (err) {
+    console.error(`[Z-API] Exceção no envio:`, err.message);
     return { success: false, error: err.message };
   }
 }
@@ -504,20 +525,38 @@ export async function getZapiStatus(config) {
 
   const baseUrl = config.baseUrl?.replace(/\/+$/, "") || "https://api.z-api.io";
   const statusUrl = `${baseUrl}/instances/${instanceId}/token/${token}/status`;
+  const deviceUrl = `${baseUrl}/instances/${instanceId}/token/${token}/device`;
   const headers = {};
   if (clientToken) headers["Client-Token"] = clientToken;
 
   try {
     const res = await fetch(statusUrl, { headers });
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
+    const isConnected = Boolean(data.connected || data.smartphoneConnected);
+
+    let deviceInfo = null;
+    if (isConnected) {
+      try {
+        const devRes = await fetch(deviceUrl, { headers });
+        if (devRes.ok) {
+          deviceInfo = await devRes.json().catch(() => null);
+        }
+      } catch (devErr) {
+        console.warn("[Z-API] Falha ao consultar /device:", devErr.message);
+      }
+    }
+
     return {
-      connected: Boolean(data.connected || data.smartphoneConnected),
+      connected: isConnected,
       configured: true,
       smartphone: data.smartphone || null,
-      phone: data.phone || data.smartphone?.phone || "",
+      phone: deviceInfo?.phone || data.phone || data.smartphone?.phone || "",
+      name: deviceInfo?.name || "",
+      isBusiness: Boolean(deviceInfo?.isBusiness),
+      deviceModel: deviceInfo?.device?.device_model || deviceInfo?.originalDevice || "",
       battery: data.battery || data.smartphone?.battery || null,
-      error: (data.connected || data.smartphoneConnected) ? null : (data.error || data.message || null),
-      details: data
+      error: isConnected ? null : (data.error || data.message || null),
+      details: { ...data, device: deviceInfo }
     };
   } catch (err) {
     return {
@@ -760,7 +799,15 @@ export function initWhatsAppEngine(app, db, saveDatabase) {
 
   // 11. Disparo de Teste Imediato (Avulso)
   app.post("/api/whatsapp/send-test", async (req, res) => {
-    const { phone, message, title = "", footer = "", buttons = [], reservationId = null } = req.body;
+    const { 
+      phone, 
+      message, 
+      title = "", 
+      footer = "", 
+      buttons = [], 
+      reservationId = null,
+      sendMode = "text" // Padrão seguro para entrega garantida em qualquer conta
+    } = req.body;
     
     if (!phone) {
       return res.status(400).json({ error: "Informe o número de telefone para o teste." });
@@ -770,7 +817,7 @@ export function initWhatsAppEngine(app, db, saveDatabase) {
     let finalButtons = buttons || [];
 
     // Se vinculou uma reserva para o teste, resolve as tags reais
-    if (reservationId) {
+    if (reservationId && reservationId !== "none") {
       const resv = (db.reservations || []).find(r => r.id === Number(reservationId) || r.code === String(reservationId));
       if (resv) {
         const baseUrl = `${req.protocol}://${req.get("host")}`;
@@ -788,7 +835,8 @@ export function initWhatsAppEngine(app, db, saveDatabase) {
       message: finalMessage,
       title,
       footer,
-      buttons: finalButtons
+      buttons: finalButtons,
+      sendMode
     });
 
     // Grava log do teste
@@ -801,7 +849,7 @@ export function initWhatsAppEngine(app, db, saveDatabase) {
       message: finalMessage,
       buttons: finalButtons,
       status: result.success ? "sent" : "failed",
-      method: result.method || "test",
+      method: result.method || (sendMode === "text" ? "text_links" : "buttons"),
       error: result.error || null,
       sentAt: new Date().toISOString()
     });

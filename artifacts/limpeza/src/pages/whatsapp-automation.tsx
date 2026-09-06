@@ -224,6 +224,7 @@ export default function WhatsappAutomation() {
   const [testMessage, setTestMessage] = useState<string>("")
   const [testReservationId, setTestReservationId] = useState<string>("")
   const [testIncludeButtons, setTestIncludeButtons] = useState<boolean>(true)
+  const [testSendMode, setTestSendMode] = useState<"text" | "buttons">("text")
   const [sendingTest, setSendingTest] = useState<boolean>(false)
 
   // State: Reservations list for preview & testing
@@ -554,7 +555,8 @@ export default function WhatsappAutomation() {
         message: testMessage || editingMessage,
         title: editingTitle,
         footer: editingFooter,
-        reservationId: testReservationId || null
+        reservationId: testReservationId || null,
+        sendMode: testSendMode
       }
 
       if (testIncludeButtons && editingButtons.length > 0) {
@@ -569,11 +571,12 @@ export default function WhatsappAutomation() {
       const data = await res.json()
 
       if (res.ok && data.success) {
+        const isSelf = statusInfo?.phone && testPhone.replace(/\D/g, "").endsWith(statusInfo.phone.replace(/\D/g, ""))
         toast({
           title: "✓ Teste enviado com sucesso!",
-          description: data.simulated 
-            ? "Simulado: Configure suas credenciais da Z-API para envio real ao aparelho."
-            : `Entregue via Z-API (${data.method === "buttons" ? "Com Botões" : "Texto"}). Verifique seu celular!`
+          description: isSelf
+            ? `Entregue via Z-API (${data.method === "buttons" ? "Com Botões" : "Texto com Links"}). Verifique sua conversa "Você" no WhatsApp!`
+            : `Entregue via Z-API (${data.method === "buttons" ? "Com Botões" : "Texto com Links"}). Verifique o aparelho destinatário!`
         })
         setTestModalOpen(false)
         fetchQueue()
@@ -1606,6 +1609,34 @@ export default function WhatsappAutomation() {
               </CardHeader>
 
               <CardContent className="space-y-4">
+                {/* Status do Dispositivo Conectado */}
+                {statusInfo?.connected && (
+                  <div className="p-4 rounded-xl border bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 space-y-2">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                        <span className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
+                          Dispositivo WhatsApp Conectado: {statusInfo.name ? `${statusInfo.name}` : "Aparelho"}
+                        </span>
+                        {statusInfo.phone && (
+                          <Badge variant="outline" className="font-mono text-[11px] bg-background">
+                            +{statusInfo.phone}
+                          </Badge>
+                        )}
+                      </div>
+                      <Badge className={statusInfo.isBusiness ? "bg-emerald-600 text-white text-[10px]" : "bg-amber-600 text-white text-[10px]"}>
+                        {statusInfo.isBusiness ? "WhatsApp Business (Botões Nativos)" : "Conta Pessoal (Modo Texto com Links)"}
+                      </Badge>
+                    </div>
+
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      {statusInfo.isBusiness 
+                        ? "Esta conta é um WhatsApp Business oficial e suporta envio com botões interativos." 
+                        : "Você conectou uma conta pessoal do WhatsApp para testes. Mensagens automáticas e testes são entregues com links diretos de acesso (Check-in, Portaria, Café) formatados no corpo da mensagem para garantir 100% de entrega sem bloqueios da Meta."}
+                    </p>
+                  </div>
+                )}
+
                 {/* Switch de ativação geral */}
                 <div className="flex items-center justify-between p-3.5 rounded-xl border bg-muted/40">
                   <div className="space-y-0.5">
@@ -1736,19 +1767,119 @@ export default function WhatsappAutomation() {
                 Disparo de Teste no WhatsApp
               </DialogTitle>
               <DialogDescription className="text-xs">
-                Receba a mensagem com botões interativos diretamente no seu smartphone.
+                Receba e valide a mensagem diretamente no seu smartphone.
               </DialogDescription>
             </DialogHeader>
 
             <div className="space-y-3 py-2 text-xs">
-              <div className="space-y-1">
-                <Label className="text-xs font-bold">Seu WhatsApp de Destino (com DDD)</Label>
+              {/* Informações do Remetente Conectado */}
+              <div className="p-3 bg-emerald-50/80 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl space-y-1.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground font-medium flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    Aparelho Remetente:
+                  </span>
+                  <span className="font-bold text-emerald-800 dark:text-emerald-300">
+                    {statusInfo?.name ? `${statusInfo.name} ` : ""}({statusInfo?.phone ? `+${statusInfo.phone}` : "Conectado"})
+                  </span>
+                </div>
+                <div className="text-[11px] leading-tight">
+                  {statusInfo?.isBusiness ? (
+                    <span className="text-emerald-700 dark:text-emerald-400 font-semibold">
+                      ✓ Conta WhatsApp Business detectada (Suporta botões nativos).
+                    </span>
+                  ) : (
+                    <span className="text-amber-700 dark:text-amber-400 font-medium">
+                      ⚠️ <strong>Conta Pessoal em Teste:</strong> A Meta bloqueia botões enviados de contas comuns. Use <strong>Texto com Links</strong> para garantir que a mensagem chegue ao celular.
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Seletor de Formato do Envio */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold">Formato do Envio</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTestSendMode("text")}
+                    className={`p-2.5 rounded-xl border text-left transition-all ${
+                      testSendMode === "text"
+                        ? "border-emerald-600 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-950 dark:text-emerald-100 ring-1 ring-emerald-600"
+                        : "bg-muted/30 hover:bg-muted/60 text-muted-foreground"
+                    }`}
+                  >
+                    <div className="font-bold text-xs flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300">
+                      📝 Texto com Links
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-0.5 leading-tight">
+                      Recomendado • 100% garantido para contas pessoais e qualquer celular.
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setTestSendMode("buttons")}
+                    className={`p-2.5 rounded-xl border text-left transition-all ${
+                      testSendMode === "buttons"
+                        ? "border-emerald-600 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-950 dark:text-emerald-100 ring-1 ring-emerald-600"
+                        : "bg-muted/30 hover:bg-muted/60 text-muted-foreground"
+                    }`}
+                  >
+                    <div className="font-bold text-xs flex items-center gap-1.5 text-foreground">
+                      🔘 Botões Interativos
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-0.5 leading-tight">
+                      Requer WhatsApp Business ativo e aprovado na Z-API.
+                    </p>
+                  </button>
+                </div>
+              </div>
+
+              {/* Telefone de Destino */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-bold">Número de Destino (Quem vai RECEBER)</Label>
+                  <span className="text-[10px] text-muted-foreground">Com DDD</span>
+                </div>
                 <Input 
-                  placeholder="Ex: 22997124021"
+                  placeholder="Ex: 22998505276 ou 22997124021"
                   value={testPhone}
                   onChange={(e) => setTestPhone(e.target.value)}
-                  className="text-xs"
+                  className="text-xs font-mono"
                 />
+
+                {/* Atalhos para preenchimento rápido */}
+                <div className="flex items-center gap-1.5 pt-0.5 flex-wrap">
+                  <span className="text-[10px] text-muted-foreground">Preencher rápido:</span>
+                  {statusInfo?.phone && (
+                    <Button 
+                      type="button" 
+                      variant="outline" 
+                      size="sm" 
+                      className="text-[10px] h-6 px-2 py-0"
+                      onClick={() => setTestPhone(statusInfo.phone)}
+                    >
+                      Meu Celular ({statusInfo.phone.slice(-4)})
+                    </Button>
+                  )}
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    size="sm" 
+                    className="text-[10px] h-6 px-2 py-0"
+                    onClick={() => setTestPhone("22997124021")}
+                  >
+                    Hotel CorpFlats (22 99712-4021)
+                  </Button>
+                </div>
+
+                {/* Alerta se estiver enviando para o próprio número */}
+                {testPhone && statusInfo?.phone && testPhone.replace(/\D/g, "").endsWith(statusInfo.phone.replace(/\D/g, "")) && (
+                  <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-[11px] text-amber-800 dark:text-amber-300">
+                    💡 <strong>Atenção:</strong> Você está enviando para o próprio número conectado. A mensagem aparecerá na sua conversa <strong>"Você / Mensagens Salvas"</strong> no WhatsApp (sem toque de mensagem recebida).
+                  </div>
+                )}
               </div>
 
               <div className="space-y-1">
@@ -1771,14 +1902,14 @@ export default function WhatsappAutomation() {
               <div className="space-y-1">
                 <Label className="text-xs font-bold">Mensagem que será enviada</Label>
                 <Textarea 
-                  rows={6}
+                  rows={5}
                   value={testMessage}
                   onChange={(e) => setTestMessage(e.target.value)}
-                  className="text-xs leading-relaxed"
+                  className="text-xs leading-relaxed font-mono text-[11px]"
                 />
               </div>
 
-              {editingButtons.length > 0 && (
+              {testSendMode === "buttons" && editingButtons.length > 0 && (
                 <div className="flex items-center justify-between p-2.5 rounded-lg border bg-muted/40">
                   <span className="text-xs font-semibold">Incluir os {editingButtons.length} Botões Interativos</span>
                   <Switch 
