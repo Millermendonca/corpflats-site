@@ -4706,6 +4706,8 @@ Cláusula 6 – Dos Procedimentos de Encerramento (Check-out)
 6.1. O horário máximo para desocupação da unidade é às 12:00h.
 6.2. Antes da saída, o HÓSPEDE compromete-se a: desligar os aparelhos de ar-condicionado, televisão, ferro e fogão; fechar todas as janelas; certificar-se do fechamento de torneiras e registros de duchas higiênicas; e entregar o cartão magnético diretamente na recepção.`;
 
+const DEFAULT_TERMS_AND_RULES = `${DEFAULT_HOUSE_RULES}\n\n=========================================\n\n${DEFAULT_CONTRACT_TERMS}`;
+
 function findReservationByLocatorOrContact(query) {
   if (!query || !db.reservations) return null;
   const raw = String(query).trim();
