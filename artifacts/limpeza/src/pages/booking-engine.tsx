@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { 
   Building2, Calendar, Users, Wifi, Tv, Wind, Coffee, ShieldCheck, 
   Sparkles, CheckCircle2, ArrowRight, CreditCard, QrCode, Copy, Check, Star, Car, Utensils,
-  Ban, MessageCircle, Clock, KeyRound, FileText, MapPin, Navigation, ExternalLink,
+  Ban, MessageCircle, Clock, KeyRound, FileText, MapPin, Navigation, ExternalLink, Mail,
   Dumbbell, Waves, Flame, Award, Heart, HelpCircle, ChevronDown, PhoneCall, Shield, Home,
   Pencil, UserCheck, LogOut, User, Settings, Key, Briefcase, Lock, ChevronRight, Layers, Image as ImageIcon,
   CheckSquare, X, Fingerprint, Save
@@ -26,6 +26,36 @@ export interface RoomConfig {
   id: number
   bedType: "queen" | "twin"
   adults: number
+}
+
+function formatPhoneNumber(phone: string): string {
+  if (!phone) return "(22) 99712-4021"
+  const digits = phone.replace(/\D/g, "")
+  if (digits.length === 13 && digits.startsWith("55")) {
+    const ddd = digits.slice(2, 4)
+    const part1 = digits.slice(4, 9)
+    const part2 = digits.slice(9)
+    return `(${ddd}) ${part1}-${part2}`
+  }
+  if (digits.length === 12 && digits.startsWith("55")) {
+    const ddd = digits.slice(2, 4)
+    const part1 = digits.slice(4, 8)
+    const part2 = digits.slice(8)
+    return `(${ddd}) ${part1}-${part2}`
+  }
+  if (digits.length === 11) {
+    const ddd = digits.slice(0, 2)
+    const part1 = digits.slice(2, 7)
+    const part2 = digits.slice(7)
+    return `(${ddd}) ${part1}-${part2}`
+  }
+  if (digits.length === 10) {
+    const ddd = digits.slice(0, 2)
+    const part1 = digits.slice(2, 6)
+    const part2 = digits.slice(6)
+    return `(${ddd}) ${part1}-${part2}`
+  }
+  return phone
 }
 
 export default function BookingEngine() {
@@ -1515,23 +1545,51 @@ export default function BookingEngine() {
             </ul>
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-3">
             <h5 className="font-bold text-slate-900 text-xs uppercase tracking-wider">Contato & Localização</h5>
-            <p className="text-slate-600 font-medium">
-              {siteConfig?.branding?.address || "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ"}
-            </p>
-            <p className="text-slate-500">Edifício Soho Residence Service</p>
-            <a 
-              href={siteConfig?.branding?.googleMapsUrl || "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ"} 
-              target="_blank" 
-              rel="noreferrer"
-              className="text-sky-600 font-bold hover:underline inline-flex items-center gap-1"
-            >
-              <MapPin className="w-3.5 h-3.5" />
-              <span>Ver no Google Maps</span>
-            </a>
-            <p className="font-bold text-slate-800 pt-1">WhatsApp: {siteConfig?.branding?.whatsapp || "(22) 99712-4021"}</p>
-            <p className="text-slate-500">E-mail: {siteConfig?.branding?.email || "reservas@corpflats.com.br"}</p>
+            
+            <div className="space-y-1 text-slate-600 text-xs">
+              <p className="font-medium text-slate-700">
+                {siteConfig?.branding?.address || "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ"}
+              </p>
+              <p className="text-slate-500 text-[11px]">Edifício Soho Residence Service</p>
+              <div>
+                <a 
+                  href={siteConfig?.branding?.googleMapsUrl || "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ"} 
+                  target="_blank" 
+                  rel="noreferrer"
+                  className="text-sky-600 font-semibold hover:underline inline-flex items-center gap-1 text-[11px] pt-0.5"
+                >
+                  <MapPin className="w-3.5 h-3.5 shrink-0" />
+                  <span>Ver no Google Maps</span>
+                </a>
+              </div>
+            </div>
+
+            <div className="pt-2 flex flex-col gap-2">
+              <a
+                href={whatsappUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-2.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-xs hover:shadow-md active:scale-95 transition-all w-fit group"
+              >
+                <div className="w-5 h-5 rounded-lg bg-emerald-500/80 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                  <MessageCircle className="w-3.5 h-3.5 fill-white/20 text-white" />
+                </div>
+                <div className="flex flex-col text-left leading-tight">
+                  <span className="font-bold text-xs">Falar no WhatsApp</span>
+                  <span className="text-[10.5px] text-emerald-100 font-normal">{formatPhoneNumber(whatsappNumber)}</span>
+                </div>
+              </a>
+
+              <a
+                href={`mailto:${siteConfig?.branding?.email || "reservas@corpflats.com.br"}`}
+                className="inline-flex items-center gap-2 text-slate-500 hover:text-sky-600 text-xs transition-colors py-0.5 w-fit group"
+              >
+                <Mail className="w-3.5 h-3.5 text-slate-400 group-hover:text-sky-600 shrink-0" />
+                <span>{siteConfig?.branding?.email || "reservas@corpflats.com.br"}</span>
+              </a>
+            </div>
           </div>
 
           <div className="space-y-2">
