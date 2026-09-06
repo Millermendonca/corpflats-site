@@ -167,12 +167,8 @@ export async function loginWithGooglePopup(onSuccess: (user: UserProfile) => voi
           })
 
           client.requestAccessToken({ prompt: "select_account" })
-        } else if (google?.accounts?.id) {
-          google.accounts.id.prompt((notification: any) => {
-            if (notification.isNotDisplayed()) {
-              resolve({ success: false, error: "Prompt suprimido." })
-            }
-          })
+        } else {
+          resolve({ success: false, error: "Serviço de autenticação Google indisponível no momento." })
         }
       }
 
@@ -400,7 +396,26 @@ export async function loginWithPasskey(email?: string): Promise<AuthResponse> {
 }
 
 /**
- * 12. Inicializador do Google One Tap e Botão Google Sign-In
+ * 12.0 Cancela e remove qualquer prompt flutuante do Google One Tap
+ */
+export function cancelGoogleOneTap(): void {
+  if (typeof window === "undefined") return
+  try {
+    const google = (window as any).google
+    if (google?.accounts?.id?.cancel) {
+      google.accounts.id.cancel()
+    }
+    const container = document.getElementById("credential_picker_container")
+    if (container) container.remove()
+    const iframe = document.getElementById("credential_picker_iframe")
+    if (iframe) iframe.remove()
+    const iframes = document.querySelectorAll("iframe[src*='accounts.google.com/gsi']")
+    iframes.forEach(el => el.remove())
+  } catch {}
+}
+
+/**
+ * 12. Inicializador do Botão Google Sign-In (Sem popups invasivos)
  */
 export async function initGoogleOneTap(
   onSuccess: (user: UserProfile) => void,
@@ -409,11 +424,6 @@ export async function initGoogleOneTap(
   if (typeof window === "undefined") return
 
   try {
-    // Limpa o cookie de cooldown do Google para forçar o One Tap a sempre tentar ser exibido
-    try {
-      document.cookie = "g_state=;path=/;expires=Thu, 01 Jan 1970 00:00:01 GMT"
-    } catch {}
-
     // Busca client ID configurado pelo administrador ou no env
     let clientId = (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || ""
     if (!clientId) {
@@ -444,12 +454,12 @@ export async function initGoogleOneTap(
             }
           },
           auto_select: false,
-          cancel_on_tap_outside: false,
+          cancel_on_tap_outside: true,
           itp_support: true,
           use_fedcm_for_prompt: false
         })
 
-        // Renderiza o botão oficial caso um elemento container tenha sido fornecido
+        // Renderiza o botão oficial apenas se um elemento container explícito tiver sido fornecido
         if (buttonContainerId) {
           const btnEl = document.getElementById(buttonContainerId)
           if (btnEl) {
@@ -464,21 +474,14 @@ export async function initGoogleOneTap(
             })
           }
         }
-
-        // Dispara o prompt do popup flutuante do Google One Tap
-        google.accounts.id.prompt((notification: any) => {
-          if (notification.isNotDisplayed()) {
-            console.log("Google One Tap não exibido (razão):", notification.getNotDisplayedReason?.())
-          }
-        })
       } catch (err) {
-        console.warn("Google One Tap:", err)
+        console.warn("Google Sign-In init error:", err)
       }
     }
 
     if ((window as any).google?.accounts?.id) {
       setupGoogle()
-    } else {
+    } else if (buttonContainerId) {
       const script = document.createElement("script")
       script.src = "https://accounts.google.com/gsi/client"
       script.async = true

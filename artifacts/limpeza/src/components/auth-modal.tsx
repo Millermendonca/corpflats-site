@@ -10,7 +10,7 @@ import {
 } from "lucide-react"
 import { 
   loginWithEmail, registerAccount, loginWithGoogleCredential, loginWithGooglePopup,
-  loginWithPasskey, requestPasswordReset, initGoogleOneTap, UserProfile 
+  loginWithPasskey, requestPasswordReset, cancelGoogleOneTap, UserProfile 
 } from "@/lib/auth-client"
 import { useToast } from "@/hooks/use-toast"
 
@@ -41,18 +41,13 @@ export function AuthModal({ open, onOpenChange, onSuccess }: AuthModalProps) {
   const [forgotEmail, setForgotEmail] = useState("")
   const [forgotSuccess, setForgotSuccess] = useState(false)
 
-  // Inicializa Google One Tap automaticamente quando o modal abre
+  // Reseta mensagens de erro e garante que nenhum popup invasivo permaneça ativo
   useEffect(() => {
     if (open) {
       setErrorMsg("")
-      initGoogleOneTap((user) => {
-        toast({
-          title: `Olá, ${user.name}! 👋`,
-          description: "Login realizado com sucesso via Google."
-        })
-        if (onSuccess) onSuccess(user)
-        onOpenChange(false)
-      })
+    }
+    return () => {
+      cancelGoogleOneTap()
     }
   }, [open])
 

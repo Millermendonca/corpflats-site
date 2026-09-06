@@ -4,6 +4,7 @@ import { useGetMe, useLogout, getGetMeQueryKey, useGetAlerts } from "@workspace/
 import { useQueryClient } from "@tanstack/react-query"
 import { showNativeNotification, markInitialHistoryAsSeen } from "@/lib/push-notifications"
 import { playHotelChime } from "@/lib/sound"
+import { cancelGoogleOneTap } from "@/lib/auth-client"
 import { 
   LogOut, LayoutDashboard, History, Settings, UserCircle, ClipboardList, 
   MessageSquareWarning, BarChart3, Bell, ClipboardCheck, Sparkles, Key, Check, AlertCircle,
@@ -40,6 +41,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
   // Mobile drawer state & search
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
+
+  // Garante que nenhum prompt do Google One Tap apareça na área administrativa/backend
+  useEffect(() => {
+    cancelGoogleOneTap()
+  }, [location])
 
   // Change password modal state
   const [pwModalOpen, setPwModalOpen] = useState(false)

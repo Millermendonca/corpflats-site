@@ -4,6 +4,7 @@ import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Route, Switch, useLocation, Router as WouterRouter } from 'wouter';
+import { cancelGoogleOneTap } from '@/lib/auth-client';
 
 import Login from '@/pages/login';
 import Dashboard from '@/pages/dashboard';
@@ -175,6 +176,11 @@ function Router() {
 
 function RoutedErrorBoundary({ children }: { children: ReactNode }) {
   const [location] = useLocation();
+  useEffect(() => {
+    if (location !== "/reservar" && location !== "/booking") {
+      cancelGoogleOneTap();
+    }
+  }, [location]);
   return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>;
 }
 
