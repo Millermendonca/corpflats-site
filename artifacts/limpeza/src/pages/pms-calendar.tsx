@@ -2013,13 +2013,13 @@ export default function PmsCalendar() {
         <Dialog open={resModalOpen} onOpenChange={setResModalOpen}>
           <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <DialogTitle className="flex items-center gap-2">
-                  <CalendarDays className="w-5 h-5 text-primary" />
-                  {selectedRes ? `Editar Reserva: ${selectedRes.code}` : "Nova Reserva"}
+                  <CalendarDays className="w-5 h-5 text-primary shrink-0" />
+                  <span>{selectedRes ? `Editar Reserva: ${selectedRes.code}` : "Nova Reserva"}</span>
                 </DialogTitle>
                 {selectedRes && (
-                  <Badge variant="outline" className="text-xs font-mono font-bold text-amber-700 dark:text-amber-300 border-amber-300">
+                  <Badge variant="outline" className="text-xs font-mono font-bold text-amber-700 dark:text-amber-300 border-amber-300 shrink-0">
                     Flat {selectedRes.flatNumber}
                   </Badge>
                 )}
@@ -2033,25 +2033,34 @@ export default function PmsCalendar() {
 
             {selectedRes && (
               <Tabs value={resModalTab} onValueChange={(v: any) => setResModalTab(v)} className="w-full mt-1 mb-2">
-                <TabsList className="grid grid-cols-3 bg-muted/60 p-1 rounded-xl">
-                  <TabsTrigger value="details" className="text-xs font-bold gap-1.5 rounded-lg">
-                    <CalendarDays className="w-3.5 h-3.5" />
-                    <span>Dados da Reserva</span>
+                <TabsList className="flex w-full items-center overflow-x-auto p-1 bg-muted/60 rounded-xl sm:grid sm:grid-cols-3 gap-1 h-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                  <TabsTrigger
+                    value="details"
+                    className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs"
+                  >
+                    <CalendarDays className="w-3.5 h-3.5 shrink-0 text-primary" />
+                    <span><span className="hidden sm:inline">Dados da </span>Reserva</span>
                   </TabsTrigger>
-                  <TabsTrigger value="audit" className="text-xs font-bold gap-1.5 rounded-lg relative">
-                    <Clock className="w-3.5 h-3.5 text-blue-500" />
-                    <span>Histórico & Logs</span>
+                  <TabsTrigger
+                    value="audit"
+                    className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs relative"
+                  >
+                    <Clock className="w-3.5 h-3.5 shrink-0 text-blue-500" />
+                    <span>Histórico<span className="hidden sm:inline"> & Logs</span></span>
                     {auditLogs.length > 0 && (
-                      <Badge variant="secondary" className="text-[10px] h-4 px-1.5 py-0 font-bold ml-1 bg-blue-500/15 text-blue-700 dark:text-blue-300">
+                      <Badge variant="secondary" className="text-[10px] h-4 px-1.5 py-0 font-bold ml-0.5 bg-blue-500/15 text-blue-700 dark:text-blue-300 shrink-0">
                         {auditLogs.length}
                       </Badge>
                     )}
                   </TabsTrigger>
-                  <TabsTrigger value="communications" className="text-xs font-bold gap-1.5 rounded-lg relative">
-                    <Mail className="w-3.5 h-3.5 text-amber-500" />
+                  <TabsTrigger
+                    value="communications"
+                    className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs relative"
+                  >
+                    <Mail className="w-3.5 h-3.5 shrink-0 text-amber-500" />
                     <span>Comunicações</span>
                     {communications.length > 0 && (
-                      <Badge variant="secondary" className="text-[10px] h-4 px-1.5 py-0 font-bold ml-1 bg-amber-500/15 text-amber-700 dark:text-amber-300">
+                      <Badge variant="secondary" className="text-[10px] h-4 px-1.5 py-0 font-bold ml-0.5 bg-amber-500/15 text-amber-700 dark:text-amber-300 shrink-0">
                         {communications.length}
                       </Badge>
                     )}
@@ -2935,10 +2944,10 @@ export default function PmsCalendar() {
             {selectedRes && resModalTab === "audit" && (
               <div className="space-y-4 pt-1">
                 {/* Header do Histórico */}
-                <div className="flex items-center justify-between p-3 rounded-2xl bg-blue-500/5 border border-blue-500/20">
-                  <div className="flex items-center gap-2">
-                    <History className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                    <div>
+                <div className="flex items-center justify-between gap-2.5 p-3 rounded-2xl bg-blue-500/5 border border-blue-500/20">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <History className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
+                    <div className="min-w-0">
                       <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
                         Linha do Tempo e Histórico de Alterações
                       </span>
@@ -2953,7 +2962,7 @@ export default function PmsCalendar() {
                     size="sm"
                     onClick={() => fetchAuditLogs(selectedRes.code || selectedRes.id)}
                     disabled={loadingAudit}
-                    className="h-7 text-xs font-semibold gap-1.5 rounded-lg border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/50"
+                    className="h-7 text-xs font-semibold gap-1.5 rounded-lg border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/50 shrink-0"
                   >
                     <RefreshCw className={`w-3 h-3 ${loadingAudit ? 'animate-spin' : ''}`} />
                     <span>Atualizar</span>
