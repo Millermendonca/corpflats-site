@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { useLocation } from "wouter"
 import { useGetMe } from "@workspace/api-client-react"
 import { Shell } from "@/components/layout"
@@ -3039,7 +3039,7 @@ export default function PmsCalendar() {
                                   const d = await res.json();
                                   if (d.success) {
                                     setSelectedRes(d.reservation);
-                                    fetchReservations();
+                                    fetchData();
                                     toast({ title: "Forma alterada!", description: `Forma alterada para ${d.paymentMethod === "pix" ? "PIX Banco Inter" : "Cartão de Crédito Mercado Pago"}.` });
                                   } else {
                                     toast({ title: "Atenção", description: d.message || d.error, variant: "destructive" });
@@ -3064,7 +3064,7 @@ export default function PmsCalendar() {
                                   const d = await res.json();
                                   if (d.paid) {
                                     toast({ title: "🎉 Pagamento Confirmado!", description: `Reserva liquidada com sucesso! R$ ${Number(d.paidAmount).toFixed(2)}` });
-                                    fetchReservations();
+                                    fetchData();
                                     setSelectedRes((prev: any) => prev ? { ...prev, paymentStatus: "pago_total", paidAmount: d.paidAmount } : null);
                                   } else {
                                     toast({ title: "Aguardando Pagamento", description: `Nenhum pagamento liquidado até o momento para ${selectedRes.code}.` });
