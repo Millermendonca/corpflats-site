@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { useToast } from "@/hooks/use-toast"
 import { 
   MessageCircle, Phone, ExternalLink, Copy, Check, Coffee, 
-  KeyRound, Users, Calendar, Eye, Building2
+  Users, Calendar, Eye, Building2
 } from "lucide-react"
 import { format, parseISO, differenceInDays } from "date-fns"
 
@@ -58,7 +58,6 @@ export function ReservationHoverCard({
   const { toast } = useToast()
   const [isOpen, setIsOpen] = useState(false)
   const [copiedLink, setCopiedLink] = useState(false)
-  const [copiedKey, setCopiedKey] = useState(false)
 
   // Fecha imediatamente se o usuário iniciar arraste da reserva
   useEffect(() => {
@@ -89,7 +88,6 @@ export function ReservationHoverCard({
   const checkoutStr = format(parseISO(resItem.checkoutDate), "dd/MM")
   const guestCount = resItem.guestCount || resItem.adults || (resItem.guests?.length || 1)
   const hasBreakfast = Boolean(resItem.includeBreakfast || resItem.hasBreakfast)
-  const accessCode = resItem.doorPassword || resItem.accessCode || flat?.doorPassword || flat?.lockCode || ""
 
   const statusCfg = STATUS_MAP[resItem.status] || STATUS_MAP.confirmada
   const originUrl = typeof window !== "undefined" ? window.location.origin : "https://corpflats.onrender.com"
@@ -108,25 +106,6 @@ export function ReservationHoverCard({
       description: "Link da página do hóspede copiado para a área de transferência."
     })
     setTimeout(() => setCopiedLink(false), 2000)
-  }
-
-  const handleCopyAccessCode = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    if (!accessCode) {
-      toast({
-        title: "Senha não cadastrada",
-        description: "Nenhuma senha de fechadura cadastrada para esta reserva.",
-        variant: "destructive"
-      })
-      return
-    }
-    navigator.clipboard.writeText(accessCode)
-    setCopiedKey(true)
-    toast({
-      title: "Senha copiada! 🔑",
-      description: `Senha ${accessCode} copiada com sucesso.`
-    })
-    setTimeout(() => setCopiedKey(false), 2000)
   }
 
   // Se houver qualquer operação de arraste ou redimensionamento ativa no calendário,
@@ -285,22 +264,6 @@ export function ReservationHoverCard({
                 <Phone className="w-3.5 h-3.5 text-slate-600 dark:text-slate-300" />
               </a>
             )}
-
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleCopyAccessCode}
-              className="h-8 px-2 rounded-xl text-xs font-semibold border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-1 shadow-2xs"
-              title={accessCode ? `Copiar senha da fechadura: ${accessCode}` : "Nenhuma senha cadastrada"}
-            >
-              {copiedKey ? (
-                <Check className="w-3.5 h-3.5 text-emerald-600" />
-              ) : (
-                <KeyRound className="w-3.5 h-3.5 text-amber-500" />
-              )}
-              <span className="text-[10.5px]">Senha</span>
-            </Button>
           </div>
 
           {/* Linha 2: Links Públicos & Detalhes */}
