@@ -117,12 +117,8 @@ export async function loginWithGooglePopup(onSuccess: (user: UserProfile) => voi
         }
       }
 
-      if (!clientId || clientId.includes("m41g9g4g0h6e5q745h5k1k9r4p0a9n") || clientId.includes("corpflats.apps.googleusercontent.com")) {
-        resolve({
-          success: false,
-          error: "O Login com Google requer a ativação da credencial (Google Client ID). Por favor, faça login com seu E-mail e Senha ou cadastre-se ao lado."
-        })
-        return
+      if (!clientId) {
+        clientId = "415372338786-m41g9g4g0h6e5q745h5k1k9r4p0a9n.apps.googleusercontent.com"
       }
 
       const launchOAuthPopup = () => {
@@ -419,7 +415,7 @@ export function cancelGoogleOneTap(): void {
 }
 
 /**
- * 12. Inicializador do Botão Google Sign-In (Sem popups invasivos)
+ * 12. Inicializador do Google One Tap e Botão Google Sign-In
  */
 export async function initGoogleOneTap(
   onSuccess: (user: UserProfile) => void,
@@ -428,6 +424,11 @@ export async function initGoogleOneTap(
   if (typeof window === "undefined") return
 
   try {
+    // Limpa o cookie de cooldown do Google para forçar o One Tap a sempre tentar ser exibido
+    try {
+      document.cookie = "g_state=;path=/;expires=Thu, 01 Jan 1970 00:00:01 GMT"
+    } catch {}
+
     // Busca client ID configurado pelo administrador ou no env
     let clientId = (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || ""
     if (!clientId) {
@@ -438,8 +439,8 @@ export async function initGoogleOneTap(
       }
     }
 
-    if (!clientId || clientId.includes("m41g9g4g0h6e5q745h5k1k9r4p0a9n") || clientId.includes("corpflats.apps.googleusercontent.com")) {
-      return
+    if (!clientId) {
+      clientId = "415372338786-m41g9g4g0h6e5q745h5k1k9r4p0a9n.apps.googleusercontent.com"
     }
 
     const setupGoogle = () => {
@@ -458,12 +459,12 @@ export async function initGoogleOneTap(
             }
           },
           auto_select: false,
-          cancel_on_tap_outside: true,
+          cancel_on_tap_outside: false,
           itp_support: true,
           use_fedcm_for_prompt: false
         })
 
-        // Renderiza o botão oficial apenas se um elemento container explícito tiver sido fornecido
+        // Renderiza o botão oficial caso um elemento container tenha sido fornecido
         if (buttonContainerId) {
           const btnEl = document.getElementById(buttonContainerId)
           if (btnEl) {
@@ -478,14 +479,21 @@ export async function initGoogleOneTap(
             })
           }
         }
+
+        // Dispara o prompt do popup flutuante do Google One Tap
+        google.accounts.id.prompt((notification: any) => {
+          if (notification.isNotDisplayed()) {
+            console.log("Google One Tap não exibido (razão):", notification.getNotDisplayedReason?.())
+          }
+        })
       } catch (err) {
-        console.warn("Google Sign-In init error:", err)
+        console.warn("Google One Tap:", err)
       }
     }
 
     if ((window as any).google?.accounts?.id) {
       setupGoogle()
-    } else if (buttonContainerId) {
+    } else {
       const script = document.createElement("script")
       script.src = "https://accounts.google.com/gsi/client"
       script.async = true

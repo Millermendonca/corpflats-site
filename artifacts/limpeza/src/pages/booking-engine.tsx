@@ -20,7 +20,7 @@ import { AddToCalendar } from "@/components/add-to-calendar"
 import { AuthModal } from "@/components/auth-modal"
 import { BookingFunnelModal } from "@/components/booking-funnel-modal"
 import { calculateCancellationPolicy } from "@/lib/cancellation-helper"
-import { cancelGoogleOneTap, loginWithGooglePopup, UserProfile } from "@/lib/auth-client"
+import { initGoogleOneTap, cancelGoogleOneTap, loginWithGooglePopup, UserProfile } from "@/lib/auth-client"
 
 export interface RoomConfig {
   id: number
@@ -384,6 +384,29 @@ export default function BookingEngine() {
         })
         .catch(() => {})
     }
+
+    // Registra o callback global oficial para o Google One Tap nativo
+    ;(window as any).handleGoogleOneTapGlobal = async (response: any) => {
+      if (response?.credential) {
+        try {
+          const res = await fetch("/api/v2/auth/google", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ credential: response.credential })
+          })
+          const data = await res.json()
+          if (data.success && data.user) {
+            applyGuestData(data.user)
+          }
+        } catch {}
+      }
+    }
+
+    // Inicializa o prompt oficial do Google One Tap que desce no topo
+    initGoogleOneTap((user) => {
+      applyGuestData(user)
+    })
 
     return () => {
       cancelGoogleOneTap()
@@ -852,6 +875,17 @@ export default function BookingEngine() {
           </div>
         </div>
       </nav>
+
+      {/* ── Google One Tap Oficial (Nativo do Google) ── */}
+      <div
+        id="g_id_onload"
+        data-client_id={siteConfig?.authConfig?.googleClientId || "415372338786-m41g9g4g0h6e5q745h5k1k9r4p0a9n.apps.googleusercontent.com"}
+        data-callback="handleGoogleOneTapGlobal"
+        data-auto_prompt="true"
+        data-auto_select="false"
+        data-cancel_on_tap_outside="false"
+        data-itp_support="true"
+      />
 
       {/* ── Hero Section (Protagonista Absoluta: A Imagem e a Experiência) ─ */}
       <header className="relative h-[360px] sm:h-[440px] lg:h-[480px] flex items-end justify-center px-4 sm:px-8 pb-12 sm:pb-16 text-center overflow-hidden">

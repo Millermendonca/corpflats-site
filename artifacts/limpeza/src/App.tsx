@@ -193,7 +193,7 @@ function Router() {
 function RoutedErrorBoundary({ children }: { children: ReactNode }) {
   const [location] = useLocation();
   useEffect(() => {
-    if (location !== "/reservar" && location !== "/booking") {
+    if (location !== "/reservar" && location !== "/booking" && location !== "/") {
       cancelGoogleOneTap();
     }
   }, [location]);

@@ -37,6 +37,15 @@ import pg from "pg";
 import { uploadImageToStorage } from "./storage-service.mjs";
 import { MicrosoftGraphService } from "./microsoft-graph-service.mjs";
 import { initWhatsAppEngine, triggerImmediateWhatsApp } from "./zapi-service.mjs";
+import { 
+  getSmtpConfig, 
+  verifySmtpConnection, 
+  sendEmailAsync, 
+  resendEmailAsync, 
+  renderCheckinConfirmedEmail, 
+  renderReservationUpdateEmail, 
+  renderManualEmail 
+} from "./mail-service.mjs";
 
 const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
@@ -330,6 +339,7 @@ let db = {
   reviewInsights: null,
   garageAuthorizations: [],
   reservations: [],
+  reservationCommunications: [],
   roomBlocks: [],
   notifications: [],
   notificationSettings: {
@@ -354,7 +364,17 @@ let db = {
     adminWhatsApp: "5522997124021",
     checkinTime: "14:00",
     checkoutTime: "12:00",
-    autoEarlyCheckinForSite: true
+    autoEarlyCheckinForSite: true,
+    buildingName: "Edifício Soho Residence Service",
+    receptionEmail: "portaria.soho@corpflats.com.br",
+    emailSettings: {
+      host: "smtppro.zoho.com",
+      port: 465,
+      user: "",
+      pass: "",
+      fromName: "CorpFlats",
+      fromEmail: ""
+    }
   },
   siteConfig: null
 };
@@ -1037,6 +1057,19 @@ async function loadDatabase() {
           CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON system_audit_logs (timestamp DESC);
           CREATE INDEX IF NOT EXISTS idx_audit_category ON system_audit_logs (category);
           CREATE INDEX IF NOT EXISTS idx_audit_level ON system_audit_logs (level);
+          CREATE TABLE IF NOT EXISTS reservation_communications (
+            id TEXT PRIMARY KEY,
+            reservation_id TEXT NOT NULL,
+            type TEXT NOT NULL DEFAULT 'email',
+            direction TEXT NOT NULL DEFAULT 'outbound',
+            recipient TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            body TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            metadata JSONB DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          );
+          CREATE INDEX IF NOT EXISTS idx_res_comm_res_id ON reservation_communications(reservation_id);
         `);
         const res = await pgPool.query("SELECT value FROM system_store WHERE key = 'db_state'");
         if (res && res.rows && res.rows[0]) {
@@ -1060,6 +1093,8 @@ async function loadDatabase() {
         console.warn("[PostgreSQL] Falha ao sincronizar estado inicial:", err.message);
       }
     }
+
+    if (!db.reservationCommunications) db.reservationCommunications = [];
 
     // Restauração de Certificado Digital A1 a partir do PostgreSQL
     if (db.nfseConfig?.certificadoA1?.pfxBase64) {
@@ -2040,6 +2075,8 @@ app.post("/api/flats", (req, res) => {
   const newFlat = {
     id: db.flats.length > 0 ? Math.max(...db.flats.map(f => f.id)) + 1 : 1,
     number: String(number).trim(),
+    buildingName: (req.body.buildingName || db.settings?.buildingName || "Edifício Soho Residence Service").trim(),
+    receptionEmail: (req.body.receptionEmail || "").trim(),
     colIndex: -1,
     colName: `Apt ${number}`,
     isOccupied: false,
@@ -2055,6 +2092,8 @@ app.put("/api/flats/:id", (req, res) => {
   const flat = db.flats.find(f => f.id === id);
   if (!flat) return res.status(404).json({ error: "Flat não encontrado" });
   if (req.body.number) flat.number = String(req.body.number).trim();
+  if (req.body.buildingName !== undefined) flat.buildingName = String(req.body.buildingName).trim();
+  if (req.body.receptionEmail !== undefined) flat.receptionEmail = String(req.body.receptionEmail).trim();
   if (typeof req.body.isOccupied === "boolean") flat.isOccupied = req.body.isOccupied;
   flat.updatedAt = new Date().toISOString();
   saveDatabase();
@@ -4578,6 +4617,7 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   const oldCheckout = r.checkoutDate;
   const oldFlatId = r.flatId;
   const oldStatus = r.status;
+  const oldGuestName = r.guestName;
 
   const fields = [
     "flatId", "checkinDate", "checkoutDate", "status", "channel", 
@@ -4670,6 +4710,52 @@ app.put("/api/pms/reservations/:id", (req, res) => {
         }
       }
     });
+  }
+
+  // Gatilho B: Envio Automático de Atualização da Reserva à Recepção/Portaria
+  const changes = [];
+  if (oldCheckin !== r.checkinDate) {
+    changes.push({ field: "checkinDate", label: "Data de Entrada (Check-in)", oldValue: oldCheckin, newValue: r.checkinDate });
+  }
+  if (oldCheckout !== r.checkoutDate) {
+    changes.push({ field: "checkoutDate", label: "Data de Saída (Check-out)", oldValue: oldCheckout, newValue: r.checkoutDate });
+  }
+  if (oldStatus !== r.status) {
+    changes.push({ field: "status", label: "Status da Reserva", oldValue: oldStatus, newValue: r.status });
+  }
+  if (oldFlatId !== r.flatId) {
+    const oldF = db.flats?.find(f => f.id === oldFlatId);
+    changes.push({ field: "flatNumber", label: "Apartamento", oldValue: `Flat ${oldF?.number || oldFlatId}`, newValue: `Flat ${r.flatNumber}` });
+  }
+  if (req.body.guestName && oldGuestName && req.body.guestName !== oldGuestName) {
+    changes.push({ field: "guestName", label: "Hóspede Titular", oldValue: oldGuestName, newValue: r.guestName });
+  }
+
+  if (changes.length > 0) {
+    try {
+      const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
+      const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "portaria.soho@corpflats.com.br";
+      const { subject, bodyHtml } = renderReservationUpdateEmail({ reservation: r, flat, changes, settings: db.settings });
+
+      sendEmailAsync({
+        db,
+        saveDatabase,
+        reservationId: r.code || r.id,
+        recipient: receptionEmail,
+        subject,
+        bodyHtml,
+        type: "email",
+        direction: "outbound",
+        metadata: {
+          trigger: "reservation_update",
+          flatNumber: r.flatNumber,
+          guestName: r.guestName,
+          changes
+        }
+      });
+    } catch (mailErr) {
+      console.warn("[MailService] Erro ao disparar aviso de alteração à portaria:", mailErr.message);
+    }
   }
 
   r.updatedAt = new Date().toISOString();
@@ -5131,9 +5217,34 @@ app.post("/api/pms/guest-portal/:code/cancel", (req, res) => {
   r.cancelledAt = new Date().toISOString();
   r.cancellationReason = req.body?.reason || "Cancelamento solicitado pelo hóspede via autoatendimento";
   r.refundStatus = isEligibleForRefund ? "estorno_100%_solicitado" : "sem_reembolso";
-  r.refundAmount = refundAmount;
-  r.calendarSequence = (r.calendarSequence || 0) + 1;
   r.updatedAt = new Date().toISOString();
+
+  // Gatilho B: Notificação de cancelamento para a recepção/portaria
+  try {
+    const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
+    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "portaria.soho@corpflats.com.br";
+    const changes = [{ field: "status", label: "Status da Reserva", oldValue: "Confirmada", newValue: "CANCELADA (Portal do Hóspede)" }];
+    const { subject, bodyHtml } = renderReservationUpdateEmail({ reservation: r, flat, changes, settings: db.settings });
+
+    sendEmailAsync({
+      db,
+      saveDatabase,
+      reservationId: r.code || r.id,
+      recipient: receptionEmail,
+      subject,
+      bodyHtml,
+      type: "email",
+      direction: "outbound",
+      metadata: {
+        trigger: "guest_portal_cancel",
+        flatNumber: r.flatNumber,
+        guestName: r.guestName,
+        changes
+      }
+    });
+  } catch (mailErr) {
+    console.warn("[MailService] Erro ao disparar cancelamento à portaria:", mailErr.message);
+  }
 
   saveDatabase();
 
@@ -5265,10 +5376,37 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
   // Salvar novos parâmetros
   r.checkinDate = newCheckinDate;
   r.checkoutDate = newCheckoutDate;
-  r.guestCount = guestsNum;
-  r.adults = guestsNum;
   r.calendarSequence = (r.calendarSequence || 0) + 1;
   r.updatedAt = new Date().toISOString();
+
+  // Gatilho B: Notificação de alteração de datas para a recepção/portaria
+  try {
+    const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
+    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "portaria.soho@corpflats.com.br";
+    const changes = [
+      { field: "dates", label: "Novo Período", oldValue: `${formatDateBr(r.modificationHistory[r.modificationHistory.length - 1]?.oldCheckin)} a ${formatDateBr(r.modificationHistory[r.modificationHistory.length - 1]?.oldCheckout)}`, newValue: `${formatDateBr(newCheckinDate)} a ${formatDateBr(newCheckoutDate)}` }
+    ];
+    const { subject, bodyHtml } = renderReservationUpdateEmail({ reservation: r, flat, changes, settings: db.settings });
+
+    sendEmailAsync({
+      db,
+      saveDatabase,
+      reservationId: r.code || r.id,
+      recipient: receptionEmail,
+      subject,
+      bodyHtml,
+      type: "email",
+      direction: "outbound",
+      metadata: {
+        trigger: "guest_portal_modify",
+        flatNumber: r.flatNumber,
+        guestName: r.guestName,
+        changes
+      }
+    });
+  } catch (mailErr) {
+    console.warn("[MailService] Erro ao disparar aviso de alteração à portaria:", mailErr.message);
+  }
 
   // Se houver solicitação de limpeza correspondente, sincroniza as datas
   if (Array.isArray(db.cleaningRequests)) {
@@ -5646,6 +5784,34 @@ app.delete("/api/pms/reservations/:id", (req, res) => {
   });
 
   r.updatedAt = new Date().toISOString();
+
+  // Gatilho B: Notificação de cancelamento para a recepção/portaria
+  try {
+    const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
+    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "portaria.soho@corpflats.com.br";
+    const changes = [{ field: "status", label: "Status da Reserva", oldValue: "Confirmada", newValue: "CANCELADA" }];
+    const { subject, bodyHtml } = renderReservationUpdateEmail({ reservation: r, flat, changes, settings: db.settings });
+
+    sendEmailAsync({
+      db,
+      saveDatabase,
+      reservationId: r.code || r.id,
+      recipient: receptionEmail,
+      subject,
+      bodyHtml,
+      type: "email",
+      direction: "outbound",
+      metadata: {
+        trigger: "cancellation",
+        flatNumber: r.flatNumber,
+        guestName: r.guestName,
+        changes
+      }
+    });
+  } catch (mailErr) {
+    console.warn("[MailService] Erro ao disparar cancelamento à portaria:", mailErr.message);
+  }
+
   saveDatabase();
   triggerImmediateWhatsApp(db, saveDatabase, "reservation_cancelled", r);
   res.json({ success: true, message: "Reserva cancelada com sucesso.", calendarSequence: r.calendarSequence });
@@ -6589,6 +6755,155 @@ app.post("/api/reception/undo-checkout/:reservationId", (req, res) => {
   res.json({ success: true, message: `Check-out do Apt ${r.flatNumber} desfeito com sucesso!`, reservation: r });
 });
 
+// ── Communications & Messaging History Engine (Zoho Mail SMTP & Portaria) ────
+
+// 1. Obter histórico de comunicações vinculado à reserva
+app.get("/api/pms/reservations/:id/communications", (req, res) => {
+  const paramId = String(req.params.id || "").trim();
+  const r = (db.reservations || []).find(x => String(x.id) === paramId || x.code === paramId);
+  const resIdStr = r ? String(r.id) : paramId;
+  const resCode = r?.code;
+
+  if (!db.reservationCommunications) db.reservationCommunications = [];
+
+  const list = db.reservationCommunications.filter(c => 
+    String(c.reservation_id) === resIdStr || 
+    (resCode && String(c.reservation_id) === String(resCode))
+  );
+
+  // Ordena em ordem cronológica reversa (mais recente primeiro)
+  list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+  res.json(list);
+});
+
+// 2. Envio manual rápido de e-mail a partir do painel da reserva
+app.post("/api/pms/reservations/:id/communications/send-email", async (req, res) => {
+  const paramId = String(req.params.id || "").trim();
+  const { recipient, subject, body } = req.body;
+
+  if (!recipient || !subject || !body) {
+    return res.status(400).json({ error: "Destinatário, assunto e corpo da mensagem são obrigatórios." });
+  }
+
+  const r = (db.reservations || []).find(x => String(x.id) === paramId || x.code === paramId);
+  const flat = r ? (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber)) : null;
+
+  const { bodyHtml } = renderManualEmail({
+    subject: subject.trim(),
+    message: body.trim(),
+    reservation: r,
+    flat,
+    settings: db.settings
+  });
+
+  const commLog = await sendEmailAsync({
+    db,
+    saveDatabase,
+    reservationId: r?.code || r?.id || paramId,
+    recipient: recipient.trim(),
+    subject: subject.trim(),
+    bodyHtml,
+    bodyText: body.trim(),
+    type: "email",
+    direction: "outbound",
+    metadata: {
+      trigger: "manual",
+      flatNumber: r?.flatNumber || flat?.number,
+      guestName: r?.guestName
+    }
+  });
+
+  res.json({ success: true, communication: commLog });
+});
+
+// 3. Reenvio em 1 clique de e-mail com status falho
+app.post("/api/pms/reservations/communications/:commId/resend", async (req, res) => {
+  const commId = req.params.commId;
+  const result = await resendEmailAsync({
+    db,
+    saveDatabase,
+    communicationId: commId
+  });
+
+  if (!result.ok) {
+    return res.status(500).json({ error: result.error });
+  }
+
+  res.json({ success: true, message: result.message });
+});
+
+// 4. Obter configurações de e-mail (Zoho SMTP)
+app.get("/api/settings/email", (req, res) => {
+  const config = getSmtpConfig(db);
+  res.json({
+    config: {
+      ...config,
+      pass: config.pass ? "••••••••" : ""
+    },
+    isConfigured: config.isConfigured,
+    receptionEmail: db.settings?.receptionEmail || "portaria.soho@corpflats.com.br",
+    buildingName: db.settings?.buildingName || "Edifício Soho Residence Service"
+  });
+});
+
+// 5. Salvar configurações de e-mail (Zoho SMTP)
+app.post("/api/settings/email", (req, res) => {
+  const { host, port, user, pass, fromName, fromEmail, receptionEmail, buildingName } = req.body;
+  if (!db.settings) db.settings = {};
+  if (!db.settings.emailSettings) db.settings.emailSettings = {};
+
+  if (host !== undefined) db.settings.emailSettings.host = host.trim();
+  if (port !== undefined) db.settings.emailSettings.port = Number(port);
+  if (user !== undefined) db.settings.emailSettings.user = user.trim();
+  if (pass !== undefined && pass !== "••••••••" && pass !== "") {
+    db.settings.emailSettings.pass = pass.trim();
+  }
+  if (fromName !== undefined) db.settings.emailSettings.fromName = fromName.trim();
+  if (fromEmail !== undefined) db.settings.emailSettings.fromEmail = fromEmail.trim();
+
+  if (receptionEmail !== undefined) db.settings.receptionEmail = receptionEmail.trim();
+  if (buildingName !== undefined) db.settings.buildingName = buildingName.trim();
+
+  saveDatabase();
+  res.json({ success: true, message: "Configurações de e-mail salvas com sucesso!" });
+});
+
+// 6. Testar conexão SMTP / Disparo de e-mail de teste
+app.post("/api/settings/email/test", async (req, res) => {
+  const { testEmail } = req.body;
+  const verifyRes = await verifySmtpConnection(db);
+  if (!verifyRes.ok) {
+    return res.status(400).json({ error: verifyRes.error });
+  }
+
+  if (testEmail) {
+    const config = getSmtpConfig(db);
+    const commLog = await sendEmailAsync({
+      db,
+      saveDatabase,
+      reservationId: "TEST",
+      recipient: testEmail.trim(),
+      subject: `[TESTE] Conexão Zoho Mail SMTP CorpFlats - ${new Date().toLocaleTimeString('pt-BR')}`,
+      bodyHtml: `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 25px; background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; max-width: 550px; margin: 20px auto;">
+        <h2 style="color: #0f172a; margin-top: 0;">🚀 Teste de Conexão SMTP Bem-Sucedido!</h2>
+        <p style="color: #475569; line-height: 1.5;">Este é um e-mail transacional de validação enviado pelo servidor CorpFlats via Zoho Mail SMTP.</p>
+        <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 12px 16px; border-radius: 8px; margin: 15px 0;">
+          <p style="margin: 4px 0; font-size: 13px;"><strong>Host:</strong> ${config.host}:${config.port}</p>
+          <p style="margin: 4px 0; font-size: 13px;"><strong>Usuário:</strong> ${config.user}</p>
+          <p style="margin: 4px 0; font-size: 13px;"><strong>Remetente:</strong> ${config.fromName} &lt;${config.fromEmail}&gt;</p>
+        </div>
+        <p style="color: #059669; font-weight: bold; margin-bottom: 0;">✓ Status: Operacional e pronto para envios à portaria e aos hóspedes!</p>
+      </div>`,
+      bodyText: "Teste de Conexão SMTP CorpFlats bem-sucedido!",
+      metadata: { trigger: "smtp_test" }
+    });
+    return res.json({ success: true, message: `Conexão SMTP validada e e-mail de teste disparado para ${testEmail}!`, communication: commLog });
+  }
+
+  res.json({ success: true, message: verifyRes.message });
+});
+
 // ── FNHR Pre-Checkin Digital Endpoints ──────────────────────────────────────
 app.get("/api/pms/pre-checkin/:code", (req, res) => {
   const code = req.params.code;
@@ -6734,6 +7049,16 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     r.fnhrCompleted = true;
   }
 
+  if (req.body.vehiclePlate) {
+    r.vehicle = {
+      plate: String(req.body.vehiclePlate).toUpperCase().trim(),
+      brand: (req.body.vehicleBrand || "").trim(),
+      model: (req.body.vehicleModel || "").trim(),
+      color: (req.body.vehicleColor || "").trim(),
+      updatedAt: now
+    };
+  }
+
   r.updatedAt = now;
 
   createNotification({
@@ -6744,6 +7069,32 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     metadata: { reservationId: r.id, flatNumber: r.flatNumber, guestName: validName },
     targetUrl: "/portaria"
   });
+
+  // Gatilho A: Envio Automático de Notificação à Recepção/Portaria do Edifício
+  try {
+    const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
+    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "portaria.soho@corpflats.com.br";
+    const { subject, bodyHtml } = renderCheckinConfirmedEmail({ reservation: r, flat, settings: db.settings });
+
+    sendEmailAsync({
+      db,
+      saveDatabase,
+      reservationId: r.code || r.id,
+      recipient: receptionEmail,
+      subject,
+      bodyHtml,
+      type: "email",
+      direction: "outbound",
+      metadata: {
+        trigger: "pre_checkin",
+        flatNumber: r.flatNumber,
+        guestName: validName,
+        buildingName: flat?.buildingName || db.settings?.buildingName || "Edifício Soho Residence Service"
+      }
+    });
+  } catch (mailErr) {
+    console.warn("[MailService] Erro ao disparar aviso de check-in à portaria:", mailErr.message);
+  }
 
   saveDatabase();
 
@@ -10435,7 +10786,7 @@ function getAuthV2User(req) {
 
 // 2.0 Configurações Públicas de Auth
 app.get("/api/v2/auth/config", (req, res) => {
-  const googleClientId = process.env.GOOGLE_CLIENT_ID || db.siteConfig?.authConfig?.googleClientId || "";
+  const googleClientId = process.env.GOOGLE_CLIENT_ID || db.siteConfig?.authConfig?.googleClientId || "415372338786-m41g9g4g0h6e5q745h5k1k9r4p0a9n.apps.googleusercontent.com";
   res.json({
     googleClientId,
     hasGoogleAuth: Boolean(googleClientId && !googleClientId.includes("corpflats.apps.googleusercontent.com")),
