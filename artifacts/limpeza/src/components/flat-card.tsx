@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react"
 import { useQueryClient } from "@tanstack/react-query"
-import { format } from "date-fns"
+import { format, addDays, parseISO, differenceInDays, isValid } from "date-fns"
+import { useToast } from "@/hooks/use-toast"
 import { 
   useUpdateFlat,
   getListCheckoutsQueryKey,
@@ -20,7 +21,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { 
   User, CheckCircle2, AlertCircle, Clock, PlayCircle, Sparkles, 
   Flame, Wrench, ClipboardCheck, DoorOpen, RotateCcw, AlertTriangle, Check, CalendarX,
-  PackageOpen, Camera, BedDouble, Image as ImageIcon, UserX, Calendar, CloudOff, Loader2
+  PackageOpen, Camera, BedDouble, Image as ImageIcon, UserX, Calendar, CloudOff, Loader2,
+  DollarSign, CalendarDays
 } from "lucide-react"
 import { compressImage } from "@/lib/image-compression"
 import { cn } from "@/lib/utils"
@@ -94,6 +96,7 @@ export function FlatCard({
 }: FlatCardProps) {
   const isAdmin = userRole === "admin"
   const queryClient = useQueryClient()
+  const { toast } = useToast()
 
   const [issueDialogOpen, setIssueDialogOpen] = useState(false)
   const [issueText, setIssueText] = useState("")
@@ -128,29 +131,92 @@ export function FlatCard({
 
   // Extend Stay (Hóspede Estendeu)
   const [extendStayModalOpen, setExtendStayModalOpen] = useState(false)
+  const [extendNewCheckoutDate, setExtendNewCheckoutDate] = useState("")
+  const [extendAdditionalAmount, setExtendAdditionalAmount] = useState<string>("")
   const [extendNotes, setExtendNotes] = useState("")
   const [isSubmittingExtend, setIsSubmittingExtend] = useState(false)
+  const [extendErrorMessage, setExtendErrorMessage] = useState<string | null>(null)
+  const [amountManuallyEdited, setAmountManuallyEdited] = useState(false)
+
+  const currentCheckoutStr = flat.reservation?.checkoutDate || flat.checkoutDate || date
+  const currentTotalAmount = Number(flat.reservation?.totalAmount || 0)
+  const dailyRate = Number(flat.reservation?.dailyRate || 0)
+
+  const handleOpenExtendStayModal = () => {
+    let nextDateStr = ""
+    try {
+      if (currentCheckoutStr && isValid(parseISO(currentCheckoutStr))) {
+        nextDateStr = format(addDays(parseISO(currentCheckoutStr), 1), "yyyy-MM-dd")
+      } else {
+        nextDateStr = format(addDays(new Date(), 1), "yyyy-MM-dd")
+      }
+    } catch {
+      nextDateStr = format(addDays(new Date(), 1), "yyyy-MM-dd")
+    }
+
+    setExtendNewCheckoutDate(nextDateStr)
+    setExtendAdditionalAmount(dailyRate > 0 ? String(dailyRate) : "")
+    setExtendNotes("")
+    setExtendErrorMessage(null)
+    setAmountManuallyEdited(false)
+    setExtendStayModalOpen(true)
+  }
+
+  const handleNewCheckoutDateChange = (newDate: string) => {
+    setExtendNewCheckoutDate(newDate)
+    setExtendErrorMessage(null)
+    if (!amountManuallyEdited && dailyRate > 0 && newDate && currentCheckoutStr) {
+      try {
+        const extraNights = Math.max(0, differenceInDays(parseISO(newDate), parseISO(currentCheckoutStr)))
+        setExtendAdditionalAmount(extraNights > 0 ? String(extraNights * dailyRate) : "0")
+      } catch {}
+    }
+  }
 
   const handleConfirmExtendStay = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!extendNewCheckoutDate) {
+      setExtendErrorMessage("Por favor, selecione a nova data de check-out.")
+      return
+    }
     setIsSubmittingExtend(true)
+    setExtendErrorMessage(null)
     try {
       const res = await fetch(`/api/cleaning/assignments/${request?.id || 0}/mark-extended`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           flatNumber: flat.flatNumber,
-          notes: extendNotes.trim() || "Hóspede estendeu a estadia"
+          flatId: flat.flatId,
+          reservationId: flat.reservation?.id || flat.activeReservation?.id,
+          requestDate: date,
+          newCheckoutDate: extendNewCheckoutDate,
+          additionalAmount: Number(extendAdditionalAmount) || 0,
+          notes: extendNotes.trim()
         }),
         credentials: "include"
       })
-      if (res.ok) {
-        setExtendStayModalOpen(false)
-        setExtendNotes("")
-        refreshData()
+      const data = await res.json()
+      if (!res.ok) {
+        setExtendErrorMessage(data.error || "Não foi possível estender a estadia.")
+        toast({
+          title: "Erro ao estender",
+          description: data.error || "Verifique as informações e tente novamente.",
+          variant: "destructive"
+        })
+        return
       }
+
+      toast({
+        title: "Estadia Estendida!",
+        description: data.message || `Flat ${flat.flatNumber} estendido com sucesso.`,
+      })
+      setExtendStayModalOpen(false)
+      setExtendNotes("")
+      refreshData()
     } catch (err) {
       console.error("Erro ao registrar extensão de estadia:", err)
+      setExtendErrorMessage("Erro de conexão ao salvar extensão.")
     } finally {
       setIsSubmittingExtend(false)
     }
@@ -1157,7 +1223,7 @@ export function FlatCard({
                     type="button"
                     variant="ghost"
                     size="sm"
-                    onClick={() => setExtendStayModalOpen(true)}
+                    onClick={handleOpenExtendStayModal}
                     disabled={isProcessing || isSubmittingExtend}
                     title="Hóspede estendeu: o hóspede renovou a estadia e continua no apartamento (não deve ser limpo hoje)."
                     className="w-full text-[11px] font-semibold h-7 gap-1 text-slate-500 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/30 mt-0.5"
@@ -1784,26 +1850,130 @@ export function FlatCard({
                 Confirmar Estadia Estendida • Flat {flat.flatNumber}
               </DialogTitle>
               <DialogDescription className="text-xs text-muted-foreground">
-                O hóspede renovou a estadia ou continuará no quarto. O apartamento sairá da lista de limpeza de hoje.
+                O hóspede renovou a estadia. A data de check-out e o valor da reserva serão atualizados automaticamente no PMS.
               </DialogDescription>
             </DialogHeader>
 
-            <div className="py-3 space-y-3 text-xs">
-              <div className="p-3.5 bg-amber-50 dark:bg-amber-950/40 rounded-2xl border border-amber-200 dark:border-amber-800/60 space-y-1">
-                <span className="font-bold text-slate-900 dark:text-slate-100 block">
-                  Hóspede atual: {flat.leavingGuest || flat.activeReservation?.guestName || "Em estadia contínua"}
-                </span>
-                <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                  Ao confirmar, este quarto não será mais considerado pendente para limpeza hoje e será marcado como ocupado em permanência.
-                </p>
+            <div className="py-3 space-y-3.5 text-xs">
+              {/* Card Resumo do Hóspede e Reserva */}
+              <div className="p-3.5 bg-amber-50/80 dark:bg-amber-950/40 rounded-2xl border border-amber-200 dark:border-amber-800/60 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-900 dark:text-slate-100 text-xs">
+                    {flat.reservation?.guestName || flat.leavingGuest || flat.activeReservation?.guestName || "Hóspede em estadia"}
+                  </span>
+                  {flat.reservation?.code && (
+                    <Badge variant="outline" className="text-[10px] font-mono bg-white dark:bg-slate-900">
+                      #{flat.reservation.code}
+                    </Badge>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2 pt-1 border-t border-amber-200/60 dark:border-amber-800/40 text-[11px] text-slate-600 dark:text-slate-400">
+                  <div>
+                    <span className="text-muted-foreground block text-[10px]">Saída Atual:</span>
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">
+                      {(() => {
+                        if (!currentCheckoutStr) return "--"
+                        try {
+                          const p = parseISO(currentCheckoutStr)
+                          return isValid(p) ? format(p, "dd/MM/yyyy") : currentCheckoutStr
+                        } catch {
+                          return currentCheckoutStr
+                        }
+                      })()}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground block text-[10px]">Total Atual:</span>
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">
+                      {currentTotalAmount > 0 ? `R$ ${currentTotalAmount.toFixed(2)}` : "Não informado"}
+                    </span>
+                  </div>
+                </div>
               </div>
 
+              {/* Mensagem de Erro / Alerta */}
+              {extendErrorMessage && (
+                <div className="p-2.5 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/60 rounded-xl flex items-center gap-2 text-xs text-rose-700 dark:text-rose-300 font-medium">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400" />
+                  <span>{extendErrorMessage}</span>
+                </div>
+              )}
+
+              {/* Campo 1: Nova data do check-out */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <CalendarDays className="w-3.5 h-3.5 text-amber-600" />
+                    Nova data do check-out <span className="text-rose-500">*</span>
+                  </span>
+                  {(() => {
+                    if (!extendNewCheckoutDate || !currentCheckoutStr) return null
+                    try {
+                      const diff = differenceInDays(parseISO(extendNewCheckoutDate), parseISO(currentCheckoutStr))
+                      return diff > 0 ? (
+                        <span className="text-[10.5px] font-bold text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/50 px-2 py-0.5 rounded-full">
+                          +{diff} {diff === 1 ? "diária" : "diárias"}
+                        </span>
+                      ) : null
+                    } catch {
+                      return null
+                    }
+                  })()}
+                </Label>
+                <Input
+                  type="date"
+                  required
+                  min={currentCheckoutStr || date}
+                  value={extendNewCheckoutDate}
+                  onChange={e => handleNewCheckoutDateChange(e.target.value)}
+                  className="text-xs font-medium"
+                />
+              </div>
+
+              {/* Campo 2: Valor a ser incrementado */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <DollarSign className="w-3.5 h-3.5 text-emerald-600" />
+                    Valor a ser incrementado na reserva (R$)
+                  </span>
+                  {dailyRate > 0 && (
+                    <span className="text-[10px] text-muted-foreground">
+                      Diária base: R$ {dailyRate.toFixed(2)}
+                    </span>
+                  )}
+                </Label>
+                <div className="relative">
+                  <span className="absolute left-3 top-2.5 text-xs text-muted-foreground font-semibold">R$</span>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={extendAdditionalAmount}
+                    onChange={e => {
+                      setAmountManuallyEdited(true)
+                      setExtendAdditionalAmount(e.target.value)
+                    }}
+                    placeholder="0,00"
+                    className="pl-9 text-xs font-medium"
+                  />
+                </div>
+                {/* Resumo do novo valor total previsto */}
+                <div className="flex items-center justify-between px-2.5 py-1.5 bg-slate-50 dark:bg-slate-900/50 rounded-lg text-[11px] text-slate-500 border border-slate-200/60 dark:border-slate-800">
+                  <span>Novo valor total previsto:</span>
+                  <span className="font-bold text-emerald-700 dark:text-emerald-400">
+                    R$ {(currentTotalAmount + (parseFloat(extendAdditionalAmount) || 0)).toFixed(2)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Campo 3: Observações / Anotação */}
               <div className="space-y-1">
-                <Label className="text-xs font-semibold">Observação / Nova data prevista de saída (opcional)</Label>
+                <Label className="text-xs font-semibold">Observações adicionais (opcional)</Label>
                 <Input
                   value={extendNotes}
                   onChange={e => setExtendNotes(e.target.value)}
-                  placeholder="Ex: Hóspede estendeu até dia 30/08..."
+                  placeholder="Ex: Hóspede solicitou pelo WhatsApp, pagamento na saída..."
                   className="text-xs"
                 />
               </div>
@@ -1816,10 +1986,17 @@ export function FlatCard({
               <Button
                 type="submit"
                 size="sm"
-                disabled={isSubmittingExtend}
+                disabled={isSubmittingExtend || !extendNewCheckoutDate}
                 className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl gap-1.5 shadow-sm"
               >
-                {isSubmittingExtend ? "Registrando..." : "Confirmar que Estendeu"}
+                {isSubmittingExtend ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    Salvando...
+                  </>
+                ) : (
+                  "Confirmar e Atualizar Reserva"
+                )}
               </Button>
             </DialogFooter>
           </form>

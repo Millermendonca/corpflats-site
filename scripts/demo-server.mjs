@@ -2495,28 +2495,207 @@ app.post("/api/cleaning/assignments/:requestId/acknowledge-extended", (req, res)
 // ── Mark Flat as Extended Stay (Hóspede Estendeu / Stayover) ───────────────
 app.post("/api/cleaning/assignments/:requestId/mark-extended", (req, res) => {
   const reqId = Number(req.params.requestId);
-  const { flatNumber, notes } = req.body || {};
+  const { flatNumber, flatId, reservationId, newCheckoutDate, additionalAmount, notes, forceConflict } = req.body || {};
   let item = db.cleaningRequests.find(r => r.id === reqId);
   if (!item && flatNumber) {
     item = db.cleaningRequests.find(r => String(r.flatNumber) === String(flatNumber) && r.status !== "clean");
   }
-  if (!item) {
-    return res.status(404).json({ error: "Solicitação de limpeza não encontrada." });
+
+  const targetFlat = (db.flats || []).find(f => (flatNumber && String(f.number) === String(flatNumber)) || (flatId && f.id === Number(flatId)) || (item && f.id === item.flatId));
+  const targetFlatNumber = targetFlat ? targetFlat.number : (flatNumber || (item ? item.flatNumber : ""));
+  const targetFlatId = targetFlat ? targetFlat.id : (item ? item.flatId : null);
+
+  if (!item && !targetFlatNumber) {
+    return res.status(404).json({ error: "Solicitação de limpeza ou apartamento não encontrado." });
   }
 
-  const targetFlatNumber = item.flatNumber;
   const userAuth = getAuthUser(req);
   const now = new Date().toISOString();
+  const requestDate = item?.requestDate || req.body.requestDate || getTodayStr();
 
-  // Marca todas as solicitações pendentes deste quarto como estendidas
-  for (const r of db.cleaningRequests) {
-    if ((String(r.flatNumber) === String(targetFlatNumber) || r.flatId === item.flatId) && r.status !== "clean") {
-      r.status = "extended";
-      r.isExtended = true;
-      r.isVacant = false;
-      r.pendingObservation = notes || "Hóspede estendeu a estadia";
-      r.updatedAt = now;
+  // 1. Localizar a reserva correspondente no flat
+  let targetRes = null;
+  if (reservationId) {
+    targetRes = (db.reservations || []).find(r => (r.id === Number(reservationId) || r.code === reservationId) && r.status !== "cancelada" && r.status !== "cancelado");
+  }
+  if (!targetRes && targetFlatNumber) {
+    targetRes = (db.reservations || []).find(r => 
+      (String(r.flatNumber) === String(targetFlatNumber) || (targetFlatId && r.flatId === targetFlatId)) &&
+      r.status !== "cancelada" && r.status !== "cancelado" &&
+      r.checkoutDate === requestDate
+    );
+  }
+  if (!targetRes && item?.leavingGuest) {
+    const lg = String(item.leavingGuest).toLowerCase().trim();
+    targetRes = (db.reservations || []).find(r => 
+      (String(r.flatNumber) === String(targetFlatNumber) || (targetFlatId && r.flatId === targetFlatId)) &&
+      r.status !== "cancelada" && r.status !== "cancelado" &&
+      r.guestName && (r.guestName.toLowerCase().trim() === lg || r.guestName.toLowerCase().includes(lg) || lg.includes(r.guestName.toLowerCase().trim()))
+    );
+  }
+  if (!targetRes && targetFlatNumber) {
+    const today = getTodayStr();
+    targetRes = (db.reservations || []).find(r => 
+      (String(r.flatNumber) === String(targetFlatNumber) || (targetFlatId && r.flatId === targetFlatId)) &&
+      r.status !== "cancelada" && r.status !== "cancelado" &&
+      r.checkinDate <= today && r.checkoutDate >= today
+    );
+  }
+  if (!targetRes && targetFlatNumber) {
+    const notCancelled = (db.reservations || [])
+      .filter(r => (String(r.flatNumber) === String(targetFlatNumber) || (targetFlatId && r.flatId === targetFlatId)) && r.status !== "cancelada" && r.status !== "cancelado")
+      .sort((a, b) => (b.checkoutDate || "").localeCompare(a.checkoutDate || ""));
+    targetRes = notCancelled[0] || null;
+  }
+
+  // 2. Se informou nova data de check-out, validar e atualizar a reserva
+  const addAmount = Math.max(0, parseFloat(additionalAmount) || 0);
+
+  if (targetRes && newCheckoutDate) {
+    if (newCheckoutDate <= targetRes.checkinDate) {
+      return res.status(400).json({ 
+        error: `A nova data de check-out (${newCheckoutDate}) deve ser posterior à data de check-in (${targetRes.checkinDate}).` 
+      });
     }
+
+    const oldCheckout = targetRes.checkoutDate;
+
+    // Verificar se há reservas conflitantes no mesmo flat
+    if (newCheckoutDate > oldCheckout) {
+      const conflictRes = (db.reservations || []).find(other => {
+        if (other.id === targetRes.id || other.status === "cancelada" || other.status === "cancelado") return false;
+        const otherFlat = String(other.flatNumber || (db.flats.find(f => f.id === other.flatId)?.number || ""));
+        if (otherFlat !== String(targetFlatNumber)) return false;
+        return (oldCheckout < other.checkoutDate) && (newCheckoutDate > other.checkinDate);
+      });
+
+      if (conflictRes && !forceConflict) {
+        return res.status(409).json({
+          error: `Conflito de agenda: O Flat ${targetFlatNumber} já possui reserva para ${conflictRes.guestName || 'outro hóspede'} (Check-in: ${conflictRes.checkinDate}, Check-out: ${conflictRes.checkoutDate}).`,
+          hasConflict: true,
+          conflictingReservation: {
+            id: conflictRes.id,
+            guestName: conflictRes.guestName,
+            checkinDate: conflictRes.checkinDate,
+            checkoutDate: conflictRes.checkoutDate
+          }
+        });
+      }
+    }
+
+    // Atualiza a reserva
+    const oldTotal = Number(targetRes.totalAmount || targetRes.price || 0);
+    const newTotal = oldTotal + addAmount;
+    targetRes.checkoutDate = newCheckoutDate;
+    targetRes.totalAmount = newTotal;
+
+    // Se houve acréscimo financeiro, atualiza status de pagamento
+    if (addAmount > 0) {
+      const currentPaid = Number(targetRes.paidAmount || 0);
+      if (currentPaid < newTotal) {
+        targetRes.paymentStatus = currentPaid > 0 ? "pago_parcial" : "pendente";
+      }
+    }
+
+    // Histórico e anotações
+    const extLogText = `Extensão de estadia para ${newCheckoutDate}${addAmount > 0 ? ` (+R$ ${addAmount.toFixed(2)})` : ""}${notes ? ` - Obs: ${notes}` : ""}`;
+    targetRes.notes = targetRes.notes 
+      ? `${targetRes.notes}\n[${now.substring(0, 10)} ${now.substring(11, 16)}] ${extLogText}`
+      : `[${now.substring(0, 10)} ${now.substring(11, 16)}] ${extLogText}`;
+
+    // Incrementar sequência do calendário (RFC 5546)
+    targetRes.calendarSequence = (targetRes.calendarSequence || 0) + 1;
+
+    // Registrar log de auditoria da reserva
+    ensureReservationAuditLogs(targetRes);
+    addReservationAuditLog(targetRes, {
+      action: "stay_extended",
+      actor: userAuth ? { id: userAuth.id, name: userAuth.name || userAuth.username, role: userAuth.role } : { name: "Governança / Limpeza", role: "admin" },
+      source: "Painel de Limpeza (Hóspede Estendeu)",
+      description: extLogText,
+      changes: [
+        { field: "checkoutDate", label: "Data de Saída (Check-out)", oldValue: oldCheckout, newValue: newCheckoutDate },
+        ...(addAmount > 0 ? [{ field: "totalAmount", label: "Valor Total", oldValue: `R$ ${oldTotal.toFixed(2)}`, newValue: `R$ ${newTotal.toFixed(2)} (+R$ ${addAmount.toFixed(2)})` }] : [])
+      ]
+    });
+
+    // Sincronizar pedidos de café da manhã (se houver)
+    if (db.breakfastOrders && oldCheckout !== newCheckoutDate) {
+      db.breakfastOrders.forEach(o => {
+        if ((o.reservationCode && (o.reservationCode === targetRes.code || o.reservationCode === targetRes.reservationCode)) || o.reservationId === targetRes.id || (String(o.roomNumber) === String(targetFlatNumber))) {
+          if (o.date >= targetRes.checkinDate && o.date <= targetRes.checkoutDate && o.status === "cancelled" && o.cancelReason?.includes("antecipou")) {
+            o.status = "pending";
+            o.cancelReason = null;
+          }
+        }
+      });
+    }
+
+    // Assegurar solicitação de limpeza na nova data de check-out
+    if (!db.cleaningRequests) db.cleaningRequests = [];
+    const hasFutureCleaning = db.cleaningRequests.some(c => 
+      (String(c.flatNumber) === String(targetFlatNumber) || (targetFlatId && c.flatId === targetFlatId)) &&
+      c.requestDate === newCheckoutDate
+    );
+    if (!hasFutureCleaning) {
+      const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(x => Number(x.id) || 0)) : 0;
+      db.cleaningRequests.unshift({
+        id: maxId + 1,
+        flatId: targetFlatId || targetRes.flatId,
+        flatNumber: targetFlatNumber,
+        requestDate: newCheckoutDate,
+        source: "checkout",
+        status: "dirty",
+        assignedUserId: null,
+        assignedUsername: null,
+        isVacant: false,
+        isPriority: false,
+        leavingGuest: targetRes.guestName,
+        arrivingGuest: null,
+        adminNote: null,
+        createdAt: now,
+        updatedAt: now
+      });
+    }
+  }
+
+  // 3. Atualizar as solicitações de limpeza pendentes da data consultada para status "extended"
+  const extendedNote = newCheckoutDate 
+    ? `Hóspede estendeu até ${newCheckoutDate}${addAmount > 0 ? ` (+R$ ${addAmount.toFixed(2)})` : ""}${notes ? ` - ${notes}` : ""}`
+    : (notes || "Hóspede estendeu a estadia");
+
+  let updatedCount = 0;
+  if (db.cleaningRequests) {
+    for (const r of db.cleaningRequests) {
+      if ((String(r.flatNumber) === String(targetFlatNumber) || (targetFlatId && r.flatId === targetFlatId)) && r.status !== "clean" && (!item || r.requestDate === requestDate)) {
+        r.status = "extended";
+        r.isExtended = true;
+        r.isVacant = false;
+        r.pendingObservation = extendedNote;
+        r.updatedAt = now;
+        updatedCount++;
+      }
+    }
+  }
+
+  // Se não havia item em db.cleaningRequests (foi sintetizado no checkouts), cria o registro persistido
+  if (updatedCount === 0 && targetFlatNumber) {
+    const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
+    db.cleaningRequests.unshift({
+      id: maxId + 1,
+      flatId: targetFlatId || (targetRes ? targetRes.flatId : null),
+      flatNumber: targetFlatNumber,
+      requestDate: requestDate,
+      source: "checkout",
+      status: "extended",
+      isExtended: true,
+      isVacant: false,
+      leavingGuest: targetRes?.guestName || item?.leavingGuest || null,
+      arrivingGuest: item?.arrivingGuest || null,
+      pendingObservation: extendedNote,
+      createdAt: now,
+      updatedAt: now
+    });
   }
 
   saveDatabase();
@@ -2526,11 +2705,26 @@ app.post("/api/cleaning/assignments/:requestId/mark-extended", (req, res) => {
     category: "cleaning",
     action: "STAY_EXTENDED",
     actor: { name: userAuth ? (userAuth.name || userAuth.username) : "Sistema", role: userAuth?.role || "admin" },
-    details: { flatNumber: targetFlatNumber, notes: notes || "Hóspede estendeu estadia" },
+    details: { 
+      flatNumber: targetFlatNumber, 
+      newCheckoutDate: newCheckoutDate || null, 
+      additionalAmount: addAmount, 
+      reservationId: targetRes?.id || null, 
+      guestName: targetRes?.guestName || null,
+      notes: extendedNote 
+    },
     source: "cleaning_dashboard"
   });
 
-  res.json({ success: true, message: `Flat ${targetFlatNumber} marcado como estadia estendida com sucesso.` });
+  res.json({ 
+    success: true, 
+    message: targetRes 
+      ? `Flat ${targetFlatNumber} estendido até ${newCheckoutDate || 'nova data'} com sucesso. Reserva de ${targetRes.guestName} atualizada (+R$ ${addAmount.toFixed(2)}).`
+      : `Flat ${targetFlatNumber} marcado como estadia estendida com sucesso.`,
+    reservation: targetRes,
+    newCheckoutDate,
+    additionalAmount: addAmount
+  });
 });
 
 // ── Admin Instructions & Room Setup Endpoint (Admin Only) ───────────────────
@@ -2888,6 +3082,17 @@ app.get("/api/reservations/checkouts", (req, res) => {
     );
     const hasFutureCheckoutOnly = Boolean(activeResToday && activeResToday.checkoutDate > dateStr && !req_.leavingGuest && req_.source !== "guest_checkout" && !req_.isVacant);
 
+    // Identifica a reserva do hóspede saindo hoje ou ativa no flat
+    const checkoutRes = (db.reservations || []).find(r => 
+      (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
+      r.status !== "cancelada" && r.status !== "cancelado" &&
+      r.checkoutDate === dateStr
+    ) || (req_.leavingGuest ? (db.reservations || []).find(r => 
+      (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
+      r.status !== "cancelada" && r.status !== "cancelado" &&
+      (r.guestName?.toLowerCase() === req_.leavingGuest?.toLowerCase() || (r.guestName && req_.leavingGuest && req_.leavingGuest.toLowerCase().includes(r.guestName.toLowerCase())))
+    ) : null) || activeResToday;
+
     return {
       flatId: flat.id,
       flatNumber: flat.number,
@@ -2906,6 +3111,17 @@ app.get("/api/reservations/checkouts", (req, res) => {
         checkinDate: activeResToday.checkinDate,
         checkoutDate: activeResToday.checkoutDate,
         isFutureCheckout: activeResToday.checkoutDate > dateStr
+      } : null,
+      reservation: checkoutRes ? {
+        id: checkoutRes.id,
+        code: checkoutRes.code,
+        guestName: checkoutRes.guestName,
+        checkinDate: checkoutRes.checkinDate,
+        checkoutDate: checkoutRes.checkoutDate,
+        dailyRate: Number(checkoutRes.dailyRate || 0),
+        totalAmount: Number(checkoutRes.totalAmount || checkoutRes.price || 0),
+        paidAmount: Number(checkoutRes.paidAmount || 0),
+        paymentStatus: checkoutRes.paymentStatus || "pendente"
       } : null,
       hasFutureCheckoutOnly,
       setupInfo,
