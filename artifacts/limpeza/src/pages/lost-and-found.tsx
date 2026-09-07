@@ -59,6 +59,12 @@ export default function LostAndFoundPage() {
   // Modal Foto Ampliada (Zoom)
   const [selectedPhotoModal, setSelectedPhotoModal] = useState<string | null>(null)
 
+  // Upload Direto / Alteração de Foto nos Cards
+  const [uploadingPhotoId, setUploadingPhotoId] = useState<number | null>(null)
+  const [failedImages, setFailedImages] = useState<Record<number, boolean>>({})
+  const [targetCardItem, setTargetCardItem] = useState<LostItem | null>(null)
+  const cardFileInputRef = useRef<HTMLInputElement>(null)
+
   // Modal Dar Baixa / Devolução
   const [returnModalOpen, setReturnModalOpen] = useState(false)
   const [selectedItemForReturn, setSelectedItemForReturn] = useState<LostItem | null>(null)
@@ -138,39 +144,121 @@ export default function LostAndFoundPage() {
     }
   }
 
-  // Upload e Compressão de Foto
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Compressão Client-Side Reutilizável de Foto (Reduz de MBs para ~90KB nítido)
+  const compressPhotoFile = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const img = new Image()
+        img.onload = () => {
+          const canvas = document.createElement("canvas")
+          const ctx = canvas.getContext("2d")
+          let w = img.width
+          let h = img.height
+          const maxDim = 1200
+          if (w > maxDim || h > maxDim) {
+            if (w > h) {
+              h = Math.round((h * maxDim) / w)
+              w = maxDim
+            } else {
+              w = Math.round((w * maxDim) / h)
+              h = maxDim
+            }
+          }
+
+          canvas.width = w
+          canvas.height = h
+          ctx?.drawImage(img, 0, 0, w, h)
+          const compressedBase64 = canvas.toDataURL("image/jpeg", 0.75)
+          resolve(compressedBase64)
+        }
+        img.onerror = () => reject(new Error("Erro ao carregar imagem para compressão."))
+        img.src = reader.result as string
+      }
+      reader.onerror = () => reject(new Error("Erro ao ler arquivo da foto."))
+      reader.readAsDataURL(file)
+    })
+  }
+
+  // Upload no Modal Novo Item
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-
-    const reader = new FileReader()
-    reader.onload = () => {
-      const img = new Image()
-      img.onload = () => {
-        const canvas = document.createElement("canvas")
-        const ctx = canvas.getContext("2d")
-        let w = img.width
-        let h = img.height
-        const maxDim = 1200
-        if (w > maxDim || h > maxDim) {
-          if (w > h) {
-            h = Math.round((h * maxDim) / w)
-            w = maxDim
-          } else {
-            w = Math.round((w * maxDim) / h)
-            h = maxDim
-          }
-        }
-
-        canvas.width = w
-        canvas.height = h
-        ctx?.drawImage(img, 0, 0, w, h)
-        const compressedBase64 = canvas.toDataURL("image/jpeg", 0.75)
-        setPhotoBase64(compressedBase64)
-      }
-      img.src = reader.result as string
+    try {
+      const base64 = await compressPhotoFile(file)
+      setPhotoBase64(base64)
+    } catch (err) {
+      console.error("Erro na compressão:", err)
     }
-    reader.readAsDataURL(file)
+  }
+
+  // Upload/Alteração Direta nos Cards da Lista
+  const handleTriggerPhotoUpload = (item: LostItem) => {
+    setTargetCardItem(item)
+    if (cardFileInputRef.current) {
+      cardFileInputRef.current.value = ""
+      cardFileInputRef.current.click()
+    }
+  }
+
+  const handleCardFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !targetCardItem) return
+
+    const itemId = targetCardItem.id
+    setUploadingPhotoId(itemId)
+    try {
+      const base64 = await compressPhotoFile(file)
+      const res = await fetch(`/api/lost-and-found/${itemId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ photoBase64: base64 }),
+        credentials: "include"
+      })
+
+      if (res.ok) {
+        const updated = await res.json()
+        setItems(prev => prev.map(i => i.id === updated.id ? updated : i))
+        setFailedImages(prev => {
+          const next = { ...prev }
+          delete next[itemId]
+          return next
+        })
+        if (selectedPhotoModal) {
+          setSelectedPhotoModal(updated.photoUrl || null)
+        }
+      } else {
+        alert("Erro ao salvar foto no servidor. Tente novamente.")
+      }
+    } catch (err) {
+      console.error("Erro no upload da foto do card:", err)
+      alert("Falha ao processar foto.")
+    } finally {
+      setUploadingPhotoId(null)
+      setTargetCardItem(null)
+    }
+  }
+
+  const handleRemovePhoto = async (item: LostItem) => {
+    if (!confirm(`Deseja remover a foto do item "${item.description}"?`)) return
+    setUploadingPhotoId(item.id)
+    try {
+      const res = await fetch(`/api/lost-and-found/${item.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ photoBase64: null }),
+        credentials: "include"
+      })
+      if (res.ok) {
+        const updated = await res.json()
+        setItems(prev => prev.map(i => i.id === updated.id ? updated : i))
+        if (selectedPhotoModal) setSelectedPhotoModal(null)
+      }
+    } catch (err) {
+      console.error("Erro ao remover foto:", err)
+    } finally {
+      setUploadingPhotoId(null)
+    }
   }
 
   const handleCreateItem = async (e: React.FormEvent) => {
@@ -460,38 +548,107 @@ export default function LostAndFoundPage() {
               return (
                 <Card key={item.id} className="rounded-3xl border border-border shadow-xs flex flex-col justify-between overflow-hidden hover:border-border/80 transition-all bg-card">
                   <div>
-                    {/* Imagem do Item com Efeito Hover de Zoom e Badge de Apartamento */}
-                    {item.photoUrl ? (
-                      <div 
-                        className="relative h-44 bg-slate-950/10 dark:bg-slate-950 flex items-center justify-center cursor-pointer group overflow-hidden border-b border-border"
-                        onClick={() => setSelectedPhotoModal(item.photoUrl || null)}
-                      >
-                        <img 
-                          src={item.photoUrl} 
-                          alt={item.description} 
-                          className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-300" 
-                        />
-                        <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-bold gap-1.5">
-                          <Eye className="w-4 h-4" />
-                          <span>Ver Foto Ampliada</span>
+                    {/* Imagem do Item com Efeito Hover de Zoom, Badge de Apartamento e Ações de Foto */}
+                    <div className="relative border-b border-border overflow-hidden">
+                      {uploadingPhotoId === item.id ? (
+                        <div className="h-44 bg-muted/40 flex flex-col items-center justify-center gap-2">
+                          <RefreshCw className="w-6 h-6 text-primary animate-spin" />
+                          <span className="text-xs font-bold text-muted-foreground">Salvando foto com segurança...</span>
                         </div>
-                        <div className="absolute top-3 left-3">
-                          <Badge className="bg-slate-900/85 text-white backdrop-blur-xs font-black text-xs shadow-sm">
-                            Flat {item.flatNumber}
-                          </Badge>
+                      ) : item.photoUrl && !failedImages[item.id] ? (
+                        <div 
+                          className="relative h-44 bg-slate-950/10 dark:bg-slate-950 flex items-center justify-center cursor-pointer group overflow-hidden"
+                          onClick={() => setSelectedPhotoModal(item.photoUrl || null)}
+                        >
+                          <img 
+                            src={item.photoUrl} 
+                            alt={item.description} 
+                            onError={() => setFailedImages(prev => ({ ...prev, [item.id]: true }))}
+                            className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-300" 
+                          />
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-bold gap-2">
+                            <span className="inline-flex items-center gap-1 bg-black/60 px-2.5 py-1 rounded-lg backdrop-blur-xs">
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>Ampliar</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleTriggerPhotoUpload(item);
+                              }}
+                              className="inline-flex items-center gap-1 bg-primary/90 hover:bg-primary text-white px-2.5 py-1 rounded-lg backdrop-blur-xs transition-colors"
+                              title="Substituir foto"
+                            >
+                              <Camera className="w-3.5 h-3.5" />
+                              <span>Trocar</span>
+                            </button>
+                          </div>
+                          <div className="absolute top-3 left-3">
+                            <Badge className="bg-slate-900/85 text-white backdrop-blur-xs font-black text-xs shadow-sm">
+                              Flat {item.flatNumber}
+                            </Badge>
+                          </div>
+                          <div className="absolute top-3 right-3 opacity-90 group-hover:opacity-100">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleTriggerPhotoUpload(item);
+                              }}
+                              className="p-1.5 rounded-lg bg-black/60 hover:bg-black text-white text-[10px] font-bold backdrop-blur-xs flex items-center gap-1 shadow-sm transition-all"
+                              title="Alterar ou atualizar foto"
+                            >
+                              <Camera className="w-3 h-3" />
+                              <span className="hidden sm:inline">Alterar</span>
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    ) : (
-                      <div className="h-32 bg-amber-500/5 dark:bg-amber-950/20 flex flex-col items-center justify-center border-b border-border relative">
-                        <PackageOpen className="w-8 h-8 text-amber-500 opacity-60 mb-1" />
-                        <span className="text-[11px] font-semibold text-muted-foreground">Sem foto anexada</span>
-                        <div className="absolute top-3 left-3">
-                          <Badge className="bg-slate-900 text-white font-black text-xs">
-                            Flat {item.flatNumber}
-                          </Badge>
+                      ) : (
+                        <div className="h-40 bg-amber-500/5 dark:bg-amber-950/20 flex flex-col items-center justify-center p-3 relative">
+                          {failedImages[item.id] ? (
+                            <>
+                              <AlertCircle className="w-7 h-7 text-amber-500/80 mb-1" />
+                              <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-400">
+                                Foto não carregada ou inexistente
+                              </span>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleTriggerPhotoUpload(item)}
+                                className="mt-2 h-7 px-3 text-[11px] font-bold rounded-xl gap-1.5 border-amber-500/40 text-amber-800 dark:text-amber-300 hover:bg-amber-500/10 shadow-2xs"
+                              >
+                                <Camera className="w-3.5 h-3.5" />
+                                <span>Reanexar Foto</span>
+                              </Button>
+                            </>
+                          ) : (
+                            <>
+                              <PackageOpen className="w-7 h-7 text-amber-500 opacity-60 mb-1" />
+                              <span className="text-[11px] font-semibold text-muted-foreground">
+                                Sem foto anexada
+                              </span>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleTriggerPhotoUpload(item)}
+                                className="mt-2 h-7 px-3 text-[11px] font-bold rounded-xl gap-1.5 border-dashed border-primary/40 text-primary hover:bg-primary/5 shadow-2xs"
+                              >
+                                <Camera className="w-3.5 h-3.5" />
+                                <span>Anexar Foto</span>
+                              </Button>
+                            </>
+                          )}
+                          <div className="absolute top-3 left-3">
+                            <Badge className="bg-slate-900 text-white font-black text-xs">
+                              Flat {item.flatNumber}
+                            </Badge>
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      )}
+                    </div>
 
                     <div className="p-4 space-y-3">
                       {/* Status Badge e Data */}
@@ -797,19 +954,54 @@ export default function LostAndFoundPage() {
               <img 
                 src={selectedPhotoModal} 
                 alt="Foto do Item Esquecido" 
-                className="max-h-[80vh] w-auto object-contain rounded-2xl shadow-2xl" 
+                className="max-h-[75vh] w-auto object-contain rounded-2xl shadow-2xl" 
               />
             )}
-            <Button 
-              size="sm" 
-              variant="outline" 
-              onClick={() => setSelectedPhotoModal(null)} 
-              className="mt-3 text-xs font-bold rounded-xl border-white/20 text-white hover:bg-white/10"
-            >
-              Fechar Visualização
-            </Button>
+            <div className="flex items-center gap-2 mt-3 flex-wrap justify-center">
+              {(() => {
+                const curItem = items.find(i => i.photoUrl === selectedPhotoModal);
+                return curItem ? (
+                  <>
+                    <Button 
+                      size="sm" 
+                      onClick={() => handleTriggerPhotoUpload(curItem)} 
+                      className="text-xs font-bold rounded-xl bg-primary text-primary-foreground gap-1.5 h-8.5"
+                    >
+                      <Camera className="w-3.5 h-3.5" />
+                      <span>Substituir Foto</span>
+                    </Button>
+                    <Button 
+                      size="sm" 
+                      variant="destructive"
+                      onClick={() => handleRemovePhoto(curItem)} 
+                      className="text-xs font-bold rounded-xl gap-1.5 h-8.5"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Remover Foto</span>
+                    </Button>
+                  </>
+                ) : null;
+              })()}
+              <Button 
+                size="sm" 
+                variant="outline" 
+                onClick={() => setSelectedPhotoModal(null)} 
+                className="text-xs font-bold rounded-xl border-white/20 text-white hover:bg-white/10 h-8.5"
+              >
+                Fechar Visualização
+              </Button>
+            </div>
           </DialogContent>
         </Dialog>
+
+        {/* Input Oculto para Upload/Substituição de Foto em Qualquer Card */}
+        <input 
+          type="file" 
+          ref={cardFileInputRef} 
+          onChange={handleCardFileSelected} 
+          accept="image/*" 
+          className="hidden" 
+        />
 
         {/* ── MODAL: EDITAR HÓSPEDE ASSOCIADO ── */}
         <Dialog open={editGuestModalOpen} onOpenChange={setEditGuestModalOpen}>

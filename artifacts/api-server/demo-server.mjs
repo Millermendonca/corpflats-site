@@ -996,6 +996,16 @@ function sanitizeLostAndFound() {
   if (!db.lostAndFound || !Array.isArray(db.lostAndFound)) return;
 
   for (const item of db.lostAndFound) {
+    // Se a foto aponta para caminho local efêmero que não existe mais em disco, limpa para evitar 404 e ícone quebrado
+    if (item.photoUrl && typeof item.photoUrl === "string" && item.photoUrl.startsWith("/api/storage/files/lost_items/")) {
+      const fileName = path.basename(item.photoUrl);
+      const filePath = path.join(LOST_ITEMS_DIR, fileName);
+      if (!fs.existsSync(filePath)) {
+        console.log(`[LostAndFound] Foto local inexistente no disco para item ${item.id} (Flat ${item.flatNumber}): ${item.photoUrl}. Resetando para null.`);
+        item.photoUrl = null;
+      }
+    }
+
     // Corrige item do Flat 1304 que foi erroneamente associado à Thaiza em vez do Pablo
     if (String(item.flatNumber) === "1304" && item.lastGuestName === "Thaiza") {
       const itemDate = item.createdAt ? item.createdAt.substring(0, 10) : "2026-09-06";
@@ -6424,7 +6434,7 @@ app.get("/api/lost-and-found", (req, res) => {
   res.json(items);
 });
 
-app.post("/api/lost-and-found", (req, res) => {
+app.post("/api/lost-and-found", async (req, res) => {
   try {
     const { 
       flatId, 
@@ -6451,29 +6461,20 @@ app.post("/api/lost-and-found", (req, res) => {
 
     const targetFlat = flatNumber || (flatId ? db.flats?.find(f => f.id === Number(flatId))?.number : "Geral");
 
-    // 1. Processamento e Persistência Segura da Foto (Local Disk / R2)
+    // 1. Processamento e Persistência Permanente da Foto (Cloudflare R2 com Fallback Base64 Seguro)
     let finalPhotoUrl = null;
-    if (photoBase64 && typeof photoBase64 === "string" && photoBase64.startsWith("data:image/")) {
-      try {
-        const match = photoBase64.match(/^data:image\/([a-zA-Z0-9+]+);base64,(.+)$/);
-        if (match) {
-          const ext = match[1] === "jpeg" ? "jpg" : (match[1] || "webp");
-          const base64Data = match[2];
-          const fileName = `lost_${Date.now()}_${String(targetFlat).replace(/[^a-zA-Z0-9]/g, "_")}.${ext}`;
-          const filePath = path.join(LOST_ITEMS_DIR, fileName);
-          fs.writeFileSync(filePath, Buffer.from(base64Data, "base64"));
-          
-          finalPhotoUrl = `/api/storage/files/lost_items/${fileName}`;
-          console.log(`[Lost and Found] Foto salva em disco: ${filePath} (${(base64Data.length * 0.75 / 1024).toFixed(1)} KB)`);
-        } else {
+    if (photoBase64 && typeof photoBase64 === "string") {
+      if (photoBase64.startsWith("data:image/")) {
+        try {
+          finalPhotoUrl = await uploadImageToStorage(photoBase64, `lost_${String(targetFlat).replace(/[^a-zA-Z0-9]/g, "_")}`, db, "lost_items");
+          console.log(`[Lost and Found] Foto salva com sucesso no storage R2: ${finalPhotoUrl}`);
+        } catch (imgErr) {
+          console.warn("[Lost and Found] Erro ao enviar foto para storage, usando fallback base64:", imgErr.message);
           finalPhotoUrl = photoBase64;
         }
-      } catch (imgErr) {
-        console.warn("[Lost and Found] Erro ao salvar arquivo físico da foto:", imgErr.message);
+      } else if (photoBase64.startsWith("http://") || photoBase64.startsWith("https://")) {
         finalPhotoUrl = photoBase64;
       }
-    } else if (photoBase64) {
-      finalPhotoUrl = photoBase64;
     }
 
     // 2. Data em que o item está sendo cadastrado / encontrado
@@ -6613,7 +6614,7 @@ app.post("/api/lost-and-found", (req, res) => {
   }
 });
 
-app.patch("/api/lost-and-found/:id", (req, res) => {
+app.patch("/api/lost-and-found/:id", async (req, res) => {
   const id = Number(req.params.id);
   if (!db.lostAndFound) db.lostAndFound = [];
   const item = db.lostAndFound.find(i => i.id === id);
@@ -6628,6 +6629,25 @@ app.patch("/api/lost-and-found/:id", (req, res) => {
   if (req.body.lastGuestEmail !== undefined) item.lastGuestEmail = req.body.lastGuestEmail;
   if (req.body.description !== undefined) item.description = req.body.description;
   if (req.body.locationInRoom !== undefined) item.locationInRoom = req.body.locationInRoom;
+
+  if (req.body.photoBase64 !== undefined) {
+    if (req.body.photoBase64 && typeof req.body.photoBase64 === "string" && req.body.photoBase64.startsWith("data:image/")) {
+      try {
+        item.photoUrl = await uploadImageToStorage(req.body.photoBase64, `lost_${String(item.flatNumber || "item").replace(/[^a-zA-Z0-9]/g, "_")}`, db, "lost_items");
+        console.log(`[Lost and Found PATCH] Foto atualizada com sucesso no storage R2: ${item.photoUrl}`);
+      } catch (err) {
+        console.warn("[Lost and Found PATCH] Erro ao salvar foto no storage, usando fallback base64:", err.message);
+        item.photoUrl = req.body.photoBase64;
+      }
+    } else if (req.body.photoBase64 === null || req.body.photoBase64 === "") {
+      item.photoUrl = null;
+    } else if (typeof req.body.photoBase64 === "string" && (req.body.photoBase64.startsWith("http://") || req.body.photoBase64.startsWith("https://"))) {
+      item.photoUrl = req.body.photoBase64;
+    }
+  } else if (req.body.photoUrl !== undefined) {
+    item.photoUrl = req.body.photoUrl;
+  }
+
   if (req.body.status === "devolvido") {
     item.returnedAt = new Date().toISOString();
     item.returnedBy = user ? (user.name || user.username) : "Recepção";
@@ -6640,7 +6660,7 @@ app.patch("/api/lost-and-found/:id", (req, res) => {
     category: "cleaning",
     action: `LOST_ITEM_${(item.status || "updated").toUpperCase()}`,
     actor: { name: user ? user.name : "Sistema", role: user?.role || "admin" },
-    details: { id, flatNumber: item.flatNumber, status: item.status, returnedTo: item.returnedTo },
+    details: { id, flatNumber: item.flatNumber, status: item.status, returnedTo: item.returnedTo, hasPhoto: Boolean(item.photoUrl) },
     source: "dashboard"
   });
 
