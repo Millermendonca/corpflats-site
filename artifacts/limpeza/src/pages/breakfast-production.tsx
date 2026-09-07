@@ -204,9 +204,26 @@ export default function BreakfastProduction() {
     }
   }
 
-  const handleDeleteOrder = async (orderId: number) => {
-    if (!confirm("Deseja realmente cancelar este pedido de café?")) return
-    await fetch(`/api/breakfast/orders/${orderId}`, { method: "DELETE", credentials: "include" })
+  const handleCancelOrDeleteOrder = async (order: any) => {
+    if (order.status === "cancelled") {
+      if (!confirm(`Deseja excluir o registro do pedido cancelado do Apt ${order.roomNumber} definitivamente?`)) return
+      await fetch(`/api/breakfast/orders/${order.id}`, { method: "DELETE", credentials: "include" })
+      fetchOrders()
+      return
+    }
+
+    const reason = prompt(`Informe o motivo do cancelamento para o Apt ${order.roomNumber} (ex: Hóspede avisou no WhatsApp / Saiu mais cedo / Não quer café hoje):`)
+    if (reason === null) return
+
+    await fetch(`/api/breakfast/orders/${order.id}/status`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ 
+        status: "cancelled", 
+        cancelReason: reason.trim() ? `Cancelamento manual: ${reason.trim()}` : "Cancelado manualmente pela recepção / cozinha"
+      }),
+      credentials: "include"
+    })
     fetchOrders()
   }
 
@@ -755,9 +772,9 @@ export default function BreakfastProduction() {
                                   <Button 
                                     variant="ghost" 
                                     size="icon" 
-                                    onClick={() => handleDeleteOrder(order.id)}
+                                    onClick={() => handleCancelOrDeleteOrder(order)}
                                     className="h-8 w-8 text-muted-foreground hover:text-rose-600"
-                                    title="Excluir pedido"
+                                    title={isCancelled ? "Excluir registro permanentemente" : "Cancelar pedido com motivo"}
                                   >
                                     <Trash2 className="w-3.5 h-3.5" />
                                   </Button>
@@ -765,9 +782,29 @@ export default function BreakfastProduction() {
                               </div>
 
                               {isCancelled && (
-                                <div className="mt-2 p-2 rounded-xl bg-rose-100 dark:bg-rose-900/40 border border-rose-300 dark:border-rose-800 text-rose-900 dark:text-rose-200 text-xs font-bold flex items-center gap-1.5">
-                                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-                                  <span>MOTIVO: {order.cancelReason || "Reserva cancelada ou check-out antecipado"} (NÃO PREPARAR)</span>
+                                <div className="mt-2.5 p-3 rounded-2xl bg-rose-50/90 dark:bg-rose-950/40 border-2 border-rose-300 dark:border-rose-800 text-rose-950 dark:text-rose-100 space-y-1.5 shadow-2xs">
+                                  <div className="flex items-center justify-between gap-2 border-b border-rose-200/80 dark:border-rose-800/60 pb-1.5">
+                                    <span className="flex items-center gap-1.5 text-xs font-black text-rose-700 dark:text-rose-300 uppercase tracking-wide">
+                                      <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                                      <span>Motivo do Cancelamento • Não Preparar</span>
+                                    </span>
+                                    <Badge variant="destructive" className="text-[10px] font-black uppercase px-2 py-0.5 shadow-none">
+                                      {order.cancelReason?.toLowerCase().includes("early check-out") 
+                                        ? "🚪 Early Check-out" 
+                                        : order.cancelReason?.toLowerCase().includes("check-in") 
+                                          ? "🔄 Check-in Alterado" 
+                                          : order.cancelReason?.toLowerCase().includes("diária") || order.cancelReason?.toLowerCase().includes("check-out antecipado") || order.cancelReason?.toLowerCase().includes("reduzida")
+                                            ? "✂️ Diária Removida"
+                                            : order.cancelReason?.toLowerCase().includes("autoatendimento")
+                                              ? "👤 Cancelado p/ Hóspede"
+                                              : order.cancelReason?.toLowerCase().includes("desmarcado")
+                                                ? "☕ Café Desmarcado"
+                                                : "🚫 Cancelado"}
+                                    </Badge>
+                                  </div>
+                                  <p className="text-xs font-bold text-rose-900 dark:text-rose-200 leading-relaxed pl-5.5">
+                                    {order.cancelReason || "Reserva cancelada no calendário ou alteração na estadia."}
+                                  </p>
                                 </div>
                               )}
                             </CardHeader>

@@ -839,6 +839,20 @@ export default function GuestBreakfast() {
                 </div>
               )}
 
+              {/* Informação se o dia foi cancelado */}
+              {currentDayInfo?.status === "cancelled" && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-2xl text-xs text-rose-900 flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <strong className="font-black block">Café Cancelado para este dia ({formatDateDisplay(currentDayInfo.date)})</strong>
+                    <span className="text-rose-800 leading-relaxed block">{currentDayInfo.cancelReason || "O pedido deste dia foi cancelado devido a alteração na reserva ou estadia."}</span>
+                    {currentDayInfo.isOpen && (
+                      <span className="text-[11px] text-slate-500 block pt-1">Caso deseje agendar novamente, você pode escolher os itens abaixo e confirmar.</span>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Seção de Repetição em Múltiplos Dias */}
               {eligibleOtherDays.length > 0 && currentDayInfo?.isOpen && (
                 <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3 pt-3.5">

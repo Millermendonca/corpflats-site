@@ -2395,6 +2395,33 @@ app.post("/api/public/checkout", (req, res) => {
 
   flat.isOccupied = false;
   flat.updatedAt = now;
+
+  const nowBrl = getBrasiliaNow();
+  const timeStr = nowBrl.timeStr;
+
+  // Atualizar a reserva ativa deste flat
+  const matchingResList = (db.reservations || []).filter(r => 
+    (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
+    r.status !== "cancelada" && r.status !== "cancelado" &&
+    r.checkinDate <= todayStr && r.checkoutDate >= todayStr
+  );
+  matchingResList.forEach(r => {
+    r.actualCheckoutAt = now;
+    r.actualCheckoutTime = timeStr;
+    r.status = "completed";
+  });
+
+  // Reconciliar pedidos de café da manhã para hoje neste flat:
+  // Se o hóspede fez checkout (ex: 04:15), cancela qualquer café agendado para hoje com motivo Early Check-out!
+  if (!db.breakfastOrders) db.breakfastOrders = [];
+  db.breakfastOrders.forEach(o => {
+    const isMatch = String(o.roomNumber) === String(flat.number) || matchingResList.some(mr => mr.code === o.reservationCode || mr.id === o.reservationId);
+    if (isMatch && o.date === todayStr && o.status !== "cancelled") {
+      o.status = "cancelled";
+      o.cancelReason = `Early check-out: Hóspede desocupou o quarto e saiu às ${timeStr} (café estava agendado para às ${o.deliveryTime || '08:00'})`;
+    }
+  });
+
   saveDatabase();
 
   // Trigger Notification for Checkout
@@ -5458,6 +5485,13 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   const oldStatus = r.status;
   const oldGuestName = r.guestName;
 
+  if (req.body.checkinDate && oldCheckin && oldCheckin !== req.body.checkinDate) {
+    r.previousCheckinDate = oldCheckin;
+  }
+  if (req.body.checkoutDate && oldCheckout && oldCheckout !== req.body.checkoutDate) {
+    r.previousCheckoutDate = oldCheckout;
+  }
+
   const fields = [
     "flatId", "checkinDate", "checkoutDate", "checkinTime", "checkoutTime", "status", "channel", 
     "dailyRate", "totalAmount", "paidAmount", "paymentStatus", 
@@ -5572,22 +5606,26 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   }
 
   // Sincronização automática de pedidos de café da manhã caso a reserva seja cancelada ou check-out antecipado/estendido
+  // Sincronização automática de pedidos de café da manhã caso a reserva seja cancelada ou check-in/check-out alterado
   if (!db.breakfastOrders) db.breakfastOrders = [];
+  const nowBrl = getBrasiliaNow();
+  const todayStr = nowBrl.date;
+
   if (r.status === "cancelada" || r.status === "cancelado") {
     db.breakfastOrders.forEach(o => {
-      if ((o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) || o.reservationId === r.id || (String(o.roomNumber) === String(r.flatNumber) && o.date >= r.checkinDate && o.date <= r.checkoutDate)) {
+      if ((o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) || o.reservationId === r.id) {
         o.status = "cancelled";
-        o.cancelReason = "Reserva cancelada no calendário";
+        o.cancelReason = computeBreakfastCancellationReason(o, r, todayStr, nowBrl, db);
       }
     });
-  } else if (oldCheckout !== r.checkoutDate) {
+  } else if (oldCheckout !== r.checkoutDate || oldCheckin !== r.checkinDate) {
     db.breakfastOrders.forEach(o => {
-      if ((o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) || o.reservationId === r.id || (String(o.roomNumber) === String(r.flatNumber))) {
-        if (o.date > r.checkoutDate) {
+      if ((o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) || o.reservationId === r.id) {
+        if (o.date > r.checkoutDate || o.date < r.checkinDate) {
           o.status = "cancelled";
-          o.cancelReason = `Hóspede antecipou o check-out (novo check-out: ${r.checkoutDate})`;
-        } else if (o.date >= r.checkinDate && o.date <= r.checkoutDate && o.status === "cancelled" && o.cancelReason?.includes("antecipou")) {
-          // Reativa caso o check-out tenha sido estendido novamente ou o pedido seja no dia do check-out
+          o.cancelReason = computeBreakfastCancellationReason(o, r, todayStr, nowBrl, db);
+        } else if (o.date >= r.checkinDate && o.date <= r.checkoutDate && o.status === "cancelled") {
+          // Reativa caso o pedido volte a estar em um dia válido da estadia
           o.status = "pending";
           o.cancelReason = null;
         }
@@ -6170,6 +6208,19 @@ app.post("/api/pms/guest-portal/:code/cancel", (req, res) => {
   r.refundStatus = isEligibleForRefund ? "estorno_100%_solicitado" : "sem_reembolso";
   r.updatedAt = new Date().toISOString();
 
+  // Cancelar pedidos de café da manhã vinculados à reserva
+  if (!db.breakfastOrders) db.breakfastOrders = [];
+  const cancelMotive = req.body?.reason?.trim() 
+    ? `Reserva cancelada pelo próprio hóspede via autoatendimento (Motivo: ${req.body.reason.trim()})`
+    : "Reserva cancelada pelo próprio hóspede via autoatendimento";
+
+  db.breakfastOrders.forEach(o => {
+    if ((o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) || o.reservationId === r.id) {
+      o.status = "cancelled";
+      o.cancelReason = cancelMotive;
+    }
+  });
+
   // Gatilho B: Notificação de cancelamento para a recepção/portaria
   try {
     const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
@@ -6363,11 +6414,35 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
     ]
   });
 
+  if (r.checkinDate !== newCheckinDate) {
+    r.previousCheckinDate = r.checkinDate;
+  }
+  if (r.checkoutDate !== newCheckoutDate) {
+    r.previousCheckoutDate = r.checkoutDate;
+  }
+
   // Salvar novos parâmetros
   r.checkinDate = newCheckinDate;
   r.checkoutDate = newCheckoutDate;
   r.calendarSequence = (r.calendarSequence || 0) + 1;
   r.updatedAt = new Date().toISOString();
+
+  // Sincronizar pedidos de café da manhã vinculados
+  if (!db.breakfastOrders) db.breakfastOrders = [];
+  const nowBrl = getBrasiliaNow();
+  const todayStr = nowBrl.date;
+
+  db.breakfastOrders.forEach(o => {
+    if ((o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) || o.reservationId === r.id) {
+      if (o.date < newCheckinDate || o.date > newCheckoutDate) {
+        o.status = "cancelled";
+        o.cancelReason = computeBreakfastCancellationReason(o, r, todayStr, nowBrl, db);
+      } else if (o.date >= newCheckinDate && o.date <= newCheckoutDate && o.status === "cancelled") {
+        o.status = "pending";
+        o.cancelReason = null;
+      }
+    }
+  });
 
   // Gatilho B: Notificação de alteração de datas para a recepção/portaria
   try {
@@ -7730,10 +7805,24 @@ app.post("/api/reception/checkout/:reservationId", (req, res) => {
   ensureReservationAuditLogs(r);
   const authUser = getAuthUser(req);
   const previousStatus = r.status;
+  const nowBrl = getBrasiliaNow();
   r.status = "completed";
   r.actualCheckoutAt = new Date().toISOString();
+  r.actualCheckoutTime = nowBrl.timeStr;
   r.previousStatus = previousStatus;
   r.updatedAt = new Date().toISOString();
+
+  // Cancelar café para hoje se o hóspede já fez checkout (Early Check-out)
+  if (!db.breakfastOrders) db.breakfastOrders = [];
+  db.breakfastOrders.forEach(o => {
+    const isMatch = (o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) ||
+                    o.reservationId === r.id ||
+                    (String(o.roomNumber) === String(r.flatNumber));
+    if (isMatch && o.date === nowBrl.date && o.status !== "cancelled") {
+      o.status = "cancelled";
+      o.cancelReason = `Early check-out: Hóspede desocupou o quarto e saiu às ${nowBrl.timeStr} (café estava agendado para às ${o.deliveryTime || '08:00'})`;
+    }
+  });
 
   addReservationAuditLog(r, {
     action: "checkout",
@@ -10342,6 +10431,166 @@ app.get("/api/breakfast/menu", (req, res) => {
   });
 });
 
+function formatDateBr(isoStr) {
+  if (!isoStr || typeof isoStr !== "string") return "";
+  const clean = isoStr.split("T")[0];
+  const parts = clean.split("-");
+  if (parts.length === 3) return `${parts[2]}/${parts[1]}`;
+  return isoStr;
+}
+
+/**
+ * Calcula o motivo contextual, detalhado e humanizado para o cancelamento de um pedido de café.
+ * Detecta:
+ * - Check-in alterado/adiado (ex: "Check-in alterado de 08/09 para 09/09...")
+ * - Check-out antecipado / Diária removida (ex: "Diária removida / Check-out antecipado para 07/09...")
+ * - Reserva cancelada (portal / calendário)
+ * - Early check-out no mesmo dia (ex: "Hóspede desocupou o quarto e saiu às 04:15, café era para 05:07...")
+ * - Café da manhã desmarcado da reserva
+ */
+function computeBreakfastCancellationReason(order, matchingRes, todayStr, nowBrl, dbInstance) {
+  if (!matchingRes) {
+    return "Reserva não localizada no calendário do hotel (quarto alterado ou reserva excluída)";
+  }
+
+  // 1. Reserva Cancelada
+  if (matchingRes.status === "cancelada" || matchingRes.status === "cancelado") {
+    const reason = matchingRes.cancellationReason || matchingRes.cancelReason;
+    if (reason && reason.toLowerCase().includes("autoatendimento")) {
+      return "Reserva cancelada pelo próprio hóspede via autoatendimento";
+    }
+    if (reason && reason.trim()) {
+      return `Reserva cancelada no calendário (Motivo: ${reason.trim()})`;
+    }
+    return "Reserva cancelada no calendário do hotel";
+  }
+
+  // 2. Early Check-out no mesmo dia do café (Hóspede desocupou o quarto antes do horário do café)
+  const flatObj = (dbInstance.flats || []).find(f => f.id === matchingRes.flatId || String(f.number) === String(matchingRes.flatNumber));
+  const flatNumber = String(matchingRes.flatNumber || flatObj?.number || order.roomNumber);
+
+  let checkoutTime = matchingRes.actualCheckoutTime || null;
+  if (!checkoutTime && matchingRes.actualCheckoutAt) {
+    const actDate = matchingRes.actualCheckoutAt.split("T")[0];
+    if (actDate === order.date) {
+      try {
+        const d = new Date(matchingRes.actualCheckoutAt);
+        const brH = String((d.getUTCHours() - 3 + 24) % 24).padStart(2, "0");
+        const brM = String(d.getUTCMinutes()).padStart(2, "0");
+        checkoutTime = `${brH}:${brM}`;
+      } catch {}
+    }
+  }
+
+  const cleaningReqToday = (dbInstance.cleaningRequests || []).find(c => 
+    (c.flatId === matchingRes.flatId || String(c.flatNumber) === flatNumber) && 
+    c.requestDate === order.date
+  );
+
+  const isRoomVacantToday = (order.date === todayStr) && (
+    matchingRes.status === "completed" || 
+    cleaningReqToday?.isVacant === true || 
+    Boolean(checkoutTime) ||
+    (cleaningReqToday?.pendingObservation && cleaningReqToday.pendingObservation.includes("Check-out"))
+  );
+
+  if (isRoomVacantToday) {
+    if (!checkoutTime && cleaningReqToday?.updatedAt) {
+      try {
+        const d = new Date(cleaningReqToday.updatedAt);
+        const brH = String((d.getUTCHours() - 3 + 24) % 24).padStart(2, "0");
+        const brM = String(d.getUTCMinutes()).padStart(2, "0");
+        checkoutTime = `${brH}:${brM}`;
+      } catch {}
+    }
+
+    const orderTime = order.deliveryTime || "08:00";
+    if (checkoutTime) {
+      return `Early check-out: Hóspede desocupou o quarto e saiu às ${checkoutTime} (café estava agendado para às ${orderTime})`;
+    } else {
+      return `Early check-out: Hóspede já desocupou o quarto hoje antes da entrega do café (${orderTime})`;
+    }
+  }
+
+  // 3. Check-in alterado / adiado (data do café é anterior à data de entrada atual)
+  if (order.date < matchingRes.checkinDate) {
+    let previousCheckin = order.originalCheckin || matchingRes.previousCheckinDate || null;
+
+    if (!previousCheckin && Array.isArray(matchingRes.modificationHistory)) {
+      const mod = matchingRes.modificationHistory.slice().reverse().find(m => m.oldCheckin && m.newCheckin && m.oldCheckin !== m.newCheckin);
+      if (mod) previousCheckin = mod.oldCheckin;
+    }
+
+    if (!previousCheckin && Array.isArray(matchingRes.auditLogs)) {
+      for (const log of matchingRes.auditLogs.slice().reverse()) {
+        const ch = (log.changes || []).find(c => c.field === "checkinDate" || c.field === "dates");
+        if (ch) {
+          if (ch.field === "checkinDate" && ch.oldValue) {
+            previousCheckin = ch.oldValue;
+            break;
+          } else if (ch.field === "dates" && ch.oldValue) {
+            const parts = ch.oldValue.split(" a ");
+            if (parts[0]) { previousCheckin = parts[0].trim(); break; }
+          }
+        }
+      }
+    }
+
+    if (previousCheckin && previousCheckin !== matchingRes.checkinDate) {
+      return `Check-in alterado do dia ${formatDateBr(previousCheckin)} para ${formatDateBr(matchingRes.checkinDate)} (café estava pedido para ${formatDateBr(order.date)}, antes da nova entrada)`;
+    } else {
+      return `Check-in alterado/postergado para ${formatDateBr(matchingRes.checkinDate)} (café estava agendado para ${formatDateBr(order.date)}, antes da entrada do hóspede)`;
+    }
+  }
+
+  // 4. Check-out antecipado / Diária removida (data do café é posterior ao check-out)
+  if (order.date > matchingRes.checkoutDate) {
+    let previousCheckout = order.originalCheckout || matchingRes.previousCheckoutDate || null;
+
+    if (!previousCheckout && Array.isArray(matchingRes.modificationHistory)) {
+      const mod = matchingRes.modificationHistory.slice().reverse().find(m => m.oldCheckout && m.newCheckout && m.oldCheckout !== m.newCheckout);
+      if (mod) previousCheckout = mod.oldCheckout;
+    }
+
+    if (!previousCheckout && Array.isArray(matchingRes.auditLogs)) {
+      for (const log of matchingRes.auditLogs.slice().reverse()) {
+        const ch = (log.changes || []).find(c => c.field === "checkoutDate" || c.field === "dates");
+        if (ch) {
+          if (ch.field === "checkoutDate" && ch.oldValue) {
+            previousCheckout = ch.oldValue;
+            break;
+          } else if (ch.field === "dates" && ch.oldValue) {
+            const parts = ch.oldValue.split(" a ");
+            if (parts[1]) { previousCheckout = parts[1].trim(); break; }
+          }
+        }
+      }
+    }
+
+    if (previousCheckout && previousCheckout !== matchingRes.checkoutDate) {
+      return `Diária removida / Check-out antecipado para ${formatDateBr(matchingRes.checkoutDate)} (estava previsto até ${formatDateBr(previousCheckout)})`;
+    } else {
+      return `Estadia reduzida / Check-out antecipado para ${formatDateBr(matchingRes.checkoutDate)} (café era para ${formatDateBr(order.date)}, após a saída)`;
+    }
+  }
+
+  // 5. Café da manhã desmarcado na reserva
+  const hasBf = Boolean(
+    matchingRes.includeBreakfast !== undefined ? matchingRes.includeBreakfast : (
+      matchingRes.hasBreakfast || 
+      matchingRes.ratePlan === "with_breakfast" ||
+      matchingRes.notes?.toLowerCase().includes("café") || 
+      matchingRes.notes?.toLowerCase().includes("cafe")
+    )
+  );
+
+  if (!hasBf) {
+    return "Café da manhã desmarcado / removido da reserva no calendário";
+  }
+
+  return order.cancelReason || "Pedido cancelado no calendário";
+}
+
 // GET /api/breakfast/reservation-context?res=CODE
 app.get("/api/breakfast/reservation-context", (req, res) => {
   initBreakfastData();
@@ -10427,11 +10676,11 @@ app.get("/api/breakfast/reservation-context", (req, res) => {
 
     if (isCancelled) {
       status = "cancelled";
-      cancelReason = "Reserva cancelada no calendário";
+      cancelReason = computeBreakfastCancellationReason({ date: dateStr }, r, todayStr, nowBrl, db);
     } else if (existing) {
       if (existing.status === "cancelled") {
         status = "cancelled";
-        cancelReason = existing.cancelReason || "Pedido cancelado";
+        cancelReason = existing.cancelReason || computeBreakfastCancellationReason(existing, r, todayStr, nowBrl, db);
       } else {
         status = "scheduled";
       }
@@ -10481,6 +10730,9 @@ app.get("/api/breakfast/orders", (req, res) => {
   const date = req.query.date || getTodayStr();
   const allOrders = db.breakfastOrders || [];
 
+  const nowBrl = getBrasiliaNow();
+  const todayStr = nowBrl.date;
+
   // Reconciliação em tempo real com o calendário PMS
   allOrders.forEach(order => {
     if (!order.status) order.status = "pending";
@@ -10492,7 +10744,7 @@ app.get("/api/breakfast/orders", (req, res) => {
       );
       if (!matchingRes) {
         order.status = "cancelled";
-        order.cancelReason = "Reserva não consta no calendário";
+        order.cancelReason = "Reserva não consta no calendário do hotel (quarto alterado ou reserva excluída)";
       }
     } else if (order.roomNumber) {
       matchingRes = (db.reservations || []).find(r => 
@@ -10502,32 +10754,40 @@ app.get("/api/breakfast/orders", (req, res) => {
     }
 
     if (matchingRes) {
-      if (matchingRes.status === "cancelada" || matchingRes.status === "cancelado") {
+      const isResCancelled = matchingRes.status === "cancelada" || matchingRes.status === "cancelado";
+      const isBeforeCheckin = order.date < matchingRes.checkinDate;
+      const isAfterCheckout = order.date > matchingRes.checkoutDate;
+      const hasBf = Boolean(
+        matchingRes.includeBreakfast !== undefined ? matchingRes.includeBreakfast : (
+          matchingRes.hasBreakfast || 
+          matchingRes.ratePlan === "with_breakfast" ||
+          matchingRes.notes?.toLowerCase().includes("café") || 
+          matchingRes.notes?.toLowerCase().includes("cafe")
+        )
+      );
+
+      // Checa se houve early check-out no mesmo dia
+      const isEarlyCheckoutToday = (order.date === todayStr) && (
+        matchingRes.status === "completed" || 
+        Boolean(matchingRes.actualCheckoutAt) || 
+        Boolean(matchingRes.actualCheckoutTime)
+      );
+
+      if (isResCancelled || isBeforeCheckin || isAfterCheckout || !hasBf || isEarlyCheckoutToday) {
         order.status = "cancelled";
-        order.cancelReason = "Reserva cancelada no calendário";
-      } else if (order.date > matchingRes.checkoutDate) {
-        order.status = "cancelled";
-        order.cancelReason = `Hóspede antecipou o check-out (novo check-out: ${matchingRes.checkoutDate})`;
-      } else if (order.date < matchingRes.checkinDate) {
-        order.status = "cancelled";
-        order.cancelReason = `Data anterior ao check-in (${matchingRes.checkinDate})`;
-      } else {
-        const hasBf = Boolean(
-          matchingRes.includeBreakfast !== undefined ? matchingRes.includeBreakfast : (
-            matchingRes.hasBreakfast || 
-            matchingRes.ratePlan === "with_breakfast" ||
-            matchingRes.notes?.toLowerCase().includes("café") || 
-            matchingRes.notes?.toLowerCase().includes("cafe")
-          )
-        );
-        if (!hasBf) {
-          order.status = "cancelled";
-          order.cancelReason = "Café da manhã desmarcado na reserva";
-        } else if (order.status === "cancelled" && order.cancelReason?.includes("antecipou")) {
-          // Reativa caso o pedido seja no dia do check-out ou data válida dentro da estadia
-          order.status = "pending";
-          order.cancelReason = null;
-        }
+        order.cancelReason = computeBreakfastCancellationReason(order, matchingRes, todayStr, nowBrl, db);
+      } else if (order.status === "cancelled" && (
+        order.cancelReason?.includes("Check-in") || 
+        order.cancelReason?.includes("check-out") || 
+        order.cancelReason?.includes("antecipou") || 
+        order.cancelReason?.includes("anterior") ||
+        order.cancelReason?.includes("desmarcado") ||
+        order.cancelReason?.includes("Diária removida") ||
+        order.cancelReason?.includes("Estadia reduzida")
+      )) {
+        // Reativa caso a reserva tenha sido estendida de volta para cobrir esta data com café
+        order.status = "pending";
+        order.cancelReason = null;
       }
     }
   });
@@ -11285,6 +11545,8 @@ app.post("/api/breakfast/orders", (req, res) => {
       existing.cancelReason = null;
       existing.reservationCode = activeRes?.code || reservationCode || existing.reservationCode || null;
       existing.reservationId = activeRes?.id || existing.reservationId || null;
+      if (activeRes?.checkinDate) existing.originalCheckin = activeRes.checkinDate;
+      if (activeRes?.checkoutDate) existing.originalCheckout = activeRes.checkoutDate;
       existing.updatedAt = new Date().toISOString();
       savedOrders.push(existing);
     } else {
@@ -11304,6 +11566,8 @@ app.post("/api/breakfast/orders", (req, res) => {
         phone: phone ? phone.trim() : "",
         reservationCode: activeRes?.code || reservationCode || null,
         reservationId: activeRes?.id || null,
+        originalCheckin: activeRes?.checkinDate || null,
+        originalCheckout: activeRes?.checkoutDate || null,
         createdAt: new Date().toISOString()
       };
       db.breakfastOrders.unshift(newOrder);
@@ -11387,6 +11651,11 @@ app.patch("/api/breakfast/orders/:id/status", (req, res) => {
   if (!order) return res.status(404).json({ error: "Pedido não encontrado" });
 
   if (req.body.status) order.status = req.body.status;
+  if (req.body.cancelReason !== undefined) {
+    order.cancelReason = req.body.cancelReason;
+  } else if (req.body.status === "pending" || req.body.status === "ready" || req.body.status === "delivered") {
+    order.cancelReason = null;
+  }
   order.updatedAt = new Date().toISOString();
   saveDatabase();
 
