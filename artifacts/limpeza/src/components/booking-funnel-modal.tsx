@@ -128,6 +128,30 @@ export function BookingFunnelModal({
   const [pixData, setPixData] = useState<any | null>(null)
   const [mpInitPoint, setMpInitPoint] = useState<string | null>(null)
   const [pixCopied, setPixCopied] = useState(false)
+  const [pixKeyCopied, setPixKeyCopied] = useState(false)
+  const [isPixPaid, setIsPixPaid] = useState(false)
+
+  // Polling para checar status do pagamento PIX automaticamente na etapa 5
+  useEffect(() => {
+    if (currentStep !== 5 || paymentMethod !== "pix" || !confirmedReservation || isPixPaid) return;
+    const resCode = confirmedReservation.code || confirmedReservation.reservationCode;
+    if (!resCode) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/pms/reservations/${encodeURIComponent(resCode)}/payment-status`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.paid || data.paymentStatus === "pago_total" || data.paymentStatus === "pago") {
+            setIsPixPaid(true);
+            clearInterval(interval);
+          }
+        }
+      } catch {}
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [currentStep, paymentMethod, confirmedReservation, isPixPaid]);
 
   // Exit-Intent Modal
   const [showExitIntent, setShowExitIntent] = useState(false)
@@ -1360,40 +1384,86 @@ export function BookingFunnelModal({
             </div>
 
             {/* Se Pagamento foi PIX */}
-            {paymentMethod === "pix" && pixData?.pixCopiaECola && (
+            {paymentMethod === "pix" && (
               <div className="p-4 bg-emerald-50/60 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-2xl space-y-3">
-                <div className="flex items-center justify-center gap-1.5 text-xs font-bold text-emerald-900 dark:text-emerald-200">
-                  <QrCode className="w-4 h-4 text-emerald-600" />
-                  <span>Pagamento PIX Banco Inter (5% de Desconto Incluso)</span>
-                </div>
+                {isPixPaid ? (
+                  <div className="py-4 text-center space-y-2">
+                    <div className="w-10 h-10 bg-emerald-600 text-white rounded-full flex items-center justify-center mx-auto shadow-md">
+                      <Check className="w-6 h-6" />
+                    </div>
+                    <h4 className="text-sm font-black text-emerald-900 dark:text-emerald-100">
+                      ✓ Pagamento PIX Confirmado!
+                    </h4>
+                    <p className="text-xs text-emerald-700 dark:text-emerald-300">
+                      Recebemos o seu pagamento via Banco Inter. Sua reserva está 100% quitada e garantida!
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-center gap-1.5 text-xs font-bold text-emerald-900 dark:text-emerald-200">
+                      <QrCode className="w-4 h-4 text-emerald-600" />
+                      <span>Pagamento PIX Banco Inter (5% de Desconto Incluso)</span>
+                    </div>
 
-                <div className="bg-white p-3 rounded-xl inline-block shadow-inner mx-auto">
-                  <img
-                    src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(pixData.pixCopiaECola)}`}
-                    alt="QR Code PIX"
-                    className="w-36 h-36 mx-auto rounded-lg"
-                  />
-                </div>
+                    {pixData?.pixCopiaECola && (
+                      <>
+                        <div className="bg-white p-3 rounded-xl inline-block shadow-inner mx-auto">
+                          <img
+                            src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(pixData.pixCopiaECola)}`}
+                            alt="QR Code PIX"
+                            className="w-36 h-36 mx-auto rounded-lg"
+                          />
+                        </div>
 
-                <div className="flex gap-2">
-                  <Input
-                    readOnly
-                    value={pixData.pixCopiaECola}
-                    className="text-[11px] font-mono bg-white dark:bg-slate-900 h-9"
-                  />
-                  <Button
-                    size="sm"
-                    onClick={() => {
-                      navigator.clipboard.writeText(pixData.pixCopiaECola)
-                      setPixCopied(true)
-                      setTimeout(() => setPixCopied(false), 3000)
-                    }}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-9 px-3 rounded-xl shrink-0"
-                  >
-                    {pixCopied ? <Check className="w-3.5 h-3.5 mr-1" /> : <Copy className="w-3.5 h-3.5 mr-1" />}
-                    <span>{pixCopied ? "Copiado!" : "Copiar"}</span>
-                  </Button>
-                </div>
+                        <div className="space-y-1 text-left">
+                          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block text-center">
+                            Código PIX Copia e Cola (Aprovação Automática)
+                          </span>
+                          <div className="flex gap-2">
+                            <Input
+                              readOnly
+                              value={pixData.pixCopiaECola}
+                              className="text-[11px] font-mono bg-white dark:bg-slate-900 h-9"
+                            />
+                            <Button
+                              size="sm"
+                              onClick={() => {
+                                navigator.clipboard.writeText(pixData.pixCopiaECola)
+                                setPixCopied(true)
+                                setTimeout(() => setPixCopied(false), 3000)
+                              }}
+                              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-9 px-3 rounded-xl shrink-0"
+                            >
+                              {pixCopied ? <Check className="w-3.5 h-3.5 mr-1" /> : <Copy className="w-3.5 h-3.5 mr-1" />}
+                              <span>{pixCopied ? "Copiado!" : "Copiar"}</span>
+                            </Button>
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    {/* Chave Pix Direta CNPJ como alternativa */}
+                    <div className="pt-2 border-t border-emerald-200/80 dark:border-emerald-800/80 flex items-center justify-between text-xs bg-white/70 dark:bg-slate-900/60 p-2.5 rounded-xl">
+                      <div className="text-left">
+                        <span className="text-[10px] text-slate-500 font-semibold block">Chave PIX Oficial (CNPJ Banco Inter):</span>
+                        <span className="font-mono font-bold text-slate-800 dark:text-slate-100 text-xs">47.964.813/0001-65</span>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          navigator.clipboard.writeText("47964813000165")
+                          setPixKeyCopied(true)
+                          setTimeout(() => setPixKeyCopied(false), 3000)
+                        }}
+                        className="h-8 text-xs font-semibold border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-xl px-3 shrink-0"
+                      >
+                        {pixKeyCopied ? <Check className="w-3.5 h-3.5 mr-1 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 mr-1" />}
+                        <span>{pixKeyCopied ? "Copiado!" : "Copiar CNPJ"}</span>
+                      </Button>
+                    </div>
+                  </>
+                )}
               </div>
             )}
 

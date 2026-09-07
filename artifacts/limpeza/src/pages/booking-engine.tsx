@@ -135,6 +135,7 @@ export default function BookingEngine() {
   const [isProcessing, setIsProcessing] = useState(false)
   const [confirmedReservation, setConfirmedReservation] = useState<any | null>(null)
   const [pixCopied, setPixCopied] = useState(false)
+  const [pixKeyCopied, setPixKeyCopied] = useState(false)
   const [settings, setSettings] = useState<any>(null)
   const [siteConfig, setSiteConfig] = useState<any>(null)
   const [faqOpen, setFaqOpen] = useState<number | null>(null)
@@ -149,6 +150,8 @@ export default function BookingEngine() {
     }
   })
   const [authModalOpen, setAuthModalOpen] = useState(false)
+  const [completeProfileModalOpen, setCompleteProfileModalOpen] = useState(false)
+  const [profileToComplete, setProfileToComplete] = useState<any | null>(null)
   const [showQuickAuthFloater, setShowQuickAuthFloater] = useState(false)
   const [authMode, setAuthMode] = useState<"login" | "register">("login")
   const [authEmail, setAuthEmail] = useState("")
@@ -240,7 +243,7 @@ export default function BookingEngine() {
   const [flats, setFlats] = useState<any[]>([])
   const [loadingFlats, setLoadingFlats] = useState(false)
 
-  const applyGuestData = (account: any) => {
+  const applyGuestData = (account: any, triggerCompletionCheck = false) => {
     if (!account) return
     setGuestAccount(account)
     if (account.name) setGuestName(account.name)
@@ -273,6 +276,12 @@ export default function BookingEngine() {
 
     // Cancela qualquer prompt de login que possa estar aberto
     cancelGoogleOneTap()
+
+    // Se o login acabou de ocorrer (ex: Google) e falta WhatsApp ou CPF:
+    if (triggerCompletionCheck && (!account.phone || !account.document || account.phone.replace(/\D/g, "").length < 10)) {
+      setProfileToComplete(account)
+      setCompleteProfileModalOpen(true)
+    }
   }
 
   const handleGuestLogin = async (e: React.FormEvent) => {
@@ -439,7 +448,7 @@ export default function BookingEngine() {
           })
           const data = await res.json()
           if (data.success && data.user) {
-            applyGuestData(data.user)
+            applyGuestData(data.user, true)
             cancelGoogleOneTap()
           }
         } catch {}
@@ -451,7 +460,7 @@ export default function BookingEngine() {
       // 1. Tenta restaurar sessão HttpOnly V2 ativa no servidor
       const sessionUser = await getCurrentSession()
       if (sessionUser) {
-        applyGuestData(sessionUser)
+        applyGuestData(sessionUser, false)
         cancelGoogleOneTap()
         return
       }
@@ -464,7 +473,7 @@ export default function BookingEngine() {
           if (res.ok) {
             const d = await res.json()
             if (d.guest) {
-              applyGuestData(d.guest)
+              applyGuestData(d.guest, false)
               cancelGoogleOneTap()
               return
             }
@@ -478,7 +487,7 @@ export default function BookingEngine() {
         try {
           const parsed = JSON.parse(rawProfile)
           if (parsed && (parsed.email || parsed.name)) {
-            applyGuestData(parsed)
+            applyGuestData(parsed, false)
             cancelGoogleOneTap()
             return
           }
@@ -487,7 +496,7 @@ export default function BookingEngine() {
 
       // 4. Se e somente se não há nenhuma conta logada nem perfil local:
       initGoogleOneTap((user) => {
-        applyGuestData(user)
+        applyGuestData(user, true)
       })
     }
 
@@ -1651,8 +1660,18 @@ export default function BookingEngine() {
         open={authModalOpen}
         onOpenChange={setAuthModalOpen}
         onSuccess={(user) => {
-          applyGuestData(user)
+          applyGuestData(user, true)
           setAuthModalOpen(false)
+        }}
+      />
+
+      {/* Modal de Conclusão / Compartilhamento de Dados Cadastrais */}
+      <CompleteProfileModal
+        open={completeProfileModalOpen}
+        onOpenChange={setCompleteProfileModalOpen}
+        user={profileToComplete || guestAccount}
+        onSuccess={(updated) => {
+          applyGuestData(updated, false)
         }}
       />
     </div>
