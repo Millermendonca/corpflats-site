@@ -10396,12 +10396,14 @@ app.get("/api/breakfast/reservation-context", (req, res) => {
     }
   }
 
-  // Fetch all orders matching this reservation
-  const reservationOrders = (db.breakfastOrders || []).filter(o => 
-    (o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) ||
-    (o.reservationId && o.reservationId === r.id) ||
-    (String(o.roomNumber) === String(r.flatNumber) && o.date >= r.checkinDate && o.date <= r.checkoutDate)
-  );
+  // Fetch all orders matching this reservation (isolando por código/ID para evitar vazamento entre hóspedes diferentes do mesmo quarto)
+  const reservationOrders = (db.breakfastOrders || []).filter(o => {
+    if (o.reservationCode || o.reservationId) {
+      return (o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) ||
+             (o.reservationId && o.reservationId === r.id);
+    }
+    return (String(o.roomNumber) === String(r.flatNumber) && o.date >= r.checkinDate && o.date <= r.checkoutDate);
+  });
 
   // Map each breakfast date with its live status and cutoff
   const daysInfo = bDates.map(dateStr => {
@@ -11255,7 +11257,7 @@ app.post("/api/breakfast/orders", (req, res) => {
     const existingIndex = (db.breakfastOrders || []).findIndex(o => 
       o.date === tDate && (
         (activeRes && (o.reservationCode === activeRes.code || o.reservationId === activeRes.id)) ||
-        (String(o.roomNumber) === String(roomNumber))
+        (!activeRes && !o.reservationCode && !o.reservationId && (String(o.roomNumber) === String(roomNumber)))
       )
     );
 

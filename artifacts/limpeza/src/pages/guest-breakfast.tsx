@@ -791,26 +791,23 @@ export default function GuestBreakfast() {
                         <span className={`font-black text-xs ${isSelected ? 'text-sky-950 font-black' : 'text-slate-800'}`}>
                           {formatDateDisplay(d.date)}
                         </span>
-                        {isScheduled && (
+                        {isScheduled ? (
                           <Badge className="bg-emerald-100 text-emerald-800 border border-emerald-200 text-[9px] font-black px-1.5 py-0.5">
                             ✓ Agendado ({d.existingOrder?.deliveryTime || '08:00'})
                           </Badge>
-                        )}
-                        {!isScheduled && d.isOpen && (
-                          <Badge className="bg-amber-100 text-amber-800 border border-amber-200 text-[9px] font-black px-1.5 py-0.5">
-                            ⏳ Pendente
-                          </Badge>
-                        )}
-                        {isClosed && (
-                          <Badge className="bg-slate-200 text-slate-600 text-[9px] font-bold px-1.5 py-0.5">
-                            🔒 Encerrado
-                          </Badge>
-                        )}
-                        {isCancelled && (
+                        ) : isCancelled ? (
                           <Badge variant="destructive" className="text-[9px] font-bold px-1.5 py-0.5">
                             🚫 Cancelado
                           </Badge>
-                        )}
+                        ) : isClosed ? (
+                          <Badge className="bg-slate-200 text-slate-600 text-[9px] font-bold px-1.5 py-0.5">
+                            🔒 Encerrado
+                          </Badge>
+                        ) : d.isOpen ? (
+                          <Badge className="bg-amber-100 text-amber-800 border border-amber-200 text-[9px] font-black px-1.5 py-0.5">
+                            ⏳ Pendente
+                          </Badge>
+                        ) : null}
                       </div>
 
                       <span className="text-[10px] text-slate-500 font-medium">
