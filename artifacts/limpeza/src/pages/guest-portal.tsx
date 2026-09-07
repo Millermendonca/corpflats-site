@@ -285,6 +285,45 @@ export default function GuestPortal() {
     }
   }
 
+  const reservation = data?.reservation
+  const isPaid = Boolean(reservation?.paymentStatus === "pago_total" || reservation?.paymentStatus === "pago" || (Number(reservation?.paidAmount) >= Number(reservation?.totalAmount) && Number(reservation?.totalAmount) > 0))
+
+  // Polling automático de status de pagamento a cada 6 segundos quando pendente
+  useEffect(() => {
+    if (!reservation?.code || isPaid) return
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/pms/reservations/${encodeURIComponent(reservation.code)}/payment-status`)
+        if (res.ok) {
+          const json = await res.json()
+          if (json.paid) {
+            setPaymentSuccessNotice(true)
+            setData((prev: any) => prev ? ({
+              ...prev,
+              reservation: {
+                ...prev.reservation,
+                paymentStatus: "pago_total",
+                paidAmount: json.paidAmount,
+                paidAt: json.paidAt || new Date().toISOString(),
+                pixTxId: json.pixTxId || prev.reservation.pixTxId,
+                mpPaymentId: json.mpPaymentId || prev.reservation.mpPaymentId
+              }
+            }) : null)
+          }
+        }
+      } catch {}
+    }, 6000)
+    return () => clearInterval(interval)
+  }, [reservation?.code, isPaid])
+
+  useEffect(() => {
+    if (reservation?.paymentMethod === "cartao_credito" || reservation?.paymentMethod === "card") {
+      setPaymentMethodTab("card")
+    } else {
+      setPaymentMethodTab("pix")
+    }
+  }, [reservation?.paymentMethod])
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50/70 text-slate-800 flex flex-col items-center justify-center p-4">
@@ -410,7 +449,7 @@ export default function GuestPortal() {
     )
   }
 
-  const { reservation, isFlatClean, canClaimFreeEarlyCheckin, breakfastOrder, preCheckinStatus, termsAndRules, adminWhatsApp } = data
+  const { isFlatClean, canClaimFreeEarlyCheckin, breakfastOrder, preCheckinStatus, termsAndRules, adminWhatsApp } = data
 
   const checkinFormatted = reservation.checkinDate ? format(parseISO(reservation.checkinDate), "dd 'de' MMMM 'de' yyyy", { locale: ptBR }) : ""
   const checkoutFormatted = reservation.checkoutDate ? format(parseISO(reservation.checkoutDate), "dd 'de' MMMM 'de' yyyy", { locale: ptBR }) : ""
@@ -445,7 +484,6 @@ export default function GuestPortal() {
     setTimeout(() => setCopiedSsid(false), 2500)
   }
 
-  const isPaid = reservation.paymentStatus === "pago_total" || reservation.paymentStatus === "pago" || (Number(reservation.paidAmount) >= Number(reservation.totalAmount) && Number(reservation.totalAmount) > 0)
   const paidAmount = isPaid ? (reservation.paidAmount || reservation.totalAmount || 0) : (Number(reservation.paidAmount) || 0)
   const pendingAmount = Math.max(0, (reservation.totalAmount || 0) - paidAmount)
 
@@ -509,42 +547,6 @@ export default function GuestPortal() {
       setCheckingPayment(false)
     }
   }
-
-  // Polling automático de status de pagamento a cada 6 segundos quando pendente
-  useEffect(() => {
-    if (!reservation?.code || isPaid) return
-    const interval = setInterval(async () => {
-      try {
-        const res = await fetch(`/api/pms/reservations/${encodeURIComponent(reservation.code)}/payment-status`)
-        if (res.ok) {
-          const json = await res.json()
-          if (json.paid) {
-            setPaymentSuccessNotice(true)
-            setData((prev: any) => prev ? ({
-              ...prev,
-              reservation: {
-                ...prev.reservation,
-                paymentStatus: "pago_total",
-                paidAmount: json.paidAmount,
-                paidAt: json.paidAt || new Date().toISOString(),
-                pixTxId: json.pixTxId || prev.reservation.pixTxId,
-                mpPaymentId: json.mpPaymentId || prev.reservation.mpPaymentId
-              }
-            }) : null)
-          }
-        }
-      } catch {}
-    }, 6000)
-    return () => clearInterval(interval)
-  }, [reservation?.code, isPaid])
-
-  useEffect(() => {
-    if (reservation?.paymentMethod === "cartao_credito" || reservation?.paymentMethod === "card") {
-      setPaymentMethodTab("card")
-    } else {
-      setPaymentMethodTab("pix")
-    }
-  }, [reservation?.paymentMethod])
 
   return (
     <div className="min-h-screen bg-slate-50/70 text-slate-900 flex flex-col font-sans selection:bg-sky-500 selection:text-white pb-20 w-full max-w-full overflow-x-hidden">
