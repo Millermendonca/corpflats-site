@@ -3404,7 +3404,6 @@ export default function PmsCalendar() {
                               }
                             }}
                             className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-emerald-300 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 flex items-center gap-1 shadow-2xs cursor-pointer active:scale-95"
-                            title={`Passe o mouse para ler a mensagem ou clique para disparar "${qm.title}"`}
                           >
                             {isSending ? (
                               <RefreshCw className="w-3 h-3 animate-spin text-emerald-600" />

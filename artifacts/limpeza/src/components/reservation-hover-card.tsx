@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react"
+import React, { useState, useEffect, useRef } from "react"
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -68,6 +68,41 @@ export function ReservationHoverCard({
   const { activeQuickMessages, dispatchQuickMessage } = useQuickMessages()
   const [hoveredQuickMsg, setHoveredQuickMsg] = useState<WhatsAppQuickMessage | null>(null)
   const [sendingMsgId, setSendingMsgId] = useState<string | null>(null)
+  const cardContentRef = useRef<HTMLDivElement>(null)
+  const [previewPlacement, setPreviewPlacement] = useState<"top" | "bottom" | "right" | "left">("right")
+
+  const handleQuickMsgHover = (qm: WhatsAppQuickMessage | null) => {
+    if (!qm) {
+      setHoveredQuickMsg(null)
+      return
+    }
+
+    if (cardContentRef.current) {
+      const rect = cardContentRef.current.getBoundingClientRect()
+      const spaceAbove = rect.top
+      const spaceBelow = window.innerHeight - rect.bottom
+      const spaceRight = window.innerWidth - rect.right
+      const spaceLeft = rect.left
+
+      // Prioriza a direita (ao lado do card, que no calendário horizontal sempre tem espaço de sobra)
+      // e garante que NUNCA seja cortado no topo da tela!
+      if (spaceRight >= 310) {
+        setPreviewPlacement("right")
+      } else if (spaceLeft >= 310) {
+        setPreviewPlacement("left")
+      } else if (spaceAbove >= 240) {
+        setPreviewPlacement("top")
+      } else if (spaceBelow >= 200) {
+        setPreviewPlacement("bottom")
+      } else {
+        setPreviewPlacement("right")
+      }
+    } else {
+      setPreviewPlacement("right")
+    }
+
+    setHoveredQuickMsg(qm)
+  }
 
   const handleTriggerQuickMessage = async (e: React.MouseEvent, qm: WhatsAppQuickMessage) => {
     e.stopPropagation()
@@ -161,6 +196,7 @@ export function ReservationHoverCard({
       </HoverCardTrigger>
 
       <HoverCardContent 
+        ref={cardContentRef}
         side="top"
         align="center"
         sideOffset={8}
@@ -174,7 +210,15 @@ export function ReservationHoverCard({
         {/* ── Janelinha Flutuante de Prévia da Mensagem (Ao Repousar o Mouse) ──── */}
         {hoveredQuickMsg && (
           <div 
-            className="absolute left-1 right-1 bottom-[calc(100%+8px)] z-50 p-3 rounded-2xl bg-slate-950/98 dark:bg-black/98 text-white border border-slate-700/80 shadow-2xl backdrop-blur-md animate-in fade-in-0 zoom-in-95 pointer-events-none select-none text-left"
+            className={`absolute z-50 p-3 rounded-2xl bg-slate-950/98 dark:bg-black/98 text-white border border-slate-700/80 shadow-2xl backdrop-blur-md animate-in fade-in-0 zoom-in-95 pointer-events-none select-none text-left ${
+              previewPlacement === "right"
+                ? "left-[calc(100%+10px)] top-0 w-[310px] max-w-[calc(100vw-360px)]"
+                : previewPlacement === "left"
+                ? "right-[calc(100%+10px)] top-0 w-[310px] max-w-[calc(100vw-360px)]"
+                : previewPlacement === "bottom"
+                ? "left-1 right-1 top-[calc(100%+8px)]"
+                : "left-1 right-1 bottom-[calc(100%+8px)]"
+            }`}
           >
             <div className="flex items-center justify-between pb-1.5 border-b border-slate-800 mb-2">
               <div className="flex items-center gap-1.5 font-bold text-xs text-emerald-400">
@@ -186,7 +230,7 @@ export function ReservationHoverCard({
               </span>
             </div>
 
-            <div className="text-[11px] leading-relaxed text-slate-200 font-normal whitespace-pre-wrap max-h-48 overflow-y-auto pr-1">
+            <div className="text-[11px] leading-relaxed text-slate-200 font-normal whitespace-pre-wrap max-h-52 overflow-y-auto pr-1">
               {renderQuickMessage(hoveredQuickMsg.message, resItem, originUrl)}
             </div>
 
@@ -208,7 +252,18 @@ export function ReservationHoverCard({
             </div>
 
             {/* Seta indicativa para o card */}
-            <div className="absolute top-full left-8 w-2.5 h-2.5 -mt-1 bg-slate-950 dark:bg-black border-r border-b border-slate-700 rotate-45" />
+            {previewPlacement === "right" && (
+              <div className="absolute top-8 -left-1.5 w-3 h-3 bg-slate-950 dark:bg-black border-l border-b border-slate-700 rotate-45" />
+            )}
+            {previewPlacement === "left" && (
+              <div className="absolute top-8 -right-1.5 w-3 h-3 bg-slate-950 dark:bg-black border-r border-t border-slate-700 rotate-45" />
+            )}
+            {previewPlacement === "top" && (
+              <div className="absolute top-full left-8 w-2.5 h-2.5 -mt-1 bg-slate-950 dark:bg-black border-r border-b border-slate-700 rotate-45" />
+            )}
+            {previewPlacement === "bottom" && (
+              <div className="absolute bottom-full left-8 w-2.5 h-2.5 -mb-1 bg-slate-950 dark:bg-black border-l border-t border-slate-700 rotate-45" />
+            )}
           </div>
         )}
 
@@ -364,10 +419,9 @@ export function ReservationHoverCard({
                     type="button"
                     disabled={isSending}
                     onClick={(e) => handleTriggerQuickMessage(e, qm)}
-                    onMouseEnter={() => setHoveredQuickMsg(qm)}
-                    onMouseLeave={() => setHoveredQuickMsg(null)}
+                    onMouseEnter={() => handleQuickMsgHover(qm)}
+                    onMouseLeave={() => handleQuickMsgHover(null)}
                     className="h-6 px-2 rounded-lg text-[10.5px] font-semibold flex items-center gap-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-slate-700 dark:text-slate-200 active:scale-95 transition-all shadow-2xs cursor-pointer group/btn"
-                    title={`Passe o mouse para ler a mensagem ou clique para disparar "${qm.title}"`}
                   >
                     {isSending ? (
                       <RefreshCw className="w-3 h-3 animate-spin text-emerald-600" />
