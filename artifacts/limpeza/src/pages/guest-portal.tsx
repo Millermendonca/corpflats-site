@@ -494,8 +494,8 @@ export default function GuestPortal() {
 
   const totalAmount = Number(reservation.totalAmount) || 0
   const rawPaidAmount = Number(reservation.paidAmount) || 0
-  const hasAmount = totalAmount > 0 || rawPaidAmount > 0
-  const paidAmount = isPaid ? (rawPaidAmount > 0 ? rawPaidAmount : totalAmount) : rawPaidAmount
+  const hasAmount = totalAmount > 0 || (!isOta && rawPaidAmount > 0)
+  const paidAmount = isPaid ? (totalAmount > 0 ? totalAmount : (isOta ? 0 : rawPaidAmount)) : rawPaidAmount
   const pendingAmount = Math.max(0, totalAmount - paidAmount)
 
   const handleCopyPix = () => {
@@ -1091,9 +1091,22 @@ export default function GuestPortal() {
             {data.isCheckinToday && isFlatClean && (
               <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-start gap-2.5 text-xs text-emerald-800">
                 <Sparkles className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                <div>
+                <div className="space-y-1">
                   <span className="font-bold block text-emerald-950">Check-in Antecipado Liberado! 🎉</span>
-                  <span>Seu apartamento já foi limpo e inspecionado. Você já pode se dirigir à portaria e entrar agora mesmo.</span>
+                  <p className="leading-relaxed">
+                    Seu apartamento já foi limpo e inspecionado. Você ganhou este benefício de <strong>Early Check-in de cortesia</strong>! Você já pode se dirigir à portaria e entrar agora mesmo.
+                  </p>
+                  <p className="text-[11px] text-emerald-700/90 pt-1 border-t border-emerald-200/70 font-medium leading-relaxed">
+                    ✨ Para receber novamente (mediante disponibilidade), reserve pelo site em sua próxima reserva:{" "}
+                    <a
+                      href="/reservar"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline font-bold text-emerald-900 hover:text-emerald-950 transition-colors"
+                    >
+                      corpflats.com.br
+                    </a>
+                  </p>
                 </div>
               </div>
             )}
@@ -1537,7 +1550,7 @@ export default function GuestPortal() {
               <span className="text-slate-400 text-[11px] block font-medium">{hasAmount ? "Valor Total" : "Status"}</span>
               <span className="text-base font-black text-emerald-600">
                 {hasAmount 
-                  ? `R$ ${paidAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}` 
+                  ? `R$ ${totalAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}` 
                   : (isPaid ? "Pago ✓" : "Pendente")}
               </span>
             </div>

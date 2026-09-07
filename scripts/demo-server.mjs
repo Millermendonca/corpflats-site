@@ -5959,6 +5959,14 @@ app.get("/api/pms/guest-portal/:code", (req, res) => {
     (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0)
   );
 
+  const resolvedTotal = Number(r.totalAmount) || 0;
+  const resolvedPaid = isPaid ? (resolvedTotal > 0 ? resolvedTotal : (isOta ? 0 : (Number(r.paidAmount) || 0))) : (Number(r.paidAmount) || 0);
+
+  if (isPaid && resolvedTotal > 0 && r.paidAmount !== resolvedTotal) {
+    r.paidAmount = resolvedTotal;
+    saveDatabase();
+  }
+
   // Se pendente com valor total cadastrado e sem chave PIX ainda, gera cobrança estática PIX com a chave oficial CorpFlats
   if (!isPaid && Number(r.totalAmount) > 0 && !r.pixCopiaECola) {
     try {
@@ -5987,8 +5995,8 @@ app.get("/api/pms/guest-portal/:code", (req, res) => {
       guestCount: r.guestCount || r.adults || 1,
       guests: r.guests || [],
       channel: r.channel || "site",
-      totalAmount: r.totalAmount || 0,
-      paidAmount: r.paidAmount || 0,
+      totalAmount: resolvedTotal,
+      paidAmount: resolvedPaid,
       isPaid,
       paymentStatus: isPaid ? "pago_total" : (r.paymentStatus || "pendente"),
       paymentMethod: r.paymentMethod || (r.pixTxId ? "pix" : (r.mpPaymentId ? "cartao_credito" : "pix")),
