@@ -41,13 +41,10 @@ export function AuthModal({ open, onOpenChange, onSuccess }: AuthModalProps) {
   const [forgotEmail, setForgotEmail] = useState("")
   const [forgotSuccess, setForgotSuccess] = useState(false)
 
-  // Reseta mensagens de erro e garante que nenhum popup invasivo permaneça ativo
+  // Reseta mensagens de erro quando o modal abre
   useEffect(() => {
     if (open) {
       setErrorMsg("")
-    }
-    return () => {
-      cancelGoogleOneTap()
     }
   }, [open])
 

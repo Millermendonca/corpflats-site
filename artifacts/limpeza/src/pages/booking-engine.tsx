@@ -20,7 +20,7 @@ import { AddToCalendar } from "@/components/add-to-calendar"
 import { AuthModal } from "@/components/auth-modal"
 import { BookingFunnelModal } from "@/components/booking-funnel-modal"
 import { calculateCancellationPolicy } from "@/lib/cancellation-helper"
-import { initGoogleOneTap, cancelGoogleOneTap, loginWithGooglePopup, UserProfile } from "@/lib/auth-client"
+import { initGoogleOneTap, cancelGoogleOneTap, clearGoogleCooldown, loginWithGooglePopup, UserProfile } from "@/lib/auth-client"
 
 export interface RoomConfig {
   id: number
@@ -361,7 +361,14 @@ export default function BookingEngine() {
     setGuestDocument("")
     localStorage.removeItem("corpflats_guest_email")
     localStorage.removeItem("corpflats_guest_token")
+    localStorage.removeItem("corpflats_guest_profile")
     setGuestProfileModalOpen(false)
+    clearGoogleCooldown()
+    setTimeout(() => {
+      initGoogleOneTap((user) => {
+        applyGuestData(user)
+      })
+    }, 250)
   }
 
   useEffect(() => {
@@ -407,10 +414,6 @@ export default function BookingEngine() {
     initGoogleOneTap((user) => {
       applyGuestData(user)
     })
-
-    return () => {
-      cancelGoogleOneTap()
-    }
   }, [])
 
   useEffect(() => {
@@ -839,18 +842,33 @@ export default function BookingEngine() {
             <a href="#faq" className="hover:text-sky-600 transition-colors">Dúvidas</a>
           </div>
 
-          {/* Ações: Entrar discreto + Reservar destacado */}
+          {/* Ações: Entrar/Conta + Reservar destacado */}
           <div className="flex items-center gap-2 shrink-0">
             {guestAccount || guestName ? (
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => setLocation("/minha-conta")}
-                className="h-8 px-2.5 text-slate-700 font-medium text-xs hover:bg-slate-100 rounded-lg flex items-center gap-1.5 shrink-0"
-              >
-                <UserCheck className="w-3.5 h-3.5 text-emerald-600" />
-                <span className="max-w-[90px] truncate">{guestAccount?.name?.split(" ")[0] || guestName?.split(" ")[0] || "Conta"}</span>
-              </Button>
+              <div className="flex items-center gap-1 shrink-0">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setLocation("/minha-conta")}
+                  className="h-8 px-2 sm:px-2.5 text-slate-700 font-medium text-xs hover:bg-slate-100 rounded-lg flex items-center gap-1.5"
+                  title="Acessar Minha Conta"
+                >
+                  <UserCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span className="max-w-[75px] sm:max-w-[110px] truncate">
+                    {guestAccount?.name?.split(" ")[0] || guestName?.split(" ")[0] || "Conta"}
+                  </span>
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleLogout}
+                  className="h-8 w-8 p-0 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg"
+                  title="Sair da conta"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </Button>
+              </div>
             ) : (
               <Button
                 type="button"
@@ -875,18 +893,6 @@ export default function BookingEngine() {
           </div>
         </div>
       </nav>
-
-      {/* ── Google One Tap Oficial (Nativo do Google) ── */}
-      <div
-        id="g_id_onload"
-        data-client_id={siteConfig?.authConfig?.googleClientId || "231444843725-mndgdjij2nj29nd010oniqc8vu8vgqp2.apps.googleusercontent.com"}
-        data-callback="handleGoogleOneTapGlobal"
-        data-auto_prompt="true"
-        data-auto_select="false"
-        data-cancel_on_tap_outside="false"
-        data-itp_support="true"
-        data-use_fedcm_for_prompt="true"
-      />
 
       {/* ── Hero Section (Protagonista Absoluta: A Imagem e a Experiência) ─ */}
       <header className="relative h-[360px] sm:h-[440px] lg:h-[480px] flex items-end justify-center px-4 sm:px-8 pb-12 sm:pb-16 text-center overflow-hidden">

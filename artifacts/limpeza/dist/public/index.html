@@ -28,8 +28,20 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <script type="module" crossorigin src="/assets/index-Nhumj9tm.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-BnzSgrN9.css">
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script>
+      try {
+        var h = window.location.hostname;
+        var domains = ['', h, '.' + h, 'onrender.com', '.onrender.com'];
+        domains.forEach(function(d) {
+          ['/', '/reservar', ''].forEach(function(p) {
+            document.cookie = 'g_state=;expires=Thu, 01 Jan 1970 00:00:01 GMT;Max-Age=0;SameSite=Lax;' + (p ? 'path=' + p + ';' : '') + (d ? 'domain=' + d + ';' : '');
+          });
+        });
+      } catch(e) {}
+    </script>
+    <script type="module" crossorigin src="/assets/index-CO1Nzsta.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-5vLPpfyD.css">
   </head>
   <body>
     <div id="root"></div>

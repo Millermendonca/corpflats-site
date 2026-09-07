@@ -415,6 +415,35 @@ export function cancelGoogleOneTap(): void {
 }
 
 /**
+ * 12.0 Limpeza de Cooldown do Google One Tap
+ */
+export function clearGoogleCooldown(): void {
+  if (typeof window === "undefined") return
+  try {
+    const host = window.location.hostname
+    const parts = host.split(".")
+    const domains = [
+      "",
+      host,
+      "." + host,
+      parts.slice(-2).join("."),
+      "." + parts.slice(-2).join("."),
+      "onrender.com",
+      ".onrender.com"
+    ]
+    const paths = ["/", "/reservar", ""]
+    domains.forEach(d => {
+      paths.forEach(p => {
+        let cookieStr = "g_state=;expires=Thu, 01 Jan 1970 00:00:01 GMT;Max-Age=0;SameSite=Lax;"
+        if (p) cookieStr += `path=${p};`
+        if (d) cookieStr += `domain=${d};`
+        document.cookie = cookieStr
+      })
+    })
+  } catch {}
+}
+
+/**
  * 12. Inicializador do Google One Tap e Botão Google Sign-In
  */
 export async function initGoogleOneTap(
@@ -424,10 +453,7 @@ export async function initGoogleOneTap(
   if (typeof window === "undefined") return
 
   try {
-    // Limpa o cookie de cooldown do Google para forçar o One Tap a sempre tentar ser exibido
-    try {
-      document.cookie = "g_state=;path=/;expires=Thu, 01 Jan 1970 00:00:01 GMT"
-    } catch {}
+    clearGoogleCooldown()
 
     // Busca client ID configurado pelo administrador ou no env
     let clientId = (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || ""
@@ -461,7 +487,7 @@ export async function initGoogleOneTap(
           auto_select: false,
           cancel_on_tap_outside: false,
           itp_support: true,
-          use_fedcm_for_prompt: true
+          use_fedcm_for_prompt: false
         })
 
         // Renderiza o botão oficial caso um elemento container tenha sido fornecido
@@ -483,7 +509,17 @@ export async function initGoogleOneTap(
         // Dispara o prompt do popup flutuante do Google One Tap
         google.accounts.id.prompt((notification: any) => {
           if (notification.isNotDisplayed()) {
-            console.log("Google One Tap não exibido (razão):", notification.getNotDisplayedReason?.())
+            const reason = notification.getNotDisplayedReason?.()
+            console.log("[Google One Tap] Não exibido (razão):", reason)
+            if (reason === "suppressed_by_user") {
+              clearGoogleCooldown()
+            }
+          } else if (notification.isSkippedMoment()) {
+            console.log("[Google One Tap] Momento pulado:", notification.getSkippedReason?.())
+          } else if (notification.isDismissedMoment()) {
+            console.log("[Google One Tap] Usuário fechou:", notification.getDismissedReason?.())
+          } else {
+            console.log("[Google One Tap] Prompt exibido com sucesso!")
           }
         })
       } catch (err) {
