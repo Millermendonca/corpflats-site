@@ -997,7 +997,7 @@ export default function BookingEngine() {
       </nav>
 
       {/* ── Hero Section (Protagonista Absoluta: A Imagem e a Experiência) ─ */}
-      <header className="relative h-[360px] sm:h-[440px] lg:h-[480px] flex items-end justify-center px-4 sm:px-8 pb-12 sm:pb-16 text-center overflow-hidden">
+      <header className="relative h-[250px] sm:h-[280px] lg:h-[300px] flex items-end justify-center px-4 sm:px-8 pb-7 sm:pb-8 text-center overflow-hidden">
         <div className="absolute inset-0 z-0">
           <img
             src={heroBg}
@@ -1005,7 +1005,7 @@ export default function BookingEngine() {
             className="w-full h-full object-cover object-center"
           />
           {/* Overlay sutil apenas para contraste da tipografia */}
-          <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/30 to-slate-950/10" />
+          <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/35 to-slate-950/15" />
         </div>
 
         {isVisualEditMode && (
@@ -1027,12 +1027,12 @@ export default function BookingEngine() {
           </div>
         )}
 
-        <div className="relative z-10 max-w-xl mx-auto space-y-2 text-white">
+        <div className="relative z-10 max-w-xl mx-auto space-y-1 sm:space-y-1.5 text-white">
           <h1
             contentEditable={isVisualEditMode}
             suppressContentEditableWarning={true}
             onBlur={(e) => updateNestedConfig("hero.title", e.currentTarget.innerText)}
-            className={`text-2xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight leading-tight drop-shadow-sm whitespace-pre-line ${
+            className={`text-xl sm:text-3xl lg:text-3xl font-extrabold tracking-tight leading-tight drop-shadow-sm whitespace-pre-line ${
               isVisualEditMode ? "outline-dashed outline-1 outline-amber-400 cursor-text rounded p-1" : ""
             }`}
           >
@@ -1043,7 +1043,7 @@ export default function BookingEngine() {
             contentEditable={isVisualEditMode}
             suppressContentEditableWarning={true}
             onBlur={(e) => updateNestedConfig("hero.highlightText", e.currentTarget.innerText)}
-            className={`text-sm sm:text-base font-medium text-slate-200 tracking-wide drop-shadow-xs ${
+            className={`text-xs sm:text-sm font-medium text-slate-200 tracking-wide drop-shadow-xs ${
               isVisualEditMode ? "outline-dashed outline-1 outline-amber-400 cursor-text rounded p-1" : ""
             }`}
           >
@@ -1053,12 +1053,12 @@ export default function BookingEngine() {
       </header>
 
       {/* ── Primeira Tela: Card de Reserva Minimalista (Imagem -> Experiência -> Tarifa -> Reserva) ── */}
-      <main id="reserva-rapida" className="max-w-md sm:max-w-lg w-full mx-auto px-4 -mt-8 sm:-mt-12 relative z-20">
-        <div className="bg-white rounded-3xl shadow-xl shadow-slate-900/5 border border-slate-200/80 p-5 sm:p-7 space-y-4">
+      <main id="reserva-rapida" className="max-w-md sm:max-w-lg w-full mx-auto px-4 -mt-6 sm:-mt-8 relative z-20">
+        <div className="bg-white rounded-2xl sm:rounded-3xl shadow-xl shadow-slate-900/5 border border-slate-200/80 p-4 sm:p-5 space-y-3 sm:space-y-3.5">
           {/* Seletor Compacto de Datas */}
-          <div className="grid grid-cols-2 gap-2.5 pb-3.5 border-b border-slate-100">
+          <div className="grid grid-cols-2 gap-2 pb-2.5 border-b border-slate-100">
             <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-slate-500 flex items-center justify-between">
+              <label className="text-[10.5px] font-semibold text-slate-500 flex items-center justify-between">
                 <span className="flex items-center gap-1">
                   <Calendar className="w-3 h-3 text-sky-600" />
                   <span>Entrada</span>
@@ -1071,12 +1071,12 @@ export default function BookingEngine() {
                 type="date" 
                 value={checkin} 
                 onChange={e => setCheckin(e.target.value)} 
-                className="bg-slate-50/80 border-slate-200 text-xs text-slate-900 h-9 font-bold rounded-xl"
+                className="bg-slate-50/80 border-slate-200 text-xs text-slate-900 h-8 font-bold rounded-xl"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-slate-500 flex items-center justify-between">
+              <label className="text-[10.5px] font-semibold text-slate-500 flex items-center justify-between">
                 <span className="flex items-center gap-1">
                   <Calendar className="w-3 h-3 text-sky-600" />
                   <span>Saída</span>
@@ -1089,103 +1089,103 @@ export default function BookingEngine() {
                 type="date" 
                 value={checkout} 
                 onChange={e => setCheckout(e.target.value)} 
-                className="bg-slate-50/80 border-slate-200 text-xs text-slate-900 h-9 font-bold rounded-xl"
+                className="bg-slate-50/80 border-slate-200 text-xs text-slate-900 h-8 font-bold rounded-xl"
               />
             </div>
           </div>
 
           {/* Seletor de Tarifas */}
-          <div id="tarifas" className="space-y-2.5">
+          <div id="tarifas" className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <h2 className="text-xs sm:text-sm font-bold text-slate-900">
+              <h2 className="text-xs font-bold text-slate-900">
                 Escolha sua tarifa
               </h2>
-              <span className="text-[11px] text-slate-500 font-medium">
+              <span className="text-[10.5px] text-slate-500 font-medium">
                 {nights} {nights === 1 ? "noite" : "noites"}
               </span>
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               {/* Opção 1: COM CAFÉ */}
               <div
                 onClick={() => setRatePlan("with_breakfast")}
-                className={`cursor-pointer p-4 rounded-2xl border transition-all flex items-center justify-between ${
+                className={`cursor-pointer p-2.5 sm:p-3 rounded-xl border transition-all flex items-center justify-between ${
                   ratePlan === "with_breakfast"
-                    ? "border-sky-600 bg-sky-50/50 text-slate-900 ring-2 ring-sky-600/20 shadow-xs"
+                    ? "border-sky-600 bg-sky-50/60 text-slate-900 ring-2 ring-sky-600/20 shadow-xs"
                     : "border-slate-200 hover:border-slate-300 bg-white text-slate-700"
                 }`}
               >
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
                     ratePlan === "with_breakfast" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-600"
                   }`}>
-                    <Coffee className="w-4 h-4" />
+                    <Coffee className="w-3.5 h-3.5" />
                   </div>
                   <div className="min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-bold text-xs sm:text-sm text-slate-900">COM CAFÉ</span>
+                    <div className="flex items-center gap-1.5 leading-none">
+                      <span className="font-bold text-xs text-slate-900">COM CAFÉ</span>
                       {ratePlan === "with_breakfast" && (
-                        <span className="text-[9px] font-bold text-sky-700 bg-sky-100 px-1.5 py-0.5 rounded-md">Ativa</span>
+                        <span className="text-[8.5px] font-bold text-sky-700 bg-sky-100 px-1 py-0.5 rounded leading-none">Ativa</span>
                       )}
                     </div>
-                    <p className="text-[11px] text-slate-500 truncate">Café da manhã no flat</p>
+                    <p className="text-[10.5px] text-slate-500 truncate mt-0.5">Café da manhã no flat</p>
                   </div>
                 </div>
                 <div className="text-right shrink-0 pl-2">
-                  <div className="font-extrabold text-sm sm:text-base text-slate-900">
+                  <div className="font-extrabold text-xs sm:text-sm text-slate-900 leading-none">
                     R$ {withBreakfastConfig.dailyRate}
                   </div>
-                  <span className="text-[10px] text-slate-400 block -mt-0.5">/ noite</span>
+                  <span className="text-[9px] text-slate-400 block mt-0.5">/ noite</span>
                 </div>
               </div>
 
               {/* Opção 2: SEM CAFÉ */}
               <div
                 onClick={() => setRatePlan("room_only")}
-                className={`cursor-pointer p-4 rounded-2xl border transition-all flex items-center justify-between ${
+                className={`cursor-pointer p-2.5 sm:p-3 rounded-xl border transition-all flex items-center justify-between ${
                   ratePlan === "room_only"
-                    ? "border-sky-600 bg-sky-50/50 text-slate-900 ring-2 ring-sky-600/20 shadow-xs"
+                    ? "border-sky-600 bg-sky-50/60 text-slate-900 ring-2 ring-sky-600/20 shadow-xs"
                     : "border-slate-200 hover:border-slate-300 bg-white text-slate-700"
                 }`}
               >
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
                     ratePlan === "room_only" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-600"
                   }`}>
-                    <Building2 className="w-4 h-4" />
+                    <Building2 className="w-3.5 h-3.5" />
                   </div>
                   <div className="min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-bold text-xs sm:text-sm text-slate-900">SEM CAFÉ</span>
+                    <div className="flex items-center gap-1.5 leading-none">
+                      <span className="font-bold text-xs text-slate-900">SEM CAFÉ</span>
                       {ratePlan === "room_only" && (
-                        <span className="text-[9px] font-bold text-sky-700 bg-sky-100 px-1.5 py-0.5 rounded-md">Ativa</span>
+                        <span className="text-[8.5px] font-bold text-sky-700 bg-sky-100 px-1 py-0.5 rounded leading-none">Ativa</span>
                       )}
                     </div>
-                    <p className="text-[11px] text-slate-500 truncate">Tarifa econômica</p>
+                    <p className="text-[10.5px] text-slate-500 truncate mt-0.5">Tarifa econômica</p>
                   </div>
                 </div>
                 <div className="text-right shrink-0 pl-2">
-                  <div className="font-extrabold text-sm sm:text-base text-slate-900">
+                  <div className="font-extrabold text-xs sm:text-sm text-slate-900 leading-none">
                     R$ {roomOnlyConfig.dailyRate}
                   </div>
-                  <span className="text-[10px] text-slate-400 block -mt-0.5">/ noite</span>
+                  <span className="text-[9px] text-slate-400 block mt-0.5">/ noite</span>
                 </div>
               </div>
             </div>
           </div>
 
           {/* Botão de Ação Principal (CTA) */}
-          <div className="pt-2 space-y-2.5">
+          <div className="pt-1 space-y-1.5">
             <Button
               onClick={() => handleStartBooking()}
               disabled={availabilityData?.available === false}
-              className="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold text-sm h-12 rounded-xl shadow-md shadow-sky-600/20 transition-all flex items-center justify-center gap-2"
+              className="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs sm:text-sm h-11 rounded-xl shadow-md shadow-sky-600/20 transition-all flex items-center justify-center gap-2"
             >
               <span>Reservar agora</span>
               <ArrowRight className="w-4 h-4" />
             </Button>
 
-            <div className="flex items-center justify-center gap-2 text-[11px] text-slate-500 font-medium">
+            <div className="flex items-center justify-center gap-1.5 text-[10.5px] text-slate-500 font-medium">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
               <span>Confirmação imediata • Cancelamento gratuito</span>
             </div>
