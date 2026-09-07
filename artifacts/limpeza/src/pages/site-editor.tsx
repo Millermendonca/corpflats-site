@@ -517,7 +517,7 @@ export default function SiteEditor() {
                       const current = config.authConfig || {}
                       setConfig({ ...config, authConfig: { ...current, googleClientId: e.target.value } })
                     }}
-                    placeholder="Ex: 415372338786-xxxxxx.apps.googleusercontent.com"
+                    placeholder="Ex: 231444843725-mndgdjij2nj29nd010oniqc8vu8vgqp2.apps.googleusercontent.com"
                     className="text-xs font-mono h-9 rounded-xl"
                   />
                   <p className="text-[10px] text-slate-500">

@@ -118,7 +118,7 @@ export async function loginWithGooglePopup(onSuccess: (user: UserProfile) => voi
       }
 
       if (!clientId) {
-        clientId = "415372338786-m41g9g4g0h6e5q745h5k1k9r4p0a9n.apps.googleusercontent.com"
+        clientId = "231444843725-mndgdjij2nj29nd010oniqc8vu8vgqp2.apps.googleusercontent.com"
       }
 
       const launchOAuthPopup = () => {
@@ -440,7 +440,7 @@ export async function initGoogleOneTap(
     }
 
     if (!clientId) {
-      clientId = "415372338786-m41g9g4g0h6e5q745h5k1k9r4p0a9n.apps.googleusercontent.com"
+      clientId = "231444843725-mndgdjij2nj29nd010oniqc8vu8vgqp2.apps.googleusercontent.com"
     }
 
     const setupGoogle = () => {

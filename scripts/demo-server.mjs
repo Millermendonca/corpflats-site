@@ -10435,7 +10435,7 @@ function getAuthV2User(req) {
 
 // 2.0 Configurações Públicas de Auth
 app.get("/api/v2/auth/config", (req, res) => {
-  const googleClientId = process.env.GOOGLE_CLIENT_ID || db.siteConfig?.authConfig?.googleClientId || "415372338786-m41g9g4g0h6e5q745h5k1k9r4p0a9n.apps.googleusercontent.com";
+  const googleClientId = process.env.GOOGLE_CLIENT_ID || db.siteConfig?.authConfig?.googleClientId || "231444843725-mndgdjij2nj29nd010oniqc8vu8vgqp2.apps.googleusercontent.com";
   res.json({
     googleClientId,
     hasGoogleAuth: Boolean(googleClientId && !googleClientId.includes("corpflats.apps.googleusercontent.com")),
