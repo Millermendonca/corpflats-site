@@ -20,6 +20,7 @@ import { AddToCalendar } from "@/components/add-to-calendar"
 import { AuthModal } from "@/components/auth-modal"
 import { CompleteProfileModal } from "@/components/complete-profile-modal"
 import { BookingFunnelModal } from "@/components/booking-funnel-modal"
+import { calculateCancellationPolicy } from "@/lib/cancellation-helper"
 import { initGoogleOneTap, cancelGoogleOneTap, clearGoogleCooldown, loginWithGooglePopup, getCurrentSession, logoutAccount, UserProfile } from "@/lib/auth-client"
 
 export interface RoomConfig {

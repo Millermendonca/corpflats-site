@@ -153,6 +153,32 @@ export function BookingFunnelModal({
     return () => clearInterval(interval);
   }, [currentStep, paymentMethod, confirmedReservation, isPixPaid]);
 
+  const handleResetAndNewBooking = () => {
+    setCurrentStep(1);
+    setConfirmedReservation(null);
+    setPixData(null);
+    setIsPixPaid(false);
+    setMpInitPoint(null);
+    setPixCopied(false);
+    setPixKeyCopied(false);
+  };
+
+  const handleCloseModal = () => {
+    onOpenChange(false);
+    if (currentStep === 5) {
+      setTimeout(() => {
+        handleResetAndNewBooking();
+      }, 300);
+    }
+  };
+
+  // Se o modal for reaberto e estava na etapa 5 (concluída), reinicia na etapa 1 para uma nova reserva
+  useEffect(() => {
+    if (open && currentStep === 5 && isPixPaid) {
+      handleResetAndNewBooking();
+    }
+  }, [open]);
+
   // Exit-Intent Modal
   const [showExitIntent, setShowExitIntent] = useState(false)
   const exitIntentTriggeredRef = useRef(false)
@@ -503,21 +529,30 @@ export function BookingFunnelModal({
   )}`
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(isOpen) => {
+      if (!isOpen) handleCloseModal();
+      else onOpenChange(true);
+    }}>
       <DialogContent className="sm:max-w-2xl max-w-[96vw] w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-4 sm:p-7 shadow-2xl max-h-[92vh] overflow-y-auto">
         <DialogHeader className="pb-2 border-b border-slate-100 dark:border-slate-800">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="w-8 h-8 rounded-xl bg-sky-600 text-white flex items-center justify-center font-black text-xs shadow-xs">
+              <span className={`w-8 h-8 rounded-xl text-white flex items-center justify-center font-black text-xs shadow-xs ${
+                currentStep === 5 && paymentMethod === "pix" && !isPixPaid ? "bg-amber-600" : "bg-sky-600"
+              }`}>
                 CF
               </span>
               <div>
                 <DialogTitle className="text-lg sm:text-xl font-black text-slate-900 dark:text-slate-100">
-                  {currentStep === 5 ? "🎉 Reserva Confirmada!" : "Motor de Reservas Diretas"}
+                  {currentStep === 5 
+                    ? (paymentMethod === "pix" && !isPixPaid ? "⏳ Aguardando Pagamento PIX" : "🎉 Reserva Confirmada!") 
+                    : "Motor de Reservas Diretas"}
                 </DialogTitle>
                 <DialogDescription className="text-xs text-slate-500">
                   {currentStep === 5 
-                    ? "Sua estadia nos flats CorpFlats está garantida." 
+                    ? (paymentMethod === "pix" && !isPixPaid 
+                        ? "Efetue o pagamento PIX para garantir sua vaga e emitir seu voucher." 
+                        : "Sua estadia nos flats CorpFlats está 100% garantida.") 
                     : "Melhor tarifa garantida sem taxas de intermediação de OTAs."}
                 </DialogDescription>
               </div>
@@ -1349,16 +1384,30 @@ export function BookingFunnelModal({
         {/* ── ETAPA 5: VOUCHER DIGITAL & PÓS-VENDA ─────────────────────────── */}
         {currentStep === 5 && confirmedReservation && (
           <div className="space-y-4 py-2 text-center animate-in zoom-in-95">
-            <div className="w-12 h-12 bg-emerald-100 text-emerald-700 rounded-2xl flex items-center justify-center mx-auto shadow-xs">
-              <CheckCircle2 className="w-6 h-6" />
+            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mx-auto shadow-xs ${
+              paymentMethod === "pix" && !isPixPaid 
+                ? "bg-amber-100 text-amber-700" 
+                : "bg-emerald-100 text-emerald-700"
+            }`}>
+              {paymentMethod === "pix" && !isPixPaid ? (
+                <Clock className="w-6 h-6" />
+              ) : (
+                <CheckCircle2 className="w-6 h-6" />
+              )}
             </div>
 
             <div className="space-y-1">
               <h3 className="text-xl font-black text-slate-900 dark:text-slate-100">
-                Reserva Realizada com Sucesso!
+                {paymentMethod === "pix" && !isPixPaid 
+                  ? "Quase lá! Conclua o Pagamento PIX" 
+                  : "Reserva Confirmada com Sucesso!"}
               </h3>
               <p className="text-xs text-slate-500">
-                Seu voucher foi emitido e encaminhado para <strong>{guestEmail}</strong>.
+                {paymentMethod === "pix" && !isPixPaid ? (
+                  <>Sua pré-reserva foi registrada. Realize o pagamento abaixo em até 24h para liberação automática do seu voucher definitivo em <strong>{guestEmail}</strong>.</>
+                ) : (
+                  <>Seu voucher oficial foi emitido e encaminhado para <strong>{guestEmail}</strong>.</>
+                )}
               </p>
             </div>
 
@@ -1380,6 +1429,18 @@ export function BookingFunnelModal({
               <div className="flex justify-between items-center">
                 <span className="text-slate-500">Acomodação:</span>
                 <span className="font-bold text-slate-900 dark:text-slate-100">Flat Studio ({confirmedReservation.flatNumber})</span>
+              </div>
+              <div className="flex justify-between items-center pt-1 border-t border-slate-200 dark:border-slate-700">
+                <span className="text-slate-500">Status da Reserva:</span>
+                {paymentMethod === "pix" && !isPixPaid ? (
+                  <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300 font-bold text-[10px]">
+                    ⏳ Aguardando Pagamento PIX
+                  </Badge>
+                ) : (
+                  <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 font-bold text-[10px]">
+                    ✓ Confirmada & Paga
+                  </Badge>
+                )}
               </div>
             </div>
 
@@ -1510,13 +1571,22 @@ export function BookingFunnelModal({
               </a>
             </div>
 
-            <Button
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-              className="w-full text-xs font-bold rounded-xl h-9"
-            >
-              Concluir e Fechar
-            </Button>
+            <div className="flex flex-col sm:flex-row gap-2 pt-1">
+              <Button
+                variant="outline"
+                onClick={handleResetAndNewBooking}
+                className="w-full text-xs font-bold rounded-xl h-9 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100"
+              >
+                Fazer Outra Reserva
+              </Button>
+
+              <Button
+                onClick={handleCloseModal}
+                className="w-full bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl h-9"
+              >
+                Concluir e Fechar
+              </Button>
+            </div>
           </div>
         )}
 
