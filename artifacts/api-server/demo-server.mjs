@@ -5136,10 +5136,14 @@ app.get("/api/pms/calendar", (req, res) => {
       matchedGuest?.autoEmitInvoice
     );
 
-    ensureReservationAuditLogs(r);
+    const rChanLower = String(r.channel || "").toLowerCase();
+    const isOtaRes = rChanLower.includes("booking") || rChanLower.includes("airbnb");
+    const isPaid = isOtaRes || r.paymentStatus === "pago_total" || r.paymentStatus === "pago";
+    const sanitizedPaid = isPaid && Number(r.totalAmount) > 0 ? Number(r.totalAmount) : (Number(r.paidAmount) || 0);
 
     return {
       ...r,
+      paidAmount: sanitizedPaid,
       checkinTime: r.checkinTime || db.settings?.checkinTime || "14:00",
       checkoutTime: r.checkoutTime || db.settings?.checkoutTime || "12:00",
       isMonthlyGuest: isMonthly,
@@ -5234,7 +5238,7 @@ app.post("/api/pms/reservations", (req, res) => {
   if (isOta && (resolvedPaymentStatus === "pendente" || !resolvedPaymentStatus)) {
     resolvedPaymentStatus = "pago_total";
   }
-  if (resolvedPaymentStatus === "pago_total" && resolvedPaidAmount === 0 && Number(totalAmount) > 0) {
+  if (resolvedPaymentStatus === "pago_total" && Number(totalAmount) > 0) {
     resolvedPaidAmount = Number(totalAmount);
   }
 
@@ -5486,7 +5490,7 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   if (putIsOta && (!r.paymentStatus || r.paymentStatus === "pendente") && req.body.paymentStatus === undefined) {
     r.paymentStatus = "pago_total";
   }
-  if (r.paymentStatus === "pago_total" && Number(r.paidAmount) === 0 && Number(r.totalAmount) > 0) {
+  if (r.paymentStatus === "pago_total" && Number(r.totalAmount) > 0) {
     r.paidAmount = Number(r.totalAmount);
   }
 
@@ -13395,7 +13399,7 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
         code: r.code,
         paid: true,
         paymentStatus: "pago_total",
-        paidAmount: r.paidAmount || r.totalAmount || 0,
+        paidAmount: Number(r.totalAmount) > 0 ? Number(r.totalAmount) : (Number(r.paidAmount) || 0),
         totalAmount: r.totalAmount || 0,
         pixTxId: r.pixTxId || null,
         mpPaymentId: r.mpPaymentId || null

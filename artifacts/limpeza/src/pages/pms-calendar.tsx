@@ -1105,7 +1105,7 @@ export default function PmsCalendar() {
     setFormChannel(chan)
     setFormDailyRate(String(resItem.dailyRate || 0))
     setFormTotalAmount(totCalculated > 0 ? String(totCalculated) : "")
-    setFormPaidAmount(String(resItem.paidAmount || (isResCurrentlyPaid ? totCalculated : 0)))
+    setFormPaidAmount(String(isResCurrentlyPaid ? totCalculated : (resItem.paidAmount || 0)))
     setFormPaymentStatus(isResCurrentlyPaid ? "pago_total" : (resItem.paymentStatus || "pendente"))
     setFormNotes(resItem.notes || "")
     const matchedGuest = crmGuests.find(g => 
@@ -1207,7 +1207,7 @@ export default function PmsCalendar() {
       const resolvedPaymentStatus = isOta ? "pago_total" : formPaymentStatus
       let resolvedPaidAmount = Number(formPaidAmount) || 0
       if (resolvedPaymentStatus === "pago_total") {
-        resolvedPaidAmount = resolvedPaidAmount > 0 ? resolvedPaidAmount : totalAmount
+        resolvedPaidAmount = totalAmount
       } else if (resolvedPaymentStatus === "sinal_pago") {
         resolvedPaidAmount = resolvedPaidAmount > 0 ? resolvedPaidAmount : Math.round(totalAmount / 2)
       } else {
@@ -2979,7 +2979,11 @@ export default function PmsCalendar() {
                             const d2 = parseISO(formCheckout);
                             const nights = Math.max(1, differenceInDays(d2, d1));
                             if (val !== "") {
-                              setFormTotalAmount(String(nights * (Number(val) || 0)));
+                              const newTot = nights * (Number(val) || 0);
+                              setFormTotalAmount(String(newTot));
+                              if (formPaymentStatus === "pago_total" || formChannel === "booking" || formChannel === "airbnb") {
+                                setFormPaidAmount(String(newTot));
+                              }
                             }
                           } catch {}
                         }} 
@@ -2997,6 +3001,9 @@ export default function PmsCalendar() {
                         onChange={e => {
                           const val = e.target.value;
                           setFormTotalAmount(val);
+                          if (formPaymentStatus === "pago_total" || formChannel === "booking" || formChannel === "airbnb") {
+                            setFormPaidAmount(val);
+                          }
                           try {
                             const d1 = parseISO(formCheckin);
                             const d2 = parseISO(formCheckout);
@@ -3082,11 +3089,12 @@ export default function PmsCalendar() {
 
                 {/* 💳 Detalhes Oficiais de Pagamento & Rastreamento Bancário */}
                 {selectedRes && (() => {
-                  const chanLower = String(selectedRes.channel || "").toLowerCase();
+                  const chanLower = String(formChannel || selectedRes.channel || "").toLowerCase();
                   const isOta = chanLower.includes("booking") || chanLower.includes("airbnb");
-                  const isResPaid = isOta || selectedRes.paymentStatus === "pago_total" || selectedRes.paymentStatus === "pago" || (Number(selectedRes.paidAmount) >= Number(selectedRes.totalAmount) && Number(selectedRes.totalAmount) > 0);
-                  const realPaid = isResPaid ? (selectedRes.paidAmount || selectedRes.totalAmount || 0) : (Number(selectedRes.paidAmount) || 0);
-                  const realPending = Math.max(0, (selectedRes.totalAmount || 0) - realPaid);
+                  const currentTotal = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
+                  const isResPaid = isOta || formPaymentStatus === "pago_total" || formPaymentStatus === "pago" || (Number(formPaidAmount) >= currentTotal && currentTotal > 0);
+                  const realPaid = isResPaid ? currentTotal : (Number(formPaidAmount) || 0);
+                  const realPending = Math.max(0, currentTotal - realPaid);
 
                   return (
                     <div className="p-3.5 bg-slate-50 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-xl space-y-2.5 text-xs">
@@ -3097,7 +3105,7 @@ export default function PmsCalendar() {
                         <Badge className={isResPaid ? "bg-emerald-600 text-white font-bold text-[10px]" : "bg-amber-600 text-white font-bold text-[10px]"}>
                           {isResPaid 
                             ? (isOta ? (chanLower.includes("booking") ? "✓ Pago (Booking)" : "✓ Pago (Airbnb)") : "✓ Pago Integralmente") 
-                            : (selectedRes.paymentStatus === "aguardando_pix" ? "⚡ Aguardando PIX" : "⏳ Aguardando Pagamento")}
+                            : (formPaymentStatus === "sinal_pago" ? "⚡ Sinal Pago (50%)" : (selectedRes.paymentStatus === "aguardando_pix" ? "⚡ Aguardando PIX" : "⏳ Aguardando Pagamento"))}
                         </Badge>
                       </div>
 
@@ -3158,19 +3166,22 @@ export default function PmsCalendar() {
                               className="h-7 text-[11px] bg-emerald-50 dark:bg-emerald-950/40 border-emerald-400 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-100 flex items-center gap-1 font-bold"
                               onClick={async () => {
                                 try {
-                                  const tot = Number(selectedRes.totalAmount) > 0 ? Number(selectedRes.totalAmount) : calculateTotal();
+                                  const currentTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
+                                  const tot = currentTot > 0 ? currentTot : (Number(selectedRes.totalAmount) > 0 ? Number(selectedRes.totalAmount) : 0);
                                   const res = await fetch(`/api/pms/reservations/${selectedRes.id}`, {
                                     method: "PUT",
                                     headers: { "Content-Type": "application/json" },
                                     body: JSON.stringify({
                                       paymentStatus: "pago_total",
-                                      paidAmount: tot
+                                      paidAmount: tot,
+                                      totalAmount: tot,
+                                      dailyRate: Number(formDailyRate) || undefined
                                     })
                                   });
                                   const d = await res.json();
                                   if (res.ok) {
                                     toast({ title: "✅ Marcado como Pago!", description: `Reserva ${selectedRes.code} marcada como paga!` });
-                                    setSelectedRes((prev: any) => prev ? { ...prev, paymentStatus: "pago_total", paidAmount: tot } : null);
+                                    setSelectedRes((prev: any) => prev ? { ...prev, paymentStatus: "pago_total", paidAmount: tot, totalAmount: tot } : null);
                                     setFormPaymentStatus("pago_total");
                                     setFormPaidAmount(String(tot));
                                     fetchData();
