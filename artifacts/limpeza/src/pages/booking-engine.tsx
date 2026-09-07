@@ -1567,9 +1567,7 @@ export default function BookingEngine() {
         onOpenChange={setAuthModalOpen}
         onSuccess={(user) => {
           applyGuestData(user)
-          if (!checkoutModalOpen) {
-            setLocation("/minha-conta")
-          }
+          setAuthModalOpen(false)
         }}
       />
     </div>

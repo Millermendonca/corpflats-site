@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react"
 import { useLocation } from "wouter"
-import { Shell } from "@/components/layout"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -82,7 +81,7 @@ export default function MyAccount() {
       }
 
       // Carrega histórico de reservas
-      const email = sessionUser?.email || ""
+      const email = sessionUser?.email || localStorage.getItem("corpflats_guest_email") || ""
       if (email) {
         const res = await fetch(`/api/guest-auth/me?email=${encodeURIComponent(email)}`)
         if (res.ok) {
@@ -253,18 +252,58 @@ export default function MyAccount() {
 
   if (loading) {
     return (
-      <Shell>
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center p-4">
         <div className="p-12 text-center text-slate-500">
           <div className="w-8 h-8 border-4 border-sky-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-          <p className="text-sm font-medium">Carregando painel do usuário...</p>
+          <p className="text-sm font-medium">Carregando painel do hóspede...</p>
         </div>
-      </Shell>
+      </div>
     )
   }
 
   return (
-    <Shell>
-      <div className="p-4 sm:p-8 max-w-5xl mx-auto space-y-6 pb-28">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans">
+      {/* Top Navbar do Hóspede */}
+      <header className="sticky top-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
+        <div className="max-w-5xl mx-auto px-4 sm:px-8 h-16 flex items-center justify-between">
+          <div 
+            onClick={() => setLocation("/reservar")} 
+            className="flex items-center gap-2.5 cursor-pointer hover:opacity-90 transition-opacity"
+          >
+            <div className="w-9 h-9 rounded-xl bg-sky-600 text-white flex items-center justify-center font-black text-sm shadow-xs">
+              CF
+            </div>
+            <div>
+              <span className="font-black text-base tracking-tight text-slate-900 dark:text-slate-100">CorpFlats</span>
+              <span className="hidden sm:inline-block text-[11px] text-slate-400 ml-2 font-medium">Área do Hóspede</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setLocation("/reservar")}
+              className="text-xs font-bold gap-1.5 h-9 rounded-xl border-slate-200 hover:border-slate-300 dark:border-slate-800"
+            >
+              <ArrowRight className="w-3.5 h-3.5 rotate-180" />
+              <span>Voltar a Reservas</span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleLogout}
+              className="text-xs font-bold gap-1.5 h-9 rounded-xl text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Sair</span>
+            </Button>
+          </div>
+        </div>
+      </header>
+
+      <main className="flex-1">
+        <div className="p-4 sm:p-8 max-w-5xl mx-auto space-y-6 pb-28">
         {/* Header do Usuário */}
         <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
@@ -758,6 +797,7 @@ export default function MyAccount() {
           </DialogContent>
         </Dialog>
       </div>
-    </Shell>
-  )
+    </main>
+  </div>
+)
 }
