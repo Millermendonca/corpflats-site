@@ -55,27 +55,37 @@ export function ReservationHoverCard({
   onOpenDetails,
   channelCfg,
   isMensalista = false,
+  isOpenMobile = false,
+  onCloseMobile,
   children
 }: ReservationHoverCardProps) {
   const { toast } = useToast()
   const [isOpen, setIsOpen] = useState(false)
   const [copiedLink, setCopiedLink] = useState(false)
 
+  // O card abre se estiver em hover no desktop OU ativado via toque no celular
+  const isCardOpen = !isBeingDragged && (Boolean(isOpenMobile) || isOpen)
+
+  const handleClose = () => {
+    setIsOpen(false)
+    onCloseMobile?.()
+  }
+
   // Fecha imediatamente se o usuário iniciar arraste da reserva
   useEffect(() => {
     if (isBeingDragged) {
-      setIsOpen(false)
+      handleClose()
     }
   }, [isBeingDragged])
 
   // Fecha imediatamente ao detectar scroll (em qualquer elemento, incluindo grade do calendário)
   useEffect(() => {
     const handleScroll = () => {
-      if (isOpen) setIsOpen(false)
+      if (isCardOpen) handleClose()
     }
     window.addEventListener("scroll", handleScroll, true)
     return () => window.removeEventListener("scroll", handleScroll, true)
-  }, [isOpen])
+  }, [isCardOpen])
 
   // Dados sanitizados da reserva
   const resCode = resItem.code || `RES-${resItem.flatNumber || flat?.number}-${String(resItem.id).padStart(4, "0")}`
@@ -118,11 +128,16 @@ export function ReservationHoverCard({
 
   return (
     <HoverCard 
-      open={isOpen} 
+      open={isCardOpen} 
       onOpenChange={(open) => {
-        if (!isBeingDragged) setIsOpen(open)
+        if (!isBeingDragged) {
+          setIsOpen(open)
+          if (!open) {
+            onCloseMobile?.()
+          }
+        }
       }}
-      openDelay={400} 
+      openDelay={350} 
       closeDelay={200}
     >
       <HoverCardTrigger asChild>
@@ -133,8 +148,11 @@ export function ReservationHoverCard({
         side="top"
         align="center"
         sideOffset={8}
+        collisionPadding={12}
         avoidCollisions={true}
-        className="w-[330px] p-0 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-2xl overflow-hidden z-50 text-xs"
+        onPointerDownOutside={handleClose}
+        onInteractOutside={handleClose}
+        className="w-[330px] max-w-[calc(100vw-24px)] p-0 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-2xl overflow-hidden z-50 text-xs"
         onClick={(e) => e.stopPropagation()}
       >
         {/* ── 1. Topo & Identificação ────────────────────────────────────── */}
@@ -157,6 +175,18 @@ export function ReservationHoverCard({
               <Badge variant="outline" className={`text-[10px] font-bold py-0.5 px-2 ${statusCfg.className}`}>
                 {statusCfg.label}
               </Badge>
+              {/* Botão de Fechar rápido no mobile / touch */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleClose()
+                }}
+                className="w-5 h-5 ml-0.5 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-800 transition-colors"
+                title="Fechar janela rápida"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
             </div>
           </div>
 
@@ -312,7 +342,7 @@ export function ReservationHoverCard({
               type="button"
               size="sm"
               onClick={() => {
-                setIsOpen(false)
+                handleClose()
                 onOpenDetails(resItem)
               }}
               className="h-7 px-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white dark:bg-slate-100 dark:text-slate-900 font-bold text-[11px] flex items-center gap-1 shadow-2xs"

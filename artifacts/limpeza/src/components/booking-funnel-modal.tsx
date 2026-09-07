@@ -12,6 +12,8 @@ import {
 import { AddToCalendar } from "@/components/add-to-calendar"
 import { calculateCancellationPolicy } from "@/lib/cancellation-helper"
 import { RoomConfig } from "@/pages/booking-engine"
+import { loginWithGooglePopup, updateAccountProfile, saveSessionLocally } from "@/lib/auth-client"
+import { maskPhone, maskCpf } from "@/components/complete-profile-modal"
 
 export interface BookingFunnelModalProps {
   open: boolean
@@ -65,11 +67,22 @@ export function BookingFunnelModal({
     return `funnel_${Date.now()}`
   })
 
-  // Guest Details
-  const [guestName, setGuestName] = useState("")
-  const [guestPhone, setGuestPhone] = useState("")
-  const [guestEmail, setGuestEmail] = useState("")
-  const [guestDocument, setGuestDocument] = useState("")
+  // Helper para carregar perfil em cache local
+  const getCachedProfile = () => {
+    if (typeof window === "undefined") return null
+    try {
+      const raw = localStorage.getItem("corpflats_guest_profile")
+      return raw ? JSON.parse(raw) : null
+    } catch {
+      return null
+    }
+  }
+
+  // Guest Details com inicialização a partir de guestAccount ou cache local
+  const [guestName, setGuestName] = useState(() => guestAccount?.name || getCachedProfile()?.name || "")
+  const [guestPhone, setGuestPhone] = useState(() => maskPhone(guestAccount?.phone || getCachedProfile()?.phone || ""))
+  const [guestEmail, setGuestEmail] = useState(() => guestAccount?.email || getCachedProfile()?.email || (typeof window !== "undefined" ? localStorage.getItem("corpflats_guest_email") || "" : ""))
+  const [guestDocument, setGuestDocument] = useState(() => maskCpf(guestAccount?.document || getCachedProfile()?.document || ""))
 
   // PJ Corporate Billing
   const [isWorkTrip, setIsWorkTrip] = useState(false)
@@ -120,25 +133,43 @@ export function BookingFunnelModal({
   const [showExitIntent, setShowExitIntent] = useState(false)
   const exitIntentTriggeredRef = useRef(false)
 
-  // Auto-fill from guestAccount if logged in
+  // Auto-fill from guestAccount if logged in or when modal opens
   useEffect(() => {
-    if (guestAccount) {
-      if (guestAccount.name && !guestName) setGuestName(guestAccount.name)
-      if (guestAccount.phone && !guestPhone) setGuestPhone(guestAccount.phone)
-      if (guestAccount.email && !guestEmail) setGuestEmail(guestAccount.email)
-      if (guestAccount.document && !guestDocument) setGuestDocument(guestAccount.document)
-      if (guestAccount.vehicle?.plate) {
+    const acc = guestAccount || getCachedProfile()
+    if (acc) {
+      if (acc.name && (!guestName || guestName !== acc.name)) setGuestName(acc.name)
+      if (acc.phone) setGuestPhone(maskPhone(acc.phone))
+      if (acc.email && (!guestEmail || guestEmail !== acc.email)) setGuestEmail(acc.email)
+      if (acc.document) setGuestDocument(maskCpf(acc.document))
+      if (acc.vehicle?.plate) {
         setHasVehicle(true)
-        setVehiclePlate(guestAccount.vehicle.plate)
-        setVehicleModel(guestAccount.vehicle.model || "")
+        setVehiclePlate(acc.vehicle.plate)
+        setVehicleModel(acc.vehicle.model || "")
       }
-      if (guestAccount.companyData?.cnpj) {
+      if (acc.companyData?.cnpj) {
         setIsWorkTrip(true)
-        setCompanyCnpj(guestAccount.companyData.cnpj)
-        setCompanyName(guestAccount.companyData.companyName || "")
+        setCompanyCnpj(acc.companyData.cnpj)
+        setCompanyName(acc.companyData.companyName || "")
       }
     }
-  }, [guestAccount])
+  }, [guestAccount, open])
+
+  // Login direto com o Google de dentro da etapa 3 do funil
+  const handleGoogleLoginInFunnel = async () => {
+    try {
+      await loginWithGooglePopup((user) => {
+        if (user.name) setGuestName(user.name)
+        if (user.email) setGuestEmail(user.email)
+        if (user.phone) setGuestPhone(maskPhone(user.phone))
+        if (user.document) setGuestDocument(maskCpf(user.document))
+        if (user.vehicle?.plate) {
+          setHasVehicle(true)
+          setVehiclePlate(user.vehicle.plate)
+          setVehicleModel(user.vehicle.model || "")
+        }
+      })
+    } catch {}
+  }
 
   // Consulta e Estado de Disponibilidade Real
   const [internalAvailability, setInternalAvailability] = useState<any>(availabilityData || null)
@@ -348,6 +379,22 @@ export function BookingFunnelModal({
         alert("Por favor, informe um e-mail válido para envio do voucher.")
         return
       }
+
+      // Sincroniza dados com a conta no servidor para nunca mais pedir novamente
+      if (guestPhone.replace(/\D/g, "").length >= 10 || guestDocument.replace(/\D/g, "").length >= 5) {
+        updateAccountProfile({
+          name: guestName.trim(),
+          phone: guestPhone.trim(),
+          document: guestDocument.trim(),
+          vehicle: hasVehicle && vehiclePlate ? { plate: vehiclePlate.toUpperCase().trim(), model: vehicleModel.trim() } : null,
+          companyData: isWorkTrip && companyCnpj ? { cnpj: companyCnpj.trim(), companyName: companyName.trim() } : null
+        }).then(res => {
+          if (res?.success && res.user) {
+            saveSessionLocally(res.user)
+          }
+        }).catch(() => {})
+      }
+
       // Registra o lead imediatamente no backend como carrinho ativo
       sendFunnelTelemetry(3, "identificacao_lead", "em_andamento")
       setCurrentStep(4)
@@ -897,24 +944,60 @@ export function BookingFunnelModal({
         {/* ── ETAPA 3: IDENTIFICAÇÃO & CAPTURA DE LEAD ────────────────────── */}
         {currentStep === 3 && (
           <div className="space-y-4 py-2 animate-in fade-in">
-            {/* Banner de Login Rápido se não estiver autenticado */}
-            {!guestAccount && (
-              <div className="p-3 bg-gradient-to-r from-sky-50 to-indigo-50 dark:from-sky-950/40 dark:to-indigo-950/40 border border-sky-200 dark:border-sky-800 rounded-2xl flex items-center justify-between gap-3 text-xs shadow-2xs">
+            {/* Banner de Identificação / Login */}
+            {guestAccount || guestEmail ? (
+              <div className="p-3 bg-emerald-50/90 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-2xl flex items-center justify-between gap-3 text-xs shadow-2xs">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-100 dark:bg-emerald-900/60 flex items-center justify-center text-emerald-700 dark:text-emerald-300 font-bold shrink-0">
+                    <CheckCircle2 className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                      <span>Conectado como {guestAccount?.name || guestName || "Hóspede"}</span>
+                      <Badge className="bg-emerald-600 text-white text-[9px] py-0 px-1.5 font-bold">
+                        ✓ Verificado
+                      </Badge>
+                    </span>
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                      {guestAccount?.email || guestEmail} — Seus dados foram preenchidos automaticamente.
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="p-3 bg-gradient-to-r from-sky-50 to-indigo-50 dark:from-sky-950/40 dark:to-indigo-950/40 border border-sky-200 dark:border-sky-800 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs shadow-2xs">
                 <div className="flex items-center gap-2">
                   <User className="w-4 h-4 text-sky-600 shrink-0" />
                   <div>
-                    <span className="font-bold text-slate-900 dark:text-slate-100 block">Já tem conta CorpFlats?</span>
-                    <span className="text-[11px] text-slate-500">Faça login para preencher em 1 clique.</span>
+                    <span className="font-bold text-slate-900 dark:text-slate-100 block">Preenchimento Rápido</span>
+                    <span className="text-[11px] text-slate-500">Conecte sua conta para preencher tudo em 1 clique.</span>
                   </div>
                 </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={onOpenAuthModal}
-                  className="bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs h-7 px-3 rounded-xl shrink-0"
-                >
-                  Fazer Login
-                </Button>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={handleGoogleLoginInFunnel}
+                    className="bg-white hover:bg-slate-50 text-slate-800 font-bold text-xs h-7 px-2.5 rounded-xl border-slate-300 shadow-xs flex items-center gap-1.5"
+                  >
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24">
+                      <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z"/>
+                      <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.34 24 12 24Z"/>
+                      <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.14-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.98 0 12s.45 3.82 1.25 5.42l4.03-3.15Z"/>
+                      <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.34 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98Z"/>
+                    </svg>
+                    <span>Google</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={onOpenAuthModal}
+                    className="bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs h-7 px-3 rounded-xl shrink-0"
+                  >
+                    Entrar
+                  </Button>
+                </div>
               </div>
             )}
 
@@ -938,9 +1021,9 @@ export function BookingFunnelModal({
                 </Label>
                 <Input
                   value={guestPhone}
-                  onChange={e => setGuestPhone(e.target.value)}
+                  onChange={e => setGuestPhone(maskPhone(e.target.value))}
                   placeholder="(22) 99999-9999"
-                  className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800 font-bold"
+                  className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800 font-bold text-slate-900 dark:text-slate-100"
                 />
               </div>
 
@@ -959,13 +1042,13 @@ export function BookingFunnelModal({
 
               <div className="space-y-1">
                 <Label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                  CPF ou Passaporte
+                  CPF ou Passaporte *
                 </Label>
                 <Input
                   value={guestDocument}
-                  onChange={e => setGuestDocument(e.target.value)}
+                  onChange={e => setGuestDocument(maskCpf(e.target.value))}
                   placeholder="000.000.000-00"
-                  className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800"
+                  className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800 font-mono"
                 />
               </div>
             </div>

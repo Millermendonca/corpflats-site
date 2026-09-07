@@ -3954,6 +3954,48 @@ app.get("/api/reservations/availability", (req, res) => {
   }
 });
 
+// ── Utilitários PIX Padrão BACEN (BR Code EMV) ──────────────────────────────
+function crc16(str) {
+  let crc = 0xFFFF;
+  for (let i = 0; i < str.length; i++) {
+    crc ^= (str.charCodeAt(i) << 8);
+    for (let j = 0; j < 8; j++) {
+      if ((crc & 0x8000) !== 0) {
+        crc = ((crc << 1) ^ 0x1021) & 0xFFFF;
+      } else {
+        crc = (crc << 1) & 0xFFFF;
+      }
+    }
+  }
+  return crc.toString(16).toUpperCase().padStart(4, "0");
+}
+
+function generateStaticPixPayload({ pixKey = "47964813000165", amount = 0, merchantName = "CORPFLATS LTDA", merchantCity = "CAMPOS DOS GOYTACAZES", txid = "***" }) {
+  const formatTag = (id, value) => `${id}${String(value.length).padStart(2, "0")}${value}`;
+  let payload = formatTag("00", "01");
+  const gui = formatTag("00", "br.gov.bcb.pix");
+  const key = formatTag("01", pixKey);
+  payload += formatTag("26", `${gui}${key}`);
+  payload += formatTag("52", "0000");
+  payload += formatTag("53", "986");
+  if (amount && Number(amount) > 0) {
+    payload += formatTag("54", Number(amount).toFixed(2));
+  }
+  payload += formatTag("58", "BR");
+  const cleanName = (merchantName || "CORPFLATS LTDA")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9 ]/g, "").trim().substring(0, 25);
+  payload += formatTag("59", cleanName || "CORPFLATS LTDA");
+  const cleanCity = (merchantCity || "CAMPOS")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9 ]/g, "").trim().substring(0, 15);
+  payload += formatTag("60", cleanCity || "CAMPOS");
+  const cleanTxId = (txid || "***").replace(/[^a-zA-Z0-9]/g, "").substring(0, 25) || "***";
+  payload += formatTag("62", formatTag("05", cleanTxId));
+  const toCrc = `${payload}6304`;
+  return `${toCrc}${crc16(toCrc)}`;
+}
+
 // ── Endpoint de Reserva Direta com Rodízio e Governança Inteligente ──────────
 app.post("/api/reservations/direct-booking", async (req, res) => {
   try {
@@ -4193,17 +4235,43 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
 
     saveDatabase();
 
-    // 5. Integração PIX Banco Inter
+    // 5. Integração PIX Banco Inter Oficial com Fallback Estático
     let pixData = null;
     if (paymentMethod === "pix") {
       try {
-        const pixPayload = `00020101021226830014br.gov.bcb.pix2561pix.bancointer.com.br/qr/v2/cobv/${resCode}520400005303986540${Number(totalAmount).toFixed(2)}5802BR5915CORPFLATS LTDA6006BRASIL62070503***6304`;
+        const pixResult = await createInterPixCob({
+          amount: totalAmount,
+          description: `Reserva CorpFlats ${resCode}`,
+          debtorName: guestName,
+          debtorDocument: guestDocument,
+          reservationCode: resCode
+        });
         pixData = {
-          pixCopiaECola: pixPayload,
-          txid: `INTER_${Date.now()}`,
+          pixCopiaECola: pixResult.pixCopiaECola,
+          txid: pixResult.txid,
           valor: totalAmount
         };
-      } catch {}
+        reservation.pixTxId = pixResult.txid;
+        reservation.pixCopiaECola = pixResult.pixCopiaECola;
+        saveDatabase();
+      } catch (pixErr) {
+        console.warn("[Direct Booking] Falha na emissão de PIX dinâmico Inter, gerando PIX estático oficial:", pixErr.message);
+        const staticPayload = generateStaticPixPayload({
+          pixKey: DEFAULT_INTER_CONFIG.pixKey || "47964813000165",
+          amount: totalAmount,
+          merchantName: "CORPFLATS LTDA",
+          merchantCity: "CAMPOS DOS GOYTACAZES",
+          txid: resCode.replace(/[^a-zA-Z0-9]/g, "").substring(0, 25)
+        });
+        pixData = {
+          pixCopiaECola: staticPayload,
+          txid: `STAT_${Date.now()}`,
+          valor: totalAmount
+        };
+        reservation.pixTxId = pixData.txid;
+        reservation.pixCopiaECola = staticPayload;
+        saveDatabase();
+      }
     }
 
     // 6. Integração Mercado Pago Checkout Pro (Cartão de Crédito)
@@ -11814,17 +11882,22 @@ async function createInterPixCob({ amount, description, debtorName, debtorDocume
 
   const txid = crypto.randomBytes(16).toString("hex");
   const cleanDoc = (debtorDocument || "").replace(/\D/g, "");
+  const cleanName = (debtorName || "Hospede CorpFlats")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9 ]/g, "").trim().substring(0, 100);
 
-  const devedor = {
-    nome: (debtorName || "Hóspede CorpFlats").substring(0, 100)
-  };
-  if (cleanDoc.length === 11) devedor.cpf = cleanDoc;
-  else if (cleanDoc.length === 14) devedor.cnpj = cleanDoc;
-  else devedor.cnpj = "47964813000165";
+  let devedor = undefined;
+  if (cleanDoc.length === 11) {
+    devedor = { nome: cleanName, cpf: cleanDoc };
+  } else if (cleanDoc.length === 14) {
+    devedor = { nome: cleanName, cnpj: cleanDoc };
+  } else {
+    devedor = { nome: cleanName || "Hospede CorpFlats", cnpj: "47964813000165" };
+  }
 
   const payload = {
     calendario: {
-      expiracao: 3600 // 1 hora
+      expiracao: 86400 // 24 horas
     },
     devedor,
     valor: {

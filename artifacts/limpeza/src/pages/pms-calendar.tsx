@@ -67,6 +67,7 @@ export default function PmsCalendar() {
   const [resModalOpen, setResModalOpen] = useState(false)
   const [selectedRes, setSelectedRes] = useState<any | null>(null)
   const [savingRes, setSavingRes] = useState(false)
+  const [mobileCardResId, setMobileCardResId] = useState<number | string | null>(null)
 
   // Form fields
   const [formFlatId, setFormFlatId] = useState("")
@@ -330,6 +331,7 @@ export default function PmsCalendar() {
     mode: "move" | "resize-left" | "resize-right";
     startPointerX: number;
     startPointerY: number;
+    pointerType: "mouse" | "touch" | "pen";
     hasMoved: boolean;
     currentFlatId: number;
     currentFlatNumber: string;
@@ -343,11 +345,18 @@ export default function PmsCalendar() {
     resItem: any, 
     flat: any, 
     mode: "move" | "resize-left" | "resize-right", 
-    e: React.MouseEvent
+    e: React.PointerEvent | React.MouseEvent
   ) => {
-    if (e.button !== 0) return;
+    if ((e as React.MouseEvent).button !== undefined && (e as React.MouseEvent).button !== 0) return;
     e.stopPropagation();
-    e.preventDefault();
+
+    const pointerType = (e as any).pointerType || 
+      ((typeof window !== "undefined" && (window.matchMedia("(pointer: coarse)").matches || window.innerWidth < 1024)) ? "touch" : "mouse");
+
+    // Só prevenimos o comportamento padrão no mouse para permitir o scroll fluido com o dedo no celular
+    if (pointerType === "mouse") {
+      e.preventDefault();
+    }
 
     const nights = differenceInDays(parseISO(resItem.checkoutDate), parseISO(resItem.checkinDate)) || 1;
 
@@ -361,6 +370,7 @@ export default function PmsCalendar() {
       mode,
       startPointerX: e.clientX,
       startPointerY: e.clientY,
+      pointerType,
       hasMoved: false,
       currentFlatId: flat.id,
       currentFlatNumber: flat.number,
@@ -372,13 +382,17 @@ export default function PmsCalendar() {
   useEffect(() => {
     if (!resDragState) return;
 
-    const onPointerMove = (e: MouseEvent) => {
+    const onPointerMove = (e: MouseEvent | PointerEvent) => {
       const dx = Math.abs(e.clientX - resDragState.startPointerX);
       const dy = Math.abs(e.clientY - resDragState.startPointerY);
 
-      if (!resDragState.hasMoved && (dx > 3 || dy > 3)) {
+      if (!resDragState.hasMoved && (dx > 5 || dy > 5)) {
         resDragState.hasMoved = true;
       }
+
+      // No celular / touch, o movimento do dedo é para rolar o calendário,
+      // portanto não ativamos o arraste/redimensionamento entre apartamentos
+      if (resDragState.pointerType === "touch") return;
 
       if (!resDragState.hasMoved) return;
 
@@ -426,13 +440,33 @@ export default function PmsCalendar() {
       }
     };
 
-    const onPointerUp = async () => {
+    const onPointerUp = async (e: MouseEvent | PointerEvent) => {
       if (!resDragState) return;
 
       if (!resDragState.hasMoved) {
         if (resDragState.mode === "move") {
-          handleOpenEditRes(resDragState.res);
+          const isTouch = 
+            resDragState.pointerType === "touch" || 
+            (e as any).pointerType === "touch" ||
+            (typeof window !== "undefined" && (
+              window.matchMedia("(pointer: coarse)").matches || 
+              window.innerWidth < 1024
+            ));
+
+          if (isTouch) {
+            // No celular / touch: abre ou fecha a janelinha flutuante de ações rápidas
+            setMobileCardResId(prev => (prev === resDragState.res.id ? null : resDragState.res.id));
+          } else {
+            // No desktop (mouse): abre o modal completo de edição
+            handleOpenEditRes(resDragState.res);
+          }
         }
+        setResDragState(null);
+        return;
+      }
+
+      // No touch, se houve deslocamento, foi apenas o gesto de rolagem do calendário
+      if (resDragState.pointerType === "touch") {
         setResDragState(null);
         return;
       }
@@ -509,10 +543,14 @@ export default function PmsCalendar() {
       }
     };
 
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
     window.addEventListener("mousemove", onPointerMove);
     window.addEventListener("mouseup", onPointerUp);
 
     return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
       window.removeEventListener("mousemove", onPointerMove);
       window.removeEventListener("mouseup", onPointerUp);
     };
@@ -1813,20 +1851,23 @@ export default function PmsCalendar() {
                             key={`res-${resItem.id}`}
                             resItem={resItem}
                             flat={flat}
-                            isBeingDragged={Boolean(resDragState)}
+                            isBeingDragged={Boolean(resDragState && resDragState.hasMoved)}
                             onOpenDetails={handleOpenEditRes}
                             channelCfg={channelCfg}
                             isMensalista={isMensalista}
+                            isOpenMobile={mobileCardResId === resItem.id}
+                            onCloseMobile={() => setMobileCardResId(null)}
                           >
                             <div
                               style={{ gridColumn: `${colStart} / span ${colSpan}`, gridRow: "1 / 2" }}
+                              onPointerDown={(e) => handleStartResDrag(resItem, flat, "move", e)}
                               onMouseDown={(e) => handleStartResDrag(resItem, flat, "move", e)}
                               className={`h-8.5 mx-0.5 rounded-xl relative select-none ${
                                 isMensalista 
                                   ? 'bg-gradient-to-r from-purple-800 via-indigo-900 to-purple-800 text-white border-2 border-purple-300 shadow-md ring-2 ring-purple-500/80' 
                                   : `${channelCfg?.bg} ${channelCfg?.text} border ${channelCfg?.border} shadow-xs`
                               } flex items-center px-2 text-[11px] font-bold overflow-hidden z-10 cursor-grab active:cursor-grabbing hover:brightness-110 hover:shadow-md transition-all ${
-                                resDragState ? 'pointer-events-none' : ''
+                                resDragState?.hasMoved ? 'pointer-events-none' : ''
                               } ${
                                 isBeingDragged && resDragState?.hasMoved ? 'opacity-30 border-dashed scale-95' : ''
                               }`}
@@ -1835,6 +1876,7 @@ export default function PmsCalendar() {
                               {/* Handle Esquerdo: Redimensionar Início (Check-in) */}
                               <div
                                 className="absolute left-0 top-0 bottom-0 w-3.5 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-l"
+                                onPointerDown={(e) => handleStartResDrag(resItem, flat, "resize-left", e)}
                                 onMouseDown={(e) => handleStartResDrag(resItem, flat, "resize-left", e)}
                                 onPointerEnter={(e) => e.stopPropagation()}
                                 onMouseEnter={(e) => e.stopPropagation()}
@@ -1861,6 +1903,7 @@ export default function PmsCalendar() {
                               {/* Handle Direito: Redimensionar Fim (Check-out) */}
                               <div
                                 className="absolute right-0 top-0 bottom-0 w-3.5 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-r"
+                                onPointerDown={(e) => handleStartResDrag(resItem, flat, "resize-right", e)}
                                 onMouseDown={(e) => handleStartResDrag(resItem, flat, "resize-right", e)}
                                 onPointerEnter={(e) => e.stopPropagation()}
                                 onMouseEnter={(e) => e.stopPropagation()}

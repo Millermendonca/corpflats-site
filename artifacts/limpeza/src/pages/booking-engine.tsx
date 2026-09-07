@@ -18,6 +18,7 @@ import { ptBR } from "date-fns/locale"
 import { useLocation } from "wouter"
 import { AddToCalendar } from "@/components/add-to-calendar"
 import { AuthModal } from "@/components/auth-modal"
+import { CompleteProfileModal } from "@/components/complete-profile-modal"
 import { BookingFunnelModal } from "@/components/booking-funnel-modal"
 import { initGoogleOneTap, cancelGoogleOneTap, clearGoogleCooldown, loginWithGooglePopup, getCurrentSession, logoutAccount, UserProfile } from "@/lib/auth-client"
 
