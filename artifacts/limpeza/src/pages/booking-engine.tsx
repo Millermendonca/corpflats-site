@@ -885,6 +885,7 @@ export default function BookingEngine() {
         data-auto_select="false"
         data-cancel_on_tap_outside="false"
         data-itp_support="true"
+        data-use_fedcm_for_prompt="true"
       />
 
       {/* ── Hero Section (Protagonista Absoluta: A Imagem e a Experiência) ─ */}
