@@ -487,7 +487,7 @@ export async function initGoogleOneTap(
           auto_select: false,
           cancel_on_tap_outside: false,
           itp_support: true,
-          use_fedcm_for_prompt: false
+          use_fedcm_for_prompt: true
         })
 
         // Renderiza o botão oficial caso um elemento container tenha sido fornecido
