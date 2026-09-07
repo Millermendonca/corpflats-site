@@ -1547,6 +1547,27 @@ export default function BookingEngine() {
                     <span>{pixCopied ? "Copiado!" : "Copiar"}</span>
                   </Button>
                 </div>
+
+                {/* Alternativa via Chave CNPJ Banco Inter */}
+                <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs bg-slate-50 p-2.5 rounded-xl">
+                  <div className="text-left">
+                    <span className="text-[10px] text-slate-500 font-semibold block">Chave Oficial (CNPJ Banco Inter):</span>
+                    <span className="font-mono font-bold text-slate-800 text-xs">47.964.813/0001-65</span>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      navigator.clipboard.writeText("47964813000165")
+                      setPixKeyCopied(true)
+                      setTimeout(() => setPixKeyCopied(false), 3000)
+                    }}
+                    className="h-8 text-xs font-semibold border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-xl px-3 shrink-0"
+                  >
+                    {pixKeyCopied ? <Check className="w-3.5 h-3.5 mr-1 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 mr-1" />}
+                    <span>{pixKeyCopied ? "Copiado!" : "Copiar CNPJ"}</span>
+                  </Button>
+                </div>
               </div>
 
               <div className="pt-2 border-t border-slate-100">
