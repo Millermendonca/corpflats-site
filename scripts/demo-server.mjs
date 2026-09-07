@@ -618,8 +618,8 @@ const DEFAULT_SITE_CONFIG = {
     feeAmount: 80,
     feeType: "per_stay", // "per_stay" ou "per_night"
     maxPets: 2,
-    allowedSpecies: "Cachorros (Cães)",
-    rules: "• É expressamente proibida a entrada de quaisquer animais, EXCETO Cachorros de pequeno e médio porte (até 15kg).\n• É obrigatório o uso de coleira/guia nas áreas comuns do condomínio.\n• Proibido deixar o animal sozinho no apartamento por longos períodos.\n• O hóspede tutor é responsável pela limpeza de resíduos e conservação dos móveis e enxoval."
+    allowedSpecies: "Cachorros (Cães) de pequeno porte (até 10kg)",
+    rules: DEFAULT_PET_RULES
   },
   cancellationPolicy: {
     rule: "dynamic_7days",
