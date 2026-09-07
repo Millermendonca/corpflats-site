@@ -7,13 +7,33 @@ import { Badge } from "@/components/ui/badge"
 import { 
   Calendar, Coffee, Building2, Sparkles, User, ShieldCheck, Check, ArrowRight, ArrowLeft,
   QrCode, CreditCard, Copy, ExternalLink, Clock, Car, Heart, AlertTriangle, MessageCircle,
-  Lock, CheckCircle2, Shield, Flame, Zap, HelpCircle, PhoneCall
+  Lock, CheckCircle2, Shield, Flame, Zap, HelpCircle, PhoneCall, RefreshCw
 } from "lucide-react"
+import { format } from "date-fns"
+import { ptBR } from "date-fns/locale"
 import { AddToCalendar } from "@/components/add-to-calendar"
 import { calculateCancellationPolicy } from "@/lib/cancellation-helper"
 import { RoomConfig } from "@/pages/booking-engine"
 import { loginWithGooglePopup, updateAccountProfile, saveSessionLocally } from "@/lib/auth-client"
 import { maskPhone, maskCpf } from "@/components/complete-profile-modal"
+
+export function formatDisplayDate(dateStr: string): string {
+  if (!dateStr) return ""
+  try {
+    const parts = dateStr.split("-").map(Number)
+    if (parts.length === 3) {
+      const d = new Date(parts[0], parts[1] - 1, parts[2], 12, 0, 0)
+      const rawWeek = format(d, "EEE", { locale: ptBR })
+      const cleanWeek = rawWeek.replace(".", "").trim()
+      const capitalizedWeek = cleanWeek.charAt(0).toUpperCase() + cleanWeek.slice(1)
+      const day = format(d, "dd")
+      const rawMonth = format(d, "MMMM", { locale: ptBR })
+      const capitalizedMonth = rawMonth.charAt(0).toUpperCase() + rawMonth.slice(1)
+      return `${capitalizedWeek}, ${day} ${capitalizedMonth}`
+    }
+  } catch {}
+  return dateStr
+}
 
 export interface BookingFunnelModalProps {
   open: boolean
@@ -620,28 +640,87 @@ export function BookingFunnelModal({
               </div>
             )}
 
-            {/* Resumo do Período & Tarifa Selecionada (com alternador rápido) */}
-            <div className="bg-slate-50 dark:bg-slate-800/60 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
-              <div>
-                <span className="text-slate-500 block text-[10px] font-bold uppercase">Período Selecionado</span>
-                <span className="font-bold text-slate-800 dark:text-slate-200 text-xs sm:text-sm">
-                  {checkin} até {checkout} ({nights} {nights === 1 ? "diária" : "diárias"})
+            {/* ── Card Resumo da Hospedagem: Datas & Tarifa (Design Organizado e Harmonioso) ── */}
+            <div className="rounded-2xl border border-slate-200/90 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 p-3.5 sm:p-4 space-y-3 shadow-2xs">
+              {/* Linha de Título com Duração */}
+              <div className="flex items-center justify-between pb-2 border-b border-slate-200/80 dark:border-slate-700/80">
+                <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-sky-600" />
+                  <span>Resumo da Hospedagem</span>
                 </span>
+                <Badge variant="secondary" className="bg-sky-100 dark:bg-sky-950 text-sky-800 dark:text-sky-300 font-bold text-[11px] px-2.5 py-0.5 rounded-lg">
+                  {nights} {nights === 1 ? "diária" : "diárias"}
+                </Badge>
               </div>
-              <div className="sm:text-right">
-                <span className="text-slate-500 block text-[10px] font-bold uppercase">Tarifa Selecionada</span>
-                <div className="flex items-center sm:justify-end gap-1.5 flex-wrap">
-                  <span className="font-black text-sky-600 text-xs sm:text-sm">
-                    {ratePlan === "with_breakfast" ? "☕ Com Café da Manhã" : "🏢 Sem Café (Econômica)"}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setRatePlan(ratePlan === "with_breakfast" ? "room_only" : "with_breakfast")}
-                    className="text-[10px] text-sky-700 dark:text-sky-400 hover:underline font-bold bg-sky-100 dark:bg-sky-950 px-2 py-0.5 rounded-md cursor-pointer transition-colors"
-                  >
-                    Trocar para {ratePlan === "with_breakfast" ? "Sem Café" : "Com Café"}
-                  </button>
+
+              {/* Grid Check-in e Check-out com Formatação Clara */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {/* Card Check-in */}
+                <div className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200/80 dark:border-slate-700/80 flex items-center gap-3 shadow-2xs">
+                  <div className="w-9 h-9 rounded-xl bg-sky-50 dark:bg-sky-950/60 text-sky-600 flex items-center justify-center shrink-0">
+                    <Calendar className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                      Check-in
+                    </span>
+                    <span className="text-xs sm:text-sm font-extrabold text-slate-900 dark:text-slate-100 block truncate">
+                      {formatDisplayDate(checkin)}
+                    </span>
+                  </div>
                 </div>
+
+                {/* Card Check-out */}
+                <div className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200/80 dark:border-slate-700/80 flex items-center gap-3 shadow-2xs">
+                  <div className="w-9 h-9 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 flex items-center justify-center shrink-0">
+                    <Calendar className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                      Check-out
+                    </span>
+                    <span className="text-xs sm:text-sm font-extrabold text-slate-900 dark:text-slate-100 block truncate">
+                      {formatDisplayDate(checkout)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Card Tarifa Ativa + Ação de Troca */}
+              <div className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200/80 dark:border-slate-700/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-2xs">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 font-bold ${
+                    ratePlan === "with_breakfast"
+                      ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+                      : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                  }`}>
+                    {ratePlan === "with_breakfast" ? <Coffee className="w-4 h-4" /> : <Building2 className="w-4 h-4" />}
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                      Tarifa Selecionada
+                    </span>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-xs sm:text-sm font-extrabold text-slate-900 dark:text-slate-100">
+                        {ratePlan === "with_breakfast" ? "Com Café da Manhã" : "Sem Café (Econômica)"}
+                      </span>
+                      <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                        • R$ {selectedDailyRate}/noite
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setRatePlan(ratePlan === "with_breakfast" ? "room_only" : "with_breakfast")}
+                  className="h-8 px-3 text-xs font-bold rounded-xl border-sky-200 dark:border-sky-800 text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-950/50 shrink-0 self-start sm:self-auto gap-1.5 transition-all"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 text-sky-600" />
+                  <span>Trocar para {ratePlan === "with_breakfast" ? "Sem Café" : "Com Café"}</span>
+                </Button>
               </div>
             </div>
 
@@ -1380,7 +1459,7 @@ export function BookingFunnelModal({
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-slate-500">Período:</span>
-                <span className="font-bold text-slate-900 dark:text-slate-100">{checkin} até {checkout} ({nights} noites)</span>
+                <span className="font-bold text-slate-900 dark:text-slate-100">{formatDisplayDate(checkin)} até {formatDisplayDate(checkout)} ({nights} noites)</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-slate-500">Acomodação:</span>

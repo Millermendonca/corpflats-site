@@ -18,8 +18,7 @@ import { ptBR } from "date-fns/locale"
 import { useLocation } from "wouter"
 import { AddToCalendar } from "@/components/add-to-calendar"
 import { AuthModal } from "@/components/auth-modal"
-import { CompleteProfileModal } from "@/components/complete-profile-modal"
-import { BookingFunnelModal } from "@/components/booking-funnel-modal"
+import { BookingFunnelModal, formatDisplayDate } from "@/components/booking-funnel-modal"
 import { calculateCancellationPolicy } from "@/lib/cancellation-helper"
 import { initGoogleOneTap, cancelGoogleOneTap, clearGoogleCooldown, loginWithGooglePopup, getCurrentSession, logoutAccount, UserProfile } from "@/lib/auth-client"
 
@@ -1059,9 +1058,14 @@ export default function BookingEngine() {
           {/* Seletor Compacto de Datas */}
           <div className="grid grid-cols-2 gap-2.5 pb-3.5 border-b border-slate-100">
             <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-slate-500 flex items-center gap-1">
-                <Calendar className="w-3 h-3 text-sky-600" />
-                <span>Entrada</span>
+              <label className="text-[11px] font-semibold text-slate-500 flex items-center justify-between">
+                <span className="flex items-center gap-1">
+                  <Calendar className="w-3 h-3 text-sky-600" />
+                  <span>Entrada</span>
+                </span>
+                <span className="text-[10px] text-sky-700 font-bold truncate max-w-[105px]">
+                  {formatDisplayDate(checkin)}
+                </span>
               </label>
               <Input 
                 type="date" 
@@ -1072,9 +1076,14 @@ export default function BookingEngine() {
             </div>
 
             <div className="space-y-1">
-              <label className="text-[11px] font-semibold text-slate-500 flex items-center gap-1">
-                <Calendar className="w-3 h-3 text-sky-600" />
-                <span>Saída</span>
+              <label className="text-[11px] font-semibold text-slate-500 flex items-center justify-between">
+                <span className="flex items-center gap-1">
+                  <Calendar className="w-3 h-3 text-sky-600" />
+                  <span>Saída</span>
+                </span>
+                <span className="text-[10px] text-indigo-700 font-bold truncate max-w-[105px]">
+                  {formatDisplayDate(checkout)}
+                </span>
               </label>
               <Input 
                 type="date" 
