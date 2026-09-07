@@ -644,7 +644,7 @@ export default function BookingEngine() {
   const heroHighlight = siteConfig?.hero?.highlightText || "Conforto, Luz Natural e Sofisticação"
   const heroDesc = siteConfig?.hero?.description && !siteConfig.hero.description.includes("Cavaleiros") && !siteConfig.hero.description.includes("Macaé")
     ? siteConfig.hero.description 
-    : "Flats decorados com estética contemporânea e arejada, ar-condicionado split em todos os ambientes, Wi-Fi 500MB ultra rápido e localização nobre no Edifício Soho Residence Service no Centro de Campos dos Goytacazes."
+    : "Flats decorados com estética contemporânea e arejada, ar-condicionado split em todos os ambientes, Wi-Fi nos flats e localização nobre no Edifício Soho Residence Service no Centro de Campos dos Goytacazes."
   const heroBg = siteConfig?.hero?.backgroundImage || "https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?auto=format&fit=crop&w=1920&q=80"
   const brandName = siteConfig?.branding?.brandName && !siteConfig.branding.brandName.includes("Macaé") ? siteConfig.branding.brandName : "CorpFlats"
   const badgeTop = siteConfig?.branding?.badgeTop && !siteConfig.branding.badgeTop.includes("15% OFF")
@@ -653,7 +653,7 @@ export default function BookingEngine() {
 
   const amenitiesList = siteConfig?.amenities || [
     { icon: "Waves", title: "Piscina com Deck Panorâmico", description: "Área de lazer ensolarada no condomínio com vista privilegiada para relaxar.", badge: "Lazer" },
-    { icon: "Wifi", title: "Wi-Fi Fibra 500 Mega", description: "Conexão dedicada de alta estabilidade para home office e streaming em 4K.", badge: "Gratuito" },
+    { icon: "Wifi", title: "Rede Wi-Fi", description: "Conexão de internet sem fio disponível em todos os flats.", badge: "Gratuito" },
     { icon: "Wind", title: "Ar-Condicionado Climatizado", description: "Ambientes frescos e arejados com splits modernos e silenciosos.", badge: "Conforto" },
     { icon: "Car", title: "Garagem Coberta Privativa", description: "Vaga demarcada e portão eletrônico automático com segurança 24h.", badge: "Incluso" },
     { icon: "Utensils", title: "Cozinha Compacta Equipada", description: "Cooktop, micro-ondas, frigobar/geladeira, cafeteira e utensílios completos.", badge: "Praticidade" },

@@ -439,8 +439,8 @@ const DEFAULT_SITE_CONFIG = {
     {
       id: "wifi",
       icon: "Wifi",
-      title: "Wi-Fi Fibra 500 Mega",
-      description: "Conexão dedicada de alta estabilidade para home office e streaming em 4K.",
+      title: "Rede Wi-Fi",
+      description: "Conexão de internet sem fio disponível em todos os flats.",
       badge: "Gratuito"
     },
     {
@@ -582,8 +582,8 @@ const DEFAULT_SITE_CONFIG = {
       a: "Aceitamos PIX Instantâneo com confirmação automática na hora e Cartão de Crédito com parcelamento facilitado."
     },
     {
-      q: "O flat possui Wi-Fi veloz para trabalhar?",
-      a: "Sim! Todos os nossos flats contam com fibra óptica dedicada de 500 Mega de alta estabilidade e bancada própria para notebook."
+      q: "O flat possui Wi-Fi?",
+      a: "Sim! Todos os nossos flats contam com rede Wi-Fi privativa e bancada própria para notebook."
     }
   ],
   petPolicy: {
@@ -2639,7 +2639,7 @@ app.get("/api/reservations/:code/calendar.ics", (req, res) => {
         `Check-in: ${resItem.checkinDate} a partir das 14:00`,
         `Check-out: ${resItem.checkoutDate} até as 12:00`,
         resItem.accessCode ? `🔑 Senha da Fechadura Digital: ${resItem.accessCode}` : `🔑 As instruções de acesso serão liberadas no dia do check-in.`,
-        `Wi-Fi: CorpFlats_Hospedes (Senha: hospedeconforto)`,
+        `Wi-Fi: apto${resItem.flatNumber || ''} (Senha: 1234567890123)`,
         `Gerenciar sua reserva: ${manageUrl}`,
         `WhatsApp Suporte: +55 (22) 99712-4021`
       );
@@ -11095,7 +11095,7 @@ app.get("/api/ai/reviews", (req, res) => {
       highlights: [
         "Café da manhã no quarto elogiado por 94% dos viajantes executivos",
         "Check-in Digital destacou a velocidade de acesso na portaria do Soho",
-        "Wi-Fi de 500 Mega altamente pontuado para trabalho remoto/home office",
+        "Wi-Fi privativo altamente pontuado para trabalho remoto/home office",
         "Limpeza e higienização das roupas de cama com nota máxima"
       ],
       actionItems: [

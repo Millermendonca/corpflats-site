@@ -16,7 +16,7 @@ import {
   CalendarDays, Plus, ChevronLeft, ChevronRight, Search, 
   Calendar as CalendarIcon, User, Users, Phone, Mail, ShieldAlert, CheckCircle2,
   Clock, DollarSign, BedDouble, AlertTriangle, Lock, Trash2, Edit3, MessageCircle, KeyRound, Sparkles, FileText, Tag, Coffee, Building2, Wind, Zap, Bed, Check, RotateCcw, AlertCircle, RefreshCw, SlidersHorizontal, Copy,
-  LogIn, LogOut, TrendingUp, Send, ChevronDown, ChevronUp
+  LogIn, LogOut, TrendingUp, Send, ChevronDown, ChevronUp, History, ArrowRight
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { 
@@ -89,8 +89,10 @@ export default function PmsCalendar() {
   const [formIncludeBreakfast, setFormIncludeBreakfast] = useState(false)
   const [formSpecialRequests, setFormSpecialRequests] = useState("")
 
-  // Communications & E-mails State
-  const [resModalTab, setResModalTab] = useState<"details" | "communications">("details")
+  // Modal Tabs, Audit Logs & Communications State
+  const [resModalTab, setResModalTab] = useState<"details" | "audit" | "communications">("details")
+  const [auditLogs, setAuditLogs] = useState<any[]>([])
+  const [loadingAudit, setLoadingAudit] = useState(false)
   const [communications, setCommunications] = useState<any[]>([])
   const [loadingComms, setLoadingComms] = useState(false)
   const [sendingEmail, setSendingEmail] = useState(false)
@@ -100,6 +102,24 @@ export default function PmsCalendar() {
   const [manualBody, setManualBody] = useState("")
   const [resendingCommId, setResendingCommId] = useState<string | null>(null)
   const [portariaEmail, setPortariaEmail] = useState("portaria.soho@corpflats.com.br")
+
+  const fetchAuditLogs = async (resIdOrCode: string | number) => {
+    if (!resIdOrCode) return
+    setLoadingAudit(true)
+    try {
+      const res = await fetch(`/api/pms/reservations/${resIdOrCode}/audit-logs`, { credentials: "include" })
+      if (res.ok) {
+        const json = await res.json()
+        if (Array.isArray(json.auditLogs)) {
+          setAuditLogs(json.auditLogs)
+        }
+      }
+    } catch (e) {
+      console.error("Erro ao buscar logs de auditoria:", e)
+    } finally {
+      setLoadingAudit(false)
+    }
+  }
 
   const fetchCommunications = async (resIdOrCode: string | number) => {
     if (!resIdOrCode) return
@@ -452,7 +472,8 @@ export default function PmsCalendar() {
         const payload = {
           flatId: resDragState.currentFlatId,
           checkinDate: resDragState.currentCheckin,
-          checkoutDate: resDragState.currentCheckout
+          checkoutDate: resDragState.currentCheckout,
+          source: "PMS Calendário (Arrastar & Soltar)"
         };
 
         // Otimista
@@ -877,6 +898,8 @@ export default function PmsCalendar() {
     setFormIncludeBreakfast(false)
     setFormSpecialRequests("")
     setFormIsMonthlyGuest(false)
+    setAuditLogs([])
+    setCommunications([])
     setResModalOpen(true)
   }
 
@@ -929,6 +952,8 @@ export default function PmsCalendar() {
     setFormSpecialRequests(resItem.specialRequests || "")
     setFormIsMonthlyGuest(Boolean(resItem.isMonthlyGuest || resItem.clientType === "mensalista"))
     setResModalTab("details")
+    setAuditLogs(Array.isArray(resItem.auditLogs) ? resItem.auditLogs : [])
+    fetchAuditLogs(resItem.code || resItem.id)
     fetchCommunications(resItem.code || resItem.id)
     const flatItem = data.flats.find(f => f.id === resItem.flatId || String(f.number) === String(resItem.flatNumber))
     const pEmail = flatItem?.receptionEmail || "portaria.soho@corpflats.com.br"
@@ -1060,7 +1085,8 @@ export default function PmsCalendar() {
         includeBreakfast: formIncludeBreakfast,
         specialRequests: formSpecialRequests,
         isMonthlyGuest: Boolean(formIsMonthlyGuest),
-        clientType: formIsMonthlyGuest ? "mensalista" : "avulso"
+        clientType: formIsMonthlyGuest ? "mensalista" : "avulso",
+        source: selectedRes ? "PMS Calendário (Edição Manual)" : "PMS Calendário (Nova Reserva)"
       }
 
       if (selectedRes) {
@@ -1091,6 +1117,8 @@ export default function PmsCalendar() {
     try {
       await fetch(`/api/pms/reservations/${selectedRes.id}`, {
         method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source: "PMS Calendário (Cancelamento Manual)" }),
         credentials: "include"
       })
       setResModalOpen(false)
@@ -2005,14 +2033,23 @@ export default function PmsCalendar() {
 
             {selectedRes && (
               <Tabs value={resModalTab} onValueChange={(v: any) => setResModalTab(v)} className="w-full mt-1 mb-2">
-                <TabsList className="grid grid-cols-2 bg-muted/60 p-1 rounded-xl">
+                <TabsList className="grid grid-cols-3 bg-muted/60 p-1 rounded-xl">
                   <TabsTrigger value="details" className="text-xs font-bold gap-1.5 rounded-lg">
                     <CalendarDays className="w-3.5 h-3.5" />
                     <span>Dados da Reserva</span>
                   </TabsTrigger>
+                  <TabsTrigger value="audit" className="text-xs font-bold gap-1.5 rounded-lg relative">
+                    <Clock className="w-3.5 h-3.5 text-blue-500" />
+                    <span>Histórico & Logs</span>
+                    {auditLogs.length > 0 && (
+                      <Badge variant="secondary" className="text-[10px] h-4 px-1.5 py-0 font-bold ml-1 bg-blue-500/15 text-blue-700 dark:text-blue-300">
+                        {auditLogs.length}
+                      </Badge>
+                    )}
+                  </TabsTrigger>
                   <TabsTrigger value="communications" className="text-xs font-bold gap-1.5 rounded-lg relative">
                     <Mail className="w-3.5 h-3.5 text-amber-500" />
-                    <span>Comunicações & E-mails</span>
+                    <span>Comunicações</span>
                     {communications.length > 0 && (
                       <Badge variant="secondary" className="text-[10px] h-4 px-1.5 py-0 font-bold ml-1 bg-amber-500/15 text-amber-700 dark:text-amber-300">
                         {communications.length}
@@ -2023,10 +2060,78 @@ export default function PmsCalendar() {
               </Tabs>
             )}
 
-            {(!selectedRes || resModalTab === "details") ? (
+            {(!selectedRes || resModalTab === "details") && (
               <form onSubmit={handleSaveRes}>
 
               <div className="py-3 space-y-3.5">
+                {/* Banner de Auditoria e Registro */}
+                {selectedRes && (
+                  <div className="p-3 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-2 text-xs shadow-2xs">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 font-bold text-slate-800 dark:text-slate-200">
+                        <Clock className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                        <span>Registro & Auditoria da Reserva</span>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setResModalTab("audit")}
+                        className="h-6 px-2 text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:text-blue-700 hover:bg-blue-100/50 dark:hover:bg-blue-950/50"
+                      >
+                        Ver histórico completo ({auditLogs.length}) ➔
+                      </Button>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs pt-1.5 border-t border-slate-200/70 dark:border-slate-800/70">
+                      <div className="space-y-0.5">
+                        <div className="text-[11px] text-muted-foreground flex items-center gap-1 flex-wrap">
+                          <span>Criada em:</span>
+                          <strong className="text-foreground font-semibold">
+                            {selectedRes.createdAt 
+                              ? format(parseISO(selectedRes.createdAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })
+                              : "Data não registrada"}
+                          </strong>
+                        </div>
+                        <div className="text-[11px] text-muted-foreground flex items-center gap-1 flex-wrap">
+                          <span>Por:</span>
+                          <strong className="text-slate-700 dark:text-slate-300 font-medium">
+                            {selectedRes.createdBy?.userName || selectedRes.createdBy?.name || (selectedRes.channel === "site" || selectedRes.channel === "site_direto" ? selectedRes.guestName || "Hóspede (Site)" : "Recepção / PMS")}
+                          </strong>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold">
+                            {selectedRes.createdBy?.source || CHANNEL_CONFIG[selectedRes.channel]?.label || selectedRes.channel || "PMS Calendário"}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-0.5">
+                        <div className="text-[11px] text-muted-foreground flex items-center gap-1 flex-wrap">
+                          <span>Última modificação:</span>
+                          <strong className="text-foreground font-semibold">
+                            {auditLogs.length > 0 && auditLogs[0]?.action !== "created"
+                              ? format(parseISO(auditLogs[0]?.timestamp), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })
+                              : (selectedRes.updatedAt && selectedRes.updatedAt !== selectedRes.createdAt
+                                  ? format(parseISO(selectedRes.updatedAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })
+                                  : "Sem alterações")}
+                          </strong>
+                        </div>
+                        <div className="text-[11px] text-muted-foreground flex items-center gap-1 flex-wrap">
+                          {auditLogs.length > 0 && auditLogs[0]?.action !== "created" ? (
+                            <>
+                              <span>Por:</span>
+                              <strong className="text-slate-700 dark:text-slate-300 font-medium">{auditLogs[0]?.actor?.name || "Administrador"}</strong>
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold">
+                                {auditLogs[0]?.source || "PMS"}
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-[10px] text-muted-foreground italic">Nenhuma alteração pós-criação</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-3 items-start">
                   <div className="space-y-1.5">
                     <Label className="text-xs font-semibold block leading-none h-4 flex items-center">Apartamento</Label>
@@ -2824,7 +2929,254 @@ export default function PmsCalendar() {
                 </div>
               </DialogFooter>
             </form>
-            ) : (
+            )}
+
+            {/* TAB: Histórico & Logs */}
+            {selectedRes && resModalTab === "audit" && (
+              <div className="space-y-4 pt-1">
+                {/* Header do Histórico */}
+                <div className="flex items-center justify-between p-3 rounded-2xl bg-blue-500/5 border border-blue-500/20">
+                  <div className="flex items-center gap-2">
+                    <History className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                    <div>
+                      <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
+                        Linha do Tempo e Histórico de Alterações
+                      </span>
+                      <span className="text-[11px] text-muted-foreground">
+                        Auditoria detalhada: criação, edições manuais, arrastes no calendário e cancelamentos
+                      </span>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => fetchAuditLogs(selectedRes.code || selectedRes.id)}
+                    disabled={loadingAudit}
+                    className="h-7 text-xs font-semibold gap-1.5 rounded-lg border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/50"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${loadingAudit ? 'animate-spin' : ''}`} />
+                    <span>Atualizar</span>
+                  </Button>
+                </div>
+
+                {/* Resumo da Criação */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                  <div className="p-2.5 rounded-xl border bg-card/60 space-y-1">
+                    <span className="text-[10px] uppercase font-bold text-muted-foreground block">
+                      Criada Em
+                    </span>
+                    <div className="font-semibold text-slate-800 dark:text-slate-200">
+                      {selectedRes.createdAt 
+                        ? format(parseISO(selectedRes.createdAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })
+                        : "—"}
+                    </div>
+                    <span className="text-[10px] text-muted-foreground">
+                      Por: <strong className="text-slate-700 dark:text-slate-300 font-medium">{selectedRes.createdBy?.userName || selectedRes.createdBy?.name || "PMS / Recepção"}</strong>
+                    </span>
+                  </div>
+
+                  <div className="p-2.5 rounded-xl border bg-card/60 space-y-1">
+                    <span className="text-[10px] uppercase font-bold text-muted-foreground block">
+                      Canal / Origem
+                    </span>
+                    <div className="font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                      <span className={`w-2 h-2 rounded-full ${CHANNEL_CONFIG[selectedRes.channel]?.bg || "bg-primary"}`} />
+                      <span>{selectedRes.createdBy?.source || CHANNEL_CONFIG[selectedRes.channel]?.label || selectedRes.channel || "PMS Calendário"}</span>
+                    </div>
+                    <span className="text-[10px] text-muted-foreground">
+                      Acomodação: Flat {selectedRes.flatNumber}
+                    </span>
+                  </div>
+
+                  <div className="p-2.5 rounded-xl border bg-card/60 space-y-1">
+                    <span className="text-[10px] uppercase font-bold text-muted-foreground block">
+                      Total de Registros
+                    </span>
+                    <div className="font-bold text-blue-600 dark:text-blue-400 text-sm">
+                      {auditLogs.length} {auditLogs.length === 1 ? 'evento' : 'eventos'}
+                    </div>
+                    <span className="text-[10px] text-muted-foreground">
+                      Rastreabilidade integral
+                    </span>
+                  </div>
+                </div>
+
+                {/* Linha do Tempo */}
+                <div className="space-y-3">
+                  <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span>Registro Cronológico</span>
+                  </span>
+
+                  {loadingAudit && auditLogs.length === 0 ? (
+                    <div className="p-8 text-center text-xs text-muted-foreground border rounded-2xl bg-muted/20">
+                      <RefreshCw className="w-4 h-4 animate-spin mx-auto mb-2 text-blue-500" />
+                      <span>Carregando histórico de auditoria...</span>
+                    </div>
+                  ) : auditLogs.length === 0 ? (
+                    <div className="p-6 text-center text-xs text-muted-foreground border rounded-2xl bg-muted/10">
+                      Nenhum registro de auditoria encontrado para esta reserva.
+                    </div>
+                  ) : (
+                    <div className="relative pl-5 border-l-2 border-slate-200 dark:border-slate-800 space-y-4 my-2 ml-2">
+                      {auditLogs.map((log: any, index: number) => {
+                        const isCreation = log.action === "created";
+                        const isFlatTransfer = log.action === "flat_changed";
+                        const isDates = log.action === "dates_changed";
+                        const isCancel = log.action === "cancelled";
+                        const isCheckin = log.action === "checkin";
+                        const isCheckout = log.action === "checkout";
+                        const isEarly = log.action === "early_checkin";
+                        const isPortal = log.action === "portal_modify";
+
+                        let badgeBg = "bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border-blue-300 dark:border-blue-800";
+                        let actionLabel = "Modificação";
+                        let dotColor = "bg-blue-500";
+                        let IconComp = Edit3;
+
+                        if (isCreation) {
+                          badgeBg = "bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800";
+                          actionLabel = "Reserva Criada";
+                          dotColor = "bg-emerald-500";
+                          IconComp = CheckCircle2;
+                        } else if (isFlatTransfer) {
+                          badgeBg = "bg-purple-100 dark:bg-purple-950/60 text-purple-800 dark:text-purple-300 border-purple-300 dark:border-purple-800";
+                          actionLabel = "Troca de Apartamento";
+                          dotColor = "bg-purple-500";
+                          IconComp = Building2;
+                        } else if (isDates) {
+                          badgeBg = "bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-800";
+                          actionLabel = "Remarcação de Datas";
+                          dotColor = "bg-amber-500";
+                          IconComp = CalendarIcon;
+                        } else if (isCancel) {
+                          badgeBg = "bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border-rose-300 dark:border-rose-800";
+                          actionLabel = "Reserva Cancelada";
+                          dotColor = "bg-rose-500";
+                          IconComp = AlertTriangle;
+                        } else if (isCheckin) {
+                          badgeBg = "bg-teal-100 dark:bg-teal-950/60 text-teal-800 dark:text-teal-300 border-teal-300 dark:border-teal-800";
+                          actionLabel = "Check-in Realizado";
+                          dotColor = "bg-teal-500";
+                          IconComp = LogIn;
+                        } else if (isCheckout) {
+                          badgeBg = "bg-indigo-100 dark:bg-indigo-950/60 text-indigo-800 dark:text-indigo-300 border-indigo-300 dark:border-indigo-800";
+                          actionLabel = "Check-out Finalizado";
+                          dotColor = "bg-indigo-500";
+                          IconComp = LogOut;
+                        } else if (isEarly) {
+                          badgeBg = "bg-sky-100 dark:bg-sky-950/60 text-sky-800 dark:text-sky-300 border-sky-300 dark:border-sky-800";
+                          actionLabel = "Early Check-in";
+                          dotColor = "bg-sky-500";
+                          IconComp = Sparkles;
+                        } else if (isPortal) {
+                          badgeBg = "bg-violet-100 dark:bg-violet-950/60 text-violet-800 dark:text-violet-300 border-violet-300 dark:border-violet-800";
+                          actionLabel = "Portal do Hóspede";
+                          dotColor = "bg-violet-500";
+                          IconComp = User;
+                        }
+
+                        return (
+                          <div key={log.id || index} className="relative">
+                            {/* Ponto na timeline */}
+                            <div className={`absolute -left-[27px] top-1.5 w-3.5 h-3.5 rounded-full ${dotColor} ring-4 ring-background flex items-center justify-center`} />
+
+                            <div className="p-3 rounded-2xl border bg-card/80 backdrop-blur-xs shadow-2xs space-y-2 text-xs">
+                              <div className="flex flex-wrap items-center justify-between gap-1.5">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <Badge variant="outline" className={`text-[10px] font-bold px-2 py-0.5 border flex items-center gap-1 ${badgeBg}`}>
+                                    <IconComp className="w-3 h-3" />
+                                    <span>{actionLabel}</span>
+                                  </Badge>
+
+                                  <span className="text-[11px] font-semibold text-slate-800 dark:text-slate-200">
+                                    {log.timestamp 
+                                      ? format(parseISO(log.timestamp), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })
+                                      : "Data não registrada"}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center gap-1 flex-wrap">
+                                  <Badge variant="secondary" className="text-[10px] font-medium bg-muted text-muted-foreground px-2 py-0.5">
+                                    Por: <strong className="ml-1 text-foreground">{log.actor?.name || "Sistema"}</strong>
+                                  </Badge>
+                                  <Badge variant="outline" className="text-[10px] font-medium text-slate-600 dark:text-slate-400 border-slate-300 dark:border-slate-700 px-2 py-0.5">
+                                    {log.source || "PMS"}
+                                  </Badge>
+                                </div>
+                              </div>
+
+                              {log.description && (
+                                <p className="text-xs text-slate-700 dark:text-slate-300 font-medium">
+                                  {log.description}
+                                </p>
+                              )}
+
+                              {Array.isArray(log.changes) && log.changes.length > 0 && (
+                                <div className="pt-2 border-t border-border/60 space-y-1.5">
+                                  <span className="text-[10px] uppercase font-bold text-muted-foreground block tracking-wider">
+                                    Alterações Registradas:
+                                  </span>
+                                  <div className="grid grid-cols-1 gap-1">
+                                    {log.changes.map((ch: any, cIdx: number) => (
+                                      <div key={cIdx} className="flex flex-wrap items-center justify-between gap-1 p-1.5 rounded-lg bg-muted/40 text-xs">
+                                        <span className="font-semibold text-slate-700 dark:text-slate-300">
+                                          {ch.label || ch.field}:
+                                        </span>
+                                        {ch.oldValue !== null && ch.oldValue !== undefined ? (
+                                          <div className="flex items-center gap-1.5 flex-wrap">
+                                            <span className="px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-700 dark:text-rose-300 line-through text-[11px] font-medium border border-rose-200 dark:border-rose-900/50">
+                                              {String(ch.oldValue)}
+                                            </span>
+                                            <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0" />
+                                            <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-bold text-[11px] border border-emerald-300 dark:border-emerald-800">
+                                              {String(ch.newValue)}
+                                            </span>
+                                          </div>
+                                        ) : (
+                                          <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-700 dark:text-blue-300 font-bold text-[11px] border border-blue-200 dark:border-blue-900/50">
+                                            {String(ch.newValue)}
+                                          </span>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <DialogFooter className="pt-3 border-t border-border flex justify-between gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setResModalTab("details")}
+                    className="text-xs font-semibold"
+                  >
+                    ← Voltar para Dados da Reserva
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="default"
+                    size="sm"
+                    onClick={() => setResModalOpen(false)}
+                    className="text-xs font-bold"
+                  >
+                    Fechar
+                  </Button>
+                </DialogFooter>
+              </div>
+            )}
+
+            {/* TAB: Comunicações & E-mails */}
+            {selectedRes && resModalTab === "communications" && (
               <div className="space-y-4 pt-1">
                 {/* 1. Painel de Envio Manual Rápido */}
                 <div className="p-4 rounded-2xl bg-amber-500/5 border border-amber-500/20 space-y-3">

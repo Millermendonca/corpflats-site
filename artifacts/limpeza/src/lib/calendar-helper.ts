@@ -40,8 +40,8 @@ const DEFAULT_PROPERTY = {
   hostName: "CorpFlats Campos dos Goytacazes",
   hostPhone: "+55 (22) 99712-4021",
   hostEmail: "reservas@corpflats.com.br",
-  wifiNetwork: "CorpFlats_Hospedes",
-  wifiPassword: "hospedeconforto",
+  wifiNetwork: "apto",
+  wifiPassword: "1234567890123",
   checkinTime: "14:00",
   checkoutTime: "12:00"
 }
@@ -107,7 +107,7 @@ export function generateIcsContent(
       `Check-out: ${data.checkoutDate} até as ${data.checkoutTime || prop.checkoutTime}`,
       ``,
       data.accessCode ? `🔑 SENHA DA FECHADURA DIGITAL: ${data.accessCode}` : `🔑 ACESSO: As instruções e senha serão liberadas no dia do check-in.`,
-      `📶 WI-FI: Rede "${data.wifiNetwork || prop.wifiNetwork}" | Senha "${data.wifiPassword || prop.wifiPassword}"`,
+      `📶 WI-FI: Rede "${data.flatNumber ? `apto${data.flatNumber}` : (data.wifiNetwork || prop.wifiNetwork)}" | Senha "${data.wifiPassword || prop.wifiPassword}"`,
       `🚗 ESTACIONAMENTO: Garagem rotativa inclusa com portaria 24h`,
       ``,
       `📲 GERENCIAR SUA RESERVA:`,
@@ -205,7 +205,7 @@ export function getGoogleCalendarUrl(data: ReservationCalendarData): string {
     `Check-in: ${data.checkinDate} a partir das ${data.checkinTime || prop.checkinTime}`,
     `Check-out: ${data.checkoutDate} até as ${data.checkoutTime || prop.checkoutTime}`,
     data.accessCode ? `🔑 Senha da Porta: ${data.accessCode}` : `🔑 Chave digital liberada no check-in`,
-    `Wi-Fi: ${data.wifiNetwork || prop.wifiNetwork} (Senha: ${data.wifiPassword || prop.wifiPassword})`,
+    `Wi-Fi: ${data.flatNumber ? `apto${data.flatNumber}` : (data.wifiNetwork || prop.wifiNetwork)} (Senha: ${data.wifiPassword || prop.wifiPassword})`,
     `Acessar Portal da Reserva: ${manageUrl}`,
     `WhatsApp Suporte: ${prop.hostPhone}`
   ].join("\n")

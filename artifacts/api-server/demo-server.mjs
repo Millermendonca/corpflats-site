@@ -459,8 +459,8 @@ const DEFAULT_SITE_CONFIG = {
     {
       id: "wifi",
       icon: "Wifi",
-      title: "Wi-Fi Fibra 500 Mega",
-      description: "Conexão dedicada de alta estabilidade para home office e streaming em 4K.",
+      title: "Rede Wi-Fi",
+      description: "Conexão de internet sem fio disponível em todos os flats.",
       badge: "Gratuito"
     },
     {
@@ -602,8 +602,8 @@ const DEFAULT_SITE_CONFIG = {
       a: "Aceitamos PIX Instantâneo com confirmação automática na hora e Cartão de Crédito com parcelamento facilitado."
     },
     {
-      q: "O flat possui Wi-Fi veloz para trabalhar?",
-      a: "Sim! Todos os nossos flats contam com fibra óptica dedicada de 500 Mega de alta estabilidade e bancada própria para notebook."
+      q: "O flat possui Wi-Fi?",
+      a: "Sim! Todos os nossos flats contam com rede Wi-Fi privativa e bancada própria para notebook."
     }
   ],
   petPolicy: {
@@ -1417,6 +1417,286 @@ function getAuthUser(req) {
   } catch {
     return null;
   }
+}
+
+// ── Reservation Audit Log Engine ─────────────────────────────────────────────
+function addReservationAuditLog(reservation, {
+  action = "updated",
+  actor = null,
+  source = "PMS Calendário",
+  description = "",
+  changes = []
+} = {}) {
+  if (!reservation) return null;
+  if (!reservation.auditLogs) reservation.auditLogs = [];
+
+  const now = new Date().toISOString();
+  const entryId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+  const normalizedActor = {
+    id: actor?.id || null,
+    name: actor?.name || actor?.username || "Sistema",
+    role: actor?.role || (actor?.name ? "user" : "system"),
+    type: actor?.type || (actor?.role === "guest" ? "guest" : (actor?.name && actor?.name !== "Sistema" ? "user" : "system"))
+  };
+
+  const entry = {
+    id: entryId,
+    timestamp: now,
+    action,
+    actor: normalizedActor,
+    source: source || "PMS Calendário",
+    description: description || "Atualização da reserva",
+    changes: Array.isArray(changes) ? changes : []
+  };
+
+  reservation.auditLogs.unshift(entry);
+  reservation.lastModifiedBy = {
+    timestamp: now,
+    actor: normalizedActor,
+    source: entry.source
+  };
+
+  try {
+    logAuditEvent({
+      level: action === "cancelled" ? "warning" : "info",
+      category: "reservation",
+      action: `RESERVATION_${String(action).toUpperCase()}`,
+      actor: normalizedActor,
+      source: entry.source,
+      details: {
+        reservationId: reservation.id,
+        reservationCode: reservation.code,
+        flatNumber: reservation.flatNumber,
+        guestName: reservation.guestName,
+        description: entry.description,
+        changes: entry.changes
+      }
+    });
+  } catch {}
+
+  return entry;
+}
+
+function ensureReservationAuditLogs(reservation) {
+  if (!reservation) return reservation;
+  if (reservation.auditLogs && reservation.auditLogs.length > 0) return reservation;
+
+  reservation.auditLogs = [];
+
+  // 1. Log sintético de criação inicial
+  const createdTimestamp = reservation.createdAt || new Date().toISOString();
+  const channel = (reservation.channel || "").toLowerCase();
+  let defaultCreator = "PMS / Recepção";
+  let defaultSource = "PMS Calendário";
+  let creatorType = "user";
+
+  if (channel === "site" || channel === "site_direto") {
+    defaultCreator = reservation.guestName || "Hóspede (Online)";
+    defaultSource = "Site CorpFlats (Motor de Reservas)";
+    creatorType = "guest";
+  } else if (channel === "booking") {
+    defaultCreator = "Canal Booking.com";
+    defaultSource = "Booking.com Sync";
+    creatorType = "system";
+  } else if (channel === "airbnb") {
+    defaultCreator = "Canal Airbnb";
+    defaultSource = "Airbnb Sync";
+    creatorType = "system";
+  } else if (channel === "whatsapp") {
+    defaultCreator = "Atendimento WhatsApp";
+    defaultSource = "WhatsApp / Direta";
+    creatorType = "user";
+  }
+
+  const creatorName = reservation.createdBy?.userName || reservation.createdBy?.name || defaultCreator;
+  const creatorSource = reservation.createdBy?.source || defaultSource;
+
+  reservation.auditLogs.push({
+    id: `audit_init_${reservation.id || Date.now()}`,
+    timestamp: createdTimestamp,
+    action: "created",
+    actor: {
+      id: reservation.createdBy?.userId || null,
+      name: creatorName,
+      role: reservation.createdBy?.role || (creatorType === "guest" ? "guest" : "admin"),
+      type: creatorType
+    },
+    source: creatorSource,
+    description: "Reserva criada no sistema",
+    changes: [
+      { field: "flatNumber", label: "Apartamento", oldValue: null, newValue: `Flat ${reservation.flatNumber || reservation.flatId}` },
+      { field: "dates", label: "Período da Estadia", oldValue: null, newValue: `${reservation.checkinDate} a ${reservation.checkoutDate}` },
+      { field: "guestName", label: "Hóspede Titular", oldValue: null, newValue: reservation.guestName || "Não informado" },
+      { field: "channel", label: "Canal", oldValue: null, newValue: reservation.channel || "direta" },
+      ...(reservation.totalAmount ? [{ field: "totalAmount", label: "Valor Total", oldValue: null, newValue: `R$ ${Number(reservation.totalAmount).toFixed(2)}` }] : [])
+    ]
+  });
+
+  // 2. Histórico de modificações anterior (ex: autoatendimento)
+  if (Array.isArray(reservation.modificationHistory)) {
+    for (const mod of reservation.modificationHistory) {
+      reservation.auditLogs.unshift({
+        id: `audit_mod_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        timestamp: mod.modifiedAt || new Date().toISOString(),
+        action: "portal_modify",
+        actor: {
+          id: null,
+          name: reservation.guestName || "Hóspede",
+          role: "guest",
+          type: "guest"
+        },
+        source: "Portal do Hóspede (Autoatendimento)",
+        description: mod.reason || "Alteração de datas pelo portal do hóspede",
+        changes: [
+          ...(mod.oldCheckin !== mod.newCheckin || mod.oldCheckout !== mod.newCheckout ? [
+            { field: "dates", label: "Período", oldValue: `${mod.oldCheckin} a ${mod.oldCheckout}`, newValue: `${mod.newCheckin} a ${mod.newCheckout}` }
+          ] : []),
+          ...(mod.oldGuests !== mod.newGuests ? [
+            { field: "guestCount", label: "Qtd. Hóspedes", oldValue: String(mod.oldGuests), newValue: String(mod.newGuests) }
+          ] : []),
+          ...(mod.additionalAmountToPay ? [
+            { field: "additionalAmountToPay", label: "Acréscimo a Pagar", oldValue: null, newValue: `+R$ ${Number(mod.additionalAmountToPay).toFixed(2)}` }
+          ] : [])
+        ]
+      });
+    }
+  }
+
+  // 3. Status de Check-in ou Check-out
+  if (reservation.actualCheckinAt) {
+    reservation.auditLogs.unshift({
+      id: `audit_chk_${reservation.id || Date.now()}_in`,
+      timestamp: reservation.actualCheckinAt,
+      action: "checkin",
+      actor: { id: null, name: "Recepção / Portaria", role: "reception", type: "user" },
+      source: "Recepção / Portaria",
+      description: "Entrada (Check-in) registrada na portaria",
+      changes: [{ field: "status", label: "Status da Reserva", oldValue: "Confirmada", newValue: "Hospedado (In House)" }]
+    });
+  }
+
+  if (reservation.actualCheckoutAt) {
+    reservation.auditLogs.unshift({
+      id: `audit_chk_${reservation.id || Date.now()}_out`,
+      timestamp: reservation.actualCheckoutAt,
+      action: "checkout",
+      actor: { id: null, name: "Recepção / Portaria", role: "reception", type: "user" },
+      source: "Recepção / Portaria",
+      description: "Saída (Check-out) registrada",
+      changes: [{ field: "status", label: "Status da Reserva", oldValue: "Hospedado", newValue: "Concluída (Completed)" }]
+    });
+  }
+
+  if (reservation.status === "cancelada" || reservation.status === "CANCELLED") {
+    reservation.auditLogs.unshift({
+      id: `audit_cancel_${reservation.id || Date.now()}`,
+      timestamp: reservation.updatedAt || new Date().toISOString(),
+      action: "cancelled",
+      actor: { id: null, name: "Recepção / PMS", role: "admin", type: "user" },
+      source: "PMS Calendário",
+      description: "Reserva cancelada",
+      changes: [{ field: "status", label: "Status da Reserva", oldValue: "Confirmada", newValue: "Cancelada" }]
+    });
+  }
+
+  return reservation;
+}
+
+function diffReservationFields(oldRes, newBody, flatsList = []) {
+  const changes = [];
+
+  const FIELD_MAP = {
+    checkinDate: "Data de Entrada (Check-in)",
+    checkoutDate: "Data de Saída (Check-out)",
+    guestName: "Hóspede Titular",
+    guestPhone: "WhatsApp / Telefone",
+    guestEmail: "E-mail do Hóspede",
+    channel: "Canal de Origem",
+    dailyRate: "Valor da Diária",
+    totalAmount: "Valor Total",
+    paidAmount: "Valor Pago",
+    paymentStatus: "Status do Pagamento",
+    status: "Status da Reserva",
+    adults: "Adultos",
+    children: "Crianças",
+    guestCount: "Total de Hóspedes",
+    notes: "Observações Gerais",
+    receptionNotes: "Aviso para a Portaria / Recepção",
+    earlyCheckinAuthorized: "Autorização de Early Check-in",
+    autoEmitInvoice: "Auto-Emissão de Nota Fiscal (NFS-e)",
+    prefersHighFloor: "Preferência por Andar Alto",
+    twinBeds: "Configuração: 2 Camas de Solteiro",
+    extraMattress: "Configuração: Colchão Extra",
+    includeBreakfast: "Café da Manhã Incluso",
+    specialRequests: "Pedidos Especiais",
+    isMonthlyGuest: "Cliente Mensalista"
+  };
+
+  // Transferência de Apartamento
+  if (newBody.flatId !== undefined && Number(newBody.flatId) !== Number(oldRes.flatId)) {
+    const oldFlatNum = oldRes.flatNumber || flatsList.find(f => f.id === Number(oldRes.flatId))?.number || oldRes.flatId;
+    const newFlatNum = flatsList.find(f => f.id === Number(newBody.flatId))?.number || newBody.flatId;
+    changes.push({
+      field: "flatNumber",
+      label: "Apartamento (Transferência)",
+      oldValue: `Flat ${oldFlatNum}`,
+      newValue: `Flat ${newFlatNum}`
+    });
+  }
+
+  for (const [key, label] of Object.entries(FIELD_MAP)) {
+    if (newBody[key] === undefined) continue;
+
+    let oldVal = oldRes[key];
+    let newVal = newBody[key];
+
+    if (typeof oldVal === "boolean" || typeof newVal === "boolean") {
+      if (Boolean(oldVal) !== Boolean(newVal)) {
+        changes.push({
+          field: key,
+          label,
+          oldValue: Boolean(oldVal) ? "Sim" : "Não",
+          newValue: Boolean(newVal) ? "Sim" : "Não"
+        });
+      }
+    } else if (key === "dailyRate" || key === "totalAmount" || key === "paidAmount") {
+      const numOld = Number(oldVal) || 0;
+      const numNew = Number(newVal) || 0;
+      if (Math.abs(numOld - numNew) > 0.01) {
+        changes.push({
+          field: key,
+          label,
+          oldValue: `R$ ${numOld.toFixed(2)}`,
+          newValue: `R$ ${numNew.toFixed(2)}`
+        });
+      }
+    } else if (key === "adults" || key === "children" || key === "guestCount") {
+      const numOld = Number(oldVal) || 0;
+      const numNew = Number(newVal) || 0;
+      if (numOld !== numNew) {
+        changes.push({
+          field: key,
+          label,
+          oldValue: String(numOld),
+          newValue: String(numNew)
+        });
+      }
+    } else {
+      const strOld = String(oldVal || "").trim();
+      const strNew = String(newVal || "").trim();
+      if (strOld !== strNew) {
+        changes.push({
+          field: key,
+          label,
+          oldValue: strOld || "(vazio)",
+          newValue: strNew || "(vazio)"
+        });
+      }
+    }
+  }
+
+  return changes;
 }
 
 // ── Spreadsheet Path & Cloud Download ────────────────────────────────────────
@@ -2678,7 +2958,7 @@ app.get("/api/reservations/:code/calendar.ics", (req, res) => {
         `Check-in: ${resItem.checkinDate} a partir das 14:00`,
         `Check-out: ${resItem.checkoutDate} até as 12:00`,
         resItem.accessCode ? `🔑 Senha da Fechadura Digital: ${resItem.accessCode}` : `🔑 As instruções de acesso serão liberadas no dia do check-in.`,
-        `Wi-Fi: CorpFlats_Hospedes (Senha: hospedeconforto)`,
+        `Wi-Fi: apto${resItem.flatNumber || ''} (Senha: 1234567890123)`,
         `Gerenciar sua reserva: ${manageUrl}`,
         `WhatsApp Suporte: +55 (22) 99712-4021`
       );
@@ -4130,9 +4410,37 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       companyData: isWorkTrip ? companyData : null,
       vehicle: vehicle || null,
       calendarSequence: 0,
+      createdBy: {
+        userName: guestName.trim(),
+        role: "guest",
+        source: "Site CorpFlats (Motor de Reservas)",
+        createdAt: new Date().toISOString()
+      },
+      auditLogs: [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
+
+    addReservationAuditLog(reservation, {
+      action: "created",
+      actor: {
+        id: null,
+        name: guestName.trim(),
+        role: "guest",
+        type: "guest"
+      },
+      source: "Site CorpFlats (Motor de Reservas)",
+      description: "Reserva criada pelo hóspede no site direto",
+      changes: [
+        { field: "flatNumber", label: "Apartamento", oldValue: null, newValue: `Flat(s) ${flatNumbersStr}` },
+        { field: "dates", label: "Período da Estadia", oldValue: null, newValue: `${checkinDate} a ${checkoutDate}` },
+        { field: "guestName", label: "Hóspede Titular", oldValue: null, newValue: guestName.trim() },
+        { field: "channel", label: "Canal de Origem", oldValue: null, newValue: "site_direto" },
+        { field: "totalAmount", label: "Valor Total", oldValue: null, newValue: `R$ ${Number(totalAmount).toFixed(2)}` },
+        { field: "paymentMethod", label: "Forma de Pagamento", oldValue: null, newValue: paymentMethod },
+        { field: "ratePlan", label: "Plano Selecionado", oldValue: null, newValue: ratePlan === "with_breakfast" ? "Com Café da Manhã" : "Sem Café" }
+      ]
+    });
 
     if (!db.reservations) db.reservations = [];
     db.reservations.push(reservation);
@@ -4402,6 +4710,8 @@ app.get("/api/pms/calendar", (req, res) => {
       matchedGuest?.clientType === "mensalista"
     );
 
+    ensureReservationAuditLogs(r);
+
     return {
       ...r,
       isMonthlyGuest: isMonthly,
@@ -4421,6 +4731,24 @@ app.get("/api/pms/calendar", (req, res) => {
     reservations,
     blocks,
     guests: db.guests || []
+  });
+});
+
+app.get("/api/pms/reservations/:id/audit-logs", (req, res) => {
+  const param = String(req.params.id || "").trim();
+  const numId = Number(param);
+  const r = (db.reservations || []).find(x => x.id === numId || x.code === param || x.reservationCode === param);
+  if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
+
+  ensureReservationAuditLogs(r);
+  res.json({
+    reservationId: r.id,
+    reservationCode: r.code || r.reservationCode,
+    createdBy: r.createdBy || null,
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
+    lastModifiedBy: r.lastModifiedBy || null,
+    auditLogs: r.auditLogs || []
   });
 });
 
@@ -4563,6 +4891,11 @@ app.post("/api/pms/reservations", (req, res) => {
   const autoEarlyForSite = db.settings.autoEarlyCheckinForSite !== false;
   const isEarlyAuth = (channel === "site" && autoEarlyForSite) || Boolean(req.body.earlyCheckinAuthorized);
 
+  const authUser = getAuthUser(req);
+  const creatorName = authUser ? (authUser.username || authUser.name || "Administrador") : "Recepção / PMS";
+  const creatorRole = authUser ? authUser.role : "admin";
+  const reqSource = req.body.source || "PMS Calendário";
+
   const newReservation = {
     id: resId,
     code: `RES-${String(flat.number)}-${String(resId).padStart(4, "0")}`,
@@ -4598,9 +4931,38 @@ app.post("/api/pms/reservations", (req, res) => {
     specialRequests: specialRequests || "",
     includeBreakfast: Boolean(includeBreakfast),
     breakfastToken: `bfk_${resId}_${crypto.randomBytes(4).toString("hex")}`,
+    createdBy: {
+      userId: authUser?.id || null,
+      userName: creatorName,
+      role: creatorRole,
+      source: reqSource,
+      createdAt: new Date().toISOString()
+    },
+    auditLogs: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
+
+  addReservationAuditLog(newReservation, {
+    action: "created",
+    actor: {
+      id: authUser?.id || null,
+      name: creatorName,
+      role: creatorRole,
+      type: "user"
+    },
+    source: reqSource,
+    description: "Reserva criada no PMS Calendário",
+    changes: [
+      { field: "flatNumber", label: "Apartamento", oldValue: null, newValue: `Flat ${flat.number}` },
+      { field: "dates", label: "Período da Estadia", oldValue: null, newValue: `${checkinDate} a ${checkoutDate}` },
+      { field: "guestName", label: "Hóspede Titular", oldValue: null, newValue: primaryName },
+      { field: "channel", label: "Canal de Origem", oldValue: null, newValue: channel },
+      { field: "totalAmount", label: "Valor Total", oldValue: null, newValue: `R$ ${Number(totalAmount).toFixed(2)}` },
+      { field: "paymentStatus", label: "Status de Pagamento", oldValue: null, newValue: paymentStatus },
+      ...(includeBreakfast ? [{ field: "includeBreakfast", label: "Café da Manhã", oldValue: null, newValue: "Incluso" }] : [])
+    ]
+  });
 
   db.reservations.unshift(newReservation);
   saveDatabase();
@@ -4612,6 +4974,9 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   const id = Number(req.params.id);
   const r = (db.reservations || []).find(x => x.id === id);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
+
+  ensureReservationAuditLogs(r);
+  const diffs = diffReservationFields(r, req.body, db.flats || []);
 
   const oldCheckin = r.checkinDate;
   const oldCheckout = r.checkoutDate;
@@ -4756,6 +5121,38 @@ app.put("/api/pms/reservations/:id", (req, res) => {
     } catch (mailErr) {
       console.warn("[MailService] Erro ao disparar aviso de alteração à portaria:", mailErr.message);
     }
+  }
+
+  if (diffs && diffs.length > 0) {
+    const authUser = getAuthUser(req);
+    const actorName = authUser ? (authUser.username || authUser.name || "Administrador") : "Sistema / Usuário";
+    const source = req.body.source || "PMS Calendário (Edição Manual)";
+    const isFlatTransfer = diffs.some(d => d.field === "flatNumber");
+    const isDatesChange = diffs.some(d => d.field === "checkinDate" || d.field === "checkoutDate");
+    const isStatusChange = diffs.some(d => d.field === "status");
+
+    let action = "updated";
+    if (isFlatTransfer) action = "flat_changed";
+    else if (isDatesChange) action = "dates_changed";
+    else if (isStatusChange && (r.status === "cancelada" || r.status === "CANCELLED")) action = "cancelled";
+
+    let desc = `Alteração de ${diffs.length} ${diffs.length === 1 ? 'campo' : 'campos'}`;
+    if (isFlatTransfer && isDatesChange) desc = "Remarcação de datas e troca de flat";
+    else if (isFlatTransfer) desc = "Transferência de apartamento";
+    else if (isDatesChange) desc = "Remarcação do período da estadia";
+
+    addReservationAuditLog(r, {
+      action,
+      actor: {
+        id: authUser?.id || null,
+        name: actorName,
+        role: authUser?.role || "admin",
+        type: authUser ? "user" : "system"
+      },
+      source,
+      description: desc,
+      changes: diffs
+    });
   }
 
   r.updatedAt = new Date().toISOString();
@@ -5373,6 +5770,45 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
     reason: reason || "Modificação solicitada pelo hóspede via autoatendimento"
   });
 
+  ensureReservationAuditLogs(r);
+  addReservationAuditLog(r, {
+    action: "portal_modify",
+    actor: {
+      id: null,
+      name: r.guestName || "Hóspede",
+      role: "guest",
+      type: "guest"
+    },
+    source: "Portal do Hóspede (Autoatendimento)",
+    description: reason || "Modificação solicitada pelo hóspede via autoatendimento",
+    changes: [
+      {
+        field: "dates",
+        label: "Período da Estadia",
+        oldValue: `${r.checkinDate} a ${r.checkoutDate}`,
+        newValue: `${newCheckinDate} a ${newCheckoutDate}`
+      },
+      ...(r.guestCount !== guestsNum ? [{
+        field: "guestCount",
+        label: "Quantidade de Hóspedes",
+        oldValue: String(r.guestCount || 1),
+        newValue: String(guestsNum)
+      }] : []),
+      ...(additionalAmountToPay > 0 ? [{
+        field: "totalAmount",
+        label: "Acréscimo de Valor",
+        oldValue: `R$ ${Number(r.totalAmount - additionalAmountToPay).toFixed(2)}`,
+        newValue: `R$ ${Number(r.totalAmount).toFixed(2)} (+R$ ${additionalAmountToPay.toFixed(2)})`
+      }] : []),
+      ...(refundAmount > 0 ? [{
+        field: "totalAmount",
+        label: "Estorno/Crédito",
+        oldValue: `R$ ${Number(r.totalAmount + refundAmount).toFixed(2)}`,
+        newValue: `R$ ${Number(r.totalAmount).toFixed(2)} (-R$ ${refundAmount.toFixed(2)})`
+      }] : [])
+    ]
+  });
+
   // Salvar novos parâmetros
   r.checkinDate = newCheckinDate;
   r.checkoutDate = newCheckoutDate;
@@ -5781,6 +6217,24 @@ app.delete("/api/pms/reservations/:id", (req, res) => {
       o.status = "cancelled";
       o.cancelReason = "Reserva cancelada no calendário";
     }
+  });
+
+  ensureReservationAuditLogs(r);
+  const authUser = getAuthUser(req);
+  const actorName = authUser ? (authUser.username || authUser.name || "Administrador") : "Administrador";
+  const source = req.body?.source || "PMS Calendário (Cancelamento Manual)";
+
+  addReservationAuditLog(r, {
+    action: "cancelled",
+    actor: {
+      id: authUser?.id || null,
+      name: actorName,
+      role: authUser?.role || "admin",
+      type: "user"
+    },
+    source,
+    description: "Reserva cancelada no sistema",
+    changes: [{ field: "status", label: "Status da Reserva", oldValue: "Confirmada", newValue: "Cancelada" }]
   });
 
   r.updatedAt = new Date().toISOString();
@@ -6569,7 +7023,30 @@ app.patch("/api/pms/reservations/:id/early-checkin", (req, res) => {
   const r = (db.reservations || []).find(x => x.id === id);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
 
-  r.earlyCheckinAuthorized = Boolean(req.body.earlyCheckinAuthorized);
+  ensureReservationAuditLogs(r);
+  const authUser = getAuthUser(req);
+  const newEarly = Boolean(req.body.earlyCheckinAuthorized);
+  if (Boolean(r.earlyCheckinAuthorized) !== newEarly) {
+    addReservationAuditLog(r, {
+      action: "early_checkin",
+      actor: {
+        id: authUser?.id || null,
+        name: authUser?.username || "Administrador",
+        role: authUser?.role || "admin",
+        type: "user"
+      },
+      source: "PMS Calendário",
+      description: newEarly ? "Early Check-in autorizado para liberação antecipada" : "Autorização de Early Check-in revogada",
+      changes: [{
+        field: "earlyCheckinAuthorized",
+        label: "Early Check-in Autorizado",
+        oldValue: r.earlyCheckinAuthorized ? "Sim" : "Não",
+        newValue: newEarly ? "Sim" : "Não"
+      }]
+    });
+  }
+
+  r.earlyCheckinAuthorized = newEarly;
   r.updatedAt = new Date().toISOString();
   saveDatabase();
   res.json({ success: true, earlyCheckinAuthorized: r.earlyCheckinAuthorized });
@@ -6580,7 +7057,30 @@ app.patch("/api/pms/reservations/:id/reception-notes", (req, res) => {
   const r = (db.reservations || []).find(x => x.id === id);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
 
-  r.receptionNotes = String(req.body.receptionNotes || "");
+  ensureReservationAuditLogs(r);
+  const authUser = getAuthUser(req);
+  const newNotes = String(req.body.receptionNotes || "");
+  if (String(r.receptionNotes || "") !== newNotes) {
+    addReservationAuditLog(r, {
+      action: "reception_note",
+      actor: {
+        id: authUser?.id || null,
+        name: authUser?.username || "Administrador",
+        role: authUser?.role || "admin",
+        type: "user"
+      },
+      source: "PMS Calendário",
+      description: "Aviso para a portaria/recepção atualizado",
+      changes: [{
+        field: "receptionNotes",
+        label: "Aviso para a Recepção",
+        oldValue: r.receptionNotes || "(vazio)",
+        newValue: newNotes || "(vazio)"
+      }]
+    });
+  }
+
+  r.receptionNotes = newNotes;
   r.updatedAt = new Date().toISOString();
   saveDatabase();
   res.json({ success: true, receptionNotes: r.receptionNotes });
@@ -6590,6 +7090,21 @@ app.post("/api/reception/checkin/:reservationId", (req, res) => {
   const id = Number(req.params.reservationId);
   const r = (db.reservations || []).find(x => x.id === id);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
+
+  ensureReservationAuditLogs(r);
+  const authUser = getAuthUser(req);
+  addReservationAuditLog(r, {
+    action: "checkin",
+    actor: {
+      id: authUser?.id || null,
+      name: authUser?.username || "Recepção / Portaria",
+      role: authUser?.role || "reception",
+      type: "user"
+    },
+    source: "Recepção / Portaria",
+    description: `Check-in do Apt ${r.flatNumber} registrado na portaria`,
+    changes: [{ field: "status", label: "Status da Reserva", oldValue: r.status || "confirmada", newValue: "in_house" }]
+  });
 
   const flat = db.flats.find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
   
@@ -6623,11 +7138,26 @@ app.post("/api/reception/checkout/:reservationId", (req, res) => {
   const r = (db.reservations || []).find(x => x.id === id);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
 
+  ensureReservationAuditLogs(r);
+  const authUser = getAuthUser(req);
   const previousStatus = r.status;
   r.status = "completed";
   r.actualCheckoutAt = new Date().toISOString();
   r.previousStatus = previousStatus;
   r.updatedAt = new Date().toISOString();
+
+  addReservationAuditLog(r, {
+    action: "checkout",
+    actor: {
+      id: authUser?.id || null,
+      name: authUser?.username || "Recepção / Portaria",
+      role: authUser?.role || "reception",
+      type: "user"
+    },
+    source: "Recepção / Portaria",
+    description: `Check-out do Apt ${r.flatNumber} finalizado na recepção`,
+    changes: [{ field: "status", label: "Status da Reserva", oldValue: previousStatus || "in_house", newValue: "completed" }]
+  });
 
   const flat = db.flats.find(f => f.id === r.flatId);
   if (flat) {

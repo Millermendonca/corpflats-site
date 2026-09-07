@@ -213,7 +213,7 @@
       "id": 229,
       "flatId": 1,
       "flatNumber": "113",
-      "requestDate": "2026-09-05",
+      "requestDate": "2026-09-07",
       "source": "checkout",
       "status": "dirty",
       "assignedUserId": null,
@@ -224,7 +224,7 @@
       "arrivingGuest": null,
       "adminNote": null,
       "createdAt": "2026-09-03T13:40:36.529Z",
-      "updatedAt": "2026-09-03T13:40:36.529Z"
+      "updatedAt": "2026-09-07T01:33:24.034Z"
     },
     {
       "id": 5,
@@ -547,6 +547,32 @@
       "arrivingGuest": "Leonardo",
       "willCleanAt": "2026-09-02T15:39:35.161Z",
       "updatedAt": "2026-09-02T15:54:19.040Z"
+    },
+    {
+      "id": 230,
+      "flatId": 1,
+      "flatNumber": "113",
+      "requestDate": "2026-09-06",
+      "source": "checkout",
+      "status": "dirty",
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "assignedUserName": null,
+      "isVacant": false,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": "Reserva Booking com café da manhã incluso",
+      "leavingGuest": "Carlos Silva",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": null,
+      "cleaningStartedAt": null,
+      "completedAt": null,
+      "durationMinutes": null,
+      "createdAt": "2026-09-06T08:00:00.000Z",
+      "updatedAt": "2026-09-06T08:00:00.000Z"
     }
   ],
   "periodicTasks": [
@@ -2447,11 +2473,11 @@
       "companyId": null,
       "companyName": "",
       "invoiceDetails": null,
-      "checkinDate": "2026-09-03",
-      "checkoutDate": "2026-09-05",
+      "checkinDate": "2026-09-04",
+      "checkoutDate": "2026-09-07",
       "status": "confirmada",
       "channel": "booking",
-      "dailyRate": 0,
+      "dailyRate": 280,
       "totalAmount": 0,
       "paidAmount": 0,
       "paymentStatus": "pendente",
@@ -2467,8 +2493,92 @@
       "includeBreakfast": true,
       "breakfastToken": "bfk_34_aee3db54",
       "createdAt": "2026-09-03T13:40:36.464Z",
-      "updatedAt": "2026-09-03T13:40:36.529Z",
-      "calendarSequence": 1
+      "updatedAt": "2026-09-07T01:33:24.045Z",
+      "calendarSequence": 2,
+      "auditLogs": [
+        {
+          "id": "audit_1788744804043_x6a1li",
+          "timestamp": "2026-09-07T01:33:24.043Z",
+          "action": "dates_changed",
+          "actor": {
+            "id": null,
+            "name": "Sistema / Usuário",
+            "role": "admin",
+            "type": "system"
+          },
+          "source": "PMS Calendário (Edição Manual)",
+          "description": "Remarcação do período da estadia",
+          "changes": [
+            {
+              "field": "checkinDate",
+              "label": "Data de Entrada (Check-in)",
+              "oldValue": "2026-09-03",
+              "newValue": "2026-09-04"
+            },
+            {
+              "field": "checkoutDate",
+              "label": "Data de Saída (Check-out)",
+              "oldValue": "2026-09-05",
+              "newValue": "2026-09-07"
+            },
+            {
+              "field": "dailyRate",
+              "label": "Valor da Diária",
+              "oldValue": "R$ 0.00",
+              "newValue": "R$ 280.00"
+            }
+          ]
+        },
+        {
+          "id": "audit_init_34",
+          "timestamp": "2026-09-03T13:40:36.464Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Canal Booking.com",
+            "role": "admin",
+            "type": "system"
+          },
+          "source": "Booking.com Sync",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 113"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-09-03 a 2026-09-05"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Carlos Silva"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "booking"
+            }
+          ]
+        }
+      ],
+      "lastModifiedBy": {
+        "timestamp": "2026-09-07T01:33:24.043Z",
+        "actor": {
+          "id": null,
+          "name": "Sistema / Usuário",
+          "role": "admin",
+          "type": "system"
+        },
+        "source": "PMS Calendário (Edição Manual)"
+      }
     },
     {
       "id": 33,
@@ -2516,7 +2626,48 @@
       "includeBreakfast": true,
       "breakfastToken": "bfk_33_09c70715",
       "createdAt": "2026-09-03T13:40:08.663Z",
-      "updatedAt": "2026-09-03T13:40:08.663Z"
+      "updatedAt": "2026-09-03T13:40:08.663Z",
+      "auditLogs": [
+        {
+          "id": "audit_init_33",
+          "timestamp": "2026-09-03T13:40:08.663Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Canal Booking.com",
+            "role": "admin",
+            "type": "system"
+          },
+          "source": "Booking.com Sync",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 113"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-09-03 a 2026-09-06"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Carlos Silva"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "booking"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 32,
@@ -2574,7 +2725,48 @@
       "prefersHighFloor": false,
       "earlyCheckinAuthorized": false,
       "isMonthlyGuest": false,
-      "clientType": "avulso"
+      "clientType": "avulso",
+      "auditLogs": [
+        {
+          "id": "audit_init_32",
+          "timestamp": "2026-09-03T02:10:08.808Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Canal Booking.com",
+            "role": "admin",
+            "type": "system"
+          },
+          "source": "Booking.com Sync",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 116"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-09-02 a 2026-09-03"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Aline"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "booking"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 31,
@@ -2632,7 +2824,48 @@
       "specialRequests": "",
       "includeBreakfast": true,
       "prefersHighFloor": false,
-      "earlyCheckinAuthorized": false
+      "earlyCheckinAuthorized": false,
+      "auditLogs": [
+        {
+          "id": "audit_init_31",
+          "timestamp": "2026-09-02T19:25:33.376Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Canal Booking.com",
+            "role": "admin",
+            "type": "system"
+          },
+          "source": "Booking.com Sync",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 605"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-09-02 a 2026-09-03"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "William"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "booking"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 30,
@@ -2681,7 +2914,48 @@
       "prefersHighFloor": false,
       "earlyCheckinAuthorized": false,
       "isMonthlyGuest": false,
-      "clientType": "avulso"
+      "clientType": "avulso",
+      "auditLogs": [
+        {
+          "id": "audit_init_30",
+          "timestamp": "2026-09-02T16:00:59.967Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Canal Booking.com",
+            "role": "admin",
+            "type": "system"
+          },
+          "source": "Booking.com Sync",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 904"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-09-02 a 2026-09-04"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Leonardo"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "booking"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 29,
@@ -2739,7 +3013,54 @@
       "prefersHighFloor": false,
       "earlyCheckinAuthorized": false,
       "isMonthlyGuest": false,
-      "clientType": "avulso"
+      "clientType": "avulso",
+      "auditLogs": [
+        {
+          "id": "audit_init_29",
+          "timestamp": "2026-09-02T15:44:19.337Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Atendimento WhatsApp",
+            "role": "admin",
+            "type": "user"
+          },
+          "source": "WhatsApp / Direta",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 408"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-09-02 a 2026-09-03"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Dany"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "whatsapp"
+            },
+            {
+              "field": "totalAmount",
+              "label": "Valor Total",
+              "oldValue": null,
+              "newValue": "R$ 200.00"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 28,
@@ -2798,7 +3119,48 @@
       "prefersHighFloor": false,
       "earlyCheckinAuthorized": false,
       "isMonthlyGuest": false,
-      "clientType": "avulso"
+      "clientType": "avulso",
+      "auditLogs": [
+        {
+          "id": "audit_init_28",
+          "timestamp": "2026-09-02T15:42:02.256Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Canal Airbnb",
+            "role": "admin",
+            "type": "system"
+          },
+          "source": "Airbnb Sync",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 712"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-09-03 a 2026-09-04"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Kaiky"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "airbnb"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 27,
@@ -2857,7 +3219,48 @@
       "calendarSequence": 1,
       "includeBreakfast": false,
       "prefersHighFloor": false,
-      "earlyCheckinAuthorized": false
+      "earlyCheckinAuthorized": false,
+      "auditLogs": [
+        {
+          "id": "audit_init_27",
+          "timestamp": "2026-09-02T15:41:05.392Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Canal Airbnb",
+            "role": "admin",
+            "type": "system"
+          },
+          "source": "Airbnb Sync",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 212"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-09-03 a 2026-09-05"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Felipe"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "airbnb"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 26,
@@ -2915,7 +3318,48 @@
       "prefersHighFloor": false,
       "earlyCheckinAuthorized": false,
       "isMonthlyGuest": false,
-      "clientType": "avulso"
+      "clientType": "avulso",
+      "auditLogs": [
+        {
+          "id": "audit_init_26",
+          "timestamp": "2026-09-02T15:40:30.837Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Canal Airbnb",
+            "role": "admin",
+            "type": "system"
+          },
+          "source": "Airbnb Sync",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 215"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-09-03 a 2026-09-05"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Claudia"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "airbnb"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 25,
@@ -2964,7 +3408,48 @@
       "prefersHighFloor": false,
       "earlyCheckinAuthorized": false,
       "isMonthlyGuest": false,
-      "clientType": "avulso"
+      "clientType": "avulso",
+      "auditLogs": [
+        {
+          "id": "audit_init_25",
+          "timestamp": "2026-09-02T15:38:22.081Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Canal Booking.com",
+            "role": "admin",
+            "type": "system"
+          },
+          "source": "Booking.com Sync",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 313"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-09-02 a 2026-09-04"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Sintia"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "booking"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 24,
@@ -3023,7 +3508,48 @@
       "calendarSequence": 1,
       "includeBreakfast": false,
       "prefersHighFloor": false,
-      "earlyCheckinAuthorized": false
+      "earlyCheckinAuthorized": false,
+      "auditLogs": [
+        {
+          "id": "audit_init_24",
+          "timestamp": "2026-09-02T15:36:25.002Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Canal Booking.com",
+            "role": "admin",
+            "type": "system"
+          },
+          "source": "Booking.com Sync",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 509"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-09-02 a 2026-09-03"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Guido"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "booking"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 23,
@@ -3073,7 +3599,48 @@
       "prefersHighFloor": false,
       "earlyCheckinAuthorized": false,
       "isMonthlyGuest": false,
-      "clientType": "avulso"
+      "clientType": "avulso",
+      "auditLogs": [
+        {
+          "id": "audit_init_23",
+          "timestamp": "2026-09-02T15:33:13.138Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Canal Airbnb",
+            "role": "admin",
+            "type": "system"
+          },
+          "source": "Airbnb Sync",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 1304"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-09-02 a 2026-09-03"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Thaiza"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "airbnb"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 22,
@@ -3123,7 +3690,48 @@
       "calendarSequence": 1,
       "includeBreakfast": false,
       "prefersHighFloor": false,
-      "earlyCheckinAuthorized": false
+      "earlyCheckinAuthorized": false,
+      "auditLogs": [
+        {
+          "id": "audit_init_22",
+          "timestamp": "2026-09-02T15:32:57.227Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Canal Airbnb",
+            "role": "admin",
+            "type": "system"
+          },
+          "source": "Airbnb Sync",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 1004"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-09-02 a 2026-09-03"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Malu"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "airbnb"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 21,
@@ -3181,7 +3789,54 @@
       "prefersHighFloor": false,
       "earlyCheckinAuthorized": false,
       "isMonthlyGuest": false,
-      "clientType": "avulso"
+      "clientType": "avulso",
+      "auditLogs": [
+        {
+          "id": "audit_init_21",
+          "timestamp": "2026-09-02T15:28:12.540Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Atendimento WhatsApp",
+            "role": "admin",
+            "type": "user"
+          },
+          "source": "WhatsApp / Direta",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 907"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-09-02 a 2026-09-03"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Fabiana"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "whatsapp"
+            },
+            {
+              "field": "totalAmount",
+              "label": "Valor Total",
+              "oldValue": null,
+              "newValue": "R$ 210.00"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 20,
@@ -3230,7 +3885,54 @@
       "prefersHighFloor": false,
       "earlyCheckinAuthorized": false,
       "isMonthlyGuest": false,
-      "clientType": "avulso"
+      "clientType": "avulso",
+      "auditLogs": [
+        {
+          "id": "audit_init_20",
+          "timestamp": "2026-09-02T15:27:19.628Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Atendimento WhatsApp",
+            "role": "admin",
+            "type": "user"
+          },
+          "source": "WhatsApp / Direta",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 215"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-09-02 a 2026-09-03"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Goal"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "whatsapp"
+            },
+            {
+              "field": "totalAmount",
+              "label": "Valor Total",
+              "oldValue": null,
+              "newValue": "R$ 200.00"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 19,
@@ -3289,7 +3991,48 @@
       "prefersHighFloor": false,
       "earlyCheckinAuthorized": false,
       "isMonthlyGuest": false,
-      "clientType": "avulso"
+      "clientType": "avulso",
+      "auditLogs": [
+        {
+          "id": "audit_init_19",
+          "timestamp": "2026-09-02T03:30:41.148Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Canal Booking.com",
+            "role": "admin",
+            "type": "system"
+          },
+          "source": "Booking.com Sync",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 116"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-09-01 a 2026-09-02"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Diana"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "booking"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 18,
@@ -3338,7 +4081,48 @@
       "prefersHighFloor": false,
       "earlyCheckinAuthorized": false,
       "isMonthlyGuest": false,
-      "clientType": "avulso"
+      "clientType": "avulso",
+      "auditLogs": [
+        {
+          "id": "audit_init_18",
+          "timestamp": "2026-09-02T03:29:02.396Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Canal Booking.com",
+            "role": "admin",
+            "type": "system"
+          },
+          "source": "Booking.com Sync",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 212"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-09-01 a 2026-09-02"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Kaio"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "booking"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 17,
@@ -3387,7 +4171,48 @@
       "prefersHighFloor": false,
       "earlyCheckinAuthorized": false,
       "isMonthlyGuest": false,
-      "clientType": "avulso"
+      "clientType": "avulso",
+      "auditLogs": [
+        {
+          "id": "audit_init_17",
+          "timestamp": "2026-09-02T03:27:47.074Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Canal Booking.com",
+            "role": "admin",
+            "type": "system"
+          },
+          "source": "Booking.com Sync",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 211"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-09-01 a 2026-09-02"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Kaio"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "booking"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 15,
@@ -3436,7 +4261,54 @@
       "prefersHighFloor": false,
       "earlyCheckinAuthorized": false,
       "isMonthlyGuest": false,
-      "clientType": "avulso"
+      "clientType": "avulso",
+      "auditLogs": [
+        {
+          "id": "audit_init_15",
+          "timestamp": "2026-09-01T20:29:46.992Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Atendimento WhatsApp",
+            "role": "admin",
+            "type": "user"
+          },
+          "source": "WhatsApp / Direta",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 905"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-09-01 a 2026-09-02"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Marcelo"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "whatsapp"
+            },
+            {
+              "field": "totalAmount",
+              "label": "Valor Total",
+              "oldValue": null,
+              "newValue": "R$ 185.00"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 14,
@@ -3494,7 +4366,48 @@
       "prefersHighFloor": false,
       "earlyCheckinAuthorized": false,
       "isMonthlyGuest": false,
-      "clientType": "avulso"
+      "clientType": "avulso",
+      "auditLogs": [
+        {
+          "id": "audit_init_14",
+          "timestamp": "2026-09-01T16:51:03.818Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Canal Booking.com",
+            "role": "admin",
+            "type": "system"
+          },
+          "source": "Booking.com Sync",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 904"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-09-01 a 2026-09-02"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Sergio"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "booking"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 13,
@@ -3543,7 +4456,48 @@
       "prefersHighFloor": false,
       "earlyCheckinAuthorized": false,
       "isMonthlyGuest": false,
-      "clientType": "avulso"
+      "clientType": "avulso",
+      "auditLogs": [
+        {
+          "id": "audit_init_13",
+          "timestamp": "2026-09-01T16:36:25.304Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Canal Airbnb",
+            "role": "admin",
+            "type": "system"
+          },
+          "source": "Airbnb Sync",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 715"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-09-01 a 2026-09-03"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Gustavo"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "airbnb"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 12,
@@ -3592,7 +4546,48 @@
       "prefersHighFloor": false,
       "earlyCheckinAuthorized": false,
       "isMonthlyGuest": false,
-      "clientType": "avulso"
+      "clientType": "avulso",
+      "auditLogs": [
+        {
+          "id": "audit_init_12",
+          "timestamp": "2026-09-01T16:35:29.978Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Canal Booking.com",
+            "role": "admin",
+            "type": "system"
+          },
+          "source": "Booking.com Sync",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 712"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-09-01 a 2026-09-02"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Roselene"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "booking"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 11,
@@ -3642,7 +4637,54 @@
       "prefersHighFloor": false,
       "earlyCheckinAuthorized": false,
       "isMonthlyGuest": false,
-      "clientType": "avulso"
+      "clientType": "avulso",
+      "auditLogs": [
+        {
+          "id": "audit_init_11",
+          "timestamp": "2026-09-01T06:05:07.542Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Canal Booking.com",
+            "role": "admin",
+            "type": "system"
+          },
+          "source": "Booking.com Sync",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 509"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-08-31 a 2026-09-01"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Fabiano"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "booking"
+            },
+            {
+              "field": "totalAmount",
+              "label": "Valor Total",
+              "oldValue": null,
+              "newValue": "R$ 250.00"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 9,
@@ -3691,7 +4733,54 @@
       "prefersHighFloor": false,
       "earlyCheckinAuthorized": false,
       "isMonthlyGuest": false,
-      "clientType": "avulso"
+      "clientType": "avulso",
+      "auditLogs": [
+        {
+          "id": "audit_init_9",
+          "timestamp": "2026-08-31T19:03:02.705Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Atendimento WhatsApp",
+            "role": "admin",
+            "type": "user"
+          },
+          "source": "WhatsApp / Direta",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 605"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-09-01 a 2026-09-02"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Luiz"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "whatsapp"
+            },
+            {
+              "field": "totalAmount",
+              "label": "Valor Total",
+              "oldValue": null,
+              "newValue": "R$ 230.00"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 7,
@@ -3742,7 +4831,48 @@
       "earlyCheckinAuthorized": false,
       "isMonthlyGuest": false,
       "clientType": "avulso",
-      "breakfastToken": "bfk_7_3b26402a"
+      "breakfastToken": "bfk_7_3b26402a",
+      "auditLogs": [
+        {
+          "id": "audit_init_7",
+          "timestamp": "2026-08-31T18:59:34.189Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Atendimento WhatsApp",
+            "role": "admin",
+            "type": "user"
+          },
+          "source": "WhatsApp / Direta",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 113"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-09-01 a 2026-09-03"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Anyelle"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "whatsapp"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 6,
@@ -3791,7 +4921,48 @@
       "prefersHighFloor": false,
       "earlyCheckinAuthorized": false,
       "isMonthlyGuest": false,
-      "clientType": "avulso"
+      "clientType": "avulso",
+      "auditLogs": [
+        {
+          "id": "audit_init_6",
+          "timestamp": "2026-08-31T18:58:48.156Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Canal Booking.com",
+            "role": "admin",
+            "type": "system"
+          },
+          "source": "Booking.com Sync",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 114"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-09-01 a 2026-09-20"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Hiago Santana"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "booking"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 5,
@@ -3841,7 +5012,48 @@
       "calendarSequence": 2,
       "includeBreakfast": true,
       "prefersHighFloor": false,
-      "earlyCheckinAuthorized": false
+      "earlyCheckinAuthorized": false,
+      "auditLogs": [
+        {
+          "id": "audit_init_5",
+          "timestamp": "2026-08-31T18:09:30.728Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Atendimento WhatsApp",
+            "role": "admin",
+            "type": "user"
+          },
+          "source": "WhatsApp / Direta",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 512"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-09-01 a 2026-09-04"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Marco"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "whatsapp"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 3,
@@ -3891,7 +5103,48 @@
       "calendarSequence": 1,
       "includeBreakfast": false,
       "prefersHighFloor": false,
-      "earlyCheckinAuthorized": false
+      "earlyCheckinAuthorized": false,
+      "auditLogs": [
+        {
+          "id": "audit_init_3",
+          "timestamp": "2026-08-31T17:45:40.375Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Atendimento WhatsApp",
+            "role": "admin",
+            "type": "user"
+          },
+          "source": "WhatsApp / Direta",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 408"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-08-31 a 2026-09-02"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Angelo"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "whatsapp"
+            }
+          ]
+        }
+      ]
     },
     {
       "id": 2,
@@ -3949,7 +5202,84 @@
       "prefersHighFloor": false,
       "earlyCheckinAuthorized": false,
       "isMonthlyGuest": false,
-      "clientType": "avulso"
+      "clientType": "avulso",
+      "auditLogs": [
+        {
+          "id": "audit_init_2",
+          "timestamp": "2026-08-31T17:44:57.164Z",
+          "action": "created",
+          "actor": {
+            "id": null,
+            "name": "Canal Booking.com",
+            "role": "admin",
+            "type": "system"
+          },
+          "source": "Booking.com Sync",
+          "description": "Reserva criada no sistema",
+          "changes": [
+            {
+              "field": "flatNumber",
+              "label": "Apartamento",
+              "oldValue": null,
+              "newValue": "Flat 313"
+            },
+            {
+              "field": "dates",
+              "label": "Período da Estadia",
+              "oldValue": null,
+              "newValue": "2026-08-31 a 2026-09-01"
+            },
+            {
+              "field": "guestName",
+              "label": "Hóspede Titular",
+              "oldValue": null,
+              "newValue": "Dayana"
+            },
+            {
+              "field": "channel",
+              "label": "Canal",
+              "oldValue": null,
+              "newValue": "booking"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "reservationCommunications": [
+    {
+      "id": "af489d28-d6a2-4438-a2aa-c3d22833314f",
+      "reservation_id": "RES-113-0034",
+      "type": "email",
+      "direction": "outbound",
+      "recipient": "portaria.soho@corpflats.com.br",
+      "subject": "[ATUALIZAÇÃO DE RESERVA] Flat 113 - Carlos Silva",
+      "body": "<!DOCTYPE html>\n<html lang=\"pt-BR\">\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <title>[ATUALIZAÇÃO DE RESERVA] Flat 113 - Carlos Silva</title>\n  <style>\n    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #f8fafc; color: #1e293b; }\n    .wrapper { max-width: 620px; margin: 20px auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; }\n    .header { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); padding: 24px 30px; text-align: left; }\n    .brand { color: #f59e0b; font-size: 20px; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase; margin: 0; }\n    .subbrand { color: #94a3b8; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 2px; }\n    .badge-bar { margin-top: 14px; }\n    .badge { display: inline-block; padding: 5px 12px; border-radius: 20px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; }\n    .badge-checkin { background-color: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }\n    .badge-update { background-color: #fffbeb; color: #b45309; border: 1px solid #fde68a; }\n    .badge-cancel { background-color: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }\n    .badge-general { background-color: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; }\n    .content { padding: 30px; }\n    .section-title { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #64748b; margin-top: 20px; margin-bottom: 8px; border-bottom: 1px solid #f1f5f9; padding-bottom: 4px; }\n    .info-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; }\n    .info-table { width: 100%; border-collapse: collapse; }\n    .info-table td { padding: 5px 0; font-size: 13px; vertical-align: top; }\n    .info-table .label { color: #64748b; font-weight: 600; width: 38%; }\n    .info-table .val { color: #0f172a; font-weight: 700; width: 62%; }\n    .guest-box { background: #ffffff; border: 1px solid #cbd5e1; border-radius: 10px; padding: 12px 14px; margin-top: 8px; }\n    .callout-alert { background: #fffbeb; border-left: 4px solid #f59e0b; padding: 14px 16px; border-radius: 6px; margin-bottom: 18px; }\n    .callout-cancel { background: #fef2f2; border-left: 4px solid #ef4444; padding: 14px 16px; border-radius: 6px; margin-bottom: 18px; }\n    .footer { background: #f1f5f9; padding: 18px 30px; text-align: center; font-size: 11px; color: #64748b; border-top: 1px solid #e2e8f0; }\n    .btn-action { display: inline-block; padding: 9px 18px; background: #0f172a; color: #ffffff !important; text-decoration: none; border-radius: 8px; font-size: 12px; font-weight: 700; margin-top: 10px; }\n  </style>\n</head>\n<body>\n  <div class=\"wrapper\">\n    <div class=\"header\">\n      <div class=\"brand\">CorpFlats</div>\n      <div class=\"subbrand\">Gestão Inteligente de Hospedagem</div>\n      <div class=\"badge-bar\">\n        <span class=\"badge badge-update\">⚡ Reserva Alterada</span>\n      </div>\n    </div>\n    <div class=\"content\">\n      \n    <div style=\"margin-bottom: 18px;\">\n      <h2 style=\"font-size: 17px; font-weight: 800; color: #0f172a; margin: 0 0 6px 0;\">Aviso de Modificação de Reserva</h2>\n      <p style=\"font-size: 13px; color: #475569; margin: 0; line-height: 1.5;\">\n        A reserva referente ao <strong>Flat 113</strong> no condomínio <strong>Edifício Soho Residence Service</strong> sofreu alterações no sistema:\n      </p>\n    </div>\n\n    \n      <div class=\"callout-alert\">\n        <strong style=\"color: #92400e; font-size: 14px;\">⚡ Modificações Realizadas:</strong>\n        <ul style=\"margin: 8px 0 0 16px; padding: 0; font-size: 13px; color: #78350f;\">\n          \n      <li style=\"margin-bottom: 6px;\">\n        <strong>Data de Entrada (Check-in):</strong> \n        <span style=\"text-decoration: line-through; color: #94a3b8;\">2026-09-03</span> \n        ➔ <strong style=\"color: #047857;\">2026-09-04</strong>\n      </li>\n    \n      <li style=\"margin-bottom: 6px;\">\n        <strong>Data de Saída (Check-out):</strong> \n        <span style=\"text-decoration: line-through; color: #94a3b8;\">2026-09-05</span> \n        ➔ <strong style=\"color: #047857;\">2026-09-07</strong>\n      </li>\n    \n        </ul>\n      </div>\n    \n\n    <div class=\"section-title\">📋 Resumo Atualizado da Reserva</div>\n    <div class=\"info-card\">\n      <table class=\"info-table\">\n        <tr><td class=\"label\">Apartamento:</td><td class=\"val\">Flat 113 (Edifício Soho Residence Service)</td></tr>\n        <tr><td class=\"label\">Hóspede Titular:</td><td class=\"val\">Carlos Silva</td></tr>\n        <tr><td class=\"label\">Entrada (Check-in):</td><td class=\"val\">04/09/2026</td></tr>\n        <tr><td class=\"label\">Saída (Check-out):</td><td class=\"val\">07/09/2026</td></tr>\n        <tr><td class=\"label\">Status Atual:</td><td class=\"val\" style=\"text-transform: uppercase; color: #059669; font-weight: 800;\">confirmada</td></tr>\n      </table>\n    </div>\n  \n    </div>\n    <div class=\"footer\">\n      Este é um e-mail transacional automatizado gerado pelo sistema CorpFlats.<br/>\n      Para suporte ou dúvidas operacionais, consulte a administração do hotel.\n    </div>\n  </div>\n</body>\n</html>",
+      "status": "failed",
+      "metadata": {
+        "trigger": "reservation_update",
+        "flatNumber": "113",
+        "guestName": "Carlos Silva",
+        "changes": [
+          {
+            "field": "checkinDate",
+            "label": "Data de Entrada (Check-in)",
+            "oldValue": "2026-09-03",
+            "newValue": "2026-09-04"
+          },
+          {
+            "field": "checkoutDate",
+            "label": "Data de Saída (Check-out)",
+            "oldValue": "2026-09-05",
+            "newValue": "2026-09-07"
+          }
+        ],
+        "attempts": 1,
+        "queuedAt": "2026-09-07T01:33:24.036Z",
+        "error": "SMTP não configurado no backend (credenciais de SMTP_USER/SMTP_PASS ausentes).",
+        "failedAt": "2026-09-07T01:33:24.162Z"
+      },
+      "created_at": "2026-09-07T01:33:24.036Z"
     }
   ],
   "roomBlocks": [],
@@ -4488,6 +5818,49 @@
   ],
   "auditLogs": [
     {
+      "id": 15,
+      "timestamp": "2026-09-07T01:33:24.044Z",
+      "level": "info",
+      "category": "reservation",
+      "action": "RESERVATION_DATES_CHANGED",
+      "actor": {
+        "id": null,
+        "name": "Sistema / Usuário",
+        "role": "admin",
+        "type": "system"
+      },
+      "details": {
+        "reservationId": 34,
+        "reservationCode": "RES-113-0034",
+        "flatNumber": "113",
+        "guestName": "Carlos Silva",
+        "description": "Remarcação do período da estadia",
+        "changes": [
+          {
+            "field": "checkinDate",
+            "label": "Data de Entrada (Check-in)",
+            "oldValue": "2026-09-03",
+            "newValue": "2026-09-04"
+          },
+          {
+            "field": "checkoutDate",
+            "label": "Data de Saída (Check-out)",
+            "oldValue": "2026-09-05",
+            "newValue": "2026-09-07"
+          },
+          {
+            "field": "dailyRate",
+            "label": "Valor da Diária",
+            "oldValue": "R$ 0.00",
+            "newValue": "R$ 280.00"
+          }
+        ]
+      },
+      "source": "PMS Calendário (Edição Manual)",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
       "id": 14,
       "timestamp": "2026-09-03T14:34:07.134Z",
       "level": "info",
@@ -4882,12 +6255,12 @@
         }
       ],
       "notes": "",
-      "status": "cancelled",
+      "status": "pending",
       "phone": "",
       "reservationCode": "RES-113-0034",
       "reservationId": 34,
       "createdAt": "2026-09-03T13:40:36.504Z",
-      "cancelReason": "Hóspede antecipou o check-out (novo check-out: 2026-09-05)"
+      "cancelReason": null
     },
     {
       "id": 2,

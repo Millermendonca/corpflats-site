@@ -57,6 +57,7 @@ export default function GuestPortal() {
   const [error, setError] = useState<string | null>(null)
   const [copiedKey, setCopiedKey] = useState(false)
   const [copiedWifi, setCopiedWifi] = useState(false)
+  const [copiedSsid, setCopiedSsid] = useState(false)
   
   // Modals & Action States
   const [termsModalOpen, setTermsModalOpen] = useState(false)
@@ -423,11 +424,19 @@ export default function GuestPortal() {
     setTimeout(() => setCopiedKey(false), 2500)
   }
 
+  const wifiNetwork = `apto${reservation.flatNumber || ""}`
+  const wifiPassword = "1234567890123"
+
   const handleCopyWifi = () => {
-    const wifiPass = data?.wifiPassword || "soho2026"
-    navigator.clipboard.writeText(wifiPass)
+    navigator.clipboard.writeText(wifiPassword)
     setCopiedWifi(true)
     setTimeout(() => setCopiedWifi(false), 2500)
+  }
+
+  const handleCopySsid = () => {
+    navigator.clipboard.writeText(wifiNetwork)
+    setCopiedSsid(true)
+    setTimeout(() => setCopiedSsid(false), 2500)
   }
 
   return (
@@ -756,7 +765,7 @@ export default function GuestPortal() {
           </Card>
         )}
 
-        {/* ── 4. Card: Wi-Fi Fibra 500 Mega ──────────────────────────────── */}
+        {/* ── 4. Card: Rede Wi-Fi ──────────────────────────────── */}
         <Card className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-5 sm:p-6 space-y-4">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2.5">
@@ -764,8 +773,7 @@ export default function GuestPortal() {
                 <Wifi className="w-4 h-4" />
               </div>
               <div>
-                <h2 className="text-base font-black text-slate-900">Wi-Fi Fibra 500 Mega Ultra Rápido</h2>
-                <span className="text-xs text-slate-500">Conexão estável e ilimitada para home office e streaming em 4K</span>
+                <h2 className="text-base font-black text-slate-900">Rede Wi-Fi</h2>
               </div>
             </div>
             <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-bold">
@@ -777,14 +785,24 @@ export default function GuestPortal() {
             <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between">
               <div>
                 <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Rede Wi-Fi (SSID)</span>
-                <span className="font-bold text-slate-900 text-sm">{data?.wifiSSID || `CorpFlats_${reservation.flatNumber}`}</span>
+                <span className="font-bold text-slate-900 text-sm">{wifiNetwork}</span>
               </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={handleCopySsid}
+                className="h-8 px-2.5 rounded-xl text-xs font-bold border-slate-200 hover:bg-white text-slate-700 flex items-center gap-1.5"
+              >
+                {copiedSsid ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-slate-600" />}
+                <span>{copiedSsid ? "Copiada!" : "Copiar"}</span>
+              </Button>
             </div>
 
             <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between">
               <div>
                 <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Senha de Acesso</span>
-                <span className="font-mono font-bold text-slate-900 text-sm">{data?.wifiPassword || "soho2026"}</span>
+                <span className="font-mono font-bold text-slate-900 text-sm">{wifiPassword}</span>
               </div>
               <Button
                 type="button"
