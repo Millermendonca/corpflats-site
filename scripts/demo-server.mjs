@@ -1014,7 +1014,7 @@ async function loadDatabase() {
     if (fs.existsSync(DB_FILE)) {
       const content = fs.readFileSync(DB_FILE, "utf-8");
       const loaded = JSON.parse(content);
-      db = { ...db, ...loaded };
+      Object.assign(db, loaded);
     }
     if (pgPool) {
       try {
@@ -1051,7 +1051,7 @@ async function loadDatabase() {
               [JSON.stringify(pgLoaded)]
             ).catch(e => console.warn("[PostgreSQL] Erro ao sincronizar tarefas preventivas na nuvem:", e.message));
           }
-          db = { ...db, ...pgLoaded };
+          Object.assign(db, pgLoaded);
           console.log("[PostgreSQL] Estado restaurado da nuvem com sucesso!");
           sanitizeAndRecoverCleanings();
           sanitizeLostAndFound();
@@ -1358,9 +1358,9 @@ function createNotification({ category, title, message, severity = "info", metad
   }
 }
 
-loadDatabase();
+await loadDatabase();
 ensureUniqueRequestIds();
-initWhatsAppEngine(app, db, saveDatabase);
+initWhatsAppEngine(app, () => db, saveDatabase);
 
 let checkinsList = [];
 let existingManualRequests = [];

@@ -2836,7 +2836,11 @@ export default function PmsCalendar() {
                             const res = await fetch("/api/whatsapp/dispatch-reservation", {
                               method: "POST",
                               headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ templateId: "tpl_new_reservation", reservationCode: selectedRes.code })
+                              body: JSON.stringify({ 
+                                templateId: "tpl_new_reservation", 
+                                reservationCode: selectedRes.code || selectedRes.reservationCode || String(selectedRes.id || ""),
+                                reservationId: selectedRes.id 
+                              })
                             });
                             const d = await res.json();
                             if (res.ok && d.success) {
@@ -2862,7 +2866,11 @@ export default function PmsCalendar() {
                             const res = await fetch("/api/whatsapp/dispatch-reservation", {
                               method: "POST",
                               headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ templateId: "tpl_breakfast_reminder", reservationCode: selectedRes.code })
+                              body: JSON.stringify({ 
+                                templateId: "tpl_breakfast_reminder", 
+                                reservationCode: selectedRes.code || selectedRes.reservationCode || String(selectedRes.id || ""),
+                                reservationId: selectedRes.id 
+                              })
                             });
                             const d = await res.json();
                             if (res.ok && d.success) {
@@ -2888,7 +2896,11 @@ export default function PmsCalendar() {
                             const res = await fetch("/api/whatsapp/dispatch-reservation", {
                               method: "POST",
                               headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ templateId: "tpl_checkin_day_instructions", reservationCode: selectedRes.code })
+                              body: JSON.stringify({ 
+                                templateId: "tpl_checkin_day_instructions", 
+                                reservationCode: selectedRes.code || selectedRes.reservationCode || String(selectedRes.id || ""),
+                                reservationId: selectedRes.id 
+                              })
                             });
                             const d = await res.json();
                             if (res.ok && d.success) {
@@ -2914,7 +2926,11 @@ export default function PmsCalendar() {
                             const res = await fetch("/api/whatsapp/dispatch-reservation", {
                               method: "POST",
                               headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ templateId: "tpl_checkout_reminder", reservationCode: selectedRes.code })
+                              body: JSON.stringify({ 
+                                templateId: "tpl_checkout_reminder", 
+                                reservationCode: selectedRes.code || selectedRes.reservationCode || String(selectedRes.id || ""),
+                                reservationId: selectedRes.id 
+                              })
                             });
                             const d = await res.json();
                             if (res.ok && d.success) {

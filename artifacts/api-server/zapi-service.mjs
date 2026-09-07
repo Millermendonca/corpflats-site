@@ -1091,9 +1091,10 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
 }
 
 // ── Disparo Imediato ao Ocorrer Evento (Nova Reserva, Cancelamento, etc.) ──────
-export async function triggerImmediateWhatsApp(db, saveDatabase, eventName, reservation, baseUrl = "") {
+export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventName, reservation, baseUrl = "") {
   try {
-    if (!db.zapiConfig?.enabled) return;
+    const db = typeof dbOrGetter === "function" ? dbOrGetter() : dbOrGetter;
+    if (!db || !db.zapiConfig?.enabled) return;
     if (!reservation || !reservation.guestPhone) return;
 
     const templates = (db.whatsappTemplates || []).filter(t => 

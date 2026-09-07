@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { useToast } from "@/hooks/use-toast"
 import { 
   MessageCircle, Phone, ExternalLink, Copy, Check, Coffee, 
-  Users, Calendar, Eye, Building2
+  Users, Calendar, Eye, Building2, X
 } from "lucide-react"
 import { format, parseISO, differenceInDays } from "date-fns"
 
@@ -16,6 +16,8 @@ interface ReservationHoverCardProps {
   onOpenDetails: (resItem: any) => void
   channelCfg?: { label: string; bg: string; text: string; border: string }
   isMensalista?: boolean
+  isOpenMobile?: boolean
+  onCloseMobile?: () => void
   children: React.ReactNode
 }
 
