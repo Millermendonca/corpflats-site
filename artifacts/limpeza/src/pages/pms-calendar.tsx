@@ -36,6 +36,7 @@ const CHANNEL_CONFIG: Record<string, { label: string; bg: string; text: string; 
 import { AccessDenied } from "@/components/access-denied"
 import { FLAT_AMENITIES_CATALOG, AMENITY_CATEGORIES, renderAmenityIcon, getFlatActiveAmenities, FlatAmenityDefinition } from "@/lib/flat-amenities"
 import { ReservationHoverCard } from "@/components/reservation-hover-card"
+import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage } from "@/hooks/use-quick-messages"
 
 
 
@@ -68,6 +69,11 @@ export default function PmsCalendar() {
   const [selectedRes, setSelectedRes] = useState<any | null>(null)
   const [savingRes, setSavingRes] = useState(false)
   const [mobileCardResId, setMobileCardResId] = useState<number | string | null>(null)
+
+  // Mensagens Rápidas (Manuais) do WhatsApp
+  const { activeQuickMessages, dispatchQuickMessage } = useQuickMessages()
+  const [hoveredModalQuickMsg, setHoveredModalQuickMsg] = useState<WhatsAppQuickMessage | null>(null)
+  const [modalSendingMsgId, setModalSendingMsgId] = useState<string | null>(null)
 
   // Form fields
   const [formFlatId, setFormFlatId] = useState("")
@@ -3330,165 +3336,85 @@ export default function PmsCalendar() {
                   );
                 })()}
 
-                {selectedRes && selectedRes.guestPhone && (
-                  <div className="p-3 bg-emerald-50/80 dark:bg-emerald-950/30 rounded-2xl border border-emerald-200 dark:border-emerald-800 space-y-2">
+                {selectedRes && (
+                  <div className="p-3 bg-emerald-50/80 dark:bg-emerald-950/30 rounded-2xl border border-emerald-200 dark:border-emerald-800 space-y-2 relative">
+                    {/* Janelinha Flutuante de Prévia no Modal (Ao passar o cursor sobre qualquer atalho) */}
+                    {hoveredModalQuickMsg && (
+                      <div className="absolute left-2 right-2 bottom-[calc(100%+8px)] z-50 p-3 rounded-2xl bg-slate-950/98 dark:bg-black/98 text-white border border-slate-700 shadow-2xl backdrop-blur-md animate-in fade-in-0 zoom-in-95 pointer-events-none text-left">
+                        <div className="flex items-center justify-between pb-1.5 border-b border-slate-800 mb-2">
+                          <div className="flex items-center gap-1.5 font-bold text-xs text-emerald-400">
+                            <span className="text-sm">{hoveredModalQuickMsg.icon}</span>
+                            <span>{hoveredModalQuickMsg.title}</span>
+                          </div>
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
+                            WhatsApp Manual
+                          </span>
+                        </div>
+                        <div className="text-[11px] leading-relaxed text-slate-200 font-normal whitespace-pre-wrap max-h-48 overflow-y-auto pr-1">
+                          {renderQuickMessage(hoveredModalQuickMsg.message, selectedRes)}
+                        </div>
+                        <div className="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[9.5px] text-slate-400">
+                          <span className="font-mono">Destino: {selectedRes.guestPhone || "Sem telefone"}</span>
+                          <span className="text-emerald-400 font-bold">⚡ Clique no botão para disparar</span>
+                        </div>
+                        <div className="absolute top-full left-12 w-2.5 h-2.5 -mt-1 bg-slate-950 dark:bg-black border-r border-b border-slate-700 rotate-45" />
+                      </div>
+                    )}
+
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold text-emerald-900 dark:text-emerald-300 flex items-center gap-1.5">
                         <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
                         Disparar WhatsApp (Z-API com Botões)
                       </span>
-                      <span className="text-[10px] text-muted-foreground font-mono">Destino: {selectedRes.guestPhone}</span>
+                      <div className="flex items-center gap-2">
+                        {selectedRes.guestPhone && (
+                          <span className="text-[10px] text-muted-foreground font-mono">Destino: {selectedRes.guestPhone}</span>
+                        )}
+                        <a 
+                          href="/whatsapp?tab=quick_messages" 
+                          target="_blank" 
+                          rel="noreferrer"
+                          className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold hover:underline flex items-center gap-0.5"
+                          title="Gerenciar modelos e ativar/desativar mensagens"
+                        >
+                          <SlidersHorizontal className="w-3 h-3" />
+                          <span>Gerenciar</span>
+                        </a>
+                      </div>
                     </div>
 
                     <div className="flex flex-wrap gap-1.5">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-amber-300 text-amber-800 dark:text-amber-300 hover:bg-amber-100 flex items-center gap-1"
-                        onClick={async () => {
-                          try {
-                            const res = await fetch("/api/whatsapp/dispatch-reservation", {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ 
-                                templateId: "tpl_payment_pending", 
-                                reservationCode: selectedRes.code || selectedRes.reservationCode || String(selectedRes.id || ""),
-                                reservationId: selectedRes.id 
-                              })
-                            });
-                            const d = await res.json();
-                            if (res.ok && d.success) {
-                              toast({ title: "✓ WhatsApp enviado!", description: `Link de cobrança/pagamento enviado para ${selectedRes.guestName}.` });
-                            } else {
-                              toast({ title: "Falha ao enviar", description: d.error || "Verifique as configurações Z-API.", variant: "destructive" });
-                            }
-                          } catch (e: any) {
-                            toast({ title: "Erro de disparo", description: e.message, variant: "destructive" });
-                          }
-                        }}
-                      >
-                        💳 Cobrança / Link Pagamento
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-emerald-300 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100"
-                        onClick={async () => {
-                          try {
-                            const res = await fetch("/api/whatsapp/dispatch-reservation", {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ 
-                                templateId: "tpl_new_reservation", 
-                                reservationCode: selectedRes.code || selectedRes.reservationCode || String(selectedRes.id || ""),
-                                reservationId: selectedRes.id 
-                              })
-                            });
-                            const d = await res.json();
-                            if (res.ok && d.success) {
-                              toast({ title: "✓ WhatsApp enviado!", description: `Confirmação e Pré-Checkin enviados para ${selectedRes.guestName}.` });
-                            } else {
-                              toast({ title: "Falha ao enviar", description: d.error || "Verifique as configurações Z-API.", variant: "destructive" });
-                            }
-                          } catch (e: any) {
-                            toast({ title: "Erro de disparo", description: e.message, variant: "destructive" });
-                          }
-                        }}
-                      >
-                        📝 Enviar Resumo + Check-in
-                      </Button>
-
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-emerald-300 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100"
-                        onClick={async () => {
-                          try {
-                            const res = await fetch("/api/whatsapp/dispatch-reservation", {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ 
-                                templateId: "tpl_breakfast_reminder", 
-                                reservationCode: selectedRes.code || selectedRes.reservationCode || String(selectedRes.id || ""),
-                                reservationId: selectedRes.id 
-                              })
-                            });
-                            const d = await res.json();
-                            if (res.ok && d.success) {
-                              toast({ title: "✓ WhatsApp enviado!", description: `Link do café enviado para ${selectedRes.guestName}.` });
-                            } else {
-                              toast({ title: "Falha ao enviar", description: d.error || "Verifique as configurações Z-API.", variant: "destructive" });
-                            }
-                          } catch (e: any) {
-                            toast({ title: "Erro de disparo", description: e.message, variant: "destructive" });
-                          }
-                        }}
-                      >
-                        🥐 Link do Café
-                      </Button>
-
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-emerald-300 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100"
-                        onClick={async () => {
-                          try {
-                            const res = await fetch("/api/whatsapp/dispatch-reservation", {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ 
-                                templateId: "tpl_checkin_day_instructions", 
-                                reservationCode: selectedRes.code || selectedRes.reservationCode || String(selectedRes.id || ""),
-                                reservationId: selectedRes.id 
-                              })
-                            });
-                            const d = await res.json();
-                            if (res.ok && d.success) {
-                              toast({ title: "✓ WhatsApp enviado!", description: `Acesso, GPS e Wi-Fi enviados para ${selectedRes.guestName}.` });
-                            } else {
-                              toast({ title: "Falha ao enviar", description: d.error || "Verifique as configurações Z-API.", variant: "destructive" });
-                            }
-                          } catch (e: any) {
-                            toast({ title: "Erro de disparo", description: e.message, variant: "destructive" });
-                          }
-                        }}
-                      >
-                        📍 Acesso & Wi-Fi
-                      </Button>
-
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-emerald-300 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100"
-                        onClick={async () => {
-                          try {
-                            const res = await fetch("/api/whatsapp/dispatch-reservation", {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ 
-                                templateId: "tpl_checkout_reminder", 
-                                reservationCode: selectedRes.code || selectedRes.reservationCode || String(selectedRes.id || ""),
-                                reservationId: selectedRes.id 
-                              })
-                            });
-                            const d = await res.json();
-                            if (res.ok && d.success) {
-                              toast({ title: "✓ WhatsApp enviado!", description: `Orientações de check-out enviadas para ${selectedRes.guestName}.` });
-                            } else {
-                              toast({ title: "Falha ao enviar", description: d.error || "Verifique as configurações Z-API.", variant: "destructive" });
-                            }
-                          } catch (e: any) {
-                            toast({ title: "Erro de disparo", description: e.message, variant: "destructive" });
-                          }
-                        }}
-                      >
-                        🚪 Lembrete Check-out
-                      </Button>
+                      {activeQuickMessages.map(qm => {
+                        const isSending = modalSendingMsgId === qm.id;
+                        return (
+                          <Button
+                            key={qm.id}
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={isSending}
+                            onMouseEnter={() => setHoveredModalQuickMsg(qm)}
+                            onMouseLeave={() => setHoveredModalQuickMsg(null)}
+                            onClick={async () => {
+                              setModalSendingMsgId(qm.id);
+                              try {
+                                await dispatchQuickMessage(qm, selectedRes);
+                              } finally {
+                                setModalSendingMsgId(null);
+                              }
+                            }}
+                            className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-emerald-300 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 flex items-center gap-1 shadow-2xs cursor-pointer active:scale-95"
+                            title={`Passe o mouse para ler a mensagem ou clique para disparar "${qm.title}"`}
+                          >
+                            {isSending ? (
+                              <RefreshCw className="w-3 h-3 animate-spin text-emerald-600" />
+                            ) : (
+                              <span>{qm.icon || "💬"}</span>
+                            )}
+                            <span>{qm.title}</span>
+                          </Button>
+                        );
+                      })}
                     </div>
                   </div>
                 )}

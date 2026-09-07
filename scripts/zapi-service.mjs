@@ -249,6 +249,141 @@ Para garantir sua acomodação, você pode pagar via PIX ou em até 12x no cart�
   }
 ];
 
+// ── Modelos de Mensagens Rápidas Pré-cadastradas (Envio Manual no PMS/Card) ────
+export const DEFAULT_WHATSAPP_QUICK_MESSAGES = [
+  {
+    id: "qm_payment_pending",
+    title: "Cobrança / Link Pagamento",
+    shortLabel: "Cobrança",
+    icon: "💳",
+    description: "Link para pagamento via PIX ou Cartão de Crédito.",
+    category: "Financeiro",
+    enabled: true,
+    message: `Olá, *{{primeiro_nome}}*! ⏳
+Sua pré-reserva no *{{nome_hotel}}* (*Flat {{quarto}}*) está aguardando pagamento para confirmação definitiva.
+
+📋 *Resumo:*
+• Código: *{{numero_reserva}}*
+• Período: *{{data_checkin}} a {{data_checkout}}*
+• Valor: *{{valor_total}}*
+
+Para garantir sua acomodação via PIX ou Cartão em até 12x, acesse o link seguro:
+{{link_portal_hospede}}`,
+    footer: "CorpFlats • Pagamento Seguro",
+    buttons: [
+      { id: "btn_pagar", type: "URL", label: "💳 Pagar e Confirmar", url: "{{link_portal_hospede}}" }
+    ]
+  },
+  {
+    id: "qm_summary_checkin",
+    title: "Enviar Resumo + Check-in",
+    shortLabel: "Check-in",
+    icon: "📝",
+    description: "Resumo da estadia e link para Pré-Check-in Digital.",
+    category: "Recepção",
+    enabled: true,
+    message: `Olá, *{{primeiro_nome}}*! 🌟
+Aqui está o resumo da sua estadia confirmada no *{{nome_hotel}}*:
+
+🏨 *Flat {{quarto}}*
+📅 Entrada: *{{data_checkin}}* a partir das *{{horario_checkin}}*
+📅 Saída: *{{data_checkout}}* até às *{{horario_checkout}}*
+👥 Hóspedes: *{{num_hospedes}}*
+
+Para agilizar sua entrada na portaria sem filas, preencha o *Pré-Check-in Digital*:
+{{link_checkin_digital}}`,
+    footer: "CorpFlats • Soho Residence",
+    buttons: [
+      { id: "btn_chk", type: "URL", label: "📝 Fazer Check-in Online", url: "{{link_checkin_digital}}" },
+      { id: "btn_portal", type: "URL", label: "🏨 Ver Reserva", url: "{{link_portal_hospede}}" }
+    ]
+  },
+  {
+    id: "qm_breakfast",
+    title: "Link do Café",
+    shortLabel: "Link do Café",
+    icon: "🥐",
+    description: "Cardápio e montagem da bandeja de café no quarto.",
+    category: "Serviços",
+    enabled: true,
+    message: `Olá, *{{primeiro_nome}}*! ☕🥐
+Para agendar o café da manhã no *Flat {{quarto}}*, você pode montar a sua bandeja diretamente pelo link abaixo:
+
+{{link_cafe_manha}}
+
+Escolha seus itens favoritos e o horário desejado!`,
+    footer: "CorpFlats • Café Artesanal",
+    buttons: [
+      { id: "btn_cafe", type: "URL", label: "🥐 Montar Café da Manhã", url: "{{link_cafe_manha}}" }
+    ]
+  },
+  {
+    id: "qm_access_wifi",
+    title: "Acesso & Wi-Fi",
+    shortLabel: "Acesso & Wi-Fi",
+    icon: "📍",
+    description: "Instruções de portaria, localização e senha da rede Wi-Fi.",
+    category: "Recepção",
+    enabled: true,
+    message: `Olá, *{{primeiro_nome}}*! 🔑📶
+Seguem as instruções de chegada e acesso ao *{{nome_hotel}}*:
+
+📍 *Endereço:* {{endereco_hotel}}
+🗺️ *Localização no Maps:* {{link_maps}}
+🚪 *Portaria:* 24 horas (basta se identificar com seu nome e Flat {{quarto}})
+
+📶 *Wi-Fi do Flat:*
+• Rede: *{{wifi_rede}}*
+• Senha: *{{wifi_senha}}*
+
+Desejamos uma ótima estadia! Se precisar de algo, estamos à disposição.`,
+    footer: "CorpFlats • Hospedagem Inteligente",
+    buttons: [
+      { id: "btn_maps", type: "URL", label: "📍 Ver no Google Maps", url: "{{link_maps}}" },
+      { id: "btn_portal", type: "URL", label: "🏨 Central do Hóspede", url: "{{link_portal_hospede}}" }
+    ]
+  },
+  {
+    id: "qm_checkout_reminder",
+    title: "Lembrete Check-out",
+    shortLabel: "Check-out",
+    icon: "🚪",
+    description: "Instruções e lembrete do horário limite de saída.",
+    category: "Saída",
+    enabled: true,
+    message: `Olá, *{{primeiro_nome}}*! ☀️
+Lembramos que o check-out do *Flat {{quarto}}* é hoje até às *{{horario_checkout}}*.
+
+Ao sair, por favor desligue luzes e ar-condicionado e entregue o cartão na portaria.
+Agradecemos muito por sua hospedagem no *{{nome_hotel}}*! Tenha uma excelente viagem de retorno!`,
+    footer: "CorpFlats • Agradecemos sua preferência",
+    buttons: [
+      { id: "btn_out", type: "URL", label: "🚪 Check-out Expresso", url: "{{link_checkout}}" }
+    ]
+  },
+  {
+    id: "qm_review_request",
+    title: "Avaliação Google",
+    shortLabel: "Avaliação",
+    icon: "⭐",
+    description: "Pedido de avaliação 5 estrelas no Google Maps.",
+    category: "Pós-Estadia",
+    enabled: true,
+    message: `Olá, *{{primeiro_nome}}*! ⭐
+Esperamos que sua experiência no *{{nome_hotel}}* tenha sido fantástica!
+
+Poderia nos dedicar 30 segundos deixando sua avaliação 5 estrelas no Google?
+{{link_avaliacao_google}}
+
+Muito obrigado e até a próxima!`,
+    footer: "CorpFlats • Sua opinião vale muito",
+    buttons: [
+      { id: "btn_rev", type: "URL", label: "⭐ Avaliar no Google", url: "{{link_avaliacao_google}}" }
+    ]
+  }
+];
+
+
 // ── Sanitização de Telefone WhatsApp ───────────────────────────────────────────
 export function cleanWhatsAppPhone(rawPhone) {
   if (!rawPhone) return "";
@@ -710,6 +845,16 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
       }
     }
 
+    if (!db.whatsappQuickMessages || db.whatsappQuickMessages.length === 0) {
+      db.whatsappQuickMessages = JSON.parse(JSON.stringify(DEFAULT_WHATSAPP_QUICK_MESSAGES));
+    } else {
+      for (const defQm of DEFAULT_WHATSAPP_QUICK_MESSAGES) {
+        if (!db.whatsappQuickMessages.some(q => q.id === defQm.id)) {
+          db.whatsappQuickMessages.push(JSON.parse(JSON.stringify(defQm)));
+        }
+      }
+    }
+
     if (!db.whatsappQueue) {
       db.whatsappQueue = [];
     }
@@ -792,6 +937,56 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
     saveDatabase();
     res.json({ success: true, templates: db.whatsappTemplates });
   });
+
+  // ── Rotas de Mensagens Rápidas (Manuais - PMS / Card da Reserva) ────────────
+
+  // 7.1. Listar Mensagens Rápidas
+  app.get("/api/whatsapp/quick-messages", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    res.json(db?.whatsappQuickMessages || []);
+  });
+
+  // 7.2. Salvar / Atualizar Mensagens Rápidas (em lote ou individual)
+  app.post("/api/whatsapp/quick-messages", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const incoming = req.body;
+    if (Array.isArray(incoming)) {
+      db.whatsappQuickMessages = incoming;
+    } else if (incoming && incoming.id) {
+      if (!db.whatsappQuickMessages) db.whatsappQuickMessages = [];
+      const idx = db.whatsappQuickMessages.findIndex(q => q.id === incoming.id);
+      if (idx >= 0) {
+        db.whatsappQuickMessages[idx] = { ...db.whatsappQuickMessages[idx], ...incoming };
+      } else {
+        db.whatsappQuickMessages.push(incoming);
+      }
+    }
+    saveDatabase();
+    res.json({ success: true, quickMessages: db.whatsappQuickMessages });
+  });
+
+  // 7.3. Excluir Mensagem Rápida
+  app.delete("/api/whatsapp/quick-messages/:id", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const id = req.params.id;
+    if (!db.whatsappQuickMessages) db.whatsappQuickMessages = [];
+    db.whatsappQuickMessages = db.whatsappQuickMessages.filter(q => q.id !== id);
+    saveDatabase();
+    res.json({ success: true, quickMessages: db.whatsappQuickMessages });
+  });
+
+  // 7.4. Restaurar Mensagens Rápidas de Fábrica
+  app.post("/api/whatsapp/reset-quick-messages", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    db.whatsappQuickMessages = JSON.parse(JSON.stringify(DEFAULT_WHATSAPP_QUICK_MESSAGES));
+    saveDatabase();
+    res.json({ success: true, quickMessages: db.whatsappQuickMessages });
+  });
+
 
   // 8. Fila de Envios Agendados & Histórico
   app.get("/api/whatsapp/queue", (req, res) => {
@@ -930,9 +1125,26 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
     const db = getDb();
     ensureDbDefaults();
     const { templateId, reservationCode, reservationId } = req.body;
-    const template = (db?.whatsappTemplates || []).find(t => t.id === templateId);
+    let template = (db?.whatsappQuickMessages || []).find(t => t.id === templateId);
     if (!template) {
-      return res.status(404).json({ error: "Template não encontrado." });
+      template = (db?.whatsappTemplates || []).find(t => t.id === templateId);
+    }
+    // Mapeamento de compatibilidade caso venha ID antigo ou novo
+    if (!template) {
+      if (templateId === "tpl_payment_pending" || templateId === "qm_payment_pending") {
+        template = (db?.whatsappQuickMessages || []).find(t => t.id === "qm_payment_pending") || (db?.whatsappTemplates || []).find(t => t.id === "tpl_payment_pending");
+      } else if (templateId === "tpl_new_reservation" || templateId === "qm_summary_checkin") {
+        template = (db?.whatsappQuickMessages || []).find(t => t.id === "qm_summary_checkin") || (db?.whatsappTemplates || []).find(t => t.id === "tpl_new_reservation");
+      } else if (templateId === "tpl_breakfast_reminder" || templateId === "qm_breakfast") {
+        template = (db?.whatsappQuickMessages || []).find(t => t.id === "qm_breakfast") || (db?.whatsappTemplates || []).find(t => t.id === "tpl_breakfast_reminder");
+      } else if (templateId === "tpl_checkin_day_instructions" || templateId === "qm_access_wifi") {
+        template = (db?.whatsappQuickMessages || []).find(t => t.id === "qm_access_wifi") || (db?.whatsappTemplates || []).find(t => t.id === "tpl_checkin_day_instructions");
+      } else if (templateId === "tpl_checkout_reminder" || templateId === "qm_checkout_reminder") {
+        template = (db?.whatsappQuickMessages || []).find(t => t.id === "qm_checkout_reminder") || (db?.whatsappTemplates || []).find(t => t.id === "tpl_checkout_reminder");
+      }
+    }
+    if (!template) {
+      return res.status(404).json({ error: "Modelo de mensagem não encontrado." });
     }
 
     const searchTarget = String(reservationCode || reservationId || req.body.code || req.body.id || "").trim();

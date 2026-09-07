@@ -51,6 +51,7 @@ import {
   RotateCcw
 } from "lucide-react"
 import { AccessDenied } from "@/components/access-denied"
+import { useQuickMessages, WhatsAppQuickMessage, renderQuickMessage } from "@/hooks/use-quick-messages"
 
 interface ButtonAction {
   id: string
@@ -231,8 +232,85 @@ export default function WhatsappAutomation() {
   const [previewModalOpen, setPreviewModalOpen] = useState<boolean>(false)
   const [previewModalItem, setPreviewModalItem] = useState<QueueItem | null>(null)
 
+  // Mensagens Rápidas (Manuais) State
+  const {
+    quickMessages,
+    toggleQuickMessage,
+    saveQuickMessage,
+    deleteQuickMessage,
+    resetQuickMessages
+  } = useQuickMessages()
+
+  const [qmModalOpen, setQmModalOpen] = useState(false)
+  const [editingQm, setEditingQm] = useState<WhatsAppQuickMessage | null>(null)
+  const [qmTitle, setQmTitle] = useState("")
+  const [qmShortLabel, setQmShortLabel] = useState("")
+  const [qmIcon, setQmIcon] = useState("💬")
+  const [qmCategory, setQmCategory] = useState("Geral")
+  const [qmDescription, setQmDescription] = useState("")
+  const [qmEnabled, setQmEnabled] = useState(true)
+  const [qmMessage, setQmMessage] = useState("")
+  const [qmFooter, setQmFooter] = useState("")
+  const [hoveredPreviewQm, setHoveredPreviewQm] = useState<WhatsAppQuickMessage | null>(null)
+
+  const handleOpenCreateQm = () => {
+    setEditingQm(null)
+    setQmTitle("")
+    setQmShortLabel("")
+    setQmIcon("💬")
+    setQmCategory("Geral")
+    setQmDescription("")
+    setQmEnabled(true)
+    setQmMessage("Olá, *{{primeiro_nome}}*! ")
+    setQmFooter("CorpFlats • Central de Atendimento")
+    setQmModalOpen(true)
+  }
+
+  const handleOpenEditQm = (qm: WhatsAppQuickMessage) => {
+    setEditingQm(qm)
+    setQmTitle(qm.title)
+    setQmShortLabel(qm.shortLabel || qm.title.slice(0, 12))
+    setQmIcon(qm.icon || "💬")
+    setQmCategory(qm.category || "Geral")
+    setQmDescription(qm.description || "")
+    setQmEnabled(qm.enabled !== false)
+    setQmMessage(qm.message)
+    setQmFooter(qm.footer || "")
+    setQmModalOpen(true)
+  }
+
+  const handleSaveQmForm = async () => {
+    if (!qmTitle.trim() || !qmMessage.trim()) {
+      toast({ title: "Preencha o título e a mensagem", variant: "destructive" })
+      return
+    }
+
+    const newItem: WhatsAppQuickMessage = {
+      id: editingQm ? editingQm.id : `qm_custom_${Date.now()}`,
+      title: qmTitle.trim(),
+      shortLabel: qmShortLabel.trim() || qmTitle.trim().slice(0, 12),
+      icon: qmIcon || "💬",
+      category: qmCategory || "Geral",
+      description: qmDescription.trim(),
+      enabled: qmEnabled,
+      message: qmMessage.trim(),
+      footer: qmFooter.trim(),
+      buttons: editingQm?.buttons || []
+    }
+
+    await saveQuickMessage(newItem)
+    setQmModalOpen(false)
+  }
+
   // Initial Data Fetching
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search)
+      const tabParam = params.get("tab")
+      if (tabParam) {
+        setActiveTab(tabParam)
+      }
+    }
     fetchTemplates()
     fetchQueue()
     fetchConfig()
@@ -728,11 +806,14 @@ export default function WhatsappAutomation() {
           <TabsList className="grid grid-cols-2 md:grid-cols-4 w-full md:w-auto rounded-xl p-1 bg-muted/60">
             <TabsTrigger value="rules" className="rounded-lg text-xs font-bold gap-1.5">
               <Zap className="w-3.5 h-3.5 text-amber-500" />
-              Régua de Gatilhos
+              Régua Automática
             </TabsTrigger>
-            <TabsTrigger value="editor" className="rounded-lg text-xs font-bold gap-1.5">
-              <Edit3 className="w-3.5 h-3.5 text-blue-500" />
-              Editor & Botões
+            <TabsTrigger value="quick_messages" className="rounded-lg text-xs font-bold gap-1.5 relative">
+              <MessageSquare className="w-3.5 h-3.5 text-emerald-500" />
+              ⚡ Mensagens Rápidas
+              <span className="ml-1 px-1.5 py-0.2 text-[10px] rounded-full bg-emerald-600 text-white font-black">
+                {quickMessages.filter(m => m.enabled !== false).length}
+              </span>
             </TabsTrigger>
             <TabsTrigger value="queue" className="rounded-lg text-xs font-bold gap-1.5 relative">
               <Clock className="w-3.5 h-3.5 text-purple-500" />
@@ -1322,6 +1403,231 @@ export default function WhatsappAutomation() {
           </TabsContent>
 
           {/* ════════════════════════════════════════════════════════════════════
+              ABA 2: MENSAGENS RÁPIDAS (MANUAIS - ATALHOS NO CARD DO PMS)
+          ════════════════════════════════════════════════════════════════════ */}
+          <TabsContent value="quick_messages" className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-card p-4 rounded-2xl border shadow-xs">
+              <div>
+                <h2 className="text-base font-black text-foreground flex items-center gap-2">
+                  <Zap className="w-4 h-4 text-emerald-600 fill-emerald-600" />
+                  Mensagens Rápidas para Envio Manual
+                </h2>
+                <p className="text-xs text-muted-foreground">
+                  Estas mensagens aparecem como botões na <strong>janelinha flutuante da reserva</strong> (no calendário) e no modal de detalhes. Use o botão liga/desliga para escolher exatamente quais atalhos exibir no card.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={async () => {
+                    if (confirm("Deseja restaurar as mensagens rápidas de fábrica (Cobrança, Check-in, Café, Wi-Fi, Saída e Avaliação)?")) {
+                      await resetQuickMessages()
+                    }
+                  }}
+                  className="text-xs gap-1.5 rounded-xl border-slate-300"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 text-muted-foreground" />
+                  Restaurar Padrões
+                </Button>
+
+                <Button 
+                  size="sm" 
+                  onClick={handleOpenCreateQm}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold gap-1.5 rounded-xl shadow-xs"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Nova Mensagem Rápida
+                </Button>
+              </div>
+            </div>
+
+            {/* Grid de Mensagens Rápidas */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {quickMessages.map((qm) => {
+                const isHovered = hoveredPreviewQm?.id === qm.id;
+                return (
+                  <Card 
+                    key={qm.id} 
+                    className={`rounded-3xl border transition-all duration-200 overflow-hidden flex flex-col justify-between ${
+                      qm.enabled !== false 
+                        ? 'border-emerald-200 dark:border-emerald-800/80 shadow-xs bg-card' 
+                        : 'border-slate-200 dark:border-slate-800 opacity-80 bg-slate-50/50 dark:bg-slate-900/40'
+                    }`}
+                  >
+                    <CardHeader className="p-4 pb-3 border-b border-border/60 bg-muted/20">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-2xl bg-white dark:bg-slate-800 border shadow-2xs flex items-center justify-center text-xl shrink-0">
+                            {qm.icon || "💬"}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <CardTitle className="text-sm font-black text-foreground">
+                                {qm.title}
+                              </CardTitle>
+                              {qm.category && (
+                                <Badge variant="outline" className="text-[10px] font-semibold py-0 px-1.5">
+                                  {qm.category}
+                                </Badge>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-muted-foreground">
+                              <span>Botão no card:</span>
+                              <span className="font-mono font-bold text-foreground px-1.5 py-0.2 rounded bg-muted text-[10px] border">
+                                [{qm.icon} {qm.shortLabel || qm.title}]
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Botão Switch Liga / Desliga (Ativar ou Desativar no Card) */}
+                        <div className="flex items-center gap-2 shrink-0 bg-white dark:bg-slate-900 py-1 px-2.5 rounded-xl border shadow-2xs">
+                          <Label htmlFor={`sw-${qm.id}`} className="text-[11px] font-bold cursor-pointer">
+                            {qm.enabled !== false ? (
+                              <span className="text-emerald-700 dark:text-emerald-300 font-bold flex items-center gap-1">
+                                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                                Ativo no Card
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground font-medium flex items-center gap-1">
+                                <span className="w-2 h-2 rounded-full bg-slate-300 dark:bg-slate-700" />
+                                Oculto
+                              </span>
+                            )}
+                          </Label>
+                          <Switch
+                            id={`sw-${qm.id}`}
+                            checked={qm.enabled !== false}
+                            onCheckedChange={(checked) => toggleQuickMessage(qm.id, checked)}
+                          />
+                        </div>
+                      </div>
+                    </CardHeader>
+
+                    <CardContent className="p-4 space-y-3 flex-1 flex flex-col justify-between">
+                      <div className="space-y-2">
+                        {qm.description && (
+                          <p className="text-xs text-muted-foreground font-medium">
+                            {qm.description}
+                          </p>
+                        )}
+
+                        {/* Visualizador de mensagem WhatsApp */}
+                        <div className="p-3 rounded-2xl bg-[#E7FFDB] dark:bg-[#005C4B]/35 border border-emerald-200 dark:border-emerald-800/80 space-y-2 text-xs text-neutral-900 dark:text-neutral-100">
+                          <div className="whitespace-pre-wrap font-sans leading-relaxed text-[11.5px]">
+                            {renderPreviewText(qm.message)}
+                          </div>
+
+                          {qm.buttons && qm.buttons.length > 0 && (
+                            <div className="pt-1.5 border-t border-emerald-300/40 dark:border-emerald-700/50 space-y-1">
+                              <span className="text-[9.5px] uppercase font-bold text-emerald-900/70 dark:text-emerald-300/70">
+                                Botões Integrados (Z-API):
+                              </span>
+                              <div className="flex flex-wrap gap-1">
+                                {qm.buttons.map(b => (
+                                  <span key={b.id} className="text-[10px] px-2 py-0.5 rounded-lg bg-white dark:bg-slate-900 border font-bold text-emerald-800 dark:text-emerald-300 shadow-2xs">
+                                    {b.label}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {qm.footer && (
+                            <div className="text-[10px] text-muted-foreground italic pt-0.5">
+                              {qm.footer}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Barra Inferior com Prévia ao Passar Mouse e Ações */}
+                      <div className="pt-3 border-t flex items-center justify-between gap-2 flex-wrap">
+                        {/* Simulação da Janelinha Flutuante ao parar o mouse */}
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onMouseEnter={() => setHoveredPreviewQm(qm)}
+                            onMouseLeave={() => setHoveredPreviewQm(null)}
+                            className="h-7 px-2.5 text-[11px] font-bold rounded-xl border bg-white dark:bg-slate-900 border-emerald-300 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-50 flex items-center gap-1.5 shadow-2xs transition-colors"
+                          >
+                            <span>{qm.icon || "💬"}</span>
+                            <span>{qm.shortLabel || qm.title}</span>
+                            <span className="text-[10px] font-normal text-muted-foreground ml-1">
+                              (Passe o mouse p/ ver prévia)
+                            </span>
+                          </button>
+
+                          {isHovered && (
+                            <div className="absolute left-0 bottom-[calc(100%+8px)] z-50 p-3 rounded-2xl bg-slate-950/98 text-white border border-slate-700 shadow-2xl backdrop-blur-md animate-in fade-in-0 zoom-in-95 pointer-events-none w-[290px] text-left">
+                              <div className="flex items-center justify-between pb-1.5 border-b border-slate-800 mb-1.5">
+                                <span className="font-bold text-xs text-emerald-400 flex items-center gap-1">
+                                  <span>{qm.icon}</span> {qm.title}
+                                </span>
+                                <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
+                                  Janelinha Flutuante
+                                </span>
+                              </div>
+                              <div className="text-[11px] leading-relaxed text-slate-200 font-normal whitespace-pre-wrap max-h-36 overflow-y-auto pr-1">
+                                {renderPreviewText(qm.message)}
+                              </div>
+                              <div className="mt-2 pt-1 border-t border-slate-800/80 text-[9.5px] text-emerald-400 font-bold">
+                                ⚡ Disparo instantâneo com 1 clique
+                              </div>
+                              <div className="absolute top-full left-6 w-2.5 h-2.5 -mt-1 bg-slate-950 border-r border-b border-slate-700 rotate-45" />
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1.5 ml-auto">
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            className="h-7 text-[11px] gap-1 rounded-xl"
+                            onClick={() => {
+                              setTestMessage(renderPreviewText(qm.message))
+                              setTestModalOpen(true)
+                            }}
+                          >
+                            <Send className="w-3 h-3 text-emerald-600" />
+                            Testar Disparo
+                          </Button>
+
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            className="h-7 text-[11px] gap-1 rounded-xl"
+                            onClick={() => handleOpenEditQm(qm)}
+                          >
+                            <Edit3 className="w-3 h-3 text-sky-600" />
+                            Editar
+                          </Button>
+
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            className="h-7 w-7 p-0 rounded-xl text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                            onClick={() => {
+                              if (confirm(`Deseja excluir a mensagem rápida "${qm.title}"?`)) {
+                                deleteQuickMessage(qm.id)
+                              }
+                            }}
+                            title="Excluir mensagem rápida"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          </TabsContent>
+
+          {/* ════════════════════════════════════════════════════════════════════
               ABA 3: FILA DE ENVIOS AGENDADOS COM AÇÃO "ENVIAR AGORA"
           ════════════════════════════════════════════════════════════════════ */}
           <TabsContent value="queue" className="space-y-4">
@@ -1763,6 +2069,172 @@ export default function WhatsappAutomation() {
                   Enviar Agora
                 </Button>
               )}
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ════════════════════════════════════════════════════════════════════
+            MODAL DE CRIAÇÃO / EDIÇÃO DE MENSAGEM RÁPIDA (MANUAL)
+        ════════════════════════════════════════════════════════════════════ */}
+        <Dialog open={qmModalOpen} onOpenChange={setQmModalOpen}>
+          <DialogContent className="max-w-xl rounded-3xl p-6">
+            <DialogHeader>
+              <DialogTitle className="text-base font-black flex items-center gap-2">
+                <Zap className="w-5 h-5 text-emerald-600 fill-emerald-600" />
+                {editingQm ? "Editar Mensagem Rápida" : "Nova Mensagem Rápida (Manual)"}
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                Configure os textos e atalhos que ficarão disponíveis para envio manual na janelinha flutuante da reserva e no modal de detalhes.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4 py-2 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                <div className="sm:col-span-8 space-y-1">
+                  <Label className="text-[11px] font-bold">Título da Mensagem</Label>
+                  <Input 
+                    placeholder="Ex: Cobrança / Link Pagamento" 
+                    value={qmTitle} 
+                    onChange={(e) => setQmTitle(e.target.value)}
+                    className="text-xs h-9 rounded-xl"
+                  />
+                </div>
+
+                <div className="sm:col-span-4 space-y-1">
+                  <Label className="text-[11px] font-bold">Rótulo Curto no Botão</Label>
+                  <Input 
+                    placeholder="Ex: Cobrança" 
+                    maxLength={14}
+                    value={qmShortLabel} 
+                    onChange={(e) => setQmShortLabel(e.target.value)}
+                    className="text-xs h-9 rounded-xl font-bold"
+                  />
+                  <span className="text-[9.5px] text-muted-foreground block">Aparece no card compacto</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                <div className="sm:col-span-5 space-y-1">
+                  <Label className="text-[11px] font-bold">Ícone / Emoji</Label>
+                  <div className="flex items-center gap-1.5">
+                    <Input 
+                      placeholder="💳" 
+                      value={qmIcon} 
+                      onChange={(e) => setQmIcon(e.target.value)}
+                      className="text-base h-9 w-12 text-center rounded-xl font-bold shrink-0"
+                    />
+                    <div className="flex items-center gap-1 overflow-x-auto py-1">
+                      {["💳", "📝", "🥐", "📍", "🚪", "⭐", "🔑", "☕", "💰", "📱"].map(em => (
+                        <button
+                          key={em}
+                          type="button"
+                          onClick={() => setQmIcon(em)}
+                          className="h-7 w-7 rounded-lg border bg-muted/40 hover:bg-emerald-50 dark:hover:bg-emerald-950 text-sm flex items-center justify-center transition-all shrink-0"
+                        >
+                          {em}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="sm:col-span-4 space-y-1">
+                  <Label className="text-[11px] font-bold">Categoria</Label>
+                  <Input 
+                    placeholder="Financeiro, Recepção..." 
+                    value={qmCategory} 
+                    onChange={(e) => setQmCategory(e.target.value)}
+                    className="text-xs h-9 rounded-xl"
+                  />
+                </div>
+
+                <div className="sm:col-span-3 flex flex-col justify-end">
+                  <div className="flex items-center justify-between p-2 rounded-xl border bg-muted/30 h-9">
+                    <span className="text-[10px] font-bold">Ativo</span>
+                    <Switch checked={qmEnabled} onCheckedChange={setQmEnabled} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-[11px] font-bold">Descrição do Objetivo (Opcional)</Label>
+                <Input 
+                  placeholder="Ex: Instruções de chegada, senha do Wi-Fi e localização no Maps" 
+                  value={qmDescription} 
+                  onChange={(e) => setQmDescription(e.target.value)}
+                  className="text-xs h-8 rounded-xl"
+                />
+              </div>
+
+              {/* Inserção de Tags Dinâmicas */}
+              <div className="space-y-1.5 p-3 rounded-2xl border bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800">
+                <span className="text-[11px] font-bold text-emerald-900 dark:text-emerald-300 flex items-center gap-1">
+                  <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                  Clique para inserir variáveis dinâmicas no texto:
+                </span>
+                <div className="flex flex-wrap gap-1 pt-1">
+                  {[
+                    { tag: "{{primeiro_nome}}", label: "Primeiro Nome" },
+                    { tag: "{{nome_hospede}}", label: "Nome Completo" },
+                    { tag: "{{quarto}}", label: "Flat / Quarto" },
+                    { tag: "{{numero_reserva}}", label: "Cód. Reserva" },
+                    { tag: "{{data_checkin}}", label: "Entrada" },
+                    { tag: "{{data_checkout}}", label: "Saída" },
+                    { tag: "{{valor_total}}", label: "Valor Total" },
+                    { tag: "{{link_portal_hospede}}", label: "Link Portal" },
+                    { tag: "{{link_checkin_digital}}", label: "Ficha Check-in" },
+                    { tag: "{{link_cafe_manha}}", label: "Link Café" },
+                    { tag: "{{link_checkout}}", label: "Link Saída" },
+                    { tag: "{{wifi_rede}}", label: "Wi-Fi Rede" },
+                    { tag: "{{wifi_senha}}", label: "Wi-Fi Senha" },
+                    { tag: "{{link_maps}}", label: "Google Maps" },
+                  ].map(t => (
+                    <button
+                      key={t.tag}
+                      type="button"
+                      onClick={() => setQmMessage(prev => prev + t.tag)}
+                      className="px-1.5 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-emerald-300 text-emerald-800 dark:text-emerald-300 text-[10px] font-mono hover:bg-emerald-100 transition-colors"
+                    >
+                      +{t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-[11px] font-bold">Texto da Mensagem (Suporta *negrito* e _itálico_)</Label>
+                <Textarea 
+                  rows={5}
+                  value={qmMessage}
+                  onChange={(e) => setQmMessage(e.target.value)}
+                  className="text-xs font-mono leading-relaxed rounded-xl"
+                  placeholder="Digite a mensagem..."
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-[11px] font-bold">Rodapé da Mensagem (Opcional)</Label>
+                <Input 
+                  placeholder="Ex: CorpFlats • Central de Atendimento" 
+                  value={qmFooter} 
+                  onChange={(e) => setQmFooter(e.target.value)}
+                  className="text-xs h-8 rounded-xl"
+                />
+              </div>
+            </div>
+
+            <DialogFooter className="gap-2">
+              <Button variant="outline" size="sm" onClick={() => setQmModalOpen(false)}>
+                Cancelar
+              </Button>
+              <Button 
+                size="sm" 
+                onClick={handleSaveQmForm}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold gap-1 shadow-xs"
+              >
+                <Check className="w-3.5 h-3.5" />
+                Salvar Mensagem Rápida
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

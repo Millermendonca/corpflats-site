@@ -5,9 +5,10 @@ import { Button } from "@/components/ui/button"
 import { useToast } from "@/hooks/use-toast"
 import { 
   MessageCircle, Phone, ExternalLink, Copy, Check, Coffee, 
-  Users, Calendar, Eye, Building2, X
+  Users, Calendar, Eye, Building2, X, Zap, SlidersHorizontal, RefreshCw
 } from "lucide-react"
 import { format, parseISO, differenceInDays } from "date-fns"
+import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage } from "@/hooks/use-quick-messages"
 
 interface ReservationHoverCardProps {
   resItem: any
@@ -62,6 +63,21 @@ export function ReservationHoverCard({
   const { toast } = useToast()
   const [isOpen, setIsOpen] = useState(false)
   const [copiedLink, setCopiedLink] = useState(false)
+
+  // Mensagens Rápidas (Manuais) e Janelinha Flutuante de Prévia
+  const { activeQuickMessages, dispatchQuickMessage } = useQuickMessages()
+  const [hoveredQuickMsg, setHoveredQuickMsg] = useState<WhatsAppQuickMessage | null>(null)
+  const [sendingMsgId, setSendingMsgId] = useState<string | null>(null)
+
+  const handleTriggerQuickMessage = async (e: React.MouseEvent, qm: WhatsAppQuickMessage) => {
+    e.stopPropagation()
+    setSendingMsgId(qm.id)
+    try {
+      await dispatchQuickMessage(qm, resItem, originUrl)
+    } finally {
+      setSendingMsgId(null)
+    }
+  }
 
   // O card abre se estiver em hover no desktop OU ativado via toque no celular
   const isCardOpen = !isBeingDragged && (Boolean(isOpenMobile) || isOpen)
@@ -152,9 +168,50 @@ export function ReservationHoverCard({
         avoidCollisions={true}
         onPointerDownOutside={handleClose}
         onInteractOutside={handleClose}
-        className="w-[330px] max-w-[calc(100vw-24px)] p-0 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-2xl overflow-hidden z-50 text-xs"
+        className="w-[330px] max-w-[calc(100vw-24px)] p-0 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-2xl z-50 text-xs relative"
         onClick={(e) => e.stopPropagation()}
       >
+        {/* ── Janelinha Flutuante de Prévia da Mensagem (Ao Repousar o Mouse) ──── */}
+        {hoveredQuickMsg && (
+          <div 
+            className="absolute left-1 right-1 bottom-[calc(100%+8px)] z-50 p-3 rounded-2xl bg-slate-950/98 dark:bg-black/98 text-white border border-slate-700/80 shadow-2xl backdrop-blur-md animate-in fade-in-0 zoom-in-95 pointer-events-none select-none text-left"
+          >
+            <div className="flex items-center justify-between pb-1.5 border-b border-slate-800 mb-2">
+              <div className="flex items-center gap-1.5 font-bold text-xs text-emerald-400">
+                <span className="text-sm">{hoveredQuickMsg.icon}</span>
+                <span className="truncate max-w-[170px]">{hoveredQuickMsg.title}</span>
+              </div>
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
+                WhatsApp Manual
+              </span>
+            </div>
+
+            <div className="text-[11px] leading-relaxed text-slate-200 font-normal whitespace-pre-wrap max-h-48 overflow-y-auto pr-1">
+              {renderQuickMessage(hoveredQuickMsg.message, resItem, originUrl)}
+            </div>
+
+            {hoveredQuickMsg.buttons && hoveredQuickMsg.buttons.length > 0 && (
+              <div className="mt-2 pt-1.5 border-t border-slate-800/80 flex flex-wrap gap-1">
+                {hoveredQuickMsg.buttons.map(b => (
+                  <span key={b.id} className="text-[9.5px] px-1.5 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700 font-medium">
+                    {b.label}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            <div className="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[9.5px] text-slate-400">
+              <span className="font-mono">Destino: {finalWaPhone ? `+${finalWaPhone}` : "Sem tel"}</span>
+              <span className="text-emerald-400 font-bold flex items-center gap-1">
+                ⚡ Clique no botão para disparar
+              </span>
+            </div>
+
+            {/* Seta indicativa para o card */}
+            <div className="absolute top-full left-8 w-2.5 h-2.5 -mt-1 bg-slate-950 dark:bg-black border-r border-b border-slate-700 rotate-45" />
+          </div>
+        )}
+
         {/* ── 1. Topo & Identificação ────────────────────────────────────── */}
         <div className="p-3.5 pb-2.5 bg-slate-50/80 dark:bg-slate-950/40 border-b border-slate-100 dark:border-slate-800/80">
           <div className="flex items-center justify-between gap-1.5 mb-1.5">
@@ -279,6 +336,51 @@ export function ReservationHoverCard({
             </div>
           </div>
         </div>
+
+        {/* ── 2.5 Atalhos de Mensagens Rápidas (Compact Pill Row) ────────── */}
+        {activeQuickMessages.length > 0 && (
+          <div className="px-3.5 py-2 bg-emerald-50/50 dark:bg-emerald-950/20 border-t border-slate-100 dark:border-slate-800/80">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[10px] font-black text-emerald-900 dark:text-emerald-300 uppercase tracking-wider flex items-center gap-1">
+                <Zap className="w-3 h-3 text-amber-500 fill-amber-500" />
+                Mensagens Rápidas
+              </span>
+              <a 
+                href="/whatsapp?tab=quick_messages" 
+                className="text-[9.5px] text-slate-500 dark:text-slate-400 hover:text-emerald-700 dark:hover:text-emerald-300 font-medium flex items-center gap-0.5 transition-colors"
+                title="Configurar e ativar/desativar atalhos de mensagens"
+              >
+                <span>Gerenciar</span>
+                <SlidersHorizontal className="w-2.5 h-2.5" />
+              </a>
+            </div>
+
+            <div className="flex flex-wrap gap-1">
+              {activeQuickMessages.map(qm => {
+                const isSending = sendingMsgId === qm.id;
+                return (
+                  <button
+                    key={qm.id}
+                    type="button"
+                    disabled={isSending}
+                    onClick={(e) => handleTriggerQuickMessage(e, qm)}
+                    onMouseEnter={() => setHoveredQuickMsg(qm)}
+                    onMouseLeave={() => setHoveredQuickMsg(null)}
+                    className="h-6 px-2 rounded-lg text-[10.5px] font-semibold flex items-center gap-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-slate-700 dark:text-slate-200 active:scale-95 transition-all shadow-2xs cursor-pointer group/btn"
+                    title={`Passe o mouse para ler a mensagem ou clique para disparar "${qm.title}"`}
+                  >
+                    {isSending ? (
+                      <RefreshCw className="w-3 h-3 animate-spin text-emerald-600" />
+                    ) : (
+                      <span className="text-xs">{qm.icon || "💬"}</span>
+                    )}
+                    <span className="truncate max-w-[90px]">{qm.shortLabel || qm.title}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* ── 3. Barra de Ações Rápidas (Action Bar) ──────────────────────── */}
         <div className="p-3 bg-slate-50/90 dark:bg-slate-950/60 border-t border-slate-100 dark:border-slate-800/80 space-y-2">
