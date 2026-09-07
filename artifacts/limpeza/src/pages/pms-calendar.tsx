@@ -82,6 +82,7 @@ export default function PmsCalendar() {
   const [defaultCheckoutTime, setDefaultCheckoutTime] = useState("12:00")
   const [formChannel, setFormChannel] = useState("whatsapp")
   const [formDailyRate, setFormDailyRate] = useState("250")
+  const [formTotalAmount, setFormTotalAmount] = useState("")
   const [formPaidAmount, setFormPaidAmount] = useState("0")
   const [formPaymentStatus, setFormPaymentStatus] = useState("pendente")
   const [formNotes, setFormNotes] = useState("")
@@ -916,6 +917,7 @@ export default function PmsCalendar() {
     setFormGuest3Email("")
     setFormChannel("whatsapp")
     setFormDailyRate("250")
+    setFormTotalAmount("")
     setFormPaidAmount("0")
     setFormPaymentStatus("pendente")
     setFormNotes("")
@@ -1040,6 +1042,7 @@ export default function PmsCalendar() {
     setFormGuest3Email("")
     setFormChannel("whatsapp")
     setFormDailyRate("250")
+    setFormTotalAmount("")
     setFormPaidAmount("0")
     setFormPaymentStatus("pendente")
     setFormNotes("")
@@ -1093,10 +1096,17 @@ export default function PmsCalendar() {
     setFormGuest3Phone(g3?.phone || "")
     setFormGuest3Email(g3?.email || "")
 
-    setFormChannel(resItem.channel || "whatsapp")
+    const chan = resItem.channel || "whatsapp"
+    const isOtaRes = (chan === "booking" || chan === "airbnb")
+    const isResCurrentlyPaid = isOtaRes || resItem.paymentStatus === "pago_total" || resItem.paymentStatus === "pago" || (Number(resItem.paidAmount) >= Number(resItem.totalAmount) && Number(resItem.totalAmount) > 0)
+    const nights = differenceInDays(parseISO(resItem.checkoutDate), parseISO(resItem.checkinDate)) || 1
+    const totCalculated = Number(resItem.totalAmount) > 0 ? resItem.totalAmount : (Number(resItem.dailyRate || 0) * nights)
+
+    setFormChannel(chan)
     setFormDailyRate(String(resItem.dailyRate || 0))
-    setFormPaidAmount(String(resItem.paidAmount || 0))
-    setFormPaymentStatus(resItem.paymentStatus || "pendente")
+    setFormTotalAmount(totCalculated > 0 ? String(totCalculated) : "")
+    setFormPaidAmount(String(resItem.paidAmount || (isResCurrentlyPaid ? totCalculated : 0)))
+    setFormPaymentStatus(isResCurrentlyPaid ? "pago_total" : (resItem.paymentStatus || "pendente"))
     setFormNotes(resItem.notes || "")
     const matchedGuest = crmGuests.find(g => 
       (resItem.guestId && String(g.id) === String(resItem.guestId)) ||
@@ -1191,7 +1201,19 @@ export default function PmsCalendar() {
 
     setSavingRes(true)
     try {
-      const totalAmount = calculateTotal()
+      const calcTot = calculateTotal()
+      const totalAmount = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calcTot
+      const isOta = formChannel === "booking" || formChannel === "airbnb"
+      const resolvedPaymentStatus = isOta ? "pago_total" : formPaymentStatus
+      let resolvedPaidAmount = Number(formPaidAmount) || 0
+      if (resolvedPaymentStatus === "pago_total") {
+        resolvedPaidAmount = resolvedPaidAmount > 0 ? resolvedPaidAmount : totalAmount
+      } else if (resolvedPaymentStatus === "sinal_pago") {
+        resolvedPaidAmount = resolvedPaidAmount > 0 ? resolvedPaidAmount : Math.round(totalAmount / 2)
+      } else {
+        resolvedPaidAmount = 0
+      }
+
       const numG = Number(formGuestCount) || 1
       const guestsPayload = [
         { index: 1, name: formGuestName.trim(), cpf: formGuest1Cpf.trim(), phone: formGuestPhone.trim(), email: formGuestEmail.trim() }
@@ -1242,8 +1264,8 @@ export default function PmsCalendar() {
         channel: formChannel,
         dailyRate: Number(formDailyRate) || 0,
         totalAmount,
-        paidAmount: Number(formPaidAmount) || 0,
-        paymentStatus: formPaymentStatus,
+        paidAmount: resolvedPaidAmount,
+        paymentStatus: resolvedPaymentStatus,
         notes: formNotes,
         earlyCheckinAuthorized: formEarlyCheckin,
         receptionNotes: formReceptionNotes,
@@ -2364,7 +2386,17 @@ export default function PmsCalendar() {
 
                   <div className="space-y-1.5">
                     <Label className="text-xs font-semibold block leading-none h-4 flex items-center">Canal de Origem</Label>
-                    <Select value={formChannel} onValueChange={setFormChannel}>
+                    <Select 
+                      value={formChannel} 
+                      onValueChange={val => {
+                        setFormChannel(val);
+                        if (val === "booking" || val === "airbnb") {
+                          setFormPaymentStatus("pago_total");
+                          const tot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
+                          if (tot > 0) setFormPaidAmount(String(tot));
+                        }
+                      }}
+                    >
                       <SelectTrigger className="text-xs h-9">
                         <SelectValue placeholder="Canal" />
                       </SelectTrigger>
@@ -2918,37 +2950,123 @@ export default function PmsCalendar() {
                   )}
                 </div>
 
-                {/* Financial values */}
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="space-y-1">
-                    <Label className="text-xs font-semibold">Valor da Diária (R$)</Label>
-                    <Input 
-                      type="number" 
-                      value={formDailyRate} 
-                      onChange={e => setFormDailyRate(e.target.value)} 
-                      className="text-xs font-semibold"
-                    />
+                {/* Financial values & Payment Status */}
+                <div className="p-3.5 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                      <CreditCard className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Valores & Pagamento da Reserva</span>
+                    </span>
+                    {(formChannel === "booking" || formChannel === "airbnb") && (
+                      <Badge variant="outline" className="text-[10px] bg-sky-50 text-sky-800 border-sky-300">
+                        Canal OTA • Pago Automaticamente
+                      </Badge>
+                    )}
                   </div>
 
-                  <div className="space-y-1">
-                    <Label className="text-xs font-semibold">Total Calculado</Label>
-                    <div className="h-9 px-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 rounded-md flex items-center font-bold text-xs text-emerald-700 dark:text-emerald-300">
-                      R$ {calculateTotal().toLocaleString("pt-BR")}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    {/* Valor da Diária */}
+                    <div className="space-y-1">
+                      <Label className="text-xs font-semibold">Valor da Diária (R$)</Label>
+                      <Input 
+                        type="number" 
+                        value={formDailyRate} 
+                        onChange={e => {
+                          const val = e.target.value;
+                          setFormDailyRate(val);
+                          try {
+                            const d1 = parseISO(formCheckin);
+                            const d2 = parseISO(formCheckout);
+                            const nights = Math.max(1, differenceInDays(d2, d1));
+                            if (val !== "") {
+                              setFormTotalAmount(String(nights * (Number(val) || 0)));
+                            }
+                          } catch {}
+                        }} 
+                        placeholder="Ex: 250"
+                        className="text-xs font-semibold"
+                      />
+                    </div>
+
+                    {/* Valor Total da Reserva */}
+                    <div className="space-y-1">
+                      <Label className="text-xs font-semibold">Valor Total da Reserva (R$)</Label>
+                      <Input 
+                        type="number"
+                        value={formTotalAmount !== "" ? formTotalAmount : (calculateTotal() > 0 ? String(calculateTotal()) : "")}
+                        onChange={e => {
+                          const val = e.target.value;
+                          setFormTotalAmount(val);
+                          try {
+                            const d1 = parseISO(formCheckin);
+                            const d2 = parseISO(formCheckout);
+                            const nights = Math.max(1, differenceInDays(d2, d1));
+                            if (val !== "" && nights > 0) {
+                              setFormDailyRate(String(Math.round((Number(val) || 0) / nights)));
+                            }
+                          } catch {}
+                        }}
+                        placeholder="Ex: 500"
+                        className="text-xs font-bold text-emerald-700 dark:text-emerald-300"
+                      />
+                    </div>
+
+                    {/* Status de Pagamento */}
+                    <div className="space-y-1">
+                      <Label className="text-xs font-semibold">Status do Pagamento</Label>
+                      <Select 
+                        value={formPaymentStatus} 
+                        onValueChange={val => {
+                          setFormPaymentStatus(val);
+                          if (val === "pago_total") {
+                            const tot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
+                            setFormPaidAmount(String(tot));
+                          } else if (val === "pendente") {
+                            setFormPaidAmount("0");
+                          }
+                        }}
+                      >
+                        <SelectTrigger className={`text-xs font-bold ${
+                          formPaymentStatus === "pago_total" 
+                            ? "bg-emerald-50 text-emerald-800 border-emerald-300 dark:bg-emerald-950/50 dark:text-emerald-300" 
+                            : "bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950/50 dark:text-amber-300"
+                        }`}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="pago_total">✅ Pago (100% Confirmado)</SelectItem>
+                          <SelectItem value="pendente">⏳ Aguardando Pagamento (Pendente)</SelectItem>
+                          <SelectItem value="sinal_pago">⚡ Sinal Pago (50%)</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
 
-                  <div className="space-y-1">
-                    <Label className="text-xs font-semibold">Pagamento</Label>
-                    <Select value={formPaymentStatus} onValueChange={setFormPaymentStatus}>
-                      <SelectTrigger className="text-xs">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="pendente">⏳ Aguardando Pagamento</SelectItem>
-                        <SelectItem value="sinal_pago">Sinal Pago (50%)</SelectItem>
-                        <SelectItem value="pago_total">Pago Total (100%)</SelectItem>
-                      </SelectContent>
-                    </Select>
+                  {/* Switch: Marcar como Pago */}
+                  <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                    <div>
+                      <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">
+                        Marcar como Pago
+                      </span>
+                      <span className="text-[11px] text-muted-foreground">
+                        {formPaymentStatus === "pago_total" 
+                          ? "O hóspede verá a reserva como Paga e o valor no portal Minha Reserva" 
+                          : "O hóspede verá opções de pagamento por PIX e Cartão no portal Minha Reserva"}
+                      </span>
+                    </div>
+                    <Switch 
+                      checked={formPaymentStatus === "pago_total"} 
+                      onCheckedChange={checked => {
+                        if (checked) {
+                          setFormPaymentStatus("pago_total");
+                          const tot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
+                          setFormPaidAmount(String(tot));
+                        } else {
+                          setFormPaymentStatus("pendente");
+                          setFormPaidAmount("0");
+                        }
+                      }} 
+                    />
                   </div>
                 </div>
 
@@ -2964,7 +3082,9 @@ export default function PmsCalendar() {
 
                 {/* 💳 Detalhes Oficiais de Pagamento & Rastreamento Bancário */}
                 {selectedRes && (() => {
-                  const isResPaid = selectedRes.paymentStatus === "pago_total" || selectedRes.paymentStatus === "pago" || (Number(selectedRes.paidAmount) >= Number(selectedRes.totalAmount) && Number(selectedRes.totalAmount) > 0);
+                  const chanLower = String(selectedRes.channel || "").toLowerCase();
+                  const isOta = chanLower.includes("booking") || chanLower.includes("airbnb");
+                  const isResPaid = isOta || selectedRes.paymentStatus === "pago_total" || selectedRes.paymentStatus === "pago" || (Number(selectedRes.paidAmount) >= Number(selectedRes.totalAmount) && Number(selectedRes.totalAmount) > 0);
                   const realPaid = isResPaid ? (selectedRes.paidAmount || selectedRes.totalAmount || 0) : (Number(selectedRes.paidAmount) || 0);
                   const realPending = Math.max(0, (selectedRes.totalAmount || 0) - realPaid);
 
@@ -2975,7 +3095,9 @@ export default function PmsCalendar() {
                           💳 <span>Comprovante & Rastreamento Bancário</span>
                         </span>
                         <Badge className={isResPaid ? "bg-emerald-600 text-white font-bold text-[10px]" : "bg-amber-600 text-white font-bold text-[10px]"}>
-                          {isResPaid ? "✓ Pago Integralmente" : (selectedRes.paymentStatus === "aguardando_pix" ? "⚡ Aguardando PIX" : "⏳ Aguardando Pagamento")}
+                          {isResPaid 
+                            ? (isOta ? (chanLower.includes("booking") ? "✓ Pago (Booking)" : "✓ Pago (Airbnb)") : "✓ Pago Integralmente") 
+                            : (selectedRes.paymentStatus === "aguardando_pix" ? "⚡ Aguardando PIX" : "⏳ Aguardando Pagamento")}
                         </Badge>
                       </div>
 
@@ -2983,7 +3105,13 @@ export default function PmsCalendar() {
                         <div>
                           <span className="text-muted-foreground block font-medium">Forma de Pagamento:</span>
                           <span className="font-semibold text-slate-900 dark:text-slate-100">
-                            {selectedRes.pixTxId || selectedRes.paymentMethod === "pix" ? "⚡ PIX Instantâneo (Banco Inter)" : (selectedRes.mpPaymentId || selectedRes.paymentMethod === "cartao_credito" ? "💳 Cartão de Crédito (Mercado Pago)" : (selectedRes.channel === "site" ? "PIX / Motor de Reservas" : "Reserva Manual / Direta"))}
+                            {isOta 
+                              ? (chanLower.includes("booking") ? "🌐 Booking.com" : "🔴 Airbnb")
+                              : (selectedRes.pixTxId || selectedRes.paymentMethod === "pix" 
+                                  ? "⚡ PIX Instantâneo (Banco Inter)" 
+                                  : (selectedRes.mpPaymentId || selectedRes.paymentMethod === "cartao_credito" 
+                                      ? "💳 Cartão de Crédito (Mercado Pago)" 
+                                      : (selectedRes.channel === "whatsapp" ? "💬 WhatsApp / CorpFlats" : "Reserva Manual / Direta")))}
                           </span>
                         </div>
 
@@ -3023,6 +3151,41 @@ export default function PmsCalendar() {
 
                         {!isResPaid && (
                           <>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-[11px] bg-emerald-50 dark:bg-emerald-950/40 border-emerald-400 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-100 flex items-center gap-1 font-bold"
+                              onClick={async () => {
+                                try {
+                                  const tot = Number(selectedRes.totalAmount) > 0 ? Number(selectedRes.totalAmount) : calculateTotal();
+                                  const res = await fetch(`/api/pms/reservations/${selectedRes.id}`, {
+                                    method: "PUT",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                      paymentStatus: "pago_total",
+                                      paidAmount: tot
+                                    })
+                                  });
+                                  const d = await res.json();
+                                  if (res.ok) {
+                                    toast({ title: "✅ Marcado como Pago!", description: `Reserva ${selectedRes.code} marcada como paga!` });
+                                    setSelectedRes((prev: any) => prev ? { ...prev, paymentStatus: "pago_total", paidAmount: tot } : null);
+                                    setFormPaymentStatus("pago_total");
+                                    setFormPaidAmount(String(tot));
+                                    fetchData();
+                                  } else {
+                                    toast({ title: "Atenção", description: d.error || "Erro ao atualizar pagamento", variant: "destructive" });
+                                  }
+                                } catch (e: any) {
+                                  toast({ title: "Erro", description: e.message, variant: "destructive" });
+                                }
+                              }}
+                            >
+                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                              <span>Marcar como Pago</span>
+                            </Button>
+
                             <Button
                               type="button"
                               variant="outline"
@@ -3078,6 +3241,42 @@ export default function PmsCalendar() {
                               <span>Verificar Status Agora</span>
                             </Button>
                           </>
+                        )}
+
+                        {isResPaid && !isOta && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-amber-300 text-amber-700 dark:text-amber-300 hover:bg-amber-50 flex items-center gap-1"
+                            onClick={async () => {
+                              try {
+                                const res = await fetch(`/api/pms/reservations/${selectedRes.id}`, {
+                                  method: "PUT",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({
+                                    paymentStatus: "pendente",
+                                    paidAmount: 0
+                                  })
+                                });
+                                const d = await res.json();
+                                if (res.ok) {
+                                  toast({ title: "Status Atualizado", description: `Reserva ${selectedRes.code} definida como pendente.` });
+                                  setSelectedRes((prev: any) => prev ? { ...prev, paymentStatus: "pendente", paidAmount: 0 } : null);
+                                  setFormPaymentStatus("pendente");
+                                  setFormPaidAmount("0");
+                                  fetchData();
+                                } else {
+                                  toast({ title: "Atenção", description: d.error || "Erro ao atualizar status", variant: "destructive" });
+                                }
+                              } catch (e: any) {
+                                toast({ title: "Erro", description: e.message, variant: "destructive" });
+                              }
+                            }}
+                          >
+                            <RefreshCw className="w-3 h-3" />
+                            <span>Desmarcar Pago (Tornar Pendente)</span>
+                          </Button>
                         )}
                       </div>
 

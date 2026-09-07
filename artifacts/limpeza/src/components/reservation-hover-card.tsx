@@ -253,11 +253,30 @@ export function ReservationHoverCard({
               </Badge>
             </div>
 
-            {resItem.dailyRate > 0 && (
-              <span className="text-[10.5px] text-slate-500 font-medium">
-                Diária: <strong className="text-slate-800 dark:text-slate-200 font-bold">R$ {resItem.dailyRate}</strong>
-              </span>
-            )}
+            <div className="flex items-center gap-1.5">
+              {(() => {
+                const chan = String(resItem.channel || "").toLowerCase();
+                const isOta = chan.includes("booking") || chan.includes("airbnb");
+                const isPaid = isOta || resItem.paymentStatus === "pago_total" || resItem.paymentStatus === "pago" || (Number(resItem.paidAmount) >= Number(resItem.totalAmount) && Number(resItem.totalAmount) > 0);
+                return (
+                  <Badge 
+                    variant="outline" 
+                    className={`text-[9.5px] font-bold px-1.5 py-0 ${
+                      isPaid 
+                        ? "bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300" 
+                        : "bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300"
+                    }`}
+                  >
+                    {isPaid ? (isOta ? (chan.includes("booking") ? "Pago (Booking)" : "Pago (Airbnb)") : "Pago ✓") : "Pendente"}
+                  </Badge>
+                );
+              })()}
+              {resItem.dailyRate > 0 && (
+                <span className="text-[10.5px] text-slate-500 font-medium">
+                  Diária: <strong className="text-slate-800 dark:text-slate-200 font-bold">R$ {resItem.dailyRate}</strong>
+                </span>
+              )}
+            </div>
           </div>
         </div>
 

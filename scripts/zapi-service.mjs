@@ -296,7 +296,9 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const checkoutTime = db.settings?.checkoutTime || "12:00";
   
   const guestCount = reservation.guestCount || reservation.adults || 1;
-  const isPaid = reservation.paymentStatus === "pago" || reservation.paymentStatus === "pago_total" || (Number(reservation.paidAmount) >= Number(reservation.totalAmount) && Number(reservation.totalAmount) > 0);
+  const chanLower = String(reservation.channel || "").toLowerCase();
+  const isOta = chanLower.includes("booking") || chanLower.includes("airbnb");
+  const isPaid = isOta || reservation.paymentStatus === "pago" || reservation.paymentStatus === "pago_total" || (Number(reservation.paidAmount) >= Number(reservation.totalAmount) && Number(reservation.totalAmount) > 0);
   const paymentStatus = isPaid
     ? "Confirmado / Pago" 
     : "Aguardando Pagamento";

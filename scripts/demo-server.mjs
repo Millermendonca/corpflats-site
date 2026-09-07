@@ -5217,6 +5217,17 @@ app.post("/api/pms/reservations", (req, res) => {
   const isMonthly = Boolean(isMonthlyGuest || clientType === "mensalista" || req.body.isMonthlyGuest || req.body.clientType === "mensalista");
   const autoInvoice = Boolean(autoEmitInvoice || req.body.autoEmitInvoice);
 
+  const chanLower = String(channel || "").toLowerCase();
+  const isOta = chanLower.includes("booking") || chanLower.includes("airbnb");
+  let resolvedPaymentStatus = paymentStatus || "pendente";
+  let resolvedPaidAmount = Number(paidAmount) || 0;
+  if (isOta && (resolvedPaymentStatus === "pendente" || !resolvedPaymentStatus)) {
+    resolvedPaymentStatus = "pago_total";
+  }
+  if (resolvedPaymentStatus === "pago_total" && resolvedPaidAmount === 0 && Number(totalAmount) > 0) {
+    resolvedPaidAmount = Number(totalAmount);
+  }
+
   const flat = db.flats.find(f => f.id === Number(flatId));
   if (!flat) return res.status(404).json({ error: "Apartamento não encontrado." });
 
@@ -5360,8 +5371,8 @@ app.post("/api/pms/reservations", (req, res) => {
     channel,
     dailyRate: Number(dailyRate),
     totalAmount: Number(totalAmount),
-    paidAmount: Number(paidAmount),
-    paymentStatus,
+    paidAmount: resolvedPaidAmount,
+    paymentStatus: resolvedPaymentStatus,
     adults: numGuests,
     children: Number(children),
     notes,
@@ -5458,6 +5469,15 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   }
   if (req.body.receptionNotes !== undefined) {
     r.receptionNotes = String(req.body.receptionNotes || "");
+  }
+
+  const putChanLower = String(r.channel || "").toLowerCase();
+  const putIsOta = putChanLower.includes("booking") || putChanLower.includes("airbnb");
+  if (putIsOta && (!r.paymentStatus || r.paymentStatus === "pendente") && req.body.paymentStatus === undefined) {
+    r.paymentStatus = "pago_total";
+  }
+  if (r.paymentStatus === "pago_total" && Number(r.paidAmount) === 0 && Number(r.totalAmount) > 0) {
+    r.paidAmount = Number(r.totalAmount);
   }
 
   // Sincroniza com o hóspede no CRM se aplicável
@@ -5917,6 +5937,30 @@ app.get("/api/pms/guest-portal/:code", (req, res) => {
   const breakfastToken = r.breakfastToken || `bfk_${r.id}_${crypto.randomBytes(4).toString("hex")}`;
   const breakfastLink = `/cafe?res=${r.code || breakfastToken}`;
 
+  const chanLower = String(r.channel || "").toLowerCase();
+  const isOta = chanLower.includes("booking") || chanLower.includes("airbnb");
+  const isPaid = isOta || Boolean(
+    r.paymentStatus === "pago_total" ||
+    r.paymentStatus === "pago" ||
+    (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0)
+  );
+
+  // Se pendente com valor total cadastrado e sem chave PIX ainda, gera cobrança estática PIX com a chave oficial CorpFlats
+  if (!isPaid && Number(r.totalAmount) > 0 && !r.pixCopiaECola) {
+    try {
+      const staticPayload = generateStaticPixPayload({
+        pixKey: DEFAULT_INTER_CONFIG.pixKey || "47964813000165",
+        amount: r.totalAmount,
+        merchantName: "CORPFLATS LTDA",
+        merchantCity: "CAMPOS DOS GOYTACAZES",
+        txid: String(r.code || `RES${r.id}`).replace(/[^a-zA-Z0-9]/g, "").substring(0, 25)
+      });
+      r.pixTxId = r.pixTxId || `STAT_${Date.now()}`;
+      r.pixCopiaECola = staticPayload;
+      saveDatabase();
+    } catch {}
+  }
+
   res.json({
     reservation: {
       id: r.id,
@@ -5931,9 +5975,8 @@ app.get("/api/pms/guest-portal/:code", (req, res) => {
       channel: r.channel || "site",
       totalAmount: r.totalAmount || 0,
       paidAmount: r.paidAmount || 0,
-      paymentStatus: (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0))
-        ? "pago_total"
-        : (r.paymentStatus || "pendente"),
+      isPaid,
+      paymentStatus: isPaid ? "pago_total" : (r.paymentStatus || "pendente"),
       paymentMethod: r.paymentMethod || (r.pixTxId ? "pix" : (r.mpPaymentId ? "cartao_credito" : "pix")),
       paidAt: r.paidAt || null,
       pixTxId: r.pixTxId || null,
@@ -13323,13 +13366,16 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
     const r = (db.reservations || []).find(x => x.code === code || String(x.id) === code || x.pixTxId === code);
     if (!r) return res.status(404).json({ error: "Reserva não encontrada." });
 
-    // Se já está marcado como pago, retorna de imediato
-    if (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0)) {
+    const chanLower = String(r.channel || "").toLowerCase();
+    const isOta = chanLower.includes("booking") || chanLower.includes("airbnb");
+
+    // Se já está marcado como pago ou canal OTA (Booking/Airbnb), retorna de imediato
+    if (isOta || r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0)) {
       return res.json({
         code: r.code,
         paid: true,
         paymentStatus: "pago_total",
-        paidAmount: r.paidAmount || r.totalAmount,
+        paidAmount: r.paidAmount || r.totalAmount || 0,
         totalAmount: r.totalAmount || 0,
         pixTxId: r.pixTxId || null,
         mpPaymentId: r.mpPaymentId || null

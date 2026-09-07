@@ -286,7 +286,15 @@ export default function GuestPortal() {
   }
 
   const reservation = data?.reservation
-  const isPaid = Boolean(reservation?.paymentStatus === "pago_total" || reservation?.paymentStatus === "pago" || (Number(reservation?.paidAmount) >= Number(reservation?.totalAmount) && Number(reservation?.totalAmount) > 0))
+  const channelLower = String(reservation?.channel || "").toLowerCase()
+  const isOta = channelLower.includes("booking") || channelLower.includes("airbnb")
+  const isPaid = Boolean(
+    isOta || 
+    reservation?.isPaid ||
+    reservation?.paymentStatus === "pago_total" || 
+    reservation?.paymentStatus === "pago" || 
+    (Number(reservation?.paidAmount) >= Number(reservation?.totalAmount) && Number(reservation?.totalAmount) > 0)
+  )
 
   // Polling automático de status de pagamento a cada 6 segundos quando pendente
   useEffect(() => {
@@ -484,8 +492,11 @@ export default function GuestPortal() {
     setTimeout(() => setCopiedSsid(false), 2500)
   }
 
-  const paidAmount = isPaid ? (reservation.paidAmount || reservation.totalAmount || 0) : (Number(reservation.paidAmount) || 0)
-  const pendingAmount = Math.max(0, (reservation.totalAmount || 0) - paidAmount)
+  const totalAmount = Number(reservation.totalAmount) || 0
+  const rawPaidAmount = Number(reservation.paidAmount) || 0
+  const hasAmount = totalAmount > 0 || rawPaidAmount > 0
+  const paidAmount = isPaid ? (rawPaidAmount > 0 ? rawPaidAmount : totalAmount) : rawPaidAmount
+  const pendingAmount = Math.max(0, totalAmount - paidAmount)
 
   const handleCopyPix = () => {
     if (!reservation.pixCopiaECola) return
@@ -564,7 +575,7 @@ export default function GuestPortal() {
                 </span>
                 {isPaid ? (
                   <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200/90 text-[10px] font-bold py-0.5 px-2">
-                    ✓ Reserva Confirmada & Paga
+                    ✓ {isOta ? (channelLower.includes("booking") ? "Pago via Booking" : "Pago via Airbnb") : "Reserva Confirmada & Paga"}
                   </Badge>
                 ) : (
                   <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-300 text-[10px] font-bold py-0.5 px-2 animate-pulse">
@@ -717,53 +728,101 @@ export default function GuestPortal() {
             </div>
 
             <Badge className={isPaid ? "bg-emerald-600 text-white font-bold text-xs" : "bg-amber-600 text-white font-bold text-xs"}>
-              {isPaid ? "✓ Pago Integralmente" : "⏳ Aguardando Pagamento"}
+              {isPaid ? "✓ Pago" : "⏳ Aguardando Pagamento"}
             </Badge>
           </div>
 
-          {/* Resumo Financeiro */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
-            <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
-              <span className="text-slate-400 font-bold uppercase text-[10px] block">Valor Total da Estadia</span>
-              <span className="text-sm sm:text-base font-bold text-slate-900 block mt-0.5">
-                R$ {(reservation.totalAmount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-              </span>
+          {/* Se PAGO mas SEM VALOR PREENCHIDO: Mostra somente "Pago" */}
+          {isPaid && !hasAmount && (
+            <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-emerald-900">
+              <div className="flex items-center gap-2.5">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                <div>
+                  <span className="font-bold block text-sm">Status: Pago</span>
+                  <span className="text-emerald-800 text-xs">
+                    {isOta 
+                      ? (channelLower.includes("booking") 
+                          ? "Reserva e pagamento confirmados via Booking.com." 
+                          : "Reserva e pagamento confirmados via Airbnb.")
+                      : "Pagamento registrado e confirmado pela administração CorpFlats."}
+                  </span>
+                </div>
+              </div>
+              <Badge className="bg-emerald-600 text-white font-bold text-xs py-1 px-3 shrink-0">
+                ✓ Pago
+              </Badge>
             </div>
+          )}
 
-            <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
-              <span className="text-slate-400 font-bold uppercase text-[10px] block">Valor Recebido</span>
-              <span className={`text-sm sm:text-base font-bold block mt-0.5 ${isPaid ? "text-emerald-600 font-bold" : "text-slate-600"}`}>
-                R$ {paidAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-              </span>
-            </div>
+          {/* Se PAGO COM VALOR PREENCHIDO: Exibe os valores normalmente */}
+          {isPaid && hasAmount && (
+            <>
+              <div className="grid grid-cols-2 gap-2.5 text-xs">
+                <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                  <span className="text-slate-400 font-bold uppercase text-[10px] block">Valor Total da Estadia</span>
+                  <span className="text-sm sm:text-base font-bold text-slate-900 block mt-0.5">
+                    R$ {totalAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
 
-            {!isPaid && (
+                <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                  <span className="text-slate-400 font-bold uppercase text-[10px] block">Valor Pago</span>
+                  <span className="text-sm sm:text-base font-bold block mt-0.5 text-emerald-600">
+                    R$ {paidAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-emerald-900">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                  <div>
+                    <span className="font-bold block text-sm">Reserva 100% Confirmada!</span>
+                    <span className="text-emerald-800 text-xs">
+                      {isOta 
+                        ? (channelLower.includes("booking") 
+                            ? "Liquidado diretamente via Booking.com." 
+                            : "Liquidado diretamente via Airbnb.")
+                        : (reservation.paymentMethod === "cartao_credito" || reservation.mpPaymentId 
+                            ? "Liquidado via Cartão de Crédito (Mercado Pago)." 
+                            : (channelLower.includes("whatsapp") 
+                                ? "Liquidado e confirmado via WhatsApp (CorpFlats)." 
+                                : "Liquidado via PIX Banco Inter."))}
+                    </span>
+                  </div>
+                </div>
+                {reservation.paidAt && (
+                  <span className="text-[11px] font-medium text-emerald-700 bg-white/80 px-2.5 py-1 rounded-xl border border-emerald-200">
+                    {format(parseISO(reservation.paidAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+                  </span>
+                )}
+              </div>
+            </>
+          )}
+
+          {/* Se NÃO PAGO: Permanece com Resumo Financeiro Completo para Pagamento */}
+          {!isPaid && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
+              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                <span className="text-slate-400 font-bold uppercase text-[10px] block">Valor Total da Estadia</span>
+                <span className="text-sm sm:text-base font-bold text-slate-900 block mt-0.5">
+                  R$ {totalAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+
+              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                <span className="text-slate-400 font-bold uppercase text-[10px] block">Valor Recebido</span>
+                <span className="text-sm sm:text-base font-bold block mt-0.5 text-slate-600">
+                  R$ {paidAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+
               <div className="p-3 bg-amber-50/90 rounded-2xl border border-amber-200 col-span-2 sm:col-span-1">
                 <span className="text-amber-800 font-bold uppercase text-[10px] block">Saldo a Pagar</span>
                 <span className="text-sm sm:text-base font-black text-amber-700 block mt-0.5">
                   R$ {pendingAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                 </span>
               </div>
-            )}
-          </div>
-
-          {/* Se PAGO: Mensagem de Sucesso */}
-          {isPaid && (
-            <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-emerald-900">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                <div>
-                  <span className="font-bold block text-sm">Reserva 100% Confirmada!</span>
-                  <span className="text-emerald-800 text-xs">
-                    Liquidado via {reservation.paymentMethod === "cartao_credito" || reservation.mpPaymentId ? "Cartão de Crédito (Mercado Pago)" : "PIX Banco Inter"}.
-                  </span>
-                </div>
-              </div>
-              {reservation.paidAt && (
-                <span className="text-[11px] font-medium text-emerald-700 bg-white/80 px-2.5 py-1 rounded-xl border border-emerald-200">
-                  {format(parseISO(reservation.paidAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
-                </span>
-              )}
             </div>
           )}
 
@@ -1455,8 +1514,8 @@ export default function GuestPortal() {
               <span className="text-emerald-600 font-bold text-lg">💰</span>
               <h2 className="text-base font-bold text-slate-900">Comprovante de Pagamento</h2>
             </div>
-            <Badge variant="outline" className={reservation.paymentStatus === "pago_total" || reservation.paymentStatus === "pago" ? "bg-emerald-50 text-emerald-700 border-emerald-200 text-xs font-bold" : "bg-amber-50 text-amber-700 border-amber-200 text-xs font-bold"}>
-              {reservation.paymentStatus === "pago_total" || reservation.paymentStatus === "pago" ? "✓ Pago Integralmente" : "Aguardando Confirmação"}
+            <Badge variant="outline" className={isPaid ? "bg-emerald-50 text-emerald-700 border-emerald-200 text-xs font-bold" : "bg-amber-50 text-amber-700 border-amber-200 text-xs font-bold"}>
+              {isPaid ? "✓ Pago" : "Aguardando Confirmação"}
             </Badge>
           </div>
 
@@ -1464,14 +1523,22 @@ export default function GuestPortal() {
             <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 space-y-1">
               <span className="text-slate-400 text-[11px] block font-medium">Forma de Liquidação</span>
               <span className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
-                {reservation.pixTxId ? "⚡ PIX Instantâneo (Banco Inter)" : (reservation.mpPaymentId ? "💳 Cartão de Crédito" : "PIX Oficial")}
+                {isOta 
+                  ? (channelLower.includes("booking") ? "🌐 Booking.com" : "🔴 Airbnb")
+                  : (reservation.pixTxId 
+                      ? "⚡ PIX Instantâneo (Banco Inter)" 
+                      : (reservation.mpPaymentId 
+                          ? "💳 Cartão de Crédito" 
+                          : (channelLower.includes("whatsapp") ? "💬 WhatsApp / CorpFlats" : "PIX Oficial")))}
               </span>
             </div>
 
             <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 space-y-1">
-              <span className="text-slate-400 text-[11px] block font-medium">Valor Total</span>
+              <span className="text-slate-400 text-[11px] block font-medium">{hasAmount ? "Valor Total" : "Status"}</span>
               <span className="text-base font-black text-emerald-600">
-                R$ {(reservation.paidAmount || reservation.totalAmount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                {hasAmount 
+                  ? `R$ ${paidAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}` 
+                  : (isPaid ? "Pago ✓" : "Pendente")}
               </span>
             </div>
           </div>
