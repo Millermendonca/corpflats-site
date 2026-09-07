@@ -115,6 +115,7 @@ interface ZapiConfig {
   token: string
   clientToken: string
   enabled: boolean
+  deliveryMode?: "text_links" | "buttons" | "auto"
   fallbackToText: boolean
   wifiNetwork: string
   wifiPassword: string
@@ -207,6 +208,7 @@ export default function WhatsappAutomation() {
     token: "",
     clientToken: "",
     enabled: false,
+    deliveryMode: "text_links",
     fallbackToText: true,
     wifiNetwork: "CorpFlats-Hospedes",
     wifiPassword: "corpflats2026",
@@ -734,8 +736,17 @@ export default function WhatsappAutomation() {
               <div>
                 <h1 className="text-2xl font-black tracking-tight text-foreground flex items-center gap-2">
                   Automação WhatsApp & Gatilhos
-                  <Badge variant="outline" className="border-emerald-500 text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 text-xs">
-                    Botões Interativos Ativos
+                  <Badge 
+                    variant="outline" 
+                    onClick={() => setLocation("/zapi-conexao")}
+                    title="Clique para configurar o Modo de Entrega em Conexão Z-API"
+                    className={`cursor-pointer text-xs gap-1 transition-all ${
+                      (config.deliveryMode || "text_links") === "text_links"
+                        ? "border-emerald-500 text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100"
+                        : "border-amber-500 text-amber-700 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100"
+                    }`}
+                  >
+                    {(config.deliveryMode || "text_links") === "text_links" ? "💬 Texto com Links (100% Entregue)" : "🔘 Botões Interativos (Meta)"}
                   </Badge>
                 </h1>
                 <p className="text-xs md:text-sm text-muted-foreground">
@@ -791,7 +802,8 @@ export default function WhatsappAutomation() {
               size="sm" 
               className="gap-1.5 text-xs rounded-xl"
               onClick={() => {
-                setTestMessage(editingMessage)
+                setTestMessage(renderPreviewText(editingMessage))
+                setTestSendMode((config.deliveryMode || "text_links") === "buttons" ? "buttons" : "text")
                 setTestModalOpen(true)
               }}
             >
@@ -938,7 +950,8 @@ export default function WhatsappAutomation() {
                           className="h-7 text-[11px] px-2"
                           onClick={() => {
                             selectTemplateForEditing(tpl)
-                            setTestMessage(tpl.message)
+                            setTestMessage(renderPreviewText(tpl.message))
+                            setTestSendMode((config.deliveryMode || "text_links") === "buttons" ? "buttons" : "text")
                             setTestModalOpen(true)
                           }}
                         >
@@ -1269,7 +1282,8 @@ export default function WhatsappAutomation() {
                           variant="outline" 
                           size="sm" 
                           onClick={() => {
-                            setTestMessage(editingMessage)
+                            setTestMessage(renderPreviewText(editingMessage))
+                            setTestSendMode((config.deliveryMode || "text_links") === "buttons" ? "buttons" : "text")
                             setTestModalOpen(true)
                           }}
                           className="text-xs gap-1.5"
@@ -1588,6 +1602,7 @@ export default function WhatsappAutomation() {
                             className="h-7 text-[11px] gap-1 rounded-xl"
                             onClick={() => {
                               setTestMessage(renderPreviewText(qm.message))
+                              setTestSendMode((config.deliveryMode || "text_links") === "buttons" ? "buttons" : "text")
                               setTestModalOpen(true)
                             }}
                           >
@@ -1865,16 +1880,13 @@ export default function WhatsappAutomation() {
                     {statusInfo?.name ? `${statusInfo.name} ` : ""}({statusInfo?.phone ? `+${statusInfo.phone}` : "Conectado"})
                   </span>
                 </div>
-                <div className="text-[11px] leading-tight">
-                  {statusInfo?.isBusiness ? (
-                    <span className="text-emerald-700 dark:text-emerald-400 font-semibold">
-                      ✓ Conta WhatsApp Business detectada (Suporta botões nativos).
-                    </span>
-                  ) : (
-                    <span className="text-amber-700 dark:text-amber-400 font-medium">
-                      ⚠️ <strong>Conta Pessoal em Teste:</strong> A Meta bloqueia botões enviados de contas comuns. Use <strong>Texto com Links</strong> para garantir que a mensagem chegue ao celular.
-                    </span>
-                  )}
+                <div className="text-[11px] leading-tight space-y-1">
+                  <span className="text-emerald-800 dark:text-emerald-300 font-medium block">
+                    💡 <strong>Dica de Entrega Garantida:</strong> Se você trocou de conta de WhatsApp recentemente na Z-API, a Meta frequentemente descarta botões interativos.
+                  </span>
+                  <span className="text-muted-foreground block text-[10px]">
+                    Utilize <strong>Texto com Links</strong> para garantir entrega direta de 100% das mensagens no celular destinatário.
+                  </span>
                 </div>
               </div>
 

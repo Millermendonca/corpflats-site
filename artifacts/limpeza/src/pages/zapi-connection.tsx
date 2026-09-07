@@ -37,6 +37,7 @@ interface ZapiConfig {
   token: string
   clientToken: string
   enabled: boolean
+  deliveryMode?: "text_links" | "buttons" | "auto"
   fallbackToText: boolean
   wifiNetwork: string
   wifiPassword: string
@@ -54,6 +55,7 @@ export default function ZapiConnection() {
     token: "",
     clientToken: "",
     enabled: false,
+    deliveryMode: "text_links",
     fallbackToText: true,
     wifiNetwork: "CorpFlats-Hospedes",
     wifiPassword: "corpflats2026",
@@ -457,12 +459,74 @@ export default function ZapiConnection() {
                 <div className="flex items-center justify-between p-3 rounded-xl border bg-muted/20">
                   <div>
                     <span className="text-xs font-semibold block">Fallback Automático para Texto</span>
-                    <span className="text-[10px] text-muted-foreground">Se botões falharem, envia mensagem em texto com links.</span>
+                    <span className="text-[10px] text-muted-foreground">Se botões falharem na API, converte para texto com links.</span>
                   </div>
                   <Switch 
                     checked={config.fallbackToText}
                     onCheckedChange={(c) => setConfig({ ...config, fallbackToText: c })}
                   />
+                </div>
+              </div>
+            </div>
+
+            {/* Seletor Oficial de Modo de Entrega das Mensagens */}
+            <div className="p-4 rounded-2xl border bg-emerald-500/5 border-emerald-500/20 space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div>
+                  <Label className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                    <Send className="w-3.5 h-3.5 text-emerald-600" />
+                    Modo de Envio Padrão do WhatsApp (Automações &amp; Mensagens Rápidas)
+                  </Label>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                    Escolha como os disparos automáticos da régua, mensagens rápidas do card e testes são entregues ao hóspede.
+                  </p>
+                </div>
+                <Badge className={(config.deliveryMode || "text_links") === "text_links" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}>
+                  {(config.deliveryMode || "text_links") === "text_links" ? "✓ 100% Entregue via Texto" : "🔘 Botões Interativos"}
+                </Badge>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div 
+                  onClick={() => setConfig({ ...config, deliveryMode: "text_links" })}
+                  className={`cursor-pointer p-3 rounded-xl border transition-all ${
+                    (config.deliveryMode || "text_links") === "text_links"
+                      ? "border-emerald-600 bg-emerald-50/80 dark:bg-emerald-950/60 ring-1 ring-emerald-600 shadow-2xs"
+                      : "border-border hover:bg-muted/30 opacity-70"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5">
+                      💬 Texto Formatado com Links
+                    </span>
+                    <span className="text-[9px] font-black uppercase tracking-wider bg-emerald-600 text-white px-1.5 py-0.5 rounded-md">
+                      Recomendado
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-1.5 leading-relaxed">
+                    <strong>100% de entrega garantida</strong> em qualquer conta de WhatsApp (pessoal, business ou recém-trocada). Os botões são convertidos em links clicáveis diretos e elegantes. Não sofre bloqueios da Meta.
+                  </p>
+                </div>
+
+                <div 
+                  onClick={() => setConfig({ ...config, deliveryMode: "buttons" })}
+                  className={`cursor-pointer p-3 rounded-xl border transition-all ${
+                    config.deliveryMode === "buttons"
+                      ? "border-emerald-600 bg-emerald-50/80 dark:bg-emerald-950/60 ring-1 ring-emerald-600 shadow-2xs"
+                      : "border-border hover:bg-muted/30 opacity-70"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                      🔘 Botões Interativos Nativos
+                    </span>
+                    <span className="text-[9px] font-bold text-muted-foreground bg-muted px-1.5 py-0.5 rounded-md">
+                      Meta Business
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-1.5 leading-relaxed">
+                    Envia os botões nativos do WhatsApp. <em>Atenção:</em> se a conta conectada na Z-API foi trocada recentemente ou for nova, a Meta pode silenciar o envio dos botões.
+                  </p>
                 </div>
               </div>
             </div>

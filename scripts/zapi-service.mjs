@@ -390,8 +390,10 @@ export function cleanWhatsAppPhone(rawPhone) {
   let digits = String(rawPhone).replace(/\D/g, "");
   if (!digits) return "";
   
-  // Remove zero à esquerda
-  if (digits.startsWith("0")) digits = digits.substring(1);
+  // Remove zeros à esquerda (ex: 022998505276 -> 22998505276)
+  while (digits.startsWith("0")) {
+    digits = digits.substring(1);
+  }
 
   // Se tem 10 ou 11 dígitos (DDD + número no Brasil), adiciona 55
   if (digits.length === 10 || digits.length === 11) {
@@ -542,7 +544,7 @@ export async function sendZapiMessage(config, { phone, message, title = "", foot
   const token = config?.token?.trim();
   const clientToken = config?.clientToken?.trim();
   const fallbackToText = config?.fallbackToText !== false;
-  const configuredDeliveryMode = config?.deliveryMode || "auto"; // "auto", "text_links", "buttons"
+  const configuredDeliveryMode = config?.deliveryMode || "text_links"; // "text_links" (padrão 100% seguro contra bloqueios de botões da Meta), "buttons", "auto"
 
   // Se não configurado, simula sucesso em ambiente de desenvolvimento/teste sem travar
   if (!instanceId || !token) {
@@ -568,7 +570,7 @@ export async function sendZapiMessage(config, { phone, message, title = "", foot
 
   // Determina se deve enviar direto por texto com links (garantido) ou tentar botões
   const shouldSendText = sendMode === "text" || 
-                         configuredDeliveryMode === "text_links" || 
+                         (sendMode !== "buttons" && configuredDeliveryMode === "text_links") || 
                          validButtons.length === 0;
 
   // 1. Envio Direto via Texto Formatado com Links (/send-text)
@@ -828,11 +830,14 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
         token: "",
         clientToken: "",
         enabled: false,
+        deliveryMode: "text_links",
         fallbackToText: true,
         wifiNetwork: "CorpFlats-Hospedes",
         wifiPassword: "corpflats2026",
         googleReviewUrl: "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ"
       };
+    } else if (!db.zapiConfig.deliveryMode) {
+      db.zapiConfig.deliveryMode = "text_links";
     }
 
     if (!db.whatsappTemplates || db.whatsappTemplates.length === 0) {
@@ -1078,11 +1083,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
     let finalMessage = message || "Mensagem de teste CorpFlats Z-API";
     let finalButtons = buttons || [];
 
-    // Se vinculou uma reserva para o teste, resolve as tags reais
+    const baseUrl = `${req.protocol}://${req.get("host")}`;
+
+    // Se vinculou uma reserva para o teste, resolve as tags reais; senão preenche com dados simulados realistas
     if (reservationId && reservationId !== "none") {
       const resv = (db?.reservations || []).find(r => r.id === Number(reservationId) || r.code === String(reservationId));
       if (resv) {
-        const baseUrl = `${req.protocol}://${req.get("host")}`;
         finalMessage = resolveWhatsAppTags(finalMessage, resv, db, baseUrl);
         finalButtons = finalButtons.map(b => ({
           ...b,
@@ -1090,6 +1096,26 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
           phone: b.phone ? resolveWhatsAppTags(b.phone, resv, db, baseUrl) : undefined
         }));
       }
+    } else {
+      const sampleResv = {
+        guestName: "Miller Mendonça",
+        guestPhone: phone,
+        code: "RES-113-0034",
+        flatNumber: "113",
+        checkinDate: new Date().toISOString().substring(0, 10),
+        checkoutDate: new Date(Date.now() + 86400000 * 2).toISOString().substring(0, 10),
+        guestsCount: 2,
+        totalAmount: 480,
+        paid: true,
+        paymentStatus: "paid",
+        source: "Site Oficial"
+      };
+      finalMessage = resolveWhatsAppTags(finalMessage, sampleResv, db, baseUrl);
+      finalButtons = finalButtons.map(b => ({
+        ...b,
+        url: b.url ? resolveWhatsAppTags(b.url, sampleResv, db, baseUrl) : undefined,
+        phone: b.phone ? resolveWhatsAppTags(b.phone, sampleResv, db, baseUrl) : undefined
+      }));
     }
 
     const result = await sendZapiMessage(db?.zapiConfig, {
