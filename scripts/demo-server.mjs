@@ -4779,6 +4779,8 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       earlyCheckinFee: Number(earlyCheckinFee) || 0,
       lateCheckoutFee: Number(lateCheckoutFee) || 0,
       lateCheckoutTime: lateCheckout ? (lateCheckoutTime || "18:00") : null,
+      checkinTime: db.settings?.checkinTime || "14:00",
+      checkoutTime: lateCheckout && lateCheckoutTime ? lateCheckoutTime : (db.settings?.checkoutTime || "12:00"),
       extras: extras || null,
       totalAmount: Number(totalAmount),
       paidAmount: paymentMethod === "pix" || paymentMethod === "card" || paymentMethod === "cartao_credito" ? 0 : Number(totalAmount),
@@ -5128,6 +5130,8 @@ app.get("/api/pms/calendar", (req, res) => {
 
     return {
       ...r,
+      checkinTime: r.checkinTime || db.settings?.checkinTime || "14:00",
+      checkoutTime: r.checkoutTime || db.settings?.checkoutTime || "12:00",
       isMonthlyGuest: isMonthly,
       clientType: isMonthly ? "mensalista" : (r.clientType || "avulso"),
       autoEmitInvoice: autoInvoice,
@@ -5145,7 +5149,11 @@ app.get("/api/pms/calendar", (req, res) => {
     flats,
     reservations,
     blocks,
-    guests: db.guests || []
+    guests: db.guests || [],
+    settings: {
+      checkinTime: db.settings?.checkinTime || "14:00",
+      checkoutTime: db.settings?.checkoutTime || "12:00"
+    }
   });
 });
 
@@ -5182,6 +5190,8 @@ app.post("/api/pms/reservations", (req, res) => {
     companyName = "",
     checkinDate,
     checkoutDate,
+    checkinTime,
+    checkoutTime,
     channel = "direta",
     dailyRate = 0,
     totalAmount = 0,
@@ -5344,6 +5354,8 @@ app.post("/api/pms/reservations", (req, res) => {
     invoiceDetails: invoiceDetails || null,
     checkinDate,
     checkoutDate,
+    checkinTime: String(checkinTime || db.settings?.checkinTime || "14:00").trim(),
+    checkoutTime: String(checkoutTime || db.settings?.checkoutTime || "12:00").trim(),
     status: "confirmada",
     channel,
     dailyRate: Number(dailyRate),
@@ -5422,7 +5434,7 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   const oldGuestName = r.guestName;
 
   const fields = [
-    "flatId", "checkinDate", "checkoutDate", "status", "channel", 
+    "flatId", "checkinDate", "checkoutDate", "checkinTime", "checkoutTime", "status", "channel", 
     "dailyRate", "totalAmount", "paidAmount", "paymentStatus", 
     "adults", "children", "notes", "prefersHighFloor", "twinBeds", 
     "extraMattress", "specialRequests", "isMonthlyGuest", "clientType", "includeBreakfast",

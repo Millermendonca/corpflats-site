@@ -228,7 +228,7 @@ export function ReservationHoverCard({
             <div className="flex items-center gap-2">
               <Calendar className="w-3.5 h-3.5 text-slate-400" />
               <span className="font-semibold text-slate-700 dark:text-slate-300">
-                {checkinStr} até {checkoutStr}
+                {checkinStr} ({resItem.checkinTime || "14:00"}) até {checkoutStr} ({resItem.checkoutTime || "12:00"})
               </span>
             </div>
             <span className="font-bold text-slate-900 dark:text-slate-100 px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-700 text-[10px]">

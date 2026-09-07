@@ -76,6 +76,10 @@ export default function PmsCalendar() {
   const [formGuestEmail, setFormGuestEmail] = useState("")
   const [formCheckin, setFormCheckin] = useState(format(new Date(), "yyyy-MM-dd"))
   const [formCheckout, setFormCheckout] = useState(format(addDays(new Date(), 1), "yyyy-MM-dd"))
+  const [formCheckinTime, setFormCheckinTime] = useState("14:00")
+  const [formCheckoutTime, setFormCheckoutTime] = useState("12:00")
+  const [defaultCheckinTime, setDefaultCheckinTime] = useState("14:00")
+  const [defaultCheckoutTime, setDefaultCheckoutTime] = useState("12:00")
   const [formChannel, setFormChannel] = useState("whatsapp")
   const [formDailyRate, setFormDailyRate] = useState("250")
   const [formPaidAmount, setFormPaidAmount] = useState("0")
@@ -507,6 +511,8 @@ export default function PmsCalendar() {
           flatId: resDragState.currentFlatId,
           checkinDate: resDragState.currentCheckin,
           checkoutDate: resDragState.currentCheckout,
+          checkinTime: resDragState.res.checkinTime || defaultCheckinTime || "14:00",
+          checkoutTime: resDragState.res.checkoutTime || defaultCheckoutTime || "12:00",
           source: "PMS Calendário (Arrastar & Soltar)"
         };
 
@@ -520,7 +526,9 @@ export default function PmsCalendar() {
                 flatId: resDragState.currentFlatId,
                 flatNumber: resDragState.currentFlatNumber,
                 checkinDate: resDragState.currentCheckin,
-                checkoutDate: resDragState.currentCheckout
+                checkoutDate: resDragState.currentCheckout,
+                checkinTime: resDragState.res.checkinTime || defaultCheckinTime || "14:00",
+                checkoutTime: resDragState.res.checkoutTime || defaultCheckoutTime || "12:00"
               };
             }
             return r;
@@ -602,6 +610,107 @@ export default function PmsCalendar() {
   const gridTemplateColumns = `${FLAT_COL_WIDTH}px ${daysInView.map(day => `${getDayColWidth(day)}px`).join(" ")}`
   const totalGridMinWidth = FLAT_COL_WIDTH + daysInView.reduce((acc, day) => acc + getDayColWidth(day), 0)
 
+  const timelineStartStr = format(daysInView[0], "yyyy-MM-dd")
+  const timelineEndStr = format(daysInView[daysInView.length - 1], "yyyy-MM-dd")
+
+  // Mapa cumulativo de posições horizontais (left e width) de cada dia na linha
+  const dayLayoutMap = useMemo(() => {
+    const map: Record<string, { left: number; width: number; idx: number }> = {}
+    let currentLeft = FLAT_COL_WIDTH
+    daysInView.forEach((day, idx) => {
+      const dayStr = format(day, "yyyy-MM-dd")
+      const width = getDayColWidth(day)
+      map[dayStr] = { left: currentLeft, width, idx }
+      currentLeft += width
+    })
+    return map
+  }, [daysInView])
+
+  const parseTimeToFraction = (timeStr?: string, defaultTime = "12:00") => {
+    const cleanTime = (timeStr && timeStr.includes(":") ? timeStr : defaultTime).trim()
+    const [hStr, mStr] = cleanTime.split(":")
+    const h = Number(hStr) || 0
+    const m = Number(mStr) || 0
+    return Math.min(Math.max((h + m / 60) / 24, 0), 1)
+  }
+
+  const getReservationPosition = (
+    checkinDate: string,
+    checkoutDate: string,
+    checkinTimeStr?: string,
+    checkoutTimeStr?: string
+  ) => {
+    if (!checkinDate || !checkoutDate) return null
+    if (checkoutDate < timelineStartStr || checkinDate > timelineEndStr) return null
+
+    const cinTime = checkinTimeStr || defaultCheckinTime || "14:00"
+    const coutTime = checkoutTimeStr || defaultCheckoutTime || "12:00"
+
+    const cinFraction = parseTimeToFraction(cinTime, "14:00")
+    const coutFraction = parseTimeToFraction(coutTime, "12:00")
+
+    let startX: number
+    if (checkinDate < timelineStartStr) {
+      startX = FLAT_COL_WIDTH
+    } else {
+      const dayLayout = dayLayoutMap[checkinDate]
+      if (!dayLayout) return null
+      startX = dayLayout.left + cinFraction * dayLayout.width
+    }
+
+    let endX: number
+    if (checkoutDate > timelineEndStr) {
+      endX = totalGridMinWidth
+    } else {
+      const dayLayout = dayLayoutMap[checkoutDate]
+      if (!dayLayout) return null
+      endX = dayLayout.left + coutFraction * dayLayout.width
+    }
+
+    if (endX <= startX) {
+      endX = startX + 24
+    }
+
+    const visualLeft = Math.round(startX) + 1
+    const rawWidth = Math.round(endX) - visualLeft - 1
+    const visualWidth = Math.max(rawWidth, 14)
+
+    return { left: visualLeft, width: visualWidth }
+  }
+
+  const getBlockPosition = (startDate: string, endDate: string) => {
+    if (!startDate || !endDate) return null
+    if (endDate < timelineStartStr || startDate > timelineEndStr) return null
+
+    let startX: number
+    if (startDate < timelineStartStr) {
+      startX = FLAT_COL_WIDTH
+    } else {
+      const dayLayout = dayLayoutMap[startDate]
+      if (!dayLayout) return null
+      startX = dayLayout.left
+    }
+
+    let endX: number
+    if (endDate > timelineEndStr) {
+      endX = totalGridMinWidth
+    } else {
+      const dayLayout = dayLayoutMap[endDate]
+      if (!dayLayout) return null
+      endX = dayLayout.left + dayLayout.width
+    }
+
+    if (endX <= startX) {
+      endX = startX + 24
+    }
+
+    const visualLeft = Math.round(startX) + 1
+    const rawWidth = Math.round(endX) - visualLeft - 1
+    const visualWidth = Math.max(rawWidth, 14)
+
+    return { left: visualLeft, width: visualWidth }
+  }
+
   const fetchCompanies = async () => {
     try {
       const res = await fetch("/api/companies", { credentials: "include" })
@@ -626,6 +735,8 @@ export default function PmsCalendar() {
       const res = await fetch(`/api/pms/calendar?startDate=${startStr}&endDate=${endStr}`, { credentials: "include" })
       const json = await res.json()
       setData(json)
+      if (json.settings?.checkinTime) setDefaultCheckinTime(json.settings.checkinTime)
+      if (json.settings?.checkoutTime) setDefaultCheckoutTime(json.settings.checkoutTime)
       fetchCompanies()
       fetchCrmGuests()
 
@@ -779,6 +890,8 @@ export default function PmsCalendar() {
       : format(d2, "yyyy-MM-dd")
     setFormCheckin(cin)
     setFormCheckout(cout)
+    setFormCheckinTime(defaultCheckinTime || "14:00")
+    setFormCheckoutTime(defaultCheckoutTime || "12:00")
     setFormGuestCount("1")
     setFormRequesterType("guest")
     setFormRequesterName("")
@@ -901,6 +1014,8 @@ export default function PmsCalendar() {
     const cout = defaultDate ? format(addDays(defaultDate, 1), "yyyy-MM-dd") : format(addDays(new Date(), 1), "yyyy-MM-dd")
     setFormCheckin(cin)
     setFormCheckout(cout)
+    setFormCheckinTime(defaultCheckinTime || "14:00")
+    setFormCheckoutTime(defaultCheckoutTime || "12:00")
     setFormGuestCount("1")
     setFormRequesterType("guest")
     setFormRequesterName("")
@@ -947,6 +1062,8 @@ export default function PmsCalendar() {
     setFormFlatId(String(resItem.flatId))
     setFormCheckin(resItem.checkinDate)
     setFormCheckout(resItem.checkoutDate)
+    setFormCheckinTime(resItem.checkinTime || defaultCheckinTime || "14:00")
+    setFormCheckoutTime(resItem.checkoutTime || defaultCheckoutTime || "12:00")
     setFormGuestCount(String(resItem.guestCount || resItem.adults || (resItem.guests?.length || 1)) as any)
     setFormRequesterType(resItem.requesterType || "guest")
     setFormRequesterName(resItem.requesterInfo?.name || "")
@@ -1120,6 +1237,8 @@ export default function PmsCalendar() {
         companyName: formRequesterType === "company" ? (selectedComp ? selectedComp.tradeName || selectedComp.corporateName : formCompanyName) : "",
         checkinDate: formCheckin,
         checkoutDate: formCheckout,
+        checkinTime: formCheckinTime || defaultCheckinTime || "14:00",
+        checkoutTime: formCheckoutTime || defaultCheckoutTime || "12:00",
         channel: formChannel,
         dailyRate: Number(formDailyRate) || 0,
         totalAmount,
@@ -1814,18 +1933,8 @@ export default function PmsCalendar() {
                       {/* Unified Multi-Day Reservation Continuous Bars (Arrastável & Redimensionável) */}
                       {flatReservations.map(resItem => {
                         const isBeingDragged = resDragState?.res.id === resItem.id;
-                        const startIdx = daysInView.findIndex(d => format(d, "yyyy-MM-dd") === resItem.checkinDate);
-                        const endIdx = daysInView.findIndex(d => format(d, "yyyy-MM-dd") === resItem.checkoutDate);
-
-                        const timelineStartStr = format(daysInView[0], "yyyy-MM-dd");
-                        const timelineEndStr = format(daysInView[daysInView.length - 1], "yyyy-MM-dd");
-
-                        if (resItem.checkoutDate <= timelineStartStr || resItem.checkinDate > timelineEndStr) return null;
-
-                        const actualStartIdx = startIdx >= 0 ? startIdx : 0;
-                        const actualEndIdx = endIdx >= 0 ? endIdx : daysInView.length;
-                        const colStart = actualStartIdx + 2;
-                        const colSpan = Math.max(1, actualEndIdx - actualStartIdx);
+                        const pos = getReservationPosition(resItem.checkinDate, resItem.checkoutDate, resItem.checkinTime, resItem.checkoutTime);
+                        if (!pos) return null;
 
                         const channelCfg = CHANNEL_CONFIG[resItem.channel] || CHANNEL_CONFIG.direta;
                         const nightsCount = differenceInDays(parseISO(resItem.checkoutDate), parseISO(resItem.checkinDate)) || 1;
@@ -1846,6 +1955,9 @@ export default function PmsCalendar() {
                           matchedGuest?.clientType === "mensalista"
                         );
 
+                        const cinTime = resItem.checkinTime || defaultCheckinTime || "14:00";
+                        const coutTime = resItem.checkoutTime || defaultCheckoutTime || "12:00";
+
                         return (
                           <ReservationHoverCard
                             key={`res-${resItem.id}`}
@@ -1859,10 +1971,16 @@ export default function PmsCalendar() {
                             onCloseMobile={() => setMobileCardResId(null)}
                           >
                             <div
-                              style={{ gridColumn: `${colStart} / span ${colSpan}`, gridRow: "1 / 2" }}
+                              style={{ 
+                                position: "absolute",
+                                left: `${pos.left}px`,
+                                width: `${pos.width}px`,
+                                top: "7px",
+                                height: "34px"
+                              }}
                               onPointerDown={(e) => handleStartResDrag(resItem, flat, "move", e)}
                               onMouseDown={(e) => handleStartResDrag(resItem, flat, "move", e)}
-                              className={`h-8.5 mx-0.5 rounded-xl relative select-none ${
+                              className={`rounded-xl select-none ${
                                 isMensalista 
                                   ? 'bg-gradient-to-r from-purple-800 via-indigo-900 to-purple-800 text-white border-2 border-purple-300 shadow-md ring-2 ring-purple-500/80' 
                                   : `${channelCfg?.bg} ${channelCfg?.text} border ${channelCfg?.border} shadow-xs`
@@ -1871,11 +1989,11 @@ export default function PmsCalendar() {
                               } ${
                                 isBeingDragged && resDragState?.hasMoved ? 'opacity-30 border-dashed scale-95' : ''
                               }`}
-                              title={`${resItem.guestName} (${channelCfg?.label || resItem.channel}) • ${resItem.checkinDate} a ${resItem.checkoutDate} • Clique para abrir ou arraste para mover/redimensionar`}
+                              title={`${resItem.guestName} (${channelCfg?.label || resItem.channel}) • Entrada: ${resItem.checkinDate} às ${cinTime} | Saída: ${resItem.checkoutDate} às ${coutTime} • Clique para abrir ou arraste para mover/redimensionar`}
                             >
                               {/* Handle Esquerdo: Redimensionar Início (Check-in) */}
                               <div
-                                className="absolute left-0 top-0 bottom-0 w-3.5 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-l"
+                                className="absolute left-0 top-0 bottom-0 w-3 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-l"
                                 onPointerDown={(e) => handleStartResDrag(resItem, flat, "resize-left", e)}
                                 onMouseDown={(e) => handleStartResDrag(resItem, flat, "resize-left", e)}
                                 onPointerEnter={(e) => e.stopPropagation()}
@@ -1886,7 +2004,7 @@ export default function PmsCalendar() {
                               </div>
 
                               {/* Conteúdo Central com Nome e Diárias Contínuos */}
-                              <div className="flex items-center gap-1.5 min-w-0 w-full overflow-hidden whitespace-nowrap px-1.5 pointer-events-none">
+                              <div className="flex items-center gap-1.5 min-w-0 w-full overflow-hidden whitespace-nowrap px-1 pointer-events-none">
                                 {resItem.includeBreakfast && (
                                   <span title="Café da Manhã Incluso" className="shrink-0 text-xs">☕</span>
                                 )}
@@ -1895,14 +2013,14 @@ export default function PmsCalendar() {
                                     👑 Mensalista
                                   </span>
                                 )}
-                                <span className="truncate font-black text-white text-[11.5px] min-w-0">
+                                <span className="truncate font-black text-white text-[11px] min-w-0">
                                   {resItem.guestName} • {nightsCount} {nightsCount === 1 ? 'diária' : 'diárias'}
                                 </span>
                               </div>
 
                               {/* Handle Direito: Redimensionar Fim (Check-out) */}
                               <div
-                                className="absolute right-0 top-0 bottom-0 w-3.5 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-r"
+                                className="absolute right-0 top-0 bottom-0 w-3 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-r"
                                 onPointerDown={(e) => handleStartResDrag(resItem, flat, "resize-right", e)}
                                 onMouseDown={(e) => handleStartResDrag(resItem, flat, "resize-right", e)}
                                 onPointerEnter={(e) => e.stopPropagation()}
@@ -1918,16 +2036,25 @@ export default function PmsCalendar() {
 
                       {/* Ghost Preview Bar ao Arrastar / Mover / Redimensionar */}
                       {resDragState && resDragState.hasMoved && flat.id === resDragState.currentFlatId && (() => {
-                        const gStartIdx = daysInView.findIndex(d => format(d, "yyyy-MM-dd") === resDragState.currentCheckin);
-                        const gEndIdx = daysInView.findIndex(d => format(d, "yyyy-MM-dd") === resDragState.currentCheckout);
-                        const gColStart = (gStartIdx >= 0 ? gStartIdx : 0) + 2;
-                        const gColSpan = Math.max(1, (gEndIdx >= 0 ? gEndIdx : daysInView.length) - (gStartIdx >= 0 ? gStartIdx : 0));
+                        const gPos = getReservationPosition(
+                          resDragState.currentCheckin, 
+                          resDragState.currentCheckout, 
+                          resDragState.res?.checkinTime, 
+                          resDragState.res?.checkoutTime
+                        );
+                        if (!gPos) return null;
                         const gNights = differenceInDays(parseISO(resDragState.currentCheckout), parseISO(resDragState.currentCheckin)) || 1;
 
                         return (
                           <div
-                            style={{ gridColumn: `${gColStart} / span ${gColSpan}`, gridRow: "1 / 2" }}
-                            className="h-9 mx-0.5 rounded-xl bg-indigo-600/90 text-white border-2 border-dashed border-white shadow-2xl flex items-center px-3 text-[11px] font-black z-30 pointer-events-none animate-pulse"
+                            style={{ 
+                              position: "absolute",
+                              left: `${gPos.left}px`,
+                              width: `${gPos.width}px`,
+                              top: "7px",
+                              height: "34px"
+                            }}
+                            className="rounded-xl bg-indigo-600/90 text-white border-2 border-dashed border-white shadow-2xl flex items-center px-3 text-[11px] font-black z-30 pointer-events-none animate-pulse"
                           >
                             <div className="flex items-center gap-2 truncate">
                               <span>🚀</span>
@@ -1941,25 +2068,21 @@ export default function PmsCalendar() {
 
                       {/* Unified Multi-Day Room Block Bars (Clicável com opção de remoção) */}
                       {flatBlocks.map(blockItem => {
-                        const startIdx = daysInView.findIndex(d => format(d, "yyyy-MM-dd") === blockItem.startDate);
-                        const endIdx = daysInView.findIndex(d => format(d, "yyyy-MM-dd") === blockItem.endDate);
-
-                        const timelineStartStr = format(daysInView[0], "yyyy-MM-dd");
-                        const timelineEndStr = format(daysInView[daysInView.length - 1], "yyyy-MM-dd");
-
-                        if (blockItem.endDate < timelineStartStr || blockItem.startDate > timelineEndStr) return null;
-
-                        const actualStartIdx = startIdx >= 0 ? startIdx : 0;
-                        const actualEndIdx = endIdx >= 0 ? endIdx : daysInView.length;
-                        const colStart = actualStartIdx + 2;
-                        const colSpan = Math.max(1, actualEndIdx - actualStartIdx + 1);
+                        const bPos = getBlockPosition(blockItem.startDate, blockItem.endDate);
+                        if (!bPos) return null;
 
                         return (
                           <div
                             key={`block-${blockItem.id}`}
-                            style={{ gridColumn: `${colStart} / span ${colSpan}`, gridRow: "1 / 2" }}
+                            style={{ 
+                              position: "absolute",
+                              left: `${bPos.left}px`,
+                              width: `${bPos.width}px`,
+                              top: "7px",
+                              height: "34px"
+                            }}
                             onClick={(e) => { e.stopPropagation(); handleOpenBlockDetails(blockItem, flat); }}
-                            className="h-8.5 mx-0.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 text-white flex items-center justify-between px-2.5 text-[10.5px] font-bold shadow-xs z-10 cursor-pointer overflow-hidden border border-slate-700 hover:border-amber-400/60 transition-all hover:scale-[1.01] active:scale-[0.99] group"
+                            className="rounded-xl bg-slate-900/90 hover:bg-slate-800 text-white flex items-center justify-between px-2.5 text-[10.5px] font-bold shadow-xs z-10 cursor-pointer overflow-hidden border border-slate-700 hover:border-amber-400/60 transition-all hover:scale-[1.01] active:scale-[0.99] group"
                             title={`Bloqueio: ${blockItem.reason === 'manutencao' ? 'Manutenção' : 'Bloqueio'} • Clique para ver detalhes ou remover bloqueio`}
                           >
                             <div className="flex items-center gap-1.5 truncate">
@@ -2263,26 +2386,73 @@ export default function PmsCalendar() {
                   </div>
                 )}
 
-                <div className="grid grid-cols-2 gap-3 items-start">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold block leading-none h-4 flex items-center">Data de Entrada (Check-in)</Label>
-                    <Input 
-                      type="date" 
-                      value={formCheckin} 
-                      onChange={e => setFormCheckin(e.target.value)} 
-                      required 
-                      className="text-xs h-9"
-                    />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
+                  {/* Entrada / Check-in */}
+                  <div className="space-y-1.5 p-2.5 rounded-xl bg-slate-50/80 dark:bg-slate-900/50 border border-border/70">
+                    <Label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <LogIn className="w-3.5 h-3.5 text-emerald-600" />
+                        Entrada (Check-in)
+                      </span>
+                      <span className="text-[10px] text-muted-foreground font-normal">Padrão: {defaultCheckinTime}</span>
+                    </Label>
+                    <div className="grid grid-cols-5 gap-2 items-center">
+                      <div className="col-span-3">
+                        <Label className="text-[10px] text-muted-foreground block mb-0.5">Data</Label>
+                        <Input 
+                          type="date" 
+                          value={formCheckin} 
+                          onChange={e => setFormCheckin(e.target.value)} 
+                          required 
+                          className="text-xs h-9"
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <Label className="text-[10px] text-muted-foreground block mb-0.5">Horário</Label>
+                        <Input 
+                          type="time" 
+                          value={formCheckinTime} 
+                          onChange={e => setFormCheckinTime(e.target.value)} 
+                          required 
+                          className="text-xs h-9 font-medium"
+                          title="Horário previsto para início do Check-in"
+                        />
+                      </div>
+                    </div>
                   </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold block leading-none h-4 flex items-center">Data de Saída (Check-out)</Label>
-                    <Input 
-                      type="date" 
-                      value={formCheckout} 
-                      onChange={e => setFormCheckout(e.target.value)} 
-                      required 
-                      className="text-xs h-9"
-                    />
+
+                  {/* Saída / Check-out */}
+                  <div className="space-y-1.5 p-2.5 rounded-xl bg-slate-50/80 dark:bg-slate-900/50 border border-border/70">
+                    <Label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <LogOut className="w-3.5 h-3.5 text-rose-600" />
+                        Saída (Check-out)
+                      </span>
+                      <span className="text-[10px] text-muted-foreground font-normal">Padrão: {defaultCheckoutTime}</span>
+                    </Label>
+                    <div className="grid grid-cols-5 gap-2 items-center">
+                      <div className="col-span-3">
+                        <Label className="text-[10px] text-muted-foreground block mb-0.5">Data</Label>
+                        <Input 
+                          type="date" 
+                          value={formCheckout} 
+                          onChange={e => setFormCheckout(e.target.value)} 
+                          required 
+                          className="text-xs h-9"
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <Label className="text-[10px] text-muted-foreground block mb-0.5">Horário</Label>
+                        <Input 
+                          type="time" 
+                          value={formCheckoutTime} 
+                          onChange={e => setFormCheckoutTime(e.target.value)} 
+                          required 
+                          className="text-xs h-9 font-medium"
+                          title="Horário limite para conclusão do Check-out"
+                        />
+                      </div>
+                    </div>
                   </div>
                 </div>
 
