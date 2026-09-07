@@ -71,6 +71,7 @@ export default function BookingEngine() {
   
   const [availabilityData, setAvailabilityData] = useState<any>(null)
   const [activePhotoIdx, setActivePhotoIdx] = useState(0)
+  const [showStickyBottom, setShowStickyBottom] = useState(false)
 
   // Modo de Edição Visual Ao Vivo (On-Page Editor)
   const [isVisualEditMode, setIsVisualEditMode] = useState(() => {
@@ -85,6 +86,20 @@ export default function BookingEngine() {
     if (typeof window !== "undefined" && (window.location.search.includes("edit=true") || window.location.hash.includes("edit=true"))) {
       setIsVisualEditMode(true)
     }
+  }, [])
+
+  useEffect(() => {
+    const handleScroll = () => {
+      const cardEl = document.getElementById("reserva-rapida")
+      if (cardEl) {
+        const rect = cardEl.getBoundingClientRect()
+        setShowStickyBottom(rect.bottom < 80)
+      } else {
+        setShowStickyBottom(window.scrollY > 350)
+      }
+    }
+    window.addEventListener("scroll", handleScroll, { passive: true })
+    return () => window.removeEventListener("scroll", handleScroll)
   }, [])
 
   const updateNestedConfig = (path: string, val: string) => {
@@ -989,7 +1004,7 @@ export default function BookingEngine() {
                 const el = document.getElementById("reserva-rapida")
                 if (el) el.scrollIntoView({ behavior: "smooth" })
               }}
-              className="bg-sky-600 hover:bg-sky-700 text-white font-semibold text-xs h-8 px-3.5 rounded-lg shadow-xs transition-all shrink-0"
+              className="hidden sm:inline-flex bg-sky-600 hover:bg-sky-700 text-white font-semibold text-xs h-8 px-3.5 rounded-lg shadow-xs transition-all shrink-0"
             >
               Reservar
             </Button>
@@ -998,7 +1013,8 @@ export default function BookingEngine() {
       </nav>
 
       {/* ── Hero Section (Protagonista Absoluta: A Imagem e a Experiência) ─ */}
-      <header className="relative h-[250px] sm:h-[280px] lg:h-[300px] flex items-end justify-center px-4 sm:px-8 pb-7 sm:pb-8 text-center overflow-hidden">
+      {/* ── Hero Section (Protagonista Absoluta: A Imagem e o Card de Reserva Integrado) ─ */}
+      <header className="relative min-h-[490px] sm:min-h-[530px] lg:min-h-[560px] flex flex-col items-center justify-start px-3 sm:px-6 pt-3 sm:pt-6 pb-8 text-center overflow-hidden">
         <div className="absolute inset-0 z-0">
           <img
             src={heroBg}
@@ -1006,7 +1022,7 @@ export default function BookingEngine() {
             className="w-full h-full object-cover object-center"
           />
           {/* Overlay sutil apenas para contraste da tipografia */}
-          <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/35 to-slate-950/15" />
+          <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/40 to-slate-950/20" />
         </div>
 
         {isVisualEditMode && (
@@ -1028,12 +1044,13 @@ export default function BookingEngine() {
           </div>
         )}
 
-        <div className="relative z-10 max-w-xl mx-auto space-y-1 sm:space-y-1.5 text-white">
+        {/* Título & Subtítulo Elegantes no Topo do Hero */}
+        <div className="relative z-10 max-w-xl mx-auto space-y-0.5 sm:space-y-1 text-white mb-2.5 sm:mb-3.5">
           <h1
             contentEditable={isVisualEditMode}
             suppressContentEditableWarning={true}
             onBlur={(e) => updateNestedConfig("hero.title", e.currentTarget.innerText)}
-            className={`text-xl sm:text-3xl lg:text-3xl font-extrabold tracking-tight leading-tight drop-shadow-sm whitespace-pre-line ${
+            className={`text-lg sm:text-2xl lg:text-3xl font-extrabold tracking-tight leading-tight drop-shadow-md whitespace-pre-line ${
               isVisualEditMode ? "outline-dashed outline-1 outline-amber-400 cursor-text rounded p-1" : ""
             }`}
           >
@@ -1044,155 +1061,157 @@ export default function BookingEngine() {
             contentEditable={isVisualEditMode}
             suppressContentEditableWarning={true}
             onBlur={(e) => updateNestedConfig("hero.highlightText", e.currentTarget.innerText)}
-            className={`text-xs sm:text-sm font-medium text-slate-200 tracking-wide drop-shadow-xs ${
+            className={`text-[11px] sm:text-xs md:text-sm font-medium text-slate-200 tracking-wide drop-shadow-xs ${
               isVisualEditMode ? "outline-dashed outline-1 outline-amber-400 cursor-text rounded p-1" : ""
             }`}
           >
             {siteConfig?.hero?.highlightText && !siteConfig.hero.highlightText.includes("Luz Natural e Sofisticação") ? siteConfig.hero.highlightText : "Flats sofisticados no Soho Residence"}
           </p>
         </div>
+
+        {/* ── Card de Reserva Flutuante e Centralizado (100% visível na 1ª dobra sem rolagem) ── */}
+        <main id="reserva-rapida" className="relative z-20 w-full max-w-md sm:max-w-lg mx-auto text-left">
+          <div className="bg-white/95 backdrop-blur-md rounded-2xl sm:rounded-3xl shadow-2xl shadow-slate-950/25 border border-white/60 p-3.5 sm:p-5 space-y-2.5 sm:space-y-3">
+            {/* Seletor Compacto de Datas */}
+            <div className="grid grid-cols-2 gap-2 pb-2.5 border-b border-slate-100">
+              <div className="space-y-1">
+                <label className="text-[10.5px] font-semibold text-slate-500 flex items-center justify-between">
+                  <span className="flex items-center gap-1">
+                    <Calendar className="w-3 h-3 text-sky-600" />
+                    <span>Entrada</span>
+                  </span>
+                  <span className="text-[10px] sm:text-[11px] text-sky-700 font-bold">
+                    {formatDisplayDate(checkin)}
+                  </span>
+                </label>
+                <Input 
+                  type="date" 
+                  value={checkin} 
+                  min={format(new Date(), "yyyy-MM-dd")}
+                  onChange={e => setCheckin(e.target.value)} 
+                  className="bg-slate-50/80 border-slate-200 text-xs text-slate-900 h-8.5 font-bold rounded-xl"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10.5px] font-semibold text-slate-500 flex items-center justify-between">
+                  <span className="flex items-center gap-1">
+                    <Calendar className="w-3 h-3 text-sky-600" />
+                    <span>Saída</span>
+                  </span>
+                  <span className="text-[10px] sm:text-[11px] text-indigo-700 font-bold">
+                    {formatDisplayDate(checkout)}
+                  </span>
+                </label>
+                <Input 
+                  type="date" 
+                  value={checkout} 
+                  min={checkin || format(new Date(), "yyyy-MM-dd")}
+                  onChange={e => setCheckout(e.target.value)} 
+                  className="bg-slate-50/80 border-slate-200 text-xs text-slate-900 h-8.5 font-bold rounded-xl"
+                />
+              </div>
+            </div>
+
+            {/* Seletor de Tarifas */}
+            <div id="tarifas" className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xs font-bold text-slate-900">
+                  Escolha sua tarifa
+                </h2>
+                <span className="text-[10.5px] text-slate-500 font-medium">
+                  {nights} {nights === 1 ? "noite" : "noites"}
+                </span>
+              </div>
+
+              <div className="space-y-1.5">
+                {/* Opção 1: COM CAFÉ */}
+                <div
+                  onClick={() => setRatePlan("with_breakfast")}
+                  className={`cursor-pointer p-2.5 sm:p-3 rounded-xl border transition-all flex items-center justify-between ${
+                    ratePlan === "with_breakfast"
+                      ? "border-sky-600 bg-sky-50/70 text-slate-900 ring-2 ring-sky-600/20 shadow-xs"
+                      : "border-slate-200 hover:border-slate-300 bg-white text-slate-700"
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                      ratePlan === "with_breakfast" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-600"
+                    }`}>
+                      <Coffee className="w-3.5 h-3.5" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 leading-none">
+                        <span className="font-bold text-xs text-slate-900">COM CAFÉ</span>
+                        {ratePlan === "with_breakfast" && (
+                          <span className="text-[8.5px] font-bold text-sky-700 bg-sky-100 px-1 py-0.5 rounded leading-none">Ativa</span>
+                        )}
+                      </div>
+                      <p className="text-[10.5px] text-slate-500 truncate mt-0.5">Café da manhã no flat</p>
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0 pl-2">
+                    <div className="font-extrabold text-xs sm:text-sm text-slate-900 leading-none">
+                      R$ {withBreakfastConfig.dailyRate}
+                    </div>
+                    <span className="text-[9px] text-slate-400 block mt-0.5">/ noite</span>
+                  </div>
+                </div>
+
+                {/* Opção 2: SEM CAFÉ */}
+                <div
+                  onClick={() => setRatePlan("room_only")}
+                  className={`cursor-pointer p-2.5 sm:p-3 rounded-xl border transition-all flex items-center justify-between ${
+                    ratePlan === "room_only"
+                      ? "border-sky-600 bg-sky-50/70 text-slate-900 ring-2 ring-sky-600/20 shadow-xs"
+                      : "border-slate-200 hover:border-slate-300 bg-white text-slate-700"
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                      ratePlan === "room_only" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-600"
+                    }`}>
+                      <Building2 className="w-3.5 h-3.5" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 leading-none">
+                        <span className="font-bold text-xs text-slate-900">SEM CAFÉ</span>
+                        {ratePlan === "room_only" && (
+                          <span className="text-[8.5px] font-bold text-sky-700 bg-sky-100 px-1 py-0.5 rounded leading-none">Ativa</span>
+                        )}
+                      </div>
+                      <p className="text-[10.5px] text-slate-500 truncate mt-0.5">Tarifa econômica</p>
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0 pl-2">
+                    <div className="font-extrabold text-xs sm:text-sm text-slate-900 leading-none">
+                      R$ {roomOnlyConfig.dailyRate}
+                    </div>
+                    <span className="text-[9px] text-slate-400 block mt-0.5">/ noite</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Botão de Ação Principal (CTA) */}
+            <div className="pt-0.5 space-y-1.5">
+              <Button
+                onClick={() => handleStartBooking()}
+                disabled={availabilityData?.available === false}
+                className="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs sm:text-sm h-10.5 sm:h-11 rounded-xl shadow-md shadow-sky-600/20 transition-all flex items-center justify-center gap-2"
+              >
+                <span>Reservar agora</span>
+                <ArrowRight className="w-4 h-4" />
+              </Button>
+
+              <div className="flex items-center justify-center gap-1.5 text-[10.5px] text-slate-500 font-medium">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <span>Confirmação imediata • Cancelamento gratuito</span>
+              </div>
+            </div>
+          </div>
+        </main>
       </header>
-
-      {/* ── Primeira Tela: Card de Reserva Minimalista (Imagem -> Experiência -> Tarifa -> Reserva) ── */}
-      <main id="reserva-rapida" className="max-w-md sm:max-w-lg w-full mx-auto px-4 -mt-6 sm:-mt-8 relative z-20">
-        <div className="bg-white rounded-2xl sm:rounded-3xl shadow-xl shadow-slate-900/5 border border-slate-200/80 p-4 sm:p-5 space-y-3 sm:space-y-3.5">
-          {/* Seletor Compacto de Datas */}
-          <div className="grid grid-cols-2 gap-2 pb-2.5 border-b border-slate-100">
-            <div className="space-y-1">
-              <label className="text-[10.5px] font-semibold text-slate-500 flex items-center justify-between">
-                <span className="flex items-center gap-1">
-                  <Calendar className="w-3 h-3 text-sky-600" />
-                  <span>Entrada</span>
-                </span>
-                <span className="text-[10px] text-sky-700 font-bold truncate max-w-[105px]">
-                  {formatDisplayDate(checkin)}
-                </span>
-              </label>
-              <Input 
-                type="date" 
-                value={checkin} 
-                onChange={e => setCheckin(e.target.value)} 
-                className="bg-slate-50/80 border-slate-200 text-xs text-slate-900 h-8 font-bold rounded-xl"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-[10.5px] font-semibold text-slate-500 flex items-center justify-between">
-                <span className="flex items-center gap-1">
-                  <Calendar className="w-3 h-3 text-sky-600" />
-                  <span>Saída</span>
-                </span>
-                <span className="text-[10px] text-indigo-700 font-bold truncate max-w-[105px]">
-                  {formatDisplayDate(checkout)}
-                </span>
-              </label>
-              <Input 
-                type="date" 
-                value={checkout} 
-                onChange={e => setCheckout(e.target.value)} 
-                className="bg-slate-50/80 border-slate-200 text-xs text-slate-900 h-8 font-bold rounded-xl"
-              />
-            </div>
-          </div>
-
-          {/* Seletor de Tarifas */}
-          <div id="tarifas" className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xs font-bold text-slate-900">
-                Escolha sua tarifa
-              </h2>
-              <span className="text-[10.5px] text-slate-500 font-medium">
-                {nights} {nights === 1 ? "noite" : "noites"}
-              </span>
-            </div>
-
-            <div className="space-y-1.5">
-              {/* Opção 1: COM CAFÉ */}
-              <div
-                onClick={() => setRatePlan("with_breakfast")}
-                className={`cursor-pointer p-2.5 sm:p-3 rounded-xl border transition-all flex items-center justify-between ${
-                  ratePlan === "with_breakfast"
-                    ? "border-sky-600 bg-sky-50/60 text-slate-900 ring-2 ring-sky-600/20 shadow-xs"
-                    : "border-slate-200 hover:border-slate-300 bg-white text-slate-700"
-                }`}
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
-                    ratePlan === "with_breakfast" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-600"
-                  }`}>
-                    <Coffee className="w-3.5 h-3.5" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5 leading-none">
-                      <span className="font-bold text-xs text-slate-900">COM CAFÉ</span>
-                      {ratePlan === "with_breakfast" && (
-                        <span className="text-[8.5px] font-bold text-sky-700 bg-sky-100 px-1 py-0.5 rounded leading-none">Ativa</span>
-                      )}
-                    </div>
-                    <p className="text-[10.5px] text-slate-500 truncate mt-0.5">Café da manhã no flat</p>
-                  </div>
-                </div>
-                <div className="text-right shrink-0 pl-2">
-                  <div className="font-extrabold text-xs sm:text-sm text-slate-900 leading-none">
-                    R$ {withBreakfastConfig.dailyRate}
-                  </div>
-                  <span className="text-[9px] text-slate-400 block mt-0.5">/ noite</span>
-                </div>
-              </div>
-
-              {/* Opção 2: SEM CAFÉ */}
-              <div
-                onClick={() => setRatePlan("room_only")}
-                className={`cursor-pointer p-2.5 sm:p-3 rounded-xl border transition-all flex items-center justify-between ${
-                  ratePlan === "room_only"
-                    ? "border-sky-600 bg-sky-50/60 text-slate-900 ring-2 ring-sky-600/20 shadow-xs"
-                    : "border-slate-200 hover:border-slate-300 bg-white text-slate-700"
-                }`}
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
-                    ratePlan === "room_only" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-600"
-                  }`}>
-                    <Building2 className="w-3.5 h-3.5" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5 leading-none">
-                      <span className="font-bold text-xs text-slate-900">SEM CAFÉ</span>
-                      {ratePlan === "room_only" && (
-                        <span className="text-[8.5px] font-bold text-sky-700 bg-sky-100 px-1 py-0.5 rounded leading-none">Ativa</span>
-                      )}
-                    </div>
-                    <p className="text-[10.5px] text-slate-500 truncate mt-0.5">Tarifa econômica</p>
-                  </div>
-                </div>
-                <div className="text-right shrink-0 pl-2">
-                  <div className="font-extrabold text-xs sm:text-sm text-slate-900 leading-none">
-                    R$ {roomOnlyConfig.dailyRate}
-                  </div>
-                  <span className="text-[9px] text-slate-400 block mt-0.5">/ noite</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Botão de Ação Principal (CTA) */}
-          <div className="pt-1 space-y-1.5">
-            <Button
-              onClick={() => handleStartBooking()}
-              disabled={availabilityData?.available === false}
-              className="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs sm:text-sm h-11 rounded-xl shadow-md shadow-sky-600/20 transition-all flex items-center justify-center gap-2"
-            >
-              <span>Reservar agora</span>
-              <ArrowRight className="w-4 h-4" />
-            </Button>
-
-            <div className="flex items-center justify-center gap-1.5 text-[10.5px] text-slate-500 font-medium">
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-              <span>Confirmação imediata • Cancelamento gratuito</span>
-            </div>
-          </div>
-        </div>
-      </main>
 
       {/* ── Benefícios (Apresentados após a reserva, discretos & naturais) ── */}
       <section id="beneficios" className="max-w-md sm:max-w-lg mx-auto px-4 py-8 sm:py-10">
@@ -1487,8 +1506,10 @@ export default function BookingEngine() {
         </div>
       </footer>
 
-      {/* ── Mobile Sticky Bottom CTA Bar ─────────────────────────────────── */}
-      <div className="sm:hidden fixed bottom-0 left-0 right-0 z-30 bg-white/95 backdrop-blur-md border-t border-slate-200 px-4 py-2.5 flex items-center justify-between shadow-lg">
+      {/* ── Mobile Sticky Bottom CTA Bar (aparece suavemente apenas quando rolar para baixo) ── */}
+      <div className={`sm:hidden fixed bottom-0 left-0 right-0 z-30 bg-white/95 backdrop-blur-md border-t border-slate-200 px-4 py-2.5 flex items-center justify-between shadow-lg transition-transform duration-300 ${
+        showStickyBottom ? "translate-y-0" : "translate-y-full pointer-events-none"
+      }`}>
         <div>
           <span className="text-[10px] text-slate-500 font-medium block">
             {ratePlan === "with_breakfast" ? "Com café da manhã" : "Sem café da manhã"}
