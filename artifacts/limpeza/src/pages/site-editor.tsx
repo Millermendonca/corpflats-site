@@ -270,7 +270,7 @@ export default function SiteEditor() {
                     <Input
                       value={config.hero?.title || ""}
                       onChange={e => setConfig({ ...config, hero: { ...config.hero, title: e.target.value } })}
-                      placeholder="Ex: Sua Estadia dos Sonhos em Macaé"
+                      placeholder="Ex: Sua Estadia dos Sonhos em Campos"
                       className="font-bold text-sm"
                     />
                   </div>
@@ -407,7 +407,7 @@ export default function SiteEditor() {
                     <Input
                       value={config.branding?.brandName || ""}
                       onChange={e => setConfig({ ...config, branding: { ...config.branding, brandName: e.target.value } })}
-                      placeholder="Ex: CorpFlats Macaé"
+                      placeholder="Ex: CorpFlats"
                       className="font-bold text-sm"
                     />
                   </div>
@@ -483,7 +483,7 @@ export default function SiteEditor() {
                     <Input
                       value={config.branding?.address || ""}
                       onChange={e => setConfig({ ...config, branding: { ...config.branding, address: e.target.value } })}
-                      placeholder="Av. Atlântica, 1788 - Cavaleiros, Macaé - RJ"
+                      placeholder="Ex: Av. Pelinca, 100 - Pelinca, Campos dos Goytacazes - RJ"
                       className="text-xs"
                     />
                   </div>

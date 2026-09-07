@@ -373,7 +373,7 @@ export async function registerPasskeyDevice(deviceName = "Dispositivo Biométric
     const credential = await navigator.credentials.create({
       publicKey: {
         challenge: challengeBuffer,
-        rp: { name: "CorpFlats Macaé", id: window.location.hostname },
+        rp: { name: "CorpFlats", id: window.location.hostname },
         user: {
           id: userIdBuffer,
           name: options.user.email,
