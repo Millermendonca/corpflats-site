@@ -19,8 +19,7 @@ import { useLocation } from "wouter"
 import { AddToCalendar } from "@/components/add-to-calendar"
 import { AuthModal } from "@/components/auth-modal"
 import { BookingFunnelModal } from "@/components/booking-funnel-modal"
-import { calculateCancellationPolicy } from "@/lib/cancellation-helper"
-import { initGoogleOneTap, cancelGoogleOneTap, clearGoogleCooldown, loginWithGooglePopup, UserProfile } from "@/lib/auth-client"
+import { initGoogleOneTap, cancelGoogleOneTap, clearGoogleCooldown, loginWithGooglePopup, getCurrentSession, logoutAccount, UserProfile } from "@/lib/auth-client"
 
 export interface RoomConfig {
   id: number
@@ -140,7 +139,14 @@ export default function BookingEngine() {
   const [faqOpen, setFaqOpen] = useState<number | null>(null)
 
   // Guest Account & Auth States
-  const [guestAccount, setGuestAccount] = useState<any | null>(null)
+  const [guestAccount, setGuestAccount] = useState<any | null>(() => {
+    try {
+      const raw = localStorage.getItem("corpflats_guest_profile")
+      return raw ? JSON.parse(raw) : null
+    } catch {
+      return null
+    }
+  })
   const [authModalOpen, setAuthModalOpen] = useState(false)
   const [showQuickAuthFloater, setShowQuickAuthFloater] = useState(false)
   const [authMode, setAuthMode] = useState<"login" | "register">("login")
@@ -166,11 +172,44 @@ export default function BookingEngine() {
   const [savingProfile, setSavingProfile] = useState(false)
   const [profileSuccessMsg, setProfileSuccessMsg] = useState("")
 
-  // Guest fields & Auto-Fill Mode
-  const [guestName, setGuestName] = useState("")
-  const [guestPhone, setGuestPhone] = useState("")
-  const [guestEmail, setGuestEmail] = useState("")
-  const [guestDocument, setGuestDocument] = useState("")
+  // Guest fields & Auto-Fill Mode (com inicialização síncrona do cache local)
+  const [guestName, setGuestName] = useState(() => {
+    try {
+      const raw = localStorage.getItem("corpflats_guest_profile")
+      if (raw) {
+        const p = JSON.parse(raw)
+        return p.name || ""
+      }
+    } catch {}
+    return ""
+  })
+  const [guestPhone, setGuestPhone] = useState(() => {
+    try {
+      const raw = localStorage.getItem("corpflats_guest_profile")
+      if (raw) {
+        const p = JSON.parse(raw)
+        return p.phone || ""
+      }
+    } catch {}
+    return ""
+  })
+  const [guestEmail, setGuestEmail] = useState(() => {
+    try {
+      return localStorage.getItem("corpflats_guest_email") || ""
+    } catch {
+      return ""
+    }
+  })
+  const [guestDocument, setGuestDocument] = useState(() => {
+    try {
+      const raw = localStorage.getItem("corpflats_guest_profile")
+      if (raw) {
+        const p = JSON.parse(raw)
+        return p.document || ""
+      }
+    } catch {}
+    return ""
+  })
 
   // Veículo & Estacionamento
   const [hasVehicle, setHasVehicle] = useState(false)
@@ -201,6 +240,7 @@ export default function BookingEngine() {
   const [loadingFlats, setLoadingFlats] = useState(false)
 
   const applyGuestData = (account: any) => {
+    if (!account) return
     setGuestAccount(account)
     if (account.name) setGuestName(account.name)
     if (account.phone) setGuestPhone(account.phone)
@@ -224,13 +264,14 @@ export default function BookingEngine() {
     }
 
     try {
-      localStorage.setItem("corpflats_guest_profile", JSON.stringify({
-        name: account.name,
-        phone: account.phone,
-        email: account.email,
-        document: account.document
-      }))
+      if (account.email) {
+        localStorage.setItem("corpflats_guest_email", account.email)
+      }
+      localStorage.setItem("corpflats_guest_profile", JSON.stringify(account))
     } catch {}
+
+    // Cancela qualquer prompt de login que possa estar aberto
+    cancelGoogleOneTap()
   }
 
   const handleGuestLogin = async (e: React.FormEvent) => {
@@ -353,22 +394,25 @@ export default function BookingEngine() {
     }
   }
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await logoutAccount()
     setGuestAccount(null)
     setGuestName("")
     setGuestPhone("")
     setGuestEmail("")
     setGuestDocument("")
+    setHasVehicle(false)
+    setVehiclePlate("")
+    setIsWorkTrip(false)
+    setCompanyCnpj("")
+    setCompanyName("")
+    setCompanyEmail("")
+    setCompanyPhone("")
     localStorage.removeItem("corpflats_guest_email")
     localStorage.removeItem("corpflats_guest_token")
     localStorage.removeItem("corpflats_guest_profile")
     setGuestProfileModalOpen(false)
-    clearGoogleCooldown()
-    setTimeout(() => {
-      initGoogleOneTap((user) => {
-        applyGuestData(user)
-      })
-    }, 250)
+    cancelGoogleOneTap()
   }
 
   useEffect(() => {
@@ -381,16 +425,6 @@ export default function BookingEngine() {
       .then(r => r.json())
       .then(d => setSiteConfig(d))
       .catch(() => {})
-
-    const savedEmail = localStorage.getItem("corpflats_guest_email")
-    if (savedEmail) {
-      fetch(`/api/guest-auth/profile?email=${encodeURIComponent(savedEmail)}`)
-        .then(r => r.json())
-        .then(d => {
-          if (d.guest) applyGuestData(d.guest)
-        })
-        .catch(() => {})
-    }
 
     // Registra o callback global oficial para o Google One Tap nativo
     ;(window as any).handleGoogleOneTapGlobal = async (response: any) => {
@@ -405,15 +439,58 @@ export default function BookingEngine() {
           const data = await res.json()
           if (data.success && data.user) {
             applyGuestData(data.user)
+            cancelGoogleOneTap()
           }
         } catch {}
       }
     }
 
-    // Inicializa o prompt oficial do Google One Tap que desce no topo
-    initGoogleOneTap((user) => {
-      applyGuestData(user)
-    })
+    // Inicialização robusta e validação de sessão
+    const initAuthSession = async () => {
+      // 1. Tenta restaurar sessão HttpOnly V2 ativa no servidor
+      const sessionUser = await getCurrentSession()
+      if (sessionUser) {
+        applyGuestData(sessionUser)
+        cancelGoogleOneTap()
+        return
+      }
+
+      // 2. Fallback legado por email salvo
+      const savedEmail = localStorage.getItem("corpflats_guest_email")
+      if (savedEmail) {
+        try {
+          const res = await fetch(`/api/guest-auth/profile?email=${encodeURIComponent(savedEmail)}`)
+          if (res.ok) {
+            const d = await res.json()
+            if (d.guest) {
+              applyGuestData(d.guest)
+              cancelGoogleOneTap()
+              return
+            }
+          }
+        } catch {}
+      }
+
+      // 3. Fallback de perfil local se já existir
+      const rawProfile = localStorage.getItem("corpflats_guest_profile")
+      if (rawProfile) {
+        try {
+          const parsed = JSON.parse(rawProfile)
+          if (parsed && (parsed.email || parsed.name)) {
+            applyGuestData(parsed)
+            cancelGoogleOneTap()
+            return
+          }
+        } catch {}
+      }
+
+      // 4. Se e somente se não há nenhuma conta logada nem perfil local:
+      initGoogleOneTap((user) => {
+        applyGuestData(user)
+      })
+    }
+
+    initAuthSession()
   }, [])
 
   useEffect(() => {
@@ -1409,6 +1486,7 @@ export default function BookingEngine() {
         removeRoom={removeRoom}
         siteConfig={siteConfig}
         guestAccount={guestAccount}
+        availabilityData={availabilityData}
         onOpenAuthModal={() => setAuthModalOpen(true)}
         onSuccessBooking={(res) => {
           setConfirmedReservation(res)

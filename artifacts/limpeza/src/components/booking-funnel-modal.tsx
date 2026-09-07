@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -29,6 +29,7 @@ export interface BookingFunnelModalProps {
   guestAccount: any
   onOpenAuthModal: () => void
   onSuccessBooking?: (reservation: any) => void
+  availabilityData?: any
 }
 
 export function BookingFunnelModal({
@@ -46,7 +47,8 @@ export function BookingFunnelModal({
   siteConfig,
   guestAccount,
   onOpenAuthModal,
-  onSuccessBooking
+  onSuccessBooking,
+  availabilityData
 }: BookingFunnelModalProps) {
   // Funnel Stepper (1 to 5)
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4 | 5>(1)
@@ -82,11 +84,29 @@ export function BookingFunnelModal({
   const [vehicleModel, setVehicleModel] = useState("")
 
   // Upsells & Extras
-  const [earlyCheckin, setEarlyCheckin] = useState(false)
+  const earlyCheckin = false // Early check-in nunca oferecido conforme regra de negócio
   const [lateCheckout, setLateCheckout] = useState(false)
+  const [lateCheckoutTime, setLateCheckoutTime] = useState("18:00")
   const [bringingPet, setBringingPet] = useState(false)
   const [petCount, setPetCount] = useState(1)
   const [petRulesAccepted, setPetRulesAccepted] = useState(false)
+
+  // Valida se o check-out ocorre no Domingo (0 = Domingo)
+  const isSundayCheckout = useMemo(() => {
+    if (!checkout) return false
+    const parts = checkout.split("-").map(Number)
+    if (parts.length !== 3) return false
+    const d = new Date(parts[0], parts[1] - 1, parts[2], 12, 0, 0)
+    return d.getDay() === 0
+  }, [checkout])
+
+  // Se a data de checkout mudar para outro dia que não é domingo, desativa o late check-out
+  useEffect(() => {
+    if (!isSundayCheckout && lateCheckout) {
+      setLateCheckout(false)
+      setLateCheckoutTime("18:00")
+    }
+  }, [isSundayCheckout, lateCheckout])
 
   // Payment Selection
   const [paymentMethod, setPaymentMethod] = useState<"pix" | "card">("pix")
@@ -119,6 +139,30 @@ export function BookingFunnelModal({
       }
     }
   }, [guestAccount])
+
+  // Consulta e Estado de Disponibilidade Real
+  const [internalAvailability, setInternalAvailability] = useState<any>(availabilityData || null)
+
+  useEffect(() => {
+    if (availabilityData) {
+      setInternalAvailability(availabilityData)
+    } else if (open && checkin && checkout) {
+      fetch(`/api/reservations/availability?checkin=${checkin}&checkout=${checkout}`)
+        .then(res => res.json())
+        .then(data => setInternalAvailability(data))
+        .catch(() => {})
+    }
+  }, [availabilityData, open, checkin, checkout])
+
+  const activeAvailability = availabilityData || internalAvailability
+  const minAvailable = typeof activeAvailability?.minAvailableOnAnyDate === "number"
+    ? activeAvailability.minAvailableOnAnyDate
+    : (typeof activeAvailability?.totalAvailableFlats === "number" ? activeAvailability.totalAvailableFlats : null)
+
+  // Mostrar essa mensagem somente quando tiver 5 flats ou menos disponíveis para uma ou mais datas solicitadas
+  const showUrgencyBanner = Boolean(
+    activeAvailability?.hasLowAvailability ?? (minAvailable !== null ? minAvailable <= 5 : false)
+  )
 
   // Pricing & Calculations
   const withBreakfastConfig = siteConfig?.ratePlans?.with_breakfast || { 
@@ -167,9 +211,44 @@ export function BookingFunnelModal({
     ? (siteConfig?.petPolicy?.feeType === "per_night" ? petFeePerUnit * nights * petCount : petFeePerUnit * petCount)
     : 0
 
-  // Upsells: Early Check-in (R$ 50) e Late Check-out (R$ 50)
-  const earlyCheckinFee = earlyCheckin ? 50 * flatsCount : 0
-  const lateCheckoutFee = lateCheckout ? 50 * flatsCount : 0
+  // Upsell Domingo: Late Check-out com Tarifação Dinâmica por Horário
+  // Regras:
+  // - Até 13:00: Cortesia / Não cobrar (R$ 0)
+  // - Além de 13:00 até 18:00: R$ 50 por flat
+  // - Além de 18:00: Cobrar 1 diária adicional em vigência (selectedDailyRate) por flat
+  const lateCheckoutTier = useMemo(() => {
+    if (!isSundayCheckout || !lateCheckout) {
+      return { feePerFlat: 0, feeTotal: 0, isFree: false, isDailyRate: false }
+    }
+    const [hStr, mStr] = (lateCheckoutTime || "18:00").split(":")
+    const hours = (parseInt(hStr, 10) || 0) + ((parseInt(mStr || "0", 10) || 0) / 60)
+
+    if (hours <= 13.0) {
+      return {
+        feePerFlat: 0,
+        feeTotal: 0,
+        isFree: true,
+        isDailyRate: false
+      }
+    } else if (hours <= 18.0) {
+      return {
+        feePerFlat: 50,
+        feeTotal: 50 * flatsCount,
+        isFree: false,
+        isDailyRate: false
+      }
+    } else {
+      return {
+        feePerFlat: selectedDailyRate,
+        feeTotal: selectedDailyRate * flatsCount,
+        isFree: false,
+        isDailyRate: true
+      }
+    }
+  }, [isSundayCheckout, lateCheckout, lateCheckoutTime, selectedDailyRate, flatsCount])
+
+  const earlyCheckinFee = 0
+  const lateCheckoutFee = lateCheckoutTier.feeTotal
 
   // Valor Total Base (Sem desconto extra de PIX)
   const baseTotalAmount = (subtotal - discountAmount) + cleaningFee + twinFee + extraBedFee + petFee + earlyCheckinFee + lateCheckoutFee
@@ -206,9 +285,10 @@ export function BookingFunnelModal({
           ratePlan,
           rooms,
           extras: {
-            earlyCheckin,
+            earlyCheckin: false,
             lateCheckout,
-            earlyCheckinFee,
+            lateCheckoutTime: lateCheckout ? lateCheckoutTime : null,
+            earlyCheckinFee: 0,
             lateCheckoutFee,
             hasPet: bringingPet,
             petCount,
@@ -299,9 +379,10 @@ export function BookingFunnelModal({
         extraBedFee,
         dailyRate: selectedDailyRate,
         cleaningFee,
-        earlyCheckin,
+        earlyCheckin: false,
         lateCheckout,
-        earlyCheckinFee,
+        lateCheckoutTime: lateCheckout ? lateCheckoutTime : null,
+        earlyCheckinFee: 0,
         lateCheckoutFee,
         hasPet: bringingPet,
         petCount: bringingPet ? petCount : 0,
@@ -415,16 +496,20 @@ export function BookingFunnelModal({
         {/* ── ETAPA 1: DATAS & REGIME DE HOSPEDAGEM ────────────────────────── */}
         {currentStep === 1 && (
           <div className="space-y-4 py-2 animate-in fade-in">
-            {/* Banner de Urgência & Prova Social */}
-            <div className="p-3 bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/40 dark:to-orange-950/40 border border-amber-200 dark:border-amber-800 rounded-2xl flex items-center justify-between text-xs shadow-2xs">
-              <div className="flex items-center gap-2 text-amber-950 dark:text-amber-200 font-semibold">
-                <Flame className="w-4 h-4 text-orange-500 animate-pulse shrink-0" />
-                <span>Alta procura para essas datas! Restam poucas unidades no Soho Residence.</span>
+            {/* Banner de Urgência & Prova Social (Apenas quando restar 5 flats ou menos para uma ou mais datas solicitadas) */}
+            {showUrgencyBanner && (
+              <div className="p-3 bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/40 dark:to-orange-950/40 border border-amber-200 dark:border-amber-800 rounded-2xl flex items-center justify-between text-xs shadow-2xs">
+                <div className="flex items-center gap-2 text-amber-950 dark:text-amber-200 font-semibold">
+                  <Flame className="w-4 h-4 text-orange-500 animate-pulse shrink-0" />
+                  <span>
+                    Alta procura para essas datas! {minAvailable === 1 ? "Resta apenas 1 unidade" : "Restam poucas unidades"} no Soho Residence.
+                  </span>
+                </div>
+                <Badge className="bg-orange-500 text-white font-black text-[10px] shrink-0">
+                  {discountPercent}% OFF
+                </Badge>
               </div>
-              <Badge className="bg-orange-500 text-white font-black text-[10px] shrink-0">
-                15% OFF
-              </Badge>
-            </div>
+            )}
 
             {/* Resumo do Período */}
             <div className="bg-slate-50 dark:bg-slate-800/60 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 flex items-center justify-between text-xs">
@@ -586,71 +671,136 @@ export function BookingFunnelModal({
               </div>
             </div>
 
-            {/* Up-sells de Alto Valor (Maximização de Ticket Médio) */}
-            <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-              <Label className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                <span>Adicionais Exclusivos para sua Estadia:</span>
-              </Label>
+            {/* Up-sell Exclusivo de Domingo: Late Check-out com Tarifação Inteligente */}
+            {isSundayCheckout && (
+              <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <Label className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Adicional Exclusivo para sua Estadia:</span>
+                </Label>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                {/* Up-sell 1: Early Check-in */}
-                <div
-                  onClick={() => setEarlyCheckin(!earlyCheckin)}
-                  className={`p-3 rounded-2xl border-2 transition-all cursor-pointer flex items-start gap-2.5 ${
-                    earlyCheckin
-                      ? "border-amber-500 bg-amber-50/70 dark:bg-amber-950/40 text-amber-950 dark:text-amber-100 shadow-xs"
-                      : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300"
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={earlyCheckin}
-                    onChange={() => {}}
-                    className="mt-1 rounded text-amber-600"
-                  />
-                  <div>
-                    <div className="flex items-center justify-between gap-1">
-                      <span className="font-bold text-xs">🕐 Early Check-in (11:00)</span>
-                      <Badge className="bg-amber-600 text-white text-[9px] px-1.5 py-0">
-                        + R$ 50
-                      </Badge>
+                <div className="grid grid-cols-1 gap-2.5">
+                  {/* Late Check-out Especial no Domingo */}
+                  <div
+                    onClick={() => {
+                      if (!lateCheckout) {
+                        setLateCheckout(true)
+                      }
+                    }}
+                    className={`p-3.5 rounded-2xl border-2 transition-all flex flex-col gap-3 ${
+                      lateCheckout
+                        ? "border-amber-500 bg-amber-50/70 dark:bg-amber-950/40 text-amber-950 dark:text-amber-100 shadow-xs"
+                        : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 cursor-pointer hover:border-amber-300"
+                    }`}
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <input
+                        type="checkbox"
+                        checked={lateCheckout}
+                        onChange={(e) => {
+                          e.stopPropagation()
+                          setLateCheckout(!lateCheckout)
+                        }}
+                        className="mt-1 rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-1 flex-wrap">
+                          <span className="font-bold text-xs flex items-center gap-1 text-slate-900 dark:text-slate-100">
+                            <span>🕒 Late Check-out no Domingo</span>
+                          </span>
+                          <Badge className="bg-amber-600 text-white text-[10px] px-2 py-0.5">
+                            {lateCheckout
+                              ? (lateCheckoutTier.isFree
+                                  ? "Cortesia (R$ 0)"
+                                  : (lateCheckoutTier.isDailyRate
+                                      ? `+ R$ ${lateCheckoutFee} (1 diária)`
+                                      : `+ R$ ${lateCheckoutFee}`))
+                              : "+ R$ 50"
+                            }
+                          </Badge>
+                        </div>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 leading-tight">
+                          {lateCheckout
+                            ? "Aproveite seu domingo sem pressa. Escolha abaixo o horário que deseja desocupar o flat:"
+                            : "Estenda sua saída no domingo além das 12h e aproveite o dia sem pressa."
+                          }
+                        </p>
+                      </div>
                     </div>
-                    <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 leading-tight">
-                      Entre 3 horas antes no apartamento (padrão é 14h) para relaxar ou trabalhar mais cedo.
-                    </p>
-                  </div>
-                </div>
 
-                {/* Up-sell 2: Late Check-out */}
-                <div
-                  onClick={() => setLateCheckout(!lateCheckout)}
-                  className={`p-3 rounded-2xl border-2 transition-all cursor-pointer flex items-start gap-2.5 ${
-                    lateCheckout
-                      ? "border-amber-500 bg-amber-50/70 dark:bg-amber-950/40 text-amber-950 dark:text-amber-100 shadow-xs"
-                      : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300"
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={lateCheckout}
-                    onChange={() => {}}
-                    className="mt-1 rounded text-amber-600"
-                  />
-                  <div>
-                    <div className="flex items-center justify-between gap-1">
-                      <span className="font-bold text-xs">🕒 Late Check-out (15:00)</span>
-                      <Badge className="bg-amber-600 text-white text-[9px] px-1.5 py-0">
-                        + R$ 50
-                      </Badge>
-                    </div>
-                    <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 leading-tight">
-                      Estenda sua saída até as 15h (padrão é 12h) e aproveite seu dia sem pressa.
-                    </p>
+                    {/* Sub-painel com horário pretendido de saída revelado ao selecionar */}
+                    {lateCheckout && (
+                      <div
+                        onClick={(e) => e.stopPropagation()}
+                        className="pt-2 border-t border-amber-200/70 dark:border-amber-900/50 space-y-2.5 animate-in fade-in-50 duration-200"
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <Label className="text-[11px] font-bold text-slate-800 dark:text-slate-200">
+                            Preencha até que horas deseja sair:
+                          </Label>
+
+                          <div className="flex items-center gap-2">
+                            <select
+                              value={lateCheckoutTime}
+                              onChange={(e) => setLateCheckoutTime(e.target.value)}
+                              className="h-8 text-xs font-semibold bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 rounded-xl px-2.5 py-0 text-slate-800 dark:text-slate-100 shadow-xs focus:ring-1 focus:ring-amber-500 outline-none"
+                            >
+                              <optgroup label="Cortesia CorpFlats (Gratuito)">
+                                <option value="12:30">Até 12:30 — Cortesia (R$ 0)</option>
+                                <option value="13:00">Até 13:00 — Cortesia (R$ 0)</option>
+                              </optgroup>
+                              <optgroup label="Saída até 18:00 (R$ 50 por flat)">
+                                <option value="14:00">Até 14:00 — + R$ 50</option>
+                                <option value="15:00">Até 15:00 — + R$ 50</option>
+                                <option value="16:00">Até 16:00 — + R$ 50</option>
+                                <option value="17:00">Até 17:00 — + R$ 50</option>
+                                <option value="18:00">Até 18:00 — + R$ 50 (Recomendado)</option>
+                              </optgroup>
+                              <optgroup label="Após 18:00 (+ 1 diária)">
+                                <option value="19:00">Até 19:00 — +1 diária (R$ {selectedDailyRate})</option>
+                                <option value="20:00">Até 20:00 — +1 diária (R$ {selectedDailyRate})</option>
+                                <option value="21:00">Até 21:00 — +1 diária (R$ {selectedDailyRate})</option>
+                                <option value="22:00">Até 22:00 — +1 diária (R$ {selectedDailyRate})</option>
+                              </optgroup>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Detalhe da condição com feedback claro */}
+                        <div className={`p-2 rounded-xl text-[11px] leading-relaxed flex items-center gap-2 ${
+                          lateCheckoutTier.isFree
+                            ? "bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-200 dark:border-emerald-800"
+                            : lateCheckoutTier.isDailyRate
+                              ? "bg-sky-50 text-sky-800 border border-sky-200 dark:bg-sky-950/40 dark:text-sky-200 dark:border-sky-800"
+                              : "bg-amber-100/60 text-amber-900 border border-amber-200 dark:bg-amber-900/30 dark:text-amber-200 dark:border-amber-800"
+                        }`}>
+                          <span className="shrink-0 font-bold">
+                            {lateCheckoutTier.isFree ? "✓" : (lateCheckoutTier.isDailyRate ? "ℹ️" : "✨")}
+                          </span>
+                          <span>
+                            {lateCheckoutTier.isFree && (
+                              <>
+                                <strong>Cortesia CorpFlats:</strong> Saída até as 13:00 concedida sem custo adicional (R$ 0).
+                              </>
+                            )}
+                            {!lateCheckoutTier.isFree && !lateCheckoutTier.isDailyRate && (
+                              <>
+                                <strong>Saída Estendida de Domingo:</strong> Até as {lateCheckoutTime} por R$ 50{flatsCount > 1 ? ` por flat (R$ ${lateCheckoutFee})` : ""}.
+                              </>
+                            )}
+                            {lateCheckoutTier.isDailyRate && (
+                              <>
+                                <strong>Saída Após as 18h:</strong> Cobrança de 1 diária adicional em vigência (R$ {selectedDailyRate}{flatsCount > 1 ? ` x ${flatsCount} flats = R$ ${lateCheckoutFee}` : ""}).
+                              </>
+                            )}
+                          </span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
-            </div>
+            )}
 
             {/* Módulo Pet Friendly */}
             <div className="p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 space-y-2.5">
@@ -1002,17 +1152,19 @@ export function BookingFunnelModal({
                 </div>
               )}
 
-              {earlyCheckin && (
-                <div className="flex justify-between text-slate-600 dark:text-slate-400">
-                  <span>Early Check-in às 11:00:</span>
-                  <span>+ R$ {earlyCheckinFee}</span>
-                </div>
-              )}
-
               {lateCheckout && (
                 <div className="flex justify-between text-slate-600 dark:text-slate-400">
-                  <span>Late Check-out até as 15:00:</span>
-                  <span>+ R$ {lateCheckoutFee}</span>
+                  <span>Late Check-out no Domingo (saída às {lateCheckoutTime}):</span>
+                  {lateCheckoutFee === 0 ? (
+                    <span className="text-emerald-600 font-bold">✓ Cortesia (R$ 0)</span>
+                  ) : (
+                    <span>
+                      + R$ {lateCheckoutFee.toLocaleString("pt-BR")}
+                      {lateCheckoutTier.isDailyRate && (
+                        <span className="text-[10px] text-slate-400 font-normal ml-1">(+1 diária)</span>
+                      )}
+                    </span>
+                  )}
                 </div>
               )}
 

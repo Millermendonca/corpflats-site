@@ -1029,12 +1029,55 @@ function sanitizeLostAndFound() {
   }
 }
 
+function sanitizeReservationFlags() {
+  if (!db.reservations) return;
+  // Auto-recuperação/correção para a reserva RES-905-0067
+  const res905 = (db.reservations || []).find(r => 
+    (r.code && r.code.toUpperCase() === "RES-905-0067") || 
+    (String(r.id) === "67" && String(r.flatNumber) === "905") ||
+    (r.code && r.code.toUpperCase().includes("905-0067"))
+  );
+  if (res905) {
+    let changed = false;
+    if (!res905.isMonthlyGuest || res905.clientType !== "mensalista") {
+      res905.isMonthlyGuest = true;
+      res905.clientType = "mensalista";
+      changed = true;
+    }
+    if (!res905.autoEmitInvoice) {
+      res905.autoEmitInvoice = true;
+      changed = true;
+    }
+    const matchedGuest = (db.guests || []).find(g => 
+      (g.id && g.id === res905.guestId) ||
+      (g.document && res905.guestDocument && g.document.replace(/\D/g, '') === res905.guestDocument.replace(/\D/g, '')) ||
+      (g.name && res905.guestName && g.name.toLowerCase().trim() === res905.guestName.toLowerCase().trim())
+    );
+    if (matchedGuest) {
+      if (!matchedGuest.isMonthlyGuest || matchedGuest.clientType !== "mensalista") {
+        matchedGuest.isMonthlyGuest = true;
+        matchedGuest.clientType = "mensalista";
+        changed = true;
+      }
+      if (!matchedGuest.autoEmitInvoice) {
+        matchedGuest.autoEmitInvoice = true;
+        changed = true;
+      }
+    }
+    if (changed) {
+      saveDatabase();
+      console.log("[Auto-Fix] Reserva RES-905-0067 e hóspede atualizados para Mensalista e Auto-Emitir Nota.");
+    }
+  }
+}
+
 async function loadDatabase() {
   try {
     if (fs.existsSync(DB_FILE)) {
       const content = fs.readFileSync(DB_FILE, "utf-8");
       const loaded = JSON.parse(content);
       db = { ...db, ...loaded };
+      sanitizeReservationFlags();
     }
     if (pgPool) {
       try {
@@ -1088,6 +1131,7 @@ async function loadDatabase() {
           console.log("[PostgreSQL] Estado restaurado da nuvem com sucesso!");
           sanitizeAndRecoverCleanings();
           sanitizeLostAndFound();
+          sanitizeReservationFlags();
         }
       } catch (err) {
         console.warn("[PostgreSQL] Falha ao sincronizar estado inicial:", err.message);
@@ -4216,9 +4260,48 @@ app.get("/api/reservations/availability", (req, res) => {
       }
     }
 
+    // Cálculo de noites solicitadas e disponibilidade diária
+    const requestedNights = [];
+    let curr = new Date(checkin + "T12:00:00Z");
+    const end = new Date(checkout + "T12:00:00Z");
+
+    if (isNaN(curr.getTime()) || isNaN(end.getTime()) || curr >= end) {
+      requestedNights.push(checkin);
+    } else {
+      while (curr < end) {
+        requestedNights.push(curr.toISOString().slice(0, 10));
+        curr.setUTCDate(curr.getUTCDate() + 1);
+      }
+    }
+
+    const activeReservations = (db.reservations || []).filter(r => r.status !== "cancelada");
+    const dailyAvailability = requestedNights.map(d => {
+      const occupiedOnDate = new Set(
+        activeReservations
+          .filter(r => r.checkinDate <= d && r.checkoutDate > d)
+          .map(r => String(r.flatNumber || r.flatId))
+      );
+      const availableCount = allFlats.filter(
+        f => !occupiedOnDate.has(String(f.number)) && !occupiedOnDate.has(String(f.id))
+      ).length;
+      return {
+        date: d,
+        availableFlats: availableCount
+      };
+    });
+
+    const minAvailableOnAnyDate = dailyAvailability.length > 0
+      ? Math.min(...dailyAvailability.map(item => item.availableFlats))
+      : totalAvailable;
+
+    const hasLowAvailability = minAvailableOnAnyDate <= 5 || totalAvailable <= 5;
+
     res.json({
       available: totalAvailable > 0,
       totalAvailableFlats: totalAvailable,
+      dailyAvailability,
+      minAvailableOnAnyDate,
+      hasLowAvailability,
       twinAvailableCount,
       allowTwinBeds: Boolean(bedCfg.allowTwinBeds && allowTwinForDates && twinAvailableCount > 0),
       twinCutoffReached,
@@ -4255,6 +4338,7 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       petFee = 0,
       earlyCheckin = false,
       lateCheckout = false,
+      lateCheckoutTime = null,
       earlyCheckinFee = 0,
       lateCheckoutFee = 0,
       cleaningFee = 0,
@@ -4401,6 +4485,7 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       lateCheckout: Boolean(lateCheckout),
       earlyCheckinFee: Number(earlyCheckinFee) || 0,
       lateCheckoutFee: Number(lateCheckoutFee) || 0,
+      lateCheckoutTime: lateCheckout ? (lateCheckoutTime || "18:00") : null,
       extras: extras || null,
       totalAmount: Number(totalAmount),
       paidAmount: paymentMethod === "pix" || paymentMethod === "card" || paymentMethod === "cartao_credito" ? 0 : Number(totalAmount),
@@ -4420,6 +4505,12 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
+
+    if (lateCheckout) {
+      const lateFeeStr = Number(lateCheckoutFee) > 0 ? `Taxa: R$ ${lateCheckoutFee}` : `Cortesia R$ 0`;
+      const lateNote = `🕒 Late Check-out Domingo solicitado para às ${lateCheckoutTime || "18:00"} (${lateFeeStr})`;
+      reservation.notes = reservation.notes ? `${reservation.notes} • ${lateNote}` : lateNote;
+    }
 
     addReservationAuditLog(reservation, {
       action: "created",
@@ -4709,6 +4800,10 @@ app.get("/api/pms/calendar", (req, res) => {
       matchedGuest?.isMonthlyGuest || 
       matchedGuest?.clientType === "mensalista"
     );
+    const autoInvoice = Boolean(
+      r.autoEmitInvoice || 
+      matchedGuest?.autoEmitInvoice
+    );
 
     ensureReservationAuditLogs(r);
 
@@ -4716,6 +4811,7 @@ app.get("/api/pms/calendar", (req, res) => {
       ...r,
       isMonthlyGuest: isMonthly,
       clientType: isMonthly ? "mensalista" : (r.clientType || "avulso"),
+      autoEmitInvoice: autoInvoice,
       includeBreakfast: Boolean(r.includeBreakfast || r.hasBreakfast || r.ratePlan === "with_breakfast" || r.notes?.toLowerCase().includes("café") || r.notes?.toLowerCase().includes("cafe")),
       breakfastToken: r.breakfastToken || (r.code ? `bfk_${r.code.toLowerCase().replace(/[^a-z0-9]/g, '')}` : `bfk_${r.id}`)
     };
@@ -4780,12 +4876,17 @@ app.post("/api/pms/reservations", (req, res) => {
     extraMattress = false,
     specialRequests = "",
     includeBreakfast = false,
-    isMonthlyGuest = false
+    isMonthlyGuest = false,
+    clientType = "avulso",
+    autoEmitInvoice = false
   } = req.body;
 
   if (!flatId || !checkinDate || !checkoutDate || (!guestName && (!guests || guests.length === 0))) {
     return res.status(400).json({ error: "Apartamento, Hóspede e Datas são obrigatórios." });
   }
+
+  const isMonthly = Boolean(isMonthlyGuest || clientType === "mensalista" || req.body.isMonthlyGuest || req.body.clientType === "mensalista");
+  const autoInvoice = Boolean(autoEmitInvoice || req.body.autoEmitInvoice);
 
   const flat = db.flats.find(f => f.id === Number(flatId));
   if (!flat) return res.status(404).json({ error: "Apartamento não encontrado." });
@@ -4816,6 +4917,9 @@ app.post("/api/pms/reservations", (req, res) => {
       city: "",
       notes: "",
       tags: [],
+      isMonthlyGuest: isMonthly,
+      clientType: isMonthly ? "mensalista" : "avulso",
+      autoEmitInvoice: autoInvoice,
       createdAt: new Date().toISOString()
     };
     db.guests.push(guest);
@@ -4824,6 +4928,13 @@ app.post("/api/pms/reservations", (req, res) => {
     if (primaryEmail) guest.email = primaryEmail;
     if (primaryDoc) guest.document = primaryDoc;
     if (companyName) guest.companyName = companyName;
+    if (isMonthly) {
+      guest.isMonthlyGuest = true;
+      guest.clientType = "mensalista";
+    }
+    if (autoInvoice) {
+      guest.autoEmitInvoice = true;
+    }
   }
 
   // Prepara lista de hóspedes da reserva (1, 2 ou 3)
@@ -4930,6 +5041,9 @@ app.post("/api/pms/reservations", (req, res) => {
     extraMattress: Boolean(extraMattress),
     specialRequests: specialRequests || "",
     includeBreakfast: Boolean(includeBreakfast),
+    isMonthlyGuest: isMonthly,
+    clientType: isMonthly ? "mensalista" : "avulso",
+    autoEmitInvoice: autoInvoice,
     breakfastToken: `bfk_${resId}_${crypto.randomBytes(4).toString("hex")}`,
     createdBy: {
       userId: authUser?.id || null,
@@ -4960,7 +5074,11 @@ app.post("/api/pms/reservations", (req, res) => {
       { field: "channel", label: "Canal de Origem", oldValue: null, newValue: channel },
       { field: "totalAmount", label: "Valor Total", oldValue: null, newValue: `R$ ${Number(totalAmount).toFixed(2)}` },
       { field: "paymentStatus", label: "Status de Pagamento", oldValue: null, newValue: paymentStatus },
-      ...(includeBreakfast ? [{ field: "includeBreakfast", label: "Café da Manhã", oldValue: null, newValue: "Incluso" }] : [])
+      ...(includeBreakfast ? [{ field: "includeBreakfast", label: "Café da Manhã", oldValue: null, newValue: "Incluso" }] : []),
+      ...(isMonthly ? [{ field: "isMonthlyGuest", label: "Cliente Mensalista", oldValue: null, newValue: "Sim" }] : []),
+      ...(autoInvoice ? [{ field: "autoEmitInvoice", label: "Auto-Emissão de Nota Fiscal (NFS-e)", oldValue: null, newValue: "Sim" }] : []),
+      ...(req.body.receptionNotes ? [{ field: "receptionNotes", label: "Aviso para a Portaria / Recepção", oldValue: null, newValue: req.body.receptionNotes }] : []),
+      ...(isEarlyAuth ? [{ field: "earlyCheckinAuthorized", label: "Autorização de Early Check-in", oldValue: null, newValue: "Sim" }] : [])
     ]
   });
 
@@ -4988,11 +5106,46 @@ app.put("/api/pms/reservations/:id", (req, res) => {
     "flatId", "checkinDate", "checkoutDate", "status", "channel", 
     "dailyRate", "totalAmount", "paidAmount", "paymentStatus", 
     "adults", "children", "notes", "prefersHighFloor", "twinBeds", 
-    "extraMattress", "specialRequests", "isMonthlyGuest", "clientType", "includeBreakfast"
+    "extraMattress", "specialRequests", "isMonthlyGuest", "clientType", "includeBreakfast",
+    "autoEmitInvoice", "earlyCheckinAuthorized", "receptionNotes",
+    "guestCount", "guests", "guestDocument", "requesterType", "requesterInfo",
+    "companyId", "companyName"
   ];
   for (const f of fields) {
     if (req.body[f] !== undefined) r[f] = req.body[f];
   }
+  if (req.body.isMonthlyGuest !== undefined || req.body.clientType !== undefined) {
+    const isMonthly = Boolean(req.body.isMonthlyGuest || req.body.clientType === "mensalista");
+    r.isMonthlyGuest = isMonthly;
+    r.clientType = isMonthly ? "mensalista" : "avulso";
+  }
+  if (req.body.autoEmitInvoice !== undefined) {
+    r.autoEmitInvoice = Boolean(req.body.autoEmitInvoice);
+  }
+  if (req.body.earlyCheckinAuthorized !== undefined) {
+    r.earlyCheckinAuthorized = Boolean(req.body.earlyCheckinAuthorized);
+  }
+  if (req.body.receptionNotes !== undefined) {
+    r.receptionNotes = String(req.body.receptionNotes || "");
+  }
+
+  // Sincroniza com o hóspede no CRM se aplicável
+  const matchedGuest = (db.guests || []).find(g => 
+    (r.guestId && g.id === r.guestId) ||
+    (r.guestPhone && g.phone === r.guestPhone) ||
+    (r.guestDocument && g.document === r.guestDocument) ||
+    (r.guestName && (g.name?.toLowerCase().trim() === r.guestName.toLowerCase().trim() || g.fullName?.toLowerCase().trim() === r.guestName.toLowerCase().trim()))
+  );
+  if (matchedGuest) {
+    if (req.body.isMonthlyGuest !== undefined || req.body.clientType !== undefined) {
+      matchedGuest.isMonthlyGuest = r.isMonthlyGuest;
+      matchedGuest.clientType = r.clientType;
+    }
+    if (req.body.autoEmitInvoice !== undefined) {
+      matchedGuest.autoEmitInvoice = r.autoEmitInvoice;
+    }
+  }
+
   if (req.body.flatId) {
     const flat = db.flats.find(f => f.id === Number(req.body.flatId));
     if (flat) r.flatNumber = flat.number;
@@ -6668,13 +6821,13 @@ const handleUpdateGuest = (req, res) => {
   const guest = (db.guests || []).find(g => g.id === id);
   if (!guest) return res.status(404).json({ error: "Hóspede não encontrado." });
 
-  const fields = ["name", "fullName", "phone", "email", "document", "documentNumber", "city", "notes", "tags", "isMonthlyGuest", "clientType", "companyId", "preferences"];
+  const fields = ["name", "fullName", "phone", "email", "document", "documentNumber", "city", "notes", "tags", "isMonthlyGuest", "clientType", "companyId", "preferences", "autoEmitInvoice"];
   for (const f of fields) {
     if (req.body[f] !== undefined) guest[f] = req.body[f];
   }
-  if (req.body.isMonthlyGuest !== undefined) {
-    guest.isMonthlyGuest = Boolean(req.body.isMonthlyGuest);
-    guest.clientType = req.body.isMonthlyGuest ? "mensalista" : "avulso";
+  if (req.body.isMonthlyGuest !== undefined || req.body.clientType !== undefined) {
+    guest.isMonthlyGuest = Boolean(req.body.isMonthlyGuest || req.body.clientType === "mensalista");
+    guest.clientType = guest.isMonthlyGuest ? "mensalista" : "avulso";
     
     // Atualiza imediatamente todas as reservas desse hóspede
     const cleanDoc = (guest.document || guest.documentNumber || "").replace(/\D/g, "");
@@ -6688,6 +6841,22 @@ const handleUpdateGuest = (req, res) => {
       if ((cleanDoc && resDoc === cleanDoc) || (cleanPhone && resPhone === cleanPhone) || (guestNameLower && resName === guestNameLower) || r.guestId === guest.id) {
         r.isMonthlyGuest = guest.isMonthlyGuest;
         r.clientType = guest.clientType;
+      }
+    });
+  }
+
+  if (req.body.autoEmitInvoice !== undefined) {
+    guest.autoEmitInvoice = Boolean(req.body.autoEmitInvoice);
+    const cleanDoc = (guest.document || guest.documentNumber || "").replace(/\D/g, "");
+    const cleanPhone = (guest.phone || "").replace(/\D/g, "");
+    const guestNameLower = (guest.fullName || guest.name || "").trim().toLowerCase();
+
+    (db.reservations || []).forEach(r => {
+      const resDoc = (r.guestDocument || r.document || "").replace(/\D/g, "");
+      const resPhone = (r.guestPhone || "").replace(/\D/g, "");
+      const resName = (r.guestName || "").trim().toLowerCase();
+      if ((cleanDoc && resDoc === cleanDoc) || (cleanPhone && resPhone === cleanPhone) || (guestNameLower && resName === guestNameLower) || r.guestId === guest.id) {
+        r.autoEmitInvoice = guest.autoEmitInvoice;
       }
     });
   }
@@ -6724,18 +6893,27 @@ app.put("/api/pms/amenities/essential-tags", (req, res) => {
 });
 
 app.post("/api/pms/guests", (req, res) => {
-  const { name, phone, email, document, city, notes, tags } = req.body;
-  if (!name || !name.trim()) return res.status(400).json({ error: "Nome é obrigatório." });
+  const { name, fullName, phone, email, document, documentNumber, city, notes, tags, isMonthlyGuest, clientType, autoEmitInvoice, companyId, preferences } = req.body;
+  const primName = (fullName || name || "").trim();
+  if (!primName) return res.status(400).json({ error: "Nome é obrigatório." });
   if (!db.guests) db.guests = [];
 
+  const isMonthly = Boolean(isMonthlyGuest || clientType === "mensalista");
   const newGuest = {
     id: db.guests.length > 0 ? Math.max(...db.guests.map(g => g.id)) + 1 : 1,
-    name: name.trim(),
+    name: primName,
+    fullName: primName,
     phone: phone || "",
     email: email || "",
-    document: document || "",
+    document: document || documentNumber || "",
+    documentNumber: documentNumber || document || "",
     city: city || "",
+    companyId: companyId ? Number(companyId) : null,
+    isMonthlyGuest: isMonthly,
+    clientType: isMonthly ? "mensalista" : "avulso",
+    autoEmitInvoice: Boolean(autoEmitInvoice),
     notes: notes || "",
+    preferences: preferences || {},
     tags: tags || [],
     createdAt: new Date().toISOString()
   };

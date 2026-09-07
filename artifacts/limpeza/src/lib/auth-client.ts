@@ -38,6 +38,31 @@ export interface AuthResponse {
 const API_BASE = "/api/v2/auth"
 
 /**
+ * Persiste sessão no armazenamento local para restauração síncrona instantânea
+ */
+export function saveSessionLocally(user: UserProfile): void {
+  if (typeof window === "undefined" || !user) return
+  try {
+    if (user.email) {
+      localStorage.setItem("corpflats_guest_email", user.email)
+    }
+    localStorage.setItem("corpflats_guest_profile", JSON.stringify(user))
+  } catch {}
+}
+
+/**
+ * Limpa armazenamento local de sessão
+ */
+export function clearLocalSession(): void {
+  if (typeof window === "undefined") return
+  try {
+    localStorage.removeItem("corpflats_guest_email")
+    localStorage.removeItem("corpflats_guest_token")
+    localStorage.removeItem("corpflats_guest_profile")
+  } catch {}
+}
+
+/**
  * 1. Login com E-mail e Senha (Emite Cookie HttpOnly Seguro)
  */
 export async function loginWithEmail(email: string, password: string): Promise<AuthResponse> {
@@ -50,6 +75,10 @@ export async function loginWithEmail(email: string, password: string): Promise<A
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || "Falha no login.")
+    if (data.user) {
+      saveSessionLocally(data.user)
+      cancelGoogleOneTap()
+    }
     return { success: true, user: data.user, message: data.message }
   } catch (err: any) {
     return { success: false, error: err.message || "Erro de conexão." }
@@ -77,6 +106,10 @@ export async function registerAccount(payload: {
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || "Erro ao criar conta.")
+    if (data.user) {
+      saveSessionLocally(data.user)
+      cancelGoogleOneTap()
+    }
     return { success: true, user: data.user, message: data.message }
   } catch (err: any) {
     return { success: false, error: err.message || "Erro ao conectar." }
@@ -96,6 +129,10 @@ export async function loginWithGoogleCredential(credential: string): Promise<Aut
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || "Erro ao autenticar com o Google.")
+    if (data.user) {
+      saveSessionLocally(data.user)
+      cancelGoogleOneTap()
+    }
     return { success: true, user: data.user, message: data.message }
   } catch (err: any) {
     return { success: false, error: err.message || "Erro no Google Sign-In." }
@@ -148,6 +185,8 @@ export async function loginWithGooglePopup(onSuccess: (user: UserProfile) => voi
                     })
                     const authData = await authRes.json()
                     if (authData.success && authData.user) {
+                      saveSessionLocally(authData.user)
+                      cancelGoogleOneTap()
                       onSuccess(authData.user)
                       resolve({ success: true, user: authData.user })
                       return
@@ -189,25 +228,42 @@ export async function loginWithGooglePopup(onSuccess: (user: UserProfile) => voi
 }
 
 /**
- * 4. Obter Sessão Ativa Atual (Consome Cookie HttpOnly)
+ * 4. Obter Sessão Ativa Atual (Consome Cookie HttpOnly com fallback local)
  */
 export async function getCurrentSession(): Promise<UserProfile | null> {
   try {
     const res = await fetch(`${API_BASE}/me`, {
       credentials: "include"
     })
-    if (!res.ok) return null
-    const data = await res.json()
-    return data.user || null
-  } catch {
-    return null
-  }
+    if (res.ok) {
+      const data = await res.json()
+      if (data.user) {
+        saveSessionLocally(data.user)
+        return data.user
+      }
+    }
+  } catch {}
+
+  // Fallback: se rede falhar temporariamente mas há perfil salvo
+  try {
+    const raw = localStorage.getItem("corpflats_guest_profile")
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (parsed && (parsed.email || parsed.name)) {
+        return parsed
+      }
+    }
+  } catch {}
+
+  return null
 }
 
 /**
- * 5. Logout Seguro (Invalida Sessão e Limpa Cookie)
+ * 5. Logout Seguro (Invalida Sessão, Limpa Armazenamento Local e Cookie)
  */
 export async function logoutAccount(): Promise<boolean> {
+  clearLocalSession()
+  cancelGoogleOneTap()
   try {
     await fetch(`${API_BASE}/logout`, {
       method: "POST",
@@ -287,6 +343,9 @@ export async function updateAccountProfile(payload: Partial<UserProfile>): Promi
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || "Erro ao atualizar perfil.")
+    if (data.user) {
+      saveSessionLocally(data.user)
+    }
     return { success: true, user: data.user, message: data.message }
   } catch (err: any) {
     return { success: false, error: err.message }
@@ -389,6 +448,10 @@ export async function loginWithPasskey(email?: string): Promise<AuthResponse> {
 
     const data = await verifyRes.json()
     if (!verifyRes.ok) throw new Error(data.error || "Falha na verificação biométrica.")
+    if (data.user) {
+      saveSessionLocally(data.user)
+      cancelGoogleOneTap()
+    }
     return { success: true, user: data.user, message: data.message }
   } catch (err: any) {
     return { success: false, error: err.message || "Erro ao entrar com Passkey." }
@@ -452,9 +515,17 @@ export async function initGoogleOneTap(
 ): Promise<void> {
   if (typeof window === "undefined") return
 
+  // Se já existe sessão local ou perfil salvo, NUNCA exibe o prompt do One Tap
   try {
-    clearGoogleCooldown()
+    const savedEmail = localStorage.getItem("corpflats_guest_email")
+    const savedProfile = localStorage.getItem("corpflats_guest_profile")
+    if (savedEmail || savedProfile) {
+      cancelGoogleOneTap()
+      return
+    }
+  } catch {}
 
+  try {
     // Busca client ID configurado pelo administrador ou no env
     let clientId = (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || ""
     if (!clientId) {
@@ -474,12 +545,21 @@ export async function initGoogleOneTap(
         const google = (window as any).google
         if (!google?.accounts?.id) return
 
+        // Confere novamente se o usuário não logou entrementes
+        const currentEmail = localStorage.getItem("corpflats_guest_email")
+        if (currentEmail) {
+          cancelGoogleOneTap()
+          return
+        }
+
         google.accounts.id.initialize({
           client_id: clientId,
           callback: async (response: any) => {
             if (response?.credential) {
               const auth = await loginWithGoogleCredential(response.credential)
               if (auth.success && auth.user) {
+                saveSessionLocally(auth.user)
+                cancelGoogleOneTap()
                 onSuccess(auth.user)
               }
             }
@@ -506,22 +586,21 @@ export async function initGoogleOneTap(
           }
         }
 
-        // Dispara o prompt do popup flutuante do Google One Tap
-        google.accounts.id.prompt((notification: any) => {
-          if (notification.isNotDisplayed()) {
-            const reason = notification.getNotDisplayedReason?.()
-            console.log("[Google One Tap] Não exibido (razão):", reason)
-            if (reason === "suppressed_by_user") {
-              clearGoogleCooldown()
+        // Se NÃO há usuário logado e NÃO é renderização isolada de botão, solicita o prompt
+        const activeEmail = localStorage.getItem("corpflats_guest_email")
+        if (!activeEmail && !buttonContainerId) {
+          google.accounts.id.prompt((notification: any) => {
+            if (notification.isNotDisplayed()) {
+              console.log("[Google One Tap] Não exibido:", notification.getNotDisplayedReason?.())
+            } else if (notification.isSkippedMoment()) {
+              console.log("[Google One Tap] Momento pulado:", notification.getSkippedReason?.())
+            } else if (notification.isDismissedMoment()) {
+              console.log("[Google One Tap] Usuário fechou:", notification.getDismissedReason?.())
+            } else {
+              console.log("[Google One Tap] Prompt exibido com sucesso!")
             }
-          } else if (notification.isSkippedMoment()) {
-            console.log("[Google One Tap] Momento pulado:", notification.getSkippedReason?.())
-          } else if (notification.isDismissedMoment()) {
-            console.log("[Google One Tap] Usuário fechou:", notification.getDismissedReason?.())
-          } else {
-            console.log("[Google One Tap] Prompt exibido com sucesso!")
-          }
-        })
+          })
+        }
       } catch (err) {
         console.warn("Google One Tap:", err)
       }

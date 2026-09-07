@@ -56,6 +56,7 @@ export default function CrmGuests() {
     breakfastNotes: ""
   })
   const [formIsMonthlyGuest, setFormIsMonthlyGuest] = useState(false)
+  const [formAutoInvoice, setFormAutoInvoice] = useState(false)
   const [savingGuest, setSavingGuest] = useState(false)
 
   // Modal Create / Edit Company
@@ -145,6 +146,7 @@ export default function CrmGuests() {
     setFormCity("")
     setFormCompanyId("")
     setFormIsMonthlyGuest(false)
+    setFormAutoInvoice(false)
     setFormNotes("")
     setFormPreferences({
       bedType: "casal",
@@ -165,6 +167,7 @@ export default function CrmGuests() {
     setFormCity(g.city || "")
     setFormCompanyId(g.companyId ? String(g.companyId) : "")
     setFormIsMonthlyGuest(Boolean(g.isMonthlyGuest || g.clientType === "mensalista"))
+    setFormAutoInvoice(Boolean(g.autoEmitInvoice))
     setFormNotes(g.notes || "")
     setFormPreferences({
       bedType: g.preferences?.bedType || "casal",
@@ -193,6 +196,7 @@ export default function CrmGuests() {
         companyId: formCompanyId ? Number(formCompanyId) : null,
         isMonthlyGuest: Boolean(formIsMonthlyGuest),
         clientType: formIsMonthlyGuest ? "mensalista" : "avulso",
+        autoEmitInvoice: Boolean(formAutoInvoice),
         notes: formNotes.trim(),
         preferences: formPreferences
       }
@@ -985,6 +989,18 @@ export default function CrmGuests() {
                   </div>
                 </div>
                 <Switch checked={formIsMonthlyGuest} onCheckedChange={setFormIsMonthlyGuest} />
+              </div>
+
+              {/* Switch: Auto-Emitir Nota Fiscal (NFS-e) */}
+              <div className="p-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 rounded-2xl flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  <div>
+                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">Auto-Emitir Nota Fiscal (NFS-e) no Check-out</span>
+                    <span className="text-[11px] text-muted-foreground">Emite e envia NFS-e no WhatsApp deste hóspede no check-out</span>
+                  </div>
+                </div>
+                <Switch checked={formAutoInvoice} onCheckedChange={setFormAutoInvoice} />
               </div>
 
               <div className="space-y-1">

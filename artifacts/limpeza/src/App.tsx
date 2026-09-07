@@ -193,7 +193,10 @@ function Router() {
 function RoutedErrorBoundary({ children }: { children: ReactNode }) {
   const [location] = useLocation();
   useEffect(() => {
-    if (location !== "/reservar" && location !== "/booking" && location !== "/") {
+    const isGuestLoggedIn = Boolean(
+      localStorage.getItem("corpflats_guest_profile") || localStorage.getItem("corpflats_guest_email")
+    );
+    if (isGuestLoggedIn || (location !== "/reservar" && location !== "/booking" && location !== "/")) {
       cancelGoogleOneTap();
     }
   }, [location]);

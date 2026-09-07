@@ -776,6 +776,7 @@ export default function PmsCalendar() {
     setFormExtraMattress(false)
     setFormIncludeBreakfast(false)
     setFormSpecialRequests("")
+    setFormIsMonthlyGuest(false)
     setMobileRangeStart(null)
     setResModalOpen(true)
   }
@@ -942,15 +943,23 @@ export default function PmsCalendar() {
     setFormPaidAmount(String(resItem.paidAmount || 0))
     setFormPaymentStatus(resItem.paymentStatus || "pendente")
     setFormNotes(resItem.notes || "")
+    const matchedGuest = crmGuests.find(g => 
+      (resItem.guestId && String(g.id) === String(resItem.guestId)) ||
+      (g.documentNumber && resItem.guestDocument && g.documentNumber.replace(/\D/g, '') === resItem.guestDocument.replace(/\D/g, '')) ||
+      (g.phone && resItem.guestPhone && g.phone.replace(/\D/g, '') === resItem.guestPhone.replace(/\D/g, '')) ||
+      (g.name && resItem.guestName && g.name.toLowerCase().trim() === resItem.guestName.toLowerCase().trim()) ||
+      (g.fullName && resItem.guestName && g.fullName.toLowerCase().trim() === resItem.guestName.toLowerCase().trim())
+    )
+
     setFormEarlyCheckin(Boolean(resItem.earlyCheckinAuthorized))
     setFormReceptionNotes(resItem.receptionNotes || "")
-    setFormAutoInvoice(Boolean(resItem.autoEmitInvoice))
+    setFormAutoInvoice(Boolean(resItem.autoEmitInvoice || matchedGuest?.autoEmitInvoice))
     setFormPrefersHighFloor(Boolean(resItem.prefersHighFloor))
     setFormTwinBeds(Boolean(resItem.twinBeds))
     setFormExtraMattress(Boolean(resItem.extraMattress))
     setFormIncludeBreakfast(Boolean(resItem.includeBreakfast || resItem.hasBreakfast))
     setFormSpecialRequests(resItem.specialRequests || "")
-    setFormIsMonthlyGuest(Boolean(resItem.isMonthlyGuest || resItem.clientType === "mensalista"))
+    setFormIsMonthlyGuest(Boolean(resItem.isMonthlyGuest || resItem.clientType === "mensalista" || matchedGuest?.isMonthlyGuest || matchedGuest?.clientType === "mensalista"))
     setResModalTab("details")
     setAuditLogs(Array.isArray(resItem.auditLogs) ? resItem.auditLogs : [])
     fetchAuditLogs(resItem.code || resItem.id)
@@ -984,6 +993,9 @@ export default function PmsCalendar() {
       }
       if (g.isMonthlyGuest || g.clientType === "mensalista") {
         setFormIsMonthlyGuest(true)
+      }
+      if (g.autoEmitInvoice) {
+        setFormAutoInvoice(true)
       }
       if (g.companyId && !formCompanyId) {
         setFormCompanyId(String(g.companyId))

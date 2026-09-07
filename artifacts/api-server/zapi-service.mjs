@@ -650,44 +650,55 @@ export function calculateScheduledTime(template, reservation, db) {
 }
 
 // ── Gerenciador da Fila & Background Scheduler ────────────────────────────────
-export function initWhatsAppEngine(app, db, saveDatabase) {
-  // Inicialização no banco caso não existam
-  if (!db.zapiConfig) {
-    db.zapiConfig = {
-      instanceId: "",
-      token: "",
-      clientToken: "",
-      enabled: false,
-      fallbackToText: true,
-      wifiNetwork: "CorpFlats-Hospedes",
-      wifiPassword: "corpflats2026",
-      googleReviewUrl: "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ"
-    };
+export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
+  const getDb = typeof dbOrGetter === "function" ? dbOrGetter : () => dbOrGetter;
+
+  function ensureDbDefaults() {
+    const db = getDb();
+    if (!db) return;
+    if (!db.zapiConfig) {
+      db.zapiConfig = {
+        instanceId: "",
+        token: "",
+        clientToken: "",
+        enabled: false,
+        fallbackToText: true,
+        wifiNetwork: "CorpFlats-Hospedes",
+        wifiPassword: "corpflats2026",
+        googleReviewUrl: "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ"
+      };
+    }
+
+    if (!db.whatsappTemplates || db.whatsappTemplates.length === 0) {
+      db.whatsappTemplates = DEFAULT_WHATSAPP_TEMPLATES;
+    }
+
+    if (!db.whatsappQueue) {
+      db.whatsappQueue = [];
+    }
+
+    if (!db.whatsappHistory) {
+      db.whatsappHistory = [];
+    }
   }
 
-  if (!db.whatsappTemplates || db.whatsappTemplates.length === 0) {
-    db.whatsappTemplates = DEFAULT_WHATSAPP_TEMPLATES;
-  }
-
-  if (!db.whatsappQueue) {
-    db.whatsappQueue = [];
-  }
-
-  if (!db.whatsappHistory) {
-    db.whatsappHistory = [];
-  }
+  ensureDbDefaults();
 
   // ── Rotas Express do WhatsApp ───────────────────────────────────────────────
 
   // 1. Obter Configurações
   app.get("/api/whatsapp/config", (req, res) => {
-    res.json(db.zapiConfig || {});
+    const db = getDb();
+    ensureDbDefaults();
+    res.json(db?.zapiConfig || {});
   });
 
   // 2. Salvar Configurações
   app.post("/api/whatsapp/config", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
     db.zapiConfig = {
-      ...db.zapiConfig,
+      ...(db.zapiConfig || {}),
       ...req.body
     };
     saveDatabase();
@@ -696,23 +707,31 @@ export function initWhatsAppEngine(app, db, saveDatabase) {
 
   // 3. Status Z-API
   app.get("/api/whatsapp/status", async (req, res) => {
-    const status = await getZapiStatus(db.zapiConfig);
+    const db = getDb();
+    ensureDbDefaults();
+    const status = await getZapiStatus(db?.zapiConfig);
     res.json(status);
   });
 
   // 4. QR Code Z-API
   app.get("/api/whatsapp/qr-code", async (req, res) => {
-    const qr = await getZapiQrCode(db.zapiConfig);
+    const db = getDb();
+    ensureDbDefaults();
+    const qr = await getZapiQrCode(db?.zapiConfig);
     res.json(qr);
   });
 
   // 5. Listar Templates
   app.get("/api/whatsapp/templates", (req, res) => {
-    res.json(db.whatsappTemplates || []);
+    const db = getDb();
+    ensureDbDefaults();
+    res.json(db?.whatsappTemplates || []);
   });
 
   // 6. Salvar / Atualizar Templates
   app.post("/api/whatsapp/templates", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
     const incoming = req.body;
     if (Array.isArray(incoming)) {
       db.whatsappTemplates = incoming;
@@ -730,6 +749,8 @@ export function initWhatsAppEngine(app, db, saveDatabase) {
 
   // 7. Restaurar Templates Originais
   app.post("/api/whatsapp/reset-templates", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
     db.whatsappTemplates = DEFAULT_WHATSAPP_TEMPLATES;
     saveDatabase();
     res.json({ success: true, templates: db.whatsappTemplates });
@@ -737,15 +758,19 @@ export function initWhatsAppEngine(app, db, saveDatabase) {
 
   // 8. Fila de Envios Agendados & Histórico
   app.get("/api/whatsapp/queue", (req, res) => {
-    const queue = (db.whatsappQueue || []).slice(-150).reverse();
-    const history = (db.whatsappHistory || []).slice(-100).reverse();
+    const db = getDb();
+    ensureDbDefaults();
+    const queue = (db?.whatsappQueue || []).slice(-150).reverse();
+    const history = (db?.whatsappHistory || []).slice(-100).reverse();
     res.json({ queue, history });
   });
 
   // 9. Ação "Enviar Agora" (Antecipar Disparo Manual)
   app.post("/api/whatsapp/queue/:id/send-now", async (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
     const id = req.params.id;
-    const item = (db.whatsappQueue || []).find(q => q.id === id);
+    const item = (db?.whatsappQueue || []).find(q => q.id === id);
     if (!item) {
       return res.status(404).json({ error: "Item da fila não encontrado." });
     }
@@ -766,6 +791,7 @@ export function initWhatsAppEngine(app, db, saveDatabase) {
     item.method = result.method || "manual";
     item.messageId = result.messageId || null;
 
+    if (!db.whatsappHistory) db.whatsappHistory = [];
     db.whatsappHistory.push({
       id: `hist_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       reservationCode: item.reservationCode,
@@ -786,8 +812,10 @@ export function initWhatsAppEngine(app, db, saveDatabase) {
 
   // 10. Cancelar Agendamento na Fila
   app.delete("/api/whatsapp/queue/:id", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
     const id = req.params.id;
-    const item = (db.whatsappQueue || []).find(q => q.id === id);
+    const item = (db?.whatsappQueue || []).find(q => q.id === id);
     if (!item) {
       return res.status(404).json({ error: "Item não encontrado." });
     }
@@ -799,6 +827,8 @@ export function initWhatsAppEngine(app, db, saveDatabase) {
 
   // 11. Disparo de Teste Imediato (Avulso)
   app.post("/api/whatsapp/send-test", async (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
     const { 
       phone, 
       message, 
@@ -818,7 +848,7 @@ export function initWhatsAppEngine(app, db, saveDatabase) {
 
     // Se vinculou uma reserva para o teste, resolve as tags reais
     if (reservationId && reservationId !== "none") {
-      const resv = (db.reservations || []).find(r => r.id === Number(reservationId) || r.code === String(reservationId));
+      const resv = (db?.reservations || []).find(r => r.id === Number(reservationId) || r.code === String(reservationId));
       if (resv) {
         const baseUrl = `${req.protocol}://${req.get("host")}`;
         finalMessage = resolveWhatsAppTags(finalMessage, resv, db, baseUrl);
@@ -830,7 +860,7 @@ export function initWhatsAppEngine(app, db, saveDatabase) {
       }
     }
 
-    const result = await sendZapiMessage(db.zapiConfig, {
+    const result = await sendZapiMessage(db?.zapiConfig, {
       phone,
       message: finalMessage,
       title,
@@ -860,16 +890,33 @@ export function initWhatsAppEngine(app, db, saveDatabase) {
 
   // 12. Disparo de Template para Reserva Específica (ex: do PMS ou CRM)
   app.post("/api/whatsapp/dispatch-reservation", async (req, res) => {
-    const { templateId, reservationCode } = req.body;
-    const template = (db.whatsappTemplates || []).find(t => t.id === templateId);
+    const db = getDb();
+    ensureDbDefaults();
+    const { templateId, reservationCode, reservationId } = req.body;
+    const template = (db?.whatsappTemplates || []).find(t => t.id === templateId);
     if (!template) {
       return res.status(404).json({ error: "Template não encontrado." });
     }
 
-    const reservation = (db.reservations || []).find(r => 
-      r.code?.toUpperCase() === reservationCode?.toUpperCase() || 
-      String(r.id) === String(reservationCode)
-    );
+    const searchTarget = String(reservationCode || reservationId || req.body.code || req.body.id || "").trim();
+    const cleanSearchDigits = searchTarget.replace(/\D/g, "");
+
+    const reservation = (db?.reservations || []).find(r => {
+      if (!r) return false;
+      const rCode = String(r.code || "").trim();
+      const rResCode = String(r.reservationCode || "").trim();
+      const rId = String(r.id || "").trim();
+      const rLoc = String(r.localizador || "").trim();
+      const rPhone = String(r.guestPhone || "").replace(/\D/g, "");
+
+      if (searchTarget && rCode.toUpperCase() === searchTarget.toUpperCase()) return true;
+      if (searchTarget && rResCode.toUpperCase() === searchTarget.toUpperCase()) return true;
+      if (searchTarget && rId === searchTarget) return true;
+      if (searchTarget && rLoc.toUpperCase() === searchTarget.toUpperCase()) return true;
+      if (cleanSearchDigits && cleanSearchDigits.length >= 8 && rPhone && rPhone === cleanSearchDigits) return true;
+      return false;
+    });
+
     if (!reservation) {
       return res.status(404).json({ error: "Reserva não encontrada." });
     }
@@ -882,7 +929,7 @@ export function initWhatsAppEngine(app, db, saveDatabase) {
       phone: b.phone ? resolveWhatsAppTags(b.phone, reservation, db, baseUrl) : undefined
     }));
 
-    const result = await sendZapiMessage(db.zapiConfig, {
+    const result = await sendZapiMessage(db?.zapiConfig, {
       phone: reservation.guestPhone,
       message: renderedMessage,
       title: template.title,
@@ -890,9 +937,10 @@ export function initWhatsAppEngine(app, db, saveDatabase) {
       buttons: renderedButtons
     });
 
+    if (!db.whatsappHistory) db.whatsappHistory = [];
     db.whatsappHistory.push({
       id: `manual_${Date.now()}`,
-      reservationCode: reservation.code,
+      reservationCode: reservation.code || reservation.reservationCode || String(reservation.id),
       guestName: reservation.guestName,
       guestPhone: reservation.guestPhone,
       triggerEvent: template.triggerEvent,
@@ -911,7 +959,8 @@ export function initWhatsAppEngine(app, db, saveDatabase) {
   // ── Background Runner Contínuo (Verifica e Dispara a Cada 60 Segundos) ──────
   setInterval(async () => {
     try {
-      if (!db.zapiConfig?.enabled) return;
+      const db = getDb();
+      if (!db || !db.zapiConfig?.enabled) return;
 
       const now = new Date();
       const nowIso = now.toISOString();
@@ -936,6 +985,7 @@ export function initWhatsAppEngine(app, db, saveDatabase) {
         item.error = result.error || null;
         item.method = result.method || "automated";
 
+        if (!db.whatsappHistory) db.whatsappHistory = [];
         db.whatsappHistory.push({
           id: `cron_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
           reservationCode: item.reservationCode,
@@ -967,8 +1017,9 @@ export function initWhatsAppEngine(app, db, saveDatabase) {
 }
 
 // ── Populador de Fila para Reservas Futuras (Regras por Tempo) ─────────────────
-export function scheduleUpcomingReservationTriggers(db, saveDatabase) {
-  if (!db.whatsappTemplates || !db.reservations) return;
+export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
+  const db = typeof dbOrGetter === "function" ? dbOrGetter() : dbOrGetter;
+  if (!db || !db.whatsappTemplates || !db.reservations) return;
 
   const now = new Date();
   const activeTemplates = db.whatsappTemplates.filter(t => t.enabled && t.triggerTiming !== "immediate");
