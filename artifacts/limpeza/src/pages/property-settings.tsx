@@ -20,7 +20,7 @@ import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { 
   Building2, Home, Plus, Edit2, Trash2, Clock, Phone, MapPin, FileText, 
-  Check, RefreshCw, Sparkles, ShieldCheck
+  Check, RefreshCw, Sparkles, ShieldCheck, Mail
 } from "lucide-react"
 
 import { AccessDenied } from "@/components/access-denied"
@@ -38,6 +38,8 @@ export default function PropertySettings() {
   const [flatModalOpen, setFlatModalOpen] = useState(false)
   const [editingFlat, setEditingFlat] = useState<any | null>(null)
   const [flatNumberInput, setFlatNumberInput] = useState("")
+  const [flatBuildingInput, setFlatBuildingInput] = useState("")
+  const [flatEmailInput, setFlatEmailInput] = useState("")
   const [savingFlat, setSavingFlat] = useState(false)
 
   // Regras da Casa e Termos Contratuais
@@ -48,6 +50,8 @@ export default function PropertySettings() {
   const [checkoutTimeInput, setCheckoutTimeInput] = useState("12:00")
   const [hotelAddressInput, setHotelAddressInput] = useState("CorpFlats")
   const [googleMapsUrlInput, setGoogleMapsUrlInput] = useState("https://www.google.com/maps/search/?api=1&query=CorpFlats")
+  const [receptionEmailInput, setReceptionEmailInput] = useState("portaria.soho@corpflats.com.br")
+  const [buildingNameInput, setBuildingNameInput] = useState("Edifício Soho Residence Service")
   const [savingTerms, setSavingTerms] = useState(false)
   const [termsSuccess, setTermsSuccess] = useState("")
 
@@ -87,6 +91,8 @@ export default function PropertySettings() {
       if (settings.checkoutTime) setCheckoutTimeInput(settings.checkoutTime)
       if (settings.hotelAddress) setHotelAddressInput(settings.hotelAddress)
       if (settings.googleMapsUrl) setGoogleMapsUrlInput(settings.googleMapsUrl)
+      if (settings.receptionEmail) setReceptionEmailInput(settings.receptionEmail)
+      if (settings.buildingName) setBuildingNameInput(settings.buildingName)
     }
   }, [settings])
 
@@ -107,7 +113,9 @@ export default function PropertySettings() {
           checkinTime: checkinTimeInput,
           checkoutTime: checkoutTimeInput,
           hotelAddress: hotelAddressInput,
-          googleMapsUrl: googleMapsUrlInput
+          googleMapsUrl: googleMapsUrlInput,
+          receptionEmail: receptionEmailInput,
+          buildingName: buildingNameInput
         }
       })
       setTermsSuccess("Políticas e regras da propriedade salvas com sucesso!")
@@ -129,19 +137,29 @@ export default function PropertySettings() {
         await fetch(`/api/flats/${editingFlat.id}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ number: flatNumberInput.trim() }),
+          body: JSON.stringify({ 
+            number: flatNumberInput.trim(),
+            buildingName: flatBuildingInput.trim(),
+            receptionEmail: flatEmailInput.trim()
+          }),
           credentials: "include"
         })
       } else {
         await fetch("/api/flats", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ number: flatNumberInput.trim() }),
+          body: JSON.stringify({ 
+            number: flatNumberInput.trim(),
+            buildingName: flatBuildingInput.trim(),
+            receptionEmail: flatEmailInput.trim()
+          }),
           credentials: "include"
         })
       }
       setFlatModalOpen(false)
       setFlatNumberInput("")
+      setFlatBuildingInput("")
+      setFlatEmailInput("")
       setEditingFlat(null)
       fetchFlats()
     } finally {
@@ -196,6 +214,8 @@ export default function PropertySettings() {
               onClick={() => {
                 setEditingFlat(null)
                 setFlatNumberInput("")
+                setFlatBuildingInput("")
+                setFlatEmailInput("")
                 setFlatModalOpen(true)
               }}
               className="h-9 px-3 rounded-xl text-xs font-bold gap-1.5 bg-primary text-primary-foreground shadow-xs"
@@ -212,11 +232,22 @@ export default function PropertySettings() {
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
                 {flatsList.map(f => (
                   <div key={f.id} className="p-3 rounded-2xl bg-muted/40 border border-border/80 flex flex-col justify-between space-y-2 hover:border-border transition-all">
-                    <div className="flex items-center justify-between">
-                      <span className="font-black text-base text-foreground">Apt {f.number}</span>
-                      <Badge variant={f.isOccupied ? "destructive" : "secondary"} className="text-[10px] px-1.5 py-0">
-                        {f.isOccupied ? "Ocupado" : "Vago"}
-                      </Badge>
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <span className="font-black text-base text-foreground">Apt {f.number}</span>
+                        <Badge variant={f.isOccupied ? "destructive" : "secondary"} className="text-[10px] px-1.5 py-0">
+                          {f.isOccupied ? "Ocupado" : "Vago"}
+                        </Badge>
+                      </div>
+                      <div className="mt-1 space-y-0.5 text-[11px] text-muted-foreground">
+                        <div className="truncate font-medium">{f.buildingName || "Edifício padrão"}</div>
+                        {f.receptionEmail && (
+                          <div className="truncate text-[10px] text-primary/80 flex items-center gap-1">
+                            <Mail className="w-3 h-3 shrink-0" />
+                            <span className="truncate">{f.receptionEmail}</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     <div className="flex items-center justify-end gap-1 pt-1 border-t border-border/50">
@@ -226,6 +257,8 @@ export default function PropertySettings() {
                         onClick={() => {
                           setEditingFlat(f)
                           setFlatNumberInput(f.number)
+                          setFlatBuildingInput(f.buildingName || "")
+                          setFlatEmailInput(f.receptionEmail || "")
                           setFlatModalOpen(true)
                         }}
                         className="h-7 w-7 text-muted-foreground hover:text-foreground"
@@ -281,6 +314,31 @@ export default function PropertySettings() {
                     value={checkoutTimeInput}
                     onChange={e => setCheckoutTimeInput(e.target.value)}
                     placeholder="12:00"
+                    className="text-xs rounded-xl h-9.5"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-bold flex items-center gap-1.5">
+                    <Building2 className="w-3.5 h-3.5 text-muted-foreground" /> Edifício Principal (Padrão)
+                  </Label>
+                  <Input 
+                    value={buildingNameInput}
+                    onChange={e => setBuildingNameInput(e.target.value)}
+                    placeholder="Edifício Soho Residence Service"
+                    className="text-xs rounded-xl h-9.5"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-bold flex items-center gap-1.5">
+                    <Mail className="w-3.5 h-3.5 text-muted-foreground" /> E-mail Padrão da Portaria / Notificação
+                  </Label>
+                  <Input 
+                    type="email"
+                    value={receptionEmailInput}
+                    onChange={e => setReceptionEmailInput(e.target.value)}
+                    placeholder="portaria.soho@corpflats.com.br"
                     className="text-xs rounded-xl h-9.5"
                   />
                 </div>
@@ -389,6 +447,28 @@ export default function PropertySettings() {
                   required
                   className="text-xs rounded-xl h-9.5 font-bold"
                 />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold">Nome do Condomínio / Edifício</Label>
+                <Input 
+                  value={flatBuildingInput}
+                  onChange={e => setFlatBuildingInput(e.target.value)}
+                  placeholder="Ex: Soho Residence Service"
+                  className="text-xs rounded-xl h-9.5"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold">E-mail da Portaria / Recepção (Específico deste flat)</Label>
+                <Input 
+                  type="email"
+                  value={flatEmailInput}
+                  onChange={e => setFlatEmailInput(e.target.value)}
+                  placeholder="Ex: portaria.soho@corpflats.com.br"
+                  className="text-xs rounded-xl h-9.5"
+                />
+                <p className="text-[10px] text-muted-foreground">Se vazio, utilizará o e-mail padrão da portaria configurado abaixo.</p>
               </div>
 
               <DialogFooter className="gap-2 pt-2">

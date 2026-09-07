@@ -24,7 +24,7 @@ import { Switch } from "@/components/ui/switch"
 import { 
   RefreshCw, Check, Users, Key, ShieldCheck, UserPlus, AlertCircle, Cloud, 
   HardDrive, Zap, Sparkles, Database, Lock, Trash2, Edit2, CreditCard,
-  Smartphone, ChevronRight
+  Smartphone, ChevronRight, Mail, Send
 } from "lucide-react"
 
 import { AccessDenied } from "@/components/access-denied"
@@ -120,6 +120,21 @@ export default function SystemSettings() {
   const [savingMp, setSavingMp] = useState(false)
   const [mpSuccessMsg, setMpSuccessMsg] = useState<string | null>(null)
 
+  // Zoho SMTP states
+  const [smtpHost, setSmtpHost] = useState("smtppro.zoho.com")
+  const [smtpPort, setSmtpPort] = useState("465")
+  const [smtpUser, setSmtpUser] = useState("")
+  const [smtpPass, setSmtpPass] = useState("")
+  const [smtpFromName, setSmtpFromName] = useState("CorpFlats")
+  const [smtpFromEmail, setSmtpFromEmail] = useState("")
+  const [smtpConfigured, setSmtpConfigured] = useState(false)
+  const [smtpHasPass, setSmtpHasPass] = useState(false)
+  const [smtpModalOpen, setSmtpModalOpen] = useState(false)
+  const [savingSmtp, setSavingSmtp] = useState(false)
+  const [testingSmtp, setTestingSmtp] = useState(false)
+  const [smtpTestEmail, setSmtpTestEmail] = useState("")
+  const [smtpStatusMsg, setSmtpStatusMsg] = useState<{ type: "success" | "error"; text: string } | null>(null)
+
   // Z-API WhatsApp states
   const [zapiStatus, setZapiStatus] = useState<any>(null)
   const [zapiConfig, setZapiConfig] = useState<any>(null)
@@ -198,6 +213,23 @@ export default function SystemSettings() {
     } catch {}
   }
 
+  const fetchEmailConfig = async () => {
+    try {
+      const res = await fetch("/api/settings/email")
+      if (res.ok) {
+        const data = await res.json()
+        if (data.host) setSmtpHost(data.host)
+        if (data.port) setSmtpPort(String(data.port))
+        if (data.user) setSmtpUser(data.user)
+        if (data.fromName) setSmtpFromName(data.fromName)
+        if (data.fromEmail) setSmtpFromEmail(data.fromEmail)
+        setSmtpConfigured(!!data.isConfigured)
+        setSmtpHasPass(!!data.hasPass)
+        if (data.fromEmail && !smtpTestEmail) setSmtpTestEmail(data.fromEmail)
+      }
+    } catch {}
+  }
+
   useEffect(() => {
     fetchUsers()
     fetchStorageConfig()
@@ -205,6 +237,7 @@ export default function SystemSettings() {
     fetchInterConfig()
     fetchMpConfig()
     fetchZapiInfo()
+    fetchEmailConfig()
   }, [])
 
   if (loadingUser) return null
@@ -303,6 +336,65 @@ export default function SystemSettings() {
     }
   }
 
+  const handleSaveSmtp = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setSavingSmtp(true)
+    setSmtpStatusMsg(null)
+    try {
+      const res = await fetch("/api/settings/email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          host: smtpHost.trim(),
+          port: Number(smtpPort) || 465,
+          user: smtpUser.trim(),
+          pass: smtpPass || undefined,
+          fromName: smtpFromName.trim(),
+          fromEmail: smtpFromEmail.trim()
+        })
+      })
+      if (res.ok) {
+        setSmtpStatusMsg({ type: "success", text: "Configurações de SMTP salvas com sucesso!" })
+        fetchEmailConfig()
+        setTimeout(() => setSmtpModalOpen(false), 1500)
+      } else {
+        const d = await res.json()
+        setSmtpStatusMsg({ type: "error", text: d.error || "Erro ao salvar configurações." })
+      }
+    } catch (err: any) {
+      setSmtpStatusMsg({ type: "error", text: err.message })
+    } finally {
+      setSavingSmtp(false)
+    }
+  }
+
+  const handleTestSmtp = async () => {
+    if (!smtpTestEmail.trim()) {
+      alert("Por favor, informe um e-mail de destino para o teste.")
+      return
+    }
+    setTestingSmtp(true)
+    setSmtpStatusMsg(null)
+    try {
+      const res = await fetch("/api/settings/email/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ toEmail: smtpTestEmail.trim() })
+      })
+      const d = await res.json()
+      if (d.success) {
+        setSmtpStatusMsg({ type: "success", text: d.message || "E-mail de teste enviado com sucesso!" })
+        fetchEmailConfig()
+      } else {
+        setSmtpStatusMsg({ type: "error", text: d.error || "Falha no envio de teste." })
+      }
+    } catch (err: any) {
+      setSmtpStatusMsg({ type: "error", text: err.message })
+    } finally {
+      setTestingSmtp(false)
+    }
+  }
+
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault()
     setUserError("")
@@ -382,7 +474,7 @@ export default function SystemSettings() {
         </div>
 
         {/* ── SEÇÃO 1: NUVEM E SINCRONIZAÇÃO ── */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-4 gap-5">
           {/* Cloudflare R2 */}
           <Card className="rounded-3xl border border-border shadow-sm flex flex-col justify-between">
             <div>
@@ -524,6 +616,51 @@ export default function SystemSettings() {
                 <Smartphone className="w-3.5 h-3.5" />
                 <span>Gerenciar Conexão Z-API</span>
                 <ChevronRight className="w-3.5 h-3.5 ml-auto" />
+              </Button>
+            </div>
+          </Card>
+
+          {/* Serviço de E-mail (Zoho SMTP Transacional) */}
+          <Card className="rounded-3xl border border-border shadow-sm flex flex-col justify-between">
+            <div>
+              <CardHeader className="p-5 border-b border-border pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm font-black text-foreground flex items-center gap-2">
+                    <Mail className="w-4 h-4 text-purple-500" />
+                    <span>Serviço E-mail (Zoho SMTP)</span>
+                  </CardTitle>
+                  <Badge variant={smtpConfigured ? "default" : "outline"} className={`text-[10px] ${smtpConfigured ? "bg-purple-600 text-white" : ""}`}>
+                    {smtpConfigured ? "✓ Ativo" : "Pendente"}
+                  </Badge>
+                </div>
+                <CardDescription className="text-xs">Envio transacional para portaria e histórico de reservas</CardDescription>
+              </CardHeader>
+
+              <CardContent className="p-5 space-y-2 text-xs">
+                <div className="flex justify-between py-1 border-b border-border/40">
+                  <span className="text-muted-foreground">Servidor:</span>
+                  <span className="font-mono text-[11px] truncate max-w-[170px]">{smtpHost}:{smtpPort}</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-border/40">
+                  <span className="text-muted-foreground">Remetente:</span>
+                  <span className="font-mono text-[11px] truncate max-w-[170px]">{smtpFromEmail || "Não definido"}</span>
+                </div>
+                <div className="flex justify-between py-1">
+                  <span className="text-muted-foreground">Credenciais:</span>
+                  <span className={`font-bold ${smtpHasPass ? "text-emerald-600" : "text-amber-600"}`}>
+                    {smtpHasPass ? "Configuradas" : "Pendente"}
+                  </span>
+                </div>
+              </CardContent>
+            </div>
+
+            <div className="p-4 border-t border-border bg-muted/20 rounded-b-3xl">
+              <Button 
+                onClick={() => setSmtpModalOpen(true)}
+                className="w-full text-xs font-bold rounded-xl h-9.5 bg-primary text-primary-foreground gap-1.5"
+              >
+                <Mail className="w-3.5 h-3.5" />
+                <span>Configurar SMTP & Teste</span>
               </Button>
             </div>
           </Card>
@@ -865,6 +1002,145 @@ export default function SystemSettings() {
                 <Button type="button" variant="outline" onClick={() => setResetPwModalOpen(false)} className="rounded-xl h-9 text-xs font-bold">Cancelar</Button>
                 <Button type="submit" disabled={savingUser} className="rounded-xl h-9 text-xs font-bold bg-primary text-primary-foreground">
                   {savingUser ? "Alterando..." : "Salvar Nova Senha"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal Zoho SMTP */}
+        <Dialog open={smtpModalOpen} onOpenChange={setSmtpModalOpen}>
+          <DialogContent className="sm:max-w-lg bg-card border border-border rounded-3xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="text-base font-black flex items-center gap-2">
+                <Mail className="w-5 h-5 text-purple-500" />
+                Configurar Zoho Mail / SMTP Transacional
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                Credenciais de envio de e-mails para a portaria/recepção e hóspedes via Zoho Mail
+              </DialogDescription>
+            </DialogHeader>
+
+            <form onSubmit={handleSaveSmtp} className="space-y-3.5 pt-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="sm:col-span-2 space-y-1">
+                  <Label className="text-xs font-bold">Servidor SMTP *</Label>
+                  <Input 
+                    value={smtpHost} 
+                    onChange={e => setSmtpHost(e.target.value)} 
+                    placeholder="smtppro.zoho.com" 
+                    required 
+                    className="text-xs rounded-xl h-9 font-mono" 
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs font-bold">Porta *</Label>
+                  <Input 
+                    value={smtpPort} 
+                    onChange={e => setSmtpPort(e.target.value)} 
+                    placeholder="465" 
+                    required 
+                    className="text-xs rounded-xl h-9 font-mono" 
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs font-bold">E-mail de Login Zoho (SMTP User) *</Label>
+                <Input 
+                  type="email"
+                  value={smtpUser} 
+                  onChange={e => setSmtpUser(e.target.value)} 
+                  placeholder="ex: contato@corpflats.com.br" 
+                  required 
+                  className="text-xs rounded-xl h-9 font-mono" 
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs font-bold">
+                  Senha de Aplicativo Zoho {smtpHasPass && "(Deixe vazio para manter)"}
+                </Label>
+                <Input 
+                  type="password" 
+                  value={smtpPass} 
+                  onChange={e => setSmtpPass(e.target.value)} 
+                  placeholder={smtpHasPass ? "••••••••••••••••" : "Senha gerada no Zoho Segurança"} 
+                  required={!smtpHasPass}
+                  className="text-xs rounded-xl h-9 font-mono" 
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Dica: Se a conta Zoho tiver 2FA, crie uma "Senha de Aplicativo" em zoho.com &gt; Segurança.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-xs font-bold">Nome do Remetente</Label>
+                  <Input 
+                    value={smtpFromName} 
+                    onChange={e => setSmtpFromName(e.target.value)} 
+                    placeholder="CorpFlats" 
+                    className="text-xs rounded-xl h-9" 
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs font-bold">E-mail do Remetente</Label>
+                  <Input 
+                    type="email"
+                    value={smtpFromEmail} 
+                    onChange={e => setSmtpFromEmail(e.target.value)} 
+                    placeholder="contato@corpflats.com.br" 
+                    className="text-xs rounded-xl h-9 font-mono" 
+                  />
+                </div>
+              </div>
+
+              {/* Seção Teste */}
+              <div className="p-3.5 rounded-2xl bg-muted/40 border border-border/80 space-y-2 mt-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                    <Send className="w-3.5 h-3.5 text-primary" /> Teste de Conexão e Envio
+                  </span>
+                </div>
+                <div className="flex gap-2">
+                  <Input 
+                    type="email"
+                    value={smtpTestEmail}
+                    onChange={e => setSmtpTestEmail(e.target.value)}
+                    placeholder="E-mail de destino para teste..."
+                    className="text-xs rounded-xl h-8.5 font-mono"
+                  />
+                  <Button 
+                    type="button" 
+                    variant="outline"
+                    disabled={testingSmtp}
+                    onClick={handleTestSmtp}
+                    className="h-8.5 px-3 rounded-xl text-xs font-bold shrink-0 gap-1.5"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${testingSmtp ? 'animate-spin' : ''}`} />
+                    <span>{testingSmtp ? "Enviando..." : "Testar"}</span>
+                  </Button>
+                </div>
+              </div>
+
+              {smtpStatusMsg && (
+                <div className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
+                  smtpStatusMsg.type === "success" 
+                    ? "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20" 
+                    : "bg-rose-500/10 text-rose-600 border border-rose-500/20"
+                }`}>
+                  {smtpStatusMsg.type === "success" ? <Check className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
+                  <span>{smtpStatusMsg.text}</span>
+                </div>
+              )}
+
+              <DialogFooter className="gap-2 pt-3">
+                <Button type="button" variant="outline" onClick={() => setSmtpModalOpen(false)} className="rounded-xl h-9 text-xs font-bold">
+                  Cancelar
+                </Button>
+                <Button type="submit" disabled={savingSmtp} className="rounded-xl h-9 text-xs font-bold bg-primary text-primary-foreground">
+                  {savingSmtp ? "Salvando..." : "Salvar Configuração"}
                 </Button>
               </DialogFooter>
             </form>

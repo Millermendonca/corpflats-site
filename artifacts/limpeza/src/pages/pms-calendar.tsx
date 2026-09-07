@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
@@ -15,7 +16,7 @@ import {
   CalendarDays, Plus, ChevronLeft, ChevronRight, Search, 
   Calendar as CalendarIcon, User, Users, Phone, Mail, ShieldAlert, CheckCircle2,
   Clock, DollarSign, BedDouble, AlertTriangle, Lock, Trash2, Edit3, MessageCircle, KeyRound, Sparkles, FileText, Tag, Coffee, Building2, Wind, Zap, Bed, Check, RotateCcw, AlertCircle, RefreshCw, SlidersHorizontal, Copy,
-  LogIn, LogOut, TrendingUp
+  LogIn, LogOut, TrendingUp, Send, ChevronDown, ChevronUp
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { 
@@ -87,6 +88,85 @@ export default function PmsCalendar() {
   const [formExtraMattress, setFormExtraMattress] = useState(false)
   const [formIncludeBreakfast, setFormIncludeBreakfast] = useState(false)
   const [formSpecialRequests, setFormSpecialRequests] = useState("")
+
+  // Communications & E-mails State
+  const [resModalTab, setResModalTab] = useState<"details" | "communications">("details")
+  const [communications, setCommunications] = useState<any[]>([])
+  const [loadingComms, setLoadingComms] = useState(false)
+  const [sendingEmail, setSendingEmail] = useState(false)
+  const [expandedCommId, setExpandedCommId] = useState<string | null>(null)
+  const [manualRecipient, setManualRecipient] = useState("")
+  const [manualSubject, setManualSubject] = useState("")
+  const [manualBody, setManualBody] = useState("")
+  const [resendingCommId, setResendingCommId] = useState<string | null>(null)
+  const [portariaEmail, setPortariaEmail] = useState("portaria.soho@corpflats.com.br")
+
+  const fetchCommunications = async (resIdOrCode: string | number) => {
+    if (!resIdOrCode) return
+    setLoadingComms(true)
+    try {
+      const res = await fetch(`/api/pms/reservations/${resIdOrCode}/communications`, { credentials: "include" })
+      if (res.ok) {
+        const json = await res.json()
+        setCommunications(Array.isArray(json) ? json : [])
+      }
+    } catch (e) {
+      console.error("Erro ao buscar comunicações:", e)
+    } finally {
+      setLoadingComms(false)
+    }
+  }
+
+  const handleSendManualEmail = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedRes || !manualRecipient.trim() || !manualSubject.trim() || !manualBody.trim()) return
+    setSendingEmail(true)
+    try {
+      const res = await fetch(`/api/pms/reservations/${selectedRes.code || selectedRes.id}/communications/send-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recipient: manualRecipient.trim(),
+          subject: manualSubject.trim(),
+          body: manualBody.trim()
+        }),
+        credentials: "include"
+      })
+      const json = await res.json()
+      if (res.ok && json.success) {
+        toast({ title: "✓ E-mail enviado!", description: `Mensagem disparada para ${manualRecipient.trim()}` })
+        setManualBody("")
+        fetchCommunications(selectedRes.code || selectedRes.id)
+      } else {
+        toast({ title: "Falha ao enviar", description: json.error || "Verifique as configurações SMTP.", variant: "destructive" })
+      }
+    } catch (err: any) {
+      toast({ title: "Erro de conexão", description: err.message, variant: "destructive" })
+    } finally {
+      setSendingEmail(false)
+    }
+  }
+
+  const handleResendEmail = async (commId: string) => {
+    setResendingCommId(commId)
+    try {
+      const res = await fetch(`/api/pms/reservations/communications/${commId}/resend`, {
+        method: "POST",
+        credentials: "include"
+      })
+      const json = await res.json()
+      if (res.ok && json.success) {
+        toast({ title: "✓ Reenvio solicitado!", description: json.message })
+        if (selectedRes) fetchCommunications(selectedRes.code || selectedRes.id)
+      } else {
+        toast({ title: "Falha no reenvio", description: json.error || "O servidor não conseguiu reenviar.", variant: "destructive" })
+      }
+    } catch (err: any) {
+      toast({ title: "Erro", description: err.message, variant: "destructive" })
+    } finally {
+      setResendingCommId(null)
+    }
+  }
 
   const fetchFairShare = async (cin: string, cout: string, excludeId: any = null) => {
     if (!cin || !cout) return
@@ -848,6 +928,14 @@ export default function PmsCalendar() {
     setFormIncludeBreakfast(Boolean(resItem.includeBreakfast || resItem.hasBreakfast))
     setFormSpecialRequests(resItem.specialRequests || "")
     setFormIsMonthlyGuest(Boolean(resItem.isMonthlyGuest || resItem.clientType === "mensalista"))
+    setResModalTab("details")
+    fetchCommunications(resItem.code || resItem.id)
+    const flatItem = data.flats.find(f => f.id === resItem.flatId || String(f.number) === String(resItem.flatNumber))
+    const pEmail = flatItem?.receptionEmail || "portaria.soho@corpflats.com.br"
+    setPortariaEmail(pEmail)
+    setManualRecipient(resItem.guestEmail || pEmail)
+    setManualSubject(`[CorpFlats] Flat ${resItem.flatNumber} - ${resItem.guestName}`)
+    setManualBody("")
     setResModalOpen(true)
   }
 
@@ -1895,17 +1983,48 @@ export default function PmsCalendar() {
 
         {/* Modal: New / Edit Reservation */}
         <Dialog open={resModalOpen} onOpenChange={setResModalOpen}>
-          <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
-            <form onSubmit={handleSaveRes}>
-              <DialogHeader>
+          <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <div className="flex items-center justify-between">
                 <DialogTitle className="flex items-center gap-2">
                   <CalendarDays className="w-5 h-5 text-primary" />
                   {selectedRes ? `Editar Reserva: ${selectedRes.code}` : "Nova Reserva"}
                 </DialogTitle>
-                <DialogDescription>
-                  Preencha os dados do hóspede, datas da estadia e valores.
-                </DialogDescription>
-              </DialogHeader>
+                {selectedRes && (
+                  <Badge variant="outline" className="text-xs font-mono font-bold text-amber-700 dark:text-amber-300 border-amber-300">
+                    Flat {selectedRes.flatNumber}
+                  </Badge>
+                )}
+              </div>
+              <DialogDescription>
+                {selectedRes 
+                  ? "Gerencie os dados da estadia, consulte o histórico de e-mails transacionais ou envie novas mensagens." 
+                  : "Preencha os dados do hóspede, datas da estadia e valores."}
+              </DialogDescription>
+            </DialogHeader>
+
+            {selectedRes && (
+              <Tabs value={resModalTab} onValueChange={(v: any) => setResModalTab(v)} className="w-full mt-1 mb-2">
+                <TabsList className="grid grid-cols-2 bg-muted/60 p-1 rounded-xl">
+                  <TabsTrigger value="details" className="text-xs font-bold gap-1.5 rounded-lg">
+                    <CalendarDays className="w-3.5 h-3.5" />
+                    <span>Dados da Reserva</span>
+                  </TabsTrigger>
+                  <TabsTrigger value="communications" className="text-xs font-bold gap-1.5 rounded-lg relative">
+                    <Mail className="w-3.5 h-3.5 text-amber-500" />
+                    <span>Comunicações & E-mails</span>
+                    {communications.length > 0 && (
+                      <Badge variant="secondary" className="text-[10px] h-4 px-1.5 py-0 font-bold ml-1 bg-amber-500/15 text-amber-700 dark:text-amber-300">
+                        {communications.length}
+                      </Badge>
+                    )}
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+            )}
+
+            {(!selectedRes || resModalTab === "details") ? (
+              <form onSubmit={handleSaveRes}>
 
               <div className="py-3 space-y-3.5">
                 <div className="grid grid-cols-2 gap-3 items-start">
@@ -2705,6 +2824,274 @@ export default function PmsCalendar() {
                 </div>
               </DialogFooter>
             </form>
+            ) : (
+              <div className="space-y-4 pt-1">
+                {/* 1. Painel de Envio Manual Rápido */}
+                <div className="p-4 rounded-2xl bg-amber-500/5 border border-amber-500/20 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                      <Send className="w-4 h-4 text-amber-500" />
+                      <span>Redigir e Enviar E-mail Manual</span>
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">Disparo via Zoho SMTP</span>
+                  </div>
+
+                  <div className="space-y-2.5">
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-[11px] font-bold text-muted-foreground">Destinatário</Label>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setManualRecipient(portariaEmail)}
+                            className="text-[10px] px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 hover:bg-amber-200 font-bold transition-colors"
+                          >
+                            🏢 Portaria ({portariaEmail})
+                          </button>
+                          {selectedRes?.guestEmail && (
+                            <button
+                              type="button"
+                              onClick={() => setManualRecipient(selectedRes.guestEmail)}
+                              className="text-[10px] px-2 py-0.5 rounded-md bg-sky-100 dark:bg-sky-950/60 text-sky-800 dark:text-sky-300 hover:bg-sky-200 font-bold transition-colors"
+                            >
+                              👤 Hóspede ({selectedRes.guestEmail})
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <Input
+                        type="email"
+                        value={manualRecipient}
+                        onChange={e => setManualRecipient(e.target.value)}
+                        placeholder="ex: portaria@condominio.com ou hospede@email.com"
+                        className="text-xs h-8.5 rounded-xl font-medium"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-[11px] font-bold text-muted-foreground">Assunto</Label>
+                      <Input
+                        value={manualSubject}
+                        onChange={e => setManualSubject(e.target.value)}
+                        placeholder="Assunto do e-mail"
+                        className="text-xs h-8.5 rounded-xl font-medium"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-[11px] font-bold text-muted-foreground">Mensagem</Label>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setManualBody(`Prezada Portaria / Recepção,\n\nSolicitamos liberação de entrada antecipada (Early Check-in) para o Flat ${selectedRes?.flatNumber}, referente ao hóspede titular ${selectedRes?.guestName}.\n\nAtenciosamente,\nEquipe CorpFlats`)}
+                            className="text-[10px] text-amber-600 dark:text-amber-400 hover:underline font-medium"
+                          >
+                            + Modelo Early Check-in
+                          </button>
+                          <span className="text-[10px] text-muted-foreground">•</span>
+                          <button
+                            type="button"
+                            onClick={() => setManualBody(`Prezado(a) ${selectedRes?.guestName},\n\nConfirmamos o recebimento de suas informações. Seguem orientações adicionais para a sua estadia no Flat ${selectedRes?.flatNumber}.\n\nEstamos à disposição para qualquer suporte!\nEquipe CorpFlats`)}
+                            className="text-[10px] text-sky-600 dark:text-sky-400 hover:underline font-medium"
+                          >
+                            + Mensagem Hóspede
+                          </button>
+                        </div>
+                      </div>
+                      <Textarea
+                        value={manualBody}
+                        onChange={e => setManualBody(e.target.value)}
+                        placeholder="Escreva a mensagem para o destinatário..."
+                        rows={3}
+                        className="text-xs rounded-xl"
+                      />
+                    </div>
+
+                    <div className="flex justify-end pt-1">
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={sendingEmail || !manualRecipient || !manualSubject || !manualBody}
+                        onClick={handleSendManualEmail}
+                        className="h-8 text-xs font-bold gap-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white shadow-xs"
+                      >
+                        {sendingEmail ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                        <span>{sendingEmail ? "Disparando..." : "Enviar E-mail Agora"}</span>
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Linha do Tempo (Timeline de Mensagens) */}
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                      <Mail className="w-4 h-4 text-primary" />
+                      <span>Histórico de Comunicações ({communications.length})</span>
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={loadingComms}
+                      onClick={() => fetchCommunications(selectedRes?.code || selectedRes?.id)}
+                      className="h-7 text-[11px] text-muted-foreground hover:text-foreground gap-1 px-2"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${loadingComms ? 'animate-spin' : ''}`} />
+                      <span>Atualizar</span>
+                    </Button>
+                  </div>
+
+                  {loadingComms ? (
+                    <div className="p-8 text-center text-xs text-muted-foreground">
+                      Carregando histórico de comunicações...
+                    </div>
+                  ) : communications.length === 0 ? (
+                    <div className="p-6 text-center rounded-2xl bg-muted/30 border border-dashed border-border text-xs text-muted-foreground space-y-1">
+                      <Mail className="w-6 h-6 mx-auto text-muted-foreground/50 mb-2" />
+                      <p className="font-bold">Nenhum e-mail registrado nesta reserva</p>
+                      <p className="text-[11px]">Os e-mails de check-in, alteração ou manuais aparecerão aqui automaticamente.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
+                      {communications.map((c: any) => {
+                        const isExpanded = expandedCommId === c.id
+                        const isFailed = c.status === "failed"
+                        const isSent = c.status === "sent"
+                        const isPending = c.status === "pending"
+
+                        return (
+                          <div
+                            key={c.id}
+                            className={`rounded-2xl border transition-all text-xs overflow-hidden ${
+                              isFailed 
+                                ? "bg-rose-50/50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/60" 
+                                : isSent
+                                ? "bg-card border-border hover:border-border/80"
+                                : "bg-amber-50/40 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900/50"
+                            }`}
+                          >
+                            {/* Header do Card de Comunicação */}
+                            <div
+                              onClick={() => setExpandedCommId(isExpanded ? null : c.id)}
+                              className="p-3 flex items-start justify-between gap-2 cursor-pointer select-none hover:bg-muted/30 transition-colors"
+                            >
+                              <div className="flex items-start gap-2.5 min-w-0">
+                                <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
+                                  isFailed 
+                                    ? "bg-rose-100 text-rose-600 dark:bg-rose-900/60 dark:text-rose-400" 
+                                    : isSent
+                                    ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/60 dark:text-emerald-400"
+                                    : "bg-amber-100 text-amber-600 dark:bg-amber-900/60 dark:text-amber-400"
+                                }`}>
+                                  {isFailed ? <AlertCircle className="w-4 h-4" /> : <Mail className="w-4 h-4" />}
+                                </div>
+
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="font-bold text-foreground text-xs truncate max-w-[280px]">
+                                      {c.subject}
+                                    </span>
+                                    {isSent && (
+                                      <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white text-[9.5px] px-1.5 py-0 h-4 font-bold gap-1">
+                                        <CheckCircle2 className="w-2.5 h-2.5" /> Enviado
+                                      </Badge>
+                                    )}
+                                    {isFailed && (
+                                      <Badge variant="destructive" className="text-[9.5px] px-1.5 py-0 h-4 font-bold gap-1">
+                                        <AlertCircle className="w-2.5 h-2.5" /> Falha
+                                      </Badge>
+                                    )}
+                                    {isPending && (
+                                      <Badge variant="outline" className="text-[9.5px] px-1.5 py-0 h-4 font-bold gap-1 text-amber-600 border-amber-300">
+                                        <Clock className="w-2.5 h-2.5" /> Pendente
+                                      </Badge>
+                                    )}
+                                  </div>
+
+                                  <div className="flex items-center gap-2 text-[10.5px] text-muted-foreground mt-0.5">
+                                    <span>Para: <strong className="text-foreground">{c.recipient}</strong></span>
+                                    <span>•</span>
+                                    <span>{c.created_at ? format(parseISO(c.created_at), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR }) : ""}</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-1 shrink-0">
+                                {isFailed && (
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={resendingCommId === c.id}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleResendEmail(c.id);
+                                    }}
+                                    className="h-6 px-2 text-[10.5px] font-bold text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-800 hover:bg-rose-100 gap-1 rounded-lg"
+                                  >
+                                    <RotateCcw className={`w-3 h-3 ${resendingCommId === c.id ? 'animate-spin' : ''}`} />
+                                    <span>{resendingCommId === c.id ? "Reenviando..." : "Reenviar"}</span>
+                                  </Button>
+                                )}
+
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6 text-muted-foreground"
+                                >
+                                  {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                </Button>
+                              </div>
+                            </div>
+
+                            {/* Erro de Disparo */}
+                            {isFailed && c.metadata?.error && (
+                              <div className="px-3 pb-2 text-[11px] text-rose-600 dark:text-rose-400 font-medium flex items-center gap-1.5">
+                                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                                <span>Erro: {c.metadata.error}</span>
+                              </div>
+                            )}
+
+                            {/* Conteúdo Expandido do E-mail */}
+                            {isExpanded && (
+                              <div className="p-3 border-t border-border/80 bg-muted/20 space-y-2">
+                                <div className="text-[10.5px] text-muted-foreground font-semibold flex items-center justify-between">
+                                  <span>Conteúdo da Mensagem:</span>
+                                  {c.metadata?.messageId && (
+                                    <span className="font-mono text-[9px] text-muted-foreground truncate max-w-[200px]" title={c.metadata.messageId}>
+                                      ID: {c.metadata.messageId}
+                                    </span>
+                                  )}
+                                </div>
+
+                                {c.body?.includes("<html") || c.body?.includes("<table") || c.body?.includes("<div") ? (
+                                  <div className="bg-white text-slate-900 rounded-xl p-3 border border-border/80 max-h-[340px] overflow-y-auto text-xs shadow-inner">
+                                    <div dangerouslySetInnerHTML={{ __html: c.body }} />
+                                  </div>
+                                ) : (
+                                  <div className="bg-background rounded-xl p-3 border border-border max-h-[220px] overflow-y-auto font-mono text-xs whitespace-pre-wrap text-foreground">
+                                    {c.body}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <DialogFooter className="pt-2 border-t border-border flex justify-end">
+                  <Button type="button" variant="outline" size="sm" onClick={() => setResModalOpen(false)} className="rounded-xl text-xs font-bold">
+                    Fechar
+                  </Button>
+                </DialogFooter>
+              </div>
+            )}
           </DialogContent>
         </Dialog>
 
