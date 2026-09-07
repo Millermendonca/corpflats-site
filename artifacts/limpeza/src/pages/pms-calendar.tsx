@@ -16,7 +16,7 @@ import {
   CalendarDays, Plus, ChevronLeft, ChevronRight, Search, 
   Calendar as CalendarIcon, User, Users, Phone, Mail, ShieldAlert, CheckCircle2,
   Clock, DollarSign, BedDouble, AlertTriangle, Lock, Trash2, Edit3, MessageCircle, KeyRound, Sparkles, FileText, Tag, Coffee, Building2, Wind, Zap, Bed, Check, RotateCcw, AlertCircle, RefreshCw, SlidersHorizontal, Copy,
-  LogIn, LogOut, TrendingUp, Send, ChevronDown, ChevronUp, History, ArrowRight
+  LogIn, LogOut, TrendingUp, Send, ChevronDown, ChevronUp, History, ArrowRight, CreditCard, ExternalLink, QrCode
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { 
@@ -2774,7 +2774,7 @@ export default function PmsCalendar() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="pendente">Pendente</SelectItem>
+                        <SelectItem value="pendente">⏳ Aguardando Pagamento</SelectItem>
                         <SelectItem value="sinal_pago">Sinal Pago (50%)</SelectItem>
                         <SelectItem value="pago_total">Pago Total (100%)</SelectItem>
                       </SelectContent>
@@ -2793,70 +2793,162 @@ export default function PmsCalendar() {
                 </div>
 
                 {/* 💳 Detalhes Oficiais de Pagamento & Rastreamento Bancário */}
-                {selectedRes && (
-                  <div className="p-3.5 bg-slate-50 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-xl space-y-2.5 text-xs">
-                    <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
-                      <span className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                        💳 <span>Comprovante & Rastreamento Bancário</span>
-                      </span>
-                      <Badge className={selectedRes.paymentStatus === "pago_total" || selectedRes.paymentStatus === "pago" ? "bg-emerald-600 text-white font-bold text-[10px]" : "bg-amber-600 text-white font-bold text-[10px]"}>
-                        {selectedRes.paymentStatus === "pago_total" || selectedRes.paymentStatus === "pago" ? "✓ Pago Integralmente" : (selectedRes.paymentStatus === "aguardando_pix" ? "Aguardando PIX" : "Pendente")}
-                      </Badge>
+                {selectedRes && (() => {
+                  const isResPaid = selectedRes.paymentStatus === "pago_total" || selectedRes.paymentStatus === "pago" || (Number(selectedRes.paidAmount) >= Number(selectedRes.totalAmount) && Number(selectedRes.totalAmount) > 0);
+                  const realPaid = isResPaid ? (selectedRes.paidAmount || selectedRes.totalAmount || 0) : (Number(selectedRes.paidAmount) || 0);
+                  const realPending = Math.max(0, (selectedRes.totalAmount || 0) - realPaid);
+
+                  return (
+                    <div className="p-3.5 bg-slate-50 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-xl space-y-2.5 text-xs">
+                      <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
+                        <span className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                          💳 <span>Comprovante & Rastreamento Bancário</span>
+                        </span>
+                        <Badge className={isResPaid ? "bg-emerald-600 text-white font-bold text-[10px]" : "bg-amber-600 text-white font-bold text-[10px]"}>
+                          {isResPaid ? "✓ Pago Integralmente" : (selectedRes.paymentStatus === "aguardando_pix" ? "⚡ Aguardando PIX" : "⏳ Aguardando Pagamento")}
+                        </Badge>
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
+                        <div>
+                          <span className="text-muted-foreground block font-medium">Forma de Pagamento:</span>
+                          <span className="font-semibold text-slate-900 dark:text-slate-100">
+                            {selectedRes.pixTxId || selectedRes.paymentMethod === "pix" ? "⚡ PIX Instantâneo (Banco Inter)" : (selectedRes.mpPaymentId || selectedRes.paymentMethod === "cartao_credito" ? "💳 Cartão de Crédito (Mercado Pago)" : (selectedRes.channel === "site" ? "PIX / Motor de Reservas" : "Reserva Manual / Direta"))}
+                          </span>
+                        </div>
+
+                        <div>
+                          <span className="text-muted-foreground block font-medium">Valor Recebido:</span>
+                          <span className={`font-bold ${isResPaid ? "text-emerald-600 dark:text-emerald-400" : "text-slate-600 dark:text-slate-300"}`}>
+                            R$ {realPaid.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+
+                        {!isResPaid && (
+                          <div>
+                            <span className="text-muted-foreground block font-medium">Saldo a Pagar:</span>
+                            <span className="font-bold text-amber-600 dark:text-amber-400">
+                              R$ {realPending.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Botões de Ação Rápida Financeira */}
+                      <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex flex-wrap gap-1.5 items-center">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-slate-300 text-slate-700 dark:text-slate-200 hover:bg-slate-100 flex items-center gap-1"
+                          onClick={() => {
+                            const link = `https://corpflats.onrender.com/minha-reserva/${selectedRes.code || selectedRes.id}`;
+                            navigator.clipboard.writeText(link);
+                            toast({ title: "Link Copiado!", description: "Link da reserva e pagamento copiado para a área de transferência." });
+                          }}
+                        >
+                          <Copy className="w-3 h-3" />
+                          <span>Copiar Link do Hóspede</span>
+                        </Button>
+
+                        {!isResPaid && (
+                          <>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-sky-300 text-sky-700 dark:text-sky-300 hover:bg-sky-50 flex items-center gap-1"
+                              onClick={async () => {
+                                try {
+                                  const newMethod = (selectedRes.paymentMethod === "pix" || selectedRes.pixTxId) ? "card" : "pix";
+                                  const res = await fetch(`/api/pms/reservations/${selectedRes.code || selectedRes.id}/change-payment-method`, {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ method: newMethod })
+                                  });
+                                  const d = await res.json();
+                                  if (d.success) {
+                                    setSelectedRes(d.reservation);
+                                    fetchReservations();
+                                    toast({ title: "Forma alterada!", description: `Forma alterada para ${d.paymentMethod === "pix" ? "PIX Banco Inter" : "Cartão de Crédito Mercado Pago"}.` });
+                                  } else {
+                                    toast({ title: "Atenção", description: d.message || d.error, variant: "destructive" });
+                                  }
+                                } catch (e: any) {
+                                  toast({ title: "Erro", description: e.message, variant: "destructive" });
+                                }
+                              }}
+                            >
+                              <RefreshCw className="w-3 h-3" />
+                              <span>Mudar para {(selectedRes.paymentMethod === "pix" || selectedRes.pixTxId) ? "Cartão (MP)" : "PIX (Inter)"}</span>
+                            </Button>
+
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-emerald-300 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 flex items-center gap-1"
+                              onClick={async () => {
+                                try {
+                                  const res = await fetch(`/api/pms/reservations/${selectedRes.code || selectedRes.id}/payment-status`);
+                                  const d = await res.json();
+                                  if (d.paid) {
+                                    toast({ title: "🎉 Pagamento Confirmado!", description: `Reserva liquidada com sucesso! R$ ${Number(d.paidAmount).toFixed(2)}` });
+                                    fetchReservations();
+                                    setSelectedRes((prev: any) => prev ? { ...prev, paymentStatus: "pago_total", paidAmount: d.paidAmount } : null);
+                                  } else {
+                                    toast({ title: "Aguardando Pagamento", description: `Nenhum pagamento liquidado até o momento para ${selectedRes.code}.` });
+                                  }
+                                } catch (e: any) {
+                                  toast({ title: "Erro ao consultar", description: e.message, variant: "destructive" });
+                                }
+                              }}
+                            >
+                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                              <span>Verificar Status Agora</span>
+                            </Button>
+                          </>
+                        )}
+                      </div>
+
+                      {selectedRes.paidAt && (
+                        <div className="text-[11px] pt-1.5 border-t border-slate-200 dark:border-slate-800 flex justify-between">
+                          <span className="text-muted-foreground font-medium">Data e Hora da Liquidação:</span>
+                          <span className="font-medium text-slate-900 dark:text-slate-100">
+                            {format(parseISO(selectedRes.paidAt), "dd/MM/yyyy 'às' HH:mm:ss", { locale: ptBR })}
+                          </span>
+                        </div>
+                      )}
+
+                      {selectedRes.pixEndToEndId && (
+                        <div className="text-[11px] pt-1.5 border-t border-slate-200 dark:border-slate-800 flex flex-col gap-0.5">
+                          <span className="text-muted-foreground font-medium">End-to-End ID (Banco Central):</span>
+                          <span className="font-mono text-[10px] text-emerald-700 dark:text-emerald-400 font-bold break-all select-all">
+                            {selectedRes.pixEndToEndId}
+                          </span>
+                        </div>
+                      )}
+
+                      {selectedRes.pixTxId && (
+                        <div className="text-[11px] pt-1.5 border-t border-slate-200 dark:border-slate-800 flex flex-col gap-0.5">
+                          <span className="text-muted-foreground font-medium">TxId da Cobrança (Banco Inter):</span>
+                          <span className="font-mono text-[10px] text-slate-700 dark:text-slate-300 break-all select-all">
+                            {selectedRes.pixTxId}
+                          </span>
+                        </div>
+                      )}
+
+                      {selectedRes.mpPaymentId && (
+                        <div className="text-[11px] pt-1.5 border-t border-slate-200 dark:border-slate-800 flex justify-between">
+                          <span className="text-muted-foreground font-medium">ID Pagamento Mercado Pago:</span>
+                          <span className="font-mono text-[10px] text-sky-700 dark:text-sky-300 font-bold">
+                            {selectedRes.mpPaymentId}
+                          </span>
+                        </div>
+                      )}
                     </div>
-
-                    <div className="grid grid-cols-2 gap-2 text-[11px]">
-                      <div>
-                        <span className="text-muted-foreground block font-medium">Forma de Pagamento:</span>
-                        <span className="font-semibold text-slate-900 dark:text-slate-100">
-                          {selectedRes.pixTxId ? "⚡ PIX Instantâneo (Banco Inter)" : (selectedRes.mpPaymentId ? "💳 Cartão de Crédito (Mercado Pago)" : (selectedRes.channel === "site" ? "PIX / Motor de Reservas" : "Reserva Manual / Direta"))}
-                        </span>
-                      </div>
-
-                      <div>
-                        <span className="text-muted-foreground block font-medium">Valor Recebido:</span>
-                        <span className="font-bold text-emerald-600 dark:text-emerald-400">
-                          R$ {(selectedRes.paidAmount || selectedRes.totalAmount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                        </span>
-                      </div>
-                    </div>
-
-                    {selectedRes.paidAt && (
-                      <div className="text-[11px] pt-1.5 border-t border-slate-200 dark:border-slate-800 flex justify-between">
-                        <span className="text-muted-foreground font-medium">Data e Hora da Liquidação:</span>
-                        <span className="font-medium text-slate-900 dark:text-slate-100">
-                          {format(parseISO(selectedRes.paidAt), "dd/MM/yyyy 'às' HH:mm:ss", { locale: ptBR })}
-                        </span>
-                      </div>
-                    )}
-
-                    {selectedRes.pixEndToEndId && (
-                      <div className="text-[11px] pt-1.5 border-t border-slate-200 dark:border-slate-800 flex flex-col gap-0.5">
-                        <span className="text-muted-foreground font-medium">End-to-End ID (Banco Central):</span>
-                        <span className="font-mono text-[10px] text-emerald-700 dark:text-emerald-400 font-bold break-all select-all">
-                          {selectedRes.pixEndToEndId}
-                        </span>
-                      </div>
-                    )}
-
-                    {selectedRes.pixTxId && (
-                      <div className="text-[11px] pt-1.5 border-t border-slate-200 dark:border-slate-800 flex flex-col gap-0.5">
-                        <span className="text-muted-foreground font-medium">TxId da Cobrança (Banco Inter):</span>
-                        <span className="font-mono text-[10px] text-slate-700 dark:text-slate-300 break-all select-all">
-                          {selectedRes.pixTxId}
-                        </span>
-                      </div>
-                    )}
-
-                    {selectedRes.mpPaymentId && (
-                      <div className="text-[11px] pt-1.5 border-t border-slate-200 dark:border-slate-800 flex justify-between">
-                        <span className="text-muted-foreground font-medium">ID Pagamento Mercado Pago:</span>
-                        <span className="font-mono text-[10px] text-sky-700 dark:text-sky-300 font-bold">
-                          {selectedRes.mpPaymentId}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                )}
+                  );
+                })()}
 
                 {selectedRes && selectedRes.guestPhone && (
                   <div className="p-3 bg-emerald-50/80 dark:bg-emerald-950/30 rounded-2xl border border-emerald-200 dark:border-emerald-800 space-y-2">
@@ -2869,6 +2961,35 @@ export default function PmsCalendar() {
                     </div>
 
                     <div className="flex flex-wrap gap-1.5">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-amber-300 text-amber-800 dark:text-amber-300 hover:bg-amber-100 flex items-center gap-1"
+                        onClick={async () => {
+                          try {
+                            const res = await fetch("/api/whatsapp/dispatch-reservation", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ 
+                                templateId: "tpl_payment_pending", 
+                                reservationCode: selectedRes.code || selectedRes.reservationCode || String(selectedRes.id || ""),
+                                reservationId: selectedRes.id 
+                              })
+                            });
+                            const d = await res.json();
+                            if (res.ok && d.success) {
+                              toast({ title: "✓ WhatsApp enviado!", description: `Link de cobrança/pagamento enviado para ${selectedRes.guestName}.` });
+                            } else {
+                              toast({ title: "Falha ao enviar", description: d.error || "Verifique as configurações Z-API.", variant: "destructive" });
+                            }
+                          } catch (e: any) {
+                            toast({ title: "Erro de disparo", description: e.message, variant: "destructive" });
+                          }
+                        }}
+                      >
+                        💳 Cobrança / Link Pagamento
+                      </Button>
                       <Button
                         type="button"
                         variant="outline"

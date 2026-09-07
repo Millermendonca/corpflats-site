@@ -5681,13 +5681,17 @@ app.get("/api/pms/guest-portal/:code", (req, res) => {
       channel: r.channel || "site",
       totalAmount: r.totalAmount || 0,
       paidAmount: r.paidAmount || 0,
-      paymentStatus: r.paymentStatus || "pago_total",
-      paymentMethod: r.paymentMethod || (r.pixTxId ? "PIX" : (r.mpPaymentId ? "Cartão de Crédito" : "PIX")),
+      paymentStatus: (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0))
+        ? "pago_total"
+        : (r.paymentStatus || "pendente"),
+      paymentMethod: r.paymentMethod || (r.pixTxId ? "pix" : (r.mpPaymentId ? "cartao_credito" : "pix")),
       paidAt: r.paidAt || null,
       pixTxId: r.pixTxId || null,
+      pixCopiaECola: r.pixCopiaECola || null,
       pixEndToEndId: r.pixEndToEndId || null,
       mpPaymentId: r.mpPaymentId || null,
       mpPreferenceId: r.mpPreferenceId || null,
+      mpInitPoint: r.mpInitPoint || null,
       hasBreakfast,
       includeBreakfast: hasBreakfast,
       breakfastToken,
@@ -13025,6 +13029,43 @@ async function checkInterPixCobStatus(txid) {
   });
 }
 
+// 6.2.2 Consulta Ativa de Pagamento no Mercado Pago por External Reference
+async function checkMercadoPagoPaymentByRef(externalRef) {
+  if (!externalRef) return null;
+  const cfg = db.settings?.mercadoPagoConfig || DEFAULT_MP_CONFIG;
+  const accessToken = cfg.accessToken || process.env.MERCADOPAGO_ACCESS_TOKEN;
+  if (!accessToken) return null;
+
+  return new Promise((resolve) => {
+    const req = https.request(`https://api.mercadopago.com/v1/payments/search?external_reference=${encodeURIComponent(externalRef)}`, {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${accessToken}`
+      }
+    }, (res) => {
+      let raw = "";
+      res.on("data", c => raw += c);
+      res.on("end", () => {
+        try {
+          const json = JSON.parse(raw);
+          if (json && Array.isArray(json.results) && json.results.length > 0) {
+            const approved = json.results.find(p => p.status === "approved");
+            if (approved) return resolve(approved);
+          }
+          resolve(null);
+        } catch {
+          resolve(null);
+        }
+      });
+    });
+    req.on("error", (e) => {
+      console.warn("[Mercado Pago] Erro ao buscar pagamentos por ref:", e.message);
+      resolve(null);
+    });
+    req.end();
+  });
+}
+
 // 6.3 Checar Status de Pagamento de Reserva Específica com Consulta Ativa em Tempo Real
 app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
   try {
@@ -13033,14 +13074,15 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
     if (!r) return res.status(404).json({ error: "Reserva não encontrada." });
 
     // Se já está marcado como pago, retorna de imediato
-    if (r.paymentStatus === "pago_total" || r.paymentStatus === "pago") {
+    if (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0)) {
       return res.json({
         code: r.code,
         paid: true,
-        paymentStatus: r.paymentStatus,
+        paymentStatus: "pago_total",
         paidAmount: r.paidAmount || r.totalAmount,
         totalAmount: r.totalAmount || 0,
-        pixTxId: r.pixTxId || null
+        pixTxId: r.pixTxId || null,
+        mpPaymentId: r.mpPaymentId || null
       });
     }
 
@@ -13071,21 +13113,158 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
           paymentStatus: "pago_total",
           paidAmount: valorPago,
           totalAmount: r.totalAmount || 0,
-          pixTxId: r.pixTxId
+          pixTxId: r.pixTxId,
+          mpPaymentId: r.mpPaymentId || null
         });
       }
+    }
+
+    // Se não liquidou pelo Inter, verifica no Mercado Pago (Cartão de Crédito)
+    const mpPayment = await checkMercadoPagoPaymentByRef(r.code);
+    if (mpPayment && mpPayment.status === "approved") {
+      const valorPago = Number(mpPayment.transaction_amount || mpPayment.total_paid_amount || r.totalAmount);
+      r.paymentStatus = "pago_total";
+      r.paidAmount = valorPago;
+      r.paidAt = mpPayment.date_approved || new Date().toISOString();
+      r.paymentMethod = "cartao_credito";
+      r.mpPaymentId = String(mpPayment.id);
+
+      createNotification({
+        category: "checkout",
+        title: `💳 Cartão Confirmado: R$ ${valorPago.toLocaleString("pt-BR")} (Apt ${r.flatNumber})`,
+        message: `Reserva ${r.code} liquidada no cartão de crédito via Mercado Pago por ${r.guestName}!`,
+        severity: "success",
+        metadata: { reservationCode: r.code, paymentId: mpPayment.id, amount: valorPago },
+        targetUrl: `/reservas`
+      });
+
+      saveDatabase();
+
+      return res.json({
+        code: r.code,
+        paid: true,
+        paymentStatus: "pago_total",
+        paidAmount: valorPago,
+        totalAmount: r.totalAmount || 0,
+        pixTxId: r.pixTxId || null,
+        mpPaymentId: r.mpPaymentId
+      });
     }
 
     res.json({
       code: r.code,
       paid: false,
-      paymentStatus: r.paymentStatus || "aguardando_pix",
+      paymentStatus: r.paymentStatus || "aguardando_pagamento",
+      paymentMethod: r.paymentMethod || "pix",
       paidAmount: r.paidAmount || 0,
       totalAmount: r.totalAmount || 0,
-      pixTxId: r.pixTxId || null
+      pixTxId: r.pixTxId || null,
+      pixCopiaECola: r.pixCopiaECola || null,
+      mpInitPoint: r.mpInitPoint || null,
+      mpPreferenceId: r.mpPreferenceId || null
     });
   } catch (err) {
     console.error("[Payment Status Check] Erro:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 6.3.1 Alterar Forma de Pagamento da Reserva (PIX <-> Cartão de Crédito)
+app.post("/api/pms/reservations/:code/change-payment-method", async (req, res) => {
+  try {
+    const { code } = req.params;
+    const { method } = req.body || {}; // "pix" | "card" | "cartao_credito"
+    if (!db.reservations) db.reservations = [];
+    const r = findReservationByLocatorOrContact(code) || (db.reservations || []).find(x => x.code === code || String(x.id) === code);
+    if (!r) return res.status(404).json({ error: "Reserva não encontrada." });
+
+    const isPaid = r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0);
+    if (isPaid) {
+      return res.json({
+        success: true,
+        isPaid: true,
+        message: "Esta reserva já foi liquidada integralmente.",
+        reservation: r
+      });
+    }
+
+    const targetMethod = (method || "").toLowerCase().includes("card") || (method || "").toLowerCase().includes("cartao") ? "cartao_credito" : "pix";
+
+    if (targetMethod === "pix") {
+      r.paymentMethod = "pix";
+      r.paymentStatus = "aguardando_pix";
+
+      // Se ainda não tem PIX emitido ou precisa gerar
+      if (!r.pixCopiaECola) {
+        try {
+          const pixResult = await createInterPixCob({
+            amount: r.totalAmount,
+            description: `Reserva CorpFlats ${r.code}`,
+            debtorName: r.guestName,
+            debtorDocument: r.guestDocument || r.document,
+            reservationCode: r.code
+          });
+          r.pixTxId = pixResult.txid;
+          r.pixCopiaECola = pixResult.pixCopiaECola;
+        } catch (pixErr) {
+          console.warn("[Change Payment Method] Falha Inter, gerando PIX estático:", pixErr.message);
+          const staticPayload = generateStaticPixPayload({
+            pixKey: DEFAULT_INTER_CONFIG.pixKey || "47964813000165",
+            amount: r.totalAmount,
+            merchantName: "CORPFLATS LTDA",
+            merchantCity: "CAMPOS DOS GOYTACAZES",
+            txid: r.code.replace(/[^a-zA-Z0-9]/g, "").substring(0, 25)
+          });
+          r.pixTxId = r.pixTxId || `STAT_${Date.now()}`;
+          r.pixCopiaECola = staticPayload;
+        }
+      }
+
+      saveDatabase();
+      return res.json({
+        success: true,
+        paymentMethod: "pix",
+        pixCopiaECola: r.pixCopiaECola,
+        pixTxId: r.pixTxId,
+        paymentStatus: r.paymentStatus,
+        reservation: r
+      });
+    } else {
+      // Cartão de Crédito (Mercado Pago)
+      r.paymentMethod = "cartao_credito";
+      r.paymentStatus = "aguardando_cartao";
+
+      if (!r.mpInitPoint) {
+        try {
+          const nightsCount = Math.max(1, Math.round((new Date(r.checkoutDate).getTime() - new Date(r.checkinDate).getTime()) / (1000 * 60 * 60 * 24)));
+          const mpPreference = await createMercadoPagoPreference({
+            reservationCode: r.code,
+            amount: r.totalAmount,
+            guestName: r.guestName,
+            guestEmail: r.guestEmail,
+            nights: nightsCount,
+            flatNumber: r.flatNumber
+          });
+          r.mpPreferenceId = mpPreference.id;
+          r.mpInitPoint = mpPreference.initPoint;
+        } catch (mpErr) {
+          console.error("[Change Payment Method] Erro ao criar preferência Mercado Pago:", mpErr.message);
+          return res.status(500).json({ error: `Falha ao gerar link Mercado Pago: ${mpErr.message}` });
+        }
+      }
+
+      saveDatabase();
+      return res.json({
+        success: true,
+        paymentMethod: "cartao_credito",
+        initPoint: r.mpInitPoint,
+        preferenceId: r.mpPreferenceId,
+        paymentStatus: r.paymentStatus,
+        reservation: r
+      });
+    }
+  } catch (err) {
+    console.error("[Change Payment Method] Erro:", err);
     res.status(500).json({ error: err.message });
   }
 });

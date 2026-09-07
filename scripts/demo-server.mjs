@@ -37,6 +37,15 @@ import pg from "pg";
 import { uploadImageToStorage } from "./storage-service.mjs";
 import { MicrosoftGraphService } from "./microsoft-graph-service.mjs";
 import { initWhatsAppEngine, triggerImmediateWhatsApp } from "./zapi-service.mjs";
+import { 
+  getSmtpConfig, 
+  verifySmtpConnection, 
+  sendEmailAsync, 
+  resendEmailAsync, 
+  renderCheckinConfirmedEmail, 
+  renderReservationUpdateEmail, 
+  renderManualEmail 
+} from "./mail-service.mjs";
 
 const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
@@ -330,6 +339,7 @@ let db = {
   reviewInsights: null,
   garageAuthorizations: [],
   reservations: [],
+  reservationCommunications: [],
   roomBlocks: [],
   notifications: [],
   notificationSettings: {
@@ -354,10 +364,27 @@ let db = {
     adminWhatsApp: "5522997124021",
     checkinTime: "14:00",
     checkoutTime: "12:00",
-    autoEarlyCheckinForSite: true
+    autoEarlyCheckinForSite: true,
+    buildingName: "Edifício Soho Residence Service",
+    receptionEmail: "portaria.soho@corpflats.com.br",
+    emailSettings: {
+      host: "smtppro.zoho.com",
+      port: 465,
+      user: "",
+      pass: "",
+      fromName: "CorpFlats",
+      fromEmail: ""
+    }
   },
   siteConfig: null
 };
+
+const DEFAULT_PET_RULES = `• Permissão: Permitida a hospedagem exclusivamente de cães de pequeno porte (até 10 kg e altura de cernelha de até 35–40 cm). Outros animais não são autorizados.
+• Circulação no Prédio: Nas áreas comuns do condomínio, o pet deve ser transportado obrigatoriamente no colo ou dentro de caixa/bolsa de transporte (ou com guia curta).
+• Uso de Elevadores: É obrigatório utilizar exclusivamente o elevador de serviço ao transitar com animais.
+• Convivência e Sossego: É proibido deixar o animal desacompanhado/sozinho no flat por longos períodos. O tutor deve zelar para evitar latidos ou ruídos excessivos.
+• Higiene e Cuidados: Proibido dar banho no animal utilizando toalhas ou enxoval do flat, bem como permitir que o pet suba em camas e sofás sem proteção própria.
+• Responsabilidade e Avarias: O titular da reserva responde integralmente por quaisquer danos a móveis, colchões, enxoval de cama/banho, odores ou sujeiras causadas pelo pet, arcando com os custos de reposição ou higienização extraordinária.`;
 
 const DEFAULT_SITE_CONFIG = {
   theme: {
@@ -1009,12 +1036,69 @@ function sanitizeLostAndFound() {
   }
 }
 
+function sanitizeReservationFlags() {
+  if (!db.reservations) return;
+  // Auto-recuperação/correção para a reserva RES-905-0067
+  const res905 = (db.reservations || []).find(r => 
+    (r.code && r.code.toUpperCase() === "RES-905-0067") || 
+    (String(r.id) === "67" && String(r.flatNumber) === "905") ||
+    (r.code && r.code.toUpperCase().includes("905-0067"))
+  );
+  if (res905) {
+    let changed = false;
+    if (!res905.isMonthlyGuest || res905.clientType !== "mensalista") {
+      res905.isMonthlyGuest = true;
+      res905.clientType = "mensalista";
+      changed = true;
+    }
+    if (!res905.autoEmitInvoice) {
+      res905.autoEmitInvoice = true;
+      changed = true;
+    }
+    const matchedGuest = (db.guests || []).find(g => 
+      (g.id && g.id === res905.guestId) ||
+      (g.document && res905.guestDocument && g.document.replace(/\D/g, '') === res905.guestDocument.replace(/\D/g, '')) ||
+      (g.name && res905.guestName && g.name.toLowerCase().trim() === res905.guestName.toLowerCase().trim())
+    );
+    if (matchedGuest) {
+      if (!matchedGuest.isMonthlyGuest || matchedGuest.clientType !== "mensalista") {
+        matchedGuest.isMonthlyGuest = true;
+        matchedGuest.clientType = "mensalista";
+        changed = true;
+      }
+      if (!matchedGuest.autoEmitInvoice) {
+        matchedGuest.autoEmitInvoice = true;
+        changed = true;
+      }
+    }
+    if (changed) {
+      saveDatabase();
+      console.log("[Auto-Fix] Reserva RES-905-0067 e hóspede atualizados para Mensalista e Auto-Emitir Nota.");
+    }
+  }
+
+  // Auto-recuperação/correção para a reserva CORP-212-0066 (PIX Banco Inter Oficial)
+  const res212 = (db.reservations || []).find(r => 
+    (r.code && r.code.toUpperCase() === "CORP-212-0066") || 
+    (r.code && r.code.toUpperCase().includes("212-0066"))
+  );
+  if (res212 && (!res212.pixTxId || res212.pixTxId.startsWith("INTER_") || !res212.pixCopiaECola || res212.pixCopiaECola.includes("cobv/"))) {
+    res212.pixTxId = "c49f630a14d7747a99d7ab97ac9fadf6";
+    res212.pixCopiaECola = "00020101021226930014BR.GOV.BCB.PIX2571spi-qrcode.bancointer.com.br/spi/pj/v2/9683e576b3fa48d28c5b69cfd34ab7a55204000053039865406181.005802BR5901*6013CAMPOS_DOS_GO61082802014062070503***630408E7";
+    res212.paymentStatus = "pendente_pix";
+    res212.totalAmount = 181;
+    saveDatabase();
+    console.log("[Auto-Fix] Reserva CORP-212-0066 atualizada com PIX oficial Banco Inter!");
+  }
+}
+
 async function loadDatabase() {
   try {
     if (fs.existsSync(DB_FILE)) {
       const content = fs.readFileSync(DB_FILE, "utf-8");
       const loaded = JSON.parse(content);
       Object.assign(db, loaded);
+      sanitizeReservationFlags();
     }
     if (pgPool) {
       try {
@@ -1037,6 +1121,19 @@ async function loadDatabase() {
           CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON system_audit_logs (timestamp DESC);
           CREATE INDEX IF NOT EXISTS idx_audit_category ON system_audit_logs (category);
           CREATE INDEX IF NOT EXISTS idx_audit_level ON system_audit_logs (level);
+          CREATE TABLE IF NOT EXISTS reservation_communications (
+            id TEXT PRIMARY KEY,
+            reservation_id TEXT NOT NULL,
+            type TEXT NOT NULL DEFAULT 'email',
+            direction TEXT NOT NULL DEFAULT 'outbound',
+            recipient TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            body TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            metadata JSONB DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          );
+          CREATE INDEX IF NOT EXISTS idx_res_comm_res_id ON reservation_communications(reservation_id);
         `);
         const res = await pgPool.query("SELECT value FROM system_store WHERE key = 'db_state'");
         if (res && res.rows && res.rows[0]) {
@@ -1055,11 +1152,14 @@ async function loadDatabase() {
           console.log("[PostgreSQL] Estado restaurado da nuvem com sucesso!");
           sanitizeAndRecoverCleanings();
           sanitizeLostAndFound();
+          sanitizeReservationFlags();
         }
       } catch (err) {
         console.warn("[PostgreSQL] Falha ao sincronizar estado inicial:", err.message);
       }
     }
+
+    if (!db.reservationCommunications) db.reservationCommunications = [];
 
     // Restauração de Certificado Digital A1 a partir do PostgreSQL
     if (db.nfseConfig?.certificadoA1?.pfxBase64) {
@@ -1382,6 +1482,286 @@ function getAuthUser(req) {
   } catch {
     return null;
   }
+}
+
+// ── Reservation Audit Log Engine ─────────────────────────────────────────────
+function addReservationAuditLog(reservation, {
+  action = "updated",
+  actor = null,
+  source = "PMS Calendário",
+  description = "",
+  changes = []
+} = {}) {
+  if (!reservation) return null;
+  if (!reservation.auditLogs) reservation.auditLogs = [];
+
+  const now = new Date().toISOString();
+  const entryId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+  const normalizedActor = {
+    id: actor?.id || null,
+    name: actor?.name || actor?.username || "Sistema",
+    role: actor?.role || (actor?.name ? "user" : "system"),
+    type: actor?.type || (actor?.role === "guest" ? "guest" : (actor?.name && actor?.name !== "Sistema" ? "user" : "system"))
+  };
+
+  const entry = {
+    id: entryId,
+    timestamp: now,
+    action,
+    actor: normalizedActor,
+    source: source || "PMS Calendário",
+    description: description || "Atualização da reserva",
+    changes: Array.isArray(changes) ? changes : []
+  };
+
+  reservation.auditLogs.unshift(entry);
+  reservation.lastModifiedBy = {
+    timestamp: now,
+    actor: normalizedActor,
+    source: entry.source
+  };
+
+  try {
+    logAuditEvent({
+      level: action === "cancelled" ? "warning" : "info",
+      category: "reservation",
+      action: `RESERVATION_${String(action).toUpperCase()}`,
+      actor: normalizedActor,
+      source: entry.source,
+      details: {
+        reservationId: reservation.id,
+        reservationCode: reservation.code,
+        flatNumber: reservation.flatNumber,
+        guestName: reservation.guestName,
+        description: entry.description,
+        changes: entry.changes
+      }
+    });
+  } catch {}
+
+  return entry;
+}
+
+function ensureReservationAuditLogs(reservation) {
+  if (!reservation) return reservation;
+  if (reservation.auditLogs && reservation.auditLogs.length > 0) return reservation;
+
+  reservation.auditLogs = [];
+
+  // 1. Log sintético de criação inicial
+  const createdTimestamp = reservation.createdAt || new Date().toISOString();
+  const channel = (reservation.channel || "").toLowerCase();
+  let defaultCreator = "PMS / Recepção";
+  let defaultSource = "PMS Calendário";
+  let creatorType = "user";
+
+  if (channel === "site" || channel === "site_direto") {
+    defaultCreator = reservation.guestName || "Hóspede (Online)";
+    defaultSource = "Site CorpFlats (Motor de Reservas)";
+    creatorType = "guest";
+  } else if (channel === "booking") {
+    defaultCreator = "Canal Booking.com";
+    defaultSource = "Booking.com Sync";
+    creatorType = "system";
+  } else if (channel === "airbnb") {
+    defaultCreator = "Canal Airbnb";
+    defaultSource = "Airbnb Sync";
+    creatorType = "system";
+  } else if (channel === "whatsapp") {
+    defaultCreator = "Atendimento WhatsApp";
+    defaultSource = "WhatsApp / Direta";
+    creatorType = "user";
+  }
+
+  const creatorName = reservation.createdBy?.userName || reservation.createdBy?.name || defaultCreator;
+  const creatorSource = reservation.createdBy?.source || defaultSource;
+
+  reservation.auditLogs.push({
+    id: `audit_init_${reservation.id || Date.now()}`,
+    timestamp: createdTimestamp,
+    action: "created",
+    actor: {
+      id: reservation.createdBy?.userId || null,
+      name: creatorName,
+      role: reservation.createdBy?.role || (creatorType === "guest" ? "guest" : "admin"),
+      type: creatorType
+    },
+    source: creatorSource,
+    description: "Reserva criada no sistema",
+    changes: [
+      { field: "flatNumber", label: "Apartamento", oldValue: null, newValue: `Flat ${reservation.flatNumber || reservation.flatId}` },
+      { field: "dates", label: "Período da Estadia", oldValue: null, newValue: `${reservation.checkinDate} a ${reservation.checkoutDate}` },
+      { field: "guestName", label: "Hóspede Titular", oldValue: null, newValue: reservation.guestName || "Não informado" },
+      { field: "channel", label: "Canal", oldValue: null, newValue: reservation.channel || "direta" },
+      ...(reservation.totalAmount ? [{ field: "totalAmount", label: "Valor Total", oldValue: null, newValue: `R$ ${Number(reservation.totalAmount).toFixed(2)}` }] : [])
+    ]
+  });
+
+  // 2. Histórico de modificações anterior (ex: autoatendimento)
+  if (Array.isArray(reservation.modificationHistory)) {
+    for (const mod of reservation.modificationHistory) {
+      reservation.auditLogs.unshift({
+        id: `audit_mod_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        timestamp: mod.modifiedAt || new Date().toISOString(),
+        action: "portal_modify",
+        actor: {
+          id: null,
+          name: reservation.guestName || "Hóspede",
+          role: "guest",
+          type: "guest"
+        },
+        source: "Portal do Hóspede (Autoatendimento)",
+        description: mod.reason || "Alteração de datas pelo portal do hóspede",
+        changes: [
+          ...(mod.oldCheckin !== mod.newCheckin || mod.oldCheckout !== mod.newCheckout ? [
+            { field: "dates", label: "Período", oldValue: `${mod.oldCheckin} a ${mod.oldCheckout}`, newValue: `${mod.newCheckin} a ${mod.newCheckout}` }
+          ] : []),
+          ...(mod.oldGuests !== mod.newGuests ? [
+            { field: "guestCount", label: "Qtd. Hóspedes", oldValue: String(mod.oldGuests), newValue: String(mod.newGuests) }
+          ] : []),
+          ...(mod.additionalAmountToPay ? [
+            { field: "additionalAmountToPay", label: "Acréscimo a Pagar", oldValue: null, newValue: `+R$ ${Number(mod.additionalAmountToPay).toFixed(2)}` }
+          ] : [])
+        ]
+      });
+    }
+  }
+
+  // 3. Status de Check-in ou Check-out
+  if (reservation.actualCheckinAt) {
+    reservation.auditLogs.unshift({
+      id: `audit_chk_${reservation.id || Date.now()}_in`,
+      timestamp: reservation.actualCheckinAt,
+      action: "checkin",
+      actor: { id: null, name: "Recepção / Portaria", role: "reception", type: "user" },
+      source: "Recepção / Portaria",
+      description: "Entrada (Check-in) registrada na portaria",
+      changes: [{ field: "status", label: "Status da Reserva", oldValue: "Confirmada", newValue: "Hospedado (In House)" }]
+    });
+  }
+
+  if (reservation.actualCheckoutAt) {
+    reservation.auditLogs.unshift({
+      id: `audit_chk_${reservation.id || Date.now()}_out`,
+      timestamp: reservation.actualCheckoutAt,
+      action: "checkout",
+      actor: { id: null, name: "Recepção / Portaria", role: "reception", type: "user" },
+      source: "Recepção / Portaria",
+      description: "Saída (Check-out) registrada",
+      changes: [{ field: "status", label: "Status da Reserva", oldValue: "Hospedado", newValue: "Concluída (Completed)" }]
+    });
+  }
+
+  if (reservation.status === "cancelada" || reservation.status === "CANCELLED") {
+    reservation.auditLogs.unshift({
+      id: `audit_cancel_${reservation.id || Date.now()}`,
+      timestamp: reservation.updatedAt || new Date().toISOString(),
+      action: "cancelled",
+      actor: { id: null, name: "Recepção / PMS", role: "admin", type: "user" },
+      source: "PMS Calendário",
+      description: "Reserva cancelada",
+      changes: [{ field: "status", label: "Status da Reserva", oldValue: "Confirmada", newValue: "Cancelada" }]
+    });
+  }
+
+  return reservation;
+}
+
+function diffReservationFields(oldRes, newBody, flatsList = []) {
+  const changes = [];
+
+  const FIELD_MAP = {
+    checkinDate: "Data de Entrada (Check-in)",
+    checkoutDate: "Data de Saída (Check-out)",
+    guestName: "Hóspede Titular",
+    guestPhone: "WhatsApp / Telefone",
+    guestEmail: "E-mail do Hóspede",
+    channel: "Canal de Origem",
+    dailyRate: "Valor da Diária",
+    totalAmount: "Valor Total",
+    paidAmount: "Valor Pago",
+    paymentStatus: "Status do Pagamento",
+    status: "Status da Reserva",
+    adults: "Adultos",
+    children: "Crianças",
+    guestCount: "Total de Hóspedes",
+    notes: "Observações Gerais",
+    receptionNotes: "Aviso para a Portaria / Recepção",
+    earlyCheckinAuthorized: "Autorização de Early Check-in",
+    autoEmitInvoice: "Auto-Emissão de Nota Fiscal (NFS-e)",
+    prefersHighFloor: "Preferência por Andar Alto",
+    twinBeds: "Configuração: 2 Camas de Solteiro",
+    extraMattress: "Configuração: Colchão Extra",
+    includeBreakfast: "Café da Manhã Incluso",
+    specialRequests: "Pedidos Especiais",
+    isMonthlyGuest: "Cliente Mensalista"
+  };
+
+  // Transferência de Apartamento
+  if (newBody.flatId !== undefined && Number(newBody.flatId) !== Number(oldRes.flatId)) {
+    const oldFlatNum = oldRes.flatNumber || flatsList.find(f => f.id === Number(oldRes.flatId))?.number || oldRes.flatId;
+    const newFlatNum = flatsList.find(f => f.id === Number(newBody.flatId))?.number || newBody.flatId;
+    changes.push({
+      field: "flatNumber",
+      label: "Apartamento (Transferência)",
+      oldValue: `Flat ${oldFlatNum}`,
+      newValue: `Flat ${newFlatNum}`
+    });
+  }
+
+  for (const [key, label] of Object.entries(FIELD_MAP)) {
+    if (newBody[key] === undefined) continue;
+
+    let oldVal = oldRes[key];
+    let newVal = newBody[key];
+
+    if (typeof oldVal === "boolean" || typeof newVal === "boolean") {
+      if (Boolean(oldVal) !== Boolean(newVal)) {
+        changes.push({
+          field: key,
+          label,
+          oldValue: Boolean(oldVal) ? "Sim" : "Não",
+          newValue: Boolean(newVal) ? "Sim" : "Não"
+        });
+      }
+    } else if (key === "dailyRate" || key === "totalAmount" || key === "paidAmount") {
+      const numOld = Number(oldVal) || 0;
+      const numNew = Number(newVal) || 0;
+      if (Math.abs(numOld - numNew) > 0.01) {
+        changes.push({
+          field: key,
+          label,
+          oldValue: `R$ ${numOld.toFixed(2)}`,
+          newValue: `R$ ${numNew.toFixed(2)}`
+        });
+      }
+    } else if (key === "adults" || key === "children" || key === "guestCount") {
+      const numOld = Number(oldVal) || 0;
+      const numNew = Number(newVal) || 0;
+      if (numOld !== numNew) {
+        changes.push({
+          field: key,
+          label,
+          oldValue: String(numOld),
+          newValue: String(numNew)
+        });
+      }
+    } else {
+      const strOld = String(oldVal || "").trim();
+      const strNew = String(newVal || "").trim();
+      if (strOld !== strNew) {
+        changes.push({
+          field: key,
+          label,
+          oldValue: strOld || "(vazio)",
+          newValue: strNew || "(vazio)"
+        });
+      }
+    }
+  }
+
+  return changes;
 }
 
 // ── Spreadsheet Path & Cloud Download ────────────────────────────────────────
@@ -2040,6 +2420,8 @@ app.post("/api/flats", (req, res) => {
   const newFlat = {
     id: db.flats.length > 0 ? Math.max(...db.flats.map(f => f.id)) + 1 : 1,
     number: String(number).trim(),
+    buildingName: (req.body.buildingName || db.settings?.buildingName || "Edifício Soho Residence Service").trim(),
+    receptionEmail: (req.body.receptionEmail || "").trim(),
     colIndex: -1,
     colName: `Apt ${number}`,
     isOccupied: false,
@@ -2055,6 +2437,8 @@ app.put("/api/flats/:id", (req, res) => {
   const flat = db.flats.find(f => f.id === id);
   if (!flat) return res.status(404).json({ error: "Flat não encontrado" });
   if (req.body.number) flat.number = String(req.body.number).trim();
+  if (req.body.buildingName !== undefined) flat.buildingName = String(req.body.buildingName).trim();
+  if (req.body.receptionEmail !== undefined) flat.receptionEmail = String(req.body.receptionEmail).trim();
   if (typeof req.body.isOccupied === "boolean") flat.isOccupied = req.body.isOccupied;
   flat.updatedAt = new Date().toISOString();
   saveDatabase();
@@ -4174,6 +4558,13 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       companyData: isWorkTrip ? companyData : null,
       vehicle: vehicle || null,
       calendarSequence: 0,
+      createdBy: {
+        userName: guestName.trim(),
+        role: "guest",
+        source: "Site CorpFlats (Motor de Reservas)",
+        createdAt: new Date().toISOString()
+      },
+      auditLogs: [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -4183,6 +4574,27 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       const lateNote = `🕒 Late Check-out Domingo solicitado para às ${lateCheckoutTime || "18:00"} (${lateFeeStr})`;
       reservation.notes = reservation.notes ? `${reservation.notes} • ${lateNote}` : lateNote;
     }
+
+    addReservationAuditLog(reservation, {
+      action: "created",
+      actor: {
+        id: null,
+        name: guestName.trim(),
+        role: "guest",
+        type: "guest"
+      },
+      source: "Site CorpFlats (Motor de Reservas)",
+      description: "Reserva criada pelo hóspede no site direto",
+      changes: [
+        { field: "flatNumber", label: "Apartamento", oldValue: null, newValue: `Flat(s) ${flatNumbersStr}` },
+        { field: "dates", label: "Período da Estadia", oldValue: null, newValue: `${checkinDate} a ${checkoutDate}` },
+        { field: "guestName", label: "Hóspede Titular", oldValue: null, newValue: guestName.trim() },
+        { field: "channel", label: "Canal de Origem", oldValue: null, newValue: "site_direto" },
+        { field: "totalAmount", label: "Valor Total", oldValue: null, newValue: `R$ ${Number(totalAmount).toFixed(2)}` },
+        { field: "paymentMethod", label: "Forma de Pagamento", oldValue: null, newValue: paymentMethod },
+        { field: "ratePlan", label: "Plano Selecionado", oldValue: null, newValue: ratePlan === "with_breakfast" ? "Com Café da Manhã" : "Sem Café" }
+      ]
+    });
 
     if (!db.reservations) db.reservations = [];
     db.reservations.push(reservation);
@@ -4482,6 +4894,8 @@ app.get("/api/pms/calendar", (req, res) => {
       matchedGuest?.autoEmitInvoice
     );
 
+    ensureReservationAuditLogs(r);
+
     return {
       ...r,
       isMonthlyGuest: isMonthly,
@@ -4502,6 +4916,24 @@ app.get("/api/pms/calendar", (req, res) => {
     reservations,
     blocks,
     guests: db.guests || []
+  });
+});
+
+app.get("/api/pms/reservations/:id/audit-logs", (req, res) => {
+  const param = String(req.params.id || "").trim();
+  const numId = Number(param);
+  const r = (db.reservations || []).find(x => x.id === numId || x.code === param || x.reservationCode === param);
+  if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
+
+  ensureReservationAuditLogs(r);
+  res.json({
+    reservationId: r.id,
+    reservationCode: r.code || r.reservationCode,
+    createdBy: r.createdBy || null,
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
+    lastModifiedBy: r.lastModifiedBy || null,
+    auditLogs: r.auditLogs || []
   });
 });
 
@@ -4659,6 +5091,11 @@ app.post("/api/pms/reservations", (req, res) => {
   const autoEarlyForSite = db.settings.autoEarlyCheckinForSite !== false;
   const isEarlyAuth = (channel === "site" && autoEarlyForSite) || Boolean(req.body.earlyCheckinAuthorized);
 
+  const authUser = getAuthUser(req);
+  const creatorName = authUser ? (authUser.username || authUser.name || "Administrador") : "Recepção / PMS";
+  const creatorRole = authUser ? authUser.role : "admin";
+  const reqSource = req.body.source || "PMS Calendário";
+
   const newReservation = {
     id: resId,
     code: `RES-${String(flat.number)}-${String(resId).padStart(4, "0")}`,
@@ -4697,9 +5134,42 @@ app.post("/api/pms/reservations", (req, res) => {
     clientType: isMonthly ? "mensalista" : "avulso",
     autoEmitInvoice: autoInvoice,
     breakfastToken: `bfk_${resId}_${crypto.randomBytes(4).toString("hex")}`,
+    createdBy: {
+      userId: authUser?.id || null,
+      userName: creatorName,
+      role: creatorRole,
+      source: reqSource,
+      createdAt: new Date().toISOString()
+    },
+    auditLogs: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
+
+  addReservationAuditLog(newReservation, {
+    action: "created",
+    actor: {
+      id: authUser?.id || null,
+      name: creatorName,
+      role: creatorRole,
+      type: "user"
+    },
+    source: reqSource,
+    description: "Reserva criada no PMS Calendário",
+    changes: [
+      { field: "flatNumber", label: "Apartamento", oldValue: null, newValue: `Flat ${flat.number}` },
+      { field: "dates", label: "Período da Estadia", oldValue: null, newValue: `${checkinDate} a ${checkoutDate}` },
+      { field: "guestName", label: "Hóspede Titular", oldValue: null, newValue: primaryName },
+      { field: "channel", label: "Canal de Origem", oldValue: null, newValue: channel },
+      { field: "totalAmount", label: "Valor Total", oldValue: null, newValue: `R$ ${Number(totalAmount).toFixed(2)}` },
+      { field: "paymentStatus", label: "Status de Pagamento", oldValue: null, newValue: paymentStatus },
+      ...(includeBreakfast ? [{ field: "includeBreakfast", label: "Café da Manhã", oldValue: null, newValue: "Incluso" }] : []),
+      ...(isMonthly ? [{ field: "isMonthlyGuest", label: "Cliente Mensalista", oldValue: null, newValue: "Sim" }] : []),
+      ...(autoInvoice ? [{ field: "autoEmitInvoice", label: "Auto-Emissão de Nota Fiscal (NFS-e)", oldValue: null, newValue: "Sim" }] : []),
+      ...(req.body.receptionNotes ? [{ field: "receptionNotes", label: "Aviso para a Portaria / Recepção", oldValue: null, newValue: req.body.receptionNotes }] : []),
+      ...(isEarlyAuth ? [{ field: "earlyCheckinAuthorized", label: "Autorização de Early Check-in", oldValue: null, newValue: "Sim" }] : [])
+    ]
+  });
 
   db.reservations.unshift(newReservation);
   saveDatabase();
@@ -4712,10 +5182,14 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   const r = (db.reservations || []).find(x => x.id === id);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
 
+  ensureReservationAuditLogs(r);
+  const diffs = diffReservationFields(r, req.body, db.flats || []);
+
   const oldCheckin = r.checkinDate;
   const oldCheckout = r.checkoutDate;
   const oldFlatId = r.flatId;
   const oldStatus = r.status;
+  const oldGuestName = r.guestName;
 
   const fields = [
     "flatId", "checkinDate", "checkoutDate", "status", "channel", 
@@ -4842,6 +5316,84 @@ app.put("/api/pms/reservations/:id", (req, res) => {
           o.cancelReason = null;
         }
       }
+    });
+  }
+
+  // Gatilho B: Envio Automático de Atualização da Reserva à Recepção/Portaria
+  const changes = [];
+  if (oldCheckin !== r.checkinDate) {
+    changes.push({ field: "checkinDate", label: "Data de Entrada (Check-in)", oldValue: oldCheckin, newValue: r.checkinDate });
+  }
+  if (oldCheckout !== r.checkoutDate) {
+    changes.push({ field: "checkoutDate", label: "Data de Saída (Check-out)", oldValue: oldCheckout, newValue: r.checkoutDate });
+  }
+  if (oldStatus !== r.status) {
+    changes.push({ field: "status", label: "Status da Reserva", oldValue: oldStatus, newValue: r.status });
+  }
+  if (oldFlatId !== r.flatId) {
+    const oldF = db.flats?.find(f => f.id === oldFlatId);
+    changes.push({ field: "flatNumber", label: "Apartamento", oldValue: `Flat ${oldF?.number || oldFlatId}`, newValue: `Flat ${r.flatNumber}` });
+  }
+  if (req.body.guestName && oldGuestName && req.body.guestName !== oldGuestName) {
+    changes.push({ field: "guestName", label: "Hóspede Titular", oldValue: oldGuestName, newValue: r.guestName });
+  }
+
+  if (changes.length > 0) {
+    try {
+      const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
+      const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "portaria.soho@corpflats.com.br";
+      const { subject, bodyHtml } = renderReservationUpdateEmail({ reservation: r, flat, changes, settings: db.settings });
+
+      sendEmailAsync({
+        db,
+        saveDatabase,
+        reservationId: r.code || r.id,
+        recipient: receptionEmail,
+        subject,
+        bodyHtml,
+        type: "email",
+        direction: "outbound",
+        metadata: {
+          trigger: "reservation_update",
+          flatNumber: r.flatNumber,
+          guestName: r.guestName,
+          changes
+        }
+      });
+    } catch (mailErr) {
+      console.warn("[MailService] Erro ao disparar aviso de alteração à portaria:", mailErr.message);
+    }
+  }
+
+  if (diffs && diffs.length > 0) {
+    const authUser = getAuthUser(req);
+    const actorName = authUser ? (authUser.username || authUser.name || "Administrador") : "Sistema / Usuário";
+    const source = req.body.source || "PMS Calendário (Edição Manual)";
+    const isFlatTransfer = diffs.some(d => d.field === "flatNumber");
+    const isDatesChange = diffs.some(d => d.field === "checkinDate" || d.field === "checkoutDate");
+    const isStatusChange = diffs.some(d => d.field === "status");
+
+    let action = "updated";
+    if (isFlatTransfer) action = "flat_changed";
+    else if (isDatesChange) action = "dates_changed";
+    else if (isStatusChange && (r.status === "cancelada" || r.status === "CANCELLED")) action = "cancelled";
+
+    let desc = `Alteração de ${diffs.length} ${diffs.length === 1 ? 'campo' : 'campos'}`;
+    if (isFlatTransfer && isDatesChange) desc = "Remarcação de datas e troca de flat";
+    else if (isFlatTransfer) desc = "Transferência de apartamento";
+    else if (isDatesChange) desc = "Remarcação do período da estadia";
+
+    addReservationAuditLog(r, {
+      action,
+      actor: {
+        id: authUser?.id || null,
+        name: actorName,
+        role: authUser?.role || "admin",
+        type: authUser ? "user" : "system"
+      },
+      source,
+      description: desc,
+      changes: diffs
     });
   }
 
@@ -5136,13 +5688,17 @@ app.get("/api/pms/guest-portal/:code", (req, res) => {
       channel: r.channel || "site",
       totalAmount: r.totalAmount || 0,
       paidAmount: r.paidAmount || 0,
-      paymentStatus: r.paymentStatus || "pago_total",
-      paymentMethod: r.paymentMethod || (r.pixTxId ? "PIX" : (r.mpPaymentId ? "Cartão de Crédito" : "PIX")),
+      paymentStatus: (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0))
+        ? "pago_total"
+        : (r.paymentStatus || "pendente"),
+      paymentMethod: r.paymentMethod || (r.pixTxId ? "pix" : (r.mpPaymentId ? "cartao_credito" : "pix")),
       paidAt: r.paidAt || null,
       pixTxId: r.pixTxId || null,
+      pixCopiaECola: r.pixCopiaECola || null,
       pixEndToEndId: r.pixEndToEndId || null,
       mpPaymentId: r.mpPaymentId || null,
       mpPreferenceId: r.mpPreferenceId || null,
+      mpInitPoint: r.mpInitPoint || null,
       hasBreakfast,
       includeBreakfast: hasBreakfast,
       breakfastToken,
@@ -5304,9 +5860,34 @@ app.post("/api/pms/guest-portal/:code/cancel", (req, res) => {
   r.cancelledAt = new Date().toISOString();
   r.cancellationReason = req.body?.reason || "Cancelamento solicitado pelo hóspede via autoatendimento";
   r.refundStatus = isEligibleForRefund ? "estorno_100%_solicitado" : "sem_reembolso";
-  r.refundAmount = refundAmount;
-  r.calendarSequence = (r.calendarSequence || 0) + 1;
   r.updatedAt = new Date().toISOString();
+
+  // Gatilho B: Notificação de cancelamento para a recepção/portaria
+  try {
+    const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
+    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "portaria.soho@corpflats.com.br";
+    const changes = [{ field: "status", label: "Status da Reserva", oldValue: "Confirmada", newValue: "CANCELADA (Portal do Hóspede)" }];
+    const { subject, bodyHtml } = renderReservationUpdateEmail({ reservation: r, flat, changes, settings: db.settings });
+
+    sendEmailAsync({
+      db,
+      saveDatabase,
+      reservationId: r.code || r.id,
+      recipient: receptionEmail,
+      subject,
+      bodyHtml,
+      type: "email",
+      direction: "outbound",
+      metadata: {
+        trigger: "guest_portal_cancel",
+        flatNumber: r.flatNumber,
+        guestName: r.guestName,
+        changes
+      }
+    });
+  } catch (mailErr) {
+    console.warn("[MailService] Erro ao disparar cancelamento à portaria:", mailErr.message);
+  }
 
   saveDatabase();
 
@@ -5435,13 +6016,79 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
     reason: reason || "Modificação solicitada pelo hóspede via autoatendimento"
   });
 
+  ensureReservationAuditLogs(r);
+  addReservationAuditLog(r, {
+    action: "portal_modify",
+    actor: {
+      id: null,
+      name: r.guestName || "Hóspede",
+      role: "guest",
+      type: "guest"
+    },
+    source: "Portal do Hóspede (Autoatendimento)",
+    description: reason || "Modificação solicitada pelo hóspede via autoatendimento",
+    changes: [
+      {
+        field: "dates",
+        label: "Período da Estadia",
+        oldValue: `${r.checkinDate} a ${r.checkoutDate}`,
+        newValue: `${newCheckinDate} a ${newCheckoutDate}`
+      },
+      ...(r.guestCount !== guestsNum ? [{
+        field: "guestCount",
+        label: "Quantidade de Hóspedes",
+        oldValue: String(r.guestCount || 1),
+        newValue: String(guestsNum)
+      }] : []),
+      ...(additionalAmountToPay > 0 ? [{
+        field: "totalAmount",
+        label: "Acréscimo de Valor",
+        oldValue: `R$ ${Number(r.totalAmount - additionalAmountToPay).toFixed(2)}`,
+        newValue: `R$ ${Number(r.totalAmount).toFixed(2)} (+R$ ${additionalAmountToPay.toFixed(2)})`
+      }] : []),
+      ...(refundAmount > 0 ? [{
+        field: "totalAmount",
+        label: "Estorno/Crédito",
+        oldValue: `R$ ${Number(r.totalAmount + refundAmount).toFixed(2)}`,
+        newValue: `R$ ${Number(r.totalAmount).toFixed(2)} (-R$ ${refundAmount.toFixed(2)})`
+      }] : [])
+    ]
+  });
+
   // Salvar novos parâmetros
   r.checkinDate = newCheckinDate;
   r.checkoutDate = newCheckoutDate;
-  r.guestCount = guestsNum;
-  r.adults = guestsNum;
   r.calendarSequence = (r.calendarSequence || 0) + 1;
   r.updatedAt = new Date().toISOString();
+
+  // Gatilho B: Notificação de alteração de datas para a recepção/portaria
+  try {
+    const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
+    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "portaria.soho@corpflats.com.br";
+    const changes = [
+      { field: "dates", label: "Novo Período", oldValue: `${formatDateBr(r.modificationHistory[r.modificationHistory.length - 1]?.oldCheckin)} a ${formatDateBr(r.modificationHistory[r.modificationHistory.length - 1]?.oldCheckout)}`, newValue: `${formatDateBr(newCheckinDate)} a ${formatDateBr(newCheckoutDate)}` }
+    ];
+    const { subject, bodyHtml } = renderReservationUpdateEmail({ reservation: r, flat, changes, settings: db.settings });
+
+    sendEmailAsync({
+      db,
+      saveDatabase,
+      reservationId: r.code || r.id,
+      recipient: receptionEmail,
+      subject,
+      bodyHtml,
+      type: "email",
+      direction: "outbound",
+      metadata: {
+        trigger: "guest_portal_modify",
+        flatNumber: r.flatNumber,
+        guestName: r.guestName,
+        changes
+      }
+    });
+  } catch (mailErr) {
+    console.warn("[MailService] Erro ao disparar aviso de alteração à portaria:", mailErr.message);
+  }
 
   // Se houver solicitação de limpeza correspondente, sincroniza as datas
   if (Array.isArray(db.cleaningRequests)) {
@@ -5818,7 +6465,53 @@ app.delete("/api/pms/reservations/:id", (req, res) => {
     }
   });
 
+  ensureReservationAuditLogs(r);
+  const authUser = getAuthUser(req);
+  const actorName = authUser ? (authUser.username || authUser.name || "Administrador") : "Administrador";
+  const source = req.body?.source || "PMS Calendário (Cancelamento Manual)";
+
+  addReservationAuditLog(r, {
+    action: "cancelled",
+    actor: {
+      id: authUser?.id || null,
+      name: actorName,
+      role: authUser?.role || "admin",
+      type: "user"
+    },
+    source,
+    description: "Reserva cancelada no sistema",
+    changes: [{ field: "status", label: "Status da Reserva", oldValue: "Confirmada", newValue: "Cancelada" }]
+  });
+
   r.updatedAt = new Date().toISOString();
+
+  // Gatilho B: Notificação de cancelamento para a recepção/portaria
+  try {
+    const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
+    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "portaria.soho@corpflats.com.br";
+    const changes = [{ field: "status", label: "Status da Reserva", oldValue: "Confirmada", newValue: "CANCELADA" }];
+    const { subject, bodyHtml } = renderReservationUpdateEmail({ reservation: r, flat, changes, settings: db.settings });
+
+    sendEmailAsync({
+      db,
+      saveDatabase,
+      reservationId: r.code || r.id,
+      recipient: receptionEmail,
+      subject,
+      bodyHtml,
+      type: "email",
+      direction: "outbound",
+      metadata: {
+        trigger: "cancellation",
+        flatNumber: r.flatNumber,
+        guestName: r.guestName,
+        changes
+      }
+    });
+  } catch (mailErr) {
+    console.warn("[MailService] Erro ao disparar cancelamento à portaria:", mailErr.message);
+  }
+
   saveDatabase();
   triggerImmediateWhatsApp(db, saveDatabase, "reservation_cancelled", r);
   res.json({ success: true, message: "Reserva cancelada com sucesso.", calendarSequence: r.calendarSequence });
@@ -6221,13 +6914,13 @@ const handleUpdateGuest = (req, res) => {
   const guest = (db.guests || []).find(g => g.id === id);
   if (!guest) return res.status(404).json({ error: "Hóspede não encontrado." });
 
-  const fields = ["name", "fullName", "phone", "email", "document", "documentNumber", "city", "notes", "tags", "isMonthlyGuest", "clientType", "companyId", "preferences"];
+  const fields = ["name", "fullName", "phone", "email", "document", "documentNumber", "city", "notes", "tags", "isMonthlyGuest", "clientType", "companyId", "preferences", "autoEmitInvoice"];
   for (const f of fields) {
     if (req.body[f] !== undefined) guest[f] = req.body[f];
   }
-  if (req.body.isMonthlyGuest !== undefined) {
-    guest.isMonthlyGuest = Boolean(req.body.isMonthlyGuest);
-    guest.clientType = req.body.isMonthlyGuest ? "mensalista" : "avulso";
+  if (req.body.isMonthlyGuest !== undefined || req.body.clientType !== undefined) {
+    guest.isMonthlyGuest = Boolean(req.body.isMonthlyGuest || req.body.clientType === "mensalista");
+    guest.clientType = guest.isMonthlyGuest ? "mensalista" : "avulso";
     
     // Atualiza imediatamente todas as reservas desse hóspede
     const cleanDoc = (guest.document || guest.documentNumber || "").replace(/\D/g, "");
@@ -6241,6 +6934,22 @@ const handleUpdateGuest = (req, res) => {
       if ((cleanDoc && resDoc === cleanDoc) || (cleanPhone && resPhone === cleanPhone) || (guestNameLower && resName === guestNameLower) || r.guestId === guest.id) {
         r.isMonthlyGuest = guest.isMonthlyGuest;
         r.clientType = guest.clientType;
+      }
+    });
+  }
+
+  if (req.body.autoEmitInvoice !== undefined) {
+    guest.autoEmitInvoice = Boolean(req.body.autoEmitInvoice);
+    const cleanDoc = (guest.document || guest.documentNumber || "").replace(/\D/g, "");
+    const cleanPhone = (guest.phone || "").replace(/\D/g, "");
+    const guestNameLower = (guest.fullName || guest.name || "").trim().toLowerCase();
+
+    (db.reservations || []).forEach(r => {
+      const resDoc = (r.guestDocument || r.document || "").replace(/\D/g, "");
+      const resPhone = (r.guestPhone || "").replace(/\D/g, "");
+      const resName = (r.guestName || "").trim().toLowerCase();
+      if ((cleanDoc && resDoc === cleanDoc) || (cleanPhone && resPhone === cleanPhone) || (guestNameLower && resName === guestNameLower) || r.guestId === guest.id) {
+        r.autoEmitInvoice = guest.autoEmitInvoice;
       }
     });
   }
@@ -6277,18 +6986,27 @@ app.put("/api/pms/amenities/essential-tags", (req, res) => {
 });
 
 app.post("/api/pms/guests", (req, res) => {
-  const { name, phone, email, document, city, notes, tags } = req.body;
-  if (!name || !name.trim()) return res.status(400).json({ error: "Nome é obrigatório." });
+  const { name, fullName, phone, email, document, documentNumber, city, notes, tags, isMonthlyGuest, clientType, autoEmitInvoice, companyId, preferences } = req.body;
+  const primName = (fullName || name || "").trim();
+  if (!primName) return res.status(400).json({ error: "Nome é obrigatório." });
   if (!db.guests) db.guests = [];
 
+  const isMonthly = Boolean(isMonthlyGuest || clientType === "mensalista");
   const newGuest = {
     id: db.guests.length > 0 ? Math.max(...db.guests.map(g => g.id)) + 1 : 1,
-    name: name.trim(),
+    name: primName,
+    fullName: primName,
     phone: phone || "",
     email: email || "",
-    document: document || "",
+    document: document || documentNumber || "",
+    documentNumber: documentNumber || document || "",
     city: city || "",
+    companyId: companyId ? Number(companyId) : null,
+    isMonthlyGuest: isMonthly,
+    clientType: isMonthly ? "mensalista" : "avulso",
+    autoEmitInvoice: Boolean(autoEmitInvoice),
     notes: notes || "",
+    preferences: preferences || {},
     tags: tags || [],
     createdAt: new Date().toISOString()
   };
@@ -6576,7 +7294,30 @@ app.patch("/api/pms/reservations/:id/early-checkin", (req, res) => {
   const r = (db.reservations || []).find(x => x.id === id);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
 
-  r.earlyCheckinAuthorized = Boolean(req.body.earlyCheckinAuthorized);
+  ensureReservationAuditLogs(r);
+  const authUser = getAuthUser(req);
+  const newEarly = Boolean(req.body.earlyCheckinAuthorized);
+  if (Boolean(r.earlyCheckinAuthorized) !== newEarly) {
+    addReservationAuditLog(r, {
+      action: "early_checkin",
+      actor: {
+        id: authUser?.id || null,
+        name: authUser?.username || "Administrador",
+        role: authUser?.role || "admin",
+        type: "user"
+      },
+      source: "PMS Calendário",
+      description: newEarly ? "Early Check-in autorizado para liberação antecipada" : "Autorização de Early Check-in revogada",
+      changes: [{
+        field: "earlyCheckinAuthorized",
+        label: "Early Check-in Autorizado",
+        oldValue: r.earlyCheckinAuthorized ? "Sim" : "Não",
+        newValue: newEarly ? "Sim" : "Não"
+      }]
+    });
+  }
+
+  r.earlyCheckinAuthorized = newEarly;
   r.updatedAt = new Date().toISOString();
   saveDatabase();
   res.json({ success: true, earlyCheckinAuthorized: r.earlyCheckinAuthorized });
@@ -6587,7 +7328,30 @@ app.patch("/api/pms/reservations/:id/reception-notes", (req, res) => {
   const r = (db.reservations || []).find(x => x.id === id);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
 
-  r.receptionNotes = String(req.body.receptionNotes || "");
+  ensureReservationAuditLogs(r);
+  const authUser = getAuthUser(req);
+  const newNotes = String(req.body.receptionNotes || "");
+  if (String(r.receptionNotes || "") !== newNotes) {
+    addReservationAuditLog(r, {
+      action: "reception_note",
+      actor: {
+        id: authUser?.id || null,
+        name: authUser?.username || "Administrador",
+        role: authUser?.role || "admin",
+        type: "user"
+      },
+      source: "PMS Calendário",
+      description: "Aviso para a portaria/recepção atualizado",
+      changes: [{
+        field: "receptionNotes",
+        label: "Aviso para a Recepção",
+        oldValue: r.receptionNotes || "(vazio)",
+        newValue: newNotes || "(vazio)"
+      }]
+    });
+  }
+
+  r.receptionNotes = newNotes;
   r.updatedAt = new Date().toISOString();
   saveDatabase();
   res.json({ success: true, receptionNotes: r.receptionNotes });
@@ -6597,6 +7361,21 @@ app.post("/api/reception/checkin/:reservationId", (req, res) => {
   const id = Number(req.params.reservationId);
   const r = (db.reservations || []).find(x => x.id === id);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
+
+  ensureReservationAuditLogs(r);
+  const authUser = getAuthUser(req);
+  addReservationAuditLog(r, {
+    action: "checkin",
+    actor: {
+      id: authUser?.id || null,
+      name: authUser?.username || "Recepção / Portaria",
+      role: authUser?.role || "reception",
+      type: "user"
+    },
+    source: "Recepção / Portaria",
+    description: `Check-in do Apt ${r.flatNumber} registrado na portaria`,
+    changes: [{ field: "status", label: "Status da Reserva", oldValue: r.status || "confirmada", newValue: "in_house" }]
+  });
 
   const flat = db.flats.find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
   
@@ -6630,11 +7409,26 @@ app.post("/api/reception/checkout/:reservationId", (req, res) => {
   const r = (db.reservations || []).find(x => x.id === id);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
 
+  ensureReservationAuditLogs(r);
+  const authUser = getAuthUser(req);
   const previousStatus = r.status;
   r.status = "completed";
   r.actualCheckoutAt = new Date().toISOString();
   r.previousStatus = previousStatus;
   r.updatedAt = new Date().toISOString();
+
+  addReservationAuditLog(r, {
+    action: "checkout",
+    actor: {
+      id: authUser?.id || null,
+      name: authUser?.username || "Recepção / Portaria",
+      role: authUser?.role || "reception",
+      type: "user"
+    },
+    source: "Recepção / Portaria",
+    description: `Check-out do Apt ${r.flatNumber} finalizado na recepção`,
+    changes: [{ field: "status", label: "Status da Reserva", oldValue: previousStatus || "in_house", newValue: "completed" }]
+  });
 
   const flat = db.flats.find(f => f.id === r.flatId);
   if (flat) {
@@ -6760,6 +7554,155 @@ app.post("/api/reception/undo-checkout/:reservationId", (req, res) => {
 
   saveDatabase();
   res.json({ success: true, message: `Check-out do Apt ${r.flatNumber} desfeito com sucesso!`, reservation: r });
+});
+
+// ── Communications & Messaging History Engine (Zoho Mail SMTP & Portaria) ────
+
+// 1. Obter histórico de comunicações vinculado à reserva
+app.get("/api/pms/reservations/:id/communications", (req, res) => {
+  const paramId = String(req.params.id || "").trim();
+  const r = (db.reservations || []).find(x => String(x.id) === paramId || x.code === paramId);
+  const resIdStr = r ? String(r.id) : paramId;
+  const resCode = r?.code;
+
+  if (!db.reservationCommunications) db.reservationCommunications = [];
+
+  const list = db.reservationCommunications.filter(c => 
+    String(c.reservation_id) === resIdStr || 
+    (resCode && String(c.reservation_id) === String(resCode))
+  );
+
+  // Ordena em ordem cronológica reversa (mais recente primeiro)
+  list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+  res.json(list);
+});
+
+// 2. Envio manual rápido de e-mail a partir do painel da reserva
+app.post("/api/pms/reservations/:id/communications/send-email", async (req, res) => {
+  const paramId = String(req.params.id || "").trim();
+  const { recipient, subject, body } = req.body;
+
+  if (!recipient || !subject || !body) {
+    return res.status(400).json({ error: "Destinatário, assunto e corpo da mensagem são obrigatórios." });
+  }
+
+  const r = (db.reservations || []).find(x => String(x.id) === paramId || x.code === paramId);
+  const flat = r ? (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber)) : null;
+
+  const { bodyHtml } = renderManualEmail({
+    subject: subject.trim(),
+    message: body.trim(),
+    reservation: r,
+    flat,
+    settings: db.settings
+  });
+
+  const commLog = await sendEmailAsync({
+    db,
+    saveDatabase,
+    reservationId: r?.code || r?.id || paramId,
+    recipient: recipient.trim(),
+    subject: subject.trim(),
+    bodyHtml,
+    bodyText: body.trim(),
+    type: "email",
+    direction: "outbound",
+    metadata: {
+      trigger: "manual",
+      flatNumber: r?.flatNumber || flat?.number,
+      guestName: r?.guestName
+    }
+  });
+
+  res.json({ success: true, communication: commLog });
+});
+
+// 3. Reenvio em 1 clique de e-mail com status falho
+app.post("/api/pms/reservations/communications/:commId/resend", async (req, res) => {
+  const commId = req.params.commId;
+  const result = await resendEmailAsync({
+    db,
+    saveDatabase,
+    communicationId: commId
+  });
+
+  if (!result.ok) {
+    return res.status(500).json({ error: result.error });
+  }
+
+  res.json({ success: true, message: result.message });
+});
+
+// 4. Obter configurações de e-mail (Zoho SMTP)
+app.get("/api/settings/email", (req, res) => {
+  const config = getSmtpConfig(db);
+  res.json({
+    config: {
+      ...config,
+      pass: config.pass ? "••••••••" : ""
+    },
+    isConfigured: config.isConfigured,
+    receptionEmail: db.settings?.receptionEmail || "portaria.soho@corpflats.com.br",
+    buildingName: db.settings?.buildingName || "Edifício Soho Residence Service"
+  });
+});
+
+// 5. Salvar configurações de e-mail (Zoho SMTP)
+app.post("/api/settings/email", (req, res) => {
+  const { host, port, user, pass, fromName, fromEmail, receptionEmail, buildingName } = req.body;
+  if (!db.settings) db.settings = {};
+  if (!db.settings.emailSettings) db.settings.emailSettings = {};
+
+  if (host !== undefined) db.settings.emailSettings.host = host.trim();
+  if (port !== undefined) db.settings.emailSettings.port = Number(port);
+  if (user !== undefined) db.settings.emailSettings.user = user.trim();
+  if (pass !== undefined && pass !== "••••••••" && pass !== "") {
+    db.settings.emailSettings.pass = pass.trim();
+  }
+  if (fromName !== undefined) db.settings.emailSettings.fromName = fromName.trim();
+  if (fromEmail !== undefined) db.settings.emailSettings.fromEmail = fromEmail.trim();
+
+  if (receptionEmail !== undefined) db.settings.receptionEmail = receptionEmail.trim();
+  if (buildingName !== undefined) db.settings.buildingName = buildingName.trim();
+
+  saveDatabase();
+  res.json({ success: true, message: "Configurações de e-mail salvas com sucesso!" });
+});
+
+// 6. Testar conexão SMTP / Disparo de e-mail de teste
+app.post("/api/settings/email/test", async (req, res) => {
+  const { testEmail } = req.body;
+  const verifyRes = await verifySmtpConnection(db);
+  if (!verifyRes.ok) {
+    return res.status(400).json({ error: verifyRes.error });
+  }
+
+  if (testEmail) {
+    const config = getSmtpConfig(db);
+    const commLog = await sendEmailAsync({
+      db,
+      saveDatabase,
+      reservationId: "TEST",
+      recipient: testEmail.trim(),
+      subject: `[TESTE] Conexão Zoho Mail SMTP CorpFlats - ${new Date().toLocaleTimeString('pt-BR')}`,
+      bodyHtml: `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 25px; background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; max-width: 550px; margin: 20px auto;">
+        <h2 style="color: #0f172a; margin-top: 0;">🚀 Teste de Conexão SMTP Bem-Sucedido!</h2>
+        <p style="color: #475569; line-height: 1.5;">Este é um e-mail transacional de validação enviado pelo servidor CorpFlats via Zoho Mail SMTP.</p>
+        <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 12px 16px; border-radius: 8px; margin: 15px 0;">
+          <p style="margin: 4px 0; font-size: 13px;"><strong>Host:</strong> ${config.host}:${config.port}</p>
+          <p style="margin: 4px 0; font-size: 13px;"><strong>Usuário:</strong> ${config.user}</p>
+          <p style="margin: 4px 0; font-size: 13px;"><strong>Remetente:</strong> ${config.fromName} &lt;${config.fromEmail}&gt;</p>
+        </div>
+        <p style="color: #059669; font-weight: bold; margin-bottom: 0;">✓ Status: Operacional e pronto para envios à portaria e aos hóspedes!</p>
+      </div>`,
+      bodyText: "Teste de Conexão SMTP CorpFlats bem-sucedido!",
+      metadata: { trigger: "smtp_test" }
+    });
+    return res.json({ success: true, message: `Conexão SMTP validada e e-mail de teste disparado para ${testEmail}!`, communication: commLog });
+  }
+
+  res.json({ success: true, message: verifyRes.message });
 });
 
 // ── FNHR Pre-Checkin Digital Endpoints ──────────────────────────────────────
@@ -6907,6 +7850,16 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     r.fnhrCompleted = true;
   }
 
+  if (req.body.vehiclePlate) {
+    r.vehicle = {
+      plate: String(req.body.vehiclePlate).toUpperCase().trim(),
+      brand: (req.body.vehicleBrand || "").trim(),
+      model: (req.body.vehicleModel || "").trim(),
+      color: (req.body.vehicleColor || "").trim(),
+      updatedAt: now
+    };
+  }
+
   r.updatedAt = now;
 
   createNotification({
@@ -6917,6 +7870,32 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     metadata: { reservationId: r.id, flatNumber: r.flatNumber, guestName: validName },
     targetUrl: "/portaria"
   });
+
+  // Gatilho A: Envio Automático de Notificação à Recepção/Portaria do Edifício
+  try {
+    const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
+    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "portaria.soho@corpflats.com.br";
+    const { subject, bodyHtml } = renderCheckinConfirmedEmail({ reservation: r, flat, settings: db.settings });
+
+    sendEmailAsync({
+      db,
+      saveDatabase,
+      reservationId: r.code || r.id,
+      recipient: receptionEmail,
+      subject,
+      bodyHtml,
+      type: "email",
+      direction: "outbound",
+      metadata: {
+        trigger: "pre_checkin",
+        flatNumber: r.flatNumber,
+        guestName: validName,
+        buildingName: flat?.buildingName || db.settings?.buildingName || "Edifício Soho Residence Service"
+      }
+    });
+  } catch (mailErr) {
+    console.warn("[MailService] Erro ao disparar aviso de check-in à portaria:", mailErr.message);
+  }
 
   saveDatabase();
 
@@ -11268,7 +12247,7 @@ app.get("/api/ai/reviews", (req, res) => {
       highlights: [
         "Café da manhã no quarto elogiado por 94% dos viajantes executivos",
         "Check-in Digital destacou a velocidade de acesso na portaria do Soho",
-        "Wi-Fi privativo altamente pontuado para trabalho remoto/home office",
+        "Wi-Fi de 500 Mega altamente pontuado para trabalho remoto/home office",
         "Limpeza e higienização das roupas de cama com nota máxima"
       ],
       actionItems: [
@@ -12057,6 +13036,43 @@ async function checkInterPixCobStatus(txid) {
   });
 }
 
+// 6.2.2 Consulta Ativa de Pagamento no Mercado Pago por External Reference
+async function checkMercadoPagoPaymentByRef(externalRef) {
+  if (!externalRef) return null;
+  const cfg = db.settings?.mercadoPagoConfig || DEFAULT_MP_CONFIG;
+  const accessToken = cfg.accessToken || process.env.MERCADOPAGO_ACCESS_TOKEN;
+  if (!accessToken) return null;
+
+  return new Promise((resolve) => {
+    const req = https.request(`https://api.mercadopago.com/v1/payments/search?external_reference=${encodeURIComponent(externalRef)}`, {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${accessToken}`
+      }
+    }, (res) => {
+      let raw = "";
+      res.on("data", c => raw += c);
+      res.on("end", () => {
+        try {
+          const json = JSON.parse(raw);
+          if (json && Array.isArray(json.results) && json.results.length > 0) {
+            const approved = json.results.find(p => p.status === "approved");
+            if (approved) return resolve(approved);
+          }
+          resolve(null);
+        } catch {
+          resolve(null);
+        }
+      });
+    });
+    req.on("error", (e) => {
+      console.warn("[Mercado Pago] Erro ao buscar pagamentos por ref:", e.message);
+      resolve(null);
+    });
+    req.end();
+  });
+}
+
 // 6.3 Checar Status de Pagamento de Reserva Específica com Consulta Ativa em Tempo Real
 app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
   try {
@@ -12065,14 +13081,15 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
     if (!r) return res.status(404).json({ error: "Reserva não encontrada." });
 
     // Se já está marcado como pago, retorna de imediato
-    if (r.paymentStatus === "pago_total" || r.paymentStatus === "pago") {
+    if (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0)) {
       return res.json({
         code: r.code,
         paid: true,
-        paymentStatus: r.paymentStatus,
+        paymentStatus: "pago_total",
         paidAmount: r.paidAmount || r.totalAmount,
         totalAmount: r.totalAmount || 0,
-        pixTxId: r.pixTxId || null
+        pixTxId: r.pixTxId || null,
+        mpPaymentId: r.mpPaymentId || null
       });
     }
 
@@ -12103,21 +13120,158 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
           paymentStatus: "pago_total",
           paidAmount: valorPago,
           totalAmount: r.totalAmount || 0,
-          pixTxId: r.pixTxId
+          pixTxId: r.pixTxId,
+          mpPaymentId: r.mpPaymentId || null
         });
       }
+    }
+
+    // Se não liquidou pelo Inter, verifica no Mercado Pago (Cartão de Crédito)
+    const mpPayment = await checkMercadoPagoPaymentByRef(r.code);
+    if (mpPayment && mpPayment.status === "approved") {
+      const valorPago = Number(mpPayment.transaction_amount || mpPayment.total_paid_amount || r.totalAmount);
+      r.paymentStatus = "pago_total";
+      r.paidAmount = valorPago;
+      r.paidAt = mpPayment.date_approved || new Date().toISOString();
+      r.paymentMethod = "cartao_credito";
+      r.mpPaymentId = String(mpPayment.id);
+
+      createNotification({
+        category: "checkout",
+        title: `💳 Cartão Confirmado: R$ ${valorPago.toLocaleString("pt-BR")} (Apt ${r.flatNumber})`,
+        message: `Reserva ${r.code} liquidada no cartão de crédito via Mercado Pago por ${r.guestName}!`,
+        severity: "success",
+        metadata: { reservationCode: r.code, paymentId: mpPayment.id, amount: valorPago },
+        targetUrl: `/reservas`
+      });
+
+      saveDatabase();
+
+      return res.json({
+        code: r.code,
+        paid: true,
+        paymentStatus: "pago_total",
+        paidAmount: valorPago,
+        totalAmount: r.totalAmount || 0,
+        pixTxId: r.pixTxId || null,
+        mpPaymentId: r.mpPaymentId
+      });
     }
 
     res.json({
       code: r.code,
       paid: false,
-      paymentStatus: r.paymentStatus || "aguardando_pix",
+      paymentStatus: r.paymentStatus || "aguardando_pagamento",
+      paymentMethod: r.paymentMethod || "pix",
       paidAmount: r.paidAmount || 0,
       totalAmount: r.totalAmount || 0,
-      pixTxId: r.pixTxId || null
+      pixTxId: r.pixTxId || null,
+      pixCopiaECola: r.pixCopiaECola || null,
+      mpInitPoint: r.mpInitPoint || null,
+      mpPreferenceId: r.mpPreferenceId || null
     });
   } catch (err) {
     console.error("[Payment Status Check] Erro:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 6.3.1 Alterar Forma de Pagamento da Reserva (PIX <-> Cartão de Crédito)
+app.post("/api/pms/reservations/:code/change-payment-method", async (req, res) => {
+  try {
+    const { code } = req.params;
+    const { method } = req.body || {}; // "pix" | "card" | "cartao_credito"
+    if (!db.reservations) db.reservations = [];
+    const r = findReservationByLocatorOrContact(code) || (db.reservations || []).find(x => x.code === code || String(x.id) === code);
+    if (!r) return res.status(404).json({ error: "Reserva não encontrada." });
+
+    const isPaid = r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0);
+    if (isPaid) {
+      return res.json({
+        success: true,
+        isPaid: true,
+        message: "Esta reserva já foi liquidada integralmente.",
+        reservation: r
+      });
+    }
+
+    const targetMethod = (method || "").toLowerCase().includes("card") || (method || "").toLowerCase().includes("cartao") ? "cartao_credito" : "pix";
+
+    if (targetMethod === "pix") {
+      r.paymentMethod = "pix";
+      r.paymentStatus = "aguardando_pix";
+
+      // Se ainda não tem PIX emitido ou precisa gerar
+      if (!r.pixCopiaECola) {
+        try {
+          const pixResult = await createInterPixCob({
+            amount: r.totalAmount,
+            description: `Reserva CorpFlats ${r.code}`,
+            debtorName: r.guestName,
+            debtorDocument: r.guestDocument || r.document,
+            reservationCode: r.code
+          });
+          r.pixTxId = pixResult.txid;
+          r.pixCopiaECola = pixResult.pixCopiaECola;
+        } catch (pixErr) {
+          console.warn("[Change Payment Method] Falha Inter, gerando PIX estático:", pixErr.message);
+          const staticPayload = generateStaticPixPayload({
+            pixKey: DEFAULT_INTER_CONFIG.pixKey || "47964813000165",
+            amount: r.totalAmount,
+            merchantName: "CORPFLATS LTDA",
+            merchantCity: "CAMPOS DOS GOYTACAZES",
+            txid: r.code.replace(/[^a-zA-Z0-9]/g, "").substring(0, 25)
+          });
+          r.pixTxId = r.pixTxId || `STAT_${Date.now()}`;
+          r.pixCopiaECola = staticPayload;
+        }
+      }
+
+      saveDatabase();
+      return res.json({
+        success: true,
+        paymentMethod: "pix",
+        pixCopiaECola: r.pixCopiaECola,
+        pixTxId: r.pixTxId,
+        paymentStatus: r.paymentStatus,
+        reservation: r
+      });
+    } else {
+      // Cartão de Crédito (Mercado Pago)
+      r.paymentMethod = "cartao_credito";
+      r.paymentStatus = "aguardando_cartao";
+
+      if (!r.mpInitPoint) {
+        try {
+          const nightsCount = Math.max(1, Math.round((new Date(r.checkoutDate).getTime() - new Date(r.checkinDate).getTime()) / (1000 * 60 * 60 * 24)));
+          const mpPreference = await createMercadoPagoPreference({
+            reservationCode: r.code,
+            amount: r.totalAmount,
+            guestName: r.guestName,
+            guestEmail: r.guestEmail,
+            nights: nightsCount,
+            flatNumber: r.flatNumber
+          });
+          r.mpPreferenceId = mpPreference.id;
+          r.mpInitPoint = mpPreference.initPoint;
+        } catch (mpErr) {
+          console.error("[Change Payment Method] Erro ao criar preferência Mercado Pago:", mpErr.message);
+          return res.status(500).json({ error: `Falha ao gerar link Mercado Pago: ${mpErr.message}` });
+        }
+      }
+
+      saveDatabase();
+      return res.json({
+        success: true,
+        paymentMethod: "cartao_credito",
+        initPoint: r.mpInitPoint,
+        preferenceId: r.mpPreferenceId,
+        paymentStatus: r.paymentStatus,
+        reservation: r
+      });
+    }
+  } catch (err) {
+    console.error("[Change Payment Method] Erro:", err);
     res.status(500).json({ error: err.message });
   }
 });

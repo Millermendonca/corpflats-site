@@ -11,7 +11,8 @@ import {
   Sparkles, CheckCircle2, ArrowRight, Clock, KeyRound, 
   MessageCircle, FileText, Ban, AlertTriangle, ChevronRight,
   Wifi, HelpCircle, Check, Copy, Phone, UserCheck, ShieldAlert,
-  MapPin, Navigation, ExternalLink, Car, ArrowLeft, Search
+  MapPin, Navigation, ExternalLink, Car, ArrowLeft, Search,
+  CreditCard, QrCode, RefreshCw, AlertCircle
 } from "lucide-react"
 import { format, parseISO, differenceInDays } from "date-fns"
 import { ptBR } from "date-fns/locale"
@@ -58,6 +59,11 @@ export default function GuestPortal() {
   const [copiedKey, setCopiedKey] = useState(false)
   const [copiedWifi, setCopiedWifi] = useState(false)
   const [copiedSsid, setCopiedSsid] = useState(false)
+  const [copiedPix, setCopiedPix] = useState(false)
+  const [checkingPayment, setCheckingPayment] = useState(false)
+  const [paymentMethodTab, setPaymentMethodTab] = useState<"pix" | "card">("pix")
+  const [changingMethod, setChangingMethod] = useState(false)
+  const [paymentSuccessNotice, setPaymentSuccessNotice] = useState(false)
   
   // Modals & Action States
   const [termsModalOpen, setTermsModalOpen] = useState(false)
@@ -439,6 +445,107 @@ export default function GuestPortal() {
     setTimeout(() => setCopiedSsid(false), 2500)
   }
 
+  const isPaid = reservation.paymentStatus === "pago_total" || reservation.paymentStatus === "pago" || (Number(reservation.paidAmount) >= Number(reservation.totalAmount) && Number(reservation.totalAmount) > 0)
+  const paidAmount = isPaid ? (reservation.paidAmount || reservation.totalAmount || 0) : (Number(reservation.paidAmount) || 0)
+  const pendingAmount = Math.max(0, (reservation.totalAmount || 0) - paidAmount)
+
+  const handleCopyPix = () => {
+    if (!reservation.pixCopiaECola) return
+    navigator.clipboard.writeText(reservation.pixCopiaECola)
+    setCopiedPix(true)
+    setTimeout(() => setCopiedPix(false), 2500)
+  }
+
+  const handleChangePaymentMethod = async (newMethod: "pix" | "card") => {
+    setPaymentMethodTab(newMethod)
+    setChangingMethod(true)
+    try {
+      const res = await fetch(`/api/pms/reservations/${encodeURIComponent(reservation.code)}/change-payment-method`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ method: newMethod })
+      })
+      const json = await res.json()
+      if (json.success && json.reservation) {
+        setData((prev: any) => prev ? ({
+          ...prev,
+          reservation: {
+            ...prev.reservation,
+            ...json.reservation
+          }
+        }) : null)
+      }
+    } catch (e) {
+      console.error("Erro ao alterar forma de pagamento:", e)
+    } finally {
+      setChangingMethod(false)
+    }
+  }
+
+  const handleCheckPaymentStatus = async () => {
+    setCheckingPayment(true)
+    try {
+      const res = await fetch(`/api/pms/reservations/${encodeURIComponent(reservation.code)}/payment-status`)
+      if (res.ok) {
+        const json = await res.json()
+        if (json.paid) {
+          setPaymentSuccessNotice(true)
+          setData((prev: any) => prev ? ({
+            ...prev,
+            reservation: {
+              ...prev.reservation,
+              paymentStatus: "pago_total",
+              paidAmount: json.paidAmount,
+              paidAt: json.paidAt || new Date().toISOString(),
+              pixTxId: json.pixTxId || prev.reservation.pixTxId,
+              mpPaymentId: json.mpPaymentId || prev.reservation.mpPaymentId
+            }
+          }) : null)
+        }
+      }
+    } catch (e) {
+      console.error("Erro ao verificar status de pagamento:", e)
+    } finally {
+      setCheckingPayment(false)
+    }
+  }
+
+  // Polling automático de status de pagamento a cada 6 segundos quando pendente
+  useEffect(() => {
+    if (!reservation?.code || isPaid) return
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/pms/reservations/${encodeURIComponent(reservation.code)}/payment-status`)
+        if (res.ok) {
+          const json = await res.json()
+          if (json.paid) {
+            setPaymentSuccessNotice(true)
+            setData((prev: any) => prev ? ({
+              ...prev,
+              reservation: {
+                ...prev.reservation,
+                paymentStatus: "pago_total",
+                paidAmount: json.paidAmount,
+                paidAt: json.paidAt || new Date().toISOString(),
+                pixTxId: json.pixTxId || prev.reservation.pixTxId,
+                mpPaymentId: json.mpPaymentId || prev.reservation.mpPaymentId
+              }
+            }) : null)
+          }
+        }
+      } catch {}
+    }, 6000)
+    return () => clearInterval(interval)
+  }, [reservation?.code, isPaid])
+
+  useEffect(() => {
+    if (reservation?.paymentMethod === "cartao_credito" || reservation?.paymentMethod === "card") {
+      setPaymentMethodTab("card")
+    } else {
+      setPaymentMethodTab("pix")
+    }
+  }, [reservation?.paymentMethod])
+
   return (
     <div className="min-h-screen bg-slate-50/70 text-slate-900 flex flex-col font-sans selection:bg-sky-500 selection:text-white pb-20 w-full max-w-full overflow-x-hidden">
       {/* ── Top Navigation Bar (Header Clean & Sofisticado) ──────────────── */}
@@ -453,9 +560,15 @@ export default function GuestPortal() {
                 <span className="font-bold text-base sm:text-lg tracking-tight text-slate-900 leading-none">
                   CorpFlats
                 </span>
-                <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200/90 text-[10px] font-bold py-0.5 px-2">
-                  Reserva Confirmada
-                </Badge>
+                {isPaid ? (
+                  <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200/90 text-[10px] font-bold py-0.5 px-2">
+                    ✓ Reserva Confirmada & Paga
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-300 text-[10px] font-bold py-0.5 px-2 animate-pulse">
+                    ⏳ Aguardando Pagamento
+                  </Badge>
+                )}
               </div>
               <span className="text-[11px] text-slate-500 font-mono font-medium block mt-0.5">
                 Localizador: <strong className="text-slate-800 font-bold">{reservation.code}</strong>
@@ -576,6 +689,267 @@ export default function GuestPortal() {
           })()}
         </Card>
 
+        {/* ── 1.5 Card de Pagamento & Confirmação Financeira ───────────────── */}
+        <Card className={`rounded-3xl border shadow-md p-5 sm:p-7 space-y-4 transition-all ${
+          isPaid 
+            ? "bg-gradient-to-br from-emerald-50/90 via-white to-emerald-50/40 border-emerald-200/90" 
+            : "bg-white border-amber-300 shadow-lg ring-1 ring-amber-300/60"
+        }`}>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+            <div className="flex items-center gap-2.5">
+              <div className={`w-10 h-10 rounded-2xl flex items-center justify-center font-black text-sm shadow-2xs ${
+                isPaid ? "bg-emerald-100 text-emerald-700 border border-emerald-300" : "bg-amber-100 text-amber-800 border border-amber-300"
+              }`}>
+                {isPaid ? <CheckCircle2 className="w-5 h-5 text-emerald-600" /> : <Clock className="w-5 h-5 text-amber-600" />}
+              </div>
+              <div>
+                <h2 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2">
+                  {isPaid ? "Pagamento Confirmado & Liquidado" : "Concluir Pagamento da Reserva"}
+                </h2>
+                <span className="text-xs text-slate-500">
+                  {isPaid 
+                    ? "Sua hospedagem está 100% garantida e o acesso ao condomínio liberado." 
+                    : "Escolha como deseja pagar para confirmar sua estadia e liberar sua fechadura."}
+                </span>
+              </div>
+            </div>
+
+            <Badge className={isPaid ? "bg-emerald-600 text-white font-bold text-xs" : "bg-amber-600 text-white font-bold text-xs"}>
+              {isPaid ? "✓ Pago Integralmente" : "⏳ Aguardando Pagamento"}
+            </Badge>
+          </div>
+
+          {/* Resumo Financeiro */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
+            <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
+              <span className="text-slate-400 font-bold uppercase text-[10px] block">Valor Total da Estadia</span>
+              <span className="text-sm sm:text-base font-bold text-slate-900 block mt-0.5">
+                R$ {(reservation.totalAmount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+              </span>
+            </div>
+
+            <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
+              <span className="text-slate-400 font-bold uppercase text-[10px] block">Valor Recebido</span>
+              <span className={`text-sm sm:text-base font-bold block mt-0.5 ${isPaid ? "text-emerald-600 font-bold" : "text-slate-600"}`}>
+                R$ {paidAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+              </span>
+            </div>
+
+            {!isPaid && (
+              <div className="p-3 bg-amber-50/90 rounded-2xl border border-amber-200 col-span-2 sm:col-span-1">
+                <span className="text-amber-800 font-bold uppercase text-[10px] block">Saldo a Pagar</span>
+                <span className="text-sm sm:text-base font-black text-amber-700 block mt-0.5">
+                  R$ {pendingAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Se PAGO: Mensagem de Sucesso */}
+          {isPaid && (
+            <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-emerald-900">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                <div>
+                  <span className="font-bold block text-sm">Reserva 100% Confirmada!</span>
+                  <span className="text-emerald-800 text-xs">
+                    Liquidado via {reservation.paymentMethod === "cartao_credito" || reservation.mpPaymentId ? "Cartão de Crédito (Mercado Pago)" : "PIX Banco Inter"}.
+                  </span>
+                </div>
+              </div>
+              {reservation.paidAt && (
+                <span className="text-[11px] font-medium text-emerald-700 bg-white/80 px-2.5 py-1 rounded-xl border border-emerald-200">
+                  {format(parseISO(reservation.paidAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Se NÃO PAGO: Seletor de Método e Instruções */}
+          {!isPaid && (
+            <div className="space-y-4 pt-2">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold text-slate-700 block">
+                  Selecione ou altere a forma de pagamento:
+                </Label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleChangePaymentMethod("pix")}
+                    disabled={changingMethod}
+                    className={`p-3 rounded-2xl border text-left transition-all flex items-center gap-2.5 ${
+                      paymentMethodTab === "pix"
+                        ? "border-sky-500 bg-sky-50/70 text-sky-900 ring-2 ring-sky-400/40 shadow-xs"
+                        : "border-slate-200 hover:bg-slate-50 text-slate-700"
+                    }`}
+                  >
+                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 ${
+                      paymentMethodTab === "pix" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-600"
+                    }`}>
+                      ⚡
+                    </div>
+                    <div>
+                      <span className="font-bold text-xs sm:text-sm block leading-tight">PIX Instantâneo</span>
+                      <span className="text-[10.5px] text-slate-500 hidden sm:block">Banco Inter • Baixa Imediata</span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleChangePaymentMethod("card")}
+                    disabled={changingMethod}
+                    className={`p-3 rounded-2xl border text-left transition-all flex items-center gap-2.5 ${
+                      paymentMethodTab === "card"
+                        ? "border-sky-500 bg-sky-50/70 text-sky-900 ring-2 ring-sky-400/40 shadow-xs"
+                        : "border-slate-200 hover:bg-slate-50 text-slate-700"
+                    }`}
+                  >
+                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 ${
+                      paymentMethodTab === "card" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-600"
+                    }`}>
+                      <CreditCard className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="font-bold text-xs sm:text-sm block leading-tight">Cartão de Crédito</span>
+                      <span className="text-[10.5px] text-slate-500 hidden sm:block">Mercado Pago • Até 12x</span>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Aba PIX */}
+              {paymentMethodTab === "pix" && (
+                <div className="p-4 sm:p-6 bg-slate-50 rounded-2xl border border-slate-200 space-y-4 text-center">
+                  <div className="space-y-1">
+                    <span className="text-sm font-bold text-slate-900 block">
+                      Pague via PIX com Baixa Automática
+                    </span>
+                    <span className="text-xs text-slate-500 block max-w-md mx-auto">
+                      Abra o aplicativo do seu banco, escolha <strong>Pagar com PIX</strong> e escaneie o QR Code abaixo ou copie o código:
+                    </span>
+                  </div>
+
+                  {/* QR Code */}
+                  {reservation.pixCopiaECola ? (
+                    <div className="inline-block p-3 bg-white rounded-2xl border border-slate-200 shadow-sm">
+                      <img
+                        src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(reservation.pixCopiaECola)}`}
+                        alt="QR Code PIX Banco Inter"
+                        className="w-44 h-44 sm:w-48 sm:h-48 mx-auto"
+                      />
+                    </div>
+                  ) : (
+                    <div className="p-6 bg-white rounded-2xl border border-slate-200 text-xs text-slate-500">
+                      Gerando cobrança PIX oficial...
+                    </div>
+                  )}
+
+                  {/* Código Copia e Cola */}
+                  {reservation.pixCopiaECola && (
+                    <div className="space-y-2 max-w-lg mx-auto">
+                      <div className="flex items-center gap-1.5 p-2 bg-white rounded-xl border border-slate-200 text-left">
+                        <span className="font-mono text-[11px] text-slate-600 truncate flex-1 px-1 select-all">
+                          {reservation.pixCopiaECola}
+                        </span>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={handleCopyPix}
+                          className={`h-8 px-3 rounded-lg text-xs font-bold gap-1.5 shrink-0 transition-all ${
+                            copiedPix ? "bg-emerald-600 text-white" : "bg-slate-900 hover:bg-slate-800 text-white"
+                          }`}
+                        >
+                          {copiedPix ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                          <span>{copiedPix ? "Copiado!" : "Copiar Código PIX"}</span>
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Ações e Polling */}
+                  <div className="flex flex-col sm:flex-row items-center justify-center gap-2 pt-1">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handleCheckPaymentStatus}
+                      disabled={checkingPayment}
+                      className="h-9 px-4 rounded-xl text-xs font-bold border-slate-300 hover:bg-white text-slate-700 gap-1.5 shadow-2xs"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${checkingPayment ? "animate-spin text-sky-600" : ""}`} />
+                      <span>{checkingPayment ? "Verificando..." : "Já fiz o PIX • Verificar Pagamento"}</span>
+                    </Button>
+                  </div>
+
+                  <div className="text-[11px] text-emerald-700 flex items-center justify-center gap-1.5 font-medium">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                    <span>Verificação automática ativa em tempo real. Assim que pagar, sua página será atualizada!</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Aba Cartão de Crédito (Mercado Pago) */}
+              {paymentMethodTab === "card" && (
+                <div className="p-4 sm:p-6 bg-slate-50 rounded-2xl border border-slate-200 space-y-4 text-center">
+                  <div className="space-y-1">
+                    <span className="text-sm font-bold text-slate-900 block">
+                      Pagamento em até 12x no Cartão de Crédito
+                    </span>
+                    <span className="text-xs text-slate-500 block max-w-md mx-auto">
+                      Pagamento 100% seguro processado pelo <strong>Mercado Pago Checkout Pro</strong> com parcelamento e todas as bandeiras.
+                    </span>
+                  </div>
+
+                  <div className="max-w-md mx-auto p-4 bg-white rounded-2xl border border-slate-200 space-y-3">
+                    <div className="flex items-center justify-between text-xs border-b border-slate-100 pb-2">
+                      <span className="text-slate-500">Valor a parcelar:</span>
+                      <strong className="text-slate-900 text-sm">
+                        R$ {pendingAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                      </strong>
+                    </div>
+
+                    {reservation.mpInitPoint ? (
+                      <a
+                        href={reservation.mpInitPoint}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs sm:text-sm shadow-md hover:shadow-lg active:scale-95 transition-all"
+                      >
+                        <CreditCard className="w-4 h-4" />
+                        <span>Pagar no Cartão (Mercado Pago)</span>
+                        <ExternalLink className="w-3.5 h-3.5 opacity-80" />
+                      </a>
+                    ) : (
+                      <Button
+                        type="button"
+                        onClick={() => handleChangePaymentMethod("card")}
+                        disabled={changingMethod}
+                        className="w-full h-11 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs sm:text-sm shadow-md gap-2"
+                      >
+                        <CreditCard className="w-4 h-4" />
+                        <span>{changingMethod ? "Gerando link de pagamento..." : "Gerar Link de Pagamento no Cartão"}</span>
+                      </Button>
+                    )}
+
+                    <div className="pt-2 border-t border-slate-100">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleCheckPaymentStatus}
+                        disabled={checkingPayment}
+                        className="text-xs text-slate-600 hover:text-slate-900 font-semibold gap-1.5"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${checkingPayment ? "animate-spin text-sky-600" : ""}`} />
+                        <span>Já realizei o pagamento no cartão (Verificar)</span>
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </Card>
+
         {/* ── 2. Card: Acomodação & Chave de Acesso / Portaria ───────────── */}
         <Card className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-5 sm:p-7 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
@@ -621,7 +995,7 @@ export default function GuestPortal() {
                 </div>
               </div>
 
-              {accessCode && (
+              {accessCode && isPaid && (
                 <div className="p-3 bg-white rounded-xl border border-slate-200 flex items-center gap-3 shadow-2xs">
                   <div>
                     <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">
@@ -644,6 +1018,13 @@ export default function GuestPortal() {
                 </div>
               )}
             </div>
+
+            {!isPaid && (
+              <div className="p-3 bg-amber-50/90 border border-amber-200 rounded-xl flex items-center gap-2.5 text-xs text-amber-800 font-medium">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>A senha da fechadura eletrônica e a autorização de portaria serão liberadas de imediato assim que o pagamento pendente for liquidado.</span>
+              </div>
+            )}
 
             {/* Aviso de Antecipação Liberada */}
             {data.isCheckinToday && isFlatClean && (

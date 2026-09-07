@@ -220,6 +220,32 @@ Lamentamos que não possa se hospedar conosco nesta ocasião e estaremos de bra�
     buttons: [
       { id: "btn_site", type: "URL", label: "🌐 Reservar Novas Datas", url: "https://corpflats.onrender.com/reservar" }
     ]
+  },
+  {
+    id: "tpl_payment_pending",
+    triggerEvent: "payment_pending",
+    title: "Cobrança • Pagamento Pendente / Concluir Reserva",
+    description: "Enviado quando uma reserva está com status Aguardando Pagamento, com links para PIX e Cartão de Crédito.",
+    enabled: true,
+    triggerTiming: "immediate",
+    offsetValue: 0,
+    offsetUnit: "minutes",
+    fixedTime: "",
+    message: `Olá, *{{nome_hospede}}*! ⏳
+Sua pré-reserva no *{{nome_hotel}}* foi recebida e está *Aguardando Pagamento* para confirmação definitiva:
+
+📋 *Detalhes da Estadia:*
+• Código: *{{numero_reserva}}*
+• Acomodação: *Flat {{quarto}}*
+• Período: *{{data_checkin}} a {{data_checkout}}*
+• Valor Pendente: *{{valor_total}}*
+
+Para garantir sua acomodação, você pode pagar via PIX ou em até 12x no cartão de crédito acessando o portal seguro abaixo:`,
+    footer: "CorpFlats • Pagamento Seguro",
+    buttons: [
+      { id: "btn_pagar", type: "URL", label: "💳 Pagar e Confirmar", url: "{{link_portal_hospede}}" },
+      { id: "btn_chk", type: "URL", label: "🏨 Ver Minha Reserva", url: "{{link_portal_hospede}}" }
+    ]
   }
 ];
 
@@ -270,9 +296,10 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const checkoutTime = db.settings?.checkoutTime || "12:00";
   
   const guestCount = reservation.guestCount || reservation.adults || 1;
-  const paymentStatus = (reservation.paymentStatus === "pago" || (reservation.paidAmount >= reservation.totalAmount && reservation.totalAmount > 0))
+  const isPaid = reservation.paymentStatus === "pago" || reservation.paymentStatus === "pago_total" || (Number(reservation.paidAmount) >= Number(reservation.totalAmount) && Number(reservation.totalAmount) > 0);
+  const paymentStatus = isPaid
     ? "Confirmado / Pago" 
-    : "Pendente";
+    : "Aguardando Pagamento";
   const channel = reservation.channel || "Site CorpFlats";
   
   const hotelName = db.siteConfig?.branding?.brandName || "CorpFlats";
@@ -290,7 +317,8 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
 
   // Links inteligentes com autenticação por código de reserva
   const linkCheckinDigital = `${appOrigin}/pre-checkin/${resCode}`;
-  const linkPortalHospede = `${appOrigin}/portal-hospede/${resCode}`;
+  const linkPortalHospede = `${appOrigin}/minha-reserva/${resCode}`;
+  const linkPagamento = `${appOrigin}/minha-reserva/${resCode}`;
   const linkCafeManha = `${appOrigin}/cafe/${resCode}`;
   const linkCheckout = `${appOrigin}/checkout?code=${resCode}`;
 
@@ -325,6 +353,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{telefone_hotel}}": adminWhatsApp,
     "{{link_checkin_digital}}": linkCheckinDigital,
     "{{link_portal_hospede}}": linkPortalHospede,
+    "{{link_pagamento}}": linkPagamento,
     "{{link_cafe_manha}}": linkCafeManha,
     "{{link_checkout}}": linkCheckout,
     "{{link_avaliacao_google}}": googleReviewUrl
@@ -671,6 +700,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
 
     if (!db.whatsappTemplates || db.whatsappTemplates.length === 0) {
       db.whatsappTemplates = DEFAULT_WHATSAPP_TEMPLATES;
+    } else {
+      for (const defTpl of DEFAULT_WHATSAPP_TEMPLATES) {
+        if (!db.whatsappTemplates.some(t => t.id === defTpl.id)) {
+          db.whatsappTemplates.push(defTpl);
+        }
+      }
     }
 
     if (!db.whatsappQueue) {
