@@ -74,10 +74,10 @@ export function generateIcsContent(
 
   const uid = `booking-${data.reservationCode}@corpflats.com.br`
   const title = isCancelled 
-    ? `CANCELADA: Hospedagem CorpFlats Macaé - Flat ${data.flatNumber} (#${data.reservationCode})`
+    ? `CANCELADA: Hospedagem CorpFlats - Flat ${data.flatNumber} (#${data.reservationCode})`
     : sequence > 0
-    ? `REMARCADA: Hospedagem CorpFlats Macaé - Flat ${data.flatNumber} (#${data.reservationCode})`
-    : `Hospedagem CorpFlats Macaé - Flat ${data.flatNumber} - Reserva #${data.reservationCode}`
+    ? `REMARCADA: Hospedagem CorpFlats - Flat ${data.flatNumber} (#${data.reservationCode})`
+    : `Hospedagem CorpFlats - Flat ${data.flatNumber} - Reserva #${data.reservationCode}`
 
   const location = `${prop.name}, ${prop.address}, ${prop.city} - ${prop.state}, CEP ${prop.zipCode}`
   const manageUrl = data.manageUrl || `https://corpflats.onrender.com/minha-reserva/${data.reservationCode}`
@@ -95,7 +95,7 @@ export function generateIcsContent(
     )
   } else {
     descriptionLines.push(
-      sequence > 0 ? `🔄 RESERVA REMARCADA / ATUALIZADA` : `🏨 HOSPEDAGEM CONFIRMADA NA CORPFLATS MACAÉ`,
+      sequence > 0 ? `🔄 RESERVA REMARCADA / ATUALIZADA` : `🏨 HOSPEDAGEM CONFIRMADA NA CORPFLATS`,
       `----------------------------------------`,
       `Acomodação: Flat Studio ${data.flatNumber} (${data.flatName || 'Studio Executivo Climatizado'})`,
       `Código Localizador: ${data.reservationCode}`,
@@ -127,7 +127,7 @@ export function generateIcsContent(
   const lines = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
-    "PRODID:-//CorpFlats Macae//Motor de Reservas 2.0//PT",
+    "PRODID:-//CorpFlats//Motor de Reservas 2.0//PT",
     "CALSCALE:GREGORIAN",
     `METHOD:${method}`,
     "BEGIN:VEVENT",
@@ -193,12 +193,12 @@ export function getGoogleCalendarUrl(data: ReservationCalendarData): string {
   const checkinDt = formatIcsDateTime(data.checkinDate, data.checkinTime || prop.checkinTime)
   const checkoutDt = formatIcsDateTime(data.checkoutDate, data.checkoutTime || prop.checkoutTime)
 
-  const title = `Hospedagem CorpFlats Macaé - Flat ${data.flatNumber} (#${data.reservationCode})`
+  const title = `Hospedagem CorpFlats - Flat ${data.flatNumber} (#${data.reservationCode})`
   const location = `${prop.name}, ${prop.address}, ${prop.city} - ${prop.state}`
   const manageUrl = data.manageUrl || `https://corpflats.onrender.com/minha-reserva/${data.reservationCode}`
 
   const details = [
-    `🏨 HOSPEDAGEM CONFIRMADA NA CORPFLATS MACAÉ`,
+    `🏨 HOSPEDAGEM CONFIRMADA NA CORPFLATS`,
     `Acomodação: Flat ${data.flatNumber}`,
     `Reserva: #${data.reservationCode}`,
     `Hóspede: ${data.guestName}`,
@@ -230,7 +230,7 @@ export function getOutlookCalendarUrl(data: ReservationCalendarData): string {
   const checkinIso = `${data.checkinDate}T${data.checkinTime || prop.checkinTime}:00`
   const checkoutIso = `${data.checkoutDate}T${data.checkoutTime || prop.checkoutTime}:00`
 
-  const title = `Hospedagem CorpFlats Macaé - Flat ${data.flatNumber} (#${data.reservationCode})`
+  const title = `Hospedagem CorpFlats - Flat ${data.flatNumber} (#${data.reservationCode})`
   const location = `${prop.name}, ${prop.address}, ${prop.city} - ${prop.state}`
   const manageUrl = data.manageUrl || `https://corpflats.onrender.com/minha-reserva/${data.reservationCode}`
 
@@ -257,7 +257,7 @@ export function getYahooCalendarUrl(data: ReservationCalendarData): string {
   const checkinDt = formatIcsDateTime(data.checkinDate, data.checkinTime || prop.checkinTime)
   const checkoutDt = formatIcsDateTime(data.checkoutDate, data.checkoutTime || prop.checkoutTime)
 
-  const title = `Hospedagem CorpFlats Macaé - Flat ${data.flatNumber}`
+  const title = `Hospedagem CorpFlats - Flat ${data.flatNumber}`
   const location = `${prop.name}, ${prop.address}, ${prop.city} - ${prop.state}`
 
   const params = new URLSearchParams({

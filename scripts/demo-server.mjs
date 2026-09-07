@@ -2651,7 +2651,7 @@ app.get("/api/reservations/:code/calendar.ics", (req, res) => {
     const lines = [
       "BEGIN:VCALENDAR",
       "VERSION:2.0",
-      "PRODID:-//CorpFlats Macae//Motor de Reservas 2.0//PT",
+      "PRODID:-//CorpFlats//Motor de Reservas 2.0//PT",
       "CALSCALE:GREGORIAN",
       `METHOD:${method}`,
       "BEGIN:VEVENT",
@@ -2665,7 +2665,7 @@ app.get("/api/reservations/:code/calendar.ics", (req, res) => {
       `DESCRIPTION:${formattedDesc}`,
       `LOCATION:${location}`,
       `URL:${manageUrl}`,
-      `ORGANIZER;CN="CorpFlats Macaé":mailto:reservas@corpflats.com.br`,
+      `ORGANIZER;CN="CorpFlats Campos dos Goytacazes":mailto:reservas@corpflats.com.br`,
       `ATTENDEE;CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;PARTSTAT=${partStat};CN=${resItem.guestName || 'Hospede'}:mailto:${guestEmail}`
     ];
 
