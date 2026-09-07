@@ -14630,49 +14630,103 @@ function serveSpaWithMetadata(distFolder, req, res) {
 
   try {
     let html = fs.readFileSync(indexPath, "utf-8");
+    const rawPath = (req.path || "").toLowerCase();
 
-    if (req.path.startsWith("/cafe")) {
-      const resCode = req.query.res || "";
-      let guestFirstName = "";
-      let flatNumber = "";
-      if (resCode) {
-        const found = (db.reservations || []).find(r => r.code === resCode || r.breakfastToken === resCode || String(r.id) === resCode);
-        if (found) {
-          guestFirstName = (found.guestName || "").trim().split(" ")[0];
-          flatNumber = found.flatNumber || "";
-        }
+    // 1. Extrair código de reserva da URL (query param ou segmento do path)
+    let resCode = req.query.res || req.query.code || req.query.r || "";
+    if (!resCode) {
+      const match = req.path.match(/(?:minha-reserva|portal-hospede|guest-portal|pre-checkin|cafe)\/([a-zA-Z0-9_\-]+)/i);
+      if (match && match[1] && !["cafe", "room-service", "null", "undefined"].includes(match[1].toLowerCase())) {
+        resCode = match[1];
       }
+    }
 
-      const cafeTitle = flatNumber 
+    // 2. Buscar dados da reserva no banco se houver código
+    let guestFirstName = "";
+    let flatNumber = "";
+    if (resCode) {
+      const cleanCode = String(resCode).trim().toLowerCase();
+      const found = (db.reservations || []).find(r => 
+        (r.code && String(r.code).toLowerCase() === cleanCode) ||
+        (r.breakfastToken && String(r.breakfastToken).toLowerCase() === cleanCode) ||
+        String(r.id) === cleanCode
+      );
+      if (found) {
+        guestFirstName = (found.guestName || "").trim().split(" ")[0];
+        flatNumber = found.flatNumber || "";
+      }
+    }
+
+    // 3. Identificar tipo de página
+    const isBreakfast = 
+      rawPath.startsWith("/cafe") || 
+      rawPath.endsWith("/cafe") || 
+      rawPath.includes("/cafe/") || 
+      rawPath.endsWith("/room-service") || 
+      rawPath.includes("/room-service/");
+
+    const isPreCheckin = rawPath.startsWith("/pre-checkin");
+    const isPortal = rawPath.startsWith("/minha-reserva") || rawPath.startsWith("/portal-hospede") || rawPath.startsWith("/guest-portal");
+
+    let title = "CorpFlats • Hospedagem Executiva & Serviços Exclusivos";
+    let desc = "Flats mobiliados completos com garagem privativa, portaria 24h e café da manhã artesanal servido no flat.";
+    let image = "https://corpflats.onrender.com/flat-preview.jpg";
+    let imageAlt = "CorpFlats • Hospedagem Executiva";
+    let imageWidth = "1200";
+    let imageHeight = "630";
+
+    if (isBreakfast) {
+      title = flatNumber 
         ? `☕ Café da Manhã • Flat ${flatNumber} • CorpFlats`
         : "☕ Pedido de Café da Manhã • CorpFlats";
-      const cafeDesc = guestFirstName 
-        ? `Olá ${guestFirstName}, monte e agende o seu café da manhã artesanal servido com carinho diretamente no seu flat.`
-        : "Monte e agende o seu café da manhã artesanal servido com todo o carinho diretamente no seu flat.";
-      const cafeImg = "https://corpflats.onrender.com/breakfast-preview.jpg";
-
-      html = html
-        .replace(/<title>.*?<\/title>/i, `<title>${cafeTitle}</title>`)
-        .replace(/<meta property="og:title" content=".*?" \/>/i, `<meta property="og:title" content="${cafeTitle}" />`)
-        .replace(/<meta name="twitter:title" content=".*?" \/>/i, `<meta name="twitter:title" content="${cafeTitle}" />`)
-        .replace(/<meta name="description" content=".*?" \/>/i, `<meta name="description" content="${cafeDesc}" />`)
-        .replace(/<meta property="og:description" content=".*?" \/>/i, `<meta property="og:description" content="${cafeDesc}" />`)
-        .replace(/<meta name="twitter:description" content=".*?" \/>/i, `<meta name="twitter:description" content="${cafeDesc}" />`)
-        .replace(/<meta property="og:image" content=".*?" \/>/i, `<meta property="og:image" content="${cafeImg}" />`)
-        .replace(/<meta property="og:image:secure_url" content=".*?" \/>/i, `<meta property="og:image:secure_url" content="${cafeImg}" />`)
-        .replace(/<meta name="twitter:image" content=".*?" \/>/i, `<meta name="twitter:image" content="${cafeImg}" />`)
-        .replace(/<link rel="image_src" href=".*?" \/>/i, `<link rel="image_src" href="${cafeImg}" />`);
-    } else if (req.path.startsWith("/minha-reserva") || req.path.startsWith("/portal-hospede") || req.path.startsWith("/guest-portal")) {
-      const portalTitle = "🏨 Área do Hóspede • CorpFlats";
-      const portalDesc = "Acesse os detalhes da sua acomodação, horário de check-in, regras do flat e agendamento de café da manhã.";
-      html = html
-        .replace(/<title>.*?<\/title>/i, `<title>${portalTitle}</title>`)
-        .replace(/<meta property="og:title" content=".*?" \/>/i, `<meta property="og:title" content="${portalTitle}" />`)
-        .replace(/<meta name="twitter:title" content=".*?" \/>/i, `<meta name="twitter:title" content="${portalTitle}" />`)
-        .replace(/<meta name="description" content=".*?" \/>/i, `<meta name="description" content="${portalDesc}" />`)
-        .replace(/<meta property="og:description" content=".*?" \/>/i, `<meta property="og:description" content="${portalDesc}" />`)
-        .replace(/<meta name="twitter:description" content=".*?" \/>/i, `<meta name="twitter:description" content="${portalDesc}" />`);
+      desc = guestFirstName 
+        ? `Olá ${guestFirstName}! Personalize o seu café da manhã artesanal e escolha o horário de entrega no seu flat.`
+        : "Personalize o seu cardápio de café da manhã artesanal servido com todo o carinho diretamente no seu flat.";
+      image = "https://corpflats.onrender.com/breakfast-preview.jpg";
+      imageAlt = "Café da Manhã CorpFlats";
+      imageWidth = "800";
+      imageHeight = "533";
+    } else if (isPreCheckin) {
+      title = flatNumber 
+        ? `📝 Pré-Check-in • Flat ${flatNumber} • CorpFlats`
+        : "📝 Pré-Check-in Digital • CorpFlats";
+      desc = guestFirstName 
+        ? `Olá ${guestFirstName}! Agilize sua chegada preenchendo os dados do pré-check-in para liberação na portaria 24h.`
+        : "Agilize sua chegada confirmando os dados de identificação para liberação rápida na portaria 24h.";
+      image = "https://corpflats.onrender.com/flat-preview.jpg";
+      imageAlt = "CorpFlats • Pré-Check-in Digital";
+      imageWidth = "1200";
+      imageHeight = "630";
+    } else if (isPortal) {
+      title = flatNumber 
+        ? `🏨 Área do Hóspede • Flat ${flatNumber} • CorpFlats`
+        : "🏨 Área do Hóspede • CorpFlats";
+      desc = guestFirstName 
+        ? `Olá ${guestFirstName}! Acesse os detalhes da sua acomodação, senha da fechadura, Wi-Fi e horários do flat.`
+        : "Acesse os detalhes da sua acomodação, senha da fechadura, conexão Wi-Fi, regras do flat e serviços.";
+      image = "https://corpflats.onrender.com/flat-preview.jpg";
+      imageAlt = "CorpFlats • Área do Hóspede";
+      imageWidth = "1200";
+      imageHeight = "630";
     }
+
+    const pageUrl = `https://corpflats.onrender.com${req.originalUrl || req.url || req.path}`;
+
+    html = html
+      .replace(/<title>.*?<\/title>/i, `<title>${title}</title>`)
+      .replace(/<meta\s+name=["']description["']\s+content=["'].*?["']\s*\/?>/i, `<meta name="description" content="${desc}" />`)
+      .replace(/<meta\s+property=["']og:title["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:title" content="${title}" />`)
+      .replace(/<meta\s+property=["']og:description["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:description" content="${desc}" />`)
+      .replace(/<meta\s+property=["']og:url["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:url" content="${pageUrl}" />`)
+      .replace(/<meta\s+property=["']og:image["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:image" content="${image}" />`)
+      .replace(/<meta\s+property=["']og:image:secure_url["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:image:secure_url" content="${image}" />`)
+      .replace(/<meta\s+property=["']og:image:width["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:image:width" content="${imageWidth}" />`)
+      .replace(/<meta\s+property=["']og:image:height["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:image:height" content="${imageHeight}" />`)
+      .replace(/<meta\s+property=["']og:image:alt["']\s+content=["'].*?["']\s*\/?>/i, `<meta property="og:image:alt" content="${imageAlt}" />`)
+      .replace(/<link\s+rel=["']image_src["']\s+href=["'].*?["']\s*\/?>/i, `<link rel="image_src" href="${image}" />`)
+      .replace(/<meta\s+name=["']twitter:title["']\s+content=["'].*?["']\s*\/?>/i, `<meta name="twitter:title" content="${title}" />`)
+      .replace(/<meta\s+name=["']twitter:description["']\s+content=["'].*?["']\s*\/?>/i, `<meta name="twitter:description" content="${desc}" />`)
+      .replace(/<meta\s+name=["']twitter:image["']\s+content=["'].*?["']\s*\/?>/i, `<meta name="twitter:image" content="${image}" />`);
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     return res.send(html);
