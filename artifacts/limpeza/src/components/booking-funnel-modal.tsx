@@ -847,7 +847,7 @@ export function BookingFunnelModal({
                   <Heart className="w-4 h-4 text-rose-500" />
                   <div>
                     <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">Vai viajar com animal de estimação?</span>
-                    <span className="text-[10px] text-slate-500">Taxa de higienização: R$ {petFeePerUnit}/pet</span>
+                    <span className="text-[10px] text-slate-500">Taxa de higienização: R$ {petFeePerUnit}/pet ({siteConfig?.petPolicy?.feeType === "per_night" ? "por diária" : "taxa única por estadia"})</span>
                   </div>
                 </div>
 
@@ -874,9 +874,16 @@ export function BookingFunnelModal({
               </div>
 
               {bringingPet && (
-                <div className="pt-2 border-t border-slate-200 dark:border-slate-700 space-y-2 text-xs animate-in fade-in">
+                <div className="pt-2 border-t border-slate-200 dark:border-slate-700 space-y-3 text-xs animate-in fade-in">
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-600 dark:text-slate-300 font-bold">Quantidade de Cães (até 15kg):</span>
+                    <div>
+                      <span className="text-slate-700 dark:text-slate-200 font-bold block">
+                        Quantidade de Cães (Pequeno Porte):
+                      </span>
+                      <span className="text-[10px] text-slate-500">
+                        {siteConfig?.petPolicy?.allowedSpecies || "Cachorros (Cães) de pequeno porte (até 10kg)"}
+                      </span>
+                    </div>
                     <div className="flex gap-1.5">
                       {[1, 2].map(n => (
                         <Button
@@ -893,18 +900,35 @@ export function BookingFunnelModal({
                     </div>
                   </div>
 
-                  <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-[10px] text-amber-900 dark:text-amber-200 leading-snug">
-                    ⚠️ <strong>Regra da Casa:</strong> Apenas cachorros dóceis de até 15kg com guia nas áreas comuns.
+                  {/* Regulamento Detalhado e Completo */}
+                  <div className="p-3.5 rounded-2xl bg-amber-50/90 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 space-y-2 text-[11px] text-amber-950 dark:text-amber-200 leading-relaxed shadow-2xs">
+                    <div className="font-bold flex items-center gap-1.5 text-xs text-amber-900 dark:text-amber-100">
+                      <span>🐾 Regulamento Oficial de Hospedagem Pet (Edifício Soho)</span>
+                    </div>
+                    <div className="whitespace-pre-line text-[10.5px] leading-relaxed text-amber-900/90 dark:text-amber-200/90 max-h-48 overflow-y-auto pr-1">
+                      {siteConfig?.petPolicy?.rules || `• Permissão: Permitida a hospedagem exclusivamente de cães de pequeno porte (até 10 kg e altura de cernelha de até 35–40 cm). Outros animais não são autorizados.
+• Circulação no Prédio: Nas áreas comuns do condomínio, o pet deve ser transportado obrigatoriamente no colo ou dentro de caixa/bolsa de transporte (ou com guia curta).
+• Uso de Elevadores: É obrigatório utilizar exclusivamente o elevador de serviço ao transitar com animais.
+• Convivência e Sossego: É proibido deixar o animal desacompanhado/sozinho no flat por longos períodos. O tutor deve zelar para evitar latidos ou ruídos excessivos.
+• Higiene e Cuidados: Proibido dar banho no animal utilizando toalhas ou enxoval do flat, bem como permitir que o pet suba em camas e sofás sem proteção própria.
+• Responsabilidade e Avarias: O titular da reserva responde integralmente por quaisquer danos a móveis, colchões, enxoval de cama/banho, odores ou sujeiras causadas pelo pet, arcando com os custos de reposição ou higienização extraordinária.`}
+                    </div>
+                    <div className="pt-2 border-t border-amber-200/70 dark:border-amber-900/50 flex items-center justify-between text-[10px] font-bold text-amber-800 dark:text-amber-300">
+                      <span>Taxa de Higienização Pet:</span>
+                      <span>+ R$ {petFee} ({flatsCount > 1 ? `${petCount} pet(s) • R$ ${petFeePerUnit} unit.` : `${petCount} pet(s)`})</span>
+                    </div>
                   </div>
 
-                  <label className="flex items-center gap-2 text-[11px] font-semibold text-slate-700 dark:text-slate-300 cursor-pointer">
+                  <label className="flex items-start gap-2 text-[11px] font-semibold text-slate-700 dark:text-slate-300 cursor-pointer pt-0.5">
                     <input
                       type="checkbox"
                       checked={petRulesAccepted}
                       onChange={e => setPetRulesAccepted(e.target.checked)}
-                      className="rounded text-sky-600"
+                      className="rounded text-sky-600 mt-0.5"
                     />
-                    <span>Concordo com as normas de convivência pet e a taxa de higienização.</span>
+                    <span>
+                      Li e concordo integralmente com as regras de convivência pet, transporte no colo nas áreas comuns, elevador de serviço e a taxa de higienização.
+                    </span>
                   </label>
                 </div>
               )}

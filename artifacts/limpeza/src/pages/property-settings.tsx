@@ -108,6 +108,14 @@ export default function PropertySettings() {
       if (settings.googleMapsUrl) setGoogleMapsUrlInput(settings.googleMapsUrl)
       if (settings.receptionEmail) setReceptionEmailInput(settings.receptionEmail)
       if (settings.buildingName) setBuildingNameInput(settings.buildingName)
+      if ((settings as any).petPolicy) {
+        const p = (settings as any).petPolicy
+        setPetEnabled(p.enabled !== false)
+        setPetFeeAmount(p.feeAmount ?? 80)
+        setPetFeeType(p.feeType || "per_stay")
+        setPetAllowedSpecies(p.allowedSpecies || "Cachorros (Cães) de pequeno porte (até 10kg)")
+        setPetRulesInput(p.rules || DEFAULT_OFFICIAL_PET_RULES)
+      }
     }
   }, [settings])
 
@@ -130,8 +138,15 @@ export default function PropertySettings() {
           hotelAddress: hotelAddressInput,
           googleMapsUrl: googleMapsUrlInput,
           receptionEmail: receptionEmailInput,
-          buildingName: buildingNameInput
-        }
+          buildingName: buildingNameInput,
+          petPolicy: {
+            enabled: petEnabled,
+            feeAmount: Number(petFeeAmount) || 0,
+            feeType: petFeeType,
+            allowedSpecies: petAllowedSpecies,
+            rules: petRulesInput
+          }
+        } as any
       })
       setTermsSuccess("Políticas e regras da propriedade salvas com sucesso!")
       setTimeout(() => setTermsSuccess(""), 3000)
@@ -397,7 +412,120 @@ export default function PropertySettings() {
             </CardContent>
           </Card>
 
-          {/* ── CARD 3: REGRAS DA CASA E TERMOS CONTRATUAIS ── */}
+          {/* ── CARD 3: POLÍTICA PET & TAXA DE HIGIENIZAÇÃO ── */}
+          <Card className="rounded-3xl border border-border shadow-sm">
+            <CardHeader className="p-5 border-b border-border">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <CardTitle className="text-base font-black text-foreground flex items-center gap-2">
+                    <Heart className="w-4 h-4 text-rose-500" />
+                    <span>Política Pet Friendly & Taxa de Higienização</span>
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    Configure a permissão de animais, taxa cobrada no motor de reservas e regulamento de convivência
+                  </CardDescription>
+                </div>
+                <Badge className={petEnabled ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-bold" : "bg-slate-100 text-slate-500 font-bold"}>
+                  {petEnabled ? "✓ Pet Friendly Ativo" : "✕ Pets Desabilitados"}
+                </Badge>
+              </div>
+            </CardHeader>
+
+            <CardContent className="p-6 space-y-5">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-4 rounded-2xl bg-muted/40 border border-border">
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-bold">Aceitar Animais de Estimação?</Label>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={petEnabled ? "default" : "outline"}
+                      onClick={() => setPetEnabled(true)}
+                      className="flex-1 text-xs font-bold rounded-xl h-8"
+                    >
+                      Sim (Aceitar)
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={!petEnabled ? "default" : "outline"}
+                      onClick={() => setPetEnabled(false)}
+                      className="flex-1 text-xs font-bold rounded-xl h-8"
+                    >
+                      Não
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-bold">Valor da Taxa Pet (R$ / animal)</Label>
+                  <Input
+                    type="number"
+                    value={petFeeAmount}
+                    onChange={e => setPetFeeAmount(Number(e.target.value))}
+                    placeholder="80"
+                    className="text-xs h-8 rounded-xl font-bold"
+                  />
+                  <p className="text-[10px] text-muted-foreground">Sincronizado automaticamente com o funil de reservas e tarifas</p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-bold">Modalidade da Cobrança</Label>
+                  <select
+                    value={petFeeType}
+                    onChange={e => setPetFeeType(e.target.value)}
+                    className="w-full h-8 px-3 rounded-xl border border-input bg-background text-xs font-medium"
+                  >
+                    <option value="per_stay">Taxa Única por Estadia (Padrão)</option>
+                    <option value="per_night">Taxa por Diária</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <Label className="text-xs font-bold">Porte e Espécies Autorizadas</Label>
+                    <p className="text-[10px] text-muted-foreground">Demais animais não listados serão expressamente proibidos nas regras</p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setPetAllowedSpecies("Cachorros (Cães) de pequeno porte (até 10kg)")
+                      setPetRulesInput(DEFAULT_OFFICIAL_PET_RULES)
+                    }}
+                    className="text-[11px] h-7 px-2.5 text-sky-600 hover:text-sky-700 font-bold bg-sky-50 dark:bg-sky-950/40 rounded-lg"
+                  >
+                    Restaurar Regulamento Padrão CorpFlats (Edifício Soho)
+                  </Button>
+                </div>
+                <Input
+                  value={petAllowedSpecies}
+                  onChange={e => setPetAllowedSpecies(e.target.value)}
+                  placeholder="Ex: Cachorros (Cães) de pequeno porte (até 10kg)"
+                  className="text-xs h-9 rounded-xl font-medium"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-xs font-bold">Regras e Regulamento Detalhado de Convivência Pet</Label>
+                <Textarea
+                  value={petRulesInput}
+                  onChange={e => setPetRulesInput(e.target.value)}
+                  rows={6}
+                  placeholder="Descreva o regulamento detalhado para pets..."
+                  className="text-xs font-mono rounded-2xl p-3.5 leading-relaxed"
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Texto exibido na íntegra ao hóspede no funil de reserva ao confirmar viagem com pet e integrado às regras de convivência do condomínio.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* ── CARD 4: REGRAS DA CASA E TERMOS CONTRATUAIS ── */}
           <Card className="rounded-3xl border border-border shadow-sm">
             <CardHeader className="p-5 border-b border-border">
               <CardTitle className="text-base font-black text-foreground flex items-center gap-2">

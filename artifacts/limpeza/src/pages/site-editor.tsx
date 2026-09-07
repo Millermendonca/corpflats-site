@@ -1144,14 +1144,14 @@ export default function SiteEditor() {
                       size="sm"
                       variant="outline"
                       onClick={() => {
-                        const species = config?.petPolicy?.allowedSpecies || "Cachorros (Cães)"
-                        const defaultRule = `• É expressamente proibida a entrada de quaisquer animais, EXCETO ${species} de pequeno e médio porte (até 15kg).\n• É obrigatório o uso de coleira/guia nas áreas comuns do condomínio.\n• Proibido deixar o animal sozinho no apartamento por longos períodos.\n• O hóspede tutor é responsável pela limpeza e conservação dos móveis e enxoval.`
+                        const species = config?.petPolicy?.allowedSpecies || "Cachorros (Cães) de pequeno porte (até 10kg)"
+                        const defaultRule = `• Permissão: Permitida a hospedagem exclusivamente de cães de pequeno porte (até 10 kg e altura de cernelha de até 35–40 cm). Outros animais não são autorizados.\n• Circulação no Prédio: Nas áreas comuns do condomínio, o pet deve ser transportado obrigatoriamente no colo ou dentro de caixa/bolsa de transporte (ou com guia curta).\n• Uso de Elevadores: É obrigatório utilizar exclusivamente o elevador de serviço ao transitar com animais.\n• Convivência e Sossego: É proibido deixar o animal desacompanhado/sozinho no flat por longos períodos. O tutor deve zelar para evitar latidos ou ruídos excessivos.\n• Higiene e Cuidados: Proibido dar banho no animal utilizando toalhas ou enxoval do flat, bem como permitir que o pet suba em camas e sofás sem proteção própria.\n• Responsabilidade e Avarias: O titular da reserva responde integralmente por quaisquer danos a móveis, colchões, enxoval de cama/banho, odores ou sujeiras causadas pelo pet, arcando com os custos de reposição ou higienização extraordinária.`
                         const current = config.petPolicy || { enabled: true, feeAmount: 80, feeType: "per_stay" }
                         setConfig({ ...config, petPolicy: { ...current, rules: defaultRule } })
                       }}
                       className="text-[11px] h-7 px-2.5 rounded-lg border-amber-300 bg-white dark:bg-slate-900 text-amber-900 dark:text-amber-200 font-bold hover:bg-amber-100"
                     >
-                      Gerar Texto Padrão com Proibição
+                      Restaurar Regulamento Oficial CorpFlats (Edifício Soho)
                     </Button>
                   </div>
 
