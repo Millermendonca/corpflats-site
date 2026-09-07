@@ -20,10 +20,17 @@ import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { 
   Building2, Home, Plus, Edit2, Trash2, Clock, Phone, MapPin, FileText, 
-  Check, RefreshCw, Sparkles, ShieldCheck, Mail
+  Check, RefreshCw, Sparkles, ShieldCheck, Mail, Heart
 } from "lucide-react"
 
 import { AccessDenied } from "@/components/access-denied"
+
+const DEFAULT_OFFICIAL_PET_RULES = `• Permissão: Permitida a hospedagem exclusivamente de cães de pequeno porte (até 10 kg e altura de cernelha de até 35–40 cm). Outros animais não são autorizados.
+• Circulação no Prédio: Nas áreas comuns do condomínio, o pet deve ser transportado obrigatoriamente no colo ou dentro de caixa/bolsa de transporte (ou com guia curta).
+• Uso de Elevadores: É obrigatório utilizar exclusivamente o elevador de serviço ao transitar com animais.
+• Convivência e Sossego: É proibido deixar o animal desacompanhado/sozinho no flat por longos períodos. O tutor deve zelar para evitar latidos ou ruídos excessivos.
+• Higiene e Cuidados: Proibido dar banho no animal utilizando toalhas ou enxoval do flat, bem como permitir que o pet suba em camas e sofás sem proteção própria.
+• Responsabilidade e Avarias: O titular da reserva responde integralmente por quaisquer danos a móveis, colchões, enxoval de cama/banho, odores ou sujeiras causadas pelo pet, arcando com os custos de reposição ou higienização extraordinária.`
 
 export default function PropertySettings() {
   const { data: user, isLoading: loadingUser } = useGetMe()
@@ -52,6 +59,14 @@ export default function PropertySettings() {
   const [googleMapsUrlInput, setGoogleMapsUrlInput] = useState("https://www.google.com/maps/search/?api=1&query=CorpFlats")
   const [receptionEmailInput, setReceptionEmailInput] = useState("portaria.soho@corpflats.com.br")
   const [buildingNameInput, setBuildingNameInput] = useState("Edifício Soho Residence Service")
+
+  // Política Pet & Taxa de Higienização
+  const [petEnabled, setPetEnabled] = useState(true)
+  const [petFeeAmount, setPetFeeAmount] = useState(80)
+  const [petFeeType, setPetFeeType] = useState("per_stay")
+  const [petAllowedSpecies, setPetAllowedSpecies] = useState("Cachorros (Cães) de pequeno porte (até 10kg)")
+  const [petRulesInput, setPetRulesInput] = useState(DEFAULT_OFFICIAL_PET_RULES)
+
   const [savingTerms, setSavingTerms] = useState(false)
   const [termsSuccess, setTermsSuccess] = useState("")
 

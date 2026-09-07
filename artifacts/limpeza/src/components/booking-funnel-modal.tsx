@@ -52,8 +52,8 @@ export function BookingFunnelModal({
   onSuccessBooking,
   availabilityData
 }: BookingFunnelModalProps) {
-  // Funnel Stepper (1 to 5)
-  const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4 | 5>(1)
+  // Funnel Stepper (1 to 4: 1. Extras, 2. Seus Dados, 3. Pagamento, 4. Conclusão)
+  const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4>(1)
 
   // Session ID única para telemetria e recuperação de carrinho
   const [sessionId] = useState(() => {
@@ -131,9 +131,9 @@ export function BookingFunnelModal({
   const [pixKeyCopied, setPixKeyCopied] = useState(false)
   const [isPixPaid, setIsPixPaid] = useState(false)
 
-  // Polling para checar status do pagamento PIX automaticamente na etapa 5
+  // Polling para checar status do pagamento PIX automaticamente na etapa 4 (Concluído)
   useEffect(() => {
-    if (currentStep !== 5 || paymentMethod !== "pix" || !confirmedReservation || isPixPaid) return;
+    if (currentStep !== 4 || paymentMethod !== "pix" || !confirmedReservation || isPixPaid) return;
     const resCode = confirmedReservation.code || confirmedReservation.reservationCode;
     if (!resCode) return;
 
@@ -165,16 +165,16 @@ export function BookingFunnelModal({
 
   const handleCloseModal = () => {
     onOpenChange(false);
-    if (currentStep === 5) {
+    if (currentStep === 4) {
       setTimeout(() => {
         handleResetAndNewBooking();
       }, 300);
     }
   };
 
-  // Se o modal for reaberto e estava na etapa 5 (concluída), reinicia na etapa 1 para uma nova reserva
+  // Se o modal for reaberto e estava na etapa 4 (concluída), reinicia na etapa 1 para uma nova reserva
   useEffect(() => {
-    if (open && currentStep === 5 && isPixPaid) {
+    if (open && currentStep === 4 && isPixPaid) {
       handleResetAndNewBooking();
     }
   }, [open]);
@@ -388,18 +388,24 @@ export function BookingFunnelModal({
     }
   }
 
-  // Dispara telemetria ao abrir ou avançar etapas
+  // Dispara telemetria ao abrir ou avançar etapas (mantendo compatibilidade com métricas analíticas)
   useEffect(() => {
     if (open) {
-      const stepNames = ["", "busca_datas", "personalizacao_extras", "identificacao_lead", "checkout_pagamento", "reserva_confirmada"]
-      sendFunnelTelemetry(currentStep, stepNames[currentStep])
+      const telemetryMap: Record<number, { num: number; name: string }> = {
+        1: { num: 2, name: "personalizacao_extras" },
+        2: { num: 3, name: "identificacao_lead" },
+        3: { num: 4, name: "checkout_pagamento" },
+        4: { num: 5, name: "reserva_confirmada" }
+      }
+      const item = telemetryMap[currentStep] || { num: 2, name: "personalizacao_extras" }
+      sendFunnelTelemetry(item.num, item.name)
     }
   }, [open, currentStep])
 
-  // Exit-Intent Listener (apenas se já estiver em etapa de dados ou checkout)
+  // Exit-Intent Listener (apenas se já estiver em etapa de extras, dados ou checkout)
   useEffect(() => {
     const handleMouseLeave = (e: MouseEvent) => {
-      if (open && currentStep >= 2 && currentStep <= 4 && !exitIntentTriggeredRef.current && e.clientY <= 10) {
+      if (open && currentStep >= 1 && currentStep <= 3 && !exitIntentTriggeredRef.current && e.clientY <= 10) {
         exitIntentTriggeredRef.current = true
         setShowExitIntent(true)
       }
@@ -410,13 +416,13 @@ export function BookingFunnelModal({
 
   // Avançar Etapa com Validações
   const handleNextStep = () => {
-    if (currentStep === 2) {
+    if (currentStep === 1) {
       if (bringingPet && !petRulesAccepted) {
         alert("Por favor, aceite as regras para animais de estimação para prosseguir.")
         return
       }
-      setCurrentStep(3)
-    } else if (currentStep === 3) {
+      setCurrentStep(2)
+    } else if (currentStep === 2) {
       if (!guestName.trim()) {
         alert("Por favor, informe seu nome completo.")
         return
@@ -447,9 +453,7 @@ export function BookingFunnelModal({
 
       // Registra o lead imediatamente no backend como carrinho ativo
       sendFunnelTelemetry(3, "identificacao_lead", "em_andamento")
-      setCurrentStep(4)
-    } else if (currentStep === 1) {
-      setCurrentStep(2)
+      setCurrentStep(3)
     }
   }
 
@@ -511,7 +515,7 @@ export function BookingFunnelModal({
           setMpInitPoint(data.initPoint)
         }
         sendFunnelTelemetry(5, "reserva_confirmada", "concluido")
-        setCurrentStep(5)
+        setCurrentStep(4)
         if (onSuccessBooking) onSuccessBooking(data.reservation)
       } else {
         alert(data.error || "Erro ao processar sua reserva.")
@@ -538,18 +542,18 @@ export function BookingFunnelModal({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className={`w-8 h-8 rounded-xl text-white flex items-center justify-center font-black text-xs shadow-xs ${
-                currentStep === 5 && paymentMethod === "pix" && !isPixPaid ? "bg-amber-600" : "bg-sky-600"
+                currentStep === 4 && paymentMethod === "pix" && !isPixPaid ? "bg-amber-600" : "bg-sky-600"
               }`}>
                 CF
               </span>
               <div>
                 <DialogTitle className="text-lg sm:text-xl font-black text-slate-900 dark:text-slate-100">
-                  {currentStep === 5 
+                  {currentStep === 4 
                     ? (paymentMethod === "pix" && !isPixPaid ? "⏳ Aguardando Pagamento PIX" : "🎉 Reserva Confirmada!") 
                     : "Motor de Reservas Diretas"}
                 </DialogTitle>
                 <DialogDescription className="text-xs text-slate-500">
-                  {currentStep === 5 
+                  {currentStep === 4 
                     ? (paymentMethod === "pix" && !isPixPaid 
                         ? "Efetue o pagamento PIX para garantir sua vaga e emitir seu voucher." 
                         : "Sua estadia nos flats CorpFlats está 100% garantida.") 
@@ -558,22 +562,21 @@ export function BookingFunnelModal({
               </div>
             </div>
 
-            {currentStep < 5 && (
+            {currentStep < 4 && (
               <Badge className="bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 text-[11px] font-bold">
-                Etapa {currentStep} de 4
+                Etapa {currentStep} de 3
               </Badge>
             )}
           </div>
 
           {/* ── Stepper Visual do Funil de Conversão ───────────────────────── */}
-          {currentStep < 5 && (
+          {currentStep < 4 && (
             <div className="pt-3">
-              <div className="grid grid-cols-4 gap-1.5 text-center">
+              <div className="grid grid-cols-3 gap-1.5 text-center">
                 {[
-                  { step: 1, label: "1. Tarifa", icon: Calendar },
-                  { step: 2, label: "2. Extras", icon: Sparkles },
-                  { step: 3, label: "3. Seus Dados", icon: User },
-                  { step: 4, label: "4. Pagamento", icon: ShieldCheck }
+                  { step: 1, label: "1. Extras & Camas", icon: Sparkles },
+                  { step: 2, label: "2. Seus Dados", icon: User },
+                  { step: 3, label: "3. Pagamento", icon: ShieldCheck }
                 ].map((s) => (
                   <div key={s.step} className="space-y-1">
                     <div className={`h-1.5 rounded-full transition-all duration-300 ${
@@ -599,7 +602,7 @@ export function BookingFunnelModal({
           )}
         </DialogHeader>
 
-        {/* ── ETAPA 1: DATAS & REGIME DE HOSPEDAGEM ────────────────────────── */}
+        {/* ── ETAPA 1: PERSONALIZAÇÃO & EXTRAS ────────────────────────────── */}
         {currentStep === 1 && (
           <div className="space-y-4 py-2 animate-in fade-in">
             {/* Banner de Urgência & Prova Social (Apenas quando restar 5 flats ou menos para uma ou mais datas solicitadas) */}
@@ -617,102 +620,31 @@ export function BookingFunnelModal({
               </div>
             )}
 
-            {/* Resumo do Período */}
-            <div className="bg-slate-50 dark:bg-slate-800/60 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 flex items-center justify-between text-xs">
+            {/* Resumo do Período & Tarifa Selecionada (com alternador rápido) */}
+            <div className="bg-slate-50 dark:bg-slate-800/60 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
               <div>
                 <span className="text-slate-500 block text-[10px] font-bold uppercase">Período Selecionado</span>
-                <span className="font-bold text-slate-800 dark:text-slate-200 text-sm">{checkin} até {checkout}</span>
+                <span className="font-bold text-slate-800 dark:text-slate-200 text-xs sm:text-sm">
+                  {checkin} até {checkout} ({nights} {nights === 1 ? "diária" : "diárias"})
+                </span>
               </div>
-              <div className="text-right">
-                <span className="text-slate-500 block text-[10px] font-bold uppercase">Duração</span>
-                <span className="font-bold text-sky-600 text-sm">{nights} {nights === 1 ? "diária" : "diárias"}</span>
-              </div>
-            </div>
-
-            {/* Seleção de Regime de Hospedagem */}
-            <div className="space-y-2">
-              <Label className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                Escolha o seu Regime de Hospedagem:
-              </Label>
-              
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                {/* Com Café Incluso */}
-                <div
-                  onClick={() => setRatePlan("with_breakfast")}
-                  className={`cursor-pointer p-3.5 rounded-2xl border-2 transition-all relative ${
-                    ratePlan === "with_breakfast"
-                      ? "border-sky-600 bg-sky-50/70 dark:bg-sky-950/40 text-slate-900 dark:text-white ring-2 ring-sky-500/20 shadow-xs"
-                      : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300"
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center font-bold shrink-0">
-                        <Coffee className="w-4 h-4" />
-                      </div>
-                      <span className="font-black text-xs sm:text-sm">Com Café da Manhã</span>
-                    </div>
-                    <Badge className="bg-amber-600 text-white font-bold text-[10px]">
-                      R$ {withBreakfastConfig.dailyRate}/dia
-                    </Badge>
-                  </div>
-                  <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-2 leading-relaxed">
-                    Café da manhã gourmet artesanal servido exclusivamente no seu flat. <strong>Taxa de limpeza 100% isenta!</strong>
-                  </p>
-                </div>
-
-                {/* Sem Café (Apenas Hospedagem) */}
-                <div
-                  onClick={() => setRatePlan("room_only")}
-                  className={`cursor-pointer p-3.5 rounded-2xl border-2 transition-all relative ${
-                    ratePlan === "room_only"
-                      ? "border-sky-600 bg-sky-50/70 dark:bg-sky-950/40 text-slate-900 dark:text-white ring-2 ring-sky-500/20 shadow-xs"
-                      : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300"
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-xl bg-slate-700 text-white flex items-center justify-center font-bold shrink-0">
-                        <Building2 className="w-4 h-4" />
-                      </div>
-                      <span className="font-black text-xs sm:text-sm">Sem Café (Econômica)</span>
-                    </div>
-                    <Badge className="bg-slate-800 text-white font-bold text-[10px]">
-                      R$ {roomOnlyConfig.dailyRate}/dia
-                    </Badge>
-                  </div>
-                  <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-2 leading-relaxed">
-                    Tarifa econômica sem café da manhã. Acesso completo à estrutura do flat com ar split, Wi-Fi 500MB e garagem.
-                  </p>
+              <div className="sm:text-right">
+                <span className="text-slate-500 block text-[10px] font-bold uppercase">Tarifa Selecionada</span>
+                <div className="flex items-center sm:justify-end gap-1.5 flex-wrap">
+                  <span className="font-black text-sky-600 text-xs sm:text-sm">
+                    {ratePlan === "with_breakfast" ? "☕ Com Café da Manhã" : "🏢 Sem Café (Econômica)"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setRatePlan(ratePlan === "with_breakfast" ? "room_only" : "with_breakfast")}
+                    className="text-[10px] text-sky-700 dark:text-sky-400 hover:underline font-bold bg-sky-100 dark:bg-sky-950 px-2 py-0.5 rounded-md cursor-pointer transition-colors"
+                  >
+                    Trocar para {ratePlan === "with_breakfast" ? "Sem Café" : "Com Café"}
+                  </button>
                 </div>
               </div>
             </div>
 
-            {/* Total Parcial */}
-            <div className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border flex items-center justify-between text-xs">
-              <span className="font-bold text-slate-700 dark:text-slate-300">
-                Subtotal das Diárias ({nights} noites • {flatsCount} {flatsCount === 1 ? "flat" : "flats"}):
-              </span>
-              <span className="font-black text-sky-700 dark:text-sky-300 text-sm">
-                R$ {(subtotal - discountAmount).toLocaleString("pt-BR")}
-              </span>
-            </div>
-
-            <div className="flex justify-end pt-2">
-              <Button
-                onClick={handleNextStep}
-                className="bg-sky-600 hover:bg-sky-700 text-white font-black text-xs h-10 px-6 rounded-xl shadow-md gap-1.5"
-              >
-                <span>Avançar para Conforto & Extras</span>
-                <ArrowRight className="w-4 h-4" />
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {/* ── ETAPA 2: PERSONALIZAÇÃO & UP-SELLS ESTRATÉGICOS ──────────────── */}
-        {currentStep === 2 && (
-          <div className="space-y-4 py-2 animate-in fade-in">
             {/* Configuração de Camas & Lotação por Flat */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
@@ -982,11 +914,11 @@ export function BookingFunnelModal({
             <div className="flex justify-between items-center pt-2">
               <Button
                 variant="outline"
-                onClick={() => setCurrentStep(1)}
+                onClick={handleCloseModal}
                 className="text-xs font-bold rounded-xl h-10 px-4"
               >
                 <ArrowLeft className="w-3.5 h-3.5 mr-1" />
-                Voltar
+                Voltar ao site
               </Button>
 
               <Button
@@ -1000,8 +932,8 @@ export function BookingFunnelModal({
           </div>
         )}
 
-        {/* ── ETAPA 3: IDENTIFICAÇÃO & CAPTURA DE LEAD ────────────────────── */}
-        {currentStep === 3 && (
+        {/* ── ETAPA 2: IDENTIFICAÇÃO & CAPTURA DE LEAD ────────────────────── */}
+        {currentStep === 2 && (
           <div className="space-y-4 py-2 animate-in fade-in">
             {/* Banner de Identificação / Login */}
             {guestAccount || guestEmail ? (
@@ -1182,7 +1114,7 @@ export function BookingFunnelModal({
             <div className="flex justify-between items-center pt-2">
               <Button
                 variant="outline"
-                onClick={() => setCurrentStep(2)}
+                onClick={() => setCurrentStep(1)}
                 className="text-xs font-bold rounded-xl h-10 px-4"
               >
                 <ArrowLeft className="w-3.5 h-3.5 mr-1" />
@@ -1200,8 +1132,8 @@ export function BookingFunnelModal({
           </div>
         )}
 
-        {/* ── ETAPA 4: CHECKOUT & PAGAMENTO TRANSPARENTE ───────────────────── */}
-        {currentStep === 4 && (
+        {/* ── ETAPA 3: CHECKOUT & PAGAMENTO TRANSPARENTE ───────────────────── */}
+        {currentStep === 3 && (
           <div className="space-y-4 py-2 animate-in fade-in">
             {/* Comparador de Formas de Pagamento */}
             <div className="space-y-2">
@@ -1273,7 +1205,7 @@ export function BookingFunnelModal({
             {/* Resumo Financeiro Consolidado */}
             <div className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-2 text-xs">
               <div className="flex justify-between text-slate-600 dark:text-slate-400">
-                <span>Diárias ({nights} noites • {flatsCount} {flatsCount === 1 ? "flat" : "flats"}):</span>
+                <span>Diárias ({nights} noites • {flatsCount} {flatsCount === 1 ? "flat" : "flats"} • {ratePlan === "with_breakfast" ? "Com Café" : "Sem Café"}):</span>
                 <span>R$ {subtotal.toLocaleString("pt-BR")}</span>
               </div>
 
@@ -1357,7 +1289,7 @@ export function BookingFunnelModal({
             <div className="flex justify-between items-center pt-2">
               <Button
                 variant="outline"
-                onClick={() => setCurrentStep(3)}
+                onClick={() => setCurrentStep(2)}
                 className="text-xs font-bold rounded-xl h-10 px-4"
               >
                 <ArrowLeft className="w-3.5 h-3.5 mr-1" />
@@ -1381,8 +1313,8 @@ export function BookingFunnelModal({
           </div>
         )}
 
-        {/* ── ETAPA 5: VOUCHER DIGITAL & PÓS-VENDA ─────────────────────────── */}
-        {currentStep === 5 && confirmedReservation && (
+        {/* ── ETAPA 4: VOUCHER DIGITAL & PÓS-VENDA ─────────────────────────── */}
+        {currentStep === 4 && confirmedReservation && (
           <div className="space-y-4 py-2 text-center animate-in zoom-in-95">
             <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mx-auto shadow-xs ${
               paymentMethod === "pix" && !isPixPaid 

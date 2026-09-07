@@ -4178,8 +4178,10 @@ app.post("/api/site-content/reset", (req, res) => {
 
 // ── Settings Endpoints ──────────────────────────────────────────────────────
 app.get("/api/settings", (req, res) => {
+  const petPolicy = db.siteConfig?.petPolicy || db.settings?.petPolicy || DEFAULT_SITE_CONFIG.petPolicy;
   res.json({
     ...db.settings,
+    petPolicy,
     houseRules: db.settings.houseRules || DEFAULT_HOUSE_RULES,
     contractTerms: db.settings.contractTerms || DEFAULT_CONTRACT_TERMS,
     termsAndRules: db.settings.termsAndRules || DEFAULT_TERMS_AND_RULES
@@ -4187,7 +4189,7 @@ app.get("/api/settings", (req, res) => {
 });
 
 app.patch("/api/settings", (req, res) => {
-  const { onedriveShareUrl, syncIntervalMinutes, sheetName, alertHour, termsAndRules, houseRules, contractTerms, adminWhatsApp, autoEarlyCheckinForSite, checkinTime, checkoutTime, hotelAddress, googleMapsUrl } = req.body;
+  const { onedriveShareUrl, syncIntervalMinutes, sheetName, alertHour, termsAndRules, houseRules, contractTerms, adminWhatsApp, autoEarlyCheckinForSite, checkinTime, checkoutTime, hotelAddress, googleMapsUrl, receptionEmail, buildingName, petPolicy } = req.body;
   if (onedriveShareUrl !== undefined) db.settings.onedriveShareUrl = onedriveShareUrl;
   if (syncIntervalMinutes !== undefined) db.settings.syncIntervalMinutes = syncIntervalMinutes;
   if (sheetName !== undefined) db.settings.sheetName = sheetName;
@@ -4201,9 +4203,21 @@ app.patch("/api/settings", (req, res) => {
   if (checkoutTime !== undefined) db.settings.checkoutTime = checkoutTime;
   if (hotelAddress !== undefined) db.settings.hotelAddress = hotelAddress;
   if (googleMapsUrl !== undefined) db.settings.googleMapsUrl = googleMapsUrl;
+  if (receptionEmail !== undefined) db.settings.receptionEmail = receptionEmail;
+  if (buildingName !== undefined) db.settings.buildingName = buildingName;
+  if (petPolicy !== undefined) {
+    if (!db.siteConfig) db.siteConfig = {};
+    db.siteConfig.petPolicy = {
+      ...(db.siteConfig.petPolicy || DEFAULT_SITE_CONFIG.petPolicy),
+      ...petPolicy
+    };
+    db.settings.petPolicy = db.siteConfig.petPolicy;
+  }
   saveDatabase();
+  const currentPetPolicy = db.siteConfig?.petPolicy || db.settings?.petPolicy || DEFAULT_SITE_CONFIG.petPolicy;
   res.json({
     ...db.settings,
+    petPolicy: currentPetPolicy,
     houseRules: db.settings.houseRules || DEFAULT_HOUSE_RULES,
     contractTerms: db.settings.contractTerms || DEFAULT_CONTRACT_TERMS
   });
@@ -5416,12 +5430,13 @@ const DEFAULT_HOUSE_RULES = `TERMOS, REGRAS E CONDIÇÕES DE RESERVA - CORPFLATS
 • Identificação da Unidade: O número do apartamento e as instruções detalhadas de acesso serão enviados por mensagem no dia da entrada, até as 14:00h.
 
 🐾 Política Pet (Cães de Pequeno Porte)
-• Permissão: Permitida a hospedagem exclusivamente de cães de pequeno porte.
-• Padrão Aceito: Cães com peso máximo de até 10 kg e altura de cernelha de até 35–40 cm.
-• Taxa Pet: Cobrança de taxa única de R$ 40,00 por animal.
-• Circulação no Prédio: Nas áreas comuns, o pet deve ser transportado obrigatoriamente no colo ou dentro de caixa/bolsa de transporte.
+• Permissão: Permitida a hospedagem exclusivamente de cães de pequeno porte (até 10 kg e altura de cernelha de até 35–40 cm). Outros animais não são autorizados.
+• Circulação no Prédio: Nas áreas comuns do condomínio, o pet deve ser transportado obrigatoriamente no colo ou dentro de caixa/bolsa de transporte (ou com guia curta).
 • Uso de Elevadores: É obrigatório utilizar exclusivamente o elevador de serviço ao transitar com animais.
-• Responsabilidade: O titular da reserva responde integralmente por quaisquer danos a móveis, colchões, enxoval de cama/banho, odores ou sujeiras causadas pelo pet.
+• Convivência e Sossego: É proibido deixar o animal desacompanhado/sozinho no flat por longos períodos. O tutor deve zelar para evitar latidos ou ruídos excessivos.
+• Higiene e Cuidados: Proibido dar banho no animal utilizando toalhas ou enxoval do flat, bem como permitir que o pet suba em camas e sofás sem proteção própria.
+• Responsabilidade e Avarias: O titular da reserva responde integralmente por quaisquer danos a móveis, colchões, enxoval de cama/banho, odores ou sujeiras causadas pelo pet, arcando com os custos de reposição ou higienização extraordinária.
+• Taxa Pet: Cobrança de taxa de higienização por animal conforme configurado no tarifário (padrão R$ 80,00 por estadia).
 
 👥 Capacidade e Visitantes
 • Ocupação Máxima: Limite de até 3 pessoas no apartamento (somando hóspedes e visitantes), respeitando a capacidade contratada na reserva.

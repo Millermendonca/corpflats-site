@@ -641,6 +641,21 @@ export default function BookingEngine() {
   const handleStartBooking = (overridePlan?: "with_breakfast" | "room_only") => {
     if (overridePlan) setRatePlan(overridePlan)
     setCheckoutModalOpen(true)
+    try {
+      fetch("/api/funnel/track", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: (typeof window !== "undefined" && sessionStorage.getItem("corpflats_funnel_session")) || `funnel_${Date.now()}`,
+          step: 1,
+          stepName: "busca_datas",
+          checkinDate: checkin,
+          checkoutDate: checkout,
+          ratePlan: overridePlan || ratePlan,
+          status: "pesquisando"
+        })
+      }).catch(() => {})
+    } catch {}
   }
 
   const handleConfirmBooking = async () => {
