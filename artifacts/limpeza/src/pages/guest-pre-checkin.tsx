@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react"
 import { useRoute, useLocation } from "wouter"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
@@ -10,13 +10,25 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { 
   Building2, User, Phone, Mail, Camera, FileText, CheckCircle2, 
   MapPin, ShieldCheck, ArrowRight, ArrowLeft, PenTool, Sparkles, AlertCircle, Zap, Car,
-  Printer, Edit3, Share2, Eye, ZoomIn, Download, ExternalLink, MessageCircle, Clock, Calendar, Check, Ban, Lock, Award, KeyRound
+  Printer, Edit3, Share2, Eye, ZoomIn, Download, ExternalLink, MessageCircle, Clock, Calendar, Check, Ban, Lock, Award, KeyRound, Search
 } from "lucide-react"
 import { compressImage } from "@/lib/image-compression"
 
 export default function GuestPreCheckin() {
   const [, params] = useRoute("/pre-checkin/:code")
-  const code = params?.code || ""
+  const [, setLocation] = useLocation()
+
+  const getQueryCode = () => {
+    if (params?.code) return params.code
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search)
+      return sp.get("code") || sp.get("res") || sp.get("reserva") || sp.get("q") || ""
+    }
+    return ""
+  }
+
+  const code = getQueryCode()
+  const [searchCodeInput, setSearchCodeInput] = useState("")
 
   const [step, setStep] = useState(1)
   const [loading, setLoading] = useState(false)
@@ -59,6 +71,7 @@ export default function GuestPreCheckin() {
   const [termsModalOpen, setTermsModalOpen] = useState(false)
   const [termsModalTab, setTermsModalTab] = useState<"rules" | "contract">("rules")
   const [settings, setSettings] = useState<any>(null)
+  const [siteConfig, setSiteConfig] = useState<any>(null)
 
   // Veículo para Garagem
   const [vehiclePlate, setVehiclePlate] = useState("")
@@ -169,7 +182,19 @@ export default function GuestPreCheckin() {
       .then(r => r.json())
       .then(data => setSettings(data))
       .catch(() => {})
+
+    fetch("/api/site-content")
+      .then(r => r.json())
+      .then(data => setSiteConfig(data))
+      .catch(() => {})
   }, [code, selectedGuestIndex])
+
+  // Branding & Contacts
+  const brandName = siteConfig?.branding?.brandName && !siteConfig.branding.brandName.includes("Macaé") 
+    ? siteConfig.branding.brandName 
+    : "CorpFlats"
+  const whatsappNumber = siteConfig?.branding?.whatsapp || settings?.adminWhatsApp || "5522997124021"
+  const whatsappUrl = `https://wa.me/${whatsappNumber.replace(/[^0-9]/g, "")}?text=${encodeURIComponent(`Olá! Gostaria de ajuda com o pré-check-in digital${reservation?.code ? ` da reserva ${reservation.code}` : ''}.`)}`
 
   // Signature canvas handlers
   const startDrawing = (e: any) => {
@@ -229,7 +254,6 @@ export default function GuestPreCheckin() {
 
     setCompressing(true)
     try {
-      // Compresses 5-8MB high-res photos into ~80-120KB WebP (97% reduction)
       const result = await compressImage(file, {
         maxWidth: 1400,
         maxHeight: 1400,
@@ -240,7 +264,7 @@ export default function GuestPreCheckin() {
       setter(result.base64)
       const origKb = Math.round(result.originalSizeBytes / 1024)
       const compKb = Math.round(result.compressedSizeBytes / 1024)
-      const statText = `⚡ Otimizada: de ${origKb}KB para ${compKb}KB (${result.savedPercentage}% de economia)`
+      const statText = `⚡ Otimizada: ${origKb}KB → ${compKb}KB (${result.savedPercentage}% economizado)`
 
       if (type === "doc") setDocCompressStats(statText)
       if (type === "selfie") setSelfieCompressStats(statText)
@@ -309,22 +333,246 @@ export default function GuestPreCheckin() {
   }
 
   // ══════════════════════════════════════════════════════════════════════════════
-  // MODO 1: FICHA DIGITAL DE HOSPEDAGEM (FNHR) FECHADA, ASSINADA & CERTIFICADA
+  // MODO 0: BUSCA DE RESERVA SE NÃO HOUVER CÓDIGO
+  // ══════════════════════════════════════════════════════════════════════════════
+  if (!code && !reservation) {
+    return (
+      <div className="min-h-screen bg-slate-50/70 text-slate-900 flex flex-col font-sans selection:bg-sky-500 selection:text-white w-full max-w-full overflow-x-hidden">
+        {/* Top Navbar */}
+        <nav className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-4 sm:px-8 py-3 shadow-2xs w-full max-w-full">
+          <div className="max-w-4xl mx-auto flex items-center justify-between gap-3">
+            <div 
+              onClick={() => setLocation("/reservar")}
+              className="flex items-center gap-2.5 sm:gap-3 cursor-pointer group shrink-0"
+            >
+              {siteConfig?.branding?.logoImage ? (
+                <img 
+                  src={siteConfig.branding.logoImage} 
+                  alt={brandName} 
+                  className="w-8 h-8 sm:w-9 sm:h-9 object-contain rounded-xl"
+                />
+              ) : (
+                <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-sm sm:text-base shadow-sm group-hover:bg-slate-800 transition-colors">
+                  CF
+                </div>
+              )}
+              <span className="font-bold text-base sm:text-lg tracking-tight text-slate-900 group-hover:text-slate-700 transition-colors block leading-none">
+                {brandName}
+              </span>
+            </div>
+
+            <a
+              href={whatsappUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 py-1.5 sm:py-2 px-3 sm:px-3.5 rounded-xl bg-emerald-50/90 hover:bg-emerald-100/90 text-emerald-700 font-semibold text-xs border border-emerald-200 transition-colors shrink-0"
+            >
+              <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+              <span>WhatsApp</span>
+            </a>
+          </div>
+        </nav>
+
+        {/* Hero Banner */}
+        <header className="relative min-h-[160px] sm:min-h-[190px] flex items-center justify-center px-4 sm:px-8 py-6 sm:py-8 text-center overflow-hidden">
+          <div className="absolute inset-0 z-0">
+            <img
+              src="https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=1920&q=80"
+              alt="Pré-Check-in CorpFlats"
+              className="w-full h-full object-cover object-center"
+            />
+            <div className="absolute inset-0 bg-gradient-to-b from-black/45 via-black/50 to-black/60" />
+          </div>
+
+          <div className="relative z-10 max-w-xl mx-auto space-y-1.5 text-white">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/20 backdrop-blur-md border border-white/25 text-[11px] font-semibold tracking-wide text-white/95 mb-1 shadow-xs">
+              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+              <span>Autoatendimento Digital • 100% Rápido & Seguro</span>
+            </div>
+            <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight drop-shadow-md text-white">
+              Pré-Check-in Digital
+            </h1>
+            <p className="text-xs sm:text-sm font-normal text-white/90 drop-shadow-sm tracking-normal">
+              Ficha Nacional de Registro de Hóspedes (FNHR) & Acesso Facilitado
+            </p>
+          </div>
+        </header>
+
+        {/* Search Card */}
+        <main className="max-w-lg w-full mx-auto px-4 -mt-6 sm:-mt-8 z-20 space-y-4 pb-20">
+          <Card className="bg-white border border-slate-200/80 rounded-3xl p-6 sm:p-8 shadow-xl text-center space-y-5">
+            <div className="w-14 h-14 rounded-2xl bg-sky-50 text-sky-600 border border-sky-200 flex items-center justify-center mx-auto shadow-2xs">
+              <FileText className="w-7 h-7" />
+            </div>
+
+            <div className="space-y-1.5">
+              <h2 className="text-xl font-bold text-slate-900 tracking-tight">Localizar Pré-Check-in</h2>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Informe o código da sua reserva, CPF ou WhatsApp cadastrado para iniciar seu pré-check-in digital.
+              </p>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                const q = searchCodeInput.trim()
+                if (!q) return
+                setLocation(`/pre-checkin/${encodeURIComponent(q)}`)
+              }}
+              className="space-y-4 text-left"
+            >
+              <div className="space-y-1.5">
+                <Label htmlFor="preCheckinSearch" className="text-xs font-bold text-slate-700">
+                  Localizador, CPF ou Telefone:
+                </Label>
+                <div className="relative">
+                  <Input
+                    id="preCheckinSearch"
+                    value={searchCodeInput}
+                    onChange={(e) => setSearchCodeInput(e.target.value)}
+                    placeholder="Ex: RES-211-0045, CPF ou 22997124021"
+                    className="pl-10 h-11 text-xs sm:text-sm rounded-xl border-slate-200 focus-visible:ring-sky-500"
+                    autoFocus
+                  />
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
+                </div>
+              </div>
+
+              <Button
+                type="submit"
+                disabled={!searchCodeInput.trim()}
+                className="w-full h-11 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm rounded-xl shadow-md gap-2"
+              >
+                <ArrowRight className="w-4 h-4" />
+                <span>Acessar Pré-Check-in</span>
+              </Button>
+            </form>
+
+            <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setLocation("/reservar")}
+                className="text-slate-500 hover:text-slate-800 text-xs font-semibold p-0 h-auto"
+              >
+                ← Ir para Site de Reservas
+              </Button>
+
+              <a
+                href={whatsappUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-emerald-700 hover:text-emerald-800 font-bold flex items-center gap-1 text-xs"
+              >
+                <MessageCircle className="w-3.5 h-3.5" />
+                <span>Falar com a Recepção</span>
+              </a>
+            </div>
+          </Card>
+        </main>
+      </div>
+    )
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════
+  // MODO 1: FICHA DIGITAL DE HOSPEDAGEM (FNHR) CONCLUÍDA & CERTIFICADA
   // ══════════════════════════════════════════════════════════════════════════════
   if (isCompleted && !isEditing) {
     return (
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col p-4 sm:p-6 font-sans">
-        <div className="max-w-3xl w-full mx-auto space-y-4">
-          {/* Barra Superior / Ações */}
-          <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/90 border border-slate-800 p-3 rounded-2xl shadow-lg">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center font-black text-xs">
-                CF
-              </div>
+      <div className="min-h-screen bg-slate-50/70 text-slate-900 flex flex-col font-sans selection:bg-sky-500 selection:text-white w-full max-w-full overflow-x-hidden">
+        {/* Top Navigation Bar */}
+        <nav className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-4 sm:px-8 py-3 shadow-2xs w-full max-w-full print:hidden">
+          <div className="max-w-4xl mx-auto flex items-center justify-between gap-3">
+            <div 
+              onClick={() => setLocation(reservation?.code ? `/minha-reserva/${reservation.code}` : "/minha-reserva")}
+              className="flex items-center gap-2.5 sm:gap-3 cursor-pointer group shrink-0"
+            >
+              {siteConfig?.branding?.logoImage ? (
+                <img 
+                  src={siteConfig.branding.logoImage} 
+                  alt={brandName} 
+                  className="w-8 h-8 sm:w-9 sm:h-9 object-contain rounded-xl"
+                />
+              ) : (
+                <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-sm sm:text-base shadow-sm group-hover:bg-slate-800 transition-colors">
+                  CF
+                </div>
+              )}
               <div>
-                <span className="font-bold text-xs text-white block leading-tight">Ficha Digital de Hospedagem (FNHR)</span>
-                <span className="text-[10px] text-slate-400">Reserva #{reservation?.code || code} • Apt {reservation?.flatNumber}</span>
+                <span className="font-bold text-base sm:text-lg tracking-tight text-slate-900 group-hover:text-slate-700 transition-colors block leading-none">
+                  {brandName}
+                </span>
+                <span className="text-[10px] text-slate-500 font-mono font-medium block mt-0.5">
+                  FNHR Certificada • Apt {reservation?.flatNumber}
+                </span>
               </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {reservation?.code && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setLocation(`/minha-reserva/${reservation.code}`)}
+                  className="h-8 sm:h-9 px-2.5 sm:px-3 text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-semibold text-xs rounded-xl flex items-center gap-1.5 transition-colors"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Portal do Hóspede</span>
+                </Button>
+              )}
+
+              <a
+                href={whatsappUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 py-1.5 sm:py-2 px-3 sm:px-3.5 rounded-xl bg-emerald-50/90 hover:bg-emerald-100/90 text-emerald-700 font-semibold text-xs border border-emerald-200 transition-colors shrink-0"
+              >
+                <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+                <span>WhatsApp</span>
+              </a>
+            </div>
+          </div>
+        </nav>
+
+        {/* Hero Section */}
+        <header className="relative min-h-[140px] sm:min-h-[170px] flex items-center justify-center px-4 sm:px-8 py-6 sm:py-8 text-center overflow-hidden print:hidden">
+          <div className="absolute inset-0 z-0">
+            <img
+              src="https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=1920&q=80"
+              alt="Pré-Check-in CorpFlats"
+              className="w-full h-full object-cover object-center"
+            />
+            <div className="absolute inset-0 bg-gradient-to-b from-black/45 via-black/50 to-black/60" />
+          </div>
+
+          <div className="relative z-10 max-w-xl mx-auto space-y-1 text-white">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/30 backdrop-blur-md border border-emerald-400/30 text-[11px] font-semibold tracking-wide text-white mb-1 shadow-xs">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
+              <span>Check-in Digital Concluído & Autenticado</span>
+            </div>
+            <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight drop-shadow-md text-white">
+              Ficha de Hospedagem (FNHR)
+            </h1>
+            <p className="text-xs sm:text-sm font-normal text-white/90 drop-shadow-sm">
+              Apartamento {reservation?.flatNumber} • Edifício Soho Residence Service
+            </p>
+          </div>
+        </header>
+
+        {/* Main Certificate Container */}
+        <main className="max-w-3xl w-full mx-auto px-4 -mt-6 sm:-mt-8 z-20 space-y-4 sm:space-y-5 pb-20">
+          
+          {/* Top Actions Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-2.5 bg-white border border-slate-200/80 p-3 sm:p-4 rounded-2xl shadow-sm print:hidden">
+            <div className="flex items-center gap-2">
+              <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs font-bold py-1 px-3 flex items-center gap-1.5 shadow-none">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Documento Registrado</span>
+              </Badge>
+              <span className="text-xs text-slate-500 font-medium hidden sm:inline">
+                Reserva <strong className="text-slate-900 font-mono">#{reservation?.code || code}</strong>
+              </span>
             </div>
 
             <div className="flex items-center gap-2">
@@ -332,20 +580,20 @@ export default function GuestPreCheckin() {
                 variant="outline"
                 size="sm"
                 onClick={() => window.print()}
-                className="h-8 text-xs bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-200 font-bold gap-1.5 rounded-xl shadow-xs"
+                className="h-9 text-xs bg-white border-slate-200 hover:bg-slate-50 text-slate-700 font-bold gap-1.5 rounded-xl shadow-2xs"
               >
-                <Printer className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Imprimir / PDF</span>
+                <Printer className="w-3.5 h-3.5 text-slate-500" />
+                <span className="hidden sm:inline">Imprimir / Salvar PDF</span>
               </Button>
 
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => setIsEditing(true)}
-                className="h-8 text-xs bg-slate-800 border-slate-700 hover:bg-slate-700 text-amber-300 font-bold gap-1.5 rounded-xl shadow-xs"
+                className="h-9 text-xs bg-amber-50/70 border-amber-200 hover:bg-amber-100/70 text-amber-800 font-bold gap-1.5 rounded-xl shadow-2xs"
               >
-                <Edit3 className="w-3.5 h-3.5" />
-                <span>Editar Ficha</span>
+                <Edit3 className="w-3.5 h-3.5 text-amber-600" />
+                <span>Editar Dados</span>
               </Button>
 
               <Button
@@ -358,18 +606,18 @@ export default function GuestPreCheckin() {
                   )
                   window.open(phoneClean ? `https://wa.me/55${phoneClean}?text=${msg}` : `https://wa.me/?text=${msg}`, "_blank")
                 }}
-                className="h-8 text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-bold gap-1.5 rounded-xl shadow-xs"
+                className="h-9 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-1.5 rounded-xl shadow-xs"
               >
                 <MessageCircle className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">WhatsApp</span>
+                <span className="hidden sm:inline">Compartilhar WhatsApp</span>
               </Button>
             </div>
           </div>
 
-          {/* Seletor de Hóspedes da Reserva (Se mais de 1 pessoa) */}
+          {/* Multi-Guest Selector (se houver mais de 1 pessoa) */}
           {guestList.length > 1 && (
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-2.5 space-y-1.5 shadow-md">
-              <span className="text-[10px] uppercase font-bold text-slate-400 block px-1 tracking-wider">
+            <div className="bg-white border border-slate-200/80 rounded-2xl p-3 sm:p-4 shadow-sm space-y-2 print:hidden">
+              <span className="text-[11px] uppercase font-bold text-slate-500 block tracking-wider">
                 Hóspedes Cadastrados na Reserva ({guestList.length} Pessoas):
               </span>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -387,17 +635,17 @@ export default function GuestPreCheckin() {
                       }}
                       className={`py-2 px-3 rounded-xl text-xs font-bold transition-all text-left flex items-center justify-between border ${
                         isCurrent
-                          ? "bg-primary text-primary-foreground border-primary shadow-md"
+                          ? "bg-slate-900 text-white border-slate-900 shadow-sm"
                           : g.hasCompletedCheckin
-                          ? "bg-emerald-950/60 border-emerald-800 text-emerald-300 hover:bg-emerald-950"
-                          : "bg-slate-950 border-slate-800 text-slate-400 hover:bg-slate-800"
+                          ? "bg-emerald-50/80 border-emerald-200 text-emerald-800 hover:bg-emerald-100/80"
+                          : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
                       }`}
                     >
                       <span className="truncate">{g.name || `Hóspede ${g.index}`}</span>
                       {g.hasCompletedCheckin ? (
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 ml-1" />
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0 ml-1" />
                       ) : (
-                        <span className="text-[9px] px-1 py-0.5 rounded bg-slate-800 text-slate-400 shrink-0 ml-1">Pendente</span>
+                        <span className="text-[9px] px-1 py-0.5 rounded bg-slate-200 text-slate-600 shrink-0 ml-1">Pendente</span>
                       )}
                     </button>
                   )
@@ -406,100 +654,108 @@ export default function GuestPreCheckin() {
             </div>
           )}
 
-          {/* Documento Oficial da FNHR */}
-          <Card className="bg-slate-900 border-slate-800 text-white rounded-3xl p-5 sm:p-7 shadow-2xl space-y-6">
-            {/* Cabeçalho do Documento */}
-            <div className="border-b border-slate-800 pb-4 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
+          {/* Ficha Oficial FNHR Certificada */}
+          <Card className="bg-white border border-slate-200/80 text-slate-900 rounded-3xl p-6 sm:p-8 shadow-xl space-y-6">
+            {/* Cabeçalho da Ficha */}
+            <div className="border-b border-slate-100 pb-5 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
-                  <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-amber-600 to-amber-400 text-slate-950 flex items-center justify-center font-black text-lg shadow-md shrink-0">
-                    CF
-                  </div>
+                  {siteConfig?.branding?.logoImage ? (
+                    <img 
+                      src={siteConfig.branding.logoImage} 
+                      alt={brandName} 
+                      className="w-11 h-11 rounded-2xl object-contain shadow-xs"
+                    />
+                  ) : (
+                    <div className="w-11 h-11 rounded-2xl bg-slate-900 text-white flex items-center justify-center font-black text-base shadow-xs shrink-0">
+                      CF
+                    </div>
+                  )}
                   <div>
-                    <h1 className="text-base sm:text-lg font-black text-white tracking-tight leading-tight">
+                    <h2 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight leading-tight">
                       Ficha Nacional de Registro de Hóspedes (FNHR)
-                    </h1>
-                    <span className="text-[11px] text-amber-400 font-bold uppercase tracking-wider block">
-                      CorpFlats • Soho Residence Service
+                    </h2>
+                    <span className="text-[11px] text-sky-600 font-bold uppercase tracking-wider block">
+                      {brandName} • Edifício Soho Residence Service
                     </span>
                   </div>
                 </div>
 
-                <Badge className="bg-emerald-950 text-emerald-300 border-emerald-800 text-xs font-bold py-1 px-3 flex items-center gap-1.5 shadow-sm">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                <Badge className="bg-emerald-50 hover:bg-emerald-50 text-emerald-700 border-emerald-200 text-xs font-bold py-1 px-3 flex items-center gap-1.5 shadow-none">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                   <span>Check-in Digital Concluído</span>
                 </Badge>
               </div>
 
-              <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-400 pt-1">
-                <span>Apartamento: <strong className="text-white">Studio Apt {reservation?.flatNumber}</strong></span>
-                <span>Código da Reserva: <strong className="text-amber-400 font-mono">{reservation?.code || code}</strong></span>
+              <div className="flex flex-wrap items-center justify-between text-xs text-slate-500 pt-1 border-t border-slate-100">
+                <span>Apartamento: <strong className="text-slate-900 font-bold">Studio Apt {reservation?.flatNumber}</strong></span>
+                <span>Localizador: <strong className="text-sky-600 font-mono font-bold">{reservation?.code || code}</strong></span>
                 {completedTimestamp && (
-                  <span>Data do Registro: <strong className="text-slate-200">{new Date(completedTimestamp).toLocaleString("pt-BR")}</strong></span>
+                  <span>Registro: <strong className="text-slate-700">{new Date(completedTimestamp).toLocaleString("pt-BR")}</strong></span>
                 )}
               </div>
             </div>
 
             {/* 1. Dados Pessoais do Hóspede */}
             <div className="space-y-2">
-              <div className="flex items-center gap-2 text-xs font-bold text-slate-300 uppercase tracking-wider">
-                <User className="w-3.5 h-3.5 text-primary" />
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-700 uppercase tracking-wider">
+                <User className="w-3.5 h-3.5 text-sky-600" />
                 <span>1. Dados de Identificação do Hóspede</span>
               </div>
-              <div className="p-4 bg-slate-950/80 rounded-2xl border border-slate-800 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              <div className="p-4 bg-slate-50/80 rounded-2xl border border-slate-200/80 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
                 <div>
-                  <span className="text-slate-500 block text-[10px] uppercase font-bold">Nome Completo</span>
-                  <span className="font-bold text-white text-sm">{fullName || "Não informado"}</span>
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Nome Completo</span>
+                  <span className="font-bold text-slate-900 text-sm">{fullName || "Não informado"}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500 block text-[10px] uppercase font-bold">CPF / Documento</span>
-                  <span className="font-medium text-slate-200 font-mono">{document || "Não informado"}</span>
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">CPF / Documento</span>
+                  <span className="font-semibold text-slate-800 font-mono">{document || "Não informado"}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500 block text-[10px] uppercase font-bold">WhatsApp / Telefone</span>
-                  <span className="font-medium text-slate-200">{phone || "Não informado"}</span>
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">WhatsApp / Telefone</span>
+                  <span className="font-semibold text-slate-800">{phone || "Não informado"}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500 block text-[10px] uppercase font-bold">E-mail</span>
-                  <span className="font-medium text-slate-200 truncate block">{email || "Não informado"}</span>
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">E-mail</span>
+                  <span className="font-medium text-slate-700 truncate block">{email || "Não informado"}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500 block text-[10px] uppercase font-bold">Data de Nascimento</span>
-                  <span className="font-medium text-slate-200">{birthDate || "Não informada"}</span>
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Data de Nascimento</span>
+                  <span className="font-medium text-slate-700">{birthDate || "Não informada"}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500 block text-[10px] uppercase font-bold">Gênero</span>
-                  <span className="font-medium text-slate-200 capitalize">{gender || "Não informado"}</span>
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Gênero</span>
+                  <span className="font-medium text-slate-700 capitalize">{gender || "Não informado"}</span>
                 </div>
-                <div className="sm:col-span-3 pt-2 border-t border-slate-900">
-                  <span className="text-slate-500 block text-[10px] uppercase font-bold">Endereço Residencial</span>
-                  <span className="font-medium text-slate-300">{address ? `${address} • ${city} - ${state}` : "Campos dos Goytacazes - RJ"}</span>
+                <div className="sm:col-span-3 pt-2 border-t border-slate-200/60">
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Endereço Residencial</span>
+                  <span className="font-medium text-slate-800">{address ? `${address} • ${city} - ${state}` : "Campos dos Goytacazes - RJ"}</span>
                 </div>
               </div>
             </div>
 
             {/* 2. Dados da Estadia & Acomodação */}
             <div className="space-y-2">
-              <div className="flex items-center gap-2 text-xs font-bold text-slate-300 uppercase tracking-wider">
-                <Calendar className="w-3.5 h-3.5 text-primary" />
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-700 uppercase tracking-wider">
+                <Calendar className="w-3.5 h-3.5 text-sky-600" />
                 <span>2. Dados da Hospedagem & Período</span>
               </div>
-              <div className="p-4 bg-slate-950/80 rounded-2xl border border-slate-800 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+              <div className="p-4 bg-slate-50/80 rounded-2xl border border-slate-200/80 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
                 <div>
-                  <span className="text-slate-500 block text-[10px] uppercase font-bold">Data de Check-in</span>
-                  <span className="font-bold text-slate-200">{reservation?.checkinDate}</span>
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Data de Check-in</span>
+                  <span className="font-bold text-slate-900">{reservation?.checkinDate}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500 block text-[10px] uppercase font-bold">Data de Check-out</span>
-                  <span className="font-bold text-slate-200">{reservation?.checkoutDate}</span>
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Data de Check-out</span>
+                  <span className="font-bold text-slate-900">{reservation?.checkoutDate}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500 block text-[10px] uppercase font-bold">Canal de Origem</span>
-                  <span className="font-bold text-amber-400 capitalize">{reservation?.channel || "Site Oficial"}</span>
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Canal de Origem</span>
+                  <span className="font-bold text-sky-600 capitalize">{reservation?.channel || "Site Oficial"}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500 block text-[10px] uppercase font-bold">Motivo da Viagem</span>
-                  <span className="font-medium text-slate-200 capitalize">{travelReason || "Lazer / Turismo"}</span>
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Motivo da Viagem</span>
+                  <span className="font-medium text-slate-800 capitalize">{travelReason || "Lazer / Turismo"}</span>
                 </div>
               </div>
             </div>
@@ -507,25 +763,25 @@ export default function GuestPreCheckin() {
             {/* 3. Veículo & Garagem Soho (se cadastrado) */}
             {vehiclePlate && (
               <div className="space-y-2">
-                <div className="flex items-center gap-2 text-xs font-bold text-slate-300 uppercase tracking-wider">
-                  <Car className="w-3.5 h-3.5 text-blue-400" />
+                <div className="flex items-center gap-2 text-xs font-bold text-slate-700 uppercase tracking-wider">
+                  <Car className="w-3.5 h-3.5 text-sky-600" />
                   <span>3. Veículo Cadastrado para Garagem</span>
                 </div>
-                <div className="p-3.5 bg-blue-950/30 rounded-2xl border border-blue-900/60 flex items-center justify-between text-xs">
+                <div className="p-4 bg-sky-50/60 rounded-2xl border border-sky-200/80 flex flex-wrap items-center justify-between gap-3 text-xs">
                   <div className="flex items-center gap-3">
-                    <div className="px-3 py-1 bg-slate-950 border-2 border-blue-500/80 rounded-lg text-center font-mono">
-                      <span className="text-[8px] block text-blue-400 font-bold uppercase leading-none">BRASIL</span>
-                      <span className="text-sm font-black text-white tracking-widest leading-none">{vehiclePlate}</span>
+                    <div className="px-3 py-1.5 bg-white border-2 border-slate-900 rounded-lg text-center font-mono shadow-xs">
+                      <span className="text-[8px] block text-sky-600 font-bold uppercase leading-none">BRASIL</span>
+                      <span className="text-sm font-black text-slate-900 tracking-widest leading-none">{vehiclePlate}</span>
                     </div>
                     <div>
-                      <span className="font-bold text-white block">{vehicleBrand} {vehicleModel}</span>
-                      <span className="text-[11px] text-blue-300">
-                        {vehicleColor ? `Cor: ${vehicleColor} • ` : ""}1 Vaga Rotativa Inclusa no Soho
+                      <span className="font-bold text-slate-900 block">{vehicleBrand} {vehicleModel}</span>
+                      <span className="text-[11px] text-slate-600">
+                        {vehicleColor ? `Cor: ${vehicleColor} • ` : ""}1 Vaga Privativa no Soho
                       </span>
                     </div>
                   </div>
-                  <Badge className="bg-emerald-950 text-emerald-400 border border-emerald-800 text-[10px] font-bold">
-                    ✓ Garagem Autorizada
+                  <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold">
+                    ✓ Garagem Autorizada na Portaria
                   </Badge>
                 </div>
               </div>
@@ -533,20 +789,20 @@ export default function GuestPreCheckin() {
 
             {/* 4. Documentos & Biometria Anexados */}
             <div className="space-y-2">
-              <div className="flex items-center justify-between text-xs font-bold text-slate-300 uppercase tracking-wider">
+              <div className="flex items-center justify-between text-xs font-bold text-slate-700 uppercase tracking-wider">
                 <div className="flex items-center gap-2">
-                  <Camera className="w-3.5 h-3.5 text-primary" />
+                  <Camera className="w-3.5 h-3.5 text-sky-600" />
                   <span>4. Documentação & Biometria Facial</span>
                 </div>
-                <span className="text-[10px] text-slate-500 font-normal lowercase">Toque na foto para ampliar</span>
+                <span className="text-[11px] text-slate-400 font-normal lowercase">Toque na foto para ampliar</span>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {/* Selfie do Hóspede */}
-                <div className="p-3 bg-slate-950/80 rounded-2xl border border-slate-800 space-y-2">
+                <div className="p-3.5 bg-slate-50/80 rounded-2xl border border-slate-200/80 space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] uppercase font-bold text-slate-400">Selfie do Hóspede</span>
+                    <span className="text-[10px] uppercase font-bold text-slate-500">Selfie do Hóspede</span>
                     {selfiePhoto && (
-                      <span className="text-[9px] text-primary font-bold flex items-center gap-0.5">
+                      <span className="text-[10px] text-sky-600 font-bold flex items-center gap-0.5">
                         <ZoomIn className="w-3 h-3" /> Ampliar
                       </span>
                     )}
@@ -555,8 +811,8 @@ export default function GuestPreCheckin() {
                     onClick={() => {
                       if (selfiePhoto) setZoomedPhoto({ url: selfiePhoto, title: `Selfie - ${fullName}` })
                     }}
-                    className={`h-40 bg-slate-900 rounded-xl border border-slate-800 flex items-center justify-center overflow-hidden relative group ${
-                      selfiePhoto ? "cursor-pointer hover:border-primary/60" : ""
+                    className={`h-40 bg-white rounded-xl border border-slate-200 flex items-center justify-center overflow-hidden relative group shadow-2xs ${
+                      selfiePhoto ? "cursor-pointer hover:border-sky-500" : ""
                     }`}
                   >
                     {selfiePhoto ? (
@@ -567,17 +823,17 @@ export default function GuestPreCheckin() {
                         </div>
                       </>
                     ) : (
-                      <span className="text-xs text-slate-500">Selfie não anexada</span>
+                      <span className="text-xs text-slate-400">Selfie não anexada</span>
                     )}
                   </div>
                 </div>
 
                 {/* Foto do Documento */}
-                <div className="p-3 bg-slate-950/80 rounded-2xl border border-slate-800 space-y-2">
+                <div className="p-3.5 bg-slate-50/80 rounded-2xl border border-slate-200/80 space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] uppercase font-bold text-slate-400">Foto do Documento (RG / CNH)</span>
+                    <span className="text-[10px] uppercase font-bold text-slate-500">Foto do Documento (RG / CNH)</span>
                     {docPhoto && (
-                      <span className="text-[9px] text-primary font-bold flex items-center gap-0.5">
+                      <span className="text-[10px] text-sky-600 font-bold flex items-center gap-0.5">
                         <ZoomIn className="w-3 h-3" /> Ampliar
                       </span>
                     )}
@@ -586,8 +842,8 @@ export default function GuestPreCheckin() {
                     onClick={() => {
                       if (docPhoto) setZoomedPhoto({ url: docPhoto, title: `Documento de Identidade - ${fullName}` })
                     }}
-                    className={`h-40 bg-slate-900 rounded-xl border border-slate-800 flex items-center justify-center overflow-hidden relative group ${
-                      docPhoto ? "cursor-pointer hover:border-primary/60" : ""
+                    className={`h-40 bg-white rounded-xl border border-slate-200 flex items-center justify-center overflow-hidden relative group shadow-2xs ${
+                      docPhoto ? "cursor-pointer hover:border-sky-500" : ""
                     }`}
                   >
                     {docPhoto ? (
@@ -598,7 +854,7 @@ export default function GuestPreCheckin() {
                         </div>
                       </>
                     ) : (
-                      <span className="text-xs text-slate-500">Documento não anexado</span>
+                      <span className="text-xs text-slate-400">Documento não anexado</span>
                     )}
                   </div>
                 </div>
@@ -606,79 +862,77 @@ export default function GuestPreCheckin() {
             </div>
 
             {/* 5. Assinatura Digital & Termo de Aceite */}
-            <div className="space-y-2 pt-2 border-t border-slate-800">
-              <div className="flex items-center gap-2 text-xs font-bold text-slate-300 uppercase tracking-wider">
-                <PenTool className="w-3.5 h-3.5 text-primary" />
+            <div className="space-y-2 pt-2 border-t border-slate-100">
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-700 uppercase tracking-wider">
+                <PenTool className="w-3.5 h-3.5 text-sky-600" />
                 <span>5. Assinatura Digital & Termos Aceitos</span>
               </div>
-              <div className="p-4 bg-slate-950/90 rounded-2xl border border-slate-800 space-y-3">
+              <div className="p-4 bg-slate-50/80 rounded-2xl border border-slate-200/80 space-y-3">
                 {signatureData ? (
                   <div 
                     onClick={() => setZoomedPhoto({ url: signatureData, title: `Assinatura Digital - ${fullName}` })}
-                    className="bg-white rounded-xl p-2 h-28 flex items-center justify-center overflow-hidden cursor-pointer hover:opacity-90 transition-opacity relative group"
+                    className="bg-white rounded-xl p-2 h-28 flex items-center justify-center overflow-hidden cursor-pointer hover:opacity-90 transition-opacity relative group border border-slate-200 shadow-2xs"
                   >
                     <img src={signatureData} alt="Assinatura Digital" className="max-h-full object-contain" />
-                    <div className="absolute top-1.5 right-2 text-[9px] bg-slate-900/80 text-slate-200 px-1.5 py-0.5 rounded font-bold">
-                      Assinado Eletronicamente
+                    <div className="absolute top-1.5 right-2 text-[9px] bg-slate-900 text-white px-2 py-0.5 rounded-full font-bold shadow-xs">
+                      ✓ Assinado Eletronicamente
                     </div>
                   </div>
                 ) : (
-                  <div className="h-20 bg-slate-900 rounded-xl flex items-center justify-center text-slate-500 text-xs">
+                  <div className="h-20 bg-white rounded-xl border border-slate-200 flex items-center justify-center text-slate-400 text-xs">
                     Assinatura não registrada
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-300">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-700">
                   <div className="flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                     <span>Regras do Imóvel & Conveniência Aceitas</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                     <span>Contrato de Locação por Temporada Aceito</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <Ban className="w-4 h-4 text-rose-400 shrink-0" />
+                    <Ban className="w-4 h-4 text-rose-600 shrink-0" />
                     <span>Flats 100% Não Fumantes (Ciente da Multa)</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <ShieldCheck className="w-4 h-4 text-primary shrink-0" />
+                    <ShieldCheck className="w-4 h-4 text-sky-600 shrink-0" />
                     <span>Dados protegidos conforme LGPD (Lei 13.709)</span>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Rodapé da Ficha com Carimbo */}
-            <div className="text-center pt-2 text-[11px] text-slate-500">
-              CorpFlats Gestão de Flats & Hospedagem • Edifício Soho Residence • Campos dos Goytacazes - RJ
+            {/* Rodapé Oficial da Ficha */}
+            <div className="text-center pt-3 text-[11px] text-slate-400 border-t border-slate-100">
+              {brandName} • Edifício Soho Residence Service • Centro, Campos dos Goytacazes - RJ
             </div>
           </Card>
-        </div>
+        </main>
 
-        {/* Modal: Visualizador Ampliado de Fotos (Zoom / Lightbox) */}
+        {/* Modal: Lightbox Zoom de Fotos */}
         <Dialog open={Boolean(zoomedPhoto)} onOpenChange={(open) => !open && setZoomedPhoto(null)}>
-          <DialogContent className="sm:max-w-2xl max-h-[92vh] p-4 bg-slate-950/95 border-slate-800 text-white flex flex-col justify-between">
-            <DialogHeader className="pb-2 border-b border-slate-800">
-              <div className="flex items-center justify-between">
-                <DialogTitle className="flex items-center gap-2 text-sm font-bold text-slate-200">
-                  <Eye className="w-4 h-4 text-primary" />
-                  <span>{zoomedPhoto?.title || "Visualização da Foto"}</span>
-                </DialogTitle>
-              </div>
+          <DialogContent className="sm:max-w-2xl max-h-[92vh] p-4 bg-white border border-slate-200 text-slate-900 flex flex-col justify-between rounded-3xl shadow-2xl">
+            <DialogHeader className="pb-2 border-b border-slate-100">
+              <DialogTitle className="flex items-center gap-2 text-sm font-bold text-slate-900">
+                <Eye className="w-4 h-4 text-sky-600" />
+                <span>{zoomedPhoto?.title || "Visualização da Foto"}</span>
+              </DialogTitle>
             </DialogHeader>
 
             {zoomedPhoto?.url && (
-              <div className="flex-1 flex items-center justify-center p-2 min-h-[300px] max-h-[65vh] overflow-hidden">
+              <div className="flex-1 flex items-center justify-center p-2 min-h-[300px] max-h-[65vh] overflow-hidden bg-slate-50 rounded-2xl">
                 <img 
                   src={zoomedPhoto.url} 
                   alt="Foto Ampliada" 
-                  className="max-w-full max-h-[62vh] object-contain rounded-xl shadow-2xl border border-slate-800" 
+                  className="max-w-full max-h-[60vh] object-contain rounded-xl shadow-md border border-slate-200" 
                 />
               </div>
             )}
 
-            <DialogFooter className="gap-2 sm:justify-between flex-row pt-2 border-t border-slate-800">
+            <DialogFooter className="gap-2 sm:justify-between flex-row pt-2 border-t border-slate-100">
               <Button
                 type="button"
                 variant="outline"
@@ -686,7 +940,7 @@ export default function GuestPreCheckin() {
                 onClick={() => {
                   if (zoomedPhoto?.url) window.open(zoomedPhoto.url, "_blank")
                 }}
-                className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700 font-bold gap-1.5"
+                className="text-xs bg-white hover:bg-slate-50 text-slate-700 border-slate-200 font-bold gap-1.5 rounded-xl"
               >
                 <ExternalLink className="w-3.5 h-3.5" />
                 <span>Abrir Original</span>
@@ -695,7 +949,7 @@ export default function GuestPreCheckin() {
                 type="button"
                 size="sm"
                 onClick={() => setZoomedPhoto(null)}
-                className="text-xs bg-slate-700 hover:bg-slate-600 text-white font-bold"
+                className="text-xs bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl"
               >
                 Fechar
               </Button>
@@ -710,38 +964,135 @@ export default function GuestPreCheckin() {
   // MODO 2: FORMULÁRIO DE PREENCHIMENTO PASSO-A-PASSO (PASSOS 1 A 4)
   // ══════════════════════════════════════════════════════════════════════════════
   return (
-    <div className="min-h-screen bg-slate-950 text-white flex flex-col p-4 sm:p-6 font-sans">
-      <div className="max-w-lg w-full mx-auto space-y-6">
-        {/* Header */}
-        <div className="text-center space-y-2">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 text-primary border border-primary/20 text-xs font-bold">
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>CorpFlats • Check-in Digital & FNHR</span>
+    <div className="min-h-screen bg-slate-50/70 text-slate-900 flex flex-col font-sans selection:bg-sky-500 selection:text-white w-full max-w-full overflow-x-hidden">
+      {/* Top Navigation Bar */}
+      <nav className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-4 sm:px-8 py-3 shadow-2xs w-full max-w-full">
+        <div className="max-w-4xl mx-auto flex items-center justify-between gap-3">
+          <div 
+            onClick={() => setLocation(reservation?.code ? `/minha-reserva/${reservation.code}` : "/minha-reserva")}
+            className="flex items-center gap-2.5 sm:gap-3 cursor-pointer group shrink-0"
+          >
+            {siteConfig?.branding?.logoImage ? (
+              <img 
+                src={siteConfig.branding.logoImage} 
+                alt={brandName} 
+                className="w-8 h-8 sm:w-9 sm:h-9 object-contain rounded-xl"
+              />
+            ) : (
+              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-sm sm:text-base shadow-sm group-hover:bg-slate-800 transition-colors">
+                CF
+              </div>
+            )}
+            <div>
+              <span className="font-bold text-base sm:text-lg tracking-tight text-slate-900 group-hover:text-slate-700 transition-colors block leading-none">
+                {brandName}
+              </span>
+              <span className="text-[10px] text-slate-500 font-mono font-medium block mt-0.5">
+                {reservation?.flatNumber ? `Flat ${reservation.flatNumber} • Pré-Check-in Digital` : "Pré-Check-in Digital"}
+              </span>
+            </div>
           </div>
-          <h1 className="text-2xl font-black text-white tracking-tight">CorpFlats • Pré-Checkin Digital</h1>
-          <p className="text-xs text-slate-400">
-            {reservation ? `Apartamento ${reservation.flatNumber} • Entrada em ${reservation.checkinDate}` : "Agilize sua chegada aos flats da CorpFlats em menos de 2 minutos."}
-          </p>
+
+          <div className="flex items-center gap-2">
+            {reservation?.code && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setLocation(`/minha-reserva/${reservation.code}`)}
+                className="h-8 sm:h-9 px-2.5 sm:px-3 text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-semibold text-xs rounded-xl flex items-center gap-1.5 transition-colors"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Portal do Hóspede</span>
+              </Button>
+            )}
+
+            <a
+              href={whatsappUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 py-1.5 sm:py-2 px-3 sm:px-3.5 rounded-xl bg-emerald-50/90 hover:bg-emerald-100/90 text-emerald-700 font-semibold text-xs border border-emerald-200 transition-colors shrink-0"
+            >
+              <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+              <span>WhatsApp</span>
+            </a>
+          </div>
+        </div>
+      </nav>
+
+      {/* Hero Section */}
+      <header className="relative min-h-[160px] sm:min-h-[190px] flex items-center justify-center px-4 sm:px-8 py-6 sm:py-8 text-center overflow-hidden">
+        <div className="absolute inset-0 z-0">
+          <img
+            src="https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=1920&q=80"
+            alt="Pré-Check-in CorpFlats"
+            className="w-full h-full object-cover object-center"
+          />
+          <div className="absolute inset-0 bg-gradient-to-b from-black/45 via-black/50 to-black/60" />
         </div>
 
-        {/* Botão de Cancelar Edição se já estava concluído */}
-        {isCompleted && isEditing && (
-          <div className="flex justify-end">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setIsEditing(false)}
-              className="text-xs border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-800"
-            >
-              ✕ Cancelar Edição e Voltar à Ficha Concluída
-            </Button>
+        <div className="relative z-10 max-w-xl mx-auto space-y-1.5 text-white">
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/20 backdrop-blur-md border border-white/25 text-[11px] font-semibold tracking-wide text-white/95 mb-1 shadow-xs">
+            <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+            <span>Ficha Nacional de Registro de Hóspedes (FNHR)</span>
           </div>
+          <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight drop-shadow-md text-white">
+            Pré-Check-in Digital
+          </h1>
+          <p className="text-xs sm:text-sm font-normal text-white/90 drop-shadow-sm tracking-normal">
+            Agilize sua entrada e libere seu acesso à portaria em menos de 2 minutos
+          </p>
+        </div>
+      </header>
+
+      {/* Main Form Container */}
+      <main className="max-w-3xl w-full mx-auto px-4 -mt-6 sm:-mt-8 z-20 space-y-4 sm:space-y-5 pb-20">
+        
+        {/* Card de Identificação da Estada */}
+        {reservation && (
+          <Card className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-6 shadow-md space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
+                Olá, {(fullName || reservation?.guestName || "Hóspede").trim().split(" ")[0]}! 👋
+              </h2>
+
+              {isCompleted && isEditing && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsEditing(false)}
+                  className="text-xs border-slate-200 bg-white text-slate-700 hover:bg-slate-50 font-bold rounded-xl"
+                >
+                  ✕ Voltar à Ficha Concluída
+                </Button>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-semibold text-xs">
+                Flat {reservation.flatNumber}
+              </span>
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-semibold text-xs">
+                {reservation.guestCount || 1} {(reservation.guestCount || 1) === 1 ? 'Hóspede' : 'Hóspedes'}
+              </span>
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-semibold text-xs">
+                Entrada: {reservation.checkinDate}
+              </span>
+              <Badge className="bg-sky-50 hover:bg-sky-50 text-sky-700 border border-sky-200/80 font-semibold text-xs px-2.5 py-1 rounded-lg shadow-none">
+                {reservation.channel || "Site Oficial"}
+              </Badge>
+            </div>
+
+            <p className="text-xs sm:text-sm text-slate-500 font-normal leading-relaxed">
+              Confirme seus dados cadastrais obrigatórios pela legislação brasileira para agilizar a liberação das chaves e autorização na portaria do condomínio.
+            </p>
+          </Card>
         )}
 
-        {/* Multi-Guest Tab Selector (se a reserva for para mais de 1 pessoa) */}
+        {/* Multi-Guest Selector (se a reserva for para mais de 1 pessoa) */}
         {guestList.length > 1 && (
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-2 space-y-1.5 shadow-lg">
-            <span className="text-[10px] uppercase font-black text-slate-400 block px-1 tracking-wider">
+          <div className="bg-white border border-slate-200/80 rounded-2xl p-3 sm:p-4 shadow-xs space-y-2">
+            <span className="text-[11px] uppercase font-bold text-slate-500 block tracking-wider">
               Selecione o Hóspede para Preenchimento ({guestList.length} Pessoas):
             </span>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -758,19 +1109,19 @@ export default function GuestPreCheckin() {
                         loadGuestData({ reservation, guests: guestList }, g.index)
                       }
                     }}
-                    className={`py-2 px-2.5 rounded-xl text-xs font-bold transition-all text-left flex items-center justify-between border ${
+                    className={`py-2 px-3 rounded-xl text-xs font-bold transition-all text-left flex items-center justify-between border ${
                       isCurrent
-                        ? "bg-primary text-primary-foreground border-primary shadow-md"
+                        ? "bg-slate-900 text-white border-slate-900 shadow-sm"
                         : g.hasCompletedCheckin
-                        ? "bg-emerald-950/60 border-emerald-800 text-emerald-300 hover:bg-emerald-950"
-                        : "bg-slate-950 border-slate-800 text-slate-400 hover:bg-slate-800"
+                        ? "bg-emerald-50/80 border-emerald-200 text-emerald-800 hover:bg-emerald-100/80"
+                        : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
                     }`}
                   >
                     <span className="truncate">{g.name || `Hóspede ${g.index}`}</span>
                     {g.hasCompletedCheckin ? (
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 ml-1" />
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0 ml-1" />
                     ) : (
-                      <span className="text-[9px] px-1 py-0.5 rounded bg-slate-800 text-slate-400 shrink-0 ml-1">Pendente</span>
+                      <span className="text-[9px] px-1 py-0.5 rounded bg-slate-200 text-slate-600 shrink-0 ml-1">Pendente</span>
                     )}
                   </button>
                 )
@@ -779,61 +1130,103 @@ export default function GuestPreCheckin() {
           </div>
         )}
 
-        {/* Step Progress Bar */}
-        <div className="flex items-center justify-between px-2">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="flex items-center gap-2">
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs transition-all ${
-                step === i ? "bg-primary text-primary-foreground ring-4 ring-primary/20" : step > i ? "bg-emerald-600 text-white" : "bg-slate-800 text-slate-500"
-              }`}>
-                {step > i ? "✓" : i}
+        {/* Stepper Progress Bar */}
+        <div className="bg-white border border-slate-200/80 rounded-2xl p-4 sm:p-5 shadow-xs">
+          <div className="flex items-center justify-between max-w-md mx-auto">
+            {[
+              { num: 1, label: "Dados" },
+              { num: 2, label: "Documento" },
+              { num: 3, label: "Selfie" },
+              { num: 4, label: "Assinatura" }
+            ].map((s, idx) => (
+              <div key={s.num} className="flex items-center gap-2">
+                <div className="flex flex-col items-center">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs transition-all ${
+                    step === s.num 
+                      ? "bg-slate-900 text-white ring-4 ring-slate-900/10 shadow-xs" 
+                      : step > s.num 
+                      ? "bg-emerald-600 text-white" 
+                      : "bg-slate-100 text-slate-400 border border-slate-200"
+                  }`}>
+                    {step > s.num ? "✓" : s.num}
+                  </div>
+                  <span className={`text-[10px] mt-1 font-semibold ${step === s.num ? "text-slate-900 font-bold" : "text-slate-400"}`}>
+                    {s.label}
+                  </span>
+                </div>
+                {idx < 3 && (
+                  <div className={`w-8 sm:w-16 h-1 rounded-full -mt-4 ${step > s.num ? "bg-emerald-600" : "bg-slate-100"}`} />
+                )}
               </div>
-              {i < 4 && <div className={`w-10 sm:w-16 h-1 rounded-full ${step > i ? "bg-emerald-600" : "bg-slate-800"}`} />}
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
 
         {/* Form Container */}
-        <Card className="bg-slate-900 border-slate-800 text-white rounded-3xl p-5 shadow-xl">
-          {/* Step 1: Personal info */}
+        <Card className="bg-white border border-slate-200/80 rounded-3xl p-5 sm:p-7 shadow-xl">
+          {/* ── Passo 1: Dados Pessoais & Endereço ────────────────────────── */}
           {step === 1 && (
-            <div className="space-y-4">
-              <div className="border-b border-slate-800 pb-2">
-                <h3 className="font-bold text-sm text-white flex items-center gap-2">
-                  <User className="w-4 h-4 text-primary" />
-                  1. Dados Pessoais & Ficha FNHR
+            <div className="space-y-4 sm:space-y-5">
+              <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
+                <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
+                  <User className="w-4 h-4 text-sky-600" />
+                  <span>1. Dados Pessoais & Ficha FNHR</span>
                 </h3>
+                <span className="text-[11px] text-slate-400 font-medium">* Campos obrigatórios</span>
               </div>
 
-              <div className="space-y-3">
-                <div className="space-y-1">
-                  <Label className="text-xs font-semibold text-slate-200">Nome Completo *</Label>
-                  <Input value={fullName} onChange={e => setFullName(e.target.value)} required placeholder="Seu nome completo" className="bg-slate-950 border-slate-700 text-white placeholder:text-slate-500 text-xs font-medium" />
+              <div className="space-y-3 sm:space-y-4">
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-bold text-slate-700">Nome Completo *</Label>
+                  <Input 
+                    value={fullName} 
+                    onChange={e => setFullName(e.target.value)} 
+                    required 
+                    placeholder="Seu nome completo como no documento" 
+                    className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-medium rounded-xl h-11 focus-visible:ring-sky-500" 
+                  />
                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="space-y-1">
-                    <Label className="text-xs font-semibold text-slate-200">CPF ou Passaporte *</Label>
-                    <Input value={document} onChange={e => setDocument(e.target.value)} required placeholder="000.000.000-00" className="bg-slate-950 border-slate-700 text-white placeholder:text-slate-500 text-xs font-medium" />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold text-slate-700">CPF ou Passaporte *</Label>
+                    <Input 
+                      value={document} 
+                      onChange={e => setDocument(e.target.value)} 
+                      required 
+                      placeholder="000.000.000-00" 
+                      className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-mono font-medium rounded-xl h-11 focus-visible:ring-sky-500" 
+                    />
                   </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs font-semibold text-slate-200">Data de Nascimento *</Label>
-                    <Input type="date" value={birthDate} onChange={e => setBirthDate(e.target.value)} required className="bg-slate-950 border-slate-700 text-white placeholder:text-slate-500 [color-scheme:dark] text-xs font-bold" />
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold text-slate-700">Data de Nascimento *</Label>
+                    <Input 
+                      type="date" 
+                      value={birthDate} 
+                      onChange={e => setBirthDate(e.target.value)} 
+                      required 
+                      className="bg-white border-slate-200 text-slate-900 text-xs sm:text-sm font-semibold rounded-xl h-11 focus-visible:ring-sky-500" 
+                    />
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="space-y-1">
-                    <Label className="text-xs font-semibold text-slate-200">WhatsApp / Celular</Label>
-                    <Input value={phone} onChange={e => setPhone(e.target.value)} placeholder="(21) 99999-9999" className="bg-slate-950 border-slate-700 text-white placeholder:text-slate-500 text-xs font-medium" />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold text-slate-700">WhatsApp / Celular</Label>
+                    <Input 
+                      value={phone} 
+                      onChange={e => setPhone(e.target.value)} 
+                      placeholder="(22) 99999-9999" 
+                      className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-medium rounded-xl h-11 focus-visible:ring-sky-500" 
+                    />
                   </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs font-semibold text-slate-200">Gênero</Label>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold text-slate-700">Gênero</Label>
                     <Select value={gender} onValueChange={setGender}>
-                      <SelectTrigger className="bg-slate-950 border-slate-700 text-white text-xs">
+                      <SelectTrigger className="bg-white border-slate-200 text-slate-900 text-xs sm:text-sm rounded-xl h-11 focus:ring-sky-500">
                         <SelectValue />
                       </SelectTrigger>
-                      <SelectContent className="bg-slate-900 border-slate-800 text-white">
+                      <SelectContent className="bg-white border-slate-200 text-slate-900 rounded-xl">
                         <SelectItem value="masculino">Masculino</SelectItem>
                         <SelectItem value="feminino">Feminino</SelectItem>
                         <SelectItem value="outro">Outro / Prefere não informar</SelectItem>
@@ -842,12 +1235,23 @@ export default function GuestPreCheckin() {
                   </div>
                 </div>
 
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-bold text-slate-700">E-mail</Label>
+                  <Input 
+                    type="email"
+                    value={email} 
+                    onChange={e => setEmail(e.target.value)} 
+                    placeholder="seuemail@exemplo.com" 
+                    className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-medium rounded-xl h-11 focus-visible:ring-sky-500" 
+                  />
+                </div>
+
                 {/* CEP com Auto-Preenchimento */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <div className="space-y-1">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
-                      <Label className="text-xs font-semibold text-slate-200">CEP</Label>
-                      {loadingCep && <span className="text-[10px] text-primary animate-pulse">Buscando...</span>}
+                      <Label className="text-xs font-bold text-slate-700">CEP</Label>
+                      {loadingCep && <span className="text-[10px] text-sky-600 animate-pulse font-bold">Buscando...</span>}
                     </div>
                     <Input 
                       value={cep} 
@@ -857,91 +1261,101 @@ export default function GuestPreCheckin() {
                       }} 
                       onBlur={e => handleLookupPreCheckinCep(e.target.value)}
                       placeholder="00000-000" 
-                      className="bg-slate-950 border-slate-700 text-white placeholder:text-slate-500 text-xs font-mono" 
+                      className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-mono rounded-xl h-11 focus-visible:ring-sky-500" 
                     />
                   </div>
-                  <div className="space-y-1 sm:col-span-2">
-                    <Label className="text-xs font-semibold text-slate-200">Endereço Residencial (Rua, Nº, Bairro)</Label>
-                    <Input value={address} onChange={e => setAddress(e.target.value)} placeholder="Ex: Av. Paulista, 1000" className="bg-slate-950 border-slate-700 text-white placeholder:text-slate-500 text-xs font-medium" />
+                  <div className="space-y-1.5 sm:col-span-2">
+                    <Label className="text-xs font-bold text-slate-700">Endereço Residencial (Rua, Nº, Bairro)</Label>
+                    <Input 
+                      value={address} 
+                      onChange={e => setAddress(e.target.value)} 
+                      placeholder="Ex: Av. Pelinca, 100 - Centro" 
+                      className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-medium rounded-xl h-11 focus-visible:ring-sky-500" 
+                    />
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="space-y-1">
-                    <Label className="text-xs font-semibold text-slate-200">Cidade / Estado</Label>
-                    <Input value={city} onChange={e => setCity(e.target.value)} placeholder="Ex: São Paulo / SP" className="bg-slate-950 border-slate-700 text-white placeholder:text-slate-500 text-xs font-medium" />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold text-slate-700">Cidade / Estado</Label>
+                    <Input 
+                      value={city} 
+                      onChange={e => setCity(e.target.value)} 
+                      placeholder="Ex: Campos dos Goytacazes / RJ" 
+                      className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-medium rounded-xl h-11 focus-visible:ring-sky-500" 
+                    />
                   </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs font-semibold text-slate-200">Meio de Transporte</Label>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold text-slate-700">Meio de Transporte</Label>
                     <Select value={transportMethod} onValueChange={setTransportMethod}>
-                      <SelectTrigger className="bg-slate-950 border-slate-700 text-white text-xs">
+                      <SelectTrigger className="bg-white border-slate-200 text-slate-900 text-xs sm:text-sm rounded-xl h-11 focus:ring-sky-500">
                         <SelectValue />
                       </SelectTrigger>
-                      <SelectContent className="bg-slate-900 border-slate-800 text-white">
+                      <SelectContent className="bg-white border-slate-200 text-slate-900 rounded-xl">
                         <SelectItem value="carro">🚗 Automóvel Próprio / Alugado (Garagem)</SelectItem>
                         <SelectItem value="aviao">✈️ Avião</SelectItem>
                         <SelectItem value="onibus">🚌 Ônibus</SelectItem>
-                        <SelectItem value="outro">Outro</SelectItem>
+                        <SelectItem value="outro">Outro / Carona</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                 </div>
 
-                {/* 🚗 Campos do Veículo para Liberação da Garagem no Soho */}
+                {/* 🚗 Garagem & Veículo Soho */}
                 {transportMethod === "carro" && (
-                  <div className="p-3.5 bg-blue-950/20 border border-blue-900/50 rounded-2xl space-y-2.5 animate-in fade-in">
+                  <div className="p-4 bg-sky-50/70 border border-sky-200/80 rounded-2xl space-y-3">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-blue-300 flex items-center gap-1.5">
-                        <Car className="w-3.5 h-3.5" />
-                        Estacionamento Gratuito • Edifício Soho Residence
+                      <span className="text-xs font-bold text-sky-900 flex items-center gap-1.5">
+                        <Car className="w-4 h-4 text-sky-600" />
+                        Estacionamento Privativo • Edifício Soho Residence
                       </span>
-                      <Badge className="bg-blue-950 text-blue-400 text-[9px] font-bold">1 Vaga Inclusa</Badge>
+                      <Badge className="bg-sky-100 text-sky-800 text-[10px] font-bold border-sky-200">1 Vaga Inclusa</Badge>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1">
-                        <Label className="text-[11px] text-slate-300 font-bold">Placa do Veículo</Label>
+                        <Label className="text-[11px] text-slate-700 font-bold">Placa do Veículo *</Label>
                         <Input 
                           value={vehiclePlate} 
                           onChange={e => setVehiclePlate(e.target.value.toUpperCase())} 
                           placeholder="ABC1D23" 
-                          className="bg-slate-950 border-slate-700 text-white text-xs font-mono font-bold uppercase" 
+                          className="bg-white border-sky-200 text-slate-900 text-xs sm:text-sm font-mono font-bold uppercase rounded-xl h-10" 
                         />
                       </div>
                       <div className="space-y-1">
-                        <Label className="text-[11px] text-slate-300">Modelo do Carro</Label>
+                        <Label className="text-[11px] text-slate-700">Modelo do Carro</Label>
                         <Input 
                           value={vehicleModel} 
                           onChange={e => setVehicleModel(e.target.value)} 
-                          placeholder="Ex: Corolla, Civic, Onix" 
-                          className="bg-slate-950 border-slate-700 text-white text-xs" 
+                          placeholder="Ex: Corolla, Civic, T-Cross" 
+                          className="bg-white border-sky-200 text-slate-900 text-xs sm:text-sm rounded-xl h-10" 
                         />
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1">
-                        <Label className="text-[11px] text-slate-300">Marca</Label>
+                        <Label className="text-[11px] text-slate-700">Marca / Fabricante</Label>
                         <Input 
                           value={vehicleBrand} 
                           onChange={e => setVehicleBrand(e.target.value)} 
-                          placeholder="Ex: Toyota, Honda" 
-                          className="bg-slate-950 border-slate-700 text-white text-xs" 
+                          placeholder="Ex: Toyota, Honda, VW" 
+                          className="bg-white border-sky-200 text-slate-900 text-xs sm:text-sm rounded-xl h-10" 
                         />
                       </div>
                       <div className="space-y-1">
-                        <Label className="text-[11px] text-slate-300">Cor</Label>
+                        <Label className="text-[11px] text-slate-700">Cor do Veículo</Label>
                         <Input 
                           value={vehicleColor} 
                           onChange={e => setVehicleColor(e.target.value)} 
-                          placeholder="Ex: Prata, Preto" 
-                          className="bg-slate-950 border-slate-700 text-white text-xs" 
+                          placeholder="Ex: Prata, Preto, Branco" 
+                          className="bg-white border-sky-200 text-slate-900 text-xs sm:text-sm rounded-xl h-10" 
                         />
                       </div>
                     </div>
 
-                    <span className="text-[10px] text-blue-300/80 block leading-tight">
-                      Sua placa será cadastrada automaticamente no sistema da portaria para entrada na garagem.
+                    <span className="text-[11px] text-sky-700 block leading-tight">
+                      Sua placa será cadastrada automaticamente no sistema da portaria para entrada liberada na garagem.
                     </span>
                   </div>
                 )}
@@ -955,7 +1369,7 @@ export default function GuestPreCheckin() {
                   }
                   setStep(2)
                 }}
-                className="w-full bg-primary text-primary-foreground font-bold text-xs h-11 rounded-xl mt-4 gap-2"
+                className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm h-12 rounded-xl mt-4 gap-2 shadow-md"
               >
                 <span>Avançar para Foto do Documento</span>
                 <ArrowRight className="w-4 h-4" />
@@ -963,26 +1377,26 @@ export default function GuestPreCheckin() {
             </div>
           )}
 
-          {/* Step 2: Document Photo */}
+          {/* ── Passo 2: Foto do Documento ─────────────────────────────────── */}
           {step === 2 && (
-            <div className="space-y-4">
-              <div className="border-b border-slate-800 pb-2">
-                <h3 className="font-bold text-sm text-white flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-primary" />
-                  2. Foto do Documento (RG / CNH / Passaporte)
+            <div className="space-y-4 sm:space-y-5">
+              <div className="border-b border-slate-100 pb-3">
+                <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-sky-600" />
+                  <span>2. Foto do Documento (RG / CNH / Passaporte)</span>
                 </h3>
               </div>
 
-              <p className="text-xs text-slate-400">
-                Tire uma foto nítida do seu documento com foto para liberação na portaria.
+              <p className="text-xs sm:text-sm text-slate-500 leading-relaxed">
+                Tire uma foto nítida da frente ou verso do seu documento oficial de identificação para validação segura na portaria.
               </p>
 
-              <div className="border-2 border-dashed border-slate-700 hover:border-primary rounded-2xl p-6 text-center bg-slate-950/60 relative overflow-hidden">
+              <div className="border-2 border-dashed border-slate-200 hover:border-sky-400 rounded-2xl p-6 sm:p-8 text-center bg-slate-50/50 relative overflow-hidden transition-colors">
                 {docPhoto ? (
                   <div className="space-y-3">
-                    <img src={docPhoto} alt="Documento" className="max-h-48 mx-auto rounded-xl object-contain border border-slate-800" />
+                    <img src={docPhoto} alt="Documento" className="max-h-52 mx-auto rounded-xl object-contain border border-slate-200 shadow-sm bg-white" />
                     {docCompressStats && (
-                      <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-500/15 border border-emerald-500/30 rounded-full text-[11px] font-bold text-emerald-400">
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 border border-emerald-200 rounded-full text-[11px] font-bold text-emerald-700">
                         <Zap className="w-3.5 h-3.5" />
                         <span>{docCompressStats}</span>
                       </div>
@@ -993,21 +1407,21 @@ export default function GuestPreCheckin() {
                         variant="outline" 
                         size="sm" 
                         onClick={() => { setDocPhoto(null); setDocCompressStats(null); }}
-                        className="border-slate-700 text-xs font-bold text-slate-300"
+                        className="border-slate-200 text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 rounded-xl"
                       >
-                        Trocar Foto
+                        Trocar Foto do Documento
                       </Button>
                     </div>
                   </div>
                 ) : (
-                  <label className="cursor-pointer flex flex-col items-center gap-2">
-                    <div className="w-12 h-12 rounded-full bg-slate-800 flex items-center justify-center text-primary">
-                      {compressing ? <Sparkles className="w-6 h-6 animate-spin text-primary" /> : <Camera className="w-6 h-6" />}
+                  <label className="cursor-pointer flex flex-col items-center gap-2 py-4">
+                    <div className="w-14 h-14 rounded-2xl bg-sky-50 border border-sky-100 flex items-center justify-center text-sky-600 shadow-2xs">
+                      {compressing ? <Sparkles className="w-7 h-7 animate-spin text-sky-600" /> : <Camera className="w-7 h-7" />}
                     </div>
-                    <span className="font-bold text-xs text-slate-200">
+                    <span className="font-bold text-sm text-slate-900 mt-1">
                       {compressing ? "Otimizando imagem..." : "Tirar Foto ou Enviar Arquivo"}
                     </span>
-                    <span className="text-[10px] text-slate-500">Compressão automática WebP ultrarrápida</span>
+                    <span className="text-xs text-slate-400">Compressão automática WebP ultrarrápida</span>
                     <input 
                       type="file" 
                       accept="image/*" 
@@ -1020,11 +1434,18 @@ export default function GuestPreCheckin() {
                 )}
               </div>
 
-              <div className="flex gap-2 pt-2">
-                <Button variant="outline" onClick={() => setStep(1)} className="border-slate-800 text-slate-300 font-bold text-xs h-11 rounded-xl">
+              <div className="flex gap-2.5 pt-2">
+                <Button 
+                  variant="outline" 
+                  onClick={() => setStep(1)} 
+                  className="border-slate-200 text-slate-700 font-bold text-xs h-11 rounded-xl bg-white hover:bg-slate-50"
+                >
                   <ArrowLeft className="w-4 h-4 mr-1" /> Voltar
                 </Button>
-                <Button onClick={() => setStep(3)} className="flex-1 bg-primary text-primary-foreground font-bold text-xs h-11 rounded-xl gap-2">
+                <Button 
+                  onClick={() => setStep(3)} 
+                  className="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm h-11 rounded-xl gap-2 shadow-md"
+                >
                   <span>Avançar para Selfie</span>
                   <ArrowRight className="w-4 h-4" />
                 </Button>
@@ -1032,26 +1453,26 @@ export default function GuestPreCheckin() {
             </div>
           )}
 
-          {/* Step 3: Selfie */}
+          {/* ── Passo 3: Selfie do Hóspede ─────────────────────────────────── */}
           {step === 3 && (
-            <div className="space-y-4">
-              <div className="border-b border-slate-800 pb-2">
-                <h3 className="font-bold text-sm text-white flex items-center gap-2">
-                  <Camera className="w-4 h-4 text-primary" />
-                  3. Selfie do Hóspede
+            <div className="space-y-4 sm:space-y-5">
+              <div className="border-b border-slate-100 pb-3">
+                <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
+                  <Camera className="w-4 h-4 text-sky-600" />
+                  <span>3. Biometria Facial (Selfie)</span>
                 </h3>
               </div>
 
-              <p className="text-xs text-slate-400">
-                Uma foto rápida do seu rosto para identificação visual segura na portaria.
+              <p className="text-xs sm:text-sm text-slate-500 leading-relaxed">
+                Tire uma foto rápida e nítida do seu rosto para identificação visual e segurança do condomínio.
               </p>
 
-              <div className="border-2 border-dashed border-slate-700 hover:border-primary rounded-2xl p-6 text-center bg-slate-950/60 relative overflow-hidden">
+              <div className="border-2 border-dashed border-slate-200 hover:border-sky-400 rounded-2xl p-6 sm:p-8 text-center bg-slate-50/50 relative overflow-hidden transition-colors">
                 {selfiePhoto ? (
                   <div className="space-y-3">
-                    <img src={selfiePhoto} alt="Selfie" className="w-36 h-36 rounded-full mx-auto object-cover border-2 border-primary" />
+                    <img src={selfiePhoto} alt="Selfie" className="w-36 h-36 rounded-full mx-auto object-cover border-4 border-white shadow-md" />
                     {selfieCompressStats && (
-                      <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-500/15 border border-emerald-500/30 rounded-full text-[11px] font-bold text-emerald-400">
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 border border-emerald-200 rounded-full text-[11px] font-bold text-emerald-700">
                         <Zap className="w-3.5 h-3.5" />
                         <span>{selfieCompressStats}</span>
                       </div>
@@ -1062,21 +1483,21 @@ export default function GuestPreCheckin() {
                         variant="outline" 
                         size="sm" 
                         onClick={() => { setSelfiePhoto(null); setSelfieCompressStats(null); }}
-                        className="border-slate-700 text-xs font-bold text-slate-300"
+                        className="border-slate-200 text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 rounded-xl"
                       >
                         Tirar Outra Selfie
                       </Button>
                     </div>
                   </div>
                 ) : (
-                  <label className="cursor-pointer flex flex-col items-center gap-2">
-                    <div className="w-12 h-12 rounded-full bg-slate-800 flex items-center justify-center text-primary">
-                      {compressing ? <Sparkles className="w-6 h-6 animate-spin text-primary" /> : <Camera className="w-6 h-6" />}
+                  <label className="cursor-pointer flex flex-col items-center gap-2 py-4">
+                    <div className="w-14 h-14 rounded-2xl bg-sky-50 border border-sky-100 flex items-center justify-center text-sky-600 shadow-2xs">
+                      {compressing ? <Sparkles className="w-7 h-7 animate-spin text-sky-600" /> : <Camera className="w-7 h-7" />}
                     </div>
-                    <span className="font-bold text-xs text-slate-200">
+                    <span className="font-bold text-sm text-slate-900 mt-1">
                       {compressing ? "Otimizando selfie..." : "Abrir Câmera Frontal"}
                     </span>
-                    <span className="text-[10px] text-slate-500">Tire uma selfie nítida</span>
+                    <span className="text-xs text-slate-400">Tire uma selfie bem iluminada do seu rosto</span>
                     <input 
                       type="file" 
                       accept="image/*" 
@@ -1089,33 +1510,40 @@ export default function GuestPreCheckin() {
                 )}
               </div>
 
-              <div className="flex gap-2 pt-2">
-                <Button variant="outline" onClick={() => setStep(2)} className="border-slate-800 text-slate-300 font-bold text-xs h-11 rounded-xl">
+              <div className="flex gap-2.5 pt-2">
+                <Button 
+                  variant="outline" 
+                  onClick={() => setStep(2)} 
+                  className="border-slate-200 text-slate-700 font-bold text-xs h-11 rounded-xl bg-white hover:bg-slate-50"
+                >
                   <ArrowLeft className="w-4 h-4 mr-1" /> Voltar
                 </Button>
-                <Button onClick={() => setStep(4)} className="flex-1 bg-primary text-primary-foreground font-bold text-xs h-11 rounded-xl gap-2">
-                  <span>Avançar para Assinatura</span>
+                <Button 
+                  onClick={() => setStep(4)} 
+                  className="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm h-11 rounded-xl gap-2 shadow-md"
+                >
+                  <span>Avançar para Assinatura & Termos</span>
                   <ArrowRight className="w-4 h-4" />
                 </Button>
               </div>
             </div>
           )}
 
-          {/* Step 4: Digital Signature */}
+          {/* ── Passo 4: Assinatura Digital & Termos ────────────────────────── */}
           {step === 4 && (
-            <div className="space-y-4">
-              <div className="border-b border-slate-800 pb-2">
-                <h3 className="font-bold text-sm text-white flex items-center gap-2">
-                  <PenTool className="w-4 h-4 text-primary" />
-                  4. Assinatura Digital do Hóspede
+            <div className="space-y-4 sm:space-y-5">
+              <div className="border-b border-slate-100 pb-3">
+                <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
+                  <PenTool className="w-4 h-4 text-sky-600" />
+                  <span>4. Assinatura Digital do Hóspede</span>
                 </h3>
               </div>
 
-              <p className="text-xs text-slate-400">
-                Assine com o dedo no quadro branco abaixo confirmando os dados da FNHR.
+              <p className="text-xs sm:text-sm text-slate-500 leading-relaxed">
+                Assine com o dedo ou mouse no quadro abaixo confirmando a autenticidade dos dados da sua FNHR.
               </p>
 
-              <div className="bg-white rounded-2xl p-2 border overflow-hidden relative touch-none">
+              <div className="bg-white rounded-2xl p-2 border border-slate-200 overflow-hidden relative touch-none shadow-inner">
                 <canvas 
                   ref={canvasRef}
                   width={340}
@@ -1131,36 +1559,36 @@ export default function GuestPreCheckin() {
                 <button
                   type="button"
                   onClick={clearCanvas}
-                  className="absolute bottom-2 right-2 text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-2 py-1 rounded-md"
+                  className="absolute bottom-2 right-2 text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-2.5 py-1 rounded-lg transition-colors"
                 >
                   Limpar Assinatura
                 </button>
               </div>
 
               {/* 📜 Aceite Obrigatório dos Termos */}
-              <div className="space-y-2.5 p-3.5 bg-slate-950/80 rounded-2xl border border-slate-800">
-                <span className="font-bold text-white text-xs block text-amber-400">
+              <div className="space-y-2.5 p-4 bg-slate-50/80 rounded-2xl border border-slate-200/80">
+                <span className="font-bold text-slate-900 text-xs block">
                   Aceite Obrigatório dos Termos de Hospedagem *
                 </span>
 
-                <label className={`flex items-start gap-2.5 p-2 rounded-xl border transition-all cursor-pointer select-none ${
-                  acceptedHouseRules ? "bg-emerald-950/30 border-emerald-800/80" : "bg-slate-900/90 border-slate-700 hover:border-slate-600"
+                <label className={`flex items-start gap-2.5 p-3 rounded-xl border transition-all cursor-pointer select-none ${
+                  acceptedHouseRules ? "bg-emerald-50/70 border-emerald-300 text-emerald-900" : "bg-white border-slate-200 hover:border-slate-300"
                 }`}>
                   <input 
                     type="checkbox" 
                     checked={acceptedHouseRules} 
                     onChange={e => setAcceptedHouseRules(e.target.checked)}
                     required
-                    className="w-4 h-4 rounded border-slate-600 bg-slate-950 text-emerald-500 focus:ring-emerald-500 mt-0.5 shrink-0"
+                    className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 mt-0.5 shrink-0"
                   />
-                  <div className="text-xs text-slate-200">
-                    <span className="font-bold">1. Regras do Imóvel e Conveniência</span>
-                    <p className="text-[11px] text-slate-400 mt-0.5">
-                      Concordo com horários (14h/12h), 100% não fumantes, vagas rotativas e normas do Edifício Soho.{" "}
+                  <div className="text-xs text-slate-700">
+                    <span className="font-bold text-slate-900">1. Regras do Imóvel e Conveniência</span>
+                    <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                      Concordo com horários (14h/12h), condomínio 100% não fumantes, vagas rotativas e normas do Edifício Soho.{" "}
                       <button 
                         type="button" 
                         onClick={(e) => { e.preventDefault(); setTermsModalTab("rules"); setTermsModalOpen(true); }}
-                        className="text-amber-400 hover:underline font-bold inline"
+                        className="text-sky-600 hover:underline font-bold inline"
                       >
                         [Ler Regras]
                       </button>
@@ -1168,24 +1596,24 @@ export default function GuestPreCheckin() {
                   </div>
                 </label>
 
-                <label className={`flex items-start gap-2.5 p-2 rounded-xl border transition-all cursor-pointer select-none ${
-                  acceptedContract ? "bg-emerald-950/30 border-emerald-800/80" : "bg-slate-900/90 border-slate-700 hover:border-slate-600"
+                <label className={`flex items-start gap-2.5 p-3 rounded-xl border transition-all cursor-pointer select-none ${
+                  acceptedContract ? "bg-emerald-50/70 border-emerald-300 text-emerald-900" : "bg-white border-slate-200 hover:border-slate-300"
                 }`}>
                   <input 
                     type="checkbox" 
                     checked={acceptedContract} 
                     onChange={e => setAcceptedContract(e.target.checked)}
                     required
-                    className="w-4 h-4 rounded border-slate-600 bg-slate-950 text-emerald-500 focus:ring-emerald-500 mt-0.5 shrink-0"
+                    className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 mt-0.5 shrink-0"
                   />
-                  <div className="text-xs text-slate-200">
-                    <span className="font-bold">2. Termos e Condições Contratuais</span>
-                    <p className="text-[11px] text-slate-400 mt-0.5">
+                  <div className="text-xs text-slate-700">
+                    <span className="font-bold text-slate-900">2. Termos e Condições Contratuais</span>
+                    <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
                       Aceito as cláusulas de locação por temporada autônoma, responsabilidade e políticas de estadia.{" "}
                       <button 
                         type="button" 
                         onClick={(e) => { e.preventDefault(); setTermsModalTab("contract"); setTermsModalOpen(true); }}
-                        className="text-indigo-400 hover:underline font-bold inline"
+                        className="text-indigo-600 hover:underline font-bold inline"
                       >
                         [Ler Contrato]
                       </button>
@@ -1194,45 +1622,49 @@ export default function GuestPreCheckin() {
                 </label>
               </div>
 
-              <div className="flex gap-2 pt-2">
-                <Button variant="outline" onClick={() => setStep(3)} className="border-slate-800 text-slate-300 font-bold text-xs h-11 rounded-xl">
+              <div className="flex gap-2.5 pt-2">
+                <Button 
+                  variant="outline" 
+                  onClick={() => setStep(3)} 
+                  className="border-slate-200 text-slate-700 font-bold text-xs h-11 rounded-xl bg-white hover:bg-slate-50"
+                >
                   <ArrowLeft className="w-4 h-4 mr-1" /> Voltar
                 </Button>
                 <Button 
                   disabled={loading || !acceptedHouseRules || !acceptedContract}
                   onClick={handleSubmit} 
-                  className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs h-11 rounded-xl gap-2 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm h-11 rounded-xl gap-2 shadow-md shadow-emerald-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {loading ? "Registrando..." : "Concluir Pré-Checkin"}
+                  {loading ? "Registrando..." : "Concluir Pré-Check-in"}
                 </Button>
               </div>
             </div>
           )}
         </Card>
-      </div>
+      </main>
 
       {/* Modal: Regras da Casa & Termos Contratuais (Com Abas) */}
       <Dialog open={termsModalOpen} onOpenChange={setTermsModalOpen}>
-        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto bg-slate-900 border-slate-800 text-white">
+        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto bg-white border border-slate-200 text-slate-900 rounded-3xl shadow-2xl">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-lg font-bold text-white">
-              <ShieldCheck className="w-5 h-5 text-primary" />
-              Regras da Casa & Termos Contratuais CorpFlats
+            <DialogTitle className="flex items-center gap-2 text-lg font-bold text-slate-900">
+              <ShieldCheck className="w-5 h-5 text-sky-600" />
+              Regras da Casa & Termos Contratuais
             </DialogTitle>
-            <DialogDescription className="text-xs text-slate-400">
-              Consulte as regras de convivência do imóvel e as cláusulas contratuais da sua locação por temporada.
+            <DialogDescription className="text-xs text-slate-500">
+              Consulte as regras de convivência do imóvel e as cláusulas contratuais da sua estadia na {brandName}.
             </DialogDescription>
           </DialogHeader>
 
           {/* Abas de Navegação */}
-          <div className="flex gap-2 border-b border-slate-800 pb-2">
+          <div className="flex gap-2 border-b border-slate-100 pb-2">
             <button
               type="button"
               onClick={() => setTermsModalTab("rules")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${
                 termsModalTab === "rules"
-                  ? "bg-amber-600 text-white shadow-xs"
-                  : "bg-slate-950 text-slate-400 hover:text-white"
+                  ? "bg-slate-900 text-white shadow-xs"
+                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
               }`}
             >
               🏡 1. Regras do Imóvel e Conveniência
@@ -1240,25 +1672,25 @@ export default function GuestPreCheckin() {
             <button
               type="button"
               onClick={() => setTermsModalTab("contract")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${
                 termsModalTab === "contract"
                   ? "bg-indigo-600 text-white shadow-xs"
-                  : "bg-slate-950 text-slate-400 hover:text-white"
+                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
               }`}
             >
               📜 2. Termos e Condições Contratuais
             </button>
           </div>
 
-          <div className="py-3 text-xs leading-relaxed text-slate-300 whitespace-pre-line bg-slate-950 p-4 rounded-2xl border border-slate-800 font-sans max-h-96 overflow-y-auto">
+          <div className="py-3 text-xs leading-relaxed text-slate-700 whitespace-pre-line bg-slate-50 p-4 rounded-2xl border border-slate-200/80 font-sans max-h-96 overflow-y-auto">
             {termsModalTab === "rules" ? (
-              settings?.houseRules || "Carregando regras da casa..."
+              settings?.houseRules || "Regras de Convivência:\n• Check-in a partir das 14h / Check-out até 12h.\n• Silêncio após às 22h.\n• Proibido fumar dentro dos apartamentos e nas áreas comuns fechadas.\n• Utilização de vagas demarcadas conforme orientação."
             ) : (
-              settings?.contractTerms || "Carregando contrato de locação..."
+              settings?.contractTerms || "Termos e Condições de Locação por Temporada:\n• A locação tem finalidade estritamente residencial por temporada (Lei 8.245/91).\n• O hóspede se compromete a zelar pelo imóvel e seus equipamentos."
             )}
           </div>
 
-          <DialogFooter className="flex flex-col sm:flex-row gap-2">
+          <DialogFooter className="flex flex-col sm:flex-row gap-2 pt-2">
             <Button 
               type="button" 
               onClick={() => {
@@ -1266,7 +1698,7 @@ export default function GuestPreCheckin() {
                 setAcceptedContract(true)
                 setTermsModalOpen(false)
               }} 
-              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs"
+              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-11 rounded-xl shadow-md"
             >
               ✓ Li e Aceito Ambos os Termos
             </Button>
