@@ -405,7 +405,7 @@ export default function PmsCalendar() {
 
     const isTouch = pointerType === "touch";
 
-    // No mouse (desktop), podemos prevenir default imediatamente para iniciar arraste sem atraso
+    // No desktop (mouse): inicia arraste imediatamente
     if (!isTouch) {
       if (e.cancelable) {
         e.preventDefault();
@@ -413,6 +413,7 @@ export default function PmsCalendar() {
     }
 
     const nights = differenceInDays(parseISO(resItem.checkoutDate), parseISO(resItem.checkinDate)) || 1;
+    const isResize = mode === "resize-left" || mode === "resize-right";
 
     const initialDragState: ResDragState = {
       res: resItem,
@@ -426,7 +427,7 @@ export default function PmsCalendar() {
       startPointerY: e.clientY,
       pointerType,
       hasMoved: false,
-      isLongPressReady: !isTouch, // No mouse fica pronto direto; no touch aguarda gesto
+      isLongPressReady: !isTouch, // Desktop fica pronto imediatamente; touch aguarda timer
       currentFlatId: flat.id,
       currentFlatNumber: flat.number,
       currentCheckin: resItem.checkinDate,
@@ -434,21 +435,38 @@ export default function PmsCalendar() {
     };
 
     setResDragState(initialDragState);
+    resDragStateRef.current = initialDragState;
 
     // No celular / touch:
-    // Seja tocando no corpo ou nas alças de diária curta:
-    // Se segurar imóvel por 400ms, converte automaticamente para o modo de MOVER (arraste livre)!
+    // - 400ms para a borda (esticar / encolher diárias)
+    // - 1000ms (1 segundo) para mover a reserva entre quartos/dias
     if (isTouch) {
+      const holdTime = isResize ? 400 : 1000;
+
       longPressTimerRef.current = setTimeout(() => {
+        if (resDragStateRef.current) {
+          resDragStateRef.current.isLongPressReady = true;
+          resDragStateRef.current.mode = mode;
+        }
+
+        // Trava imediatamente o container contra scroll horizontal nativo
+        if (scrollContainerRef.current) {
+          scrollContainerRef.current.style.overflowX = "hidden";
+          scrollContainerRef.current.style.touchAction = "none";
+        }
+
         setLongPressActiveResId(resItem.id);
         setResDragState(prev => {
           if (!prev || prev.res.id !== resItem.id) return prev;
-          return { ...prev, mode: "move", isLongPressReady: true };
+          return { ...prev, mode, isLongPressReady: true };
         });
+
         if (typeof navigator !== "undefined" && navigator.vibrate) {
-          try { navigator.vibrate(45); } catch (_) {}
+          try {
+            navigator.vibrate(isResize ? 35 : 60);
+          } catch (_) {}
         }
-      }, 400);
+      }, holdTime);
     }
   };
 
@@ -463,13 +481,17 @@ export default function PmsCalendar() {
       const dx = Math.abs(clientX - current.startPointerX);
       const dy = Math.abs(clientY - current.startPointerY);
 
-      // Se for toque no modo 'move' aguardando 400ms:
-      if (current.pointerType === "touch" && current.mode === "move" && !current.isLongPressReady) {
-        // Se mexer mais de 10px antes dos 400ms, significa que o usuário quer apenas rolar a página!
-        if (dx > 10 || dy > 10) {
+      // Se for touch no celular e ainda estiver aguardando o timer de segurar:
+      if (current.pointerType === "touch" && !current.isLongPressReady) {
+        // Se o dedo se mover mais de 18px antes do tempo, o usuário está rolando a tela livremente!
+        if (dx > 18 || dy > 18) {
           if (longPressTimerRef.current) {
             clearTimeout(longPressTimerRef.current);
             longPressTimerRef.current = null;
+          }
+          if (scrollContainerRef.current) {
+            scrollContainerRef.current.style.overflowX = "";
+            scrollContainerRef.current.style.touchAction = "";
           }
           setLongPressActiveResId(null);
           setResDragState(null);
@@ -477,28 +499,17 @@ export default function PmsCalendar() {
         return;
       }
 
-      // Se for resize e começou a puxar a borda antes de 400ms, cancela o timer de conversão para move
-      if (current.mode !== "move" && !current.hasMoved && (dx > 4 || dy > 4)) {
-        if (longPressTimerRef.current) {
-          clearTimeout(longPressTimerRef.current);
-          longPressTimerRef.current = null;
-        }
-        current.hasMoved = true;
-      }
-
+      // Já ativou o modo (long press pronto ou desktop):
       if (!current.hasMoved && (dx > 4 || dy > 4)) {
         current.hasMoved = true;
       }
 
-      if (!current.hasMoved) return;
-
-      // Auto-scroll horizontal suave se o arraste estiver próximo às bordas do calendário
+      // Auto-scroll horizontal suave SOMENTE se o dedo chegar bem perto dos extremos da tela
       if (scrollContainerRef.current) {
-        const cRect = scrollContainerRef.current.getBoundingClientRect();
-        const threshold = 40;
-        if (clientX > cRect.right - threshold) {
+        const edgeZone = 60; // 60px da borda da tela
+        if (clientX > window.innerWidth - edgeZone) {
           scrollContainerRef.current.scrollLeft += 12;
-        } else if (clientX < cRect.left + threshold) {
+        } else if (clientX < edgeZone + 50) {
           scrollContainerRef.current.scrollLeft -= 12;
         }
       }
@@ -537,7 +548,7 @@ export default function PmsCalendar() {
             const actualFlatId = prev.mode === "move" ? targetFlatId : prev.originFlatId;
             const actualFlatNum = prev.mode === "move" ? targetFlatNum : prev.originFlatNumber;
 
-            return {
+            const updated: ResDragState = {
               ...prev,
               hasMoved: true,
               currentFlatId: actualFlatId,
@@ -545,6 +556,8 @@ export default function PmsCalendar() {
               currentCheckin: newCheckin,
               currentCheckout: newCheckout
             };
+            resDragStateRef.current = updated;
+            return updated;
           });
         }
       }
@@ -556,6 +569,12 @@ export default function PmsCalendar() {
         longPressTimerRef.current = null;
       }
       setLongPressActiveResId(null);
+
+      // Destrava o container de scroll
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.style.overflowX = "";
+        scrollContainerRef.current.style.touchAction = "";
+      }
 
       const current = resDragStateRef.current;
       if (!current) return;
@@ -666,10 +685,11 @@ export default function PmsCalendar() {
           credentials: "include"
         });
 
-        fetchData();
+        // Atualização silenciosa em background sem tela de carregamento nem reset de scroll
+        fetchData(false);
       } catch (e) {
         console.error("Erro ao salvar nova posição da reserva:", e);
-        fetchData();
+        fetchData(false);
       } finally {
         setResDragState(null);
       }
@@ -696,11 +716,13 @@ export default function PmsCalendar() {
       const touch = e.touches[0];
       if (!touch) return;
 
-      // Se o long-press já ativou OU se for resize ativo: bloqueia o scroll da página
-      if (current.isLongPressReady || current.mode !== "move" || current.hasMoved) {
+      // Se o long-press já ativou OU se já houve movimento:
+      // Bloqueia 100% o scroll nativo da página e do container!
+      if (current.isLongPressReady || current.hasMoved) {
         if (e.cancelable) {
           e.preventDefault();
         }
+        e.stopPropagation();
       }
 
       processDragMove(touch.clientX, touch.clientY);
@@ -725,6 +747,10 @@ export default function PmsCalendar() {
         clearTimeout(longPressTimerRef.current);
         longPressTimerRef.current = null;
       }
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.style.overflowX = "";
+        scrollContainerRef.current.style.touchAction = "";
+      }
       setLongPressActiveResId(null);
       setResDragState(null);
     };
@@ -733,6 +759,10 @@ export default function PmsCalendar() {
       if (longPressTimerRef.current) {
         clearTimeout(longPressTimerRef.current);
         longPressTimerRef.current = null;
+      }
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.style.overflowX = "";
+        scrollContainerRef.current.style.touchAction = "";
       }
       setLongPressActiveResId(null);
       setResDragState(null);
@@ -750,6 +780,10 @@ export default function PmsCalendar() {
     return () => {
       if (longPressTimerRef.current) {
         clearTimeout(longPressTimerRef.current);
+      }
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.style.overflowX = "";
+        scrollContainerRef.current.style.touchAction = "";
       }
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
@@ -925,8 +959,8 @@ export default function PmsCalendar() {
     } catch {}
   }
 
-  const fetchData = async () => {
-    setLoading(true)
+  const fetchData = async (showLoading = false) => {
+    if (showLoading) setLoading(true)
     try {
       const startStr = format(subDays(timelineStart, 5), "yyyy-MM-dd")
       const endStr = format(addDays(timelineEnd, 5), "yyyy-MM-dd")
@@ -959,12 +993,12 @@ export default function PmsCalendar() {
         fetchFairShare(todayStr, tomorrowStr)
       } catch {}
     } finally {
-      setLoading(false)
+      if (showLoading) setLoading(false)
     }
   }
 
   useEffect(() => {
-    fetchData()
+    fetchData(true)
   }, [])
 
   // Auto-scroll inicial para posicionar o dia de hoje na 3ª ou 4ª coluna à esquerda
@@ -1921,7 +1955,11 @@ export default function PmsCalendar() {
           {/* Timeline Grid Table */}
           <div 
             ref={scrollContainerRef}
-            className="overflow-x-auto select-none scroll-smooth"
+            className={`overflow-x-auto select-none ${
+              resDragState && (resDragState.hasMoved || resDragState.isLongPressReady)
+                ? 'overflow-x-hidden touch-none'
+                : 'scroll-smooth'
+            }`}
             onMouseUp={handleFinishDrag}
             onMouseLeave={() => { if (isDragging) handleFinishDrag(); }}
           >
@@ -2229,7 +2267,7 @@ export default function PmsCalendar() {
                                   ? 'bg-gradient-to-r from-purple-800 via-indigo-900 to-purple-800 text-white border-2 border-purple-300 shadow-md ring-2 ring-purple-500/80' 
                                   : `${channelCfg?.bg} ${channelCfg?.text} border ${channelCfg?.border} shadow-xs`
                               } flex items-center px-2 text-[11px] font-bold overflow-hidden z-10 cursor-grab active:cursor-grabbing hover:brightness-110 hover:shadow-md transition-all ${
-                                isBeingDragged && resDragState?.hasMoved ? 'opacity-30 border-dashed scale-95' : ''
+                                isBeingDragged && (resDragState?.hasMoved || resDragState?.isLongPressReady) ? 'opacity-30 border-dashed scale-95' : ''
                               } ${
                                 isLongPressActive ? 'ring-4 ring-indigo-400 ring-offset-2 scale-[1.04] shadow-2xl z-40 animate-pulse brightness-125' : ''
                               }`}
@@ -2283,7 +2321,7 @@ export default function PmsCalendar() {
                       })}
 
                       {/* Ghost Preview Bar ao Arrastar / Mover / Redimensionar */}
-                      {resDragState && resDragState.hasMoved && flat.id === resDragState.currentFlatId && (() => {
+                      {resDragState && (resDragState.hasMoved || resDragState.isLongPressReady) && flat.id === resDragState.currentFlatId && (() => {
                         const gPos = getReservationPosition(
                           resDragState.currentCheckin, 
                           resDragState.currentCheckout, 
