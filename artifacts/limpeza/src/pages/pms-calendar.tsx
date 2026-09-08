@@ -344,6 +344,7 @@ export default function PmsCalendar() {
     startPointerY: number;
     pointerType: "mouse" | "touch" | "pen";
     hasMoved: boolean;
+    isLongPressReady?: boolean;
     currentFlatId: number;
     currentFlatNumber: string;
     currentCheckin: string;
@@ -351,8 +352,26 @@ export default function PmsCalendar() {
   }
 
   const [resDragState, setResDragState] = useState<ResDragState | null>(null);
+  const resDragStateRef = useRef<ResDragState | null>(null);
+  resDragStateRef.current = resDragState;
+
+  const [longPressActiveResId, setLongPressActiveResId] = useState<number | string | null>(null);
+  const longPressTimerRef = useRef<any>(null);
   const lastTouchTimeRef = useRef<number>(0);
   const lastToggleCardTimeRef = useRef<number>(0);
+
+  // Helper robusto para encontrar a célula do calendário sob coordenadas (x, y) mesmo com overlays
+  const getCellFromPoint = (x: number, y: number): HTMLElement | null => {
+    if (typeof document.elementsFromPoint === "function") {
+      const elements = document.elementsFromPoint(x, y);
+      for (const el of elements) {
+        const cell = el.closest?.("[data-calendar-cell='true']") as HTMLElement;
+        if (cell) return cell;
+      }
+    }
+    const el = document.elementFromPoint(x, y);
+    return (el?.closest?.("[data-calendar-cell='true']") as HTMLElement) || null;
+  };
 
   const handleStartResDrag = (
     resItem: any, 
@@ -361,6 +380,11 @@ export default function PmsCalendar() {
     e: React.PointerEvent | React.MouseEvent
   ) => {
     if ((e as React.MouseEvent).button !== undefined && (e as React.MouseEvent).button !== 0) return;
+
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
 
     // Ignora eventos de mouse sintéticos que o navegador emite logo após toque em tela touch
     if (e.type === "mousedown" && Date.now() - lastTouchTimeRef.current < 600) {
@@ -377,14 +401,27 @@ export default function PmsCalendar() {
     const pointerType = (e as any).pointerType || 
       ((typeof window !== "undefined" && (window.matchMedia("(pointer: coarse)").matches || window.innerWidth < 1024)) ? "touch" : "mouse");
 
-    // Só prevenimos o comportamento padrão no mouse para permitir o scroll fluido com o dedo no celular
-    if (pointerType === "mouse") {
-      e.preventDefault();
+    const isResize = mode === "resize-left" || mode === "resize-right";
+
+    // Se for resize (alças das pontas) ou mouse, podemos prevenir o scroll padrão imediatamente
+    if (pointerType === "mouse" || isResize) {
+      if (e.cancelable) {
+        e.preventDefault();
+      }
+      if (isResize && (e.currentTarget as any)?.setPointerCapture && (e as any).pointerId !== undefined) {
+        try {
+          (e.currentTarget as any).setPointerCapture((e as any).pointerId);
+        } catch (_) {}
+        if (typeof navigator !== "undefined" && navigator.vibrate) {
+          try { navigator.vibrate(30); } catch (_) {}
+        }
+      }
     }
 
     const nights = differenceInDays(parseISO(resItem.checkoutDate), parseISO(resItem.checkinDate)) || 1;
+    const isTouchMove = pointerType === "touch" && !isResize;
 
-    setResDragState({
+    const initialDragState: ResDragState = {
       res: resItem,
       originFlatId: flat.id,
       originFlatNumber: flat.number,
@@ -396,11 +433,29 @@ export default function PmsCalendar() {
       startPointerY: e.clientY,
       pointerType,
       hasMoved: false,
+      isLongPressReady: !isTouchMove,
       currentFlatId: flat.id,
       currentFlatNumber: flat.number,
       currentCheckin: resItem.checkinDate,
       currentCheckout: resItem.checkoutDate
-    });
+    };
+
+    setResDragState(initialDragState);
+
+    // No celular / touch para mover reserva: aguarda 400ms de segurar firme (Long Press)
+    // Se o usuário mexer o dedo antes para rolar a tela, o timer é cancelado e o scroll ocorre livremente
+    if (isTouchMove) {
+      longPressTimerRef.current = setTimeout(() => {
+        setLongPressActiveResId(resItem.id);
+        setResDragState(prev => {
+          if (!prev || prev.res.id !== resItem.id) return prev;
+          return { ...prev, isLongPressReady: true };
+        });
+        if (typeof navigator !== "undefined" && navigator.vibrate) {
+          try { navigator.vibrate(45); } catch (_) {}
+        }
+      }, 400);
+    }
   };
 
   useEffect(() => {
@@ -410,18 +465,44 @@ export default function PmsCalendar() {
       const dx = Math.abs(e.clientX - resDragState.startPointerX);
       const dy = Math.abs(e.clientY - resDragState.startPointerY);
 
-      if (!resDragState.hasMoved && (dx > 5 || dy > 5)) {
+      // Se for touch e for 'move', ainda aguardando o long-press de 400ms:
+      if (resDragState.pointerType === "touch" && !resDragState.isLongPressReady) {
+        // Se o usuário mover o dedo mais de 8px antes dos 400ms, é gesto de rolagem do calendário!
+        if (dx > 8 || dy > 8) {
+          if (longPressTimerRef.current) {
+            clearTimeout(longPressTimerRef.current);
+            longPressTimerRef.current = null;
+          }
+          setLongPressActiveResId(null);
+          setResDragState(null);
+          return;
+        }
+        return;
+      }
+
+      if (!resDragState.hasMoved && (dx > 4 || dy > 4)) {
         resDragState.hasMoved = true;
       }
 
-      // No celular / touch, o movimento do dedo é para rolar o calendário,
-      // portanto não ativamos o arraste/redimensionamento entre apartamentos
-      if (resDragState.pointerType === "touch") return;
-
       if (!resDragState.hasMoved) return;
 
-      const el = document.elementFromPoint(e.clientX, e.clientY);
-      const cell = el?.closest("[data-calendar-cell='true']") as HTMLElement;
+      // Durante o arraste ativo, cancela o scroll nativo se for cancelável
+      if (e.cancelable) {
+        e.preventDefault();
+      }
+
+      // Auto-scroll horizontal suave se o arraste estiver próximo às bordas da tela
+      if (scrollContainerRef.current) {
+        const cRect = scrollContainerRef.current.getBoundingClientRect();
+        const threshold = 40;
+        if (e.clientX > cRect.right - threshold) {
+          scrollContainerRef.current.scrollLeft += 12;
+        } else if (e.clientX < cRect.left + threshold) {
+          scrollContainerRef.current.scrollLeft -= 12;
+        }
+      }
+
+      const cell = getCellFromPoint(e.clientX, e.clientY);
 
       if (cell) {
         const targetFlatId = Number(cell.getAttribute("data-flat-id"));
@@ -451,11 +532,15 @@ export default function PmsCalendar() {
               }
             }
 
+            // No resize, mantém sempre no apartamento de origem
+            const actualFlatId = prev.mode === "move" ? targetFlatId : prev.originFlatId;
+            const actualFlatNum = prev.mode === "move" ? targetFlatNum : prev.originFlatNumber;
+
             return {
               ...prev,
               hasMoved: true,
-              currentFlatId: targetFlatId,
-              currentFlatNumber: targetFlatNum,
+              currentFlatId: actualFlatId,
+              currentFlatNumber: actualFlatNum,
               currentCheckin: newCheckin,
               currentCheckout: newCheckout
             };
@@ -465,10 +550,23 @@ export default function PmsCalendar() {
     };
 
     const onPointerUp = async (e: MouseEvent | PointerEvent) => {
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
+      setLongPressActiveResId(null);
+
       if (!resDragState) return;
 
+      // Se não houve movimento efetivo:
       if (!resDragState.hasMoved) {
         if (resDragState.mode === "move") {
+          // Se estava em long-press pronto e soltou sem mover, encerra sem abrir modal/card
+          if (resDragState.isLongPressReady && resDragState.pointerType === "touch") {
+            setResDragState(null);
+            return;
+          }
+
           const isTouch = 
             resDragState.pointerType === "touch" || 
             (e as any).pointerType === "touch" ||
@@ -479,15 +577,14 @@ export default function PmsCalendar() {
             ));
 
           if (isTouch) {
-            // No celular / touch: abre ou fecha a janelinha flutuante de ações rápidas
-            // com debounce para prevenir re-fechamento imediato por eventos duplicados
+            // Toque rápido no celular: abre/fecha a janelinha flutuante de ações rápidas
             const now = Date.now();
             if (now - lastToggleCardTimeRef.current > 400) {
               lastToggleCardTimeRef.current = now;
               setMobileCardResId(prev => (prev === resDragState.res.id ? null : resDragState.res.id));
             }
           } else {
-            // No desktop (mouse): abre o modal completo de edição
+            // Clique no desktop (mouse): abre o modal completo de edição
             handleOpenEditRes(resDragState.res);
           }
         }
@@ -495,8 +592,8 @@ export default function PmsCalendar() {
         return;
       }
 
-      // No touch, se houve deslocamento, foi apenas o gesto de rolagem do calendário
-      if (resDragState.pointerType === "touch") {
+      // Se for touch e mode 'move' mas NÃO completou long-press: ignora
+      if (resDragState.pointerType === "touch" && resDragState.mode === "move" && !resDragState.isLongPressReady) {
         setResDragState(null);
         return;
       }
@@ -527,7 +624,7 @@ export default function PmsCalendar() {
       });
 
       if (hasConflict || hasBlockConflict) {
-        alert(`Não foi possível mover a reserva: o Apt ${resDragState.currentFlatNumber} já possui ocupação ou bloqueio no período (${format(parseISO(resDragState.currentCheckin), "dd/MM")} a ${format(parseISO(resDragState.currentCheckout), "dd/MM")}).`);
+        alert(`Não foi possível alterar a reserva: o Apt ${resDragState.currentFlatNumber} já possui ocupação ou bloqueio no período (${format(parseISO(resDragState.currentCheckin), "dd/MM")} a ${format(parseISO(resDragState.currentCheckout), "dd/MM")}).`);
         setResDragState(null);
         return;
       }
@@ -539,7 +636,7 @@ export default function PmsCalendar() {
           checkoutDate: resDragState.currentCheckout,
           checkinTime: resDragState.res.checkinTime || defaultCheckinTime || "14:00",
           checkoutTime: resDragState.res.checkoutTime || defaultCheckoutTime || "12:00",
-          source: "PMS Calendário (Arrastar & Soltar)"
+          source: resDragState.mode === "move" ? "PMS Calendário (Arrastar & Soltar)" : "PMS Calendário (Ajuste de Diárias)"
         };
 
         // Otimista
@@ -577,14 +674,39 @@ export default function PmsCalendar() {
       }
     };
 
-    window.addEventListener("pointermove", onPointerMove);
+    const onPointerCancel = () => {
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
+      setLongPressActiveResId(null);
+      setResDragState(null);
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      const current = resDragStateRef.current;
+      if (current && (current.hasMoved || current.isLongPressReady)) {
+        if (e.cancelable) {
+          e.preventDefault();
+        }
+      }
+    };
+
+    window.addEventListener("pointermove", onPointerMove, { passive: false });
     window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerCancel);
+    window.addEventListener("touchmove", onTouchMove, { passive: false });
     window.addEventListener("mousemove", onPointerMove);
     window.addEventListener("mouseup", onPointerUp);
 
     return () => {
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+      }
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerCancel);
+      window.removeEventListener("touchmove", onTouchMove);
       window.removeEventListener("mousemove", onPointerMove);
       window.removeEventListener("mouseup", onPointerUp);
     };
@@ -2013,12 +2135,14 @@ export default function PmsCalendar() {
                         const cinTime = resItem.checkinTime || defaultCheckinTime || "14:00";
                         const coutTime = resItem.checkoutTime || defaultCheckoutTime || "12:00";
 
+                        const isLongPressActive = longPressActiveResId === resItem.id;
+
                         return (
                           <ReservationHoverCard
                             key={`res-${resItem.id}`}
                             resItem={resItem}
                             flat={flat}
-                            isBeingDragged={Boolean(resDragState && resDragState.hasMoved)}
+                            isBeingDragged={Boolean(resDragState && (resDragState.hasMoved || resDragState.isLongPressReady))}
                             onOpenDetails={handleOpenEditRes}
                             channelCfg={channelCfg}
                             isMensalista={isMensalista}
@@ -2032,7 +2156,8 @@ export default function PmsCalendar() {
                                 left: `${pos.left}px`,
                                 width: `${pos.width}px`,
                                 top: "7px",
-                                height: "34px"
+                                height: "34px",
+                                touchAction: isLongPressActive ? "none" : undefined
                               }}
                               onPointerDown={(e) => handleStartResDrag(resItem, flat, "move", e)}
                               className={`rounded-xl select-none ${
@@ -2043,17 +2168,20 @@ export default function PmsCalendar() {
                                 resDragState?.hasMoved ? 'pointer-events-none' : ''
                               } ${
                                 isBeingDragged && resDragState?.hasMoved ? 'opacity-30 border-dashed scale-95' : ''
+                              } ${
+                                isLongPressActive ? 'ring-4 ring-indigo-400 ring-offset-2 scale-[1.04] shadow-2xl z-40 animate-pulse brightness-125' : ''
                               }`}
-                              title={`${resItem.guestName}${formattedTotal ? ` • ${formattedTotal}` : ""} (${channelCfg?.label || resItem.channel}) • Entrada: ${resItem.checkinDate} às ${cinTime} | Saída: ${resItem.checkoutDate} às ${coutTime} • Toque para ver detalhes ou arraste para mover`}
+                              title={`${resItem.guestName}${formattedTotal ? ` • ${formattedTotal}` : ""} (${channelCfg?.label || resItem.channel}) • Entrada: ${resItem.checkinDate} às ${cinTime} | Saída: ${resItem.checkoutDate} às ${coutTime} • Toque para ver detalhes ou segure para mover`}
                             >
                               {/* Handle Esquerdo: Redimensionar Início (Check-in) */}
                               <div
-                                className="absolute left-0 top-0 bottom-0 w-3 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-l"
+                                style={{ touchAction: "none" }}
+                                className="absolute left-0 top-0 bottom-0 w-6 max-w-[38%] sm:w-3.5 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-l touch-none select-none"
                                 onPointerDown={(e) => handleStartResDrag(resItem, flat, "resize-left", e)}
                                 onPointerEnter={(e) => e.stopPropagation()}
                                 title="Arraste para alterar a data de Check-in"
                               >
-                                <div className="w-0.5 h-3.5 bg-white/50 rounded-full group-hover/resize-l:bg-white pointer-events-none" />
+                                <div className="w-1 sm:w-0.5 h-4 sm:h-3.5 bg-white/70 rounded-full group-hover/resize-l:bg-white pointer-events-none shadow-xs" />
                               </div>
 
                               {/* Conteúdo Central com Nome, Valor e Diárias Contínuos */}
@@ -2075,12 +2203,13 @@ export default function PmsCalendar() {
 
                               {/* Handle Direito: Redimensionar Fim (Check-out) */}
                               <div
-                                className="absolute right-0 top-0 bottom-0 w-3 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-r"
+                                style={{ touchAction: "none" }}
+                                className="absolute right-0 top-0 bottom-0 w-6 max-w-[38%] sm:w-3.5 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-r touch-none select-none"
                                 onPointerDown={(e) => handleStartResDrag(resItem, flat, "resize-right", e)}
                                 onPointerEnter={(e) => e.stopPropagation()}
                                 title="Arraste para alterar a data de Check-out"
                               >
-                                <div className="w-0.5 h-3.5 bg-white/50 rounded-full group-hover/resize-r:bg-white pointer-events-none" />
+                                <div className="w-1 sm:w-0.5 h-4 sm:h-3.5 bg-white/70 rounded-full group-hover/resize-r:bg-white pointer-events-none shadow-xs" />
                               </div>
                             </div>
                           </ReservationHoverCard>
@@ -2169,17 +2298,22 @@ export default function PmsCalendar() {
 
         
         {/* Banner Flutuante de Ajuda ao Mover / Redimensionar Reserva */}
-        {resDragState && resDragState.hasMoved && (
+        {resDragState && (resDragState.hasMoved || resDragState.isLongPressReady) && (
           <div className="fixed top-4 inset-x-4 sm:inset-x-auto sm:right-6 z-50 bg-slate-950/95 backdrop-blur-md text-white px-4 py-2.5 rounded-2xl shadow-2xl flex items-center gap-3 text-xs border border-indigo-500 animate-in slide-in-from-top duration-150">
             <div className="w-7 h-7 rounded-xl bg-indigo-600 flex items-center justify-center font-black shrink-0">
               {resDragState.mode === "move" ? "↔️" : "↔"}
             </div>
             <div>
               <div className="font-black text-indigo-300">
-                {resDragState.mode === "move" ? "Movendo Reserva" : "Alterando Duração"}:
+                {resDragState.mode === "move" 
+                  ? (resDragState.hasMoved ? "Movendo Reserva:" : "Reserva pronta para mover:")
+                  : "Alterando Duração:"}
               </div>
               <div className="font-semibold text-[11px]">
                 Apt {resDragState.currentFlatNumber} • {format(parseISO(resDragState.currentCheckin), "dd/MM")} até {format(parseISO(resDragState.currentCheckout), "dd/MM")} ({differenceInDays(parseISO(resDragState.currentCheckout), parseISO(resDragState.currentCheckin))} noites)
+                {!resDragState.hasMoved && resDragState.mode === "move" && (
+                  <span className="block text-[10px] text-indigo-200/80 font-normal">👉 Arraste o dedo até o apartamento ou data desejada</span>
+                )}
               </div>
             </div>
           </div>
