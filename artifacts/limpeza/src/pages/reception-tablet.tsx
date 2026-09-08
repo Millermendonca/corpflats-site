@@ -46,6 +46,13 @@ export default function ReceptionTablet() {
   // Diálogo de Liberação Forçada de Quarto em Limpeza
   const [forceCheckinItem, setForceCheckinItem] = useState<any | null>(null)
 
+  // Diálogo de Confirmação de Entrada Parcial
+  const [partialCheckinItem, setPartialCheckinItem] = useState<{
+    item: any
+    clearedGuests: any[]
+    pendingGuests: any[]
+  } | null>(null)
+
   // Clock interval
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000)
@@ -69,12 +76,24 @@ export default function ReceptionTablet() {
     return () => clearInterval(poll)
   }, [])
 
-  const handleCheckin = async (resItem: any, force = false) => {
-    const guestsList = resItem.guests || [{ index: 1, name: resItem.guestName, hasCompletedCheckin: resItem.hasPreCheckin }]
-    const hasPendingCheckin = guestsList.some((g: any) => !g.hasCompletedCheckin)
+  const handleCheckin = async (resItem: any, force = false, guestIndices?: number[], isPartial = false) => {
+    const rawGuests = resItem.guests || [{ index: 1, name: resItem.guestName, hasCompletedCheckin: resItem.hasPreCheckin, entryAuthorized: false }]
+    const completedGuests = rawGuests.filter((g: any) => g.hasCompletedCheckin)
+    const pendingGuests = rawGuests.filter((g: any) => !g.hasCompletedCheckin)
 
-    if (hasPendingCheckin) {
-      alert("Acesso Bloqueado na Portaria:\n\nHá hóspede(s) com Pré-Check-in Digital pendente nesta reserva. Conforme as normas de segurança da CorpFlats, todos os hóspedes devem preencher a ficha digital antes da liberação de entrada.")
+    if (completedGuests.length === 0) {
+      alert("Acesso Bloqueado na Portaria:\n\nNenhum hóspede concluiu o Pré-Check-in Digital ainda. Conforme as normas de segurança da CorpFlats, o hóspede deve preencher a ficha digital antes da liberação de entrada.")
+      return
+    }
+
+    // Se houver hóspedes pendentes e ainda não foi confirmado modal parcial nem especificado hóspedes
+    if (pendingGuests.length > 0 && !isPartial && (!guestIndices || guestIndices.length === 0)) {
+      const clearedNotEntered = rawGuests.filter((g: any) => g.hasCompletedCheckin && !g.entryAuthorized)
+      setPartialCheckinItem({
+        item: resItem,
+        clearedGuests: clearedNotEntered.length > 0 ? clearedNotEntered : completedGuests,
+        pendingGuests: pendingGuests
+      })
       return
     }
 
@@ -84,10 +103,18 @@ export default function ReceptionTablet() {
     }
 
     try {
+      const payload: any = { force: true }
+      if (isPartial) {
+        payload.partial = true
+      }
+      if (guestIndices && guestIndices.length > 0) {
+        payload.guestIndices = guestIndices
+      }
+
       const res = await fetch(`/api/reception/checkin/${resItem.id}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ force: true }),
+        body: JSON.stringify(payload),
         credentials: "include"
       })
       if (!res.ok) {
@@ -96,8 +123,20 @@ export default function ReceptionTablet() {
         return
       }
       setForceCheckinItem(null)
+      setPartialCheckinItem(null)
       fetchToday()
-    } catch {}
+    } catch {
+      alert("Erro de conexão ao registrar check-in.")
+    }
+  }
+
+  const executePartialCheckin = async (info: { item: any; clearedGuests: any[]; pendingGuests: any[] }) => {
+    await handleCheckin(
+      info.item,
+      true,
+      info.clearedGuests.map((g: any) => g.index),
+      true
+    )
   }
 
   const handleCheckout = async (resItem: any) => {
@@ -310,15 +349,18 @@ export default function ReceptionTablet() {
                           <span className="text-slate-500 font-normal">Check-in Digital</span>
                         </div>
                         <div className="space-y-1">
-                          {(item.guests || [{ index: 1, name: item.guestName, hasCompletedCheckin: item.hasPreCheckin }]).map((g: any, gIdx: number) => {
+                          {(item.guests || [{ index: 1, name: item.guestName, hasCompletedCheckin: item.hasPreCheckin, entryAuthorized: false }]).map((g: any, gIdx: number) => {
                             const isCleared = Boolean(g.hasCompletedCheckin)
+                            const hasEntered = Boolean(g.entryAuthorized)
                             return (
                               <div 
                                 key={gIdx} 
                                 className={`flex items-center justify-between px-2 py-1.5 rounded-lg text-xs font-medium border ${
-                                  isCleared 
-                                    ? "bg-emerald-950/40 border-emerald-800/50 text-emerald-200" 
-                                    : "bg-slate-800 border-slate-700/60 text-slate-300"
+                                  hasEntered 
+                                    ? "bg-emerald-950/60 border-emerald-700/70 text-emerald-200" 
+                                    : isCleared 
+                                      ? "bg-emerald-950/30 border-emerald-800/50 text-emerald-300" 
+                                      : "bg-slate-800 border-slate-700/60 text-slate-300"
                                 }`}
                               >
                                 <div className="flex items-center gap-2 truncate pr-2">
@@ -328,7 +370,11 @@ export default function ReceptionTablet() {
                                   <span className="truncate font-semibold">{g.name || `Hóspede ${g.index || gIdx + 1}`}</span>
                                 </div>
                                 <div className="flex items-center gap-1 shrink-0">
-                                  {isCleared ? (
+                                  {hasEntered ? (
+                                    <Badge className="bg-emerald-700 hover:bg-emerald-700 text-white text-[9px] font-bold px-1.5 py-0 flex items-center gap-1 shadow-2xs">
+                                      <CheckCircle2 className="w-2.5 h-2.5" /> Entrou
+                                    </Badge>
+                                  ) : isCleared ? (
                                     <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white text-[9px] font-bold px-1.5 py-0 flex items-center gap-1 shadow-2xs">
                                       <CheckCircle2 className="w-2.5 h-2.5" /> Liberado
                                     </Badge>
@@ -357,10 +403,12 @@ export default function ReceptionTablet() {
 
                       {/* Action Buttons */}
                       {(() => {
-                        const guestsList = item.guests || [{ index: 1, name: item.guestName, hasCompletedCheckin: item.hasPreCheckin }]
+                        const guestsList = item.guests || [{ index: 1, name: item.guestName, hasCompletedCheckin: item.hasPreCheckin, entryAuthorized: false }]
                         const totalGuests = guestsList.length
                         const completedGuests = guestsList.filter((g: any) => g.hasCompletedCheckin).length
-                        const hasPendingCheckin = completedGuests < totalGuests
+                        const pendingGuests = guestsList.filter((g: any) => !g.hasCompletedCheckin)
+                        const enteredGuests = guestsList.filter((g: any) => g.entryAuthorized)
+                        const clearedNotEntered = guestsList.filter((g: any) => g.hasCompletedCheckin && !g.entryAuthorized)
 
                         return (
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-slate-700/60">
@@ -378,18 +426,57 @@ export default function ReceptionTablet() {
                               <span>Ver Ficha / Link</span>
                             </Button>
 
-                            {hasPendingCheckin ? (
+                            {/* Caso 1: Há hóspede liberado que ainda não entrou e há hóspede com check-in pendente */}
+                            {clearedNotEntered.length > 0 && pendingGuests.length > 0 ? (
                               <Button 
                                 size="sm"
                                 onClick={() => {
-                                  alert(`Acesso Bloqueado na Portaria:\n\nHá ${totalGuests - completedGuests} hóspede(s) com Pré-Check-in Digital pendente nesta reserva.\n\nPor favor, solicite aos hóspedes que concluam a Ficha Digital para liberação da portaria.`)
+                                  setPartialCheckinItem({
+                                    item,
+                                    clearedGuests: clearedNotEntered,
+                                    pendingGuests: pendingGuests
+                                  })
+                                }}
+                                className="font-bold text-xs h-12 rounded-xl gap-2 shadow-md transition-all bg-amber-600 hover:bg-amber-500 text-white"
+                              >
+                                <Unlock className="w-4 h-4 shrink-0" />
+                                <span className="truncate">
+                                  {enteredGuests.length > 0 
+                                    ? `Liberar Entrada Restante (${clearedNotEntered.length})` 
+                                    : `Liberar Entrada Parcial (${completedGuests}/${totalGuests})`}
+                                </span>
+                              </Button>
+                            ) : clearedNotEntered.length === 0 && pendingGuests.length > 0 ? (
+                              /* Caso 2: Todos os liberados já entraram, restante pendente */
+                              <Button 
+                                size="sm"
+                                onClick={() => {
+                                  const names = pendingGuests.map((g: any) => g.name || `Hóspede ${g.index}`).join(", ")
+                                  alert(`Check-in Digital Pendente:\n\nO(s) hóspede(s) ${names} ainda não concluíram o Pré-Check-in Digital.\n\nAcesse "Ver Ficha / Link" para enviar o link individual pelo WhatsApp. A entrada deles será liberada na portaria assim que preencherem.`)
                                 }}
                                 className="font-bold text-xs h-12 rounded-xl gap-2 shadow-md transition-all bg-amber-950/80 hover:bg-amber-900 border border-amber-700/80 text-amber-300"
                               >
                                 <Lock className="w-4 h-4 text-amber-400 shrink-0" />
-                                <span className="truncate">Check-in Pendente ({completedGuests}/{totalGuests})</span>
+                                <span className="truncate">
+                                  {enteredGuests.length > 0 
+                                    ? `Aguardando Entrada (${enteredGuests.length}/${totalGuests} no apt)` 
+                                    : `Check-in Pendente (0/${totalGuests})`}
+                                </span>
+                              </Button>
+                            ) : completedGuests === 0 ? (
+                              /* Caso 3: Nenhum hóspede concluiu o check-in */
+                              <Button 
+                                size="sm"
+                                onClick={() => {
+                                  alert(`Acesso Bloqueado na Portaria:\n\nNenhum hóspede concluiu o Pré-Check-in Digital nesta reserva ainda.\n\nPor favor, solicite aos hóspedes que preencham a ficha digital para liberação de entrada.`)
+                                }}
+                                className="font-bold text-xs h-12 rounded-xl gap-2 shadow-md transition-all bg-amber-950/80 hover:bg-amber-900 border border-amber-700/80 text-amber-300"
+                              >
+                                <Lock className="w-4 h-4 text-amber-400 shrink-0" />
+                                <span className="truncate">Check-in Pendente (0/{totalGuests})</span>
                               </Button>
                             ) : !isClean ? (
+                              /* Caso 4: Quarto ainda em limpeza */
                               <Button 
                                 size="sm"
                                 onClick={() => handleCheckin(item)}
@@ -399,6 +486,7 @@ export default function ReceptionTablet() {
                                 <span className="truncate">Quarto em Limpeza</span>
                               </Button>
                             ) : (
+                              /* Caso 5: Todos liberados e quarto limpo */
                               <Button 
                                 size="sm"
                                 onClick={() => handleCheckin(item)}
@@ -459,7 +547,11 @@ export default function ReceptionTablet() {
                               <span>Auto NFS-e</span>
                             </Badge>
                           )}
-                          {item.isCheckoutToday ? (
+                          {item.isPartialCheckin ? (
+                            <Badge className="bg-amber-950 text-amber-300 border-amber-800 text-[10px] font-bold animate-pulse">
+                              🟡 Entrada Parcial
+                            </Badge>
+                          ) : item.isCheckoutToday ? (
                             <Badge className="bg-rose-950 text-rose-300 border-rose-800 text-[10px] font-black animate-pulse">
                               Saída Hoje
                             </Badge>
@@ -471,6 +563,76 @@ export default function ReceptionTablet() {
                         </div>
                       </div>
 
+                      {/* Lista de Hóspedes e Status de Entrada */}
+                      <div className="bg-slate-900/90 border border-slate-700/70 rounded-xl p-2.5 space-y-1.5">
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center justify-between">
+                          <span>Hóspedes ({item.guests?.length || item.guestCount || 1})</span>
+                          <span className="text-slate-500 font-normal">Entrada Portaria</span>
+                        </div>
+                        <div className="space-y-1">
+                          {(item.guests || [{ index: 1, name: item.guestName, hasCompletedCheckin: true, entryAuthorized: true }]).map((g: any, gIdx: number) => {
+                            const isCleared = Boolean(g.hasCompletedCheckin)
+                            const hasEntered = Boolean(g.entryAuthorized)
+                            return (
+                              <div 
+                                key={gIdx} 
+                                className={`flex items-center justify-between px-2 py-1.5 rounded-lg text-xs font-medium border ${
+                                  hasEntered
+                                    ? "bg-emerald-950/40 border-emerald-800/50 text-emerald-200"
+                                    : isCleared
+                                      ? "bg-sky-950/40 border-sky-800/50 text-sky-200"
+                                      : "bg-amber-950/30 border-amber-800/40 text-amber-300"
+                                }`}
+                              >
+                                <div className="flex items-center gap-2 truncate pr-2">
+                                  <span className="w-4 h-4 rounded-full bg-slate-700 flex items-center justify-center text-[9px] font-bold text-slate-300 shrink-0">
+                                    {g.index || gIdx + 1}
+                                  </span>
+                                  <span className="truncate font-semibold">{g.name || `Hóspede ${g.index || gIdx + 1}`}</span>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  {hasEntered ? (
+                                    <Badge className="bg-emerald-600 text-white text-[9px] font-bold px-1.5 py-0 flex items-center gap-1">
+                                      <CheckCircle2 className="w-2.5 h-2.5" /> No Quarto
+                                    </Badge>
+                                  ) : isCleared ? (
+                                    <Button
+                                      size="sm"
+                                      onClick={() => handleCheckin(item, true, [g.index], true)}
+                                      className="h-6 px-2 text-[10px] bg-emerald-600 hover:bg-emerald-500 text-white font-bold gap-1 shadow-xs"
+                                    >
+                                      <Unlock className="w-2.5 h-2.5" /> Liberar Entrada
+                                    </Button>
+                                  ) : (
+                                    <div className="flex items-center gap-1">
+                                      <Badge variant="outline" className="bg-amber-950/60 text-amber-400 border-amber-800 text-[9px] font-bold px-1.5 py-0">
+                                        Pendente
+                                      </Badge>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => {
+                                          const preCheckinUrl = `${window.location.origin}/pre-checkin/${item.code || item.id}?guest=${g.index || gIdx + 1}`
+                                          const phone = (g.phone || item.guestPhone || "").replace(/\D/g, "")
+                                          const msg = encodeURIComponent(
+                                            `Olá, ${g.name || 'Hóspede'}! 🏨\n\nPor favor, realize seu Check-in Digital para liberação da sua entrada no Apt ${item.flatNumber}:\n${preCheckinUrl}\n\nObrigado e boa estadia!`
+                                          )
+                                          window.open(phone ? `https://wa.me/55${phone}?text=${msg}` : `https://wa.me/?text=${msg}`, "_blank")
+                                        }}
+                                        className="h-6 w-6 p-0 bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-300"
+                                        title="Enviar WhatsApp"
+                                      >
+                                        <MessageCircle className="w-3 h-3 text-emerald-400" />
+                                      </Button>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+
                       {/* Notice */}
                       {item.receptionNotes && (
                         <div className="p-2.5 bg-amber-950/60 border border-amber-800/80 rounded-xl text-amber-300 text-xs flex items-start gap-2">
@@ -479,15 +641,31 @@ export default function ReceptionTablet() {
                         </div>
                       )}
 
-                      {/* Checkout Button 1 Click */}
-                      <Button 
-                        size="sm"
-                        onClick={() => handleCheckout(item)}
-                        className="w-full bg-rose-600 hover:bg-rose-500 text-white font-black text-xs h-11 rounded-xl gap-2 shadow-md"
-                      >
-                        <LogOut className="w-4 h-4" />
-                        <span>Fazer Check-out (Desocupar Quarto)</span>
-                      </Button>
+                      {/* Action Buttons */}
+                      <div className="grid grid-cols-3 gap-2">
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => {
+                            setSelectedItem(item)
+                            setModalGuestIndex(1)
+                            setFnhrModalOpen(true)
+                          }}
+                          className="border-slate-700 bg-slate-900 hover:bg-slate-700 text-slate-200 font-bold text-xs h-11 rounded-xl"
+                        >
+                          <FileText className="w-4 h-4 mr-1 text-primary" />
+                          <span>Ficha</span>
+                        </Button>
+
+                        <Button 
+                          size="sm"
+                          onClick={() => handleCheckout(item)}
+                          className="col-span-2 bg-rose-600 hover:bg-rose-500 text-white font-black text-xs h-11 rounded-xl gap-2 shadow-md"
+                        >
+                          <LogOut className="w-4 h-4" />
+                          <span>Check-out</span>
+                        </Button>
+                      </div>
                     </div>
                   )
                 })}
@@ -990,6 +1168,105 @@ export default function ReceptionTablet() {
             >
               <Unlock className="w-4 h-4" />
               <span>Confirmar & Liberar Entrada</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal: Confirmação de Entrada Parcial de Hóspede */}
+      <Dialog open={Boolean(partialCheckinItem)} onOpenChange={(open) => !open && setPartialCheckinItem(null)}>
+        <DialogContent className="sm:max-w-md bg-slate-900 border-slate-800 text-white shadow-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base font-bold text-amber-400">
+              <AlertTriangle className="w-5 h-5 text-amber-400" />
+              <span>Confirmar Entrada Parcial</span>
+            </DialogTitle>
+            <DialogDescription className="text-slate-400 text-xs">
+              Apt {partialCheckinItem?.item?.flatNumber} • {partialCheckinItem?.item?.guestName}
+            </DialogDescription>
+          </DialogHeader>
+
+          {partialCheckinItem && (
+            <div className="py-3 space-y-3 text-xs">
+              {/* Box Hóspede(s) Pendente(s) */}
+              <div className="p-3 bg-amber-950/60 border border-amber-800/80 rounded-xl space-y-1.5 text-amber-200">
+                <div className="flex items-center gap-1.5 font-bold text-amber-300">
+                  <Clock className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span>Hóspede(s) com Check-in Pendente:</span>
+                </div>
+                <div className="space-y-1 pl-5">
+                  {partialCheckinItem.pendingGuests.map((g: any) => (
+                    <div key={g.index} className="flex items-center justify-between font-semibold">
+                      <span>• {g.name || `Hóspede ${g.index}`}</span>
+                      <span className="text-[10px] text-amber-400/90 font-normal">Ficha digital não preenchida</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Box Hóspede(s) Liberado(s) */}
+              <div className="p-3 bg-emerald-950/60 border border-emerald-800/80 rounded-xl space-y-1.5 text-emerald-200">
+                <div className="flex items-center gap-1.5 font-bold text-emerald-300">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>Entrada Liberada Apenas Para:</span>
+                </div>
+                <div className="space-y-1 pl-5">
+                  {partialCheckinItem.clearedGuests.map((g: any) => (
+                    <div key={g.index} className="flex items-center justify-between font-bold text-white">
+                      <span>• {g.name || `Hóspede ${g.index}`}</span>
+                      <Badge className="bg-emerald-600 text-white text-[9px] px-1.5 py-0">Check-in OK</Badge>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Pergunta Solicitada pelo Usuário */}
+              <div className="p-3.5 bg-slate-950 border border-slate-800 rounded-xl text-center space-y-2">
+                <p className="text-sm font-black text-slate-100 leading-snug">
+                  Deseja registrar a entrada apenas de{" "}
+                  <span className="text-emerald-400">
+                    {partialCheckinItem.clearedGuests.map((g: any) => g.name || `Hóspede ${g.index}`).join(" e ")}
+                  </span>
+                  ?
+                </p>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  O hóspede pendente continuará com entrada bloqueada na portaria até que complete o pré-check-in digital.
+                </p>
+              </div>
+
+              {/* Aviso caso quarto ainda esteja em limpeza */}
+              {!partialCheckinItem.item.isRoomReady && (
+                <div className="p-2.5 bg-rose-950/50 border border-rose-900/70 rounded-xl text-[11px] text-rose-300 flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  <span>Atenção: Quarto consta como em higienização. Ao confirmar, será atualizado como limpo e ocupado.</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter className="gap-2 sm:justify-between flex-row">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setPartialCheckinItem(null)}
+              className="text-xs bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700"
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => partialCheckinItem && executePartialCheckin(partialCheckinItem)}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs gap-1.5"
+            >
+              <Unlock className="w-4 h-4" />
+              <span>
+                Confirmar Entrada de{" "}
+                {partialCheckinItem?.clearedGuests?.length === 1
+                  ? (partialCheckinItem.clearedGuests[0].name || "").split(" ")[0] || "Hóspede"
+                  : "Hóspedes Liberados"}
+              </span>
             </Button>
           </DialogFooter>
         </DialogContent>

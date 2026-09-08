@@ -7763,11 +7763,20 @@ app.get("/api/reception/today", (req, res) => {
   const today = brDate.toISOString().substring(0, 10);
   const currentHour = brDate.getHours();
 
-  // 1. Chegadas Previstas para Hoje (Aguardando Check-in)
+  // 1. Chegadas Previstas para Hoje (Aguardando Check-in ou com Entrada Parcial Ativa)
   const arrivals = (db.reservations || [])
     .filter(r => {
       const resDate = r.checkinDate ? r.checkinDate.substring(0, 10) : "";
-      return resDate === today && r.status !== "cancelada" && r.status !== "cancelado" && r.status !== "in_house" && r.status !== "completed" && r.status !== "checked_out";
+      if (r.status === "cancelada" || r.status === "cancelado" || r.status === "completed" || r.status === "checked_out") {
+        return false;
+      }
+      if (resDate === today && r.status !== "in_house") {
+        return true;
+      }
+      if (r.isPartialCheckin && Array.isArray(r.guests) && r.guests.some(g => !g.entryAuthorized)) {
+        return true;
+      }
+      return false;
     })
     .map(r => {
       const flat = db.flats.find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber)) || { id: r.flatId, number: r.flatNumber || String(r.flatId) };
@@ -7891,10 +7900,19 @@ app.get("/api/reception/today", (req, res) => {
       let entryMessage = "";
       let entryBadgeType = "neutral";
 
+      const completedCount = guestList.filter(g => g.hasCompletedCheckin).length;
+      const totalCount = guestList.length;
+
       if (!allCheckinDone) {
-        canAuthorizeEntry = false;
-        entryMessage = `Check-in Digital Pendente (${guestList.filter(g => g.hasCompletedCheckin).length}/${guestList.length} concluído)`;
-        entryBadgeType = "error";
+        if (completedCount > 0) {
+          canAuthorizeEntry = isRoomReady && (isPastOrExact14h || earlyCheckinStatus === "Liberado");
+          entryMessage = `Entrada Parcial Liberada (${completedCount}/${totalCount} prontos)`;
+          entryBadgeType = "warning";
+        } else {
+          canAuthorizeEntry = false;
+          entryMessage = `Check-in Digital Pendente (0/${totalCount} concluído)`;
+          entryBadgeType = "error";
+        }
       } else if (!isRoomReady) {
         canAuthorizeEntry = false;
         entryMessage = `Quarto não está pronto (${cleaningLabel})`;
@@ -7964,9 +7982,10 @@ app.get("/api/reception/today", (req, res) => {
         ...r,
         flatNumber: flat.number,
         guestCount: count,
-        guests: r.guests || [{ index: 1, name: r.guestName, hasCompletedCheckin: true }],
+        guests: r.guests || [{ index: 1, name: r.guestName, hasCompletedCheckin: true, entryAuthorized: true }],
         receptionNotes: r.receptionNotes || guest.notes || "",
-        isCheckoutToday: r.checkoutDate === today
+        isCheckoutToday: r.checkoutDate === today,
+        isPartialCheckin: Boolean(r.isPartialCheckin)
       };
     });
 
@@ -8075,33 +8094,106 @@ app.post("/api/reception/checkin/:reservationId", (req, res) => {
   const r = (db.reservations || []).find(x => x.id === id);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
 
-  // Bloqueio mandatória: Não permitir liberar entrada se houver hóspede com check-in pendente
-  const guests = r.guests || [];
+  // Garante array de hóspedes consistente
+  const count = Math.min(Math.max(Number(r.guestCount) || Number(r.adults) || 1, 1), 3);
+  if (!r.guests || r.guests.length === 0) {
+    r.guests = [{
+      index: 1,
+      name: r.guestName || "Hóspede 1",
+      cpf: r.guestDocument || "",
+      phone: r.guestPhone || "",
+      email: r.guestEmail || "",
+      hasCompletedCheckin: Boolean(r.fnhrCompleted),
+      checkinCompletedAt: r.fnhrCompleted ? r.updatedAt : null,
+      entryAuthorized: r.status === "in_house"
+    }];
+    for (let i = 2; i <= count; i++) {
+      r.guests.push({
+        index: i,
+        name: `Hóspede ${i}`,
+        cpf: "",
+        phone: "",
+        email: "",
+        hasCompletedCheckin: false,
+        checkinCompletedAt: null,
+        entryAuthorized: false
+      });
+    }
+  }
+
+  const guests = r.guests;
   const pendingGuests = guests.filter(g => !g.hasCompletedCheckin);
-  if (pendingGuests.length > 0 && !req.body.adminOverride && !r.fnhrCompleted) {
-    const names = pendingGuests.map(g => g.name || `Hóspede ${g.index}`).join(", ");
+  const clearedGuests = guests.filter(g => g.hasCompletedCheckin);
+  const isPartialRequested = Boolean(req.body.partial || (Array.isArray(req.body.guestIndices) && req.body.guestIndices.length > 0));
+
+  // Bloqueio mandatória: se nenhum hóspede completou a ficha digital
+  if (clearedGuests.length === 0 && !req.body.adminOverride && !r.fnhrCompleted) {
     return res.status(400).json({
-      error: `Não é possível liberar a entrada: ${pendingGuests.length} hóspede(s) (${names}) ainda estão com o Check-in Digital pendente. Todos os hóspedes devem registrar documento e selfie antes da entrada.`
+      error: "Não é possível liberar a entrada: Nenhum hóspede concluiu o Check-in Digital ainda. É necessário preencher a ficha digital antes da liberação de entrada."
     });
   }
 
-  ensureReservationAuditLogs(r);
+  // Se houver pendentes e NÃO foi solicitada confirmação de liberação parcial nem adminOverride
+  if (pendingGuests.length > 0 && !isPartialRequested && !req.body.adminOverride && !r.fnhrCompleted) {
+    const pendingNames = pendingGuests.map(g => g.name || `Hóspede ${g.index}`).join(", ");
+    const clearedNames = clearedGuests.map(g => g.name || `Hóspede ${g.index}`).join(", ");
+    return res.status(400).json({
+      error: `Há hóspede(s) com check-in pendente (${pendingNames}). Apenas a entrada de ${clearedNames} está liberada no momento. Deseja registrar a entrada apenas dele(s)?`,
+      requiresPartialConfirmation: true,
+      pendingGuests: pendingGuests.map(g => ({ index: g.index, name: g.name })),
+      clearedGuests: clearedGuests.map(g => ({ index: g.index, name: g.name }))
+    });
+  }
+
+  // Identifica quais hóspedes terão a entrada autorizada neste momento
+  let guestsToAuthorize = [];
+  if (Array.isArray(req.body.guestIndices) && req.body.guestIndices.length > 0) {
+    const targetIndices = req.body.guestIndices.map(Number);
+    guestsToAuthorize = guests.filter(g => targetIndices.includes(Number(g.index)));
+  } else if (isPartialRequested) {
+    guestsToAuthorize = clearedGuests.filter(g => !g.entryAuthorized);
+  } else {
+    guestsToAuthorize = clearedGuests.length > 0 ? clearedGuests : guests;
+  }
+
+  if (guestsToAuthorize.length === 0) {
+    return res.status(400).json({
+      error: "Nenhum hóspede elegível para registrar entrada física."
+    });
+  }
+
+  // Não permitir liberar hóspede cujo check-in digital não foi concluído sem adminOverride
+  const unauthorizedAttempt = guestsToAuthorize.filter(g => !g.hasCompletedCheckin && !req.body.adminOverride);
+  if (unauthorizedAttempt.length > 0) {
+    const names = unauthorizedAttempt.map(g => g.name || `Hóspede ${g.index}`).join(", ");
+    return res.status(400).json({
+      error: `Não é possível liberar a entrada de ${names}: Check-in Digital pendente.`
+    });
+  }
+
+  const nowIso = new Date().toISOString();
   const authUser = getAuthUser(req);
-  addReservationAuditLog(r, {
-    action: "checkin",
-    actor: {
-      id: authUser?.id || null,
-      name: authUser?.username || "Recepção / Portaria",
-      role: authUser?.role || "reception",
-      type: "user"
-    },
-    source: "Recepção / Portaria",
-    description: `Check-in do Apt ${r.flatNumber} registrado na portaria`,
-    changes: [{ field: "status", label: "Status da Reserva", oldValue: r.status || "confirmada", newValue: "in_house" }]
+  const authorizerName = authUser?.username || "Recepção / Portaria";
+
+  // Autoriza a entrada física dos hóspedes selecionados
+  guestsToAuthorize.forEach(g => {
+    g.entryAuthorized = true;
+    g.entryAuthorizedAt = g.entryAuthorizedAt || nowIso;
+    g.entryAuthorizedBy = authorizerName;
   });
 
+  const allGuestsAuthorized = guests.every(g => g.entryAuthorized);
+  r.isPartialCheckin = !allGuestsAuthorized;
+  r.status = "in_house";
+  r.actualCheckinAt = r.actualCheckinAt || nowIso;
+  r.updatedAt = nowIso;
+
   const flat = db.flats.find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
-  
+  if (flat) {
+    flat.isOccupied = true;
+    flat.updatedAt = nowIso;
+  }
+
   // Atualiza solicitação de limpeza caso exista
   const cleanReq = (db.cleaningRequests || []).find(c => 
     (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) && 
@@ -8109,22 +8201,43 @@ app.post("/api/reception/checkin/:reservationId", (req, res) => {
   );
   if (cleanReq && cleanReq.status !== "clean") {
     cleanReq.status = "clean";
-    cleanReq.completedAt = cleanReq.completedAt || new Date().toISOString();
-    cleanReq.updatedAt = new Date().toISOString();
+    cleanReq.completedAt = cleanReq.completedAt || nowIso;
+    cleanReq.updatedAt = nowIso;
   }
 
-  r.status = "in_house";
-  r.actualCheckinAt = new Date().toISOString();
-  r.updatedAt = new Date().toISOString();
+  const clearedNames = guestsToAuthorize.map(g => g.name || `Hóspede ${g.index}`).join(", ");
+  const remainingPending = guests.filter(g => !g.entryAuthorized);
+  const remainingNames = remainingPending.map(g => g.name || `Hóspede ${g.index}`).join(", ");
 
-  if (flat) {
-    flat.isOccupied = true;
-    flat.updatedAt = new Date().toISOString();
-  }
+  ensureReservationAuditLogs(r);
+  addReservationAuditLog(r, {
+    action: r.isPartialCheckin ? "partial_checkin" : "checkin",
+    actor: {
+      id: authUser?.id || null,
+      name: authorizerName,
+      role: authUser?.role || "reception",
+      type: "user"
+    },
+    source: "Recepção / Portaria",
+    description: r.isPartialCheckin 
+      ? `Entrada parcial do Apt ${r.flatNumber} registrada na portaria para: ${clearedNames}. Pendente(s): ${remainingNames}`
+      : `Check-in / Entrada do Apt ${r.flatNumber} registrado na portaria para: ${clearedNames}`,
+    changes: [{ field: "status", label: "Status da Reserva", oldValue: r.status || "confirmada", newValue: "in_house" }]
+  });
 
   saveDatabase();
   triggerImmediateWhatsApp(db, saveDatabase, "checkin_completed", r);
-  res.json({ success: true, message: `Check-in do Apt ${r.flatNumber} realizado com sucesso!`, reservation: r });
+
+  res.json({
+    success: true,
+    isPartialCheckin: r.isPartialCheckin,
+    message: r.isPartialCheckin
+      ? `Entrada registrada apenas para ${clearedNames}. Hóspede(s) pendente(s): ${remainingNames}.`
+      : `Check-in do Apt ${r.flatNumber} realizado com sucesso!`,
+    authorizedGuests: clearedNames,
+    pendingGuests: remainingNames,
+    reservation: r
+  });
 });
 
 app.post("/api/reception/checkout/:reservationId", (req, res) => {
