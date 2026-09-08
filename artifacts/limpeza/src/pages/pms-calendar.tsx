@@ -58,6 +58,7 @@ export default function PmsCalendar() {
   const [isSyncing, setIsSyncing] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
   const [cleaningFilter, setCleaningFilter] = useState<"all" | "dirty" | "clean">("all")
+  const [specialFilter, setSpecialFilter] = useState<"all" | "minors" | "risk">("all")
   const [breakfastStats, setBreakfastStats] = useState<{
     todayOrders: number;
     todayGuests: number;
@@ -1844,13 +1845,38 @@ export default function PmsCalendar() {
   const dirtyFlatsCount = data.flats.filter(f => (f as any).cleaningStatus === "dirty" || (f as any).cleaningStatus === "cleaning_now").length
   const cleanFlatsCount = data.flats.filter(f => (f as any).cleaningStatus === "clean" || !(f as any).cleaningStatus).length
 
+  // Contagem de reservas com menores de idade e com alerta de atenção (< 30a locais)
+  const minorReservationsCount = useMemo(() => {
+    return data.reservations.filter(r => r.status !== "cancelada" && r.hasMinor).length
+  }, [data.reservations])
+
+  const riskAttentionCount = useMemo(() => {
+    return data.reservations.filter(r => r.status !== "cancelada" && r.riskAttentionAlert).length
+  }, [data.reservations])
+
   const displayedFlats = data.flats.filter(f => {
     if (cleaningFilter === "dirty") {
-      return (f as any).cleaningStatus === "dirty" || (f as any).cleaningStatus === "cleaning_now"
+      if (!((f as any).cleaningStatus === "dirty" || (f as any).cleaningStatus === "cleaning_now")) return false
+    } else if (cleaningFilter === "clean") {
+      if (!((f as any).cleaningStatus === "clean" || !(f as any).cleaningStatus)) return false
     }
-    if (cleaningFilter === "clean") {
-      return (f as any).cleaningStatus === "clean" || !(f as any).cleaningStatus
+
+    if (specialFilter === "minors") {
+      const hasMinorInFlat = data.reservations.some(r => 
+        (r.flatId === f.id || String(r.flatNumber) === String(f.number)) &&
+        r.status !== "cancelada" &&
+        r.hasMinor
+      )
+      if (!hasMinorInFlat) return false
+    } else if (specialFilter === "risk") {
+      const hasRiskInFlat = data.reservations.some(r => 
+        (r.flatId === f.id || String(r.flatNumber) === String(f.number)) &&
+        r.status !== "cancelada" &&
+        r.riskAttentionAlert
+      )
+      if (!hasRiskInFlat) return false
     }
+
     return true
   })
 
@@ -2101,6 +2127,35 @@ export default function PmsCalendar() {
                 >
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                   Limpos ({cleanFlatsCount})
+                </button>
+              </div>
+
+              {/* Filtro Rápido de Menores e Alertas de Atenção */}
+              <div className="flex items-center gap-0.5 bg-background border rounded-lg p-0.5 ml-1 shadow-2xs">
+                <button
+                  type="button"
+                  onClick={() => setSpecialFilter(prev => prev === "minors" ? "all" : "minors")}
+                  className={`px-2 py-1 rounded-md text-[11px] font-bold transition-all flex items-center gap-1 ${
+                    specialFilter === "minors" 
+                      ? "bg-rose-600 text-white shadow-xs" 
+                      : "text-rose-600 dark:text-rose-400 hover:bg-rose-500/10"
+                  }`}
+                  title="Filtrar apartamentos com menores de idade (ECA Art. 82)"
+                >
+                  <span>👶 Menores ({minorReservationsCount})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSpecialFilter(prev => prev === "risk" ? "all" : "risk")}
+                  className={`px-2 py-1 rounded-md text-[11px] font-bold transition-all flex items-center gap-1 ${
+                    specialFilter === "risk" 
+                      ? "bg-amber-500 text-slate-950 shadow-xs" 
+                      : "text-amber-600 dark:text-amber-400 hover:bg-amber-500/10"
+                  }`}
+                  title="Filtrar reservas com alerta de atenção (< 30a de Campos dos Goytacazes)"
+                >
+                  <AlertTriangle className="w-3 h-3 text-amber-500" />
+                  <span>Locais &lt;30a ({riskAttentionCount})</span>
                 </button>
               </div>
             </div>
@@ -2453,6 +2508,12 @@ export default function PmsCalendar() {
                                 isMensalista 
                                   ? 'bg-gradient-to-r from-purple-800 via-indigo-900 to-purple-800 text-white border-2 border-purple-300 shadow-md ring-2 ring-purple-500/80' 
                                   : `${channelCfg?.bg} ${channelCfg?.text} border ${channelCfg?.border} shadow-xs`
+                              } ${
+                                resItem.hasMinor 
+                                  ? 'border-2 border-rose-500 ring-2 ring-rose-400 animate-pulse' 
+                                  : resItem.riskAttentionAlert
+                                  ? 'border-2 border-amber-400 ring-1 ring-amber-300'
+                                  : ''
                               } flex items-center px-2 text-[11px] font-bold overflow-hidden z-10 cursor-grab active:cursor-grabbing hover:brightness-110 hover:shadow-md transition-all ${
                                 isBeingDragged && (resDragState?.hasMoved || resDragState?.isLongPressReady) ? 'opacity-30 border-dashed scale-95' : ''
                               } ${
@@ -2481,6 +2542,16 @@ export default function PmsCalendar() {
                                 {isMensalista && (
                                   <span title="Cliente Mensalista / Contrato Long Stay" className="shrink-0 text-[8.5px] uppercase font-black px-1.5 py-0.2 bg-amber-400 text-slate-950 rounded shadow-xs tracking-wider">
                                     👑 Mensalista
+                                  </span>
+                                )}
+                                {resItem.hasMinor && (
+                                  <span title="Hóspede Menor de Idade Registrado (ECA Art. 82)" className="shrink-0 text-xs px-1 py-0.2 bg-rose-600 text-white rounded font-black shadow-xs">
+                                    👶 Menor
+                                  </span>
+                                )}
+                                {resItem.riskAttentionAlert && !resItem.hasMinor && (
+                                  <span title={resItem.riskAttentionReason || "Atenção: Hóspede jovem < 30 anos (Campos dos Goytacazes)"} className="shrink-0 text-xs px-1 py-0.2 bg-amber-400 text-slate-950 rounded font-black shadow-xs">
+                                    ⚠️ &lt;30a
                                   </span>
                                 )}
                                 <span className="truncate font-black text-white text-[11px] min-w-0">

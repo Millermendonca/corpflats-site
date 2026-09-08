@@ -38,6 +38,7 @@ export default function ReceptionTablet() {
   // Modal Ficha FNHR
   const [selectedItem, setSelectedItem] = useState<any | null>(null)
   const [fnhrModalOpen, setFnhrModalOpen] = useState(false)
+  const [modalGuestIndex, setModalGuestIndex] = useState(1)
 
   // Visualizador Ampliado de Fotos (Zoom / Lightbox)
   const [zoomedPhoto, setZoomedPhoto] = useState<{ url: string; title: string } | null>(null)
@@ -69,6 +70,14 @@ export default function ReceptionTablet() {
   }, [])
 
   const handleCheckin = async (resItem: any, force = false) => {
+    const guestsList = resItem.guests || [{ index: 1, name: resItem.guestName, hasCompletedCheckin: resItem.hasPreCheckin }]
+    const hasPendingCheckin = guestsList.some((g: any) => !g.hasCompletedCheckin)
+
+    if (hasPendingCheckin) {
+      alert("Acesso Bloqueado na Portaria:\n\nHá hóspede(s) com Pré-Check-in Digital pendente nesta reserva. Conforme as normas de segurança da CorpFlats, todos os hóspedes devem preencher a ficha digital antes da liberação de entrada.")
+      return
+    }
+
     if (!resItem.isRoomReady && !force) {
       setForceCheckinItem(resItem)
       return
@@ -347,42 +356,61 @@ export default function ReceptionTablet() {
                       )}
 
                       {/* Action Buttons */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-slate-700/60">
-                        <Button 
-                          variant="outline" 
-                          size="sm"
-                          onClick={() => {
-                            setSelectedItem(item)
-                            setFnhrModalOpen(true)
-                          }}
-                          className="border-slate-700 bg-slate-900 hover:bg-slate-700 text-slate-200 font-bold text-xs h-12 rounded-xl"
-                        >
-                          <FileText className="w-4 h-4 mr-1 text-primary" />
-                          <span>Ver Ficha / Link</span>
-                        </Button>
+                      {(() => {
+                        const guestsList = item.guests || [{ index: 1, name: item.guestName, hasCompletedCheckin: item.hasPreCheckin }]
+                        const totalGuests = guestsList.length
+                        const completedGuests = guestsList.filter((g: any) => g.hasCompletedCheckin).length
+                        const hasPendingCheckin = completedGuests < totalGuests
 
-                        <Button 
-                          size="sm"
-                          onClick={() => handleCheckin(item)}
-                          className={`font-bold text-xs h-12 rounded-xl gap-2 shadow-md transition-all ${
-                            isClean 
-                              ? "bg-emerald-600 hover:bg-emerald-500 text-white font-black" 
-                              : "bg-rose-950/80 hover:bg-rose-900/90 border border-rose-800/80 text-rose-300"
-                          }`}
-                        >
-                          {isClean ? (
-                            <>
-                              <Unlock className="w-4 h-4 shrink-0" />
-                              <span>Liberar Entrada</span>
-                            </>
-                          ) : (
-                            <>
-                              <Lock className="w-4 h-4 text-rose-400 shrink-0" />
-                              <span className="truncate">🔒 Quarto em Limpeza</span>
-                            </>
-                          )}
-                        </Button>
-                      </div>
+                        return (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-slate-700/60">
+                            <Button 
+                              variant="outline" 
+                              size="sm"
+                              onClick={() => {
+                                setSelectedItem(item)
+                                setModalGuestIndex(1)
+                                setFnhrModalOpen(true)
+                              }}
+                              className="border-slate-700 bg-slate-900 hover:bg-slate-700 text-slate-200 font-bold text-xs h-12 rounded-xl"
+                            >
+                              <FileText className="w-4 h-4 mr-1 text-primary" />
+                              <span>Ver Ficha / Link</span>
+                            </Button>
+
+                            {hasPendingCheckin ? (
+                              <Button 
+                                size="sm"
+                                onClick={() => {
+                                  alert(`Acesso Bloqueado na Portaria:\n\nHá ${totalGuests - completedGuests} hóspede(s) com Pré-Check-in Digital pendente nesta reserva.\n\nPor favor, solicite aos hóspedes que concluam a Ficha Digital para liberação da portaria.`)
+                                }}
+                                className="font-bold text-xs h-12 rounded-xl gap-2 shadow-md transition-all bg-amber-950/80 hover:bg-amber-900 border border-amber-700/80 text-amber-300"
+                              >
+                                <Lock className="w-4 h-4 text-amber-400 shrink-0" />
+                                <span className="truncate">Check-in Pendente ({completedGuests}/{totalGuests})</span>
+                              </Button>
+                            ) : !isClean ? (
+                              <Button 
+                                size="sm"
+                                onClick={() => handleCheckin(item)}
+                                className="font-bold text-xs h-12 rounded-xl gap-2 shadow-md transition-all bg-rose-950/80 hover:bg-rose-900/90 border border-rose-800/80 text-rose-300"
+                              >
+                                <Lock className="w-4 h-4 text-rose-400 shrink-0" />
+                                <span className="truncate">Quarto em Limpeza</span>
+                              </Button>
+                            ) : (
+                              <Button 
+                                size="sm"
+                                onClick={() => handleCheckin(item)}
+                                className="font-bold text-xs h-12 rounded-xl gap-2 shadow-md transition-all bg-emerald-600 hover:bg-emerald-500 text-white font-black"
+                              >
+                                <Unlock className="w-4 h-4 shrink-0" />
+                                <span>Liberar Entrada</span>
+                              </Button>
+                            )}
+                          </div>
+                        )
+                      })()}
                     </div>
                   )
                 })}
@@ -537,214 +565,326 @@ export default function ReceptionTablet() {
             </DialogDescription>
           </DialogHeader>
 
-          {selectedItem && (
-            <div className="py-3 space-y-4 text-xs">
-              {/* Photos Row */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-slate-300 block text-[10px] uppercase">Selfie do Hóspede</span>
-                    {selectedItem.guestPhoto && (
-                      <span className="text-[9px] text-primary font-semibold flex items-center gap-0.5">
-                        <ZoomIn className="w-3 h-3" /> Toque p/ ampliar
-                      </span>
-                    )}
-                  </div>
-                  <div 
-                    onClick={() => {
-                      if (selectedItem.guestPhoto) {
-                        setZoomedPhoto({ 
-                          url: selectedItem.guestPhoto, 
-                          title: `Selfie do Hóspede - ${selectedItem.guestName} (Apt ${selectedItem.flatNumber})` 
-                        })
-                      }
-                    }}
-                    className={`h-36 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-center overflow-hidden relative group ${
-                      selectedItem.guestPhoto ? "cursor-pointer hover:border-primary/60 transition-all" : ""
-                    }`}
-                  >
-                    {selectedItem.guestPhoto ? (
-                      <>
-                        <img src={selectedItem.guestPhoto} alt="Selfie" className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
-                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-xs font-bold gap-1 transition-opacity">
-                          <ZoomIn className="w-4 h-4" /> <span>Ampliar</span>
-                        </div>
-                      </>
-                    ) : (
-                      <span className="text-slate-600 text-center px-2">Selfie não enviada</span>
-                    )}
-                  </div>
-                </div>
+          {selectedItem && (() => {
+            const rawGuests = selectedItem.guests && selectedItem.guests.length > 0
+              ? selectedItem.guests
+              : [{ 
+                  index: 1, 
+                  name: selectedItem.guestName, 
+                  phone: selectedItem.guestPhone,
+                  document: selectedItem.guestDocument,
+                  hasCompletedCheckin: selectedItem.hasPreCheckin,
+                  selfieUrl: selectedItem.guestPhoto,
+                  docPhotoUrl: selectedItem.docPhoto,
+                  signatureUrl: selectedItem.signatureUrl
+                }]
 
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-slate-300 block text-[10px] uppercase">Foto do Documento</span>
-                    {selectedItem.docPhoto && (
-                      <span className="text-[9px] text-primary font-semibold flex items-center gap-0.5">
-                        <ZoomIn className="w-3 h-3" /> Toque p/ ampliar
-                      </span>
-                    )}
-                  </div>
-                  <div 
-                    onClick={() => {
-                      if (selectedItem.docPhoto) {
-                        setZoomedPhoto({ 
-                          url: selectedItem.docPhoto, 
-                          title: `Foto do Documento - ${selectedItem.guestName} (Apt ${selectedItem.flatNumber})` 
-                        })
-                      }
-                    }}
-                    className={`h-36 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-center overflow-hidden relative group ${
-                      selectedItem.docPhoto ? "cursor-pointer hover:border-primary/60 transition-all" : ""
-                    }`}
-                  >
-                    {selectedItem.docPhoto ? (
-                      <>
-                        <img src={selectedItem.docPhoto} alt="Documento" className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
-                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-xs font-bold gap-1 transition-opacity">
-                          <ZoomIn className="w-4 h-4" /> <span>Ampliar</span>
-                        </div>
-                      </>
-                    ) : (
-                      <span className="text-slate-600 text-center px-2">Doc não enviado</span>
-                    )}
-                  </div>
-                </div>
-              </div>
+            const currentGuest = rawGuests.find((g: any) => g.index === modalGuestIndex) || rawGuests[0]
+            const activeSelfie = currentGuest.selfieUrl || (currentGuest.index === 1 ? selectedItem.guestPhoto : null)
+            const activeDoc = currentGuest.docPhotoUrl || (currentGuest.index === 1 ? selectedItem.docPhoto : null)
+            const activeSig = currentGuest.signatureUrl || (currentGuest.index === 1 ? selectedItem.signatureUrl : null)
 
-              {/* Data Grid */}
-              <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800 space-y-2">
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <span className="text-slate-500 block text-[10px] uppercase font-bold">Nome Completo</span>
-                    <span className="font-bold text-white text-sm">{selectedItem.guestName}</span>
+            return (
+              <div className="py-3 space-y-4 text-xs">
+                {/* Guest Switcher Tabs (Hóspede 1 / Hóspede 2) */}
+                {rawGuests.length > 1 && (
+                  <div className="flex items-center gap-1.5 p-1 bg-slate-950 rounded-xl border border-slate-800">
+                    {rawGuests.map((g: any) => {
+                      const isSelected = modalGuestIndex === g.index
+                      return (
+                        <button
+                          key={g.index}
+                          type="button"
+                          onClick={() => setModalGuestIndex(g.index)}
+                          className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                            isSelected
+                              ? "bg-primary text-primary-foreground shadow-sm"
+                              : "text-slate-400 hover:text-white hover:bg-slate-800"
+                          }`}
+                        >
+                          <span className="truncate">{g.name ? g.name.split(" ")[0] : `Hóspede ${g.index}`}</span>
+                          {g.hasCompletedCheckin ? (
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                          ) : (
+                            <span className="text-[9px] px-1 py-0.2 rounded bg-amber-950 text-amber-300 border border-amber-800 shrink-0">Pendente</span>
+                          )}
+                        </button>
+                      )
+                    })}
                   </div>
-                  <div>
-                    <span className="text-slate-500 block text-[10px] uppercase font-bold">Telefone / WhatsApp</span>
-                    {selectedItem.guestPhone ? (
-                      <a
-                        href={`https://wa.me/55${(selectedItem.guestPhone || "").replace(/\D/g, "")}?text=${encodeURIComponent(`Olá, ${selectedItem.guestName}! Falamos da recepção da CorpFlats referente à sua reserva no Flat ${selectedItem.flatNumber}.`)}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 font-bold text-emerald-400 hover:text-emerald-300 hover:underline"
+                )}
+
+                {/* Alerta de Menor de Idade (ECA Art. 82) se aplicável */}
+                {currentGuest.isMinor && (
+                  <div className="p-3 bg-rose-950/60 border border-rose-800/80 rounded-xl space-y-1.5 text-rose-300">
+                    <div className="flex items-center gap-2 font-bold text-rose-200">
+                      <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                      <span>Hóspede Menor de Idade • ECA (Art. 82)</span>
+                    </div>
+                    <p className="text-[11px] leading-relaxed text-slate-300">
+                      Parentesco: <strong>{currentGuest.minorKinship === "filho" ? "Filho(a) dos pais acompanhantes" : currentGuest.minorKinship || "Outro"}</strong>
+                      {currentGuest.minorAuthDocUrl ? " • Autorização em Cartório Anexada" : currentGuest.minorKinship === "filho" ? " • Acompanhado pelos pais" : " • ⚠️ Sem documento em cartório"}
+                    </p>
+                    {currentGuest.minorAuthDocUrl && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setZoomedPhoto({ url: currentGuest.minorAuthDocUrl, title: `Autorização em Cartório - ${currentGuest.name}` })}
+                        className="h-7 text-[10px] bg-rose-900/40 border-rose-700 text-rose-200 hover:bg-rose-900 font-bold gap-1"
                       >
-                        <MessageCircle className="w-3.5 h-3.5" />
-                        <span>{selectedItem.guestPhone}</span>
-                      </a>
-                    ) : (
-                      <span className="font-semibold text-slate-400">Não informado</span>
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>Ver Autorização do Cartório</span>
+                      </Button>
                     )}
                   </div>
+                )}
+
+                {/* Alerta de Atenção da Gestão (ex: Jovem local < 30a) */}
+                {selectedItem.riskAttentionAlert && (
+                  <div className="p-3 bg-amber-950/60 border border-amber-800/80 rounded-xl space-y-1 text-amber-300">
+                    <div className="flex items-center gap-2 font-bold text-amber-200">
+                      <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span>Aviso de Atenção para a Portaria</span>
+                    </div>
+                    <p className="text-[11px] text-slate-300">
+                      {selectedItem.riskAttentionReason || "Hóspede local com menos de 30 anos (Campos dos Goytacazes). Recomenda-se conferência atenta de documentos e cumprimento estrito do regulamento."}
+                    </p>
+                  </div>
+                )}
+
+                {/* Status IA de Biometria e Documentos (se avaliado) */}
+                {currentGuest.aiVerification && (
+                  <div className="p-2.5 bg-sky-950/50 border border-sky-800/60 rounded-xl flex items-center justify-between text-[11px] text-sky-200">
+                    <span className="flex items-center gap-1.5 font-bold">
+                      <Sparkles className="w-3.5 h-3.5 text-sky-400" />
+                      Auditoria de Identidade por IA
+                    </span>
+                    <Badge className={currentGuest.aiVerification.facesMatch ? "bg-emerald-950 text-emerald-300 border-emerald-800 text-[10px]" : "bg-rose-950 text-rose-300 border-rose-800 text-[10px]"}>
+                      {currentGuest.aiVerification.facesMatch ? "✓ Rosto & Documento Conferem" : "⚠️ Divergência Detectada"}
+                    </Badge>
+                  </div>
+                )}
+
+                {/* Photos Row */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-300 block text-[10px] uppercase">Selfie com Documento</span>
+                      {activeSelfie && (
+                        <span className="text-[9px] text-primary font-semibold flex items-center gap-0.5">
+                          <ZoomIn className="w-3 h-3" /> Toque p/ ampliar
+                        </span>
+                      )}
+                    </div>
+                    <div 
+                      onClick={() => {
+                        if (activeSelfie) {
+                          setZoomedPhoto({ 
+                            url: activeSelfie, 
+                            title: `Selfie - ${currentGuest.name || selectedItem.guestName} (Apt ${selectedItem.flatNumber})` 
+                          })
+                        }
+                      }}
+                      className={`h-36 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-center overflow-hidden relative group ${
+                        activeSelfie ? "cursor-pointer hover:border-primary/60 transition-all" : ""
+                      }`}
+                    >
+                      {activeSelfie ? (
+                        <>
+                          <img src={activeSelfie} alt="Selfie" className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-xs font-bold gap-1 transition-opacity">
+                            <ZoomIn className="w-4 h-4" /> <span>Ampliar</span>
+                          </div>
+                        </>
+                      ) : (
+                        <span className="text-slate-600 text-center px-2">Selfie não enviada</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-300 block text-[10px] uppercase">Foto do Documento</span>
+                      {activeDoc && (
+                        <span className="text-[9px] text-primary font-semibold flex items-center gap-0.5">
+                          <ZoomIn className="w-3 h-3" /> Toque p/ ampliar
+                        </span>
+                      )}
+                    </div>
+                    <div 
+                      onClick={() => {
+                        if (activeDoc) {
+                          setZoomedPhoto({ 
+                            url: activeDoc, 
+                            title: `Foto do Documento - ${currentGuest.name || selectedItem.guestName} (Apt ${selectedItem.flatNumber})` 
+                          })
+                        }
+                      }}
+                      className={`h-36 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-center overflow-hidden relative group ${
+                        activeDoc ? "cursor-pointer hover:border-primary/60 transition-all" : ""
+                      }`}
+                    >
+                      {activeDoc ? (
+                        <>
+                          <img src={activeDoc} alt="Documento" className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-xs font-bold gap-1 transition-opacity">
+                            <ZoomIn className="w-4 h-4" /> <span>Ampliar</span>
+                          </div>
+                        </>
+                      ) : (
+                        <span className="text-slate-600 text-center px-2">Doc não enviado</span>
+                      )}
+                    </div>
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-800">
-                  <div>
-                    <span className="text-slate-500 block text-[10px] uppercase font-bold">Check-in</span>
-                    <span className="font-semibold text-slate-200">{selectedItem.checkinDate}</span>
+                {/* Data Grid do Hóspede Selecionado */}
+                <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800 space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <span className="text-slate-500 block text-[10px] uppercase font-bold">Nome do Hóspede</span>
+                      <span className="font-bold text-white text-sm">{currentGuest.name || selectedItem.guestName}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block text-[10px] uppercase font-bold">Telefone / WhatsApp</span>
+                      {(currentGuest.phone || selectedItem.guestPhone) ? (
+                        <a
+                          href={`https://wa.me/55${((currentGuest.phone || selectedItem.guestPhone) || "").replace(/\D/g, "")}?text=${encodeURIComponent(`Olá, ${currentGuest.name || selectedItem.guestName}! Falamos da recepção da CorpFlats referente à sua reserva no Flat ${selectedItem.flatNumber}.`)}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 font-bold text-emerald-400 hover:text-emerald-300 hover:underline"
+                        >
+                          <MessageCircle className="w-3.5 h-3.5" />
+                          <span>{currentGuest.phone || selectedItem.guestPhone}</span>
+                        </a>
+                      ) : (
+                        <span className="font-semibold text-slate-400">Não informado</span>
+                      )}
+                    </div>
                   </div>
-                  <div>
-                    <span className="text-slate-500 block text-[10px] uppercase font-bold">Check-out</span>
-                    <span className="font-semibold text-slate-200">{selectedItem.checkoutDate}</span>
+
+                  <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-800">
+                    <div>
+                      <span className="text-slate-500 block text-[10px] uppercase font-bold">CPF / Documento</span>
+                      <span className="font-semibold text-slate-200 font-mono">{currentGuest.cpf || currentGuest.document || selectedItem.guestDocument || "Não informado"}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block text-[10px] uppercase font-bold">Nascimento / Idade</span>
+                      <span className="font-semibold text-slate-200">
+                        {currentGuest.birthDate ? `${currentGuest.birthDate} ${currentGuest.age ? `(${currentGuest.age} anos)` : ''}` : "Não informado"}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-800">
+                    <div>
+                      <span className="text-slate-500 block text-[10px] uppercase font-bold">Check-in</span>
+                      <span className="font-semibold text-slate-200">{selectedItem.checkinDate}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block text-[10px] uppercase font-bold">Check-out</span>
+                      <span className="font-semibold text-slate-200">{selectedItem.checkoutDate}</span>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Status dos Hóspedes e Links de Check-in Digital */}
-              <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 space-y-2">
-                <span className="font-bold text-[10px] uppercase block text-slate-400">
-                  Hóspedes Autorizados ({selectedItem.guests?.length || selectedItem.guestCount || 1})
-                </span>
-                <div className="space-y-1.5">
-                  {(selectedItem.guests || [{ index: 1, name: selectedItem.guestName, hasCompletedCheckin: selectedItem.hasPreCheckin }]).map((g: any, i: number) => (
-                    <div key={i} className="flex items-center justify-between p-2 rounded-lg bg-slate-900 border border-slate-800 text-xs">
-                      <div>
-                        <div className="font-bold text-slate-200">{g.name || `Hóspede ${g.index || i + 1}`}</div>
-                        <div className="text-[10px] text-slate-400">
-                          {g.hasCompletedCheckin ? "✅ Check-in Digital Realizado" : "⏳ Pendente de Preenchimento"}
+                {/* Status dos Hóspedes e Links de Check-in Digital */}
+                <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 space-y-2">
+                  <span className="font-bold text-[10px] uppercase block text-slate-400">
+                    Links Individuais de Pré-Checkin ({rawGuests.length})
+                  </span>
+                  <div className="space-y-1.5">
+                    {rawGuests.map((g: any, i: number) => (
+                      <div key={i} className="flex items-center justify-between p-2 rounded-lg bg-slate-900 border border-slate-800 text-xs">
+                        <div>
+                          <div className="font-bold text-slate-200">{g.name || `Hóspede ${g.index || i + 1}`}</div>
+                          <div className="text-[10px] text-slate-400">
+                            {g.hasCompletedCheckin ? "✅ Check-in Digital Realizado" : "⏳ Pendente de Preenchimento"}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              const preCheckinUrl = `${window.location.origin}/pre-checkin/${selectedItem.code || selectedItem.id}?guest=${g.index || i + 1}`
+                              navigator.clipboard.writeText(preCheckinUrl)
+                              alert(`Link copiado para a área de transferência:\n${preCheckinUrl}`)
+                            }}
+                            className="h-7 text-[10px] px-2 bg-slate-800 border-slate-700 hover:bg-slate-700"
+                          >
+                            Copiar Link
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              const preCheckinUrl = `${window.location.origin}/pre-checkin/${selectedItem.code || selectedItem.id}?guest=${g.index || i + 1}`
+                              const phone = (g.phone || selectedItem.guestPhone || "").replace(/\D/g, "")
+                              const msg = encodeURIComponent(
+                                `Olá, ${g.name || 'Hóspede'}! 🏨\n\nPor favor, realize seu Check-in Digital para liberação da sua entrada no Apt ${selectedItem.flatNumber}:\n${preCheckinUrl}\n\nObrigado e boa estadia! ✨`
+                              )
+                              window.open(phone ? `https://wa.me/55${phone}?text=${msg}` : `https://wa.me/?text=${msg}`, "_blank")
+                            }}
+                            className="h-7 text-[10px] px-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold"
+                          >
+                            WhatsApp
+                          </Button>
                         </div>
                       </div>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            const preCheckinUrl = `${window.location.origin}/pre-checkin/${selectedItem.code || selectedItem.id}?guest=${g.index || i + 1}`
-                            navigator.clipboard.writeText(preCheckinUrl)
-                            alert(`Link copiado para a área de transferência:\n${preCheckinUrl}`)
-                          }}
-                          className="h-7 text-[10px] px-2 bg-slate-800 border-slate-700 hover:bg-slate-700"
-                        >
-                          Copiar Link
-                        </Button>
-                        <Button
-                          size="sm"
-                          onClick={() => {
-                            const preCheckinUrl = `${window.location.origin}/pre-checkin/${selectedItem.code || selectedItem.id}?guest=${g.index || i + 1}`
-                            const phone = (g.phone || selectedItem.guestPhone || "").replace(/\D/g, "")
-                            const msg = encodeURIComponent(
-                              `Olá, ${g.name || 'Hóspede'}! 🏨\n\nPor favor, realize seu Check-in Digital para liberação da sua entrada no Apt ${selectedItem.flatNumber}:\n${preCheckinUrl}\n\nObrigado e boa estadia! ✨`
-                            )
-                            window.open(phone ? `https://wa.me/55${phone}?text=${msg}` : `https://wa.me/?text=${msg}`, "_blank")
-                          }}
-                          className="h-7 text-[10px] px-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold"
-                        >
-                          WhatsApp
-                        </Button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Reception Note */}
+                {selectedItem.receptionNotes && (
+                  <div className="p-3 bg-amber-950/60 border border-amber-800/80 rounded-xl text-amber-300">
+                    <span className="font-bold text-[10px] uppercase block text-amber-400">Aviso Especial para a Portaria</span>
+                    <span className="font-medium text-xs">{selectedItem.receptionNotes}</span>
+                  </div>
+                )}
+
+                {/* Digital Signature */}
+                {activeSig && (
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-300 block text-[10px] uppercase">Assinatura Digital</span>
+                      <span className="text-[9px] text-primary font-semibold flex items-center gap-0.5">
+                        <ZoomIn className="w-3 h-3" /> Toque p/ ampliar
+                      </span>
+                    </div>
+                    <div 
+                      onClick={() => {
+                        setZoomedPhoto({ 
+                          url: activeSig, 
+                          title: `Assinatura Digital - ${currentGuest.name || selectedItem.guestName} (Apt ${selectedItem.flatNumber})` 
+                        })
+                      }}
+                      className="h-24 bg-white rounded-xl p-2 flex items-center justify-center border cursor-pointer hover:border-primary transition-all relative group shadow-inner"
+                    >
+                      <img src={activeSig} alt="Assinatura" className="max-h-full object-contain group-hover:scale-105 transition-transform" />
+                      <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 flex items-center justify-center text-slate-900 text-xs font-bold gap-1 transition-opacity rounded-xl">
+                        <ZoomIn className="w-4 h-4" /> <span>Ampliar</span>
                       </div>
                     </div>
-                  ))}
-                </div>
+                  </div>
+                )}
               </div>
-
-              {/* Reception Note */}
-              {selectedItem.receptionNotes && (
-                <div className="p-3 bg-amber-950/60 border border-amber-800/80 rounded-xl text-amber-300">
-                  <span className="font-bold text-[10px] uppercase block text-amber-400">Aviso Especial para a Portaria</span>
-                  <span className="font-medium text-xs">{selectedItem.receptionNotes}</span>
-                </div>
-              )}
-
-              {/* Digital Signature */}
-              {selectedItem.signatureUrl && (
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-slate-300 block text-[10px] uppercase">Assinatura Digital do Hóspede</span>
-                    <span className="text-[9px] text-primary font-semibold flex items-center gap-0.5">
-                      <ZoomIn className="w-3 h-3" /> Toque p/ ampliar
-                    </span>
-                  </div>
-                  <div 
-                    onClick={() => {
-                      if (selectedItem.signatureUrl) {
-                        setZoomedPhoto({ 
-                          url: selectedItem.signatureUrl, 
-                          title: `Assinatura Digital - ${selectedItem.guestName} (Apt ${selectedItem.flatNumber})` 
-                        })
-                      }
-                    }}
-                    className="h-24 bg-white rounded-xl p-2 flex items-center justify-center border cursor-pointer hover:border-primary transition-all relative group shadow-inner"
-                  >
-                    <img src={selectedItem.signatureUrl} alt="Assinatura" className="max-h-full object-contain group-hover:scale-105 transition-transform" />
-                    <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 flex items-center justify-center text-slate-900 text-xs font-bold gap-1 transition-opacity rounded-xl">
-                      <ZoomIn className="w-4 h-4" /> <span>Ampliar</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
+            )
+          })()}
 
           <DialogFooter className="gap-2 sm:gap-0">
             <Button 
               type="button" 
               onClick={() => {
                 if (selectedItem) {
-                  window.open(`/pre-checkin/${selectedItem.code || selectedItem.id}`, "_blank")
+                  window.open(`/pre-checkin/${selectedItem.code || selectedItem.id}?guest=${modalGuestIndex}&readonly=true&view=document`, "_blank")
                 }
               }}
-              className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-xs"
+              className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-xs gap-1.5"
             >
-              Abrir Ficha Digital no Tablet
+              <FileText className="w-4 h-4" />
+              <span>Abrir Ficha Digital no Tablet</span>
             </Button>
             <Button 
               type="button" 

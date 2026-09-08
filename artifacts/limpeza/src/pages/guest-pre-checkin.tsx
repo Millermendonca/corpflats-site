@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { useRoute, useLocation } from "wouter"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -36,8 +36,19 @@ export default function GuestPreCheckin() {
   const [isCompleted, setIsCompleted] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [compressing, setCompressing] = useState(false)
-  const [docCompressStats, setDocCompressStats] = useState<string | null>(null)
-  const [selfieCompressStats, setSelfieCompressStats] = useState<string | null>(null)
+
+  // Minor of age (ECA Art. 82)
+  const [minorKinship, setMinorKinship] = useState("filho")
+  const [minorAuthDocPhoto, setMinorAuthDocPhoto] = useState<string | null>(null)
+
+  // Read-only / Immutable document mode (tablet / print)
+  const isReadOnlyDocument = useMemo(() => {
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search)
+      return sp.get("view") === "document" || sp.get("readonly") === "true"
+    }
+    return false
+  }, [])
 
   // Zoom / Lightbox State
   const [zoomedPhoto, setZoomedPhoto] = useState<{ url: string, title: string } | null>(null)
@@ -79,6 +90,27 @@ export default function GuestPreCheckin() {
   const [vehicleBrand, setVehicleBrand] = useState("")
   const [vehicleColor, setVehicleColor] = useState("")
 
+  // Cálculo de idade e detecção de menor de idade (ECA Art. 82)
+  const calculatedAge = useMemo(() => {
+    if (!birthDate) return null
+    const parts = birthDate.split("-")
+    if (parts.length < 3) return null
+    const bYear = parseInt(parts[0], 10)
+    const bMonth = parseInt(parts[1], 10) - 1
+    const bDay = parseInt(parts[2], 10)
+    if (isNaN(bYear) || isNaN(bMonth) || isNaN(bDay)) return null
+    const bDate = new Date(bYear, bMonth, bDay)
+    const now = new Date()
+    let age = now.getFullYear() - bDate.getFullYear()
+    const m = now.getMonth() - bDate.getMonth()
+    if (m < 0 || (m === 0 && now.getDate() < bDate.getDate())) {
+      age--
+    }
+    return age >= 0 ? age : null
+  }, [birthDate])
+
+  const isMinorGuest = calculatedAge !== null && calculatedAge < 18
+
   // Canvas for signature
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [isDrawing, setIsDrawing] = useState(false)
@@ -117,21 +149,44 @@ export default function GuestPreCheckin() {
     const res = resData.reservation || {}
     const guest = resData.guest || {}
 
-    const gName = currentG?.name || (gIdx === 1 ? (res.guestName || guest.name) : "")
-    const gPhone = currentG?.phone || (gIdx === 1 ? (res.guestPhone || guest.phone) : "")
-    const gEmail = currentG?.email || (gIdx === 1 ? (res.guestEmail || guest.email) : "")
-    const gDoc = currentG?.cpf || (gIdx === 1 ? (res.guestDocument || guest.document) : "")
+    // Limpeza completa para evitar vazamento de estado entre hóspedes
+    setDocPhoto(null)
+    setSelfiePhoto(null)
+    setSignatureData(null)
+    setMinorAuthDocPhoto(null)
+    setMinorKinship("filho")
 
-    setFullName(gName && !gName.startsWith("Hóspede") ? gName : (gIdx === 1 ? (gName || "") : ""))
-    setPhone(gPhone || "")
-    setEmail(gEmail || "")
-    setDocument(gDoc || "")
+    const isTitular = gIdx === 1
 
-    if (guest.birthDate) setBirthDate(guest.birthDate)
-    if (guest.gender) setGender(guest.gender)
-    if (guest.address) setAddress(guest.address)
-    if (guest.city) setCity(guest.city)
-    if (guest.state) setState(guest.state)
+    const gName = currentG?.name && !currentG.name.startsWith("Hóspede")
+      ? currentG.name
+      : (isTitular ? (res.guestName || guest.name || "") : "")
+
+    const gPhone = currentG?.phone
+      ? currentG.phone
+      : (isTitular ? (res.guestPhone || guest.phone || "") : "")
+
+    const gEmail = currentG?.email
+      ? currentG.email
+      : (isTitular ? (res.guestEmail || guest.email || "") : "")
+
+    const gDoc = currentG?.cpf
+      ? currentG.cpf
+      : (isTitular ? (res.guestDocument || guest.document || "") : "")
+
+    setFullName(gName)
+    setPhone(gPhone)
+    setEmail(gEmail)
+    setDocument(gDoc)
+
+    setBirthDate(currentG?.birthDate || (isTitular ? (guest.birthDate || "") : ""))
+    setGender(currentG?.gender || (isTitular ? (guest.gender || "masculino") : "masculino"))
+    setAddress(currentG?.address || (isTitular ? (guest.address || "") : ""))
+    setCity(currentG?.city || (isTitular ? (guest.city || "") : ""))
+    setState(currentG?.state || (isTitular ? (guest.state || "RJ") : "RJ"))
+
+    setMinorKinship(currentG?.minorKinship || "filho")
+    setMinorAuthDocPhoto(currentG?.minorAuthDocUrl || null)
 
     const v = res.vehicle || guest.vehicle
     if (v && v.plate) {
@@ -142,27 +197,36 @@ export default function GuestPreCheckin() {
       setTransportMethod("carro")
     }
 
-    const selfie = res.selfieUrl || guest.photoUrl || null
-    const doc = res.docPhotoUrl || guest.docPhotoUrl || null
-    const sig = res.signatureUrl || guest.signatureUrl || null
+    // Isolamento estrito de fotos e biometria:
+    // Hóspede 1: pode ler do cadastro titular
+    // Hóspede 2+: lê SOMENTE de currentG (NUNCA herda fotos do hóspede 1!)
+    const selfie = currentG?.selfieUrl || (isTitular ? (res.selfieUrl || guest.photoUrl || null) : null)
+    const doc = currentG?.docPhotoUrl || (isTitular ? (res.docPhotoUrl || guest.docPhotoUrl || null) : null)
+    const sig = currentG?.signatureUrl || (isTitular ? (res.signatureUrl || guest.signatureUrl || null) : null)
 
-    if (selfie) setSelfiePhoto(selfie)
-    if (doc) setDocPhoto(doc)
-    if (sig) setSignatureData(sig)
+    setSelfiePhoto(selfie || null)
+    setDocPhoto(doc || null)
+    setSignatureData(sig || null)
 
+    // O Hóspede só é considerado concluído se ELE MESMO (currentG) tiver check-in feito!
     const fnhrDone = Boolean(
-      res.fnhrCompleted || 
       currentG?.hasCompletedCheckin || 
-      guest.fnhrCompleted || 
-      (selfie && sig)
+      (isTitular && (res.fnhrCompleted || guest.fnhrCompleted) && selfie && sig)
     )
 
-    if (currentG?.checkinCompletedAt || res.updatedAt) {
+    if (currentG?.checkinCompletedAt || (isTitular && res.updatedAt)) {
       setCompletedTimestamp(currentG?.checkinCompletedAt || res.updatedAt)
+    } else {
+      setCompletedTimestamp(null)
     }
 
-    setIsCompleted(fnhrDone)
-    setIsEditing(!fnhrDone)
+    if (isReadOnlyDocument) {
+      setIsCompleted(true)
+      setIsEditing(false)
+    } else {
+      setIsCompleted(fnhrDone)
+      setIsEditing(!fnhrDone)
+    }
   }
 
   useEffect(() => {
@@ -247,7 +311,7 @@ export default function GuestPreCheckin() {
   const handleFileUpload = async (
     e: React.ChangeEvent<HTMLInputElement>, 
     setter: (val: string) => void,
-    type: "doc" | "selfie"
+    type: "doc" | "selfie" | "auth"
   ) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -262,12 +326,6 @@ export default function GuestPreCheckin() {
       })
 
       setter(result.base64)
-      const origKb = Math.round(result.originalSizeBytes / 1024)
-      const compKb = Math.round(result.compressedSizeBytes / 1024)
-      const statText = `⚡ Otimizada: ${origKb}KB → ${compKb}KB (${result.savedPercentage}% economizado)`
-
-      if (type === "doc") setDocCompressStats(statText)
-      if (type === "selfie") setSelfieCompressStats(statText)
     } catch (err) {
       console.warn("Erro ao comprimir imagem, usando fallback:", err)
       const reader = new FileReader()
@@ -301,7 +359,11 @@ export default function GuestPreCheckin() {
           travelReason,
           selfieBase64: selfiePhoto,
           docPhotoBase64: docPhoto,
-          signatureBase64: signatureData
+          signatureBase64: signatureData,
+          isMinor: calculatedAge !== null && calculatedAge < 18,
+          minorAge: calculatedAge,
+          minorKinship: (calculatedAge !== null && calculatedAge < 18) ? minorKinship : null,
+          minorAuthDocBase64: (calculatedAge !== null && calculatedAge < 18 && minorKinship !== "filho") ? minorAuthDocPhoto : null
         })
       })
 
@@ -586,15 +648,22 @@ export default function GuestPreCheckin() {
                 <span className="hidden sm:inline">Imprimir / Salvar PDF</span>
               </Button>
 
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setIsEditing(true)}
-                className="h-9 text-xs bg-amber-50/70 border-amber-200 hover:bg-amber-100/70 text-amber-800 font-bold gap-1.5 rounded-xl shadow-2xs"
-              >
-                <Edit3 className="w-3.5 h-3.5 text-amber-600" />
-                <span>Editar Dados</span>
-              </Button>
+              {!isReadOnlyDocument ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsEditing(true)}
+                  className="h-9 text-xs bg-amber-50/70 border-amber-200 hover:bg-amber-100/70 text-amber-800 font-bold gap-1.5 rounded-xl shadow-2xs"
+                >
+                  <Edit3 className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Editar Dados</span>
+                </Button>
+              ) : (
+                <Badge className="bg-slate-900 text-white border-slate-900 text-xs font-bold py-1.5 px-3 flex items-center gap-1.5 shadow-xs">
+                  <Lock className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Documento Oficial Imutável</span>
+                </Badge>
+              )}
 
               <Button
                 size="sm"
@@ -796,11 +865,30 @@ export default function GuestPreCheckin() {
                 </div>
                 <span className="text-[11px] text-slate-400 font-normal lowercase">Toque na foto para ampliar</span>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+
+              {/* Aviso de Menor de Idade se aplicável */}
+              {minorKinship && (
+                <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-2xl flex items-start gap-2.5">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <div className="text-xs text-rose-900 space-y-0.5">
+                    <span className="font-bold block">
+                      Hóspede Menor de Idade • ECA (Lei Federal nº 8.069/1990)
+                    </span>
+                    <p className="text-rose-700 text-[11px] leading-relaxed">
+                      Parentesco declarado: <strong>
+                        {minorKinship === "filho" ? "Filho(a) do responsável acompanhante" : minorKinship === "neto" ? "Neto(a)" : minorKinship === "sobrinho" ? "Sobrinho(a)" : minorKinship === "irmao" ? "Irmão / Irmã" : "Acompanhante Autorizado"}
+                      </strong>
+                      {minorAuthDocPhoto ? " • Autorização de Cartório Anexada com Sucesso" : minorKinship === "filho" ? " • Acompanhado diretamente pelos pais" : ""}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <div className={`grid grid-cols-1 ${minorAuthDocPhoto ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} gap-3`}>
                 {/* Selfie do Hóspede */}
                 <div className="p-3.5 bg-slate-50/80 rounded-2xl border border-slate-200/80 space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] uppercase font-bold text-slate-500">Selfie do Hóspede</span>
+                    <span className="text-[10px] uppercase font-bold text-slate-500">Selfie com Documento</span>
                     {selfiePhoto && (
                       <span className="text-[10px] text-sky-600 font-bold flex items-center gap-0.5">
                         <ZoomIn className="w-3 h-3" /> Ampliar
@@ -809,7 +897,7 @@ export default function GuestPreCheckin() {
                   </div>
                   <div
                     onClick={() => {
-                      if (selfiePhoto) setZoomedPhoto({ url: selfiePhoto, title: `Selfie - ${fullName}` })
+                      if (selfiePhoto) setZoomedPhoto({ url: selfiePhoto, title: `Selfie com Documento - ${fullName}` })
                     }}
                     className={`h-40 bg-white rounded-xl border border-slate-200 flex items-center justify-center overflow-hidden relative group shadow-2xs ${
                       selfiePhoto ? "cursor-pointer hover:border-sky-500" : ""
@@ -858,6 +946,29 @@ export default function GuestPreCheckin() {
                     )}
                   </div>
                 </div>
+
+                {/* Foto da Autorização de Cartório (se houver) */}
+                {minorAuthDocPhoto && (
+                  <div className="p-3.5 bg-slate-50/80 rounded-2xl border border-rose-200 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] uppercase font-bold text-rose-800">Autorização Cartório (ECA)</span>
+                      <span className="text-[10px] text-rose-600 font-bold flex items-center gap-0.5">
+                        <ZoomIn className="w-3 h-3" /> Ampliar
+                      </span>
+                    </div>
+                    <div
+                      onClick={() => {
+                        setZoomedPhoto({ url: minorAuthDocPhoto, title: `Autorização em Cartório - ${fullName}` })
+                      }}
+                      className="h-40 bg-white rounded-xl border border-rose-200 flex items-center justify-center overflow-hidden relative group shadow-2xs cursor-pointer hover:border-rose-400"
+                    >
+                      <img src={minorAuthDocPhoto} alt="Autorização em Cartório" className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-xs font-bold gap-1 transition-opacity">
+                        <ZoomIn className="w-4 h-4" /> <span>Ampliar Foto</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1089,6 +1200,26 @@ export default function GuestPreCheckin() {
           </Card>
         )}
 
+        {/* Banner de Preenchimento Único CorpFlats */}
+        <div className="p-4 bg-gradient-to-r from-sky-50 via-indigo-50/50 to-emerald-50/40 border border-sky-200/80 rounded-2xl flex items-start gap-3 shadow-xs">
+          <div className="p-2 bg-slate-900 text-white rounded-xl shrink-0 mt-0.5 shadow-2xs">
+            <Sparkles className="w-4 h-4 text-amber-400" />
+          </div>
+          <div className="space-y-1 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-slate-900 text-xs sm:text-sm">
+                ⚡ Preenchimento Único CorpFlats
+              </span>
+              <Badge className="bg-sky-100 text-sky-800 text-[10px] font-bold border-sky-200 py-0 px-2">
+                1x Apenas
+              </Badge>
+            </div>
+            <p className="text-slate-600 leading-relaxed text-[11px] sm:text-xs">
+              Seus dados cadastrais precisam ser preenchidos <strong>apenas 1 única vez</strong>. Nas próximas reservas que fizer conosco, seu cadastro já estará pronto automaticamente e você não precisará preencher tudo de novo! Cada hóspede possui um cadastro único, seguro e intransferível.
+            </p>
+          </div>
+        </div>
+
         {/* Multi-Guest Selector (se a reserva for para mais de 1 pessoa) */}
         {guestList.length > 1 && (
           <div className="bg-white border border-slate-200/80 rounded-2xl p-3 sm:p-4 shadow-xs space-y-2">
@@ -1209,6 +1340,83 @@ export default function GuestPreCheckin() {
                     />
                   </div>
                 </div>
+
+                {/* Bloco Obrigatório do Estatuto da Criança e do Adolescente (ECA - Art. 82) */}
+                {isMinorGuest && (
+                  <div className="p-4 bg-rose-50/90 border border-rose-200 rounded-2xl space-y-3">
+                    <div className="flex items-start gap-2.5">
+                      <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-bold text-xs text-rose-900 block">
+                          Hóspede Menor de Idade ({calculatedAge} {calculatedAge === 1 ? 'ano' : 'anos'}) • Estatuto da Criança e do Adolescente (ECA)
+                        </span>
+                        <p className="text-[11px] text-rose-700 leading-relaxed mt-0.5">
+                          De acordo com o <strong>Art. 82 da Lei Federal nº 8.069/1990 (ECA)</strong>, é proibida a hospedagem de criança ou adolescente desacompanhado dos pais ou responsáveis legais sem expressa autorização formal.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5 pt-1 border-t border-rose-200/60">
+                      <Label className="text-xs font-bold text-rose-950">
+                        Qual o grau de parentesco com o responsável acompanhante? *
+                      </Label>
+                      <Select value={minorKinship} onValueChange={setMinorKinship}>
+                        <SelectTrigger className="bg-white border-rose-300 text-slate-900 text-xs sm:text-sm rounded-xl h-11 focus:ring-rose-500">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="bg-white border-slate-200 text-slate-900 rounded-xl">
+                          <SelectItem value="filho">Filho(a) do responsável acompanhante</SelectItem>
+                          <SelectItem value="neto">Neto(a)</SelectItem>
+                          <SelectItem value="sobrinho">Sobrinho(a)</SelectItem>
+                          <SelectItem value="irmao">Irmão / Irmã</SelectItem>
+                          <SelectItem value="outro">Outro parentesco / Sem parentesco direto</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {minorKinship !== "filho" && (
+                      <div className="p-3.5 bg-white border border-rose-300 rounded-xl space-y-2">
+                        <span className="font-bold text-xs text-rose-900 block">
+                          📜 Autorização dos Pais com Firma Reconhecida em Cartório (Obrigatório) *
+                        </span>
+                        <p className="text-[11px] text-slate-600 leading-relaxed">
+                          Como o menor não está acompanhado diretamente de pai ou mãe, a legislação exige autorização por escrito dos pais com <strong>firma reconhecida em cartório</strong>. Por favor, anexe uma foto legível do documento.
+                        </p>
+
+                        {minorAuthDocPhoto ? (
+                          <div className="flex items-center justify-between p-2.5 bg-rose-50 border border-rose-200 rounded-xl">
+                            <span className="text-xs font-semibold text-rose-800 flex items-center gap-1.5">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                              Autorização de cartório anexada com sucesso
+                            </span>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setMinorAuthDocPhoto(null)}
+                              className="text-[11px] h-7 px-2.5 border-rose-300 text-rose-800 hover:bg-rose-100 font-bold rounded-lg"
+                            >
+                              Trocar Foto
+                            </Button>
+                          </div>
+                        ) : (
+                          <label className="cursor-pointer flex items-center justify-center gap-2 p-3.5 border-2 border-dashed border-rose-300 hover:border-rose-500 rounded-xl bg-rose-50/50 text-rose-800 text-xs font-bold transition-colors">
+                            <Camera className="w-4 h-4" />
+                            <span>Tirar Foto ou Anexar Autorização</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              capture="environment"
+                              onChange={e => handleFileUpload(e, setMinorAuthDocPhoto, "auth")}
+                              className="hidden"
+                              disabled={compressing}
+                            />
+                          </label>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1.5">
@@ -1367,6 +1575,16 @@ export default function GuestPreCheckin() {
                     alert("Por favor, preencha pelo menos seu Nome Completo e CPF/Passaporte.")
                     return
                   }
+                  if (isMinorGuest) {
+                    if (!minorKinship) {
+                      alert("Por favor, selecione o grau de parentesco do menor acompanhado.")
+                      return
+                    }
+                    if (minorKinship !== "filho" && !minorAuthDocPhoto) {
+                      alert("Atenção: Para hóspede menor de idade desacompanhado dos pais, é obrigatório anexar a autorização com firma reconhecida em cartório (Art. 82 do ECA).")
+                      return
+                    }
+                  }
                   setStep(2)
                 }}
                 className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm h-12 rounded-xl mt-4 gap-2 shadow-md"
@@ -1395,18 +1613,12 @@ export default function GuestPreCheckin() {
                 {docPhoto ? (
                   <div className="space-y-3">
                     <img src={docPhoto} alt="Documento" className="max-h-52 mx-auto rounded-xl object-contain border border-slate-200 shadow-sm bg-white" />
-                    {docCompressStats && (
-                      <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 border border-emerald-200 rounded-full text-[11px] font-bold text-emerald-700">
-                        <Zap className="w-3.5 h-3.5" />
-                        <span>{docCompressStats}</span>
-                      </div>
-                    )}
                     <div>
                       <Button 
                         type="button" 
                         variant="outline" 
                         size="sm" 
-                        onClick={() => { setDocPhoto(null); setDocCompressStats(null); }}
+                        onClick={() => setDocPhoto(null)}
                         className="border-slate-200 text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 rounded-xl"
                       >
                         Trocar Foto do Documento
@@ -1419,9 +1631,9 @@ export default function GuestPreCheckin() {
                       {compressing ? <Sparkles className="w-7 h-7 animate-spin text-sky-600" /> : <Camera className="w-7 h-7" />}
                     </div>
                     <span className="font-bold text-sm text-slate-900 mt-1">
-                      {compressing ? "Otimizando imagem..." : "Tirar Foto ou Enviar Arquivo"}
+                      {compressing ? "Processando imagem..." : "Tirar Foto ou Enviar Arquivo"}
                     </span>
-                    <span className="text-xs text-slate-400">Compressão automática WebP ultrarrápida</span>
+                    <span className="text-xs text-slate-400">Foto nítida da frente ou verso do seu documento</span>
                     <input 
                       type="file" 
                       accept="image/*" 
@@ -1459,30 +1671,24 @@ export default function GuestPreCheckin() {
               <div className="border-b border-slate-100 pb-3">
                 <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
                   <Camera className="w-4 h-4 text-sky-600" />
-                  <span>3. Biometria Facial (Selfie)</span>
+                  <span>3. Biometria Facial (Selfie com Documento Oficial ao Lado)</span>
                 </h3>
               </div>
 
-              <p className="text-xs sm:text-sm text-slate-500 leading-relaxed">
-                Tire uma foto rápida e nítida do seu rosto para identificação visual e segurança do condomínio.
+              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                Tire uma selfie segurando seu documento oficial (RG ou CNH) ao lado do seu rosto com nitidez. Nossa inteligência artificial fará a conferência visual entre a sua selfie e o documento para sua total segurança.
               </p>
 
               <div className="border-2 border-dashed border-slate-200 hover:border-sky-400 rounded-2xl p-6 sm:p-8 text-center bg-slate-50/50 relative overflow-hidden transition-colors">
                 {selfiePhoto ? (
                   <div className="space-y-3">
-                    <img src={selfiePhoto} alt="Selfie" className="w-36 h-36 rounded-full mx-auto object-cover border-4 border-white shadow-md" />
-                    {selfieCompressStats && (
-                      <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 border border-emerald-200 rounded-full text-[11px] font-bold text-emerald-700">
-                        <Zap className="w-3.5 h-3.5" />
-                        <span>{selfieCompressStats}</span>
-                      </div>
-                    )}
+                    <img src={selfiePhoto} alt="Selfie" className="w-40 h-40 rounded-2xl mx-auto object-cover border-4 border-white shadow-md" />
                     <div>
                       <Button 
                         type="button" 
                         variant="outline" 
                         size="sm" 
-                        onClick={() => { setSelfiePhoto(null); setSelfieCompressStats(null); }}
+                        onClick={() => setSelfiePhoto(null)}
                         className="border-slate-200 text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 rounded-xl"
                       >
                         Tirar Outra Selfie
@@ -1495,9 +1701,9 @@ export default function GuestPreCheckin() {
                       {compressing ? <Sparkles className="w-7 h-7 animate-spin text-sky-600" /> : <Camera className="w-7 h-7" />}
                     </div>
                     <span className="font-bold text-sm text-slate-900 mt-1">
-                      {compressing ? "Otimizando selfie..." : "Abrir Câmera Frontal"}
+                      {compressing ? "Processando selfie..." : "Abrir Câmera Frontal"}
                     </span>
-                    <span className="text-xs text-slate-400">Tire uma selfie bem iluminada do seu rosto</span>
+                    <span className="text-xs text-slate-400">Segure o documento ao lado do rosto em local bem iluminado</span>
                     <input 
                       type="file" 
                       accept="image/*" 

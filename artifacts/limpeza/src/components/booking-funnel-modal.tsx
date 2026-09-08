@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react"
+import { useLocation } from "wouter"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -72,6 +73,7 @@ export function BookingFunnelModal({
   onSuccessBooking,
   availabilityData
 }: BookingFunnelModalProps) {
+  const [, setLocation] = useLocation()
   // Funnel Stepper (1 to 4: 1. Extras, 2. Seus Dados, 3. Pagamento, 4. Conclusão)
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4>(1)
 
@@ -184,11 +186,15 @@ export function BookingFunnelModal({
   };
 
   const handleCloseModal = () => {
+    const resCode = confirmedReservation?.code || confirmedReservation?.id;
     onOpenChange(false);
     if (currentStep === 4) {
       setTimeout(() => {
         handleResetAndNewBooking();
-      }, 300);
+        if (resCode) {
+          setLocation(`/minha-reserva/${resCode}`);
+        }
+      }, 150);
     }
   };
 
@@ -1616,10 +1622,17 @@ export function BookingFunnelModal({
               </Button>
 
               <Button
-                onClick={handleCloseModal}
-                className="w-full bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl h-9"
+                onClick={() => {
+                  const resCode = confirmedReservation?.code || confirmedReservation?.id;
+                  onOpenChange(false);
+                  if (resCode) {
+                    setLocation(`/minha-reserva/${resCode}`);
+                  }
+                }}
+                className="w-full bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl h-9 gap-1.5"
               >
-                Concluir e Fechar
+                <span>Concluir e Ver Reserva</span>
+                <ArrowRight className="w-3.5 h-3.5" />
               </Button>
             </div>
           </div>
