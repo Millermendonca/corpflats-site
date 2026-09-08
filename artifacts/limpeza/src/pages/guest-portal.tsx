@@ -12,7 +12,7 @@ import {
   MessageCircle, FileText, Ban, AlertTriangle, ChevronRight,
   Wifi, HelpCircle, Check, Copy, Phone, UserCheck, ShieldAlert,
   MapPin, Navigation, ExternalLink, Car, ArrowLeft, Search,
-  CreditCard, QrCode, RefreshCw, AlertCircle
+  CreditCard, QrCode, RefreshCw, AlertCircle, DoorOpen
 } from "lucide-react"
 import { format, parseISO, differenceInDays } from "date-fns"
 import { ptBR } from "date-fns/locale"
@@ -590,6 +590,16 @@ export default function GuestPortal() {
           </div>
 
           <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setLocation(`/checkout/${code || reservation.code}`)}
+              className="h-9 px-3 rounded-xl border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs flex items-center gap-1.5 shadow-2xs"
+            >
+              <DoorOpen className="w-3.5 h-3.5 text-slate-600" />
+              <span>Check-out</span>
+            </Button>
             <a
               href={whatsappUrl}
               target="_blank"
@@ -654,26 +664,39 @@ export default function GuestPortal() {
               </span>
             </div>
 
-            <div className="p-4 rounded-2xl bg-slate-50/80 border border-slate-100 space-y-1">
-              <div className="flex items-center justify-between">
-                <span className="text-slate-400 font-bold uppercase text-[10px] tracking-wider block">
-                  Check-out (Saída)
+            <div className="p-4 rounded-2xl bg-slate-50/80 border border-slate-100 space-y-1.5 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400 font-bold uppercase text-[10px] tracking-wider block">
+                    Check-out (Saída)
+                  </span>
+                  {reservation.status === "completed" || reservation.actualCheckoutAt ? (
+                    <Badge variant="outline" className="bg-slate-100 text-slate-600 border-slate-300 font-bold text-[10px]">
+                      ✓ Saída Realizada
+                    </Badge>
+                  ) : (
+                    <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md">
+                      Autoatendimento
+                    </span>
+                  )}
+                </div>
+                <span className="text-sm sm:text-base font-bold text-slate-900 block mt-0.5">
+                  {checkoutFormatted}
                 </span>
-                <a
-                  href={`/checkout/${code || reservation.code}`}
-                  className="text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-0.5 rounded-lg transition-colors inline-flex items-center gap-1 shadow-2xs"
-                >
-                  <span>Check-out Expresso</span>
-                  <ArrowRight className="w-3 h-3" />
-                </a>
+                <span className="text-[11px] text-slate-500 font-semibold flex items-center gap-1">
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>Até as {data?.checkoutTime || "12:00"}</span>
+                </span>
               </div>
-              <span className="text-sm sm:text-base font-bold text-slate-900 block">
-                {checkoutFormatted}
-              </span>
-              <span className="text-[11px] text-slate-500 font-semibold flex items-center gap-1">
-                <Clock className="w-3.5 h-3.5" />
-                <span>Até as {data?.checkoutTime || "12:00"}</span>
-              </span>
+
+              <Button
+                type="button"
+                onClick={() => setLocation(`/checkout/${code || reservation.code}`)}
+                className="w-full h-8.5 text-xs font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-all active:scale-95 flex items-center justify-center gap-1.5 mt-2"
+              >
+                <DoorOpen className="w-3.5 h-3.5" />
+                <span>{reservation.status === "completed" || reservation.actualCheckoutAt ? "Ver Confirmação de Saída" : "Check-out Expresso"}</span>
+              </Button>
             </div>
           </div>
 

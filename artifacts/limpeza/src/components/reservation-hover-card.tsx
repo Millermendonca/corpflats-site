@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/hooks/use-toast"
 import { 
-  MessageCircle, Phone, ExternalLink, Copy, Check, Coffee, 
+  MessageCircle, Phone, ExternalLink, Copy, Check, Coffee, DoorOpen,
   Users, Calendar, Eye, Building2, X, Zap, SlidersHorizontal, RefreshCw
 } from "lucide-react"
 import { format, parseISO, differenceInDays } from "date-fns"
@@ -174,6 +174,7 @@ export function ReservationHoverCard({
   const originUrl = typeof window !== "undefined" ? window.location.origin : "https://corpflats.onrender.com"
   const portalUrl = `${originUrl}/minha-reserva/${resItem.code || resItem.id}`
   const breakfastUrl = `${originUrl}/minha-reserva/${resItem.code || resItem.id}/cafe`
+  const checkoutUrl = `${originUrl}/checkout/${resItem.code || resItem.id}`
 
   const waMessage = `Olá ${guestName}, tudo bem? Falamos da CorpFlats a respeito da sua estadia no Flat ${flatNumber} (${checkinStr} a ${checkoutStr}). Como podemos ajudar?`
   const waLink = finalWaPhone ? `https://wa.me/${finalWaPhone}?text=${encodeURIComponent(waMessage)}` : null
@@ -534,7 +535,7 @@ export function ReservationHoverCard({
               className="flex-1 inline-flex items-center justify-center gap-1 h-7 px-2 rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50/80 hover:bg-sky-100 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 font-bold text-[11px] transition-colors"
             >
               <ExternalLink className="w-3 h-3" />
-              <span>Minha Reserva</span>
+              <span>Portal</span>
             </a>
 
             <Button
@@ -542,7 +543,7 @@ export function ReservationHoverCard({
               variant="ghost"
               size="sm"
               onClick={handleCopyLink}
-              className="h-7 w-7 p-0 rounded-xl hover:bg-slate-200/80 text-slate-600 dark:text-slate-300"
+              className="h-7 w-7 p-0 rounded-xl hover:bg-slate-200/80 text-slate-600 dark:text-slate-300 shrink-0"
               title="Copiar Link da Reserva"
             >
               {copiedLink ? (
@@ -557,13 +558,24 @@ export function ReservationHoverCard({
                 href={breakfastUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="h-7 px-2 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50/80 hover:bg-amber-100 text-amber-800 dark:text-amber-300 font-bold text-[11px] inline-flex items-center gap-1 transition-colors"
+                className="h-7 px-2 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50/80 hover:bg-amber-100 text-amber-800 dark:text-amber-300 font-bold text-[11px] inline-flex items-center gap-1 transition-colors shrink-0"
                 title="Abrir Gestão de Café da Manhã"
               >
                 <Coffee className="w-3 h-3 text-amber-600" />
                 <span>Café</span>
               </a>
             )}
+
+            <a
+              href={checkoutUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="h-7 px-2 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/80 hover:bg-emerald-100 text-emerald-800 dark:text-emerald-300 font-bold text-[11px] inline-flex items-center gap-1 transition-colors shrink-0"
+              title="Abrir Link de Check-out Expresso"
+            >
+              <DoorOpen className="w-3 h-3 text-emerald-600" />
+              <span>Saída</span>
+            </a>
 
             <Button
               type="button"
@@ -572,7 +584,7 @@ export function ReservationHoverCard({
                 handleClose()
                 onOpenDetails(resItem)
               }}
-              className="h-7 px-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white dark:bg-slate-100 dark:text-slate-900 font-bold text-[11px] flex items-center gap-1 shadow-2xs"
+              className="h-7 px-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white dark:bg-slate-100 dark:text-slate-900 font-bold text-[11px] flex items-center gap-1 shadow-2xs shrink-0"
             >
               <Eye className="w-3 h-3" />
               <span>Detalhes</span>

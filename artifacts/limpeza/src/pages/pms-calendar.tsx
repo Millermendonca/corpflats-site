@@ -16,7 +16,7 @@ import {
   CalendarDays, Plus, ChevronLeft, ChevronRight, Search, 
   Calendar as CalendarIcon, User, Users, Phone, Mail, ShieldAlert, CheckCircle2,
   Clock, DollarSign, BedDouble, AlertTriangle, Lock, Trash2, Edit3, MessageCircle, KeyRound, Sparkles, FileText, Tag, Coffee, Building2, Wind, Zap, Bed, Check, RotateCcw, AlertCircle, RefreshCw, SlidersHorizontal, Copy,
-  LogIn, LogOut, TrendingUp, Send, ChevronDown, ChevronUp, History, ArrowRight, CreditCard, ExternalLink, QrCode
+  LogIn, LogOut, TrendingUp, Send, ChevronDown, ChevronUp, History, ArrowRight, CreditCard, ExternalLink, QrCode, Link2, DoorOpen
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { 
@@ -103,7 +103,7 @@ export default function PmsCalendar() {
   const [formSpecialRequests, setFormSpecialRequests] = useState("")
 
   // Modal Tabs, Audit Logs & Communications State
-  const [resModalTab, setResModalTab] = useState<"details" | "audit" | "communications">("details")
+  const [resModalTab, setResModalTab] = useState<"details" | "audit" | "communications" | "links">("details")
   const [auditLogs, setAuditLogs] = useState<any[]>([])
   const [loadingAudit, setLoadingAudit] = useState(false)
   const [communications, setCommunications] = useState<any[]>([])
@@ -115,6 +115,7 @@ export default function PmsCalendar() {
   const [manualBody, setManualBody] = useState("")
   const [resendingCommId, setResendingCommId] = useState<string | null>(null)
   const [portariaEmail, setPortariaEmail] = useState("portaria.soho@corpflats.com.br")
+  const [copiedLinkKey, setCopiedLinkKey] = useState<string | null>(null)
 
   const fetchAuditLogs = async (resIdOrCode: string | number) => {
     if (!resIdOrCode) return
@@ -2463,7 +2464,7 @@ export default function PmsCalendar() {
 
             {selectedRes && (
               <Tabs value={resModalTab} onValueChange={(v: any) => setResModalTab(v)} className="w-full mt-1 mb-2">
-                <TabsList className="flex w-full items-center overflow-x-auto p-1 bg-muted/60 rounded-xl sm:grid sm:grid-cols-3 gap-1 h-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                <TabsList className="flex w-full items-center overflow-x-auto p-1 bg-muted/60 rounded-xl sm:grid sm:grid-cols-4 gap-1 h-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                   <TabsTrigger
                     value="details"
                     className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs"
@@ -2495,6 +2496,13 @@ export default function PmsCalendar() {
                       </Badge>
                     )}
                   </TabsTrigger>
+                  <TabsTrigger
+                    value="links"
+                    className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs relative"
+                  >
+                    <Link2 className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
+                    <span>Links Úteis</span>
+                  </TabsTrigger>
                 </TabsList>
               </Tabs>
             )}
@@ -2503,6 +2511,31 @@ export default function PmsCalendar() {
               <form onSubmit={handleSaveRes}>
 
               <div className="py-3 space-y-3.5">
+                {/* Banner de Acesso Rápido aos Links da Reserva */}
+                {selectedRes && (
+                  <div className="p-3 bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/80 dark:border-emerald-800/60 rounded-2xl flex items-center justify-between gap-3 text-xs shadow-2xs">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                        <Link2 className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="font-bold text-slate-800 dark:text-slate-200">Central de Links da Reserva</div>
+                        <div className="text-[11px] text-muted-foreground">Portal Minha Reserva, Café, Pré Check-in e Check-out Expresso</div>
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setResModalTab("links")}
+                      className="h-7 px-2.5 text-xs font-bold text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700 hover:bg-emerald-100/50 dark:hover:bg-emerald-900/40 shrink-0 rounded-xl"
+                    >
+                      <Link2 className="w-3.5 h-3.5 mr-1" />
+                      Ver todos ➔
+                    </Button>
+                  </div>
+                )}
+
                 {/* Banner de Auditoria e Registro */}
                 {selectedRes && (
                   <div className="p-3 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-2 text-xs shadow-2xs">
@@ -4212,6 +4245,268 @@ export default function PmsCalendar() {
                 </DialogFooter>
               </div>
             )}
+
+            {selectedRes && resModalTab === "links" && (() => {
+              const origin = typeof window !== "undefined" ? window.location.origin : "https://corpflats.onrender.com"
+              const resCode = selectedRes.code || selectedRes.id
+              const guestName = selectedRes.guestName || "Hóspede"
+              const flatNum = selectedRes.flatNumber || ""
+              const guestPhone = (selectedRes.guestPhone || "").replace(/\D/g, "")
+              const waPhone = guestPhone.length >= 10 ? (guestPhone.startsWith("55") ? guestPhone : `55${guestPhone}`) : ""
+
+              const linksList = [
+                {
+                  id: "portal",
+                  title: "Minha Reserva (Portal do Hóspede)",
+                  url: `${origin}/minha-reserva/${resCode}`,
+                  desc: "Acesso completo à reserva: senhas da fechadura eletrônica, Wi-Fi, regras, pedidos de café e serviços.",
+                  icon: User,
+                  badge: "Completo",
+                  badgeColor: "bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-300",
+                  iconColor: "text-sky-600 bg-sky-100 dark:bg-sky-950/60 dark:text-sky-400",
+                },
+                {
+                  id: "precheckin",
+                  title: "Pré Check-in Digital",
+                  url: `${origin}/pre-checkin/${resCode}`,
+                  desc: "Formulário para o hóspede preencher os dados dos acompanhantes, fotos de documentos e assinatura antecipada.",
+                  icon: FileText,
+                  badge: "Entrada Ágil",
+                  badgeColor: "bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border-indigo-300",
+                  iconColor: "text-indigo-600 bg-indigo-100 dark:bg-indigo-950/60 dark:text-indigo-400",
+                },
+                {
+                  id: "cafe",
+                  title: "Cardápio & Pedido de Café da Manhã",
+                  url: `${origin}/cafe/${resCode}`,
+                  desc: "Link direto para o hóspede escolher os itens de café da manhã e agendar horário de entrega no flat.",
+                  icon: Coffee,
+                  badge: "Alimentação",
+                  badgeColor: "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-300",
+                  iconColor: "text-amber-600 bg-amber-100 dark:bg-amber-950/60 dark:text-amber-400",
+                },
+                {
+                  id: "checkout",
+                  title: "Check-out Expresso",
+                  url: `${origin}/checkout/${resCode}`,
+                  desc: "Link personalizado de saída expressa com 1 clique (sem necessidade de digitar flat, cancela café se antes do horário).",
+                  icon: DoorOpen,
+                  badge: "Saída Expressa",
+                  badgeColor: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-300",
+                  iconColor: "text-emerald-600 bg-emerald-100 dark:bg-emerald-950/60 dark:text-emerald-400",
+                },
+                {
+                  id: "pagamento",
+                  title: "Pagamento & Extrato da Reserva",
+                  url: `${origin}/minha-reserva/${resCode}#pagamento`,
+                  desc: "Acesso direto à área de pagamento via Pix / Cartão e consulta de pendências financeiras.",
+                  icon: CreditCard,
+                  badge: "Financeiro",
+                  badgeColor: "bg-purple-500/15 text-purple-700 dark:text-purple-300 border-purple-300",
+                  iconColor: "text-purple-600 bg-purple-100 dark:bg-purple-950/60 dark:text-purple-400",
+                },
+                {
+                  id: "maps",
+                  title: "Localização no Google Maps",
+                  url: `https://www.google.com/maps/search/?api=1&query=SOHO+Promenade+Brasilia`,
+                  desc: "Ponto exato e rotas de GPS até a portaria do condomínio Soho Promenade.",
+                  icon: Tag,
+                  badge: "Como Chegar",
+                  badgeColor: "bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-300",
+                  iconColor: "text-rose-600 bg-rose-100 dark:bg-rose-950/60 dark:text-rose-400",
+                },
+              ]
+
+              const handleCopySingle = (id: string, url: string, title: string) => {
+                navigator.clipboard.writeText(url)
+                setCopiedLinkKey(id)
+                toast({
+                  title: "Link Copiado! 📋",
+                  description: `${title} copiado com sucesso.`
+                })
+                setTimeout(() => setCopiedLinkKey(null), 2000)
+              }
+
+              const handleCopyAllFormatted = () => {
+                const text = `🏨 *CorpFlats - Links da sua Estadia*\n🔑 *Reserva:* #${resCode}${flatNum ? ` (Flat ${flatNum})` : ""}\n👤 *Hóspede:* ${guestName}\n\n` +
+                  `🌐 *Portal Minha Reserva:*\n${origin}/minha-reserva/${resCode}\n\n` +
+                  `📝 *Pré Check-in Digital:*\n${origin}/pre-checkin/${resCode}\n\n` +
+                  `☕ *Cardápio de Café da Manhã:*\n${origin}/cafe/${resCode}\n\n` +
+                  `🚪 *Check-out Expresso:*\n${origin}/checkout/${resCode}\n\n` +
+                  `📍 *Localização no Google Maps:*\nhttps://www.google.com/maps/search/?api=1&query=SOHO+Promenade+Brasilia`
+
+                navigator.clipboard.writeText(text)
+                setCopiedLinkKey("all")
+                toast({
+                  title: "Todos os links copiados! 📋",
+                  description: "Mensagem formatada com todos os links pronta para enviar pelo WhatsApp ou E-mail."
+                })
+                setTimeout(() => setCopiedLinkKey(null), 2500)
+              }
+
+              const handleSendWa = (url: string, title: string) => {
+                if (!waPhone) return
+                const msg = `Olá ${guestName}, aqui está o link de ${title} para sua estadia no Flat ${flatNum} (Reserva #${resCode}):\n\n${url}`
+                window.open(`https://wa.me/${waPhone}?text=${encodeURIComponent(msg)}`, "_blank")
+              }
+
+              return (
+                <div className="py-2 space-y-4">
+                  {/* Top Banner / Actions */}
+                  <div className="p-4 bg-gradient-to-r from-emerald-50 via-teal-50 to-sky-50 dark:from-emerald-950/40 dark:via-teal-950/30 dark:to-sky-950/30 border border-emerald-200 dark:border-emerald-800 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-300 font-bold text-[11px]">
+                          Reserva #{resCode}
+                        </Badge>
+                        {flatNum && (
+                          <Badge variant="outline" className="bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-300 font-bold text-[11px]">
+                            Flat {flatNum}
+                          </Badge>
+                        )}
+                        <span className="text-xs font-semibold text-foreground/80 truncate max-w-[200px]">
+                          {guestName}
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Acesse, confira ou copie qualquer link exclusivo desta reserva para enviar ao hóspede.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={handleCopyAllFormatted}
+                        className="h-8 rounded-xl font-bold text-xs bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs flex items-center gap-1.5"
+                      >
+                        {copiedLinkKey === "all" ? (
+                          <>
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Copiado!</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3.5 h-3.5" />
+                            <span>Copiar Todos os Links</span>
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Links List */}
+                  <div className="space-y-2.5 max-h-[55vh] overflow-y-auto pr-1">
+                    {linksList.map((item) => {
+                      const Icon = item.icon
+                      const isCopied = copiedLinkKey === item.id
+                      return (
+                        <div
+                          key={item.id}
+                          className="p-3 bg-card border border-border/80 hover:border-border rounded-2xl transition-all space-y-2.5 shadow-2xs"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center gap-2.5">
+                              <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${item.iconColor}`}>
+                                <Icon className="w-4 h-4" />
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="font-bold text-xs text-foreground">{item.title}</span>
+                                  <Badge variant="outline" className={`text-[10px] h-4 px-1.5 py-0 font-bold ${item.badgeColor}`}>
+                                    {item.badge}
+                                  </Badge>
+                                </div>
+                                <p className="text-[11px] text-muted-foreground line-clamp-1 mt-0.5">
+                                  {item.desc}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <a
+                                href={item.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center justify-center gap-1 h-7 px-2.5 rounded-lg border border-border/80 bg-background hover:bg-muted text-foreground text-[11px] font-bold transition-colors shadow-2xs"
+                                title="Abrir e conferir em nova aba"
+                              >
+                                <ExternalLink className="w-3 h-3 text-muted-foreground" />
+                                <span>Abrir ↗</span>
+                              </a>
+
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleCopySingle(item.id, item.url, item.title)}
+                                className={`h-7 px-2.5 rounded-lg text-[11px] font-bold transition-all shadow-2xs ${
+                                  isCopied
+                                    ? "bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300"
+                                    : "hover:bg-muted"
+                                }`}
+                              >
+                                {isCopied ? (
+                                  <>
+                                    <Check className="w-3 h-3 text-emerald-600 mr-1" />
+                                    <span>Copiado!</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="w-3 h-3 text-muted-foreground mr-1" />
+                                    <span>Copiar</span>
+                                  </>
+                                )}
+                              </Button>
+
+                              {waPhone && (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleSendWa(item.url, item.title)}
+                                  className="h-7 w-7 p-0 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-emerald-600"
+                                  title="Enviar este link pelo WhatsApp"
+                                >
+                                  <MessageCircle className="w-3.5 h-3.5" />
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Link URL box */}
+                          <div className="flex items-center gap-2 bg-muted/50 dark:bg-muted/20 border border-border/50 rounded-xl px-2.5 py-1.5 text-[11px] font-mono text-muted-foreground overflow-hidden">
+                            <span className="truncate select-all text-foreground/80">{item.url}</span>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {/* Footer */}
+                  <DialogFooter className="pt-2 border-t border-border flex items-center justify-between sm:justify-between w-full">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setResModalTab("details")}
+                      className="rounded-xl text-xs font-bold text-muted-foreground hover:text-foreground"
+                    >
+                      ← Voltar aos Dados da Reserva
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setResModalOpen(false)}
+                      className="rounded-xl text-xs font-bold"
+                    >
+                      Fechar
+                    </Button>
+                  </DialogFooter>
+                </div>
+              )
+            })()}
           </DialogContent>
         </Dialog>
 

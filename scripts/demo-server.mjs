@@ -1892,6 +1892,13 @@ function getBrasiliaNow() {
   };
 }
 
+function isTimeBefore(t1, t2) {
+  if (!t1 || !t2) return false;
+  const [h1, m1] = String(t1).split(":").map(Number);
+  const [h2, m2] = String(t2).split(":").map(Number);
+  return (h1 * 60 + m1) < (h2 * 60 + m2);
+}
+
 function getOffsetDateStr(offsetDays = 0) {
   if (offsetDays === 0) return getTodayStr();
   const todayStr = getTodayStr();
@@ -2480,13 +2487,14 @@ app.post("/api/public/checkout", (req, res) => {
   });
 
   // Reconciliar pedidos de café da manhã para hoje neste flat:
-  // Se o hóspede fez checkout (ex: 04:15), cancela qualquer café agendado para hoje com motivo Early Check-out!
+  // Apenas cancela se o check-out ocorreu ANTES do horário de entrega do café agendado!
   if (!db.breakfastOrders) db.breakfastOrders = [];
   db.breakfastOrders.forEach(o => {
     const isMatch = String(o.roomNumber) === String(flat.number) || matchingResList.some(mr => mr.code === o.reservationCode || mr.id === o.reservationId);
-    if (isMatch && o.date === todayStr && o.status !== "cancelled") {
+    const orderDeliveryTime = o.deliveryTime || "08:00";
+    if (isMatch && o.date === todayStr && o.status !== "cancelled" && isTimeBefore(timeStr, orderDeliveryTime)) {
       o.status = "cancelled";
-      o.cancelReason = `Early check-out: Hóspede desocupou o quarto e saiu às ${timeStr} (café estava agendado para às ${o.deliveryTime || '08:00'})`;
+      o.cancelReason = `Early check-out: Hóspede desocupou o quarto e saiu às ${timeStr} antes do horário do café (${orderDeliveryTime})`;
     }
   });
 
@@ -7856,6 +7864,21 @@ app.post("/api/reception/checkout/:reservationId", (req, res) => {
   if (cleanReq) {
     cleanReq.isVacant = true;
   }
+
+  // Cancelar café para hoje apenas se o hóspede fez checkout ANTES do horário de entrega do café
+  if (!db.breakfastOrders) db.breakfastOrders = [];
+  const nowBrl = getBrasiliaNow();
+  r.actualCheckoutTime = nowBrl.timeStr;
+  db.breakfastOrders.forEach(o => {
+    const isMatch = (o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) ||
+                    o.reservationId === r.id ||
+                    (String(o.roomNumber) === String(r.flatNumber));
+    const deliveryTime = o.deliveryTime || "08:00";
+    if (isMatch && o.date === nowBrl.date && o.status !== "cancelled" && isTimeBefore(nowBrl.timeStr, deliveryTime)) {
+      o.status = "cancelled";
+      o.cancelReason = `Early check-out: Hóspede desocupou o quarto e saiu às ${nowBrl.timeStr} antes do horário do café (${deliveryTime})`;
+    }
+  });
 
   // Automatic NFS-e Check with Channel Matrix Rules
   let autoInvoiceEmitted = false;
