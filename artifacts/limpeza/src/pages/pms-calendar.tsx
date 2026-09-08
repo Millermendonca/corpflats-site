@@ -351,6 +351,8 @@ export default function PmsCalendar() {
   }
 
   const [resDragState, setResDragState] = useState<ResDragState | null>(null);
+  const lastTouchTimeRef = useRef<number>(0);
+  const lastToggleCardTimeRef = useRef<number>(0);
 
   const handleStartResDrag = (
     resItem: any, 
@@ -359,6 +361,17 @@ export default function PmsCalendar() {
     e: React.PointerEvent | React.MouseEvent
   ) => {
     if ((e as React.MouseEvent).button !== undefined && (e as React.MouseEvent).button !== 0) return;
+
+    // Ignora eventos de mouse sintéticos que o navegador emite logo após toque em tela touch
+    if (e.type === "mousedown" && Date.now() - lastTouchTimeRef.current < 600) {
+      return;
+    }
+
+    const isTouchEvt = (e as any).pointerType === "touch" || (e as any).pointerType === "pen" || e.type.startsWith("touch");
+    if (isTouchEvt) {
+      lastTouchTimeRef.current = Date.now();
+    }
+
     e.stopPropagation();
 
     const pointerType = (e as any).pointerType || 
@@ -459,6 +472,7 @@ export default function PmsCalendar() {
           const isTouch = 
             resDragState.pointerType === "touch" || 
             (e as any).pointerType === "touch" ||
+            Date.now() - lastTouchTimeRef.current < 600 ||
             (typeof window !== "undefined" && (
               window.matchMedia("(pointer: coarse)").matches || 
               window.innerWidth < 1024
@@ -466,7 +480,12 @@ export default function PmsCalendar() {
 
           if (isTouch) {
             // No celular / touch: abre ou fecha a janelinha flutuante de ações rápidas
-            setMobileCardResId(prev => (prev === resDragState.res.id ? null : resDragState.res.id));
+            // com debounce para prevenir re-fechamento imediato por eventos duplicados
+            const now = Date.now();
+            if (now - lastToggleCardTimeRef.current > 400) {
+              lastToggleCardTimeRef.current = now;
+              setMobileCardResId(prev => (prev === resDragState.res.id ? null : resDragState.res.id));
+            }
           } else {
             // No desktop (mouse): abre o modal completo de edição
             handleOpenEditRes(resDragState.res);
@@ -1967,6 +1986,14 @@ export default function PmsCalendar() {
                         const channelCfg = CHANNEL_CONFIG[resItem.channel] || CHANNEL_CONFIG.direta;
                         const nightsCount = differenceInDays(parseISO(resItem.checkoutDate), parseISO(resItem.checkinDate)) || 1;
                         
+                        // Cálculo e formatação do Valor Total da Reserva
+                        const resTotal = Number(resItem.totalAmount) > 0 
+                          ? Number(resItem.totalAmount) 
+                          : (Number(resItem.dailyRate || 0) * nightsCount);
+                        const formattedTotal = resTotal > 0 
+                          ? `R$ ${resTotal.toLocaleString("pt-BR", { minimumFractionDigits: resTotal % 1 !== 0 ? 2 : 0, maximumFractionDigits: 2 })}` 
+                          : null;
+
                         // Verificação dinâmica de Mensalista (por reserva ou por cadastro no CRM)
                         const matchedGuest = (data.guests || []).find((g: any) => 
                           (g.id && g.id === resItem.guestId) ||
@@ -1999,6 +2026,7 @@ export default function PmsCalendar() {
                             onCloseMobile={() => setMobileCardResId(null)}
                           >
                             <div
+                              data-reservation-id={resItem.id}
                               style={{ 
                                 position: "absolute",
                                 left: `${pos.left}px`,
@@ -2007,7 +2035,6 @@ export default function PmsCalendar() {
                                 height: "34px"
                               }}
                               onPointerDown={(e) => handleStartResDrag(resItem, flat, "move", e)}
-                              onMouseDown={(e) => handleStartResDrag(resItem, flat, "move", e)}
                               className={`rounded-xl select-none ${
                                 isMensalista 
                                   ? 'bg-gradient-to-r from-purple-800 via-indigo-900 to-purple-800 text-white border-2 border-purple-300 shadow-md ring-2 ring-purple-500/80' 
@@ -2017,21 +2044,19 @@ export default function PmsCalendar() {
                               } ${
                                 isBeingDragged && resDragState?.hasMoved ? 'opacity-30 border-dashed scale-95' : ''
                               }`}
-                              title={`${resItem.guestName} (${channelCfg?.label || resItem.channel}) • Entrada: ${resItem.checkinDate} às ${cinTime} | Saída: ${resItem.checkoutDate} às ${coutTime} • Clique para abrir ou arraste para mover/redimensionar`}
+                              title={`${resItem.guestName}${formattedTotal ? ` • ${formattedTotal}` : ""} (${channelCfg?.label || resItem.channel}) • Entrada: ${resItem.checkinDate} às ${cinTime} | Saída: ${resItem.checkoutDate} às ${coutTime} • Toque para ver detalhes ou arraste para mover`}
                             >
                               {/* Handle Esquerdo: Redimensionar Início (Check-in) */}
                               <div
                                 className="absolute left-0 top-0 bottom-0 w-3 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-l"
                                 onPointerDown={(e) => handleStartResDrag(resItem, flat, "resize-left", e)}
-                                onMouseDown={(e) => handleStartResDrag(resItem, flat, "resize-left", e)}
                                 onPointerEnter={(e) => e.stopPropagation()}
-                                onMouseEnter={(e) => e.stopPropagation()}
                                 title="Arraste para alterar a data de Check-in"
                               >
                                 <div className="w-0.5 h-3.5 bg-white/50 rounded-full group-hover/resize-l:bg-white pointer-events-none" />
                               </div>
 
-                              {/* Conteúdo Central com Nome e Diárias Contínuos */}
+                              {/* Conteúdo Central com Nome, Valor e Diárias Contínuos */}
                               <div className="flex items-center gap-1.5 min-w-0 w-full overflow-hidden whitespace-nowrap px-1 pointer-events-none">
                                 {resItem.includeBreakfast && (
                                   <span title="Café da Manhã Incluso" className="shrink-0 text-xs">☕</span>
@@ -2042,7 +2067,9 @@ export default function PmsCalendar() {
                                   </span>
                                 )}
                                 <span className="truncate font-black text-white text-[11px] min-w-0">
-                                  {resItem.guestName} • {nightsCount} {nightsCount === 1 ? 'diária' : 'diárias'}
+                                  {resItem.guestName}
+                                  {formattedTotal ? ` • ${formattedTotal}` : ""}
+                                  {` • ${nightsCount} ${nightsCount === 1 ? 'diária' : 'diárias'}`}
                                 </span>
                               </div>
 
@@ -2050,9 +2077,7 @@ export default function PmsCalendar() {
                               <div
                                 className="absolute right-0 top-0 bottom-0 w-3 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-r"
                                 onPointerDown={(e) => handleStartResDrag(resItem, flat, "resize-right", e)}
-                                onMouseDown={(e) => handleStartResDrag(resItem, flat, "resize-right", e)}
                                 onPointerEnter={(e) => e.stopPropagation()}
-                                onMouseEnter={(e) => e.stopPropagation()}
                                 title="Arraste para alterar a data de Check-out"
                               >
                                 <div className="w-0.5 h-3.5 bg-white/50 rounded-full group-hover/resize-r:bg-white pointer-events-none" />

@@ -129,9 +129,19 @@ export function ReservationHoverCard({
     }
   }, [isBeingDragged])
 
-  // Fecha imediatamente ao detectar scroll (em qualquer elemento, incluindo grade do calendário)
+  const openedAtRef = useRef<number>(0)
+  useEffect(() => {
+    if (isCardOpen) {
+      openedAtRef.current = Date.now()
+    }
+  }, [isCardOpen])
+
+  // Fecha ao detectar scroll (em qualquer elemento, incluindo grade do calendário)
   useEffect(() => {
     const handleScroll = () => {
+      // Ignora eventos de scroll nos primeiros 450ms após abrir para evitar que micro-ajustes
+      // de layout ou rolagem virtual no mobile/tablet fechem o card instantaneamente
+      if (Date.now() - openedAtRef.current < 450) return
       if (isCardOpen) handleClose()
     }
     window.addEventListener("scroll", handleScroll, true)
@@ -151,6 +161,14 @@ export function ReservationHoverCard({
   const checkoutStr = format(parseISO(resItem.checkoutDate), "dd/MM")
   const guestCount = resItem.guestCount || resItem.adults || (resItem.guests?.length || 1)
   const hasBreakfast = Boolean(resItem.includeBreakfast || resItem.hasBreakfast)
+
+  // Cálculo e formatação do Valor Total da Reserva
+  const resTotal = Number(resItem.totalAmount) > 0 
+    ? Number(resItem.totalAmount) 
+    : (Number(resItem.dailyRate || 0) * nightsCount)
+  const formattedTotal = resTotal > 0 
+    ? `R$ ${resTotal.toLocaleString("pt-BR", { minimumFractionDigits: resTotal % 1 !== 0 ? 2 : 0, maximumFractionDigits: 2 })}` 
+    : null
 
   const statusCfg = STATUS_MAP[resItem.status] || STATUS_MAP.confirmada
   const originUrl = typeof window !== "undefined" ? window.location.origin : "https://corpflats.onrender.com"
@@ -202,8 +220,30 @@ export function ReservationHoverCard({
         sideOffset={8}
         collisionPadding={12}
         avoidCollisions={true}
-        onPointerDownOutside={handleClose}
-        onInteractOutside={handleClose}
+        onPointerDownOutside={(e) => {
+          const target = e.target as HTMLElement | null
+          if (target?.closest(`[data-reservation-id="${resItem.id}"]`)) {
+            e.preventDefault()
+            return
+          }
+          if (Date.now() - openedAtRef.current < 450) {
+            e.preventDefault()
+            return
+          }
+          handleClose()
+        }}
+        onInteractOutside={(e) => {
+          const target = e.target as HTMLElement | null
+          if (target?.closest(`[data-reservation-id="${resItem.id}"]`)) {
+            e.preventDefault()
+            return
+          }
+          if (Date.now() - openedAtRef.current < 450) {
+            e.preventDefault()
+            return
+          }
+          handleClose()
+        }}
         className="w-[330px] max-w-[calc(100vw-24px)] p-0 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-2xl z-50 text-xs relative"
         onClick={(e) => e.stopPropagation()}
       >
@@ -348,21 +388,20 @@ export function ReservationHoverCard({
             </span>
           </div>
 
-          {/* Café da Manhã & Financeiro */}
-          <div className="flex items-center justify-between text-[11px] pt-0.5">
-            <div className="flex items-center gap-1.5">
-              <Coffee className={`w-3.5 h-3.5 ${hasBreakfast ? "text-amber-500" : "text-slate-300"}`} />
-              <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">Café:</span>
-              <Badge 
-                variant="outline" 
-                className={`text-[9.5px] font-bold px-1.5 py-0 ${
-                  hasBreakfast 
-                    ? "bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300" 
-                    : "bg-slate-100 text-slate-500 border-slate-200"
-                }`}
-              >
-                {hasBreakfast ? "Incluso ✓" : "Não incluso"}
-              </Badge>
+          {/* Valor da Reserva & Status Financeiro */}
+          <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px]">
+            <div className="leading-tight">
+              <span className="text-[9.5px] text-slate-400 font-semibold uppercase tracking-wider block">Valor da Reserva:</span>
+              <div className="flex items-baseline gap-1.5 mt-0.5">
+                <span className="font-black text-slate-950 dark:text-slate-50 text-[13px]">
+                  {formattedTotal || "A definir"}
+                </span>
+                {resItem.dailyRate > 0 && (
+                  <span className="text-[10px] text-slate-500">
+                    ({nightsCount}x R$ {resItem.dailyRate})
+                  </span>
+                )}
+              </div>
             </div>
 
             <div className="flex items-center gap-1.5">
@@ -373,7 +412,7 @@ export function ReservationHoverCard({
                 return (
                   <Badge 
                     variant="outline" 
-                    className={`text-[9.5px] font-bold px-1.5 py-0 ${
+                    className={`text-[9.5px] font-bold px-2 py-0.5 ${
                       isPaid 
                         ? "bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300" 
                         : "bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300"
@@ -383,11 +422,24 @@ export function ReservationHoverCard({
                   </Badge>
                 );
               })()}
-              {resItem.dailyRate > 0 && (
-                <span className="text-[10.5px] text-slate-500 font-medium">
-                  Diária: <strong className="text-slate-800 dark:text-slate-200 font-bold">R$ {resItem.dailyRate}</strong>
-                </span>
-              )}
+            </div>
+          </div>
+
+          {/* Café da Manhã */}
+          <div className="flex items-center justify-between text-[11px] pt-0.5 px-0.5">
+            <div className="flex items-center gap-1.5">
+              <Coffee className={`w-3.5 h-3.5 ${hasBreakfast ? "text-amber-500" : "text-slate-300"}`} />
+              <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">Café da Manhã:</span>
+              <Badge 
+                variant="outline" 
+                className={`text-[9.5px] font-bold px-1.5 py-0 ${
+                  hasBreakfast 
+                    ? "bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300" 
+                    : "bg-slate-100 text-slate-500 border-slate-200"
+                }`}
+              >
+                {hasBreakfast ? "Incluso ✓" : "Não incluso"}
+              </Badge>
             </div>
           </div>
         </div>
