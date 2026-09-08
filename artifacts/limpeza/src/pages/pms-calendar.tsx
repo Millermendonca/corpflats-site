@@ -55,6 +55,7 @@ export default function PmsCalendar() {
     guests: []
   })
   const [loading, setLoading] = useState(true)
+  const [isSyncing, setIsSyncing] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
   const [cleaningFilter, setCleaningFilter] = useState<"all" | "dirty" | "clean">("all")
   const [breakfastStats, setBreakfastStats] = useState<{
@@ -687,6 +688,7 @@ export default function PmsCalendar() {
 
         // Atualização silenciosa em background sem tela de carregamento nem reset de scroll
         fetchData(false);
+        notifyCalendarUpdated();
       } catch (e) {
         console.error("Erro ao salvar nova posição da reserva:", e);
         fetchData(false);
@@ -818,6 +820,7 @@ export default function PmsCalendar() {
         setBlockDetailsModalOpen(false)
         setSelectedBlockForDetails(null)
         fetchData()
+        notifyCalendarUpdated()
       }
     } catch (e) {
       console.error("Erro ao remover bloqueio:", e)
@@ -959,47 +962,71 @@ export default function PmsCalendar() {
     } catch {}
   }
 
-  const fetchData = async (showLoading = false) => {
-    if (showLoading) setLoading(true)
+  const notifyCalendarUpdated = () => {
     try {
-      const startStr = format(subDays(timelineStart, 5), "yyyy-MM-dd")
-      const endStr = format(addDays(timelineEnd, 5), "yyyy-MM-dd")
-      const res = await fetch(`/api/pms/calendar?startDate=${startStr}&endDate=${endStr}`, { credentials: "include" })
-      const json = await res.json()
-      setData(json)
-      if (json.settings?.checkinTime) setDefaultCheckinTime(json.settings.checkinTime)
-      if (json.settings?.checkoutTime) setDefaultCheckoutTime(json.settings.checkoutTime)
-      fetchCompanies()
-      fetchCrmGuests()
+      localStorage.setItem("pms_calendar_sync_trigger", Date.now().toString());
+    } catch {}
+  };
 
-      // Busca pedidos de café da manhã para hoje e amanhã
-      try {
-        const todayStr = format(new Date(), "yyyy-MM-dd")
-        const tomorrowStr = format(addDays(new Date(), 1), "yyyy-MM-dd")
-        const [bfTodayRes, bfTomRes] = await Promise.all([
-          fetch(`/api/breakfast/orders?date=${todayStr}`, { credentials: "include" }),
-          fetch(`/api/breakfast/orders?date=${tomorrowStr}`, { credentials: "include" })
-        ])
-        const bfTodayJson = bfTodayRes.ok ? await bfTodayRes.json() : null
-        const bfTomJson = bfTomRes.ok ? await bfTomRes.json() : null
-        setBreakfastStats({
-          todayOrders: bfTodayJson?.totalOrders ?? 0,
-          todayGuests: bfTodayJson?.totalGuests ?? 0,
-          tomorrowOrders: bfTomJson?.totalOrders ?? 0,
-          tomorrowGuests: bfTomJson?.totalGuests ?? 0,
-        })
+  const isFetchingRef = useRef(false);
+  const lastAuxFetchRef = useRef(0);
 
-        // Prefetch Quarto da Vez (sugestão de equilíbrio) para hoje
-        fetchFairShare(todayStr, tomorrowStr)
-      } catch {}
+  const fetchData = async (showLoading = false) => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+    if (showLoading) setLoading(true);
+    else setIsSyncing(true);
+
+    try {
+      const startStr = format(subDays(timelineStart, 5), "yyyy-MM-dd");
+      const endStr = format(addDays(timelineEnd, 5), "yyyy-MM-dd");
+      const res = await fetch(`/api/pms/calendar?startDate=${startStr}&endDate=${endStr}`, { credentials: "include" });
+      if (res.ok) {
+        const json = await res.json();
+        setData(json);
+        if (json.settings?.checkinTime) setDefaultCheckinTime(json.settings.checkinTime);
+        if (json.settings?.checkoutTime) setDefaultCheckoutTime(json.settings.checkoutTime);
+      }
+
+      // Atualiza pedidos de café da manhã e dados auxiliares a cada 30s ou no carregamento inicial
+      const now = Date.now();
+      if (showLoading || now - lastAuxFetchRef.current > 30000) {
+        lastAuxFetchRef.current = now;
+        fetchCompanies();
+        fetchCrmGuests();
+
+        try {
+          const todayStr = format(new Date(), "yyyy-MM-dd");
+          const tomorrowStr = format(addDays(new Date(), 1), "yyyy-MM-dd");
+          const [bfTodayRes, bfTomRes] = await Promise.all([
+            fetch(`/api/breakfast/orders?date=${todayStr}`, { credentials: "include" }),
+            fetch(`/api/breakfast/orders?date=${tomorrowStr}`, { credentials: "include" })
+          ]);
+          const bfTodayJson = bfTodayRes.ok ? await bfTodayRes.json() : null;
+          const bfTomJson = bfTomRes.ok ? await bfTomRes.json() : null;
+          setBreakfastStats({
+            todayOrders: bfTodayJson?.totalOrders ?? 0,
+            todayGuests: bfTodayJson?.totalGuests ?? 0,
+            tomorrowOrders: bfTomJson?.totalOrders ?? 0,
+            tomorrowGuests: bfTomJson?.totalGuests ?? 0,
+          });
+
+          // Prefetch Quarto da Vez (sugestão de equilíbrio) para hoje
+          fetchFairShare(todayStr, tomorrowStr);
+        } catch {}
+      }
+    } catch (err) {
+      console.error("Erro ao sincronizar dados do calendário:", err);
     } finally {
-      if (showLoading) setLoading(false)
+      if (showLoading) setLoading(false);
+      else setIsSyncing(false);
+      isFetchingRef.current = false;
     }
-  }
+  };
 
   useEffect(() => {
-    fetchData(true)
-  }, [])
+    fetchData(true);
+  }, []);
 
   // Auto-scroll inicial para posicionar o dia de hoje na 3ª ou 4ª coluna à esquerda
 
@@ -1079,6 +1106,7 @@ export default function PmsCalendar() {
       if (res.ok) {
         setFlatTagsModalOpen(false)
         fetchData()
+        notifyCalendarUpdated()
       }
     } finally {
       setSavingFlatTags(false)
@@ -1113,6 +1141,70 @@ export default function PmsCalendar() {
   const [dragStartDay, setDragStartDay] = useState<Date | null>(null)
   const [dragHoverDay, setDragHoverDay] = useState<Date | null>(null)
   const [mobileRangeStart, setMobileRangeStart] = useState<{ flatId: number; day: Date; flatNumber: string } | null>(null)
+
+  const isDraggingRef = useRef(false)
+  isDraggingRef.current = isDragging
+
+  const isAnyModalOpenRef = useRef(false)
+  isAnyModalOpenRef.current = Boolean(
+    resModalOpen || 
+    blockModalOpen || 
+    flatTagsModalOpen || 
+    blockDetailsModalOpen || 
+    essentialConfigModalOpen
+  )
+
+  // Sincronização em tempo real entre múltiplos dispositivos (PC, Tablet, Celular)
+  useEffect(() => {
+    const doSilentSync = () => {
+      // Se a aba estiver oculta/minimizada, não executa o poll para economizar recursos
+      if (typeof document !== "undefined" && document.hidden) return;
+      // Não atualiza se o usuário estiver ativamente arrastando/redimensionando reserva
+      if (resDragStateRef.current) return;
+      // Não atualiza se estiver selecionando período com arrasto
+      if (isDraggingRef.current) return;
+      // Não atualiza se algum modal de formulário/edição estiver aberto
+      if (isAnyModalOpenRef.current) return;
+
+      fetchData(false);
+    };
+
+    // 1. Polling a cada 4 segundos para sincronização contínua automática
+    const intervalId = setInterval(doSilentSync, 4000);
+
+    // 2. Sincronização imediata ao desbloquear o aparelho, trocar de aba ou focar a janela
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        doSilentSync();
+      }
+    };
+    const handleFocus = () => {
+      doSilentSync();
+    };
+    const handlePageShow = () => {
+      doSilentSync();
+    };
+
+    // 3. Sincronização instantânea entre abas no mesmo computador via StorageEvent
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === "pms_calendar_sync_trigger") {
+        doSilentSync();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", handleFocus);
+    window.addEventListener("pageshow", handlePageShow);
+    window.addEventListener("storage", handleStorageChange);
+
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("pageshow", handlePageShow);
+      window.removeEventListener("storage", handleStorageChange);
+    };
+  }, []);
 
   const handleOpenNewResRange = (defaultFlatId: number, startDate: Date, endDate: Date) => {
     const d1 = startDate <= endDate ? startDate : endDate
@@ -1541,6 +1633,7 @@ export default function PmsCalendar() {
       }
       setResModalOpen(false)
       fetchData()
+      notifyCalendarUpdated()
     } finally {
       setSavingRes(false)
     }
@@ -1558,6 +1651,7 @@ export default function PmsCalendar() {
       })
       setResModalOpen(false)
       fetchData()
+      notifyCalendarUpdated()
     } catch {}
   }
 
@@ -1579,6 +1673,7 @@ export default function PmsCalendar() {
       })
       setBlockModalOpen(false)
       fetchData()
+      notifyCalendarUpdated()
     } catch {}
   }
 
@@ -1701,6 +1796,19 @@ export default function PmsCalendar() {
           </div>
 
           <div className="flex items-center gap-2">
+            <Button 
+              onClick={() => fetchData(false)} 
+              variant="outline" 
+              size="sm" 
+              className="font-semibold text-xs gap-1.5 shadow-2xs h-8 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800"
+              title="Sincronizar dados agora (sincronização automática em tempo real a cada 4s)"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-emerald-600 ${isSyncing ? "animate-spin text-primary" : ""}`} />
+              <span className="hidden sm:inline font-medium">
+                {isSyncing ? "Sincronizando..." : "Ao vivo"}
+              </span>
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            </Button>
             <Button onClick={() => setBlockModalOpen(true)} variant="outline" size="sm" className="font-semibold text-xs gap-1.5 shadow-2xs">
               <Lock className="w-3.5 h-3.5" />
               <span>Bloquear Quarto</span>
