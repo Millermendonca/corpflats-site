@@ -77,6 +77,7 @@ export default function PmsCalendar() {
 
   // Form fields
   const [formFlatId, setFormFlatId] = useState("")
+  const isFlatManuallyChangedRef = useRef(false)
   const [formGuestName, setFormGuestName] = useState("")
   const [formGuestPhone, setFormGuestPhone] = useState("")
   const [formGuestEmail, setFormGuestEmail] = useState("")
@@ -223,7 +224,7 @@ export default function PmsCalendar() {
     }
     if (resModalOpen && formCheckin && formCheckout) {
       fetchFairShare(formCheckin, formCheckout, selectedRes?.id).then((result) => {
-        if (!selectedRes && result?.bestFlatId && (!formFlatId || formFlatId === "auto")) {
+        if (!selectedRes && result?.bestFlatId && !isFlatManuallyChangedRef.current) {
           setFormFlatId(String(result.bestFlatId))
         }
       })
@@ -904,6 +905,9 @@ export default function PmsCalendar() {
           tomorrowOrders: bfTomJson?.totalOrders ?? 0,
           tomorrowGuests: bfTomJson?.totalGuests ?? 0,
         })
+
+        // Prefetch Quarto da Vez (sugestão de equilíbrio) para hoje
+        fetchFairShare(todayStr, tomorrowStr)
       } catch {}
     } finally {
       setLoading(false)
@@ -1031,6 +1035,7 @@ export default function PmsCalendar() {
     const d1 = startDate <= endDate ? startDate : endDate
     const d2 = startDate <= endDate ? endDate : startDate
     setSelectedRes(null)
+    isFlatManuallyChangedRef.current = true
     setFormFlatId(String(defaultFlatId))
     const cin = format(d1, "yyyy-MM-dd")
     const cout = isSameDay(d1, d2) 
@@ -1158,11 +1163,19 @@ export default function PmsCalendar() {
   const handleOpenNewRes = (defaultFlatId?: number, defaultDate?: Date) => {
     setMobileRangeStart(null)
     setSelectedRes(null)
-    setFormFlatId(defaultFlatId ? String(defaultFlatId) : (data.flats[0]?.id ? String(data.flats[0].id) : ""))
     const cin = defaultDate ? format(defaultDate, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd")
     const cout = defaultDate ? format(addDays(defaultDate, 1), "yyyy-MM-dd") : format(addDays(new Date(), 1), "yyyy-MM-dd")
     setFormCheckin(cin)
     setFormCheckout(cout)
+
+    if (defaultFlatId) {
+      isFlatManuallyChangedRef.current = true
+      setFormFlatId(String(defaultFlatId))
+    } else {
+      isFlatManuallyChangedRef.current = false
+      const suggestedId = fairShareResult?.bestFlatId
+      setFormFlatId(suggestedId ? String(suggestedId) : (data.flats[0]?.id ? String(data.flats[0].id) : ""))
+    }
     setFormCheckinTime(defaultCheckinTime || "14:00")
     setFormCheckoutTime(defaultCheckoutTime || "12:00")
     setFormGuestCount("1")
@@ -1209,6 +1222,7 @@ export default function PmsCalendar() {
 
   const handleOpenEditRes = (resItem: any) => {
     setSelectedRes(resItem)
+    isFlatManuallyChangedRef.current = true
     setFormFlatId(String(resItem.flatId))
     setFormCheckin(resItem.checkinDate)
     setFormCheckout(resItem.checkoutDate)
@@ -2508,11 +2522,27 @@ export default function PmsCalendar() {
                 )}
                 <div className="grid grid-cols-2 gap-3 items-start">
                   <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold block leading-none h-4 flex items-center">Apartamento</Label>
-                    <Select value={formFlatId} onValueChange={(val) => { setFormFlatId(val); setFormForceReplace(false); }}>
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs font-semibold block leading-none h-4 flex items-center">Apartamento</Label>
+                      {!selectedRes && fairShareResult?.bestFlatId && String(formFlatId) === String(fairShareResult.bestFlatId) && (
+                        <span className="text-[10px] text-amber-600 dark:text-amber-400 font-bold flex items-center gap-1">
+                          ✨ Sugerido da vez
+                        </span>
+                      )}
+                    </div>
+                    <Select 
+                      value={formFlatId} 
+                      onValueChange={(val) => { 
+                        isFlatManuallyChangedRef.current = true;
+                        setFormFlatId(val); 
+                        setFormForceReplace(false); 
+                      }}
+                    >
                       <SelectTrigger className="text-xs font-bold h-9">
-                        <SelectValue placeholder="Selecione o Flat">
-                          {formFlatId ? `Apt ${data.flats.find(f => String(f.id) === String(formFlatId))?.number || formFlatId}` : "Selecione o Flat"}
+                        <SelectValue placeholder={loadingFairShare ? "✨ Buscando quarto sugerido..." : "Selecione o Flat"}>
+                          {formFlatId 
+                            ? `Apt ${data.flats.find(f => String(f.id) === String(formFlatId))?.number || formFlatId}${!selectedRes && String(formFlatId) === String(fairShareResult?.bestFlatId) ? " ✨ (Sugerido)" : ""}` 
+                            : (loadingFairShare ? "✨ Selecionando quarto sugerido..." : "Selecione o Flat")}
                         </SelectValue>
                       </SelectTrigger>
                       <SelectContent className="max-h-60">
@@ -2528,7 +2558,7 @@ export default function PmsCalendar() {
                                 <span className="font-bold">Apt {f.number}</span>
                                 {isBest && (
                                   <span className="text-[9px] bg-amber-500 text-white font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5">
-                                    ✨ Quarto da Vez
+                                    ✨ Quarto da Vez (Sugerido)
                                   </span>
                                 )}
                                 {!isAvail && (
@@ -2577,9 +2607,31 @@ export default function PmsCalendar() {
 
                 {/* Banner sutil do Quarto da Vez apenas na criação de Nova Reserva */}
                 {!selectedRes && fairShareResult?.bestFlatNumber && (
-                  <div className="text-[11px] text-amber-800 dark:text-amber-200 font-medium flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-lg animate-in fade-in">
-                    <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                    <span>Sugestão da vez para equilíbrio: <strong className="font-bold">Apt {fairShareResult.bestFlatNumber}</strong></span>
+                  <div className="text-[11px] text-amber-800 dark:text-amber-200 font-medium flex items-center justify-between bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-lg animate-in fade-in">
+                    <div className="flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                      <span>
+                        Sugestão da vez para equilíbrio: <strong className="font-bold">Apt {fairShareResult.bestFlatNumber}</strong>
+                        {String(formFlatId) === String(fairShareResult.bestFlatId) && (
+                          <span className="ml-1.5 text-[10px] text-emerald-600 dark:text-emerald-400 font-bold">✓ Selecionado</span>
+                        )}
+                      </span>
+                    </div>
+                    {String(formFlatId) !== String(fairShareResult.bestFlatId) && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          isFlatManuallyChangedRef.current = false;
+                          setFormFlatId(String(fairShareResult.bestFlatId));
+                          setFormForceReplace(false);
+                        }}
+                        className="h-6 text-[10px] font-bold text-amber-800 dark:text-amber-200 hover:bg-amber-500/20 px-2 py-0 border border-amber-500/30 rounded"
+                      >
+                        Usar Apt {fairShareResult.bestFlatNumber}
+                      </Button>
+                    )}
                   </div>
                 )}
 
