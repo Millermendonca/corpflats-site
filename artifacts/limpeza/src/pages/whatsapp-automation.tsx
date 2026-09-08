@@ -164,7 +164,7 @@ const TAG_GROUPS = [
       { tag: "{{link_checkin_digital}}", label: "📝 Ficha Check-in Online", example: "https://.../pre-checkin/RES-..." },
       { tag: "{{link_portal_hospede}}", label: "🏨 Portal do Hóspede", example: "https://.../portal-hospede/RES-..." },
       { tag: "{{link_cafe_manha}}", label: "🥐 Link do Café da Manhã", example: "https://.../cafe/RES-..." },
-      { tag: "{{link_checkout}}", label: "🚪 Check-out Expresso", example: "https://.../checkout?code=..." },
+      { tag: "{{link_checkout}}", label: "🚪 Check-out Expresso", example: "https://.../checkout/RES-..." },
       { tag: "{{link_avaliacao_google}}", label: "⭐ Avaliação Google Maps", example: "https://g.page/r/.../review" },
     ]
   }
@@ -679,7 +679,7 @@ export default function WhatsappAutomation() {
       "{{link_checkin_digital}}": `https://corpflats.onrender.com/pre-checkin/${code}`,
       "{{link_portal_hospede}}": `https://corpflats.onrender.com/portal-hospede/${code}`,
       "{{link_cafe_manha}}": `https://corpflats.onrender.com/cafe/${code}`,
-      "{{link_checkout}}": `https://corpflats.onrender.com/checkout?code=${code}`,
+      "{{link_checkout}}": `https://corpflats.onrender.com/checkout/${code}`,
       "{{link_avaliacao_google}}": config.googleReviewUrl || "https://g.page/r/corpflats/review"
     }
 

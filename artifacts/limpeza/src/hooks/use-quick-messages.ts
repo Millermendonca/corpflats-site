@@ -214,7 +214,7 @@ export function renderQuickMessage(templateText: string, resItem: any, appOrigin
   const linkPortal = `${origin}/minha-reserva/${resCode}`
   const linkCheckin = `${origin}/pre-checkin/${resCode}`
   const linkCafe = `${origin}/minha-reserva/${resCode}/cafe`
-  const linkCheckout = `${origin}/checkout?code=${resCode}`
+  const linkCheckout = `${origin}/checkout/${resCode}`
   const linkMaps = "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ"
   const linkAvaliacao = "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ"
 

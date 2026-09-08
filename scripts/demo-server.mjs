@@ -2347,27 +2347,94 @@ app.delete("/api/admin/users/:id", (req, res) => {
 });
 
 // ── Public Guest Checkout Endpoint ─────────────────────────────────────────
-app.post("/api/public/checkout", (req, res) => {
-  const rawNum = String(req.body?.flatNumber || "").replace(/\D/g, "").trim();
-  if (!rawNum) {
-    return res.status(400).json({ error: "Por favor, digite apenas o número do apartamento." });
+// ── Public Guest Checkout Context & Endpoints ──────────────────────────────
+app.get("/api/public/checkout/context", (req, res) => {
+  const code = (req.query.code || req.query.res || req.query.r || "").trim();
+  if (!code) {
+    return res.status(400).json({ error: "Código da reserva não informado." });
   }
 
-  const flat = db.flats.find(f => f.number === rawNum || f.number.replace(/\D/g, "") === rawNum);
+  if (!db.reservations) db.reservations = [];
+  const r = findReservationByLocatorOrContact(code);
+  if (!r) {
+    return res.status(404).json({ error: "Reserva não encontrada no sistema. Verifique o link ou procure a recepção." });
+  }
+
+  const rawFlatNum = r.flatNumber ? String(r.flatNumber) : "";
+  const flat = (db.flats || []).find(f => (rawFlatNum && (f.number === rawFlatNum || f.number.replace(/\D/g, "") === rawFlatNum.replace(/\D/g, ""))) || f.id === r.flatId);
+  const resolvedFlatNum = flat ? flat.number : (rawFlatNum || "Flat");
+
+  const nowBrl = getBrasiliaNow();
+  const todayStr = nowBrl.date;
+
+  const isAlreadyCheckedOut = Boolean(
+    r.actualCheckoutAt || 
+    r.status === "completed" || 
+    r.status === "checked_out" ||
+    (flat && !flat.isOccupied && (db.cleaningRequests || []).some(c => c.flatId === flat.id && c.requestDate === todayStr && c.isVacant))
+  );
+
+  const guestName = (r.guestName || r.guests?.[0]?.name || "Hóspede").trim();
+  const firstName = guestName.split(" ")[0];
+
+  res.json({
+    success: true,
+    reservation: {
+      id: r.id,
+      code: r.code || code,
+      guestName,
+      firstName,
+      flatNumber: resolvedFlatNum,
+      checkinDate: r.checkinDate,
+      checkoutDate: r.checkoutDate,
+      checkoutTime: r.checkoutTime || db.settings?.checkoutTime || "12:00",
+      isAlreadyCheckedOut
+    },
+    flat: {
+      number: resolvedFlatNum,
+      isOccupied: flat ? flat.isOccupied : false
+    }
+  });
+});
+
+app.post("/api/public/checkout", (req, res) => {
+  let rawNum = String(req.body?.flatNumber || "").replace(/\D/g, "").trim();
+  const code = String(req.body?.code || req.body?.res || req.body?.reservationCode || "").trim();
+  let foundRes = null;
+
+  if (code) {
+    if (!db.reservations) db.reservations = [];
+    foundRes = findReservationByLocatorOrContact(code);
+    if (foundRes && !rawNum && foundRes.flatNumber) {
+      rawNum = String(foundRes.flatNumber).replace(/\D/g, "").trim();
+    }
+  }
+
+  if (!rawNum && !foundRes) {
+    return res.status(400).json({ error: "Por favor, informe o código da reserva ou o número do apartamento." });
+  }
+
+  const flat = (db.flats || []).find(f => 
+    (rawNum && (f.number === rawNum || f.number.replace(/\D/g, "") === rawNum)) ||
+    (foundRes && (f.id === foundRes.flatId || (foundRes.flatNumber && f.number === String(foundRes.flatNumber))))
+  );
+
   if (!flat) {
-    return res.status(404).json({ error: `Apartamento ${rawNum} não encontrado. Por favor, verifique o número ou contate a recepção.` });
+    return res.status(404).json({ error: `Apartamento ${rawNum || ""} não encontrado. Por favor, verifique o número ou contate a recepção.` });
   }
 
   const todayStr = getTodayStr();
   let existing = db.cleaningRequests.find(r => r.flatId === flat.id && r.requestDate === todayStr);
 
+  const guestDisplayName = foundRes?.guestName || "Hóspede";
   const now = new Date().toISOString();
   if (existing) {
     existing.isVacant = true; // Confirma quarto desocupado
+    existing.leavingGuest = guestDisplayName;
     if (!existing.pendingObservation) {
-      existing.pendingObservation = "Check-out registrado (Recepção / Hóspede)";
-    } else if (!existing.pendingObservation.includes("Check-out registrado")) {
-      existing.pendingObservation = `${existing.pendingObservation} | Check-out registrado`;
+      existing.pendingObservation = `Check-out expresso confirmado (${guestDisplayName})`;
+    } else if (!existing.pendingObservation.includes("Check-out")) {
+      existing.pendingObservation = `${existing.pendingObservation} | Check-out expresso (${guestDisplayName})`;
     }
     existing.updatedAt = now;
   } else {
@@ -2381,9 +2448,9 @@ app.post("/api/public/checkout", (req, res) => {
       assignedUserId: null,
       isVacant: true, // Já saiu
       isPriority: false, // Prioridade manual exclusiva do admin
-      leavingGuest: "Hóspede",
+      leavingGuest: guestDisplayName,
       arrivingGuest: null,
-      pendingObservation: "Check-out registrado (Recepção / Hóspede)",
+      pendingObservation: `Check-out expresso confirmado (${guestDisplayName})`,
       willCleanAt: null,
       cleaningStartedAt: null,
       completedAt: null,
@@ -2395,21 +2462,50 @@ app.post("/api/public/checkout", (req, res) => {
 
   flat.isOccupied = false;
   flat.updatedAt = now;
+
+  const nowBrl = getBrasiliaNow();
+  const timeStr = nowBrl.timeStr;
+
+  // Atualizar a reserva ativa deste flat ou a reserva identificada por código
+  const matchingResList = (db.reservations || []).filter(r => 
+    (foundRes && (r.id === foundRes.id || r.code === foundRes.code)) ||
+    ((r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
+    r.status !== "cancelada" && r.status !== "cancelado" &&
+    r.checkinDate <= todayStr && r.checkoutDate >= todayStr)
+  );
+  matchingResList.forEach(r => {
+    r.actualCheckoutAt = now;
+    r.actualCheckoutTime = timeStr;
+    r.status = "completed";
+  });
+
+  // Reconciliar pedidos de café da manhã para hoje neste flat:
+  // Se o hóspede fez checkout (ex: 04:15), cancela qualquer café agendado para hoje com motivo Early Check-out!
+  if (!db.breakfastOrders) db.breakfastOrders = [];
+  db.breakfastOrders.forEach(o => {
+    const isMatch = String(o.roomNumber) === String(flat.number) || matchingResList.some(mr => mr.code === o.reservationCode || mr.id === o.reservationId);
+    if (isMatch && o.date === todayStr && o.status !== "cancelled") {
+      o.status = "cancelled";
+      o.cancelReason = `Early check-out: Hóspede desocupou o quarto e saiu às ${timeStr} (café estava agendado para às ${o.deliveryTime || '08:00'})`;
+    }
+  });
+
   saveDatabase();
 
   // Trigger Notification for Checkout
   createNotification({
     category: "checkout",
     title: `🚪 Check-out Realizado - Apt ${flat.number}`,
-    message: `Saída do apartamento ${flat.number} registrada. Quarto desocupado e pronto para limpeza.`,
+    message: `Saída do hóspede ${guestDisplayName} (Apt ${flat.number}) registrada. Quarto desocupado e pronto para limpeza.`,
     severity: "info",
-    metadata: { flatId: flat.id, flatNumber: flat.number },
+    metadata: { flatId: flat.id, flatNumber: flat.number, guestName: guestDisplayName, code: foundRes?.code },
     targetUrl: "/dashboard"
   });
 
   res.json({
     success: true,
     flatNumber: flat.number,
+    guestName: guestDisplayName,
     message: "Check-out confirmado com sucesso!"
   });
 });
@@ -14364,8 +14460,8 @@ function serveSpaWithMetadata(distFolder, req, res) {
     // 1. Extrair código de reserva da URL (query param ou segmento do path)
     let resCode = req.query.res || req.query.code || req.query.r || "";
     if (!resCode) {
-      const match = req.path.match(/(?:minha-reserva|portal-hospede|guest-portal|pre-checkin|cafe)\/([a-zA-Z0-9_\-]+)/i);
-      if (match && match[1] && !["cafe", "room-service", "null", "undefined"].includes(match[1].toLowerCase())) {
+      const match = req.path.match(/(?:minha-reserva|portal-hospede|guest-portal|pre-checkin|cafe|checkout|check-out|saida)\/([a-zA-Z0-9_\-]+)/i);
+      if (match && match[1] && !["cafe", "room-service", "checkout", "check-out", "saida", "null", "undefined"].includes(match[1].toLowerCase())) {
         resCode = match[1];
       }
     }
@@ -14396,6 +14492,7 @@ function serveSpaWithMetadata(distFolder, req, res) {
 
     const isPreCheckin = rawPath.startsWith("/pre-checkin");
     const isPortal = rawPath.startsWith("/minha-reserva") || rawPath.startsWith("/portal-hospede") || rawPath.startsWith("/guest-portal");
+    const isCheckout = rawPath.startsWith("/checkout") || rawPath.startsWith("/check-out") || rawPath.startsWith("/saida") || rawPath.endsWith("/checkout");
 
     let title = "CorpFlats • Hospedagem Executiva & Serviços Exclusivos";
     let desc = "Flats mobiliados completos com garagem privativa, portaria 24h e café da manhã artesanal servido no flat.";
@@ -14404,7 +14501,16 @@ function serveSpaWithMetadata(distFolder, req, res) {
     let imageWidth = "1200";
     let imageHeight = "630";
 
-    if (isBreakfast) {
+    if (isCheckout) {
+      title = flatNumber 
+        ? `🚪 Check-out Expresso • Flat ${flatNumber} • CorpFlats`
+        : "🚪 Check-out Expresso • CorpFlats";
+      desc = guestFirstName 
+        ? `Olá ${guestFirstName}! Confirme sua saída do Flat ${flatNumber} com 1 clique e lembre-se de devolver o cartão na recepção.`
+        : "Confirme sua saída de forma rápida e prática pelo Check-out Expresso CorpFlats.";
+      image = "https://corpflats.onrender.com/flat-preview.jpg";
+      imageAlt = "CorpFlats • Check-out Expresso";
+    } else if (isBreakfast) {
       title = flatNumber 
         ? `☕ Café da Manhã • Flat ${flatNumber} • CorpFlats`
         : "☕ Pedido de Café da Manhã • CorpFlats";

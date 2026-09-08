@@ -87,8 +87,15 @@ function Router() {
         <Route path="/tablet" component={ReceptionTablet} />
 
         {/* Public Guest Checkout Route */}
+        <Route path="/minha-reserva/:code/checkout" component={GuestCheckout} />
+        <Route path="/minha-reserva/:code/saida" component={GuestCheckout} />
+        <Route path="/portal-hospede/:code/checkout" component={GuestCheckout} />
+        <Route path="/guest-portal/:code/checkout" component={GuestCheckout} />
+        <Route path="/checkout/:code" component={GuestCheckout} />
         <Route path="/checkout" component={GuestCheckout} />
+        <Route path="/check-out/:code" component={GuestCheckout} />
         <Route path="/check-out" component={GuestCheckout} />
+        <Route path="/saida/:code" component={GuestCheckout} />
         <Route path="/saida" component={GuestCheckout} />
 
         {/* Reception Fast Checkout Route */}

@@ -655,9 +655,18 @@ export default function GuestPortal() {
             </div>
 
             <div className="p-4 rounded-2xl bg-slate-50/80 border border-slate-100 space-y-1">
-              <span className="text-slate-400 font-bold uppercase text-[10px] tracking-wider block">
-                Check-out (Saída)
-              </span>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400 font-bold uppercase text-[10px] tracking-wider block">
+                  Check-out (Saída)
+                </span>
+                <a
+                  href={`/checkout/${code || reservation.code}`}
+                  className="text-[11px] font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-0.5 rounded-lg transition-colors inline-flex items-center gap-1 shadow-2xs"
+                >
+                  <span>Check-out Expresso</span>
+                  <ArrowRight className="w-3 h-3" />
+                </a>
+              </div>
               <span className="text-sm sm:text-base font-bold text-slate-900 block">
                 {checkoutFormatted}
               </span>

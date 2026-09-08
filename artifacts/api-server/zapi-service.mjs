@@ -459,7 +459,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const linkPortalHospede = `${appOrigin}/minha-reserva/${resCode}`;
   const linkPagamento = `${appOrigin}/minha-reserva/${resCode}`;
   const linkCafeManha = `${appOrigin}/cafe/${resCode}`;
-  const linkCheckout = `${appOrigin}/checkout?code=${resCode}`;
+  const linkCheckout = `${appOrigin}/checkout/${resCode}`;
 
   let totalNights = 1;
   if (reservation.checkinDate && reservation.checkoutDate) {
