@@ -190,12 +190,6 @@ export function ReservationHoverCard({
     setTimeout(() => setCopiedLink(false), 2000)
   }
 
-  // Se houver qualquer operação de arraste ou redimensionamento ativa no calendário,
-  // ignora completamente o HoverCard para não interferir na captura de ponteiro
-  if (isBeingDragged) {
-    return <>{children}</>
-  }
-
   return (
     <HoverCard 
       open={isCardOpen} 

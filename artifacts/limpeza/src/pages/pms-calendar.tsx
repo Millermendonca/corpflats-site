@@ -428,7 +428,7 @@ export default function PmsCalendar() {
       startPointerY: e.clientY,
       pointerType,
       hasMoved: false,
-      isLongPressReady: !isTouch, // Desktop fica pronto imediatamente; touch aguarda timer
+      isLongPressReady: !isTouch || isResize, // Na borda (esticar/encolher) ou mouse: pronto IMEDIATAMENTE!
       currentFlatId: flat.id,
       currentFlatNumber: flat.number,
       currentCheckin: resItem.checkinDate,
@@ -438,16 +438,24 @@ export default function PmsCalendar() {
     setResDragState(initialDragState);
     resDragStateRef.current = initialDragState;
 
-    // No celular / touch:
-    // - 400ms para a borda (esticar / encolher diárias)
-    // - 1000ms (1 segundo) para mover a reserva entre quartos/dias
-    if (isTouch) {
-      const holdTime = isResize ? 400 : 1000;
-
+    if (isResize) {
+      // Borda das pontas: ativa imediatamente ao tocar/clicar sem precisar esperar
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.style.overflowX = "hidden";
+        scrollContainerRef.current.style.touchAction = "none";
+      }
+      setLongPressActiveResId(resItem.id);
+      if (typeof navigator !== "undefined" && navigator.vibrate) {
+        try {
+          navigator.vibrate(35);
+        } catch (_) {}
+      }
+    } else if (isTouch) {
+      // Mover reserva no celular: 2 segundos (2000ms) de pressão estática antes de armar o arraste
       longPressTimerRef.current = setTimeout(() => {
         if (resDragStateRef.current) {
           resDragStateRef.current.isLongPressReady = true;
-          resDragStateRef.current.mode = mode;
+          resDragStateRef.current.mode = "move";
         }
 
         // Trava imediatamente o container contra scroll horizontal nativo
@@ -459,20 +467,93 @@ export default function PmsCalendar() {
         setLongPressActiveResId(resItem.id);
         setResDragState(prev => {
           if (!prev || prev.res.id !== resItem.id) return prev;
-          return { ...prev, mode, isLongPressReady: true };
+          return { ...prev, mode: "move", isLongPressReady: true };
         });
 
         if (typeof navigator !== "undefined" && navigator.vibrate) {
           try {
-            navigator.vibrate(isResize ? 35 : 60);
+            navigator.vibrate([60, 50, 80]);
           } catch (_) {}
         }
-      }, holdTime);
+      }, 2000);
     }
   };
 
   useEffect(() => {
     if (!resDragState) return;
+
+    // Resolução de célula / apartamento / data com DOM + fallback geométrico contínuo
+    const resolveTargetFromCoords = (clientX: number, clientY: number): { flatId: number; flatNum: string; dayStr: string } | null => {
+      const current = resDragStateRef.current;
+      if (!current) return null;
+
+      let foundFlatId: number | null = null;
+      let foundDayStr: string | null = null;
+
+      // 1. Tenta identificar via célula do DOM
+      const cell = getCellFromPoint(clientX, clientY);
+      if (cell) {
+        const fId = Number(cell.getAttribute("data-flat-id"));
+        const dStr = cell.getAttribute("data-day-str");
+        if (fId && dStr) {
+          foundFlatId = fId;
+          foundDayStr = dStr;
+        }
+      }
+
+      // 2. Fallback geométrico de alta precisão (à prova de falhas)
+      if ((!foundFlatId || !foundDayStr) && scrollContainerRef.current) {
+        const container = scrollContainerRef.current;
+        const cRect = container.getBoundingClientRect();
+
+        // 2a. Resolução horizontal do dia
+        if (!foundDayStr) {
+          const scrollLeft = container.scrollLeft;
+          const timelineX = clientX - cRect.left + scrollLeft;
+          for (let i = 0; i < daysInView.length; i++) {
+            const dStr = format(daysInView[i], "yyyy-MM-dd");
+            const layout = dayLayoutMap[dStr];
+            if (layout && timelineX >= layout.left && timelineX < layout.left + layout.width) {
+              foundDayStr = dStr;
+              break;
+            }
+          }
+          if (!foundDayStr) {
+            if (timelineX < FLAT_COL_WIDTH) {
+              foundDayStr = format(daysInView[0], "yyyy-MM-dd");
+            } else {
+              foundDayStr = format(daysInView[daysInView.length - 1], "yyyy-MM-dd");
+            }
+          }
+        }
+
+        // 2b. Resolução vertical do apartamento
+        if (!foundFlatId) {
+          if (current.mode !== "move") {
+            foundFlatId = current.originFlatId;
+          } else {
+            const rows = container.querySelectorAll<HTMLElement>("[data-flat-row-id]");
+            for (let i = 0; i < rows.length; i++) {
+              const rRect = rows[i].getBoundingClientRect();
+              if (clientY >= rRect.top && clientY <= rRect.bottom) {
+                const rId = Number(rows[i].getAttribute("data-flat-row-id"));
+                if (rId) {
+                  foundFlatId = rId;
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      const finalFlatId = (current.mode === "move" ? foundFlatId : current.originFlatId) || current.currentFlatId;
+      const finalDayStr = foundDayStr || current.currentCheckin;
+      const targetFlat = data.flats.find(f => f.id === finalFlatId);
+      const targetFlatNum = targetFlat?.number || String(finalFlatId);
+
+      return { flatId: finalFlatId, flatNum: targetFlatNum, dayStr: finalDayStr };
+    };
 
     // Função unificada para processar o movimento do arraste (mouse ou touch)
     const processDragMove = (clientX: number, clientY: number) => {
@@ -482,10 +563,10 @@ export default function PmsCalendar() {
       const dx = Math.abs(clientX - current.startPointerX);
       const dy = Math.abs(clientY - current.startPointerY);
 
-      // Se for touch no celular e ainda estiver aguardando o timer de segurar:
+      // Se for touch no celular e ainda estiver aguardando o timer de 2 segundos (modo mover):
       if (current.pointerType === "touch" && !current.isLongPressReady) {
-        // Se o dedo se mover mais de 18px antes do tempo, o usuário está rolando a tela livremente!
-        if (dx > 18 || dy > 18) {
+        // Se o dedo se mover mais de 25px antes dos 2 segundos, o usuário está rolando a página normalmente
+        if (dx > 25 || dy > 25) {
           if (longPressTimerRef.current) {
             clearTimeout(longPressTimerRef.current);
             longPressTimerRef.current = null;
@@ -500,7 +581,7 @@ export default function PmsCalendar() {
         return;
       }
 
-      // Já ativou o modo (long press pronto ou desktop):
+      // Já ativou o modo (borda imediata, long press 2s pronto ou desktop):
       if (!current.hasMoved && (dx > 4 || dy > 4)) {
         current.hasMoved = true;
       }
@@ -515,53 +596,43 @@ export default function PmsCalendar() {
         }
       }
 
-      const cell = getCellFromPoint(clientX, clientY);
+      const target = resolveTargetFromCoords(clientX, clientY);
+      if (!target) return;
 
-      if (cell) {
-        const targetFlatId = Number(cell.getAttribute("data-flat-id"));
-        const targetDayStr = cell.getAttribute("data-day-str");
+      setResDragState(prev => {
+        if (!prev) return null;
+        let newCheckin = prev.currentCheckin;
+        let newCheckout = prev.currentCheckout;
 
-        if (targetFlatId && targetDayStr) {
-          const targetFlat = data.flats.find(f => f.id === targetFlatId);
-          const targetFlatNum = targetFlat?.number || String(targetFlatId);
-
-          setResDragState(prev => {
-            if (!prev) return null;
-            let newCheckin = prev.currentCheckin;
-            let newCheckout = prev.currentCheckout;
-
-            if (prev.mode === "move") {
-              newCheckin = targetDayStr;
-              newCheckout = format(addDays(parseISO(targetDayStr), prev.nightsCount), "yyyy-MM-dd");
-            } else if (prev.mode === "resize-left") {
-              if (targetDayStr < prev.originCheckout) {
-                newCheckin = targetDayStr;
-                newCheckout = prev.originCheckout;
-              }
-            } else if (prev.mode === "resize-right") {
-              if (targetDayStr > prev.originCheckin) {
-                newCheckin = prev.originCheckin;
-                newCheckout = targetDayStr;
-              }
-            }
-
-            // No resize, mantém sempre no apartamento de origem
-            const actualFlatId = prev.mode === "move" ? targetFlatId : prev.originFlatId;
-            const actualFlatNum = prev.mode === "move" ? targetFlatNum : prev.originFlatNumber;
-
-            const updated: ResDragState = {
-              ...prev,
-              hasMoved: true,
-              currentFlatId: actualFlatId,
-              currentFlatNumber: actualFlatNum,
-              currentCheckin: newCheckin,
-              currentCheckout: newCheckout
-            };
-            resDragStateRef.current = updated;
-            return updated;
-          });
+        if (prev.mode === "move") {
+          newCheckin = target.dayStr;
+          newCheckout = format(addDays(parseISO(target.dayStr), prev.nightsCount), "yyyy-MM-dd");
+        } else if (prev.mode === "resize-left") {
+          if (target.dayStr < prev.originCheckout) {
+            newCheckin = target.dayStr;
+            newCheckout = prev.originCheckout;
+          }
+        } else if (prev.mode === "resize-right") {
+          if (target.dayStr > prev.originCheckin) {
+            newCheckin = prev.originCheckin;
+            newCheckout = target.dayStr;
+          }
         }
-      }
+
+        const actualFlatId = prev.mode === "move" ? target.flatId : prev.originFlatId;
+        const actualFlatNum = prev.mode === "move" ? target.flatNum : prev.originFlatNumber;
+
+        const updated: ResDragState = {
+          ...prev,
+          hasMoved: true,
+          currentFlatId: actualFlatId,
+          currentFlatNumber: actualFlatNum,
+          currentCheckin: newCheckin,
+          currentCheckout: newCheckout
+        };
+        resDragStateRef.current = updated;
+        return updated;
+      });
     };
 
     const finishResDrag = async () => {
@@ -740,8 +811,10 @@ export default function PmsCalendar() {
     };
 
     const onPointerCancel = (e: PointerEvent) => {
+      // Ignora pointercancel em telas touch pois o fluxo de toque é gerenciado por touchmove/touchend/touchcancel
+      if ((e as any).pointerType === "touch") return;
+
       const current = resDragStateRef.current;
-      // Se for toque e estiver com o arraste ativo, ignora o pointercancel pois o touchmove/touchend continuam
       if (current && (current.isLongPressReady || current.hasMoved)) {
         return;
       }
@@ -758,6 +831,11 @@ export default function PmsCalendar() {
     };
 
     const onTouchCancel = () => {
+      const current = resDragStateRef.current;
+      // Se já ativou o modo de arraste ou já moveu, não cancela no touchcancel
+      if (current && (current.isLongPressReady || current.hasMoved)) {
+        return;
+      }
       if (longPressTimerRef.current) {
         clearTimeout(longPressTimerRef.current);
         longPressTimerRef.current = null;
@@ -2182,6 +2260,7 @@ export default function PmsCalendar() {
                   return (
                     <div 
                       key={flat.id} 
+                      data-flat-row-id={flat.id}
                       style={{ 
                         gridTemplateColumns,
                         gridTemplateRows: "48px"
