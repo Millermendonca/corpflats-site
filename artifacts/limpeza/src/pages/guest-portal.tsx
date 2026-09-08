@@ -594,6 +594,16 @@ export default function GuestPortal() {
               type="button"
               variant="outline"
               size="sm"
+              onClick={() => setLocation(`/pre-checkin/${code || reservation.code}`)}
+              className="h-9 px-3 rounded-xl border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs flex items-center gap-1.5 shadow-2xs"
+            >
+              <FileText className="w-3.5 h-3.5 text-indigo-600" />
+              <span>Pré-Check-in</span>
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
               onClick={() => setLocation(`/checkout/${code || reservation.code}`)}
               className="h-9 px-3 rounded-xl border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs flex items-center gap-1.5 shadow-2xs"
             >
@@ -651,17 +661,39 @@ export default function GuestPortal() {
 
           {/* Grid de Entrada e Saída */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-            <div className="p-4 rounded-2xl bg-slate-50/80 border border-slate-100 space-y-1">
-              <span className="text-slate-400 font-bold uppercase text-[10px] tracking-wider block">
-                Check-in (Entrada)
-              </span>
-              <span className="text-sm sm:text-base font-bold text-slate-900 block">
-                {checkinFormatted}
-              </span>
-              <span className="text-[11px] text-emerald-700 font-semibold flex items-center gap-1">
-                <Clock className="w-3.5 h-3.5" />
-                <span>A partir das {data?.checkinTime || "14:00"} (antecipado assim que limpo)</span>
-              </span>
+            <div className="p-4 rounded-2xl bg-slate-50/80 border border-slate-100 space-y-1.5 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400 font-bold uppercase text-[10px] tracking-wider block">
+                    Check-in (Entrada)
+                  </span>
+                  {preCheckinStatus?.completed ? (
+                    <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-300 font-bold text-[10px]">
+                      ✓ Dados Enviados
+                    </Badge>
+                  ) : (
+                    <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md">
+                      Autoatendimento
+                    </span>
+                  )}
+                </div>
+                <span className="text-sm sm:text-base font-bold text-slate-900 block mt-0.5">
+                  {checkinFormatted}
+                </span>
+                <span className="text-[11px] text-emerald-700 font-semibold flex items-center gap-1">
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>A partir das {data?.checkinTime || "14:00"} (antecipado assim que limpo)</span>
+                </span>
+              </div>
+
+              <Button
+                type="button"
+                onClick={() => setLocation(`/pre-checkin/${code || reservation.code}`)}
+                className="w-full h-8.5 text-xs font-bold rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs transition-all active:scale-95 flex items-center justify-center gap-1.5 mt-2"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                <span>{preCheckinStatus?.completed ? "Ver Dados do Check-in" : "Pré-Check-in Digital"}</span>
+              </Button>
             </div>
 
             <div className="p-4 rounded-2xl bg-slate-50/80 border border-slate-100 space-y-1.5 flex flex-col justify-between">

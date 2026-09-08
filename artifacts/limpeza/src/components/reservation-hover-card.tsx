@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/hooks/use-toast"
 import { 
-  MessageCircle, Phone, ExternalLink, Copy, Check, Coffee, DoorOpen,
+  MessageCircle, Phone, ExternalLink, Copy, Check, Coffee, DoorOpen, FileText,
   Users, Calendar, Eye, Building2, X, Zap, SlidersHorizontal, RefreshCw
 } from "lucide-react"
 import { format, parseISO, differenceInDays } from "date-fns"
@@ -175,6 +175,7 @@ export function ReservationHoverCard({
   const portalUrl = `${originUrl}/minha-reserva/${resItem.code || resItem.id}`
   const breakfastUrl = `${originUrl}/minha-reserva/${resItem.code || resItem.id}/cafe`
   const checkoutUrl = `${originUrl}/checkout/${resItem.code || resItem.id}`
+  const preCheckinUrl = `${originUrl}/pre-checkin/${resItem.code || resItem.id}`
 
   const waMessage = `Olá ${guestName}, tudo bem? Falamos da CorpFlats a respeito da sua estadia no Flat ${flatNumber} (${checkinStr} a ${checkoutStr}). Como podemos ajudar?`
   const waLink = finalWaPhone ? `https://wa.me/${finalWaPhone}?text=${encodeURIComponent(waMessage)}` : null
@@ -559,6 +560,17 @@ export function ReservationHoverCard({
                 <span>Café</span>
               </a>
             )}
+
+            <a
+              href={preCheckinUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="h-7 px-2 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/80 hover:bg-indigo-100 text-indigo-800 dark:text-indigo-300 font-bold text-[11px] inline-flex items-center gap-1 transition-colors shrink-0"
+              title="Abrir Link de Pré-Check-in Digital"
+            >
+              <FileText className="w-3 h-3 text-indigo-600" />
+              <span>Check-in</span>
+            </a>
 
             <a
               href={checkoutUrl}
