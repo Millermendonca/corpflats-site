@@ -6612,6 +6612,13 @@
           "label": "🏨 Ver Detalhes da Reserva",
           "url": "{{link_portal_hospede}}"
         }
+      ],
+      "channels": [
+        "site",
+        "whatsapp",
+        "booking",
+        "airbnb",
+        "outros"
       ]
     },
     {
@@ -6633,6 +6640,13 @@
           "label": "🏨 Acessar Minha Reserva",
           "url": "{{link_portal_hospede}}"
         }
+      ],
+      "channels": [
+        "site",
+        "whatsapp",
+        "booking",
+        "airbnb",
+        "outros"
       ]
     },
     {
@@ -6654,6 +6668,13 @@
           "label": "📝 Preencher Ficha Digital",
           "url": "{{link_checkin_digital}}"
         }
+      ],
+      "channels": [
+        "site",
+        "whatsapp",
+        "booking",
+        "airbnb",
+        "outros"
       ]
     },
     {
@@ -6681,6 +6702,13 @@
           "label": "🏨 Portal do Hóspede",
           "url": "{{link_portal_hospede}}"
         }
+      ],
+      "channels": [
+        "site",
+        "whatsapp",
+        "booking",
+        "airbnb",
+        "outros"
       ]
     },
     {
@@ -6708,6 +6736,13 @@
           "label": "📞 Ligar Recepção",
           "phone": "{{telefone_hotel}}"
         }
+      ],
+      "channels": [
+        "site",
+        "whatsapp",
+        "booking",
+        "airbnb",
+        "outros"
       ]
     },
     {
@@ -6729,6 +6764,10 @@
           "label": "🥐 Montar Café da Manhã",
           "url": "{{link_cafe_manha}}"
         }
+      ],
+      "channels": [
+        "site",
+        "whatsapp"
       ]
     },
     {
@@ -6750,6 +6789,13 @@
           "label": "🚪 Check-out Expresso",
           "url": "{{link_checkout}}"
         }
+      ],
+      "channels": [
+        "site",
+        "whatsapp",
+        "booking",
+        "airbnb",
+        "outros"
       ]
     },
     {
@@ -6771,6 +6817,13 @@
           "label": "⭐ Avaliar no Google (5 Estrelas)",
           "url": "{{link_avaliacao_google}}"
         }
+      ],
+      "channels": [
+        "site",
+        "whatsapp",
+        "booking",
+        "airbnb",
+        "outros"
       ]
     },
     {
@@ -6792,6 +6845,13 @@
           "label": "🌐 Reservar Novas Datas",
           "url": "https://corpflats.onrender.com/reservar"
         }
+      ],
+      "channels": [
+        "site",
+        "whatsapp",
+        "booking",
+        "airbnb",
+        "outros"
       ]
     }
   ],

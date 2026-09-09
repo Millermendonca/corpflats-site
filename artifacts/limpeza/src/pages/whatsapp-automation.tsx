@@ -61,12 +61,51 @@ interface ButtonAction {
   phone?: string
 }
 
+export const CHANNEL_OPTIONS = [
+  { 
+    id: "site", 
+    label: "Site Oficial", 
+    icon: "🌐", 
+    description: "Reservas feitas diretamente pelo motor de reservas do site CorpFlats",
+    badgeClass: "bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300 border-indigo-200"
+  },
+  { 
+    id: "whatsapp", 
+    label: "WhatsApp Direto", 
+    icon: "💬", 
+    description: "Reservas fechadas diretamente pelo time de vendas via WhatsApp",
+    badgeClass: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border-emerald-200"
+  },
+  { 
+    id: "booking", 
+    label: "Booking.com", 
+    icon: "🏨", 
+    description: "Reservas recebidas via Booking.com (OTA)",
+    badgeClass: "bg-sky-100 text-sky-800 dark:bg-sky-950/60 dark:text-sky-300 border-sky-200"
+  },
+  { 
+    id: "airbnb", 
+    label: "Airbnb", 
+    icon: "🔴", 
+    description: "Reservas recebidas via Airbnb (OTA)",
+    badgeClass: "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 border-rose-200"
+  },
+  { 
+    id: "outros", 
+    label: "Balcão / Outros", 
+    icon: "🏢", 
+    description: "Reservas presenciais, corporativas, Decolar, Expedia ou outros canais",
+    badgeClass: "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border-amber-200"
+  },
+]
+
 interface WhatsAppTemplate {
   id: string
   triggerEvent: string
   title: string
   description?: string
   enabled: boolean
+  channels?: string[]
   triggerTiming: "immediate" | "before_event" | "after_event" | "fixed_time_day_of" | "fixed_time_day_before"
   offsetValue: number
   offsetUnit: "minutes" | "hours" | "days"
@@ -82,6 +121,7 @@ interface QueueItem {
   reservationCode: string
   guestName: string
   guestPhone: string
+  channel?: string
   triggerEvent: string
   templateId: string
   title: string
@@ -192,6 +232,7 @@ export default function WhatsappAutomation() {
   const [editingOffsetUnit, setEditingOffsetUnit] = useState<"minutes" | "hours" | "days">("hours")
   const [editingFixedTime, setEditingFixedTime] = useState<string>("09:00")
   const [editingButtons, setEditingButtons] = useState<ButtonAction[]>([])
+  const [editingChannels, setEditingChannels] = useState<string[]>(["site", "whatsapp", "booking", "airbnb", "outros"])
   const [editingEnabled, setEditingEnabled] = useState<boolean>(true)
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -428,7 +469,22 @@ export default function WhatsappAutomation() {
     setEditingOffsetUnit(tpl.offsetUnit || "hours")
     setEditingFixedTime(tpl.fixedTime || "09:00")
     setEditingButtons(tpl.buttons ? JSON.parse(JSON.stringify(tpl.buttons)) : [])
+    const tplChannels = tpl.channels && Array.isArray(tpl.channels) && tpl.channels.length > 0
+      ? tpl.channels
+      : ["site", "whatsapp", "booking", "airbnb", "outros"]
+    setEditingChannels(tplChannels)
     setEditingEnabled(tpl.enabled !== false)
+  }
+
+  // Toggle individual channel for the current editing template
+  const handleToggleChannel = (channelId: string) => {
+    setEditingChannels(prev => {
+      if (prev.includes(channelId)) {
+        return prev.filter(id => id !== channelId)
+      } else {
+        return [...prev, channelId]
+      }
+    })
   }
 
   // Insert tag at current cursor position in the message textarea
@@ -493,6 +549,7 @@ export default function WhatsappAutomation() {
       offsetUnit: editingOffsetUnit,
       fixedTime: editingFixedTime,
       buttons: editingButtons,
+      channels: editingChannels,
       enabled: editingEnabled
     }
 
@@ -504,7 +561,10 @@ export default function WhatsappAutomation() {
       })
 
       if (res.ok) {
-        toast({ title: "Template salvo com sucesso!", description: "As alterações da mensagem e botões já estão ativas." })
+        toast({ 
+          title: "Template salvo com sucesso!", 
+          description: `Régua atualizada com ${editingChannels.length} canal(is) configurado(s).` 
+        })
         setTemplates(prev => prev.map(t => t.id === updatedTemplate.id ? updatedTemplate : t))
         setCurrentTemplate(updatedTemplate)
       } else {
@@ -930,6 +990,30 @@ export default function WhatsappAutomation() {
                         </div>
                       )}
 
+                      {/* Canais Destinatários Permitidos */}
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                          <ListFilter className="w-3 h-3 text-primary" /> Canais Destinatários:
+                        </span>
+                        <div className="flex flex-wrap gap-1">
+                          {(!tpl.channels || tpl.channels.length === 0 || tpl.channels.length >= 5 || tpl.channels.includes("all")) ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                              🌐 Todos os Canais
+                            </span>
+                          ) : (
+                            tpl.channels.map((chId) => {
+                              const opt = CHANNEL_OPTIONS.find(o => o.id === chId)
+                              return (
+                                <span key={chId} className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md border ${opt?.badgeClass || 'bg-muted text-foreground'}`}>
+                                  <span>{opt?.icon || "🏷️"}</span>
+                                  <span>{opt?.label || chId}</span>
+                                </span>
+                              )
+                            })
+                          )}
+                        </div>
+                      </div>
+
                       <div className="pt-2 flex items-center justify-between border-t border-border/50">
                         <Button 
                           variant="ghost" 
@@ -978,10 +1062,20 @@ export default function WhatsappAutomation() {
                 {/* Seletor do Template a Editar */}
                 <Card className="rounded-2xl border shadow-xs">
                   <CardHeader className="pb-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        onClick={() => setActiveTab("rules")}
+                        className="text-xs h-7 px-2 text-muted-foreground hover:text-foreground gap-1"
+                      >
+                        ← Voltar para a Lista de Réguas
+                      </Button>
+                    </div>
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <div>
                         <CardTitle className="text-base font-bold">Personalizar Mensagem & Gatilho</CardTitle>
-                        <CardDescription className="text-xs">Selecione qual momento da jornada você deseja configurar.</CardDescription>
+                        <CardDescription className="text-xs">Selecione qual momento da jornada você deseja configurar e os canais autorizados.</CardDescription>
                       </div>
                       <Select 
                         value={selectedTemplateId} 
@@ -1098,6 +1192,119 @@ export default function WhatsappAutomation() {
                               className="text-xs h-9"
                             />
                           </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* CANAIS DE RESERVA DESTINATÁRIOS (FILTRO POR CANAL DE ORIGEM) */}
+                    <div className="p-3.5 rounded-xl bg-slate-50/80 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <ListFilter className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                          <div>
+                            <span className="text-xs font-bold text-foreground uppercase tracking-wider">
+                              Canais de Reserva Destinatários
+                            </span>
+                            <p className="text-[11px] text-muted-foreground">
+                              Defina quais hóspedes receberão esta mensagem automática de acordo com o canal onde reservaram.
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Botões de Ação Rápida */}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setEditingChannels(["site", "whatsapp"])}
+                            className={`h-7 text-[11px] px-2.5 font-bold gap-1 transition-all ${
+                              editingChannels.length === 2 && editingChannels.includes("site") && editingChannels.includes("whatsapp")
+                                ? "border-emerald-500 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
+                                : "hover:bg-muted"
+                            }`}
+                            title="Ativa apenas hóspedes do Site Próprio e WhatsApp (ideal para café da manhã e ofertas exclusivas)"
+                          >
+                            ⚡ Apenas Diretos (Site + WhatsApp)
+                          </Button>
+
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setEditingChannels(["site", "whatsapp", "booking", "airbnb", "outros"])}
+                            className={`h-7 text-[11px] px-2 font-semibold ${
+                              editingChannels.length === 5 ? "border-primary text-primary bg-primary/5" : ""
+                            }`}
+                          >
+                            🌐 Todos os Canais
+                          </Button>
+                        </div>
+                      </div>
+
+                      {/* Grid de Canais Selecionáveis */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-1">
+                        {CHANNEL_OPTIONS.map((ch) => {
+                          const isSelected = editingChannels.includes(ch.id);
+                          return (
+                            <div
+                              key={ch.id}
+                              onClick={() => handleToggleChannel(ch.id)}
+                              className={`cursor-pointer p-2.5 rounded-xl border transition-all flex items-start justify-between gap-2.5 select-none ${
+                                isSelected 
+                                  ? "bg-white dark:bg-slate-900 border-emerald-500 shadow-2xs ring-1 ring-emerald-500/20" 
+                                  : "bg-muted/20 border-border opacity-60 hover:opacity-100 hover:bg-muted/40"
+                              }`}
+                            >
+                              <div className="flex items-start gap-2 min-w-0">
+                                <span className="text-lg shrink-0 mt-0.5">{ch.icon}</span>
+                                <div className="space-y-0.5 min-w-0">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="text-xs font-bold text-foreground truncate">{ch.label}</span>
+                                    {isSelected ? (
+                                      <Badge variant="secondary" className="text-[9.5px] py-0 px-1 font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300 border border-emerald-200">
+                                        Ativo
+                                      </Badge>
+                                    ) : (
+                                      <Badge variant="outline" className="text-[9.5px] py-0 px-1 text-muted-foreground">
+                                        Bloqueado
+                                      </Badge>
+                                    )}
+                                  </div>
+                                  <p className="text-[10px] text-muted-foreground line-clamp-2 leading-tight">
+                                    {ch.description}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <Switch
+                                checked={isSelected}
+                                onCheckedChange={() => handleToggleChannel(ch.id)}
+                                className="shrink-0"
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Resumo do Status de Envio */}
+                      <div className="p-2 rounded-lg bg-muted/40 border text-[11px] flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-1.5 text-muted-foreground flex-wrap">
+                          <span>Destinatários selecionados:</span>
+                          <strong className="text-foreground">
+                            {editingChannels.length === 5 
+                              ? "Todos os Canais (Sem restrição)" 
+                              : editingChannels.length === 0 
+                                ? "Nenhum canal (Mensagem pausada para todos)" 
+                                : `${editingChannels.length} canal(is) ativo(s): ${editingChannels.map(id => CHANNEL_OPTIONS.find(o => o.id === id)?.label).join(", ")}`}
+                          </strong>
+                        </div>
+
+                        {editingChannels.length === 0 && (
+                          <Badge variant="destructive" className="text-[10px]">
+                            ⚠️ Nenhum hóspede receberá
+                          </Badge>
                         )}
                       </div>
                     </div>
@@ -1707,6 +1914,17 @@ export default function WhatsappAutomation() {
                               <Badge variant="outline" className="text-[10px] font-mono">
                                 {item.reservationCode}
                               </Badge>
+
+                              {/* Canal de Origem da Reserva */}
+                              {item.channel && (
+                                <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md border ${
+                                  CHANNEL_OPTIONS.find(o => o.id === item.channel)?.badgeClass || "bg-muted text-foreground"
+                                }`}>
+                                  <span>{CHANNEL_OPTIONS.find(o => o.id === item.channel)?.icon || "🏷️"}</span>
+                                  <span>{CHANNEL_OPTIONS.find(o => o.id === item.channel)?.label || item.channel}</span>
+                                </span>
+                              )}
+
                               <span className="text-xs text-muted-foreground font-mono">
                                 📞 {item.guestPhone}
                               </span>
@@ -1728,9 +1946,16 @@ export default function WhatsappAutomation() {
                                 </Badge>
                               )}
                               {isCancelled && (
-                                <Badge className="bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-300 text-[10px]">
-                                  Cancelado
-                                </Badge>
+                                <div className="flex items-center gap-1.5">
+                                  <Badge className="bg-neutral-100 text-neutral-800 dark:bg-neutral-800 dark:text-neutral-300 text-[10px]">
+                                    Cancelado
+                                  </Badge>
+                                  {item.error && (
+                                    <span className="text-[10px] text-amber-600 dark:text-amber-400 font-medium">
+                                      ({item.error})
+                                    </span>
+                                  )}
+                                </div>
                               )}
                             </div>
 

@@ -10,6 +10,42 @@
  * - Fila de disparos com agendamento por offset de tempo e antecipação manual ("Enviar Agora")
  */
 
+// ── Canais de Reserva Suportados no Sistema ─────────────────────────────────
+export const AVAILABLE_CHANNELS = [
+  { id: "site", label: "Site Oficial", description: "Reservas diretas pelo site CorpFlats" },
+  { id: "whatsapp", label: "WhatsApp", description: "Reservas negociadas diretamente via WhatsApp" },
+  { id: "booking", label: "Booking.com", description: "Reservas importadas da Booking.com" },
+  { id: "airbnb", label: "Airbnb", description: "Reservas importadas do Airbnb" },
+  { id: "outros", label: "Balcão / Outros", description: "Balcão, presencial ou outros canais" },
+];
+
+export const ALL_CHANNEL_IDS = ["site", "whatsapp", "booking", "airbnb", "outros"];
+
+/**
+ * Normaliza qualquer string de canal vinda da reserva para os identificadores canônicos
+ */
+export function normalizeReservationChannel(rawChannel) {
+  const c = String(rawChannel || "").toLowerCase().trim();
+  if (c.includes("booking")) return "booking";
+  if (c.includes("airbnb")) return "airbnb";
+  if (c.includes("whats") || c.includes("direta") || c.includes("wpp")) return "whatsapp";
+  if (c.includes("site")) return "site";
+  if (c.includes("balcao") || c.includes("balcão") || c.includes("presencial") || c.includes("decolar") || c.includes("expedia")) return "outros";
+  return c || "site";
+}
+
+/**
+ * Verifica se um template automático está autorizado para o canal da reserva
+ */
+export function isTemplateAllowedForChannel(template, rawChannel) {
+  if (!template || !template.channels || !Array.isArray(template.channels) || template.channels.length === 0 || template.channels.includes("all")) {
+    return true;
+  }
+  const norm = normalizeReservationChannel(rawChannel);
+  const rawLower = String(rawChannel || "").toLowerCase().trim();
+  return template.channels.includes(norm) || template.channels.includes(rawLower);
+}
+
 // ── Templates Padrão de Alta Conversão & Boas Práticas Hoteleiras ──────────────
 export const DEFAULT_WHATSAPP_TEMPLATES = [
   {
@@ -18,6 +54,7 @@ export const DEFAULT_WHATSAPP_TEMPLATES = [
     title: "Nova Reserva • Confirmação & Resumo",
     description: "Enviado imediatamente quando uma nova reserva é criada ou confirmada no sistema/site.",
     enabled: true,
+    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
     triggerTiming: "immediate",
     offsetValue: 0,
     offsetUnit: "minutes",
@@ -49,6 +86,7 @@ Para agilizar sua entrada na portaria sem filas, realize com antecedência o seu
     title: "Modificação de Reserva • Dados Atualizados",
     description: "Enviado quando datas, quarto ou número de hóspedes forem alterados.",
     enabled: true,
+    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
     triggerTiming: "immediate",
     offsetValue: 0,
     offsetUnit: "minutes",
@@ -73,6 +111,7 @@ Qualquer dúvida, estamos à inteira disposição!`,
     title: "Lembrete de Pré-Check-in Digital",
     description: "Enviado 24 horas antes do check-in para agilizar o cadastro de portaria.",
     enabled: true,
+    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
     triggerTiming: "before_event",
     offsetValue: 24,
     offsetUnit: "hours",
@@ -92,6 +131,7 @@ Para que a portaria do Edifício Soho libere sua entrada imediatamente na chegad
     title: "Dia do Check-in • Instruções de Chegada",
     description: "Enviado no dia do check-in às 09:00 com localização, regras e senha de Wi-Fi.",
     enabled: true,
+    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
     triggerTiming: "fixed_time_day_of",
     offsetValue: 0,
     offsetUnit: "hours",
@@ -122,6 +162,7 @@ Desejamos uma ótima viagem até aqui! Se precisar de suporte, estamos à dispos
     title: "Check-in Realizado • Boas-vindas ao Quarto",
     description: "Enviado assim que o hóspede entra e o check-in é concluído no tablet ou sistema.",
     enabled: true,
+    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
     triggerTiming: "immediate",
     offsetValue: 0,
     offsetUnit: "minutes",
@@ -146,6 +187,7 @@ Tenha uma estadia incrível!`,
     title: "Café da Manhã • Montagem da Bandeja",
     description: "Enviado às 18:00 da véspera para hóspedes com café agendarem a bandeja.",
     enabled: true,
+    channels: ["site", "whatsapp"],
     triggerTiming: "fixed_time_day_before",
     offsetValue: 0,
     offsetUnit: "hours",
@@ -165,6 +207,7 @@ Preparamos tudo fresquinho com frutas, pães e café quente no horário de sua p
     title: "Dia do Check-out • Orientações de Saída",
     description: "Enviado no dia de saída às 09:30 relembrando o horário limite das 12:00.",
     enabled: true,
+    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
     triggerTiming: "fixed_time_day_of",
     offsetValue: 0,
     offsetUnit: "hours",
@@ -187,6 +230,7 @@ Caso necessite estender o horário (Late Check-out), solicite diretamente à rec
     title: "Pós Check-out • Agradecimento & Avaliação Google",
     description: "Enviado 2 horas após a saída convidando para avaliação 5 estrelas no Google.",
     enabled: true,
+    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
     triggerTiming: "after_event",
     offsetValue: 2,
     offsetUnit: "hours",
@@ -208,6 +252,7 @@ Sua opinião ajuda outros hóspedes e motiva nossa equipe a evoluir sempre:`,
     title: "Cancelamento de Reserva",
     description: "Enviado imediatamente quando uma reserva for cancelada no sistema.",
     enabled: true,
+    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
     triggerTiming: "immediate",
     offsetValue: 0,
     offsetUnit: "minutes",
@@ -227,6 +272,7 @@ Lamentamos que não possa se hospedar conosco nesta ocasião e estaremos de bra�
     title: "Cobrança • Pagamento Pendente / Concluir Reserva",
     description: "Enviado quando uma reserva está com status Aguardando Pagamento, com links para PIX e Cartão de Crédito.",
     enabled: true,
+    channels: ["site", "whatsapp"],
     triggerTiming: "immediate",
     offsetValue: 0,
     offsetUnit: "minutes",
@@ -848,6 +894,16 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
           db.whatsappTemplates.push(defTpl);
         }
       }
+      // Garante que templates existentes possuam a propriedade channels inicializada
+      for (const tpl of db.whatsappTemplates) {
+        if (!tpl.channels || !Array.isArray(tpl.channels) || tpl.channels.length === 0) {
+          if (tpl.id === "tpl_breakfast_reminder") {
+            tpl.channels = ["site", "whatsapp"];
+          } else {
+            tpl.channels = ["site", "whatsapp", "booking", "airbnb", "outros"];
+          }
+        }
+      }
     }
 
     if (!db.whatsappQuickMessages || db.whatsappQuickMessages.length === 0) {
@@ -915,13 +971,16 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
     res.json(db?.whatsappTemplates || []);
   });
 
-  // 6. Salvar / Atualizar Templates
+  // 6. Salvar / Atualizar Templates (com cancelamento automático de agendamentos para canais removidos)
   app.post("/api/whatsapp/templates", (req, res) => {
     const db = getDb();
     ensureDbDefaults();
     const incoming = req.body;
+    let modifiedTemplates = [];
+
     if (Array.isArray(incoming)) {
       db.whatsappTemplates = incoming;
+      modifiedTemplates = incoming;
     } else if (incoming && incoming.id) {
       const idx = (db.whatsappTemplates || []).findIndex(t => t.id === incoming.id);
       if (idx >= 0) {
@@ -929,7 +988,26 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
       } else {
         db.whatsappTemplates.push(incoming);
       }
+      modifiedTemplates = [incoming];
     }
+
+    // Se o template teve canais configurados, cancela agendamentos futuros na fila de canais não permitidos
+    for (const utpl of modifiedTemplates) {
+      if (utpl && utpl.id && utpl.channels && Array.isArray(utpl.channels) && !utpl.channels.includes("all")) {
+        for (const qItem of (db.whatsappQueue || [])) {
+          if (qItem.templateId === utpl.id && qItem.status === "scheduled") {
+            const itemChannel = qItem.channel || (db.reservations || []).find(r => r.id === qItem.reservationId || r.code === qItem.reservationCode)?.channel;
+            if (itemChannel && !isTemplateAllowedForChannel(utpl, itemChannel)) {
+              console.log(`[Auto-WhatsApp] Cancelando agendamento na fila para ${qItem.guestName} (Canal '${itemChannel}') pois canal foi desabilitado no template '${utpl.title || utpl.id}'`);
+              qItem.status = "cancelled";
+              qItem.error = `Canal '${itemChannel}' desativado nas configurações do template`;
+              qItem.updatedAt = new Date().toISOString();
+            }
+          }
+        }
+      }
+    }
+
     saveDatabase();
     res.json({ success: true, templates: db.whatsappTemplates });
   });
@@ -1246,7 +1324,19 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
       );
 
       for (const item of pendingItems) {
-        console.log(`[Auto-WhatsApp] Disparando agendamento automático para ${item.guestName} (${item.triggerEvent})...`);
+        // Revalidação de segurança: se o template desautorizou este canal após o agendamento
+        const tpl = (db.whatsappTemplates || []).find(t => t.id === item.templateId);
+        const itemChannel = item.channel || (db.reservations || []).find(r => r.id === item.reservationId || r.code === item.reservationCode)?.channel;
+        if (tpl && itemChannel && !isTemplateAllowedForChannel(tpl, itemChannel)) {
+          console.log(`[Auto-WhatsApp] Cancelando disparo agendado de ${item.guestName}: canal '${itemChannel}' desativado no template '${tpl.title}'`);
+          item.status = "cancelled";
+          item.error = `Canal '${itemChannel}' desativado nas regras do template`;
+          item.updatedAt = nowIso;
+          saveDatabase();
+          continue;
+        }
+
+        console.log(`[Auto-WhatsApp] Disparando agendamento automático para ${item.guestName} (${item.triggerEvent} / Canal: ${itemChannel || 'Padrão'})...`);
         const result = await sendZapiMessage(db.zapiConfig, {
           phone: item.guestPhone,
           message: item.renderedMessage,
@@ -1307,8 +1397,15 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
   let hasChanges = false;
 
   for (const resv of confirmedReservations) {
+    const resvChannel = resv.channel || resv.source || "site";
+
     for (const tpl of activeTemplates) {
-      // Ignora café da manhã se reserva não inclui café
+      // 1. Verifica se o canal da reserva está permitido no template (ex: site/whatsapp sim, booking/airbnb não)
+      if (!isTemplateAllowedForChannel(tpl, resvChannel)) {
+        continue;
+      }
+
+      // 2. Ignora café da manhã se reserva não inclui café
       if (tpl.triggerEvent === "breakfast_reminder" && !resv.includeBreakfast) {
         continue;
       }
@@ -1341,6 +1438,7 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
             reservationCode: resv.code,
             guestName: resv.guestName,
             guestPhone: resv.guestPhone,
+            channel: resvChannel,
             triggerEvent: tpl.triggerEvent,
             templateId: tpl.id,
             title: tpl.title,
@@ -1372,8 +1470,13 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     if (!db || !db.zapiConfig?.enabled) return;
     if (!reservation || !reservation.guestPhone) return;
 
+    const resvChannel = reservation.channel || reservation.source || "site";
+
     const templates = (db.whatsappTemplates || []).filter(t => 
-      t.enabled && t.triggerEvent === eventName && t.triggerTiming === "immediate"
+      t.enabled && 
+      t.triggerEvent === eventName && 
+      t.triggerTiming === "immediate" &&
+      isTemplateAllowedForChannel(t, resvChannel)
     );
 
     for (const tpl of templates) {
