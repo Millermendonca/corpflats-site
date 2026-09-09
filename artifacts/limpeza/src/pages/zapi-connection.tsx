@@ -28,7 +28,9 @@ import {
   ShieldCheck, 
   SlidersHorizontal,
   ChevronRight,
-  Info
+  Info,
+  Phone,
+  Sparkles
 } from "lucide-react"
 import { AccessDenied } from "@/components/access-denied"
 
@@ -76,7 +78,12 @@ export default function ZapiConnection() {
   const [testMessage, setTestMessage] = useState<string>(
     "Olá! Esta é uma mensagem de teste enviada pela central CorpFlats via Z-API. Conexão operacional e funcionando perfeitamente!"
   )
-  const [testSendMode, setTestSendMode] = useState<"text" | "buttons">("text")
+  const [testSendMode, setTestSendMode] = useState<"text" | "buttons">("buttons")
+  const [testButtons, setTestButtons] = useState<any[]>([
+    { id: "btn_test_chk", type: "URL", label: "📝 Ficha Check-in", url: "https://corpflats.onrender.com/pre-checkin/RES-113-0034" },
+    { id: "btn_test_res", type: "URL", label: "🏨 Ver Reserva", url: "https://corpflats.onrender.com/minha-reserva/RES-113-0034" },
+    { id: "btn_test_call", type: "CALL", label: "📞 Ligar Recepção", phone: "5522997124021" }
+  ])
   const [sendingTest, setSendingTest] = useState<boolean>(false)
 
   useEffect(() => {
@@ -190,7 +197,8 @@ export default function ZapiConnection() {
         message: testMessage,
         title: "CorpFlats - Teste Z-API",
         footer: "Sistema CorpFlats Soho Residence",
-        sendMode: testSendMode
+        sendMode: testSendMode,
+        buttons: testSendMode === "buttons" ? testButtons : []
       }
 
       const res = await fetch("/api/whatsapp/send-test", {
@@ -773,6 +781,32 @@ export default function ZapiConnection() {
                 className="text-xs h-9 rounded-xl"
               />
             </div>
+
+            {testSendMode === "buttons" && (
+              <div className="p-3 rounded-xl bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-emerald-900 dark:text-emerald-200 flex items-center gap-1.5">
+                    🔘 Botões Interativos Anexados ({testButtons.length})
+                  </span>
+                  <span className="text-[10px] text-emerald-700 dark:text-emerald-300 font-medium">
+                    Ativos no disparo
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {testButtons.map((btn, idx) => (
+                    <div key={idx} className="flex items-center gap-1.5 px-2.5 py-1 bg-white dark:bg-background rounded-lg border text-xs shadow-xs font-medium">
+                      <span>{btn.label}</span>
+                      <span className="text-[9px] px-1 py-0.2 bg-muted text-muted-foreground rounded font-mono">
+                        {btn.type === "CALL" ? "Ligação" : "Link"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[10px] text-emerald-700 dark:text-emerald-400">
+                  Estes botões de ação nativos aparecerão clicáveis no WhatsApp do destinatário.
+                </p>
+              </div>
+            )}
           </div>
 
           <DialogFooter className="gap-2">

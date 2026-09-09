@@ -1159,7 +1159,16 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
     }
 
     let finalMessage = message || "Mensagem de teste CorpFlats Z-API";
-    let finalButtons = buttons || [];
+    let finalButtons = Array.isArray(buttons) && buttons.length > 0 ? buttons : [];
+
+    // Se o modo selecionado for botões e nenhum botão foi enviado, provê botões de teste interativos oficiais
+    if (sendMode === "buttons" && finalButtons.length === 0) {
+      finalButtons = [
+        { id: "btn_test_chk", type: "URL", label: "📝 Ficha Check-in", url: "{{link_checkin_digital}}" },
+        { id: "btn_test_res", type: "URL", label: "🏨 Ver Reserva", url: "{{link_portal_hospede}}" },
+        { id: "btn_test_call", type: "CALL", label: "📞 Ligar Recepção", phone: "{{telefone_hotel}}" }
+      ];
+    }
 
     const baseUrl = `${req.protocol}://${req.get("host")}`;
 

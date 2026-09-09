@@ -654,8 +654,16 @@ export default function WhatsappAutomation() {
         sendMode: testSendMode
       }
 
-      if (testIncludeButtons && editingButtons.length > 0) {
-        payload.buttons = editingButtons
+      if (testSendMode === "buttons") {
+        if (testIncludeButtons && editingButtons.length > 0) {
+          payload.buttons = editingButtons
+        } else {
+          payload.buttons = [
+            { id: "btn_test_chk", type: "URL", label: "📝 Ficha Check-in", url: "https://corpflats.onrender.com/pre-checkin/RES-113-0034" },
+            { id: "btn_test_res", type: "URL", label: "🏨 Ver Reserva", url: "https://corpflats.onrender.com/minha-reserva/RES-113-0034" },
+            { id: "btn_test_call", type: "CALL", label: "📞 Falar na Recepção", phone: "5522997124021" }
+          ]
+        }
       }
 
       const res = await fetch("/api/whatsapp/send-test", {
@@ -2138,7 +2146,10 @@ export default function WhatsappAutomation() {
 
                   <button
                     type="button"
-                    onClick={() => setTestSendMode("buttons")}
+                    onClick={() => {
+                      setTestSendMode("buttons")
+                      setTestIncludeButtons(true)
+                    }}
                     className={`p-2.5 rounded-xl border text-left transition-all ${
                       testSendMode === "buttons"
                         ? "border-emerald-600 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-950 dark:text-emerald-100 ring-1 ring-emerald-600"
@@ -2228,13 +2239,54 @@ export default function WhatsappAutomation() {
                 />
               </div>
 
-              {testSendMode === "buttons" && editingButtons.length > 0 && (
-                <div className="flex items-center justify-between p-2.5 rounded-lg border bg-muted/40">
-                  <span className="text-xs font-semibold">Incluir os {editingButtons.length} Botões Interativos</span>
-                  <Switch 
-                    checked={testIncludeButtons}
-                    onCheckedChange={setTestIncludeButtons}
-                  />
+              {testSendMode === "buttons" && (
+                <div className="p-3 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-emerald-900 dark:text-emerald-200 flex items-center gap-1.5">
+                      🔘 Botões Interativos Anexados {editingButtons.length > 0 ? `(${editingButtons.length})` : "(Padrão de Demonstração)"}
+                    </span>
+                    {editingButtons.length > 0 && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-muted-foreground">Incluir</span>
+                        <Switch 
+                          checked={testIncludeButtons}
+                          onCheckedChange={setTestIncludeButtons}
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {editingButtons.length > 0 ? (
+                    testIncludeButtons && (
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {editingButtons.map((btn: any, idx: number) => (
+                          <div key={idx} className="flex items-center gap-1.5 px-2.5 py-1 bg-white dark:bg-background rounded-lg border text-xs shadow-xs font-medium">
+                            <span>{btn.label}</span>
+                            <span className="text-[9px] px-1 py-0.2 bg-muted text-muted-foreground rounded font-mono">
+                              {btn.type === "CALL" ? "Ligação" : "Link"}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  ) : (
+                    <div className="space-y-1.5">
+                      <p className="text-[11px] text-emerald-800 dark:text-emerald-300">
+                        Como este modelo específico não possui botões configurados no template, anexaremos botões interativos de teste para demonstrar a funcionalidade:
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        <span className="px-2.5 py-1 bg-white dark:bg-background rounded-lg border text-xs font-medium text-emerald-900 dark:text-emerald-200 shadow-2xs">
+                          📝 Ficha Check-in
+                        </span>
+                        <span className="px-2.5 py-1 bg-white dark:bg-background rounded-lg border text-xs font-medium text-emerald-900 dark:text-emerald-200 shadow-2xs">
+                          🏨 Ver Reserva
+                        </span>
+                        <span className="px-2.5 py-1 bg-white dark:bg-background rounded-lg border text-xs font-medium text-emerald-900 dark:text-emerald-200 shadow-2xs">
+                          📞 Falar na Recepção
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
