@@ -6978,16 +6978,50 @@
   },
   "whatsappTemplates": [
     {
-      "id": "tpl_new_reservation",
-      "triggerEvent": "reservation_created",
-      "title": "Nova Reserva • Confirmação & Resumo",
-      "description": "Enviado imediatamente quando uma nova reserva é criada ou confirmada no sistema/site.",
+      "id": "tpl_pre_reserva",
+      "triggerEvent": "pre_reservation_created",
+      "title": "Pré-Reserva • Confirmação & Dados para Pagamento",
+      "description": "Enviado automaticamente quando uma pré-reserva é registrada (sem pagamento ou com pagamento parcial), com dados e chave PIX para pagamento.",
       "enabled": true,
       "triggerTiming": "immediate",
       "offsetValue": 0,
       "offsetUnit": "minutes",
       "fixedTime": "",
-      "message": "Olá, *{{nome_hospede}}*! 🌟\nSua reserva no *{{nome_hotel}}* está confirmada!\n\n📋 *Resumo da sua Estadia:*\n• Código da Reserva: *{{numero_reserva}}*\n• Acomodação: *Flat {{quarto}}*\n• Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*\n• Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*\n• Total de Hóspedes: *{{num_hospedes}}*\n• Valor Total: *{{valor_total}}* ({{status_pagamento}})\n\n📍 *Endereço:*\n{{endereco_hotel}}\n\nPara agilizar sua entrada na portaria sem filas, realize com antecedência o seu *Pré-Check-in Digital* pelo botão abaixo:",
+      "message": "Olá, *{{nome_hospede}}*! ⏳\nRecebemos o pedido de *Pré-Reserva* no *{{nome_hotel}}*!\n\n📋 *Resumo da Estadia:*\n• Código da Reserva: *{{numero_reserva}}*\n• Acomodação: *Flat {{quarto}}*\n• Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*\n• Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*\n• Total de Hóspedes: *{{num_hospedes}}*\n\n💰 *Situação Financeira:*\n• Valor Total: *{{valor_total}}*\n• Quanto foi Pago: *{{valor_pago}}*\n• Quanto Falta Pagar: *{{quanto_falta}}*\n\n🔑 *Dados para Pagamento via PIX:*\n• Chave PIX (CNPJ): *{{chave_pix}}*\n• Favorecido: *{{titular_pix}}*\n\n{{instrucao_pagamento}}\n\nPara agilizar sua estadia ou pagar via cartão em até 12x, acesse seu portal:",
+      "footer": "CorpFlats • Hospedagem Contemporânea",
+      "buttons": [
+        {
+          "id": "btn_portal",
+          "type": "URL",
+          "label": "💳 Ver Reserva & Pagar",
+          "url": "{{link_portal_hospede}}"
+        },
+        {
+          "id": "btn_admin",
+          "type": "CALL",
+          "label": "📞 Falar com Atendimento",
+          "phone": "{{telefone_hotel}}"
+        }
+      ],
+      "channels": [
+        "site",
+        "whatsapp",
+        "booking",
+        "airbnb",
+        "outros"
+      ]
+    },
+    {
+      "id": "tpl_new_reservation",
+      "triggerEvent": "reservation_created",
+      "title": "Nova Reserva • Confirmação & Resumo",
+      "description": "Enviado imediatamente quando uma reserva é confirmada no sistema/site.",
+      "enabled": true,
+      "triggerTiming": "immediate",
+      "offsetValue": 0,
+      "offsetUnit": "minutes",
+      "fixedTime": "",
+      "message": "Olá, *{{nome_hospede}}*! 🌟\nSua reserva no *{{nome_hotel}}* está *Confirmada*!\n\n📋 *Resumo da sua Estadia:*\n• Código da Reserva: *{{numero_reserva}}*\n• Acomodação: *Flat {{quarto}}*\n• Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*\n• Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*\n• Total de Hóspedes: *{{num_hospedes}}*\n\n💰 *Situação Financeira:*\n• Valor Total: *{{valor_total}}*\n• Quanto foi Pago: *{{valor_pago}}*\n• Saldo a Quitar: *{{quanto_falta}}*\n\n{{instrucao_saldo}}\n\n📍 *Endereço:*\n{{endereco_hotel}}\n\nPara agilizar sua entrada na portaria sem filas, realize com antecedência o seu *Pré-Check-in Digital* pelo botão abaixo:",
       "footer": "CorpFlats • Hospedagem Contemporânea",
       "buttons": [
         {

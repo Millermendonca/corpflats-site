@@ -94,6 +94,7 @@ export default function PmsCalendar() {
   const [formTotalAmount, setFormTotalAmount] = useState("")
   const [formPaidAmount, setFormPaidAmount] = useState("0")
   const [formPaymentStatus, setFormPaymentStatus] = useState("pendente")
+  const [formStatus, setFormStatus] = useState<"confirmada" | "pre_reserva">("pre_reserva")
   const [formNotes, setFormNotes] = useState("")
   const [formEarlyCheckin, setFormEarlyCheckin] = useState(false)
   const [formReceptionNotes, setFormReceptionNotes] = useState("")
@@ -1326,6 +1327,7 @@ export default function PmsCalendar() {
     setFormTotalAmount("")
     setFormPaidAmount("0")
     setFormPaymentStatus("pendente")
+    setFormStatus("pre_reserva")
     setFormNotes("")
     setFormEarlyCheckin(false)
     setFormReceptionNotes("")
@@ -1459,6 +1461,7 @@ export default function PmsCalendar() {
     setFormTotalAmount("")
     setFormPaidAmount("0")
     setFormPaymentStatus("pendente")
+    setFormStatus("pre_reserva")
     setFormNotes("")
     setFormEarlyCheckin(false)
     setFormReceptionNotes("")
@@ -1520,8 +1523,9 @@ export default function PmsCalendar() {
     setFormChannel(chan)
     setFormDailyRate(String(resItem.dailyRate || 0))
     setFormTotalAmount(totCalculated > 0 ? String(totCalculated) : "")
-    setFormPaidAmount(String(isResCurrentlyPaid ? totCalculated : (resItem.paidAmount || 0)))
+    setFormPaidAmount(String(resItem.paidAmount !== undefined ? resItem.paidAmount : (isResCurrentlyPaid ? totCalculated : 0)))
     setFormPaymentStatus(isResCurrentlyPaid ? "pago_total" : (resItem.paymentStatus || "pendente"))
+    setFormStatus((resItem.status === "confirmada" || isResCurrentlyPaid) ? "confirmada" : (resItem.status || "pre_reserva"))
     setFormNotes(resItem.notes || "")
     const matchedGuest = crmGuests.find(g => 
       (resItem.guestId && String(g.id) === String(resItem.guestId)) ||
@@ -1619,14 +1623,17 @@ export default function PmsCalendar() {
       const calcTot = calculateTotal()
       const totalAmount = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calcTot
       const isOta = formChannel === "booking" || formChannel === "airbnb"
-      const resolvedPaymentStatus = isOta ? "pago_total" : formPaymentStatus
       let resolvedPaidAmount = Number(formPaidAmount) || 0
-      if (resolvedPaymentStatus === "pago_total") {
+      let resolvedPaymentStatus = formPaymentStatus
+      if (isOta) {
+        resolvedPaymentStatus = "pago_total"
         resolvedPaidAmount = totalAmount
-      } else if (resolvedPaymentStatus === "sinal_pago") {
-        resolvedPaidAmount = resolvedPaidAmount > 0 ? resolvedPaidAmount : Math.round(totalAmount / 2)
-      } else {
-        resolvedPaidAmount = 0
+      } else if (resolvedPaymentStatus === "pago_total" && resolvedPaidAmount === 0 && totalAmount > 0) {
+        resolvedPaidAmount = totalAmount
+      } else if (resolvedPaidAmount >= totalAmount && totalAmount > 0) {
+        resolvedPaymentStatus = "pago_total"
+      } else if (resolvedPaidAmount > 0 && resolvedPaidAmount < totalAmount && resolvedPaymentStatus === "pendente") {
+        resolvedPaymentStatus = "sinal_pago"
       }
 
       const numG = Number(formGuestCount) || 1
@@ -1676,6 +1683,7 @@ export default function PmsCalendar() {
         checkoutDate: formCheckout,
         checkinTime: formCheckinTime || defaultCheckinTime || "14:00",
         checkoutTime: formCheckoutTime || defaultCheckoutTime || "12:00",
+        status: formStatus,
         channel: formChannel,
         dailyRate: Number(formDailyRate) || 0,
         totalAmount,
@@ -2509,6 +2517,10 @@ export default function PmsCalendar() {
                                   ? 'bg-gradient-to-r from-purple-800 via-indigo-900 to-purple-800 text-white border-2 border-purple-300 shadow-md ring-2 ring-purple-500/80' 
                                   : `${channelCfg?.bg} ${channelCfg?.text} border ${channelCfg?.border} shadow-xs`
                               } ${
+                                resItem.status === 'pre_reserva'
+                                  ? 'border-dashed border-2 border-amber-400 ring-1 ring-amber-300/80'
+                                  : ''
+                              } ${
                                 resItem.hasMinor 
                                   ? 'border-2 border-rose-500 ring-2 ring-rose-400 animate-pulse' 
                                   : resItem.riskAttentionAlert
@@ -2536,6 +2548,11 @@ export default function PmsCalendar() {
 
                               {/* Conteúdo Central com Nome, Valor e Diárias Contínuos */}
                               <div className="flex items-center gap-1.5 min-w-0 w-full overflow-hidden whitespace-nowrap px-1 pointer-events-none select-none">
+                                {resItem.status === 'pre_reserva' && (
+                                  <span title="Pré-Reserva (Aguardando Pagamento / Confirmação)" className="shrink-0 text-[9px] px-1 py-0.2 bg-amber-400 text-slate-950 font-black rounded shadow-xs flex items-center gap-0.5">
+                                    ⏳ Pré-Reserva
+                                  </span>
+                                )}
                                 {resItem.includeBreakfast && (
                                   <span title="Café da Manhã Incluso" className="shrink-0 text-xs">☕</span>
                                 )}
@@ -3547,6 +3564,67 @@ export default function PmsCalendar() {
                   )}
                 </div>
 
+                {/* Status & Confirmação da Reserva (Regra Oficial: só confirmada se marcada aqui) */}
+                <div className={`p-3.5 rounded-2xl border transition-all ${
+                  formStatus === "confirmada" 
+                    ? "bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-700/60" 
+                    : "bg-amber-50/70 dark:bg-amber-950/30 border-amber-300 dark:border-amber-700/60"
+                }`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      {formStatus === "confirmada" ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                      ) : (
+                        <Clock className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                      )}
+                      <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                        Status & Confirmação da Reserva
+                      </span>
+                    </div>
+                    <Badge className={formStatus === "confirmada" ? "bg-emerald-600 text-white font-bold text-[10px]" : "bg-amber-500 text-white font-bold text-[10px]"}>
+                      {formStatus === "confirmada" ? "✅ Confirmada" : "⏳ Pré-Reserva"}
+                    </Badge>
+                  </div>
+
+                  <p className="text-[11px] text-muted-foreground mb-2.5">
+                    A reserva <strong>só é confirmada de fato</strong> se marcada como <strong>Confirmada</strong> abaixo. Pode ser confirmada mesmo sem pagamento integral (ex: faturado corporativo, pagamento no balcão no check-in, hóspede VIP).
+                  </p>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setFormStatus("pre_reserva")}
+                      className={`p-2.5 rounded-xl border text-left transition-all text-xs font-bold flex items-center justify-between ${
+                        formStatus === "pre_reserva"
+                          ? "bg-amber-500 text-white border-amber-500 shadow-xs"
+                          : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-amber-400"
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5" />
+                        <span>⏳ Pré-Reserva</span>
+                      </div>
+                      {formStatus === "pre_reserva" && <CheckCircle2 className="w-3.5 h-3.5" />}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setFormStatus("confirmada")}
+                      className={`p-2.5 rounded-xl border text-left transition-all text-xs font-bold flex items-center justify-between ${
+                        formStatus === "confirmada"
+                          ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                          : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-emerald-400"
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>✅ Confirmada</span>
+                      </div>
+                      {formStatus === "confirmada" && <CheckCircle2 className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                </div>
+
                 {/* Financial values & Payment Status */}
                 <div className="p-3.5 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-3">
                   <div className="flex items-center justify-between">
@@ -3561,7 +3639,7 @@ export default function PmsCalendar() {
                     )}
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
                     {/* Valor da Diária */}
                     <div className="space-y-1">
                       <Label className="text-xs font-semibold">Valor da Diária (R$)</Label>
@@ -3591,7 +3669,7 @@ export default function PmsCalendar() {
 
                     {/* Valor Total da Reserva */}
                     <div className="space-y-1">
-                      <Label className="text-xs font-semibold">Valor Total da Reserva (R$)</Label>
+                      <Label className="text-xs font-semibold">Valor Total (R$)</Label>
                       <Input 
                         type="number"
                         value={formTotalAmount !== "" ? formTotalAmount : (calculateTotal() > 0 ? String(calculateTotal()) : "")}
@@ -3615,63 +3693,130 @@ export default function PmsCalendar() {
                       />
                     </div>
 
+                    {/* Quanto foi pago (R$) */}
+                    <div className="space-y-1">
+                      <Label className="text-xs font-semibold flex items-center justify-between">
+                        <span>Quanto foi pago (R$)</span>
+                        {Number(formPaidAmount) > 0 && (
+                          <span className="text-[10px] text-emerald-600 font-bold">
+                            {Math.round((Number(formPaidAmount) / (Number(formTotalAmount) || calculateTotal() || 1)) * 100)}%
+                          </span>
+                        )}
+                      </Label>
+                      <Input 
+                        type="number" 
+                        value={formPaidAmount} 
+                        onChange={e => {
+                          const val = e.target.value;
+                          setFormPaidAmount(val);
+                          const numVal = Number(val) || 0;
+                          const currentTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
+                          if (numVal <= 0) {
+                            setFormPaymentStatus("pendente");
+                          } else if (numVal >= currentTot && currentTot > 0) {
+                            setFormPaymentStatus("pago_total");
+                          } else {
+                            setFormPaymentStatus("sinal_pago");
+                          }
+                        }} 
+                        placeholder="Ex: 0 ou 250"
+                        className="text-xs font-bold text-indigo-700 dark:text-indigo-300 bg-indigo-50/40 dark:bg-indigo-950/20"
+                      />
+                    </div>
+
                     {/* Status de Pagamento */}
                     <div className="space-y-1">
-                      <Label className="text-xs font-semibold">Status do Pagamento</Label>
+                      <Label className="text-xs font-semibold">Status Pagamento</Label>
                       <Select 
                         value={formPaymentStatus} 
                         onValueChange={val => {
                           setFormPaymentStatus(val);
+                          const currentTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
                           if (val === "pago_total") {
-                            const tot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
-                            setFormPaidAmount(String(tot));
+                            setFormPaidAmount(String(currentTot));
                           } else if (val === "pendente") {
                             setFormPaidAmount("0");
+                          } else if (val === "sinal_pago") {
+                            setFormPaidAmount(String(Math.round(currentTot / 2)));
                           }
                         }}
                       >
                         <SelectTrigger className={`text-xs font-bold ${
                           formPaymentStatus === "pago_total" 
                             ? "bg-emerald-50 text-emerald-800 border-emerald-300 dark:bg-emerald-950/50 dark:text-emerald-300" 
+                            : formPaymentStatus === "sinal_pago"
+                            ? "bg-indigo-50 text-indigo-800 border-indigo-300 dark:bg-indigo-950/50 dark:text-indigo-300"
                             : "bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950/50 dark:text-amber-300"
                         }`}>
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="pago_total">✅ Pago (100% Confirmado)</SelectItem>
-                          <SelectItem value="pendente">⏳ Aguardando Pagamento (Pendente)</SelectItem>
-                          <SelectItem value="sinal_pago">⚡ Sinal Pago (50%)</SelectItem>
+                          <SelectItem value="pago_total">✅ Pago (100% Quitado)</SelectItem>
+                          <SelectItem value="sinal_pago">⚡ Sinal Pago (Parcial)</SelectItem>
+                          <SelectItem value="pendente">⏳ Aguardando Pagamento (R$ 0)</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
                   </div>
 
-                  {/* Switch: Marcar como Pago */}
-                  <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between">
-                    <div>
-                      <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">
-                        Marcar como Pago
-                      </span>
-                      <span className="text-[11px] text-muted-foreground">
-                        {formPaymentStatus === "pago_total" 
-                          ? "O hóspede verá a reserva como Paga e o valor no portal Minha Reserva" 
-                          : "O hóspede verá opções de pagamento por PIX e Cartão no portal Minha Reserva"}
-                      </span>
-                    </div>
-                    <Switch 
-                      checked={formPaymentStatus === "pago_total"} 
-                      onCheckedChange={checked => {
-                        if (checked) {
-                          setFormPaymentStatus("pago_total");
-                          const tot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
-                          setFormPaidAmount(String(tot));
-                        } else {
-                          setFormPaymentStatus("pendente");
-                          setFormPaidAmount("0");
-                        }
-                      }} 
-                    />
-                  </div>
+                  {/* Atalhos Rápidos de Valor Pago & Saldo Restante */}
+                  {(() => {
+                    const currentTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
+                    const currentPaid = Number(formPaidAmount) || 0;
+                    const remaining = Math.max(0, currentTot - currentPaid);
+
+                    return (
+                      <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] text-muted-foreground font-medium">Preencher rápido:</span>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setFormPaidAmount("0");
+                              setFormPaymentStatus("pendente");
+                            }}
+                            className="h-6 px-2 text-[10px] font-bold cursor-pointer"
+                          >
+                            R$ 0 (Nada)
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              const half = Math.round(currentTot / 2);
+                              setFormPaidAmount(String(half));
+                              setFormPaymentStatus("sinal_pago");
+                            }}
+                            className="h-6 px-2 text-[10px] font-bold cursor-pointer"
+                          >
+                            50% (Sinal)
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setFormPaidAmount(String(currentTot));
+                              setFormPaymentStatus("pago_total");
+                            }}
+                            className="h-6 px-2 text-[10px] font-bold cursor-pointer"
+                          >
+                            100% (Total)
+                          </Button>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Quanto falta pagar:</span>
+                          <Badge className={remaining > 0 ? "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950 dark:text-amber-200 font-bold" : "bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-200 font-bold"}>
+                            {remaining > 0 ? `R$ ${remaining.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}` : "Quitado (R$ 0,00)"}
+                          </Badge>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 <div className="space-y-1">

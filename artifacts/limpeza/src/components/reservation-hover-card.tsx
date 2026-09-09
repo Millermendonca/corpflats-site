@@ -27,6 +27,10 @@ const STATUS_MAP: Record<string, { label: string; className: string }> = {
     label: "Confirmada", 
     className: "bg-emerald-50 text-emerald-700 border-emerald-200/80 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800" 
   },
+  pre_reserva: { 
+    label: "⏳ Pré-Reserva", 
+    className: "bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700 font-bold" 
+  },
   checkin: { 
     label: "Hospedado (In)", 
     className: "bg-sky-50 text-sky-700 border-sky-200/80 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-800" 
@@ -399,40 +403,60 @@ export function ReservationHoverCard({
           </div>
 
           {/* Valor da Reserva & Status Financeiro */}
-          <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px]">
-            <div className="leading-tight">
-              <span className="text-[9.5px] text-slate-400 font-semibold uppercase tracking-wider block">Valor da Reserva:</span>
-              <div className="flex items-baseline gap-1.5 mt-0.5">
-                <span className="font-black text-slate-950 dark:text-slate-50 text-[13px]">
-                  {formattedTotal || "A definir"}
-                </span>
-                {resItem.dailyRate > 0 && (
-                  <span className="text-[10px] text-slate-500">
-                    ({nightsCount}x R$ {resItem.dailyRate})
+          <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 space-y-1.5 text-[11px]">
+            <div className="flex items-center justify-between">
+              <div className="leading-tight">
+                <span className="text-[9.5px] text-slate-400 font-semibold uppercase tracking-wider block">Valor da Reserva:</span>
+                <div className="flex items-baseline gap-1.5 mt-0.5">
+                  <span className="font-black text-slate-950 dark:text-slate-50 text-[13px]">
+                    {formattedTotal || "A definir"}
                   </span>
-                )}
+                  {resItem.dailyRate > 0 && (
+                    <span className="text-[10px] text-slate-500">
+                      ({nightsCount}x R$ {resItem.dailyRate})
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                {(() => {
+                  const chan = String(resItem.channel || "").toLowerCase();
+                  const isOta = chan.includes("booking") || chan.includes("airbnb");
+                  const tot = Number(resItem.totalAmount) || 0;
+                  const paid = Number(resItem.paidAmount) || 0;
+                  const isPaid = isOta || resItem.paymentStatus === "pago_total" || resItem.paymentStatus === "pago" || (paid >= tot && tot > 0);
+                  const isPartial = !isPaid && paid > 0;
+                  return (
+                    <Badge 
+                      variant="outline" 
+                      className={`text-[9.5px] font-bold px-2 py-0.5 ${
+                        isPaid 
+                          ? "bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300" 
+                          : isPartial
+                          ? "bg-indigo-50 text-indigo-800 border-indigo-200 dark:bg-indigo-950/40 dark:text-indigo-300"
+                          : "bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300"
+                      }`}
+                    >
+                      {isPaid ? (isOta ? (chan.includes("booking") ? "Pago (Booking)" : "Pago (Airbnb)") : "Pago ✓") : (isPartial ? `Sinal R$ ${paid}` : "Aguardando Pagto")}
+                    </Badge>
+                  );
+                })()}
               </div>
             </div>
 
-            <div className="flex items-center gap-1.5">
-              {(() => {
-                const chan = String(resItem.channel || "").toLowerCase();
-                const isOta = chan.includes("booking") || chan.includes("airbnb");
-                const isPaid = isOta || resItem.paymentStatus === "pago_total" || resItem.paymentStatus === "pago" || (Number(resItem.paidAmount) >= Number(resItem.totalAmount) && Number(resItem.totalAmount) > 0);
-                return (
-                  <Badge 
-                    variant="outline" 
-                    className={`text-[9.5px] font-bold px-2 py-0.5 ${
-                      isPaid 
-                        ? "bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300" 
-                        : "bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300"
-                    }`}
-                  >
-                    {isPaid ? (isOta ? (chan.includes("booking") ? "Pago (Booking)" : "Pago (Airbnb)") : "Pago ✓") : "Pendente"}
-                  </Badge>
-                );
-              })()}
-            </div>
+            {(() => {
+              const tot = Number(resItem.totalAmount) || 0;
+              const paid = Number(resItem.paidAmount) || 0;
+              const remaining = Math.max(0, tot - paid);
+              if (tot <= 0 || paid >= tot) return null;
+              return (
+                <div className="pt-1 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-[10px]">
+                  <span className="text-slate-500">Pago: <strong className="text-emerald-600 dark:text-emerald-400">R$ {paid.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
+                  <span className="text-slate-500">Falta: <strong className="text-amber-600 dark:text-amber-400">R$ {remaining.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
+                </div>
+              );
+            })()}
           </div>
 
           {/* Café da Manhã */}

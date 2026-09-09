@@ -202,14 +202,20 @@ export function renderQuickMessage(templateText: string, resItem: any, appOrigin
 
   const guestCount = resItem.guestCount || resItem.adults || (resItem.guests?.length || 1)
   const totalAmount = Number(resItem.totalAmount || resItem.amount || 0)
+  const paidAmount = Number(resItem.paidAmount ?? (resItem.paymentStatus === "pago" || resItem.paymentStatus === "pago_total" ? totalAmount : 0))
+  const pendingAmount = Math.max(0, totalAmount - paidAmount)
+
   const formattedTotal = totalAmount > 0 
     ? totalAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
     : "R$ 0,00"
+  const formattedPaid = paidAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
+  const formattedPending = pendingAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
 
   const chanLower = String(resItem.channel || "").toLowerCase()
   const isOta = chanLower.includes("booking") || chanLower.includes("airbnb")
-  const isPaid = isOta || resItem.paymentStatus === "pago" || resItem.paymentStatus === "pago_total" || (Number(resItem.paidAmount) >= totalAmount && totalAmount > 0)
+  const isPaid = isOta || resItem.paymentStatus === "pago" || resItem.paymentStatus === "pago_total" || (paidAmount >= totalAmount && totalAmount > 0)
   const paymentStatus = isPaid ? "Confirmado / Pago" : "Aguardando Pagamento"
+  const statusConfirmacao = resItem.status === "pre_reserva" ? "Pré-Reserva" : "Confirmada"
 
   const linkPortal = `${origin}/minha-reserva/${resCode}`
   const linkCheckin = `${origin}/pre-checkin/${resCode}`
@@ -231,7 +237,14 @@ export function renderQuickMessage(templateText: string, resItem: any, appOrigin
     "{{num_hospedes}}": String(guestCount),
     "{{num_diarias}}": String(totalNights),
     "{{valor_total}}": formattedTotal,
+    "{{valor_pago}}": formattedPaid,
+    "{{quanto_falta}}": formattedPending,
+    "{{saldo_restante}}": formattedPending,
+    "{{status_confirmacao}}": statusConfirmacao,
     "{{status_pagamento}}": paymentStatus,
+    "{{chave_pix}}": "47.964.813/0001-65",
+    "{{titular_pix}}": "CorpFlats Hospedagem",
+    "{{instrucao_saldo}}": pendingAmount > 0 ? `Saldo restante de ${formattedPending} a acertar no check-in.` : "Reserva quitada.",
     "{{canal_reserva}}": resItem.channel || "Site CorpFlats",
     "{{nome_hotel}}": "CorpFlats",
     "{{endereco_hotel}}": "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ",

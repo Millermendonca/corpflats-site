@@ -6050,6 +6050,7 @@ app.post("/api/pms/reservations", (req, res) => {
     totalAmount = 0,
     paidAmount = 0,
     paymentStatus = "pendente",
+    status = null,
     adults = 1,
     children = 0,
     notes = "",
@@ -6072,13 +6073,26 @@ app.post("/api/pms/reservations", (req, res) => {
 
   const chanLower = String(channel || "").toLowerCase();
   const isOta = chanLower.includes("booking") || chanLower.includes("airbnb");
-  let resolvedPaymentStatus = paymentStatus || "pendente";
   let resolvedPaidAmount = Number(paidAmount) || 0;
+  let resolvedPaymentStatus = paymentStatus || "pendente";
   if (isOta && (resolvedPaymentStatus === "pendente" || !resolvedPaymentStatus)) {
     resolvedPaymentStatus = "pago_total";
   }
-  if (resolvedPaymentStatus === "pago_total" && Number(totalAmount) > 0) {
+  if (resolvedPaymentStatus === "pago_total" && Number(totalAmount) > 0 && resolvedPaidAmount === 0) {
     resolvedPaidAmount = Number(totalAmount);
+  }
+  if (resolvedPaidAmount > 0 && resolvedPaidAmount < Number(totalAmount) && resolvedPaymentStatus === "pendente") {
+    resolvedPaymentStatus = "sinal_pago";
+  } else if (resolvedPaidAmount >= Number(totalAmount) && Number(totalAmount) > 0) {
+    resolvedPaymentStatus = "pago_total";
+  }
+
+  // A reserva só é confirmada de fato se explicitamente informada como confirmada no campo (ou canal OTA)
+  let resolvedStatus = "pre_reserva";
+  if (status) {
+    resolvedStatus = String(status).trim();
+  } else if (isOta || resolvedPaymentStatus === "pago_total") {
+    resolvedStatus = "confirmada";
   }
 
   const flat = db.flats.find(f => f.id === Number(flatId));
@@ -6220,7 +6234,7 @@ app.post("/api/pms/reservations", (req, res) => {
     checkoutDate,
     checkinTime: String(checkinTime || db.settings?.checkinTime || "14:00").trim(),
     checkoutTime: String(checkoutTime || db.settings?.checkoutTime || "12:00").trim(),
-    status: "confirmada",
+    status: resolvedStatus,
     channel,
     dailyRate: Number(dailyRate),
     totalAmount: Number(totalAmount),
@@ -6267,8 +6281,10 @@ app.post("/api/pms/reservations", (req, res) => {
       { field: "dates", label: "Período da Estadia", oldValue: null, newValue: `${checkinDate} a ${checkoutDate}` },
       { field: "guestName", label: "Hóspede Titular", oldValue: null, newValue: primaryName },
       { field: "channel", label: "Canal de Origem", oldValue: null, newValue: channel },
+      { field: "status", label: "Status da Reserva", oldValue: null, newValue: resolvedStatus === "confirmada" ? "Confirmada" : "Pré-Reserva" },
       { field: "totalAmount", label: "Valor Total", oldValue: null, newValue: `R$ ${Number(totalAmount).toFixed(2)}` },
-      { field: "paymentStatus", label: "Status de Pagamento", oldValue: null, newValue: paymentStatus },
+      { field: "paidAmount", label: "Valor Pago", oldValue: null, newValue: `R$ ${Number(resolvedPaidAmount).toFixed(2)}` },
+      { field: "paymentStatus", label: "Status de Pagamento", oldValue: null, newValue: resolvedPaymentStatus },
       ...(includeBreakfast ? [{ field: "includeBreakfast", label: "Café da Manhã", oldValue: null, newValue: "Incluso" }] : []),
       ...(isMonthly ? [{ field: "isMonthlyGuest", label: "Cliente Mensalista", oldValue: null, newValue: "Sim" }] : []),
       ...(autoInvoice ? [{ field: "autoEmitInvoice", label: "Auto-Emissão de Nota Fiscal (NFS-e)", oldValue: null, newValue: "Sim" }] : []),
@@ -6279,7 +6295,12 @@ app.post("/api/pms/reservations", (req, res) => {
 
   db.reservations.unshift(newReservation);
   saveDatabase();
-  triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", newReservation);
+
+  if (resolvedStatus === "pre_reserva") {
+    triggerImmediateWhatsApp(db, saveDatabase, "pre_reservation_created", newReservation);
+  } else {
+    triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", newReservation);
+  }
   res.status(201).json(newReservation);
 });
 
@@ -6549,7 +6570,11 @@ app.put("/api/pms/reservations/:id", (req, res) => {
 
   r.updatedAt = new Date().toISOString();
   saveDatabase();
-  triggerImmediateWhatsApp(db, saveDatabase, "reservation_updated", r);
+  if (oldStatus === "pre_reserva" && r.status === "confirmada") {
+    triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", r);
+  } else {
+    triggerImmediateWhatsApp(db, saveDatabase, "reservation_updated", r);
+  }
   res.json(r);
 });
 

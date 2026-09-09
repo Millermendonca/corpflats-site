@@ -188,6 +188,19 @@ const TAG_GROUPS = [
     ]
   },
   {
+    category: "💳 Pagamento & PIX",
+    tags: [
+      { tag: "{{valor_total}}", label: "Valor Total da Reserva", example: "R$ 450,00" },
+      { tag: "{{valor_pago}}", label: "Quanto foi Pago", example: "R$ 200,00" },
+      { tag: "{{quanto_falta}}", label: "Quanto Falta Pagar", example: "R$ 250,00" },
+      { tag: "{{saldo_restante}}", label: "Saldo Restante", example: "R$ 250,00" },
+      { tag: "{{status_confirmacao}}", label: "Status de Confirmação", example: "Pré-Reserva" },
+      { tag: "{{chave_pix}}", label: "Chave PIX Hotel", example: "47.964.813/0001-65" },
+      { tag: "{{titular_pix}}", label: "Titular PIX", example: "CorpFlats Hospedagem" },
+      { tag: "{{instrucao_saldo}}", label: "Instrução Dinâmica de Saldo", example: "Saldo restante de R$ 250,00 a acertar no check-in." },
+    ]
+  },
+  {
     category: "🏢 Propriedade & Wi-Fi",
     tags: [
       { tag: "{{nome_hotel}}", label: "Nome Hotel", example: "CorpFlats" },
@@ -732,6 +745,14 @@ export default function WhatsappAutomation() {
     const code = targetRes.code || `RES-${targetRes.flatNumber || "113"}-0001`
     const mapsUrl = config.googleReviewUrl || "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209"
 
+    const totalAmount = Number(targetRes.totalAmount) || 450
+    const paidAmount = Number(targetRes.paidAmount ?? (targetRes.paymentStatus === "pago" ? totalAmount : 0))
+    const pendingAmount = Math.max(0, totalAmount - paidAmount)
+    const fmtTotal = totalAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
+    const fmtPaid = paidAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
+    const fmtPending = pendingAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
+    const isPreReserva = targetRes.status === "pre_reserva"
+
     const map: Record<string, string> = {
       "{{nome_hospede}}": targetRes.guestName || "Hóspede",
       "{{primeiro_nome}}": firstName,
@@ -744,8 +765,15 @@ export default function WhatsappAutomation() {
       "{{horario_checkout}}": "12:00",
       "{{num_hospedes}}": String(targetRes.guestCount || 2),
       "{{num_diarias}}": "2",
-      "{{valor_total}}": (Number(targetRes.totalAmount) || 450).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }),
-      "{{status_pagamento}}": targetRes.paymentStatus === "pago" ? "Confirmado / Pago" : "Pendente",
+      "{{valor_total}}": fmtTotal,
+      "{{valor_pago}}": fmtPaid,
+      "{{quanto_falta}}": fmtPending,
+      "{{saldo_restante}}": fmtPending,
+      "{{status_confirmacao}}": isPreReserva ? "Pré-Reserva" : "Confirmada",
+      "{{status_pagamento}}": targetRes.paymentStatus === "pago" ? "Confirmado / Pago" : (paidAmount > 0 ? "Sinal Pago" : "Pendente"),
+      "{{chave_pix}}": "47.964.813/0001-65",
+      "{{titular_pix}}": "CorpFlats Hospedagem",
+      "{{instrucao_saldo}}": pendingAmount > 0 ? `Saldo restante de ${fmtPending} a acertar no check-in.` : "Reserva 100% quitada.",
       "{{canal_reserva}}": targetRes.channel || "Site CorpFlats",
       "{{nome_hotel}}": "CorpFlats - Soho Residence",
       "{{endereco_hotel}}": "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ",
@@ -2484,6 +2512,10 @@ export default function WhatsappAutomation() {
                     { tag: "{{data_checkin}}", label: "Entrada" },
                     { tag: "{{data_checkout}}", label: "Saída" },
                     { tag: "{{valor_total}}", label: "Valor Total" },
+                    { tag: "{{valor_pago}}", label: "Valor Pago" },
+                    { tag: "{{quanto_falta}}", label: "Quanto Falta" },
+                    { tag: "{{status_confirmacao}}", label: "Status Confirmação" },
+                    { tag: "{{chave_pix}}", label: "Chave PIX" },
                     { tag: "{{link_portal_hospede}}", label: "Link Portal" },
                     { tag: "{{link_checkin_digital}}", label: "Ficha Check-in" },
                     { tag: "{{link_cafe_manha}}", label: "Link Café" },

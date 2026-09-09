@@ -49,10 +49,49 @@ export function isTemplateAllowedForChannel(template, rawChannel) {
 // ── Templates Padrão de Alta Conversão & Boas Práticas Hoteleiras ──────────────
 export const DEFAULT_WHATSAPP_TEMPLATES = [
   {
+    id: "tpl_pre_reserva",
+    triggerEvent: "pre_reservation_created",
+    title: "Pré-Reserva • Confirmação & Dados para Pagamento",
+    description: "Enviado automaticamente quando uma pré-reserva é registrada (sem pagamento ou com pagamento parcial), com dados e chave PIX para pagamento.",
+    enabled: true,
+    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    triggerTiming: "immediate",
+    offsetValue: 0,
+    offsetUnit: "minutes",
+    fixedTime: "",
+    message: `Olá, *{{nome_hospede}}*! ⏳
+Recebemos o pedido de *Pré-Reserva* no *{{nome_hotel}}*!
+
+📋 *Resumo da Estadia:*
+• Código da Reserva: *{{numero_reserva}}*
+• Acomodação: *Flat {{quarto}}*
+• Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*
+• Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*
+• Total de Hóspedes: *{{num_hospedes}}*
+
+💰 *Situação Financeira:*
+• Valor Total: *{{valor_total}}*
+• Quanto foi Pago: *{{valor_pago}}*
+• Quanto Falta Pagar: *{{quanto_falta}}*
+
+🔑 *Dados para Pagamento via PIX:*
+• Chave PIX (CNPJ): *{{chave_pix}}*
+• Favorecido: *{{titular_pix}}*
+
+{{instrucao_pagamento}}
+
+Para agilizar sua estadia ou pagar via cartão em até 12x, acesse seu portal:`,
+    footer: "CorpFlats • Hospedagem Contemporânea",
+    buttons: [
+      { id: "btn_portal", type: "URL", label: "💳 Ver Reserva & Pagar", url: "{{link_portal_hospede}}" },
+      { id: "btn_admin", type: "CALL", label: "📞 Falar com Atendimento", phone: "{{telefone_hotel}}" }
+    ]
+  },
+  {
     id: "tpl_new_reservation",
     triggerEvent: "reservation_created",
     title: "Nova Reserva • Confirmação & Resumo",
-    description: "Enviado imediatamente quando uma nova reserva é criada ou confirmada no sistema/site.",
+    description: "Enviado imediatamente quando uma reserva é confirmada no sistema/site.",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
     triggerTiming: "immediate",
@@ -60,7 +99,7 @@ export const DEFAULT_WHATSAPP_TEMPLATES = [
     offsetUnit: "minutes",
     fixedTime: "",
     message: `Olá, *{{nome_hospede}}*! 🌟
-Sua reserva no *{{nome_hotel}}* está confirmada!
+Sua reserva no *{{nome_hotel}}* está *Confirmada*!
 
 📋 *Resumo da sua Estadia:*
 • Código da Reserva: *{{numero_reserva}}*
@@ -68,7 +107,13 @@ Sua reserva no *{{nome_hotel}}* está confirmada!
 • Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*
 • Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*
 • Total de Hóspedes: *{{num_hospedes}}*
-• Valor Total: *{{valor_total}}* ({{status_pagamento}})
+
+💰 *Situação Financeira:*
+• Valor Total: *{{valor_total}}*
+• Quanto foi Pago: *{{valor_pago}}*
+• Saldo a Quitar: *{{quanto_falta}}*
+
+{{instrucao_saldo}}
 
 📍 *Endereço:*
 {{endereco_hotel}}
@@ -480,12 +525,40 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   
   const guestCount = reservation.guestCount || reservation.adults || 1;
   const chanLower = String(reservation.channel || "").toLowerCase();
+  const totalAmount = Number(reservation.totalAmount) || 0;
+  const paidAmount = Number(reservation.paidAmount) || 0;
+  const pendingAmount = Math.max(0, totalAmount - paidAmount);
+  const pixKey = db.settings?.interConfig?.pixKey || db.settings?.pixKey || "47.964.813/0001-65";
+  const titularPix = "CorpFlats Ltda (Banco Inter)";
+
   const isOta = chanLower.includes("booking") || chanLower.includes("airbnb");
-  const isPaid = isOta || reservation.paymentStatus === "pago" || reservation.paymentStatus === "pago_total" || (Number(reservation.paidAmount) >= Number(reservation.totalAmount) && Number(reservation.totalAmount) > 0);
-  const paymentStatus = isPaid
-    ? "Confirmado / Pago" 
-    : "Aguardando Pagamento";
+  const isPaid = isOta || reservation.paymentStatus === "pago" || reservation.paymentStatus === "pago_total" || (paidAmount >= totalAmount && totalAmount > 0);
+
+  let paymentStatus = "Aguardando Pagamento";
+  if (isPaid) {
+    paymentStatus = "Confirmado / Pago (100%)";
+  } else if (paidAmount > 0 && pendingAmount > 0) {
+    paymentStatus = `Sinal Pago (${formatCurrency(paidAmount)})`;
+  }
   const channel = reservation.channel || "Site CorpFlats";
+  
+  let instrucaoPagamento = "";
+  if (paidAmount === 0) {
+    instrucaoPagamento = "Para garantir e confirmar definitivamente sua acomodação, realize o pagamento via PIX da chave acima ou acesse o link para cartão de crédito e nos envie o comprovante por aqui.";
+  } else if (paidAmount > 0 && pendingAmount > 0) {
+    instrucaoPagamento = `Identificamos o pagamento parcial de *${formatCurrency(paidAmount)}*. O saldo restante de *${formatCurrency(pendingAmount)}* poderá ser quitado via PIX ou diretamente na recepção no momento do check-in.`;
+  } else {
+    instrucaoPagamento = "Reserva 100% quitada! Nenhuma pendência financeira.";
+  }
+
+  let instrucaoSaldo = "";
+  if (pendingAmount > 0) {
+    instrucaoSaldo = `ℹ️ *Aviso de Pagamento:* Resta o saldo de *${formatCurrency(pendingAmount)}*, que poderá ser quitado via PIX (Chave CNPJ: *${pixKey}*) ou diretamente na recepção no momento do check-in.`;
+  } else {
+    instrucaoSaldo = "✅ *Pagamento 100% Concluído:* Sua hospedagem está totalmente quitada.";
+  }
+
+  const statusConfirmacao = reservation.status === "confirmada" ? "Confirmada" : "Pré-Reserva";
   
   const hotelName = db.siteConfig?.branding?.brandName || "CorpFlats";
   const hotelAddress = db.settings?.hotelAddress || "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ";
@@ -527,7 +600,16 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{horario_checkout}}": checkoutTime,
     "{{num_hospedes}}": String(guestCount),
     "{{num_diarias}}": String(totalNights),
-    "{{valor_total}}": formatCurrency(reservation.totalAmount || 0),
+    "{{valor_total}}": formatCurrency(totalAmount),
+    "{{valor_pago}}": formatCurrency(paidAmount),
+    "{{quanto_falta}}": formatCurrency(pendingAmount),
+    "{{saldo_restante}}": formatCurrency(pendingAmount),
+    "{{valor_restante}}": formatCurrency(pendingAmount),
+    "{{chave_pix}}": pixKey,
+    "{{titular_pix}}": titularPix,
+    "{{instrucao_pagamento}}": instrucaoPagamento,
+    "{{instrucao_saldo}}": instrucaoSaldo,
+    "{{status_confirmacao}}": statusConfirmacao,
     "{{status_pagamento}}": paymentStatus,
     "{{canal_reserva}}": channel,
     "{{nome_hotel}}": hotelName,
@@ -1686,12 +1768,17 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
 
     const resvChannel = reservation.channel || reservation.source || "site";
 
-    const templates = (db.whatsappTemplates || []).filter(t => 
+    let templates = (db.whatsappTemplates || []).filter(t => 
       t.enabled && 
       t.triggerEvent === eventName && 
       t.triggerTiming === "immediate" &&
       isTemplateAllowedForChannel(t, resvChannel)
     );
+
+    if (templates.length === 0 && eventName === "pre_reservation_created") {
+      const defPre = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_reserva");
+      if (defPre) templates = [defPre];
+    }
 
     for (const tpl of templates) {
       const renderedMessage = resolveWhatsAppTags(tpl.message, reservation, db, baseUrl);
