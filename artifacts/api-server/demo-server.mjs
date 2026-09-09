@@ -1669,6 +1669,7 @@ function createNotification({ category, title, message, severity = "info", metad
 
 await loadDatabase();
 ensureUniqueRequestIds();
+reconcileCleaningRequests();
 initWhatsAppEngine(app, () => db, saveDatabase);
 initMaidAutomationEngine(app, () => db, saveDatabase);
 
@@ -3295,10 +3296,11 @@ function getRequestsForDate(dateStr) {
       r.checkinDate === dateStr
     );
 
-    const existingCleaning = (db.cleaningRequests || []).find(c => 
+    const matchingCleanings = (db.cleaningRequests || []).filter(c => 
       (String(c.flatNumber) === flatNumber || c.flatId === flat.id) && 
       c.requestDate === dateStr
     );
+    const existingCleaning = matchingCleanings.find(c => c.status === "clean") || matchingCleanings[0];
 
     const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
     const card = {
@@ -3353,6 +3355,16 @@ function getRequestsForDate(dateStr) {
       if (!r.leavingGuest && r.source !== "manual" && r.source !== "admin_manual" && r.source !== "guest_checkout") return false;
       if (stayoverFlatNumbers.has(fNumber)) return false;
       if (existingFlatNumbersForDate.has(fNumber)) return false;
+
+      // Se o flat já possui qualquer limpeza concluída (status === "clean") nessa mesma data ou em data posterior,
+      // ele já foi higienizado e NÃO deve ser considerado pendência nem reaparecer para limpar!
+      const alreadyCleanedOnOrAfter = (db.cleaningRequests || []).some(c => 
+        (String(c.flatNumber) === fNumber || c.flatId === r.flatId) &&
+        c.requestDate >= r.requestDate &&
+        c.status === "clean"
+      );
+      if (alreadyCleanedOnOrAfter) return false;
+
       return true;
     });
 
@@ -3792,12 +3804,14 @@ function findOrUpsertCleaningRequest(reqId, flatNumber, flatId, dateStr = null) 
   // 1. Procura por ID numérico direto
   let item = db.cleaningRequests.find(r => r.id === Number(reqId));
 
-  // 2. Procura por Flat e Data
+  // 2. Procura por Flat e Data (priorizando clean se houver múltiplos)
   if (!item && flatNumber) {
-    item = db.cleaningRequests.find(r => String(r.flatNumber) === String(flatNumber) && r.requestDate === targetDate);
+    const matching = db.cleaningRequests.filter(r => String(r.flatNumber) === String(flatNumber) && r.requestDate === targetDate);
+    item = matching.find(r => r.status === "clean") || matching[0];
   }
   if (!item && flatId) {
-    item = db.cleaningRequests.find(r => r.flatId === Number(flatId) && r.requestDate === targetDate);
+    const matching = db.cleaningRequests.filter(r => r.flatId === Number(flatId) && r.requestDate === targetDate);
+    item = matching.find(r => r.status === "clean") || matching[0];
   }
 
   // 3. Se ainda não achou, procura nos cards dinâmicos gerados para a data
