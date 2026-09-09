@@ -2631,7 +2631,7 @@ app.get("/api/public/checkout/context", (req, res) => {
   if (!db.reservations) db.reservations = [];
   const r = findReservationByLocatorOrContact(code);
   if (!r) {
-    return res.status(404).json({ error: "Reserva não encontrada no sistema. Verifique o link ou procure a recepção." });
+    return res.status(404).json({ error: "Reserva não encontrada no sistema. Verifique o link ou procure a administração." });
   }
 
   const rawFlatNum = r.flatNumber ? String(r.flatNumber) : "";
@@ -2694,7 +2694,7 @@ app.post("/api/public/checkout", (req, res) => {
   );
 
   if (!flat) {
-    return res.status(404).json({ error: `Apartamento ${rawNum || ""} não encontrado. Por favor, verifique o número ou contate a recepção.` });
+    return res.status(404).json({ error: `Apartamento ${rawNum || ""} não encontrado. Por favor, verifique o número ou contate a administração.` });
   }
 
   const todayStr = getTodayStr();
@@ -6774,7 +6774,7 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
 
   if (hasConflict) {
     return res.status(409).json({
-      error: `O Flat ${r.flatNumber} não possui disponibilidade para o período solicitado (${newCheckinDate} a ${newCheckoutDate}). Por favor, selecione outras datas ou entre em contato com nossa recepção.`
+      error: `O Flat ${r.flatNumber} não possui disponibilidade para o período solicitado (${newCheckinDate} a ${newCheckoutDate}). Por favor, selecione outras datas ou entre em contato com nossa administração.`
     });
   }
 

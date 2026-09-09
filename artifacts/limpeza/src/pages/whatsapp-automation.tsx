@@ -195,7 +195,7 @@ const TAG_GROUPS = [
       { tag: "{{link_maps}}", label: "Link GPS Google", example: "https://maps.google.com/..." },
       { tag: "{{wifi_rede}}", label: "Nome Wi-Fi", example: "CorpFlats-Hospedes" },
       { tag: "{{wifi_senha}}", label: "Senha Wi-Fi", example: "corpflats2026" },
-      { tag: "{{telefone_hotel}}", label: "WhatsApp Hotel", example: "5522997124021" },
+      { tag: "{{telefone_hotel}}", label: "WhatsApp Administração", example: "5522997124021" },
     ]
   },
   {
@@ -661,7 +661,7 @@ export default function WhatsappAutomation() {
           payload.buttons = [
             { id: "btn_test_chk", type: "URL", label: "📝 Ficha Check-in", url: "https://corpflats.onrender.com/pre-checkin/RES-113-0034" },
             { id: "btn_test_res", type: "URL", label: "🏨 Ver Reserva", url: "https://corpflats.onrender.com/minha-reserva/RES-113-0034" },
-            { id: "btn_test_call", type: "CALL", label: "📞 Falar na Recepção", phone: "5522997124021" }
+            { id: "btn_test_call", type: "CALL", label: "📞 Falar na Administração", phone: "5522997124021" }
           ]
         }
       }
@@ -2296,7 +2296,7 @@ export default function WhatsappAutomation() {
                           🏨 Ver Reserva
                         </span>
                         <span className="px-2.5 py-1 bg-white dark:bg-background rounded-lg border text-xs font-medium text-emerald-900 dark:text-emerald-200 shadow-2xs">
-                          📞 Falar na Recepção
+                          📞 Falar na Administração
                         </span>
                       </div>
                     </div>

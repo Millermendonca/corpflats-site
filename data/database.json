@@ -6733,7 +6733,7 @@
         {
           "id": "btn_call",
           "type": "CALL",
-          "label": "📞 Ligar Recepção",
+          "label": "📞 Ligar Administração",
           "phone": "{{telefone_hotel}}"
         }
       ],
@@ -6780,7 +6780,7 @@
       "offsetValue": 0,
       "offsetUnit": "hours",
       "fixedTime": "09:30",
-      "message": "Bom dia, *{{primeiro_nome}}*! ☀️\nLembramos que hoje é a data de encerramento da sua estadia no *Flat {{quarto}}*.\n\n⏰ *Horário limite de saída:* Até às *{{horario_checkout}}*.\n\nAo sair, por favor certifique-se de desligar luzes e ar-condicionado e entregue as chaves/cartão na portaria.\nCaso necessite estender o horário (Late Check-out), solicite diretamente à recepção.",
+      "message": "Bom dia, *{{primeiro_nome}}*! ☀️\nLembramos que hoje é a data de encerramento da sua estadia no *Flat {{quarto}}*.\n\n⏰ *Horário limite de saída:* Até às *{{horario_checkout}}*.\n\nAo sair, por favor certifique-se de desligar luzes e ar-condicionado e entregue as chaves/cartão na portaria.\nCaso necessite estender o horário (Late Check-out), solicite diretamente à administração.",
       "footer": "CorpFlats • Agradecemos a visita",
       "buttons": [
         {
@@ -6870,7 +6870,7 @@
       "status": "scheduled",
       "sentAt": null,
       "error": null,
-      "renderedMessage": "Bom dia, *Carlos*! ☀️\nLembramos que hoje é a data de encerramento da sua estadia no *Flat 113*.\n\n⏰ *Horário limite de saída:* Até às *12:00*.\n\nAo sair, por favor certifique-se de desligar luzes e ar-condicionado e entregue as chaves/cartão na portaria.\nCaso necessite estender o horário (Late Check-out), solicite diretamente à recepção.",
+      "renderedMessage": "Bom dia, *Carlos*! ☀️\nLembramos que hoje é a data de encerramento da sua estadia no *Flat 113*.\n\n⏰ *Horário limite de saída:* Até às *12:00*.\n\nAo sair, por favor certifique-se de desligar luzes e ar-condicionado e entregue as chaves/cartão na portaria.\nCaso necessite estender o horário (Late Check-out), solicite diretamente à administração.",
       "renderedButtons": [
         {
           "id": "btn_out",
@@ -6920,7 +6920,7 @@
       "status": "scheduled",
       "sentAt": null,
       "error": null,
-      "renderedMessage": "Bom dia, *Hiago*! ☀️\nLembramos que hoje é a data de encerramento da sua estadia no *Flat 114*.\n\n⏰ *Horário limite de saída:* Até às *12:00*.\n\nAo sair, por favor certifique-se de desligar luzes e ar-condicionado e entregue as chaves/cartão na portaria.\nCaso necessite estender o horário (Late Check-out), solicite diretamente à recepção.",
+      "renderedMessage": "Bom dia, *Hiago*! ☀️\nLembramos que hoje é a data de encerramento da sua estadia no *Flat 114*.\n\n⏰ *Horário limite de saída:* Até às *12:00*.\n\nAo sair, por favor certifique-se de desligar luzes e ar-condicionado e entregue as chaves/cartão na portaria.\nCaso necessite estender o horário (Late Check-out), solicite diretamente à administração.",
       "renderedButtons": [
         {
           "id": "btn_out",

@@ -134,7 +134,7 @@ export default function GuestCheckout() {
       const data = await res.json()
 
       if (!res.ok) {
-        setErrorMsg(data.error || "Não foi possível registrar o check-out. Por favor, avise a recepção.")
+        setErrorMsg(data.error || "Não foi possível registrar o check-out. Por favor, avise a administração.")
       } else {
         setSubmittedData({
           flatNumber: data.flatNumber || resContext?.flatNumber || "Flat",
@@ -142,7 +142,7 @@ export default function GuestCheckout() {
         })
       }
     } catch (err) {
-      setErrorMsg("Erro de conexão. Por favor, tente novamente ou avise a recepção.")
+      setErrorMsg("Erro de conexão. Por favor, tente novamente ou avise a administração.")
     } finally {
       setLoading(false)
     }
@@ -169,7 +169,7 @@ export default function GuestCheckout() {
       const data = await res.json()
 
       if (!res.ok) {
-        setErrorMsg(data.error || "Não foi possível registrar o check-out. Por favor, avise a recepção.")
+        setErrorMsg(data.error || "Não foi possível registrar o check-out. Por favor, avise a administração.")
       } else {
         setSubmittedData({
           flatNumber: data.flatNumber || cleanNumber,
@@ -177,7 +177,7 @@ export default function GuestCheckout() {
         })
       }
     } catch (err) {
-      setErrorMsg("Erro de conexão. Por favor, tente novamente ou avise a recepção.")
+      setErrorMsg("Erro de conexão. Por favor, tente novamente ou avise a administração.")
     } finally {
       setLoading(false)
     }

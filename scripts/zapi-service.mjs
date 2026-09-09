@@ -178,7 +178,7 @@ Tenha uma estadia incrível!`,
     footer: "CorpFlats • Soho Residence Service",
     buttons: [
       { id: "btn_portal", type: "URL", label: "🌐 Abrir Portal do Flat", url: "{{link_portal_hospede}}" },
-      { id: "btn_call", type: "CALL", label: "📞 Ligar Recepção", phone: "{{telefone_hotel}}" }
+      { id: "btn_call", type: "CALL", label: "📞 Ligar Administração", phone: "{{telefone_hotel}}" }
     ]
   },
   {
@@ -218,7 +218,7 @@ Lembramos que hoje é a data de encerramento da sua estadia no *Flat {{quarto}}*
 ⏰ *Horário limite de saída:* Até às *{{horario_checkout}}*.
 
 Ao sair, por favor certifique-se de desligar luzes e ar-condicionado e entregue as chaves/cartão na portaria.
-Caso necessite estender o horário (Late Check-out), solicite diretamente à recepção.`,
+Caso necessite estender o horário (Late Check-out), solicite diretamente à administração.`,
     footer: "CorpFlats • Agradecemos a visita",
     buttons: [
       { id: "btn_out", type: "URL", label: "🚪 Check-out Expresso", url: "{{link_checkout}}" }
@@ -1339,7 +1339,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
       finalButtons = [
         { id: "btn_test_chk", type: "URL", label: "📝 Ficha Check-in", url: "{{link_checkin_digital}}" },
         { id: "btn_test_res", type: "URL", label: "🏨 Ver Reserva", url: "{{link_portal_hospede}}" },
-        { id: "btn_test_call", type: "CALL", label: "📞 Ligar Recepção", phone: "{{telefone_hotel}}" }
+        { id: "btn_test_call", type: "CALL", label: "📞 Ligar Administração", phone: "{{telefone_hotel}}" }
       ];
     }
 

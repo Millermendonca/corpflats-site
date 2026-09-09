@@ -364,7 +364,7 @@ export default function GuestPortal() {
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-emerald-200 bg-emerald-50/90 hover:bg-emerald-100/90 text-emerald-800 text-xs font-bold transition-all shadow-2xs"
             >
               <MessageCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-              <span>WhatsApp Recepção</span>
+              <span>WhatsApp Administração</span>
             </a>
           </div>
         </nav>
@@ -448,7 +448,7 @@ export default function GuestPortal() {
                 className="text-emerald-700 hover:text-emerald-800 font-bold flex items-center gap-1 text-xs"
               >
                 <MessageCircle className="w-3.5 h-3.5" />
-                <span>Falar com a Recepção</span>
+                <span>Falar com a Administração</span>
               </a>
             </div>
           </Card>
@@ -1868,7 +1868,7 @@ export default function GuestPortal() {
                       <span className="text-sm font-black text-sky-950">+ R$ {addAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
                     </div>
                     <p className="text-[11px] text-sky-700">
-                      O valor adicional poderá ser liquidado via PIX ou diretamente na recepção.
+                      O valor adicional poderá ser liquidado via PIX ou com a administração.
                     </p>
                   </div>
                 )}

@@ -527,7 +527,7 @@ export default function GuestPreCheckin() {
                 className="text-emerald-700 hover:text-emerald-800 font-bold flex items-center gap-1 text-xs"
               >
                 <MessageCircle className="w-3.5 h-3.5" />
-                <span>Falar com a Recepção</span>
+                <span>Falar com a Administração</span>
               </a>
             </div>
           </Card>

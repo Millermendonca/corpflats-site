@@ -466,7 +466,7 @@ export default function GuestBreakfast() {
               className="w-full inline-flex items-center justify-center gap-1.5 h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-colors shadow-md shadow-emerald-600/20"
             >
               <MessageCircle className="w-4 h-4" />
-              <span>Falar com a Recepção no WhatsApp</span>
+              <span>Falar com a Administração no WhatsApp</span>
             </a>
           </div>
         </Card>
@@ -1604,7 +1604,7 @@ export default function GuestBreakfast() {
             </div>
           ) : availableSlots.length === 0 ? (
             <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-amber-800 text-xs text-center font-medium">
-              Sem horários disponíveis para esta data. Por favor, contate a recepção pelo WhatsApp.
+              Sem horários disponíveis para esta data. Por favor, contate a administração pelo WhatsApp.
             </div>
           ) : (
             <div className="space-y-2">

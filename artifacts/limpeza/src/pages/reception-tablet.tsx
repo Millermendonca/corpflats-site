@@ -294,7 +294,7 @@ export default function ReceptionTablet() {
                         {item.guestPhone && (
                           <div className="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5">
                             <a
-                              href={`https://wa.me/55${(item.guestPhone || "").replace(/\D/g, "")}?text=${encodeURIComponent(`Olá, ${item.guestName}! Falamos da recepção da CorpFlats referente à sua reserva no Flat ${item.flatNumber}.`)}`}
+                              href={`https://wa.me/55${(item.guestPhone || "").replace(/\D/g, "")}?text=${encodeURIComponent(`Olá, ${item.guestName}! Falamos da administração da CorpFlats referente à sua reserva no Flat ${item.flatNumber}.`)}`}
                               target="_blank"
                               rel="noreferrer"
                               onClick={(e) => e.stopPropagation()}
@@ -928,7 +928,7 @@ export default function ReceptionTablet() {
                       <span className="text-slate-500 block text-[10px] uppercase font-bold">Telefone / WhatsApp</span>
                       {(currentGuest.phone || selectedItem.guestPhone) ? (
                         <a
-                          href={`https://wa.me/55${((currentGuest.phone || selectedItem.guestPhone) || "").replace(/\D/g, "")}?text=${encodeURIComponent(`Olá, ${currentGuest.name || selectedItem.guestName}! Falamos da recepção da CorpFlats referente à sua reserva no Flat ${selectedItem.flatNumber}.`)}`}
+                          href={`https://wa.me/55${((currentGuest.phone || selectedItem.guestPhone) || "").replace(/\D/g, "")}?text=${encodeURIComponent(`Olá, ${currentGuest.name || selectedItem.guestName}! Falamos da administração da CorpFlats referente à sua reserva no Flat ${selectedItem.flatNumber}.`)}`}
                           target="_blank"
                           rel="noreferrer"
                           className="inline-flex items-center gap-1 font-bold text-emerald-400 hover:text-emerald-300 hover:underline"

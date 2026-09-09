@@ -82,7 +82,7 @@ export default function ZapiConnection() {
   const [testButtons, setTestButtons] = useState<any[]>([
     { id: "btn_test_chk", type: "URL", label: "📝 Ficha Check-in", url: "https://corpflats.onrender.com/pre-checkin/RES-113-0034" },
     { id: "btn_test_res", type: "URL", label: "🏨 Ver Reserva", url: "https://corpflats.onrender.com/minha-reserva/RES-113-0034" },
-    { id: "btn_test_call", type: "CALL", label: "📞 Ligar Recepção", phone: "5522997124021" }
+    { id: "btn_test_call", type: "CALL", label: "📞 Ligar Administração", phone: "5522997124021" }
   ])
   const [sendingTest, setSendingTest] = useState<boolean>(false)
 

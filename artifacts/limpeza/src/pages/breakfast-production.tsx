@@ -1064,7 +1064,7 @@ export default function BreakfastProduction() {
                   Lançar Pedido Manual de Café
                 </DialogTitle>
                 <DialogDescription>
-                  Para hóspedes que solicitaram o café diretamente na recepção ou por telefone.
+                  Para hóspedes que solicitaram o café diretamente à administração ou por telefone.
                 </DialogDescription>
               </DialogHeader>
 
