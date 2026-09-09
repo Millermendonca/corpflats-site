@@ -40,6 +40,7 @@ import TarifasEditor from '@/pages/tarifas';
 import SystemLogsPage from '@/pages/system-logs';
 import MyAccount from '@/pages/my-account';
 import WhatsappAutomation from '@/pages/whatsapp-automation';
+import MaidWhatsappAutomation from '@/pages/maid-whatsapp-automation';
 import ZapiConnection from '@/pages/zapi-connection';
 import NotFound from '@/pages/not-found';
 
@@ -125,6 +126,9 @@ function Router() {
         <Route path="/login" component={Login} />
         <Route path="/dashboard" component={Dashboard} />
         {/* WhatsApp Automation & Z-API Connection Routes */}
+        <Route path="/automacoes-camareiras" component={MaidWhatsappAutomation} />
+        <Route path="/camareiras-whatsapp" component={MaidWhatsappAutomation} />
+        <Route path="/governanca-whatsapp" component={MaidWhatsappAutomation} />
         <Route path="/whatsapp" component={WhatsappAutomation} />
         <Route path="/automacao-whatsapp" component={WhatsappAutomation} />
         <Route path="/zapi-conexao" component={ZapiConnection} />

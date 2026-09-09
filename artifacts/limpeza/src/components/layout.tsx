@@ -220,6 +220,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         { href: "/observations", label: "Ocorrências & Avarias", icon: MessageSquareWarning, description: "Defeitos e manutenções relatadas" },
         ...(isAdmin ? [{ href: "/surveys", label: "Vistorias de Saída", icon: ClipboardCheck, description: "Conferência de itens e fotos pós checkout" }] : []),
         { href: "/reports", label: isAdmin ? "Relatório & Fechamento de Limpeza" : "Meu Relatório", icon: BarChart3, description: "Fechamento quinzenal, histórico e métricas" },
+        ...(isAdmin ? [{ href: "/automacoes-camareiras", label: "Automação WhatsApp Camareiras", icon: MessageSquare, description: "Gatilhos automáticos, alertas de quarto e fechamentos" }] : []),
       ]
     },
     ...(isAdmin ? [

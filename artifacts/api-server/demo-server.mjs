@@ -36,7 +36,8 @@ import { fileURLToPath } from "url";
 import pg from "pg";
 import { uploadImageToStorage } from "./storage-service.mjs";
 import { MicrosoftGraphService } from "./microsoft-graph-service.mjs";
-import { initWhatsAppEngine, triggerImmediateWhatsApp } from "./zapi-service.mjs";
+import { initWhatsAppEngine, triggerImmediateWhatsApp, cleanWhatsAppPhone } from "./zapi-service.mjs";
+import { initMaidAutomationEngine } from "./maid-automation-service.mjs";
 import { 
   getSmtpConfig, 
   verifySmtpConnection, 
@@ -1483,9 +1484,49 @@ function ensureUniqueRequestIds() {
   }
 }
 
+// ── Reconciliação e Deduplicação Definitiva de Limpezas ────────────────────────
+// Garante que nunca existam dois registros de limpeza para o mesmo flat na mesma data.
+// Se um registro já estiver "clean" (limpo), ele sempre prevalecerá sobre qualquer duplicata suja!
+function reconcileCleaningRequests() {
+  if (!db.cleaningRequests) db.cleaningRequests = [];
+  const byFlatAndDate = new Map();
+  for (const req of db.cleaningRequests) {
+    if (!req || (!req.flatId && !req.flatNumber) || !req.requestDate) continue;
+    const fKey = String(req.flatNumber || req.flatId);
+    const key = `${fKey}_${req.requestDate}`;
+    if (!byFlatAndDate.has(key)) {
+      byFlatAndDate.set(key, []);
+    }
+    byFlatAndDate.get(key).push(req);
+  }
+
+  const reconciled = [];
+  for (const [key, items] of byFlatAndDate.entries()) {
+    if (items.length === 1) {
+      reconciled.push(items[0]);
+    } else {
+      // Prioridade absoluta: registro com status === "clean"
+      const cleanItem = items.find(i => i.status === "clean");
+      if (cleanItem) {
+        reconciled.push(cleanItem);
+      } else {
+        const inProgress = items.find(i => i.status === "cleaning_now" || i.status === "will_clean");
+        if (inProgress) {
+          reconciled.push(inProgress);
+        } else {
+          reconciled.push(items[0]);
+        }
+      }
+    }
+  }
+
+  db.cleaningRequests = reconciled;
+  ensureUniqueRequestIds();
+}
+
 function saveDatabase() {
   try {
-    ensureUniqueRequestIds();
+    reconcileCleaningRequests();
     fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), "utf-8");
     if (pgPool) {
       pgPool.query(
@@ -1629,6 +1670,7 @@ function createNotification({ category, title, message, severity = "info", metad
 await loadDatabase();
 ensureUniqueRequestIds();
 initWhatsAppEngine(app, () => db, saveDatabase);
+initMaidAutomationEngine(app, () => db, saveDatabase);
 
 let checkinsList = [];
 let existingManualRequests = [];
@@ -2442,7 +2484,11 @@ app.get("/api/staff", (req, res) => {
     id: u.id,
     username: u.username,
     name: u.name || u.username,
-    role: u.role
+    role: u.role,
+    whatsapp: u.whatsapp || u.phone || "",
+    phone: u.phone || u.whatsapp || "",
+    pixKey: u.pixKey || "",
+    active: u.active !== false
   }));
   res.json(list);
 });
@@ -2450,10 +2496,16 @@ app.get("/api/staff", (req, res) => {
 app.get("/api/admin/users", (req, res) => {
   const userAuth = getAuthUser(req);
   if (userAuth?.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
-  const list = db.users.map(u => ({
+  const list = (db.users || []).map(u => ({
     id: u.id,
     username: u.username,
-    role: u.role
+    name: u.name || u.username,
+    role: u.role,
+    whatsapp: u.whatsapp || u.phone || "",
+    phone: u.phone || u.whatsapp || "",
+    pixKey: u.pixKey || "",
+    active: u.active !== false,
+    lastLoginAt: u.lastLoginAt || null
   }));
   res.json(list);
 });
@@ -2461,7 +2513,7 @@ app.get("/api/admin/users", (req, res) => {
 app.post("/api/admin/users", (req, res) => {
   const userAuth = getAuthUser(req);
   if (userAuth?.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
-  const { username, password, role = "camareira" } = req.body || {};
+  const { username, password, role = "camareira", name, whatsapp, phone, pixKey } = req.body || {};
 
   if (!username || !password) {
     return res.status(400).json({ error: "Nome de usuário e senha são obrigatórios." });
@@ -2470,16 +2522,72 @@ app.post("/api/admin/users", (req, res) => {
     return res.status(409).json({ error: "Já existe um usuário com esse nome." });
   }
 
+  const cleanPh = cleanWhatsAppPhone(whatsapp || phone || "");
   const newUser = {
     id: db.users.length > 0 ? Math.max(...db.users.map(u => u.id)) + 1 : 1,
     username: username.trim(),
-    role: role === "admin" ? "admin" : "camareira",
+    name: (name || username).trim(),
+    role: role === "admin" ? "admin" : (role === "recepcao" ? "recepcao" : "camareira"),
+    whatsapp: cleanPh,
+    phone: cleanPh,
+    pixKey: (pixKey || "").trim(),
+    active: true,
     passwordHash: hashPassword(password)
   };
 
   db.users.push(newUser);
   saveDatabase();
-  res.status(201).json({ id: newUser.id, username: newUser.username, role: newUser.role });
+  res.status(201).json({ 
+    id: newUser.id, 
+    username: newUser.username, 
+    name: newUser.name, 
+    role: newUser.role,
+    whatsapp: newUser.whatsapp,
+    pixKey: newUser.pixKey,
+    active: newUser.active
+  });
+});
+
+app.patch("/api/admin/users/:id", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (userAuth?.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+  const id = Number(req.params.id);
+  const user = (db.users || []).find(u => u.id === id);
+  if (!user) return res.status(404).json({ error: "Usuário não encontrado." });
+
+  const { name, username, role, whatsapp, phone, pixKey, active } = req.body || {};
+
+  if (username !== undefined && username.trim()) {
+    const existing = db.users.find(u => u.id !== id && u.username.toLowerCase() === username.trim().toLowerCase());
+    if (existing) return res.status(409).json({ error: "Já existe outro usuário com esse login." });
+    user.username = username.trim();
+  }
+  if (name !== undefined) user.name = String(name).trim();
+  if (role !== undefined && (role === "admin" || role === "camareira" || role === "recepcao")) {
+    user.role = role;
+  }
+  if (whatsapp !== undefined || phone !== undefined) {
+    const cleanPh = cleanWhatsAppPhone(whatsapp || phone || "");
+    user.whatsapp = cleanPh;
+    user.phone = cleanPh;
+  }
+  if (pixKey !== undefined) user.pixKey = String(pixKey).trim();
+  if (active !== undefined) user.active = Boolean(active);
+
+  saveDatabase();
+  res.json({
+    success: true,
+    user: {
+      id: user.id,
+      username: user.username,
+      name: user.name || user.username,
+      role: user.role,
+      whatsapp: user.whatsapp || "",
+      phone: user.phone || "",
+      pixKey: user.pixKey || "",
+      active: user.active !== false
+    }
+  });
 });
 
 app.patch("/api/admin/users/:id/reset-password", (req, res) => {
@@ -3060,12 +3168,17 @@ app.patch("/api/cleaning/requests/:requestId/admin-instructions", (req, res) => 
 
 // ── Cleaners List Endpoint ──────────────────────────────────────────────────
 app.get("/api/cleaners", (req, res) => {
-  const cleaners = db.users
+  const cleaners = (db.users || [])
     .filter(u => u.role === "camareira" || u.role === "cleaner" || u.role === "admin")
     .map(u => ({ 
       id: u.id, 
       username: u.username, 
-      role: u.role === "camareira" || u.role === "cleaner" ? "camareira" : u.role 
+      name: u.name || u.username,
+      role: u.role === "camareira" || u.role === "cleaner" ? "camareira" : u.role,
+      whatsapp: u.whatsapp || u.phone || "",
+      phone: u.phone || u.whatsapp || "",
+      pixKey: u.pixKey || "",
+      active: u.active !== false
     }));
   res.json(cleaners);
 });

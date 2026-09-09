@@ -23,8 +23,8 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { 
   RefreshCw, Check, Users, Key, ShieldCheck, UserPlus, AlertCircle, Cloud, 
-  HardDrive, Zap, Sparkles, Database, Lock, Trash2, Edit2, CreditCard,
-  Smartphone, ChevronRight, Mail, Send
+  HardDrive, Zap, Sparkles, Database, Lock, Trash2, Edit2, Edit3, CreditCard,
+  Smartphone, ChevronRight, Mail, Send, Phone
 } from "lucide-react"
 
 import { AccessDenied } from "@/components/access-denied"
@@ -66,9 +66,19 @@ export default function SystemSettings() {
   const [loadingUsers, setLoadingUsers] = useState(true)
   const [newUserModalOpen, setNewUserModalOpen] = useState(false)
   const [newUsername, setNewUsername] = useState("")
+  const [newName, setNewName] = useState("")
+  const [newWhatsapp, setNewWhatsapp] = useState("")
+  const [newPixKey, setNewPixKey] = useState("")
   const [newUserPassword, setNewUserPassword] = useState("")
   const [newUserRole, setNewUserRole] = useState("camareira")
   const [userError, setUserError] = useState("")
+
+  const [editUserModalOpen, setEditUserModalOpen] = useState(false)
+  const [editingUser, setEditingUser] = useState<any | null>(null)
+  const [editName, setEditName] = useState("")
+  const [editWhatsapp, setEditWhatsapp] = useState("")
+  const [editPixKey, setEditPixKey] = useState("")
+  const [editRole, setEditRole] = useState("camareira")
 
   const [resetPwModalOpen, setResetPwModalOpen] = useState(false)
   const [targetUser, setTargetUser] = useState<any | null>(null)
@@ -402,12 +412,22 @@ export default function SystemSettings() {
       const res = await fetch("/api/admin/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: newUsername, password: newUserPassword, role: newUserRole })
+        body: JSON.stringify({ 
+          username: newUsername, 
+          name: newName || newUsername,
+          password: newUserPassword, 
+          role: newUserRole,
+          whatsapp: newWhatsapp,
+          pixKey: newPixKey
+        })
       })
       const data = await res.json()
       if (res.ok) {
         setNewUserModalOpen(false)
         setNewUsername("")
+        setNewName("")
+        setNewWhatsapp("")
+        setNewPixKey("")
         setNewUserPassword("")
         fetchUsers()
       } else {
@@ -415,6 +435,45 @@ export default function SystemSettings() {
       }
     } catch {
       setUserError("Erro na requisição.")
+    }
+  }
+
+  const handleOpenEditUser = (u: any) => {
+    setEditingUser(u)
+    setEditName(u.name || u.username)
+    setEditWhatsapp(u.whatsapp || u.phone || "")
+    setEditPixKey(u.pixKey || "")
+    setEditRole(u.role || "camareira")
+    setEditUserModalOpen(true)
+  }
+
+  const handleSaveEditUser = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingUser) return
+    try {
+      setSavingUser(true)
+      const res = await fetch(`/api/admin/users/${editingUser.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: editName.trim(),
+          role: editRole,
+          whatsapp: editWhatsapp.trim(),
+          phone: editWhatsapp.trim(),
+          pixKey: editPixKey.trim()
+        })
+      })
+      if (res.ok) {
+        setEditUserModalOpen(false)
+        fetchUsers()
+      } else {
+        const d = await res.json()
+        alert(d.error || "Erro ao atualizar usuário.")
+      }
+    } catch {
+      alert("Erro ao conectar com o servidor.")
+    } finally {
+      setSavingUser(false)
     }
   }
 
@@ -800,6 +859,7 @@ export default function SystemSettings() {
                     <tr>
                       <th className="p-3.5">Nome / Login</th>
                       <th className="p-3.5">Perfil</th>
+                      <th className="p-3.5">WhatsApp</th>
                       <th className="p-3.5">Último Acesso</th>
                       <th className="p-3.5 text-right">Ações</th>
                     </tr>
@@ -818,11 +878,31 @@ export default function SystemSettings() {
                             {u.role === "admin" ? "Administrador" : u.role === "recepcao" ? "Recepção" : "Camareira"}
                           </Badge>
                         </td>
+                        <td className="p-3.5">
+                          {u.whatsapp || u.phone ? (
+                            <span className="font-mono text-emerald-600 font-bold flex items-center gap-1">
+                              <Phone className="w-3 h-3" />
+                              <span>{u.whatsapp || u.phone}</span>
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground italic text-[11px]">—</span>
+                          )}
+                        </td>
                         <td className="p-3.5 text-muted-foreground">
                           {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString("pt-BR") : "—"}
                         </td>
                         <td className="p-3.5 text-right">
                           <div className="flex items-center justify-end gap-1">
+                            <Button 
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => handleOpenEditUser(u)}
+                              className="h-7 px-2 text-[11px] font-bold rounded-lg text-foreground hover:bg-muted"
+                              title="Editar dados e WhatsApp"
+                            >
+                              <Edit3 className="w-3 h-3 mr-1" />
+                              <span>Editar</span>
+                            </Button>
                             <Button 
                               size="sm"
                               variant="ghost"
@@ -952,11 +1032,24 @@ export default function SystemSettings() {
 
             <form onSubmit={handleCreateUser} className="space-y-3 pt-2">
               <div className="space-y-1">
-                <Label className="text-xs font-bold">Nome / Usuário</Label>
-                <Input value={newUsername} onChange={e => setNewUsername(e.target.value)} required className="text-xs rounded-xl h-9" />
+                <Label className="text-xs font-bold">Login do Usuário *</Label>
+                <Input value={newUsername} onChange={e => setNewUsername(e.target.value)} required placeholder="ex: cris" className="text-xs rounded-xl h-9" />
               </div>
               <div className="space-y-1">
-                <Label className="text-xs font-bold">Senha Inicial</Label>
+                <Label className="text-xs font-bold">Nome de Exibição</Label>
+                <Input value={newName} onChange={e => setNewName(e.target.value)} placeholder="ex: Cristiane Silva" className="text-xs rounded-xl h-9" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-bold">WhatsApp / Celular</Label>
+                <Input value={newWhatsapp} onChange={e => setNewWhatsapp(e.target.value)} placeholder="ex: (22) 99850-5276" className="text-xs rounded-xl h-9 font-mono" />
+                <p className="text-[10px] text-muted-foreground">Necessário para receber alertas de quarto e relatórios da governança.</p>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-bold">Chave PIX (Opcional)</Label>
+                <Input value={newPixKey} onChange={e => setNewPixKey(e.target.value)} placeholder="ex: CPF ou Celular" className="text-xs rounded-xl h-9 font-mono" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-bold">Senha Inicial *</Label>
                 <Input type="password" value={newUserPassword} onChange={e => setNewUserPassword(e.target.value)} required className="text-xs rounded-xl h-9" />
               </div>
               <div className="space-y-1">
@@ -973,9 +1066,62 @@ export default function SystemSettings() {
                 </Select>
               </div>
 
+              {userError && (
+                <p className="text-xs text-rose-500 font-medium">{userError}</p>
+              )}
+
               <DialogFooter className="gap-2 pt-2">
                 <Button type="button" variant="outline" onClick={() => setNewUserModalOpen(false)} className="rounded-xl h-9 text-xs font-bold">Cancelar</Button>
                 <Button type="submit" className="rounded-xl h-9 text-xs font-bold bg-primary text-primary-foreground">Criar Usuário</Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal Editar Usuário */}
+        <Dialog open={editUserModalOpen} onOpenChange={setEditUserModalOpen}>
+          <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl">
+            <DialogHeader>
+              <DialogTitle className="text-base font-black flex items-center gap-2">
+                <Edit3 className="w-5 h-5 text-primary" />
+                Editar Usuário: {editingUser?.name || editingUser?.username}
+              </DialogTitle>
+              <DialogDescription className="text-xs">Atualize os dados cadastrais, WhatsApp e Chave PIX</DialogDescription>
+            </DialogHeader>
+
+            <form onSubmit={handleSaveEditUser} className="space-y-3 pt-2">
+              <div className="space-y-1">
+                <Label className="text-xs font-bold">Nome de Exibição</Label>
+                <Input value={editName} onChange={e => setEditName(e.target.value)} required className="text-xs rounded-xl h-9" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-bold">WhatsApp / Celular</Label>
+                <Input value={editWhatsapp} onChange={e => setEditWhatsapp(e.target.value)} placeholder="(22) 99850-5276" className="text-xs rounded-xl h-9 font-mono" />
+                <p className="text-[10px] text-muted-foreground">Número para disparo de mensagens e relatórios automáticos.</p>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-bold">Chave PIX</Label>
+                <Input value={editPixKey} onChange={e => setEditPixKey(e.target.value)} placeholder="Chave PIX da colaboradora" className="text-xs rounded-xl h-9 font-mono" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-bold">Perfil de Acesso</Label>
+                <Select value={editRole} onValueChange={setEditRole}>
+                  <SelectTrigger className="h-9 text-xs rounded-xl">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="camareira">Camareira (Apenas Limpeza)</SelectItem>
+                    <SelectItem value="recepcao">Recepção / Portaria</SelectItem>
+                    <SelectItem value="admin">Administrador Geral</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <DialogFooter className="gap-2 pt-2">
+                <Button type="button" variant="outline" onClick={() => setEditUserModalOpen(false)} className="rounded-xl h-9 text-xs font-bold">Cancelar</Button>
+                <Button type="submit" disabled={savingUser} className="rounded-xl h-9 text-xs font-bold bg-primary text-primary-foreground">
+                  {savingUser ? "Salvando..." : "Salvar Alterações"}
+                </Button>
               </DialogFooter>
             </form>
           </DialogContent>
