@@ -210,11 +210,20 @@ export default function ZapiConnection() {
 
       if (res.ok && data.success) {
         const isSelf = statusInfo?.phone && testPhone.replace(/\D/g, "").endsWith(statusInfo.phone.replace(/\D/g, ""))
+        const isButtons = data.method === "buttons"
+        const isFallback = data.method === "fallback_text"
+
         toast({
-          title: "✓ Teste enviado com sucesso!",
-          description: isSelf
-            ? `Entregue via Z-API (${data.method === "buttons" ? "Com Botões" : "Texto com Links"}). Verifique sua conversa "Você" no WhatsApp!`
-            : `Entregue via Z-API (${data.method === "buttons" ? "Com Botões" : "Texto com Links"}). Verifique o aparelho destinatário!`
+          title: isFallback 
+            ? "⚠️ Entregue via Texto com Links (Fallback Z-API)" 
+            : isButtons 
+              ? "✓ Teste enviado com Botões Interativos!" 
+              : "✓ Teste enviado com sucesso!",
+          description: isFallback
+            ? `Aviso Z-API: "${data.buttonError || 'Recurso de botões requer ativação prévia'}". A mensagem foi entregue em texto com todos os links diretos para não perder o envio.`
+            : isSelf
+              ? `Entregue via Z-API (${isButtons ? "Com Botões Interativos" : "Texto com Links"}). Verifique sua conversa "Você" no WhatsApp!`
+              : `Entregue via Z-API (${isButtons ? "Com Botões Interativos" : "Texto com Links"}). Verifique o aparelho destinatário!`
         })
         setTestModalOpen(false)
       } else {
@@ -536,6 +545,34 @@ export default function ZapiConnection() {
                     Envia os botões nativos do WhatsApp. <em>Atenção:</em> se a conta conectada na Z-API foi trocada recentemente ou for nova, a Meta pode silenciar o envio dos botões.
                   </p>
                 </div>
+              </div>
+
+              {/* Guia e Requisitos Oficiais da Z-API para Botões Interativos */}
+              <div className="p-4 rounded-2xl bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-blue-900 dark:text-blue-200 flex items-center gap-1.5">
+                    💡 Requisitos Importantes para Uso dos Botões Interativos (Z-API)
+                  </span>
+                  <a 
+                    href="https://developer.z-api.io/message/send-button-actions" 
+                    target="_blank" 
+                    rel="noopener noreferrer" 
+                    className="text-[10px] text-blue-700 dark:text-blue-300 font-semibold underline flex items-center gap-0.5"
+                  >
+                    Documentação Oficial <ExternalLink className="w-2.5 h-2.5" />
+                  </a>
+                </div>
+                <ul className="text-[11px] text-blue-800 dark:text-blue-300 space-y-1.5 list-disc pl-4 leading-relaxed">
+                  <li>
+                    <strong>Ativação no Painel da Z-API:</strong> O recurso de botões requer que você acesse sua instância no painel <a href="https://app.z-api.io" target="_blank" rel="noopener noreferrer" className="underline font-bold">app.z-api.io</a>, vá em <em>Configurações</em> e aceite os termos de uso de mensagens com botão.
+                  </li>
+                  <li>
+                    <strong>Regra do WhatsApp:</strong> Não misture botões de <em>Link (URL) / Ligação (CALL)</em> com botões de <em>Resposta Rápida (REPLY)</em> na mesma mensagem, pois o WhatsApp Web rejeita o envio. O CorpFlats filtra e organiza os botões automaticamente para evitar falhas.
+                  </li>
+                  <li>
+                    <strong>Fallback Automático de Segurança:</strong> Caso o WhatsApp ou a Z-API rejeitem o botão por qualquer motivo momentâneo, o CorpFlats converte a mensagem instantaneamente em texto formatado com os links clicáveis, assegurando que o hóspede nunca deixe de receber a mensagem.
+                  </li>
+                </ul>
               </div>
             </div>
 

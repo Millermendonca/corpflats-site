@@ -675,11 +675,20 @@ export default function WhatsappAutomation() {
 
       if (res.ok && data.success) {
         const isSelf = statusInfo?.phone && testPhone.replace(/\D/g, "").endsWith(statusInfo.phone.replace(/\D/g, ""))
+        const isButtons = data.method === "buttons"
+        const isFallback = data.method === "fallback_text"
+
         toast({
-          title: "✓ Teste enviado com sucesso!",
-          description: isSelf
-            ? `Entregue via Z-API (${data.method === "buttons" ? "Com Botões" : "Texto com Links"}). Verifique sua conversa "Você" no WhatsApp!`
-            : `Entregue via Z-API (${data.method === "buttons" ? "Com Botões" : "Texto com Links"}). Verifique o aparelho destinatário!`
+          title: isFallback 
+            ? "⚠️ Entregue via Texto com Links (Fallback Z-API)" 
+            : isButtons 
+              ? "✓ Teste enviado com Botões Interativos!" 
+              : "✓ Teste enviado com sucesso!",
+          description: isFallback
+            ? `Aviso Z-API: "${data.buttonError || 'Recurso de botões requer ativação prévia no painel'}". A mensagem foi entregue em texto com os links de acesso direto.`
+            : isSelf
+              ? `Entregue via Z-API (${isButtons ? "Com Botões Interativos" : "Texto com Links"}). Verifique sua conversa "Você" no WhatsApp!`
+              : `Entregue via Z-API (${isButtons ? "Com Botões Interativos" : "Texto com Links"}). Verifique o aparelho destinatário!`
         })
         setTestModalOpen(false)
         fetchQueue()

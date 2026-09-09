@@ -655,18 +655,52 @@ export async function sendZapiMessage(config, { phone, message, title = "", foot
 
   // 2. Tentativa com Botões Interativos (/send-button-actions)
   const buttonActionsUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-button-actions`;
+
+  // Tratamento e validação estrita conforme documentação oficial da Z-API (developer.z-api.io):
+  // 1. WhatsApp rejeita misturar botões REPLY com CALL/URL simultaneamente.
+  // 2. URLs devem obrigatoriamente iniciar com http:// ou https://.
+  // 3. Suporte ao link nativo de cópia OTP do WhatsApp: https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code=...
+  // 4. Telefones para CALL devem conter DDI + DDD + números limpos.
+  const hasCallOrUrl = validButtons.some(b => b.type === "CALL" || b.type === "URL");
+  const hasReply = validButtons.some(b => b.type === "REPLY");
+
+  let filteredButtons = validButtons;
+  if (hasCallOrUrl && hasReply) {
+    console.warn("[Z-API] Mistura de botões REPLY com CALL/URL detectada. Priorizando CALL e URL para evitar rejeição pelo WhatsApp Web.");
+    filteredButtons = validButtons.filter(b => b.type !== "REPLY");
+  }
+
+  const formattedActions = filteredButtons.slice(0, 3).map((b, idx) => {
+    let type = (b.type || "URL").toUpperCase();
+    if (type !== "CALL" && type !== "REPLY") type = "URL";
+
+    const action = {
+      id: String(b.id || `btn_${idx + 1}`),
+      type,
+      label: String(b.label || "Acessar").trim().substring(0, 25)
+    };
+
+    if (type === "URL") {
+      let rawUrl = String(b.url || "").trim();
+      if (b.copyCode) {
+        rawUrl = `https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code=${encodeURIComponent(b.copyCode)}`;
+      } else if (!rawUrl.startsWith("http://") && !rawUrl.startsWith("https://")) {
+        rawUrl = "https://" + rawUrl;
+      }
+      action.url = rawUrl;
+    } else if (type === "CALL") {
+      action.phone = cleanWhatsAppPhone(b.phone || config.adminWhatsApp || "5522997124021");
+    }
+
+    return action;
+  });
+
   const buttonActionsPayload = {
     phone: cleanPhone,
     message: message,
     ...(title ? { title } : {}),
     ...(footer ? { footer } : {}),
-    buttonActions: validButtons.slice(0, 3).map((b, idx) => ({
-      id: b.id || `btn_${idx + 1}`,
-      type: b.type || "URL",
-      label: b.label.substring(0, 20), // Z-API recomenda labels concisos
-      ...(b.type === "URL" ? { url: b.url } : {}),
-      ...(b.type === "CALL" ? { phone: cleanWhatsAppPhone(b.phone || config.adminWhatsApp || "5522997124021") } : {})
-    }))
+    buttonActions: formattedActions
   };
 
   try {
@@ -706,7 +740,8 @@ export async function sendZapiMessage(config, { phone, message, title = "", foot
         return {
           success: true,
           method: "fallback_text",
-          warning: "Destinatário ou conta não suporta botões interativos. Mensagem entregue via texto tradicional com os links integrados.",
+          warning: "A Z-API ou WhatsApp não renderizou os botões interativos (exigência de aceite dos termos de botões no painel da Z-API ou limitação da Meta). Mensagem entregue via texto com os links diretos.",
+          buttonError: data.message || data.error || `Erro HTTP ${res.status}`,
           messageId: textData.zaapId || textData.id,
           data: textData
         };
@@ -719,6 +754,144 @@ export async function sendZapiMessage(config, { phone, message, title = "", foot
     };
   } catch (err) {
     console.error(`[Z-API] Exceção no envio:`, err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+// ── Funções Auxiliares de Recursos Modernos da Z-API ───────────────────────────
+
+/**
+ * Enviar Localização Fixa no Mapa do WhatsApp (/send-message-location)
+ */
+export async function sendZapiLocation(config, { phone, title, address, latitude, longitude }) {
+  const cleanPhone = cleanWhatsAppPhone(phone);
+  if (!cleanPhone) return { success: false, error: "Telefone inválido" };
+
+  const instanceId = config?.instanceId?.trim();
+  const token = config?.token?.trim();
+  const clientToken = config?.clientToken?.trim();
+  if (!instanceId || !token) return { success: true, simulated: true };
+
+  const baseUrl = config.baseUrl?.replace(/\/+$/, "") || "https://api.z-api.io";
+  const url = `${baseUrl}/instances/${instanceId}/token/${token}/send-message-location`;
+  const headers = { "Content-Type": "application/json" };
+  if (clientToken) headers["Client-Token"] = clientToken;
+
+  const payload = {
+    phone: cleanPhone,
+    title: title || "CorpFlats Soho Residence",
+    address: address || "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ, 28010-140",
+    latitude: String(latitude || "-21.7584"),
+    longitude: String(longitude || "-41.3262")
+  };
+
+  try {
+    const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(payload) });
+    const data = await res.json().catch(() => ({}));
+    return { success: res.ok, data };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Enviar Botão OTP de Cópia com 1 Toque (/send-button-otp)
+ */
+export async function sendZapiOtpButton(config, { phone, message, code, buttonText = "Copiar código" }) {
+  const cleanPhone = cleanWhatsAppPhone(phone);
+  if (!cleanPhone) return { success: false, error: "Telefone inválido" };
+
+  const instanceId = config?.instanceId?.trim();
+  const token = config?.token?.trim();
+  const clientToken = config?.clientToken?.trim();
+  if (!instanceId || !token) return { success: true, simulated: true };
+
+  const baseUrl = config.baseUrl?.replace(/\/+$/, "") || "https://api.z-api.io";
+  const url = `${baseUrl}/instances/${instanceId}/token/${token}/send-button-otp`;
+  const headers = { "Content-Type": "application/json" };
+  if (clientToken) headers["Client-Token"] = clientToken;
+
+  const payload = {
+    phone: cleanPhone,
+    message,
+    code,
+    buttonText
+  };
+
+  try {
+    const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(payload) });
+    const data = await res.json().catch(() => ({}));
+    return { success: res.ok, data };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Enviar Botão Nativo de Chave PIX (/send-button-pix)
+ */
+export async function sendZapiPixButton(config, { phone, pixKey, type = "EVP", merchantName = "CorpFlats" }) {
+  const cleanPhone = cleanWhatsAppPhone(phone);
+  if (!cleanPhone) return { success: false, error: "Telefone inválido" };
+
+  const instanceId = config?.instanceId?.trim();
+  const token = config?.token?.trim();
+  const clientToken = config?.clientToken?.trim();
+  if (!instanceId || !token) return { success: true, simulated: true };
+
+  const baseUrl = config.baseUrl?.replace(/\/+$/, "") || "https://api.z-api.io";
+  const url = `${baseUrl}/instances/${instanceId}/token/${token}/send-button-pix`;
+  const headers = { "Content-Type": "application/json" };
+  if (clientToken) headers["Client-Token"] = clientToken;
+
+  const payload = {
+    phone: cleanPhone,
+    pixKey,
+    type,
+    merchantName
+  };
+
+  try {
+    const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(payload) });
+    const data = await res.json().catch(() => ({}));
+    return { success: res.ok, data };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Enviar Lista Interativa de Opções / Dropdown (/send-option-list)
+ */
+export async function sendZapiOptionList(config, { phone, message, title, buttonLabel = "Ver Opções", options }) {
+  const cleanPhone = cleanWhatsAppPhone(phone);
+  if (!cleanPhone) return { success: false, error: "Telefone inválido" };
+
+  const instanceId = config?.instanceId?.trim();
+  const token = config?.token?.trim();
+  const clientToken = config?.clientToken?.trim();
+  if (!instanceId || !token) return { success: true, simulated: true };
+
+  const baseUrl = config.baseUrl?.replace(/\/+$/, "") || "https://api.z-api.io";
+  const url = `${baseUrl}/instances/${instanceId}/token/${token}/send-option-list`;
+  const headers = { "Content-Type": "application/json" };
+  if (clientToken) headers["Client-Token"] = clientToken;
+
+  const payload = {
+    phone: cleanPhone,
+    message,
+    optionList: {
+      title: title || "Opções Disponíveis",
+      buttonLabel,
+      options: options || []
+    }
+  };
+
+  try {
+    const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(payload) });
+    const data = await res.json().catch(() => ({}));
+    return { success: res.ok, data };
+  } catch (err) {
     return { success: false, error: err.message };
   }
 }
@@ -1315,6 +1488,38 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
     });
     saveDatabase();
 
+    res.json(result);
+  });
+
+  // 13. Enviar Localização Fixa no Mapa (/api/whatsapp/send-location)
+  app.post("/api/whatsapp/send-location", async (req, res) => {
+    const db = getDb();
+    const { phone, title, address, latitude, longitude } = req.body;
+    const result = await sendZapiLocation(db?.zapiConfig, { phone, title, address, latitude, longitude });
+    res.json(result);
+  });
+
+  // 14. Enviar Botão OTP de Cópia com 1 Toque (/api/whatsapp/send-otp)
+  app.post("/api/whatsapp/send-otp", async (req, res) => {
+    const db = getDb();
+    const { phone, message, code, buttonText } = req.body;
+    const result = await sendZapiOtpButton(db?.zapiConfig, { phone, message, code, buttonText });
+    res.json(result);
+  });
+
+  // 15. Enviar Botão Nativo de Chave PIX (/api/whatsapp/send-pix)
+  app.post("/api/whatsapp/send-pix", async (req, res) => {
+    const db = getDb();
+    const { phone, pixKey, type, merchantName } = req.body;
+    const result = await sendZapiPixButton(db?.zapiConfig, { phone, pixKey, type, merchantName });
+    res.json(result);
+  });
+
+  // 16. Enviar Lista Interativa de Opções / Dropdown (/api/whatsapp/send-option-list)
+  app.post("/api/whatsapp/send-option-list", async (req, res) => {
+    const db = getDb();
+    const { phone, message, title, buttonLabel, options } = req.body;
+    const result = await sendZapiOptionList(db?.zapiConfig, { phone, message, title, buttonLabel, options });
     res.json(result);
   });
 
