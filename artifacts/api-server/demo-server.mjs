@@ -6006,26 +6006,50 @@ app.put("/api/pms/reservations/:id", (req, res) => {
     if (!db.cleaningRequests) db.cleaningRequests = [];
     const flatNum = r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number);
 
-    // 1. Procura solicitação não-concluída na data antiga para este flat e atualiza para a nova data
+    // 1. Verifica se na nova data de check-out (r.checkoutDate) já existe uma limpeza concluída para este flat
+    const existingCleanOnTarget = db.cleaningRequests.find(c => 
+      (c.flatId === r.flatId || String(c.flatNumber) === String(flatNum)) && 
+      c.requestDate === r.checkoutDate && 
+      c.status === "clean"
+    );
+
+    // 2. Procura solicitação não-concluída na data antiga para este flat
     const oldReq = db.cleaningRequests.find(c => 
       (c.flatId === oldFlatId || String(c.flatNumber) === String(flatNum)) && 
       c.requestDate === oldCheckout && 
       c.status !== "clean"
     );
 
-    if (oldReq) {
-      oldReq.requestDate = r.checkoutDate;
-      oldReq.flatId = r.flatId;
-      oldReq.flatNumber = flatNum;
-      oldReq.leavingGuest = r.guestName;
-      oldReq.updatedAt = new Date().toISOString();
-    } else {
-      // 2. Se não havia pendência ou já estava limpa, garante que exista a nova pendência na nova data de checkout
-      const hasNewReq = db.cleaningRequests.some(c => 
+    if (existingCleanOnTarget) {
+      // Se o flat já está limpo na data de destino, descarta qualquer pendência antiga da data anterior
+      // para nunca sobrescrever nem recriar duplicatas sujas sobre um quarto já higienizado!
+      if (oldReq) {
+        db.cleaningRequests = db.cleaningRequests.filter(c => c.id !== oldReq.id);
+      }
+    } else if (oldReq) {
+      // Verifica se já existe outra solicitação na data de destino
+      const existingOnTarget = db.cleaningRequests.find(c => 
         (c.flatId === r.flatId || String(c.flatNumber) === String(flatNum)) && 
         c.requestDate === r.checkoutDate
       );
-      if (!hasNewReq && r.status !== "cancelada") {
+      if (existingOnTarget) {
+        // Já existe um card na nova data; descarta o card obsoleto da data antiga
+        db.cleaningRequests = db.cleaningRequests.filter(c => c.id !== oldReq.id);
+      } else {
+        // Move a pendência para a nova data
+        oldReq.requestDate = r.checkoutDate;
+        oldReq.flatId = r.flatId;
+        oldReq.flatNumber = flatNum;
+        oldReq.leavingGuest = r.guestName;
+        oldReq.updatedAt = new Date().toISOString();
+      }
+    } else {
+      // 3. Se não havia pendência na data antiga e não existe na nova data, garante criação se não cancelada
+      const hasAnyReq = db.cleaningRequests.some(c => 
+        (c.flatId === r.flatId || String(c.flatNumber) === String(flatNum)) && 
+        c.requestDate === r.checkoutDate
+      );
+      if (!hasAnyReq && r.status !== "cancelada") {
         const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(x => Number(x.id) || 0)) : 0;
         db.cleaningRequests.unshift({
           id: maxId + 1,
