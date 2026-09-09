@@ -1251,46 +1251,51 @@ export default function WhatsappAutomation() {
                       </div>
 
                       {/* Grid de Canais Selecionáveis */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-1">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
                         {CHANNEL_OPTIONS.map((ch) => {
                           const isSelected = editingChannels.includes(ch.id);
+                          const isLastOdd = ch.id === "outros";
                           return (
                             <div
                               key={ch.id}
                               onClick={() => handleToggleChannel(ch.id)}
-                              className={`cursor-pointer p-2.5 rounded-xl border transition-all flex items-start justify-between gap-2.5 select-none ${
+                              className={`cursor-pointer p-3.5 rounded-xl border transition-all select-none flex flex-col justify-between gap-2 ${
                                 isSelected 
                                   ? "bg-white dark:bg-slate-900 border-emerald-500 shadow-2xs ring-1 ring-emerald-500/20" 
                                   : "bg-muted/20 border-border opacity-60 hover:opacity-100 hover:bg-muted/40"
-                              }`}
+                              } ${isLastOdd ? "md:col-span-2" : ""}`}
                             >
-                              <div className="flex items-start gap-2 min-w-0">
-                                <span className="text-lg shrink-0 mt-0.5">{ch.icon}</span>
-                                <div className="space-y-0.5 min-w-0">
-                                  <div className="flex items-center gap-1.5 flex-wrap">
-                                    <span className="text-xs font-bold text-foreground truncate">{ch.label}</span>
-                                    {isSelected ? (
-                                      <Badge variant="secondary" className="text-[9.5px] py-0 px-1 font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300 border border-emerald-200">
-                                        Ativo
-                                      </Badge>
-                                    ) : (
-                                      <Badge variant="outline" className="text-[9.5px] py-0 px-1 text-muted-foreground">
-                                        Bloqueado
-                                      </Badge>
-                                    )}
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="flex items-start gap-3 min-w-0">
+                                  <span className="text-2xl shrink-0 leading-none select-none mt-0.5">{ch.icon}</span>
+                                  <div className="space-y-1 min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="text-xs font-bold text-foreground whitespace-nowrap">
+                                        {ch.label}
+                                      </span>
+                                      {isSelected ? (
+                                        <Badge variant="secondary" className="text-[10px] py-0 px-1.5 font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300 border border-emerald-200">
+                                          Ativo
+                                        </Badge>
+                                      ) : (
+                                        <Badge variant="outline" className="text-[10px] py-0 px-1.5 text-muted-foreground">
+                                          Pausado
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    <p className="text-[11px] text-muted-foreground leading-snug">
+                                      {ch.description}
+                                    </p>
                                   </div>
-                                  <p className="text-[10px] text-muted-foreground line-clamp-2 leading-tight">
-                                    {ch.description}
-                                  </p>
                                 </div>
-                              </div>
 
-                              <Switch
-                                checked={isSelected}
-                                onCheckedChange={() => handleToggleChannel(ch.id)}
-                                className="shrink-0"
-                                onClick={(e) => e.stopPropagation()}
-                              />
+                                <Switch
+                                  checked={isSelected}
+                                  onCheckedChange={() => handleToggleChannel(ch.id)}
+                                  className="shrink-0 mt-0.5"
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                              </div>
                             </div>
                           );
                         })}
