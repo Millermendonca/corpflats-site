@@ -17,7 +17,7 @@ import {
   Calendar, BedDouble, DollarSign, History, Star, Edit2, ShieldCheck, Tag, 
   FileText, Building2, Building, ExternalLink, Download, Send, MapPin, 
   CheckCircle2, UserCheck, Eye, Sparkles, RefreshCw, Trash2, Heart, Award, 
-  Car, Coffee, Filter
+  Car, Coffee, Filter, ZoomIn, Camera, PenTool, Maximize2, AlertTriangle
 } from "lucide-react"
 
 import { AccessDenied } from "@/components/access-denied"
@@ -32,6 +32,9 @@ export default function CrmGuests() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
   const [selectedTagFilter, setSelectedTagFilter] = useState<string>("all")
+
+  // Lightbox de Mídias (Selfie, Documento, Assinatura)
+  const [lightboxMedia, setLightboxMedia] = useState<{ url: string; title: string; subtitle?: string } | null>(null)
 
   // Modal Detail 360º
   const [detailModalOpen, setDetailModalOpen] = useState(false)
@@ -101,6 +104,14 @@ export default function CrmGuests() {
     fetchGuests()
     fetchCompanies()
   }, [])
+
+  const calculateGuestAge = (birthDate?: string) => {
+    if (!birthDate) return null
+    const bDate = new Date(String(birthDate).substring(0, 10) + "T12:00:00")
+    if (isNaN(bDate.getTime())) return null
+    const diffMs = new Date().getTime() - bDate.getTime()
+    return Math.max(0, Math.floor(diffMs / (365.25 * 24 * 60 * 60 * 1000)))
+  }
 
   const handleOpenDetail = async (guest: any) => {
     setLoadingDetail(true)
@@ -571,12 +582,39 @@ export default function CrmGuests() {
                         <tr key={g.id} className="hover:bg-muted/20 transition-colors">
                           <td className="p-3.5">
                             <div className="flex items-center gap-2.5">
-                              <div className="w-8 h-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-black text-xs shrink-0">
-                                {(g.fullName || g.name || "H").substring(0, 2).toUpperCase()}
-                              </div>
+                              {g.photoUrl ? (
+                                <img
+                                  src={g.photoUrl}
+                                  alt={g.fullName || g.name}
+                                  onClick={() => setLightboxMedia({ 
+                                    url: g.photoUrl, 
+                                    title: `Selfie Biométrica - ${g.fullName || g.name}`,
+                                    subtitle: `Hóspede: ${g.guestCode || `HOSP-${String(g.id).padStart(5, '0')}`} • CPF: ${g.documentNumber || g.document || 'Não informado'}`
+                                  })}
+                                  className="w-10 h-10 rounded-xl object-cover border border-primary/30 shadow-xs cursor-pointer hover:scale-105 hover:border-primary transition-all shrink-0"
+                                />
+                              ) : (
+                                <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-black text-xs shrink-0">
+                                  {(g.fullName || g.name || "H").substring(0, 2).toUpperCase()}
+                                </div>
+                              )}
                               <div>
-                                <div className="flex items-center gap-1.5">
+                                <div className="flex items-center gap-1.5 flex-wrap">
                                   <span className="font-bold text-foreground block">{g.fullName || g.name}</span>
+                                  {g.guestCode && (
+                                    <span className="font-mono text-[9px] text-muted-foreground bg-muted/60 border border-border px-1.5 py-0.2 rounded">
+                                      {g.guestCode}
+                                    </span>
+                                  )}
+                                  {g.fnhrCompleted ? (
+                                    <Badge className="text-[9px] bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 gap-1 font-bold px-1.5 py-0">
+                                      <CheckCircle2 className="w-2.5 h-2.5" /> FNHR OK
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-400/40 px-1.5 py-0">
+                                      Pendente FNHR
+                                    </Badge>
+                                  )}
                                   {(g.isMonthlyGuest || g.clientType === "mensalista") && (
                                     <Badge className="text-[9px] bg-purple-600 text-white font-black px-1.5 py-0.2 rounded-md">
                                       🏢 Mensalista
@@ -751,34 +789,335 @@ export default function CrmGuests() {
         )}
 
         {/* ── MODAL FICHA 360º DO HÓSPEDE ── */}
+        {/* ── MODAL FICHA 360º DO HÓSPEDE COM MÍDIAS E FNHR UNIFICADA ── */}
         <Dialog open={detailModalOpen} onOpenChange={setDetailModalOpen}>
-          <DialogContent className="sm:max-w-3xl bg-card border border-border rounded-3xl max-h-[85vh] overflow-y-auto">
-            <DialogHeader className="border-b border-border pb-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center font-black text-base">
-                    {(activeGuest?.fullName || activeGuest?.name || "H").substring(0, 2).toUpperCase()}
-                  </div>
+          <DialogContent className="sm:max-w-4xl bg-card border border-border rounded-3xl max-h-[88vh] overflow-y-auto p-6">
+            <DialogHeader className="border-b border-border pb-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3.5">
+                  {activeGuest?.photoUrl ? (
+                    <div 
+                      onClick={() => setLightboxMedia({ 
+                        url: activeGuest.photoUrl, 
+                        title: `Foto / Biometria Facial - ${activeGuest.fullName || activeGuest.name}`,
+                        subtitle: `${activeGuest.guestCode || ''} • CPF: ${activeGuest.documentNumber || activeGuest.document || '-'}`
+                      })}
+                      className="relative group cursor-pointer shrink-0"
+                    >
+                      <img
+                        src={activeGuest.photoUrl}
+                        alt={activeGuest.fullName || activeGuest.name}
+                        className="w-16 h-16 rounded-2xl object-cover border-2 border-primary/40 shadow-md group-hover:brightness-90 transition-all"
+                      />
+                      <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 bg-black/40 rounded-2xl transition-opacity">
+                        <ZoomIn className="w-5 h-5 text-white" />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="w-16 h-16 rounded-2xl bg-primary/10 text-primary flex items-center justify-center font-black text-xl shrink-0 border border-primary/20">
+                      {(activeGuest?.fullName || activeGuest?.name || "H").substring(0, 2).toUpperCase()}
+                    </div>
+                  )}
+
                   <div>
-                    <DialogTitle className="text-lg font-black text-foreground flex items-center gap-2">
+                    <DialogTitle className="text-xl font-black text-foreground flex items-center gap-2 flex-wrap">
                       <span>{activeGuest?.fullName || activeGuest?.name}</span>
+                      {activeGuest?.guestCode && (
+                        <span className="font-mono text-xs font-bold bg-primary/10 text-primary px-2 py-0.5 rounded-lg border border-primary/20">
+                          {activeGuest.guestCode}
+                        </span>
+                      )}
+                      {activeGuest?.fnhrCompleted ? (
+                        <Badge className="text-[10px] bg-emerald-600 text-white font-black gap-1 py-0.5 px-2">
+                          <CheckCircle2 className="w-3 h-3" /> FNHR OK
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-400/50 py-0.5 px-2">
+                          Pendente FNHR
+                        </Badge>
+                      )}
                       {(activeGuest?.tags || []).map((t: string) => (
-                        <Badge key={t} className="text-[10px] bg-amber-500 text-white">{t}</Badge>
+                        <Badge 
+                          key={t} 
+                          className={`text-[10px] ${
+                            t === 'VIP' ? 'bg-amber-500 text-white font-bold' :
+                            t === 'Recorrente' ? 'bg-emerald-600 text-white font-bold' :
+                            'bg-muted text-muted-foreground'
+                          }`}
+                        >
+                          {t}
+                        </Badge>
                       ))}
                     </DialogTitle>
-                    <DialogDescription className="text-xs">
-                      CPF: {activeGuest?.documentNumber || activeGuest?.document || "—"} • {activeGuest?.phone || "Sem tel"} • {activeGuest?.email || "Sem e-mail"}
+                    <DialogDescription className="text-xs text-muted-foreground mt-1 flex flex-wrap items-center gap-2">
+                      <span>CPF: <strong>{activeGuest?.documentNumber || activeGuest?.document || "—"}</strong></span>
+                      <span>•</span>
+                      <span>Tel: <strong>{activeGuest?.phone || "Não informado"}</strong></span>
+                      <span>•</span>
+                      <span>Email: <strong>{activeGuest?.email || "Não informado"}</strong></span>
                     </DialogDescription>
                   </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  {activeGuest?.phone && (
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        const cleanP = String(activeGuest.phone).replace(/\D/g, '').replace(/^55/, '');
+                        window.open(`https://wa.me/55${cleanP}?text=${encodeURIComponent(`Olá, ${activeGuest.fullName || activeGuest.name}! Falamos da CorpFlats.`)}`, '_blank');
+                      }}
+                      className="h-9 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold gap-1.5 shadow-xs"
+                    >
+                      <MessageCircle className="w-4 h-4" />
+                      <span>WhatsApp</span>
+                    </Button>
+                  )}
+                  {activeGuest?.fnhrCompleted && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        const resCode = activeGuest.reservations?.[0]?.code || activeGuest.stays?.[0]?.code || 'view';
+                        window.open(`/pre-checkin/${resCode}?readonly=true&guestId=${activeGuest.id}`, '_blank');
+                      }}
+                      className="h-9 px-3 rounded-xl border-primary/30 text-primary hover:bg-primary/10 text-xs font-bold gap-1.5"
+                    >
+                      <FileText className="w-4 h-4" />
+                      <span>Ficha FNHR</span>
+                    </Button>
+                  )}
                 </div>
               </div>
             </DialogHeader>
 
             {loadingDetail ? (
-              <div className="p-12 text-center text-xs text-muted-foreground">Carregando ficha 360º...</div>
+              <div className="p-16 text-center text-xs text-muted-foreground flex flex-col items-center justify-center gap-2">
+                <RefreshCw className="w-6 h-6 animate-spin text-primary" />
+                <span>Carregando dados 360º e mídias de check-in...</span>
+              </div>
             ) : activeGuest && (
-              <div className="space-y-5 pt-2 text-xs">
-                {/* Métricas e Preferências */}
+              <div className="space-y-6 pt-3 text-xs">
+                {/* ── GALERIA DE MÍDIAS E DOCUMENTOS BIOMÉTRICOS ── */}
+                <div className="space-y-2.5">
+                  <div className="font-bold text-foreground flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <Camera className="w-4 h-4 text-primary" />
+                      <span className="text-sm font-black">Galeria de Identificação & Biometria Digital</span>
+                    </div>
+                    {activeGuest.fnhrCompleted && (
+                      <span className="text-[11px] text-emerald-600 font-bold flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Ficha FNHR Concluída {activeGuest.fnhrCompletedAt ? `(${new Date(activeGuest.fnhrCompletedAt).toLocaleDateString("pt-BR")})` : ''}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {/* Card 1: Selfie Biométrica */}
+                    <div className="p-3.5 rounded-2xl bg-muted/30 border border-border flex flex-col justify-between space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-foreground text-[11px] flex items-center gap-1">
+                          <UserCheck className="w-3.5 h-3.5 text-primary" /> Selfie Facial
+                        </span>
+                        {activeGuest.photoUrl ? (
+                          <Badge className="text-[9px] bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-bold border border-emerald-500/30">Anexada</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[9px] text-muted-foreground">Pendente</Badge>
+                        )}
+                      </div>
+
+                      {activeGuest.photoUrl ? (
+                        <div 
+                          onClick={() => setLightboxMedia({ 
+                            url: activeGuest.photoUrl, 
+                            title: `Selfie Biométrica - ${activeGuest.fullName || activeGuest.name}`,
+                            subtitle: "Reconhecimento facial conferido no Check-in Digital"
+                          })}
+                          className="relative group cursor-pointer rounded-xl overflow-hidden bg-background border border-border h-36 flex items-center justify-center shadow-inner"
+                        >
+                          <img
+                            src={activeGuest.photoUrl}
+                            alt="Selfie"
+                            className="w-full h-full object-contain p-1 group-hover:scale-105 transition-transform"
+                          />
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-1.5 text-white font-bold text-xs transition-opacity">
+                            <ZoomIn className="w-4 h-4" /> Ampliar
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="h-36 rounded-xl border border-dashed border-border bg-muted/20 flex flex-col items-center justify-center text-muted-foreground text-center p-3">
+                          <Camera className="w-6 h-6 mb-1 opacity-40" />
+                          <span className="text-[11px]">Nenhuma foto anexada</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Card 2: Foto do Documento */}
+                    <div className="p-3.5 rounded-2xl bg-muted/30 border border-border flex flex-col justify-between space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-foreground text-[11px] flex items-center gap-1">
+                          <ShieldCheck className="w-3.5 h-3.5 text-primary" /> Documento (RG / CNH)
+                        </span>
+                        {activeGuest.docPhotoUrl ? (
+                          <Badge className="text-[9px] bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-bold border border-emerald-500/30">Validado</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[9px] text-muted-foreground">Pendente</Badge>
+                        )}
+                      </div>
+
+                      {activeGuest.docPhotoUrl ? (
+                        <div 
+                          onClick={() => setLightboxMedia({ 
+                            url: activeGuest.docPhotoUrl, 
+                            title: `Documento de Identidade Oficial - ${activeGuest.fullName || activeGuest.name}`,
+                            subtitle: `CPF: ${activeGuest.documentNumber || activeGuest.document || 'Oficial'}`
+                          })}
+                          className="relative group cursor-pointer rounded-xl overflow-hidden bg-background border border-border h-36 flex items-center justify-center shadow-inner"
+                        >
+                          <img
+                            src={activeGuest.docPhotoUrl}
+                            alt="Documento"
+                            className="w-full h-full object-contain p-1 group-hover:scale-105 transition-transform"
+                          />
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-1.5 text-white font-bold text-xs transition-opacity">
+                            <ZoomIn className="w-4 h-4" /> Ampliar
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="h-36 rounded-xl border border-dashed border-border bg-muted/20 flex flex-col items-center justify-center text-muted-foreground text-center p-3">
+                          <FileText className="w-6 h-6 mb-1 opacity-40" />
+                          <span className="text-[11px]">Documento não anexado</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Card 3: Assinatura Digital */}
+                    <div className="p-3.5 rounded-2xl bg-muted/30 border border-border flex flex-col justify-between space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-foreground text-[11px] flex items-center gap-1">
+                          <PenTool className="w-3.5 h-3.5 text-primary" /> Assinatura Digital
+                        </span>
+                        {activeGuest.signatureUrl ? (
+                          <Badge className="text-[9px] bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-bold border border-emerald-500/30">Assinado</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[9px] text-muted-foreground">Pendente</Badge>
+                        )}
+                      </div>
+
+                      {activeGuest.signatureUrl ? (
+                        <div 
+                          onClick={() => setLightboxMedia({ 
+                            url: activeGuest.signatureUrl, 
+                            title: `Termo de Estadia Assinado Digitalmente - ${activeGuest.fullName || activeGuest.name}`,
+                            subtitle: "Assinatura digitalizada e vinculada ao CPF com carimbo de tempo"
+                          })}
+                          className="relative group cursor-pointer rounded-xl overflow-hidden bg-white border border-border h-36 flex items-center justify-center shadow-inner p-2"
+                        >
+                          <img
+                            src={activeGuest.signatureUrl}
+                            alt="Assinatura"
+                            className="w-full h-full object-contain group-hover:scale-105 transition-transform"
+                          />
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-1.5 text-white font-bold text-xs transition-opacity">
+                            <ZoomIn className="w-4 h-4" /> Ampliar
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="h-36 rounded-xl border border-dashed border-border bg-muted/20 flex flex-col items-center justify-center text-muted-foreground text-center p-3">
+                          <PenTool className="w-6 h-6 mb-1 opacity-40" />
+                          <span className="text-[11px]">Assinatura pendente</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Alertas de Menor ou Auditoria de IA */}
+                  {activeGuest.isMinor && (
+                    <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-200 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600" />
+                        <span>
+                          <strong>Hóspede Menor de Idade ({activeGuest.minorAge || calculateGuestAge(activeGuest.birthDate)} anos).</strong> Parentesco declarado: {activeGuest.minorKinship || 'Não especificado'}.
+                        </span>
+                      </div>
+                      {activeGuest.minorAuthDocUrl && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setLightboxMedia({
+                            url: activeGuest.minorAuthDocUrl,
+                            title: `Autorização de Hospedagem de Menor - ${activeGuest.fullName || activeGuest.name}`,
+                            subtitle: "Documento de autorização dos pais/responsáveis legais (ECA)"
+                          })}
+                          className="h-7 text-[11px] font-bold rounded-lg border-amber-400 text-amber-900 dark:text-amber-100"
+                        >
+                          Ver Autorização ECA
+                        </Button>
+                      )}
+                    </div>
+                  )}
+
+                  {activeGuest.aiVerification && (
+                    <div className="p-2.5 rounded-xl bg-sky-500/10 border border-sky-500/20 text-sky-800 dark:text-sky-200 text-[11px] flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+                        <span>Auditoria IA: <strong>{activeGuest.aiVerification.status === 'approved' ? 'Aprovado' : 'Em análise'}</strong> • {activeGuest.aiVerification.facialMatch || 'Biometria compatível'} • {activeGuest.aiVerification.documentValidity || 'Documento autêntico'}</span>
+                      </div>
+                      <Badge className="bg-sky-600 text-white text-[9px]">Confiança {activeGuest.aiVerification.confidence || 99}%</Badge>
+                    </div>
+                  )}
+                </div>
+
+                {/* ── GRID DE DADOS MINISTERIAIS (FNHR) & PESSOAIS ── */}
+                <div className="space-y-2">
+                  <div className="font-bold text-foreground flex items-center gap-1.5">
+                    <FileText className="w-4 h-4 text-primary" />
+                    <span className="text-sm font-black">Ficha Cadastral e Ministerial (FNHR)</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 p-4 rounded-2xl bg-muted/20 border border-border">
+                    <div>
+                      <div className="text-[10px] uppercase font-bold text-muted-foreground">CPF / Documento</div>
+                      <div className="text-xs font-bold text-foreground mt-0.5 font-mono">{activeGuest.documentNumber || activeGuest.document || "Não informado"}</div>
+                    </div>
+
+                    <div>
+                      <div className="text-[10px] uppercase font-bold text-muted-foreground">Nascimento & Idade</div>
+                      <div className="text-xs font-bold text-foreground mt-0.5">
+                        {activeGuest.birthDate ? `${activeGuest.birthDate} (${calculateGuestAge(activeGuest.birthDate) || '-'} anos)` : "Não informada"}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="text-[10px] uppercase font-bold text-muted-foreground">Gênero / Sexo</div>
+                      <div className="text-xs font-bold text-foreground mt-0.5 capitalize">{activeGuest.gender || "Não informado"}</div>
+                    </div>
+
+                    <div>
+                      <div className="text-[10px] uppercase font-bold text-muted-foreground">Veículo Registrado</div>
+                      <div className="text-xs font-bold text-foreground mt-0.5 flex items-center gap-1">
+                        <Car className="w-3 h-3 text-muted-foreground" />
+                        <span>{activeGuest.vehiclePlate ? `${activeGuest.vehiclePlate} (${activeGuest.vehicleModel || activeGuest.vehicleBrand || 'Veículo'})` : "Sem carro"}</span>
+                      </div>
+                    </div>
+
+                    <div className="col-span-2">
+                      <div className="text-[10px] uppercase font-bold text-muted-foreground">Endereço Residencial Completo</div>
+                      <div className="text-xs font-semibold text-foreground mt-0.5">
+                        {activeGuest.address || "Endereço não cadastrado"}
+                      </div>
+                    </div>
+
+                    <div className="col-span-2">
+                      <div className="text-[10px] uppercase font-bold text-muted-foreground">Cidade / Estado / País</div>
+                      <div className="text-xs font-semibold text-foreground mt-0.5">
+                        {activeGuest.city ? `${activeGuest.city}/${activeGuest.state || 'RJ'}` : "Não informada"} • {activeGuest.country || "Brasil"}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ── MÉTRICAS DE HOSPEDAGEM E PREFERÊNCIAS ── */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   <div className="p-3 rounded-2xl bg-muted/40 border border-border">
                     <div className="text-[10px] font-bold text-muted-foreground uppercase">LTV Total</div>
@@ -798,9 +1137,9 @@ export default function CrmGuests() {
                   </div>
 
                   <div className="p-3 rounded-2xl bg-muted/40 border border-border">
-                    <div className="text-[10px] font-bold text-muted-foreground uppercase">Pet / Carro</div>
+                    <div className="text-[10px] font-bold text-muted-foreground uppercase">Flat Frequente</div>
                     <div className="text-sm font-bold text-foreground mt-0.5">
-                      {activeGuest.preferences?.hasPet ? "🐾 Com Pet" : "Sem Pet"} {activeGuest.preferences?.vehiclePlate ? `• ${activeGuest.preferences.vehiclePlate}` : ""}
+                      {activeGuest.favoriteFlat ? `Apto ${activeGuest.favoriteFlat}` : "Variado"}
                     </div>
                   </div>
                 </div>
@@ -858,6 +1197,9 @@ export default function CrmGuests() {
                             <span className="text-muted-foreground text-[11px] ml-2">
                               {r.checkinDate} a {r.checkoutDate} ({r.nightsCount || 1} noites)
                             </span>
+                            {r.fnhrCompleted && (
+                              <Badge className="ml-2 text-[9px] bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">FNHR OK</Badge>
+                            )}
                           </div>
                           <div className="font-black text-emerald-600">
                             R$ {Number(r.totalAmount || r.totalPrice || 0).toFixed(2)}
@@ -906,11 +1248,11 @@ export default function CrmGuests() {
               </div>
             )}
 
-            <DialogFooter className="gap-2 pt-3 border-t border-border">
+            <DialogFooter className="gap-2 pt-4 border-t border-border flex-wrap sm:flex-nowrap">
               <Button
                 onClick={() => {
                   setDetailModalOpen(false)
-                  setLocation(`/notas?doc=${activeGuest?.documentNumber || ''}&nome=${encodeURIComponent(activeGuest?.fullName || '')}`)
+                  setLocation(`/notas?doc=${activeGuest?.documentNumber || activeGuest?.document || ''}&nome=${encodeURIComponent(activeGuest?.fullName || activeGuest?.name || '')}`)
                 }}
                 className="rounded-xl h-10 text-xs font-black bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5"
               >
@@ -1077,6 +1419,56 @@ export default function CrmGuests() {
             </form>
           </DialogContent>
         </Dialog>
+
+        {/* ── LIGHTBOX ZOOM MODAL (EM TELA CHEIA) ── */}
+        {lightboxMedia && (
+          <Dialog open={!!lightboxMedia} onOpenChange={(open) => !open && setLightboxMedia(null)}>
+            <DialogContent className="sm:max-w-4xl bg-card/95 backdrop-blur-md border border-border rounded-3xl p-5 shadow-2xl">
+              <DialogHeader className="border-b border-border pb-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <DialogTitle className="text-base font-black text-foreground flex items-center gap-2">
+                      <Maximize2 className="w-4 h-4 text-primary" />
+                      <span>{lightboxMedia.title}</span>
+                    </DialogTitle>
+                    {lightboxMedia.subtitle && (
+                      <DialogDescription className="text-xs text-muted-foreground mt-0.5">
+                        {lightboxMedia.subtitle}
+                      </DialogDescription>
+                    )}
+                  </div>
+                </div>
+              </DialogHeader>
+
+              <div className="flex items-center justify-center p-4 bg-muted/20 rounded-2xl max-h-[72vh] overflow-hidden my-2">
+                <img
+                  src={lightboxMedia.url}
+                  alt={lightboxMedia.title}
+                  className="max-h-[68vh] max-w-full object-contain rounded-xl shadow-lg border border-border"
+                />
+              </div>
+
+              <DialogFooter className="flex items-center justify-between pt-2 border-t border-border">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => window.open(lightboxMedia.url, "_blank")}
+                  className="text-xs font-bold rounded-xl gap-1.5"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Abrir em Nova Aba</span>
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => setLightboxMedia(null)}
+                  className="text-xs font-bold rounded-xl"
+                >
+                  Fechar
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        )}
       </div>
     </Shell>
   )

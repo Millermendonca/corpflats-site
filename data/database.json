@@ -2216,7 +2216,10 @@
       "city": "",
       "notes": "",
       "tags": [],
-      "createdAt": "2026-08-25T04:45:05.807Z"
+      "createdAt": "2026-08-25T04:45:05.807Z",
+      "fullName": "Fabiano",
+      "guestCode": "HOSP-00001",
+      "documentNumber": ""
     },
     {
       "id": 2,
@@ -2228,7 +2231,10 @@
       "city": "",
       "notes": "",
       "tags": [],
-      "createdAt": "2026-08-25T04:51:34.860Z"
+      "createdAt": "2026-08-25T04:51:34.860Z",
+      "guestCode": "HOSP-00002",
+      "fullName": "Hospede Flexivel",
+      "documentNumber": ""
     },
     {
       "id": 3,
@@ -2236,7 +2242,10 @@
       "phone": "2299887766",
       "email": "twin@corpflats.com.br",
       "document": "",
-      "createdAt": "2026-08-25T05:15:53.753Z"
+      "createdAt": "2026-08-25T05:15:53.753Z",
+      "guestCode": "HOSP-00003",
+      "fullName": "Hospede 2 Camas Solteiro",
+      "documentNumber": ""
     },
     {
       "id": 4,
@@ -2244,7 +2253,10 @@
       "phone": "2299887765",
       "email": "queen@corpflats.com.br",
       "document": "",
-      "createdAt": "2026-08-25T05:15:53.766Z"
+      "createdAt": "2026-08-25T05:15:53.766Z",
+      "guestCode": "HOSP-00004",
+      "fullName": "Hospede Queen Casal",
+      "documentNumber": ""
     },
     {
       "id": 5,
@@ -2252,7 +2264,10 @@
       "phone": "2299887755",
       "email": "semcafe@corpflats.com.br",
       "document": "",
-      "createdAt": "2026-08-25T05:33:12.122Z"
+      "createdAt": "2026-08-25T05:33:12.122Z",
+      "guestCode": "HOSP-00005",
+      "fullName": "Hospede Sem Cafe",
+      "documentNumber": ""
     },
     {
       "id": 6,
@@ -2260,7 +2275,10 @@
       "phone": "2299887754",
       "email": "comcafe@corpflats.com.br",
       "document": "",
-      "createdAt": "2026-08-25T05:33:12.134Z"
+      "createdAt": "2026-08-25T05:33:12.134Z",
+      "guestCode": "HOSP-00006",
+      "fullName": "Hospede Com Cafe",
+      "documentNumber": ""
     },
     {
       "id": 7,
@@ -2272,7 +2290,238 @@
       "city": "",
       "notes": "",
       "tags": [],
-      "createdAt": "2026-09-03T13:40:08.662Z"
+      "createdAt": "2026-09-03T13:40:08.662Z",
+      "fullName": "Carlos Silva",
+      "guestCode": "HOSP-00007",
+      "documentNumber": ""
+    },
+    {
+      "id": 8,
+      "guestCode": "HOSP-00008",
+      "name": "Dayana",
+      "fullName": "Dayana",
+      "createdAt": "2026-09-03T02:10:08.808Z",
+      "phone": "22998622492",
+      "documentNumber": "",
+      "document": ""
+    },
+    {
+      "id": 9,
+      "guestCode": "HOSP-00009",
+      "name": "William",
+      "fullName": "William",
+      "createdAt": "2026-09-02T19:25:33.376Z",
+      "phone": "21 96899-8861",
+      "documentNumber": "",
+      "document": ""
+    },
+    {
+      "id": 10,
+      "guestCode": "HOSP-00010",
+      "name": "Leonardo",
+      "fullName": "Leonardo",
+      "createdAt": "2026-09-02T16:00:59.967Z",
+      "phone": "28981141553",
+      "documentNumber": "",
+      "document": ""
+    },
+    {
+      "id": 11,
+      "guestCode": "HOSP-00011",
+      "name": "Marco",
+      "fullName": "Marco",
+      "createdAt": "2026-09-02T15:44:19.337Z",
+      "phone": "21 99670-1988",
+      "documentNumber": "",
+      "document": ""
+    },
+    {
+      "id": 12,
+      "guestCode": "HOSP-00012",
+      "name": "Hiago Santana",
+      "fullName": "Hiago Santana",
+      "createdAt": "2026-09-02T15:42:02.256Z",
+      "phone": "38991146406",
+      "documentNumber": "",
+      "document": ""
+    },
+    {
+      "id": 13,
+      "guestCode": "HOSP-00013",
+      "name": "Anyelle",
+      "fullName": "Anyelle",
+      "createdAt": "2026-09-02T15:41:05.392Z",
+      "phone": "22981015177",
+      "documentNumber": "",
+      "document": ""
+    },
+    {
+      "id": 14,
+      "guestCode": "HOSP-00014",
+      "name": "Claudia",
+      "fullName": "Claudia",
+      "createdAt": "2026-09-02T15:40:30.837Z",
+      "documentNumber": "",
+      "document": ""
+    },
+    {
+      "id": 15,
+      "guestCode": "HOSP-00015",
+      "name": "Roselene",
+      "fullName": "Roselene",
+      "createdAt": "2026-09-02T15:38:22.081Z",
+      "phone": "21997598289",
+      "documentNumber": "",
+      "document": ""
+    },
+    {
+      "id": 16,
+      "guestCode": "HOSP-00016",
+      "name": "Gustavo",
+      "fullName": "Gustavo",
+      "createdAt": "2026-09-02T15:36:25.002Z",
+      "phone": "27999682556",
+      "documentNumber": "",
+      "document": ""
+    },
+    {
+      "id": 17,
+      "guestCode": "HOSP-00017",
+      "name": "Thaiza",
+      "fullName": "Thaiza",
+      "createdAt": "2026-09-02T15:33:13.138Z",
+      "phone": "21967558194",
+      "documentNumber": "",
+      "document": ""
+    },
+    {
+      "id": 18,
+      "guestCode": "HOSP-00018",
+      "name": "Marcelo",
+      "fullName": "Marcelo",
+      "createdAt": "2026-09-02T15:32:57.227Z",
+      "phone": "21972373799",
+      "documentNumber": "",
+      "document": ""
+    },
+    {
+      "id": 19,
+      "guestCode": "HOSP-00019",
+      "name": "Malu",
+      "fullName": "Malu",
+      "createdAt": "2026-09-09T21:10:43.308Z",
+      "documentNumber": "",
+      "document": ""
+    },
+    {
+      "id": 20,
+      "guestCode": "HOSP-00020",
+      "name": "Fabiana",
+      "fullName": "Fabiana",
+      "createdAt": "2026-09-02T15:28:12.540Z",
+      "documentNumber": "",
+      "document": ""
+    },
+    {
+      "id": 21,
+      "guestCode": "HOSP-00021",
+      "name": "Goal",
+      "fullName": "Goal",
+      "createdAt": "2026-09-02T15:27:19.628Z",
+      "documentNumber": "",
+      "document": ""
+    },
+    {
+      "id": 22,
+      "guestCode": "HOSP-00022",
+      "name": "Goal",
+      "fullName": "Goal",
+      "createdAt": "2026-09-09T21:10:43.310Z",
+      "documentNumber": "",
+      "document": ""
+    },
+    {
+      "id": 23,
+      "guestCode": "HOSP-00023",
+      "name": "Diana",
+      "fullName": "Diana",
+      "createdAt": "2026-09-09T21:10:43.310Z",
+      "documentNumber": "",
+      "document": ""
+    },
+    {
+      "id": 24,
+      "guestCode": "HOSP-00024",
+      "name": "Kaio",
+      "fullName": "Kaio",
+      "createdAt": "2026-09-09T21:10:43.310Z",
+      "documentNumber": "",
+      "document": ""
+    },
+    {
+      "id": 25,
+      "guestCode": "HOSP-00025",
+      "name": "Kaio",
+      "fullName": "Kaio",
+      "createdAt": "2026-09-09T21:10:43.310Z",
+      "documentNumber": "",
+      "document": ""
+    },
+    {
+      "id": 26,
+      "guestCode": "HOSP-00026",
+      "name": "Luiz",
+      "fullName": "Luiz",
+      "createdAt": "2026-09-09T21:10:43.313Z",
+      "phone": "27 99601-8588",
+      "documentNumber": "",
+      "document": ""
+    },
+    {
+      "id": 27,
+      "guestCode": "HOSP-00027",
+      "name": "Angelo",
+      "fullName": "Angelo",
+      "createdAt": "2026-09-09T21:10:43.314Z",
+      "documentNumber": "",
+      "document": ""
+    },
+    {
+      "id": 28,
+      "guestCode": "HOSP-00028",
+      "name": "Miller Mendonça Pessanha",
+      "fullName": "Miller Mendonça Pessanha",
+      "createdAt": "2026-08-28T01:23:41.256-03:00",
+      "document": "12585736792",
+      "documentNumber": "12585736792",
+      "phone": "22998505276",
+      "email": "millerpessanha@gmail.com",
+      "city": "Campos dos Goytacazes",
+      "state": "RJ",
+      "address": "Av. Pelinca, 200, Apto 408",
+      "birthDate": "1990-05-15",
+      "gender": "masculino",
+      "vehiclePlate": "KVW8840",
+      "vehicleModel": "Corolla",
+      "vehicleBrand": "Toyota",
+      "vehicleColor": "Cinza",
+      "fnhrCompleted": true,
+      "fnhrCompletedAt": "2026-08-25T14:20:00.000Z",
+      "photoUrl": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='400' height='400' viewBox='0 0 400 400'><rect width='400' height='400' fill='%230f172a'/><circle cx='200' cy='150' r='70' fill='%2338bdf8'/><path d='M100 350 C100 250 300 250 300 350 Z' fill='%2338bdf8'/><rect x='130' y='320' width='140' height='30' rx='15' fill='%2322c55e'/><text x='200' y='340' fill='white' font-family='sans-serif' font-size='12' font-weight='bold' text-anchor='middle'>BIOMETRIA FACIAL OK</text></svg>",
+      "docPhotoUrl": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='600' height='400' viewBox='0 0 600 400'><rect width='600' height='400' rx='20' fill='%231e293b' stroke='%233b82f6' stroke-width='4'/><rect x='40' y='40' width='520' height='60' rx='10' fill='%231e3a8a'/><text x='60' y='75' fill='%2393c5fd' font-family='sans-serif' font-size='18' font-weight='bold'>REPUBLICA FEDERATIVA DO BRASIL</text><text x='60' y='92' fill='%23cbd5e1' font-family='sans-serif' font-size='12'>CARTEIRA NACIONAL DE HABILITACAO / RG</text><rect x='50' y='130' width='130' height='170' rx='10' fill='%23334155'/><circle cx='115' cy='190' r='35' fill='%2364748b'/><path d='M70 290 C70 240 160 240 160 290 Z' fill='%2364748b'/><text x='210' y='160' fill='%2394a3b8' font-family='sans-serif' font-size='11'>NOME COMPLETO</text><text x='210' y='180' fill='white' font-family='sans-serif' font-size='16' font-weight='bold'>MILLER MENDONCA PESSANHA</text><text x='210' y='220' fill='%2394a3b8' font-family='sans-serif' font-size='11'>CPF</text><text x='210' y='240' fill='white' font-family='sans-serif' font-size='15' font-weight='bold'>125.857.367-92</text><text x='380' y='220' fill='%2394a3b8' font-family='sans-serif' font-size='11'>NASCIMENTO</text><text x='380' y='240' fill='white' font-family='sans-serif' font-size='15' font-weight='bold'>15/05/1990</text><rect x='40' y='330' width='520' height='40' rx='8' fill='%230f172a'/><text x='300' y='355' fill='%2322c55e' font-family='sans-serif' font-size='13' font-weight='bold' text-anchor='middle'>DOCUMENTO VALIDADO PELA IA (AUTENTICO)</text></svg>",
+      "signatureUrl": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='500' height='200' viewBox='0 0 500 200'><rect width='500' height='200' fill='%23ffffff' rx='15' stroke='%23cbd5e1' stroke-width='2'/><path d='M 50 130 Q 120 40 160 110 T 220 80 T 280 130 T 360 90 T 450 120' fill='none' stroke='%231e293b' stroke-width='4' stroke-linecap='round'/><path d='M 120 140 Q 250 170 420 130' fill='none' stroke='%230284c7' stroke-width='3' stroke-linecap='round'/><text x='250' y='180' fill='%2364748b' font-family='sans-serif' font-size='12' text-anchor='middle'>Assinatura Digital Certificada - Miller Mendonca Pessanha</text></svg>",
+      "aiVerification": {
+        "verified": true,
+        "confidence": 99,
+        "status": "approved",
+        "facialMatch": "100% compativel com documento",
+        "documentValidity": "Documento oficial autentico (RG/CNH)",
+        "auditTimestamp": "2026-08-25T14:20:00.000Z"
+      },
+      "tags": [
+        "VIP",
+        "Recorrente"
+      ]
     }
   ],
   "guestAccounts": [
@@ -2448,6 +2697,66 @@
   ],
   "reservations": [
     {
+      "id": 35,
+      "code": "RES-408-0035",
+      "flatNumber": "408",
+      "flatId": 8,
+      "guestId": 28,
+      "guestCode": "HOSP-00028",
+      "guestName": "Miller Mendonça Pessanha",
+      "guestDocument": "12585736792",
+      "guestPhone": "22998505276",
+      "guestEmail": "millerpessanha@gmail.com",
+      "checkinDate": "2026-08-25",
+      "checkoutDate": "2026-08-28",
+      "nightsCount": 3,
+      "totalAmount": 711,
+      "totalPrice": 711,
+      "price": 711,
+      "status": "concluida",
+      "fnhrCompleted": true,
+      "fnhrCompletedAt": "2026-08-25T14:20:00.000Z",
+      "selfieUrl": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='400' height='400' viewBox='0 0 400 400'><rect width='400' height='400' fill='%230f172a'/><circle cx='200' cy='150' r='70' fill='%2338bdf8'/><path d='M100 350 C100 250 300 250 300 350 Z' fill='%2338bdf8'/><rect x='130' y='320' width='140' height='30' rx='15' fill='%2322c55e'/><text x='200' y='340' fill='white' font-family='sans-serif' font-size='12' font-weight='bold' text-anchor='middle'>BIOMETRIA FACIAL OK</text></svg>",
+      "docPhotoUrl": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='600' height='400' viewBox='0 0 600 400'><rect width='600' height='400' rx='20' fill='%231e293b' stroke='%233b82f6' stroke-width='4'/><rect x='40' y='40' width='520' height='60' rx='10' fill='%231e3a8a'/><text x='60' y='75' fill='%2393c5fd' font-family='sans-serif' font-size='18' font-weight='bold'>REPUBLICA FEDERATIVA DO BRASIL</text><text x='60' y='92' fill='%23cbd5e1' font-family='sans-serif' font-size='12'>CARTEIRA NACIONAL DE HABILITACAO / RG</text><rect x='50' y='130' width='130' height='170' rx='10' fill='%23334155'/><circle cx='115' cy='190' r='35' fill='%2364748b'/><path d='M70 290 C70 240 160 240 160 290 Z' fill='%2364748b'/><text x='210' y='160' fill='%2394a3b8' font-family='sans-serif' font-size='11'>NOME COMPLETO</text><text x='210' y='180' fill='white' font-family='sans-serif' font-size='16' font-weight='bold'>MILLER MENDONCA PESSANHA</text><text x='210' y='220' fill='%2394a3b8' font-family='sans-serif' font-size='11'>CPF</text><text x='210' y='240' fill='white' font-family='sans-serif' font-size='15' font-weight='bold'>125.857.367-92</text><text x='380' y='220' fill='%2394a3b8' font-family='sans-serif' font-size='11'>NASCIMENTO</text><text x='380' y='240' fill='white' font-family='sans-serif' font-size='15' font-weight='bold'>15/05/1990</text><rect x='40' y='330' width='520' height='40' rx='8' fill='%230f172a'/><text x='300' y='355' fill='%2322c55e' font-family='sans-serif' font-size='13' font-weight='bold' text-anchor='middle'>DOCUMENTO VALIDADO PELA IA (AUTENTICO)</text></svg>",
+      "signatureUrl": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='500' height='200' viewBox='0 0 500 200'><rect width='500' height='200' fill='%23ffffff' rx='15' stroke='%23cbd5e1' stroke-width='2'/><path d='M 50 130 Q 120 40 160 110 T 220 80 T 280 130 T 360 90 T 450 120' fill='none' stroke='%231e293b' stroke-width='4' stroke-linecap='round'/><path d='M 120 140 Q 250 170 420 130' fill='none' stroke='%230284c7' stroke-width='3' stroke-linecap='round'/><text x='250' y='180' fill='%2364748b' font-family='sans-serif' font-size='12' text-anchor='middle'>Assinatura Digital Certificada - Miller Mendonca Pessanha</text></svg>",
+      "vehicle": {
+        "plate": "KVW8840",
+        "brand": "Toyota",
+        "model": "Corolla",
+        "color": "Cinza"
+      },
+      "guests": [
+        {
+          "index": 1,
+          "guestId": 28,
+          "guestCode": "HOSP-00028",
+          "name": "Miller Mendonça Pessanha",
+          "cpf": "12585736792",
+          "phone": "22998505276",
+          "email": "millerpessanha@gmail.com",
+          "birthDate": "1990-05-15",
+          "gender": "masculino",
+          "address": "Av. Pelinca, 200, Apto 408",
+          "city": "Campos dos Goytacazes",
+          "state": "RJ",
+          "docPhotoUrl": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='600' height='400' viewBox='0 0 600 400'><rect width='600' height='400' rx='20' fill='%231e293b' stroke='%233b82f6' stroke-width='4'/><rect x='40' y='40' width='520' height='60' rx='10' fill='%231e3a8a'/><text x='60' y='75' fill='%2393c5fd' font-family='sans-serif' font-size='18' font-weight='bold'>REPUBLICA FEDERATIVA DO BRASIL</text><text x='60' y='92' fill='%23cbd5e1' font-family='sans-serif' font-size='12'>CARTEIRA NACIONAL DE HABILITACAO / RG</text><rect x='50' y='130' width='130' height='170' rx='10' fill='%23334155'/><circle cx='115' cy='190' r='35' fill='%2364748b'/><path d='M70 290 C70 240 160 240 160 290 Z' fill='%2364748b'/><text x='210' y='160' fill='%2394a3b8' font-family='sans-serif' font-size='11'>NOME COMPLETO</text><text x='210' y='180' fill='white' font-family='sans-serif' font-size='16' font-weight='bold'>MILLER MENDONCA PESSANHA</text><text x='210' y='220' fill='%2394a3b8' font-family='sans-serif' font-size='11'>CPF</text><text x='210' y='240' fill='white' font-family='sans-serif' font-size='15' font-weight='bold'>125.857.367-92</text><text x='380' y='220' fill='%2394a3b8' font-family='sans-serif' font-size='11'>NASCIMENTO</text><text x='380' y='240' fill='white' font-family='sans-serif' font-size='15' font-weight='bold'>15/05/1990</text><rect x='40' y='330' width='520' height='40' rx='8' fill='%230f172a'/><text x='300' y='355' fill='%2322c55e' font-family='sans-serif' font-size='13' font-weight='bold' text-anchor='middle'>DOCUMENTO VALIDADO PELA IA (AUTENTICO)</text></svg>",
+          "selfieUrl": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='400' height='400' viewBox='0 0 400 400'><rect width='400' height='400' fill='%230f172a'/><circle cx='200' cy='150' r='70' fill='%2338bdf8'/><path d='M100 350 C100 250 300 250 300 350 Z' fill='%2338bdf8'/><rect x='130' y='320' width='140' height='30' rx='15' fill='%2322c55e'/><text x='200' y='340' fill='white' font-family='sans-serif' font-size='12' font-weight='bold' text-anchor='middle'>BIOMETRIA FACIAL OK</text></svg>",
+          "signatureUrl": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='500' height='200' viewBox='0 0 500 200'><rect width='500' height='200' fill='%23ffffff' rx='15' stroke='%23cbd5e1' stroke-width='2'/><path d='M 50 130 Q 120 40 160 110 T 220 80 T 280 130 T 360 90 T 450 120' fill='none' stroke='%231e293b' stroke-width='4' stroke-linecap='round'/><path d='M 120 140 Q 250 170 420 130' fill='none' stroke='%230284c7' stroke-width='3' stroke-linecap='round'/><text x='250' y='180' fill='%2364748b' font-family='sans-serif' font-size='12' text-anchor='middle'>Assinatura Digital Certificada - Miller Mendonca Pessanha</text></svg>",
+          "hasCompletedCheckin": true,
+          "checkinCompletedAt": "2026-08-25T14:20:00.000Z",
+          "aiVerification": {
+            "verified": true,
+            "confidence": 99,
+            "status": "approved",
+            "facialMatch": "100% compativel com documento",
+            "documentValidity": "Documento oficial autentico (RG/CNH)",
+            "auditTimestamp": "2026-08-25T14:20:00.000Z"
+          }
+        }
+      ],
+      "createdAt": "2026-08-24T18:00:00.000Z"
+    },
+    {
       "id": 34,
       "code": "RES-113-0034",
       "flatId": 1,
@@ -2465,7 +2774,8 @@
           "phone": "22998877665",
           "email": "",
           "hasCompletedCheckin": false,
-          "checkinCompletedAt": null
+          "checkinCompletedAt": null,
+          "guestId": 7
         }
       ],
       "requesterType": "guest",
@@ -2598,7 +2908,8 @@
           "phone": "22998877665",
           "email": "",
           "hasCompletedCheckin": false,
-          "checkinCompletedAt": null
+          "checkinCompletedAt": null,
+          "guestId": 7
         }
       ],
       "requesterType": "guest",
@@ -2683,7 +2994,9 @@
           "index": 1,
           "phone": "22998622492",
           "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
+          "hasCompletedCheckin": false,
+          "guestId": 8,
+          "guestCode": "HOSP-00008"
         },
         {
           "cpf": "",
@@ -2697,7 +3010,7 @@
       ],
       "status": "confirmada",
       "channel": "booking",
-      "guestId": 33,
+      "guestId": 8,
       "children": 0,
       "twinBeds": false,
       "companyId": null,
@@ -2766,7 +3079,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00008"
     },
     {
       "id": 31,
@@ -2782,7 +3096,9 @@
           "index": 1,
           "phone": "21 96899-8861",
           "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
+          "hasCompletedCheckin": false,
+          "guestId": 9,
+          "guestCode": "HOSP-00009"
         },
         {
           "cpf": "",
@@ -2796,7 +3112,7 @@
       ],
       "status": "confirmada",
       "channel": "booking",
-      "guestId": 32,
+      "guestId": 9,
       "children": 0,
       "twinBeds": false,
       "companyId": null,
@@ -2865,7 +3181,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00009"
     },
     {
       "id": 30,
@@ -2881,12 +3198,14 @@
           "index": 1,
           "phone": "28981141553",
           "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
+          "hasCompletedCheckin": false,
+          "guestId": 10,
+          "guestCode": "HOSP-00010"
         }
       ],
       "status": "confirmada",
       "channel": "booking",
-      "guestId": 31,
+      "guestId": 10,
       "children": 0,
       "twinBeds": false,
       "companyId": null,
@@ -2955,7 +3274,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00010"
     },
     {
       "id": 29,
@@ -2971,7 +3291,9 @@
           "index": 1,
           "phone": "21 99670-1988",
           "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
+          "hasCompletedCheckin": false,
+          "guestId": 11,
+          "guestCode": "HOSP-00011"
         },
         {
           "cpf": "",
@@ -2985,7 +3307,7 @@
       ],
       "status": "confirmada",
       "channel": "whatsapp",
-      "guestId": 30,
+      "guestId": 11,
       "children": 0,
       "twinBeds": false,
       "companyId": null,
@@ -3060,7 +3382,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00011"
     },
     {
       "id": 28,
@@ -3076,7 +3399,9 @@
           "index": 1,
           "phone": "",
           "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
+          "hasCompletedCheckin": false,
+          "guestId": 12,
+          "guestCode": "HOSP-00012"
         },
         {
           "cpf": "",
@@ -3090,7 +3415,7 @@
       ],
       "status": "confirmada",
       "channel": "airbnb",
-      "guestId": 29,
+      "guestId": 12,
       "children": 0,
       "twinBeds": false,
       "companyId": null,
@@ -3160,7 +3485,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00012"
     },
     {
       "id": 27,
@@ -3176,7 +3502,9 @@
           "index": 1,
           "phone": "",
           "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
+          "hasCompletedCheckin": false,
+          "guestId": 13,
+          "guestCode": "HOSP-00013"
         },
         {
           "cpf": "",
@@ -3190,7 +3518,7 @@
       ],
       "status": "confirmada",
       "channel": "airbnb",
-      "guestId": 28,
+      "guestId": 13,
       "children": 0,
       "twinBeds": false,
       "companyId": null,
@@ -3260,7 +3588,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00013"
     },
     {
       "id": 26,
@@ -3276,7 +3605,9 @@
           "index": 1,
           "phone": "",
           "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
+          "hasCompletedCheckin": false,
+          "guestId": 14,
+          "guestCode": "HOSP-00014"
         },
         {
           "cpf": "",
@@ -3290,7 +3621,7 @@
       ],
       "status": "confirmada",
       "channel": "airbnb",
-      "guestId": 27,
+      "guestId": 14,
       "children": 0,
       "twinBeds": false,
       "companyId": null,
@@ -3359,7 +3690,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00014"
     },
     {
       "id": 25,
@@ -3375,12 +3707,14 @@
           "index": 1,
           "phone": "21997598289",
           "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
+          "hasCompletedCheckin": false,
+          "guestId": 15,
+          "guestCode": "HOSP-00015"
         }
       ],
       "status": "confirmada",
       "channel": "booking",
-      "guestId": 26,
+      "guestId": 15,
       "children": 0,
       "twinBeds": false,
       "companyId": null,
@@ -3449,7 +3783,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00015"
     },
     {
       "id": 24,
@@ -3465,7 +3800,9 @@
           "index": 1,
           "phone": "999682556",
           "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
+          "hasCompletedCheckin": false,
+          "guestId": 16,
+          "guestCode": "HOSP-00016"
         },
         {
           "cpf": "",
@@ -3479,7 +3816,7 @@
       ],
       "status": "confirmada",
       "channel": "booking",
-      "guestId": 25,
+      "guestId": 16,
       "children": 0,
       "twinBeds": false,
       "companyId": null,
@@ -3549,7 +3886,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00016"
     },
     {
       "id": 23,
@@ -3565,12 +3903,14 @@
           "index": 1,
           "phone": "",
           "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
+          "hasCompletedCheckin": false,
+          "guestId": 17,
+          "guestCode": "HOSP-00017"
         }
       ],
       "status": "confirmada",
       "channel": "airbnb",
-      "guestId": 24,
+      "guestId": 17,
       "children": 0,
       "twinBeds": false,
       "companyId": null,
@@ -3640,7 +3980,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00017"
     },
     {
       "id": 22,
@@ -3656,12 +3997,14 @@
           "index": 1,
           "phone": "",
           "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
+          "hasCompletedCheckin": false,
+          "guestId": 19,
+          "guestCode": "HOSP-00019"
         }
       ],
       "status": "confirmada",
       "channel": "airbnb",
-      "guestId": 23,
+      "guestId": 18,
       "children": 0,
       "twinBeds": false,
       "companyId": null,
@@ -3731,7 +4074,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00018"
     },
     {
       "id": 21,
@@ -3747,7 +4091,9 @@
           "index": 1,
           "phone": "",
           "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
+          "hasCompletedCheckin": false,
+          "guestId": 20,
+          "guestCode": "HOSP-00020"
         },
         {
           "cpf": "",
@@ -3761,7 +4107,7 @@
       ],
       "status": "confirmada",
       "channel": "whatsapp",
-      "guestId": 22,
+      "guestId": 20,
       "children": 0,
       "twinBeds": false,
       "companyId": null,
@@ -3836,7 +4182,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00020"
     },
     {
       "id": 20,
@@ -3852,7 +4199,9 @@
           "index": 1,
           "phone": "",
           "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
+          "hasCompletedCheckin": false,
+          "guestId": 22,
+          "guestCode": "HOSP-00022"
         }
       ],
       "status": "confirmada",
@@ -3932,7 +4281,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00021"
     },
     {
       "id": 19,
@@ -3948,7 +4298,9 @@
           "index": 1,
           "phone": "",
           "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
+          "hasCompletedCheckin": false,
+          "guestId": 23,
+          "guestCode": "HOSP-00023"
         },
         {
           "cpf": "",
@@ -4032,7 +4384,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00020"
     },
     {
       "id": 18,
@@ -4048,7 +4401,9 @@
           "index": 1,
           "phone": "",
           "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
+          "hasCompletedCheckin": false,
+          "guestId": 24,
+          "guestCode": "HOSP-00024"
         }
       ],
       "status": "confirmada",
@@ -4122,7 +4477,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00019"
     },
     {
       "id": 17,
@@ -4138,7 +4494,9 @@
           "index": 1,
           "phone": "",
           "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
+          "hasCompletedCheckin": false,
+          "guestId": 25,
+          "guestCode": "HOSP-00025"
         }
       ],
       "status": "confirmada",
@@ -4212,7 +4570,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00019"
     },
     {
       "id": 15,
@@ -4228,7 +4587,9 @@
           "index": 1,
           "phone": "21972373799",
           "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
+          "hasCompletedCheckin": false,
+          "guestId": 18,
+          "guestCode": "HOSP-00018"
         }
       ],
       "status": "confirmada",
@@ -4308,7 +4669,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00018"
     },
     {
       "id": 14,
@@ -4324,7 +4686,9 @@
           "index": 1,
           "phone": "21967558194",
           "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
+          "hasCompletedCheckin": false,
+          "guestId": 17,
+          "guestCode": "HOSP-00017"
         },
         {
           "cpf": "",
@@ -4407,7 +4771,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00017"
     },
     {
       "id": 13,
@@ -4423,7 +4788,9 @@
           "index": 1,
           "phone": "22981149914",
           "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
+          "hasCompletedCheckin": false,
+          "guestId": 16,
+          "guestCode": "HOSP-00016"
         }
       ],
       "status": "confirmada",
@@ -4497,7 +4864,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00016"
     },
     {
       "id": 12,
@@ -4513,7 +4881,9 @@
           "index": 1,
           "phone": "21976403551",
           "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
+          "hasCompletedCheckin": false,
+          "guestId": 15,
+          "guestCode": "HOSP-00015"
         }
       ],
       "status": "confirmada",
@@ -4587,7 +4957,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00015"
     },
     {
       "id": 11,
@@ -4603,7 +4974,8 @@
           "index": 1,
           "phone": "2299881122",
           "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
+          "hasCompletedCheckin": false,
+          "guestId": 1
         }
       ],
       "status": "confirmada",
@@ -4700,7 +5072,9 @@
           "index": 1,
           "phone": "27 99601-8588",
           "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
+          "hasCompletedCheckin": false,
+          "guestId": 26,
+          "guestCode": "HOSP-00026"
         }
       ],
       "status": "confirmada",
@@ -4780,7 +5154,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00010"
     },
     {
       "id": 7,
@@ -4796,7 +5171,9 @@
           "index": 1,
           "phone": "22981015177",
           "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
+          "hasCompletedCheckin": false,
+          "guestId": 13,
+          "guestCode": "HOSP-00013"
         }
       ],
       "status": "confirmada",
@@ -4872,7 +5249,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00013"
     },
     {
       "id": 6,
@@ -4888,7 +5266,9 @@
           "index": 1,
           "phone": "38991146406",
           "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
+          "hasCompletedCheckin": false,
+          "guestId": 12,
+          "guestCode": "HOSP-00012"
         }
       ],
       "status": "confirmada",
@@ -4962,7 +5342,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00012"
     },
     {
       "id": 5,
@@ -4978,7 +5359,9 @@
           "index": 1,
           "phone": "21 99985-4881",
           "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
+          "hasCompletedCheckin": false,
+          "guestId": 11,
+          "guestCode": "HOSP-00011"
         }
       ],
       "status": "confirmada",
@@ -5053,7 +5436,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00011"
     },
     {
       "id": 3,
@@ -5069,7 +5453,9 @@
           "index": 1,
           "phone": "",
           "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
+          "hasCompletedCheckin": false,
+          "guestId": 27,
+          "guestCode": "HOSP-00027"
         }
       ],
       "status": "confirmada",
@@ -5144,7 +5530,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00009"
     },
     {
       "id": 2,
@@ -5160,7 +5547,9 @@
           "index": 1,
           "phone": "21965567043",
           "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
+          "hasCompletedCheckin": false,
+          "guestId": 8,
+          "guestCode": "HOSP-00008"
         },
         {
           "cpf": "",
@@ -5243,7 +5632,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00008"
     }
   ],
   "reservationCommunications": [
