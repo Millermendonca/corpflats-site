@@ -21,6 +21,10 @@ export interface WhatsAppQuickMessage {
   message: string
   footer?: string
   buttons?: ButtonAction[]
+  hasAttachment?: boolean
+  documentUrl?: string
+  documentName?: string
+  documentCaption?: string
 }
 
 export const DEFAULT_QUICK_MESSAGES: WhatsAppQuickMessage[] = [
@@ -153,6 +157,37 @@ Muito obrigado e até a próxima!`,
     buttons: [
       { id: "btn_rev", type: "URL", label: "⭐ Avaliar no Google", url: "{{link_avaliacao_google}}" }
     ]
+  },
+  {
+    id: "qm_guest_manual",
+    title: "Guia / Manual do Hóspede (PDF)",
+    shortLabel: "Guia / Manual",
+    icon: "📖",
+    description: "Manual com regras do flat, Wi-Fi, lazer, dicas da cidade e anexo PDF.",
+    category: "Estadia",
+    enabled: true,
+    hasAttachment: true,
+    documentUrl: "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
+    documentName: "Manual_do_Hospede_CorpFlats.pdf",
+    documentCaption: "Segue o Manual e Guia Completo do Hóspede em PDF para sua estadia! 📖✨",
+    message: `Olá, *{{primeiro_nome}}*! 📖✨
+Preparamos um *Manual e Guia do Hóspede Completo* com tudo o que você precisa saber sobre o seu *Flat {{quarto}}* e as facilidades do condomínio:
+
+📶 Conexão e Senha do Wi-Fi
+🏊‍♂️ Horários da Piscina e Sauna
+🚗 Estacionamento e Portaria
+🏖️ Dicas de praias e melhores restaurantes da região
+
+Segue o PDF oficial anexo logo abaixo. Você também pode consultar o guia online a qualquer momento:
+{{link_guia_hospede}}
+
+Desejamos uma estadia memorável!`,
+    footer: "CorpFlats • Guia do Hóspede",
+    buttons: [
+      { id: "btn_guia", type: "URL", label: "📖 Abrir Guia Digital", url: "{{link_guia_hospede}}" },
+      { id: "btn_portal", type: "URL", label: "🏨 Minha Reserva", url: "{{link_portal_hospede}}" },
+      { id: "btn_adm", type: "CALL", label: "📞 Recepção / Adm", phone: "5522997124021" }
+    ]
   }
 ]
 
@@ -257,7 +292,9 @@ export function renderQuickMessage(templateText: string, resItem: any, appOrigin
     "{{link_pagamento}}": linkPortal,
     "{{link_cafe_manha}}": linkCafe,
     "{{link_checkout}}": linkCheckout,
-    "{{link_avaliacao_google}}": linkAvaliacao
+    "{{link_avaliacao_google}}": linkAvaliacao,
+    "{{link_guia_hospede}}": `${origin}/guia-hospede`,
+    "{{link_manual_hospede}}": `${origin}/guia-hospede`
   }
 
   let text = templateText

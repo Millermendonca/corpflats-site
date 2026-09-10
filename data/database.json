@@ -6974,7 +6974,9 @@
     "token": "9F303A38EAEAEF8B071A32CA",
     "clientToken": "F3b5f4fa69f004c008e3730f341fdda8eS",
     "enabled": true,
-    "fallbackToText": true
+    "fallbackToText": true,
+    "guestGuidePdfUrl": "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
+    "guestGuidePdfName": "Manual_do_Hospede_CorpFlats.pdf"
   },
   "whatsappTemplates": [
     {
@@ -7167,7 +7169,11 @@
         "booking",
         "airbnb",
         "outros"
-      ]
+      ],
+      "hasAttachment": true,
+      "documentUrl": "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
+      "documentName": "Manual_do_Hospede_CorpFlats.pdf",
+      "documentCaption": "Segue em anexo o Manual do Hóspede em PDF com todas as orientações! 📖"
     },
     {
       "id": "tpl_breakfast_reminder",

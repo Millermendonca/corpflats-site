@@ -10,6 +10,18 @@
  * - Fila de disparos com agendamento por offset de tempo e antecipação manual ("Enviar Agora")
  */
 
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const UPLOADS_DIR = path.join(__dirname, "uploads");
+const DOCUMENTS_DIR = path.join(UPLOADS_DIR, "documents");
+if (!fs.existsSync(DOCUMENTS_DIR)) {
+  try { fs.mkdirSync(DOCUMENTS_DIR, { recursive: true }); } catch {}
+}
+
 // ── Canais de Reserva Suportados no Sistema ─────────────────────────────────
 export const AVAILABLE_CHANNELS = [
   { id: "site", label: "Site Oficial", description: "Reservas diretas pelo site CorpFlats" },
@@ -221,6 +233,10 @@ No portal abaixo você confere senhas, instruções dos aparelhos e regras de co
 
 Tenha uma estadia incrível!`,
     footer: "CorpFlats • Soho Residence Service",
+    hasAttachment: false,
+    documentUrl: "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
+    documentName: "Manual_do_Hospede_CorpFlats.pdf",
+    documentCaption: "Segue em anexo o Manual do Hóspede em PDF com todas as orientações! 📖",
     buttons: [
       { id: "btn_portal", type: "URL", label: "🌐 Abrir Portal do Flat", url: "{{link_portal_hospede}}" },
       { id: "btn_call", type: "CALL", label: "📞 Ligar Administração", phone: "{{telefone_hotel}}" }
@@ -471,6 +487,28 @@ Muito obrigado e até a próxima!`,
     buttons: [
       { id: "btn_rev", type: "URL", label: "⭐ Avaliar no Google", url: "{{link_avaliacao_google}}" }
     ]
+  },
+  {
+    id: "qm_guest_manual",
+    title: "Manual do Hóspede (PDF)",
+    shortLabel: "Manual PDF",
+    icon: "📖",
+    description: "Envia o Guia e Manual do Hóspede em anexo com regras e orientações do Flat.",
+    category: "Check-in",
+    enabled: true,
+    hasAttachment: true,
+    documentUrl: "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
+    documentName: "Manual_do_Hospede_CorpFlats.pdf",
+    documentCaption: "Segue o Manual do Hóspede em PDF com todas as orientações! 📖",
+    message: `Olá, *{{primeiro_nome}}*! 📖✨
+Segue em anexo o *Manual do Hóspede* do *{{nome_hotel}}* com todas as orientações da sua acomodação (instruções dos aparelhos, regras do condomínio e senhas de acesso).
+
+Tenha uma excelente estadia! Se precisar de suporte, estamos à disposição.`,
+    footer: "CorpFlats • Guia de Convivência & Acomodação",
+    buttons: [
+      { id: "btn_portal", type: "URL", label: "🏨 Ver Minha Reserva", url: "{{link_portal_hospede}}" },
+      { id: "btn_admin", type: "CALL", label: "📞 Falar com Atendimento", phone: "{{telefone_hotel}}" }
+    ]
   }
 ];
 
@@ -623,7 +661,9 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{link_pagamento}}": linkPagamento,
     "{{link_cafe_manha}}": linkCafeManha,
     "{{link_checkout}}": linkCheckout,
-    "{{link_avaliacao_google}}": googleReviewUrl
+    "{{link_avaliacao_google}}": googleReviewUrl,
+    "{{link_guia_hospede}}": zapiCfg.guestGuidePdfUrl || `${appOrigin}/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf`,
+    "{{link_manual_hospede}}": zapiCfg.guestGuidePdfUrl || `${appOrigin}/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf`
   };
 
   let rendered = text;
@@ -661,11 +701,146 @@ export function formatMessageWithLinks(message, footer = "", buttons = []) {
   return text;
 }
 
-// ── Disparo Oficial Z-API ──────────────────────────────────────────────────────
-export async function sendZapiMessage(config, { phone, message, title = "", footer = "", buttons = [], sendMode = "auto" }) {
+// ── Disparo Oficial de Documento / PDF via Z-API (/send-document/{extension}) ─
+export async function sendZapiDocument(config, {
+  phone,
+  document,
+  fileName = "Manual_do_Hospede_CorpFlats.pdf",
+  caption = ""
+}) {
   const cleanPhone = cleanWhatsAppPhone(phone);
   if (!cleanPhone) {
     return { success: false, error: "Número de WhatsApp do destinatário inválido ou ausente." };
+  }
+  if (!document) {
+    return { success: false, error: "Arquivo ou link do documento não especificado." };
+  }
+
+  const instanceId = config?.instanceId?.trim();
+  const token = config?.token?.trim();
+  const clientToken = config?.clientToken?.trim();
+
+  // Simulação para desenvolvimento se credenciais não estiverem configuradas
+  if (!instanceId || !token) {
+    console.warn(`[Z-API Mock] Credenciais não configuradas. Documento '${fileName}' para ${cleanPhone} simulado.`);
+    return {
+      success: true,
+      simulated: true,
+      messageId: `mock_doc_${Date.now()}`,
+      phone: cleanPhone,
+      fileName
+    };
+  }
+
+  // Detecta extensão do arquivo
+  let extension = "pdf";
+  if (fileName && fileName.includes(".")) {
+    extension = fileName.split(".").pop().toLowerCase().replace(/[^a-z0-9]/g, "") || "pdf";
+  }
+
+  // Se o documento for um arquivo local do sistema (/api/storage/files/...), lê do disco e converte em Base64
+  let finalDocument = document;
+  if (typeof document === "string") {
+    if (document.startsWith("/api/storage/files/")) {
+      const relPath = document.replace(/^\/api\/storage\/files\//, "");
+      const fullPath = path.join(UPLOADS_DIR, relPath);
+      if (fs.existsSync(fullPath)) {
+        try {
+          const fileBuf = fs.readFileSync(fullPath);
+          const mime = extension === "pdf" ? "application/pdf" : (extension === "docx" ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document" : `application/${extension}`);
+          finalDocument = `data:${mime};base64,${fileBuf.toString("base64")}`;
+          console.log(`[Z-API Document] Arquivo local '${relPath}' lido e convertido em Base64 (${fileBuf.length} bytes) para envio seguro.`);
+        } catch (readErr) {
+          console.warn("[Z-API Document] Erro ao ler arquivo local:", readErr.message);
+          const pubBase = config.publicOrigin || "https://corpflats.onrender.com";
+          finalDocument = `${pubBase.replace(/\/+$/, "")}/${document.replace(/^\/+/, "")}`;
+        }
+      } else {
+        const pubBase = config.publicOrigin || "https://corpflats.onrender.com";
+        finalDocument = `${pubBase.replace(/\/+$/, "")}/${document.replace(/^\/+/, "")}`;
+      }
+    } else if (!document.startsWith("http://") && !document.startsWith("https://") && !document.startsWith("data:")) {
+      const fullPath = path.join(DOCUMENTS_DIR, document);
+      if (fs.existsSync(fullPath)) {
+        try {
+          const fileBuf = fs.readFileSync(fullPath);
+          finalDocument = `data:application/pdf;base64,${fileBuf.toString("base64")}`;
+        } catch (e) {}
+      }
+    }
+  }
+
+  const baseUrl = config.baseUrl?.replace(/\/+$/, "") || "https://api.z-api.io";
+  const docUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-document/${extension}`;
+  const headers = { "Content-Type": "application/json" };
+  if (clientToken) headers["Client-Token"] = clientToken;
+
+  const payload = {
+    phone: cleanPhone,
+    document: finalDocument,
+    fileName: fileName || `Documento.${extension}`,
+    caption: caption || ""
+  };
+
+  try {
+    console.log(`[Z-API] Enviando documento (${fileName}) para ${cleanPhone}...`);
+    const res = await fetch(docUrl, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+
+    if (res.ok && (data.zaapId || data.id || data.messageId)) {
+      console.log(`[Z-API ✓] Documento ${fileName} entregue para ${cleanPhone}. ID: ${data.zaapId || data.id}`);
+      return {
+        success: true,
+        messageId: data.zaapId || data.id,
+        fileName,
+        data
+      };
+    }
+
+    console.warn(`[Z-API] Falha ao enviar documento (HTTP ${res.status}):`, data);
+    return {
+      success: false,
+      error: data.message || data.error || `Erro HTTP ${res.status} ao enviar documento via Z-API`,
+      data
+    };
+  } catch (err) {
+    console.error(`[Z-API] Exceção ao enviar documento:`, err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+// ── Disparo Oficial Z-API ──────────────────────────────────────────────────────
+export async function sendZapiMessage(config, {
+  phone,
+  message,
+  title = "",
+  footer = "",
+  buttons = [],
+  sendMode = "auto",
+  documentUrl = "",
+  documentName = "",
+  documentCaption = "",
+  fileBase64 = ""
+}) {
+  const cleanPhone = cleanWhatsAppPhone(phone);
+  if (!cleanPhone) {
+    return { success: false, error: "Número de WhatsApp do destinatário inválido ou ausente." };
+  }
+
+  const hasDoc = Boolean(documentUrl || fileBase64);
+
+  // Se não há texto na mensagem mas há documento, envia diretamente o documento
+  if (!message && hasDoc) {
+    return await sendZapiDocument(config, {
+      phone: cleanPhone,
+      document: fileBase64 || documentUrl,
+      fileName: documentName || "Manual_do_Hospede_CorpFlats.pdf",
+      caption: documentCaption || title || ""
+    });
   }
 
   const instanceId = config?.instanceId?.trim();
@@ -677,13 +852,23 @@ export async function sendZapiMessage(config, { phone, message, title = "", foot
   // Se não configurado, simula sucesso em ambiente de desenvolvimento/teste sem travar
   if (!instanceId || !token) {
     console.warn(`[Z-API Mock] Credenciais não configuradas. Mensagem para ${cleanPhone} simulada.`);
-    return {
+    const mockResult = {
       success: true,
       simulated: true,
       messageId: `mock_${Date.now()}`,
       phone: cleanPhone,
       message: message
     };
+    if (hasDoc) {
+      mockResult.hasDocument = true;
+      mockResult.documentResult = {
+        success: true,
+        simulated: true,
+        messageId: `mock_doc_${Date.now()}`,
+        fileName: documentName || "Manual_do_Hospede_CorpFlats.pdf"
+      };
+    }
+    return mockResult;
   }
 
   const baseUrl = config.baseUrl?.replace(/\/+$/, "") || "https://api.z-api.io";
@@ -701,6 +886,8 @@ export async function sendZapiMessage(config, { phone, message, title = "", foot
                          (sendMode !== "buttons" && configuredDeliveryMode === "text_links") || 
                          validButtons.length === 0;
 
+  let primaryResult = null;
+
   // 1. Envio Direto via Texto Formatado com Links (/send-text)
   if (shouldSendText) {
     const textWithLinks = formatMessageWithLinks(message, footer, validButtons);
@@ -717,127 +904,145 @@ export async function sendZapiMessage(config, { phone, message, title = "", foot
 
       if (res.ok && (data.zaapId || data.id || data.messageId)) {
         console.log(`[Z-API ✓] Texto entregue para ${cleanPhone}. ID: ${data.zaapId || data.id}`);
-        return {
+        primaryResult = {
           success: true,
           method: "text_links",
           messageId: data.zaapId || data.id,
           data
         };
-      }
-
-      return {
-        success: false,
-        error: data.message || data.error || `Erro HTTP ${res.status} ao enviar texto via Z-API`
-      };
-    } catch (err) {
-      console.error(`[Z-API] Exceção ao enviar texto:`, err.message);
-      return { success: false, error: err.message };
-    }
-  }
-
-  // 2. Tentativa com Botões Interativos (/send-button-actions)
-  const buttonActionsUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-button-actions`;
-
-  // Tratamento e validação estrita conforme documentação oficial da Z-API (developer.z-api.io):
-  // 1. WhatsApp rejeita misturar botões REPLY com CALL/URL simultaneamente.
-  // 2. URLs devem obrigatoriamente iniciar com http:// ou https://.
-  // 3. Suporte ao link nativo de cópia OTP do WhatsApp: https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code=...
-  // 4. Telefones para CALL devem conter DDI + DDD + números limpos.
-  const hasCallOrUrl = validButtons.some(b => b.type === "CALL" || b.type === "URL");
-  const hasReply = validButtons.some(b => b.type === "REPLY");
-
-  let filteredButtons = validButtons;
-  if (hasCallOrUrl && hasReply) {
-    console.warn("[Z-API] Mistura de botões REPLY com CALL/URL detectada. Priorizando CALL e URL para evitar rejeição pelo WhatsApp Web.");
-    filteredButtons = validButtons.filter(b => b.type !== "REPLY");
-  }
-
-  const formattedActions = filteredButtons.slice(0, 3).map((b, idx) => {
-    let type = (b.type || "URL").toUpperCase();
-    if (type !== "CALL" && type !== "REPLY") type = "URL";
-
-    const action = {
-      id: String(b.id || `btn_${idx + 1}`),
-      type,
-      label: String(b.label || "Acessar").trim().substring(0, 25)
-    };
-
-    if (type === "URL") {
-      let rawUrl = String(b.url || "").trim();
-      if (b.copyCode) {
-        rawUrl = `https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code=${encodeURIComponent(b.copyCode)}`;
-      } else if (!rawUrl.startsWith("http://") && !rawUrl.startsWith("https://")) {
-        rawUrl = "https://" + rawUrl;
-      }
-      action.url = rawUrl;
-    } else if (type === "CALL") {
-      action.phone = cleanWhatsAppPhone(b.phone || config.adminWhatsApp || "5522997124021");
-    }
-
-    return action;
-  });
-
-  const buttonActionsPayload = {
-    phone: cleanPhone,
-    message: message,
-    ...(title ? { title } : {}),
-    ...(footer ? { footer } : {}),
-    buttonActions: formattedActions
-  };
-
-  try {
-    console.log(`[Z-API] Enviando mensagem com botões para ${cleanPhone}...`);
-    const res = await fetch(buttonActionsUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(buttonActionsPayload)
-    });
-    const data = await res.json().catch(() => ({}));
-
-    if (res.ok && (data.zaapId || data.id || data.messageId || data.value)) {
-      console.log(`[Z-API ✓] Mensagem com botões aceita para ${cleanPhone}. ID: ${data.zaapId || data.id}`);
-      return {
-        success: true,
-        method: "buttons",
-        messageId: data.zaapId || data.id || "ok",
-        data
-      };
-    }
-
-    console.warn(`[Z-API] Falha ao enviar com botões (HTTP ${res.status}):`, data);
-
-    // Se der erro nos botões e fallback de texto estiver ativo, converte para texto normal com links
-    if (fallbackToText) {
-      console.log(`[Z-API Fallback] Reenviando como texto formatado para ${cleanPhone}...`);
-      const textWithLinks = formatMessageWithLinks(message, footer, validButtons);
-      const textUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-text`;
-      const textRes = await fetch(textUrl, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ phone: cleanPhone, message: textWithLinks })
-      });
-      const textData = await textRes.json().catch(() => ({}));
-
-      if (textRes.ok && (textData.zaapId || textData.id)) {
-        return {
-          success: true,
-          method: "fallback_text",
-          warning: "A Z-API ou WhatsApp não renderizou os botões interativos (exigência de aceite dos termos de botões no painel da Z-API ou limitação da Meta). Mensagem entregue via texto com os links diretos.",
-          buttonError: data.message || data.error || `Erro HTTP ${res.status}`,
-          messageId: textData.zaapId || textData.id,
-          data: textData
+      } else {
+        primaryResult = {
+          success: false,
+          error: data.message || data.error || `Erro HTTP ${res.status} ao enviar texto via Z-API`
         };
       }
+    } catch (err) {
+      console.error(`[Z-API] Exceção ao enviar texto:`, err.message);
+      primaryResult = { success: false, error: err.message };
+    }
+  } else {
+    // 2. Tentativa com Botões Interativos (/send-button-actions)
+    const buttonActionsUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-button-actions`;
+
+    const hasCallOrUrl = validButtons.some(b => b.type === "CALL" || b.type === "URL");
+    const hasReply = validButtons.some(b => b.type === "REPLY");
+
+    let filteredButtons = validButtons;
+    if (hasCallOrUrl && hasReply) {
+      filteredButtons = validButtons.filter(b => b.type !== "REPLY");
     }
 
-    return {
-      success: false,
-      error: data.message || data.error || `Erro HTTP ${res.status} na Z-API`
+    const formattedActions = filteredButtons.slice(0, 3).map((b, idx) => {
+      const type = (b.type === "CALL" || b.type === "URL") ? b.type : "URL";
+      const action = {
+        id: String(b.id || `btn_${idx + 1}`),
+        type,
+        label: String(b.label || "Acessar").trim().substring(0, 25)
+      };
+
+      if (type === "URL") {
+        let rawUrl = String(b.url || "").trim();
+        if (b.copyCode) {
+          rawUrl = `https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code=${encodeURIComponent(b.copyCode)}`;
+        } else if (!rawUrl.startsWith("http://") && !rawUrl.startsWith("https://")) {
+          rawUrl = "https://" + rawUrl;
+        }
+        action.url = rawUrl;
+      } else if (type === "CALL") {
+        action.phone = cleanWhatsAppPhone(b.phone || config.adminWhatsApp || "5522997124021");
+      }
+
+      return action;
+    });
+
+    const buttonActionsPayload = {
+      phone: cleanPhone,
+      message: message,
+      ...(title ? { title } : {}),
+      ...(footer ? { footer } : {}),
+      buttonActions: formattedActions
     };
-  } catch (err) {
-    console.error(`[Z-API] Exceção no envio:`, err.message);
-    return { success: false, error: err.message };
+
+    try {
+      console.log(`[Z-API] Enviando mensagem com botões para ${cleanPhone}...`);
+      const res = await fetch(buttonActionsUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(buttonActionsPayload)
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (res.ok && (data.zaapId || data.id || data.messageId || data.value)) {
+        console.log(`[Z-API ✓] Mensagem com botões aceita para ${cleanPhone}. ID: ${data.zaapId || data.id}`);
+        primaryResult = {
+          success: true,
+          method: "buttons",
+          messageId: data.zaapId || data.id || "ok",
+          data
+        };
+      } else {
+        console.warn(`[Z-API] Falha ao enviar com botões (HTTP ${res.status}):`, data);
+
+        // Fallback para texto formatado se configurado
+        if (fallbackToText) {
+          console.log(`[Z-API Fallback] Reenviando como texto formatado para ${cleanPhone}...`);
+          const textWithLinks = formatMessageWithLinks(message, footer, validButtons);
+          const textUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-text`;
+          const textRes = await fetch(textUrl, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ phone: cleanPhone, message: textWithLinks })
+          });
+          const textData = await textRes.json().catch(() => ({}));
+
+          if (textRes.ok && (textData.zaapId || textData.id)) {
+            primaryResult = {
+              success: true,
+              method: "fallback_text",
+              warning: "Mensagem entregue via texto com links diretos após recusa de botões pela Z-API.",
+              buttonError: data.message || data.error || `Erro HTTP ${res.status}`,
+              messageId: textData.zaapId || textData.id,
+              data: textData
+            };
+          } else {
+            primaryResult = {
+              success: false,
+              error: data.message || data.error || `Erro HTTP ${res.status} na Z-API`
+            };
+          }
+        } else {
+          primaryResult = {
+            success: false,
+            error: data.message || data.error || `Erro HTTP ${res.status} na Z-API`
+          };
+        }
+      }
+    } catch (err) {
+      console.error(`[Z-API] Exceção no envio:`, err.message);
+      primaryResult = { success: false, error: err.message };
+    }
   }
+
+  // Se o envio principal teve sucesso (ou simulação) E há documento anexo configurado:
+  if ((primaryResult?.success || primaryResult?.simulated) && hasDoc) {
+    try {
+      console.log(`[Z-API] Anexando documento ${documentName || 'PDF'} para ${cleanPhone}...`);
+      await new Promise(r => setTimeout(r, 1200)); // Pequena pausa para garantir ordem cronológica no WhatsApp
+      const docResult = await sendZapiDocument(config, {
+        phone: cleanPhone,
+        document: fileBase64 || documentUrl,
+        fileName: documentName || "Manual_do_Hospede_CorpFlats.pdf",
+        caption: documentCaption || ""
+      });
+      primaryResult.documentResult = docResult;
+      primaryResult.hasDocument = true;
+    } catch (docErr) {
+      console.warn(`[Z-API] Erro ao disparar documento anexo:`, docErr.message);
+      primaryResult.documentError = docErr.message;
+    }
+  }
+
+  return primaryResult;
 }
 
 // ── Funções Auxiliares de Recursos Modernos da Z-API ───────────────────────────
@@ -1135,10 +1340,20 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
         fallbackToText: true,
         wifiNetwork: "CorpFlats-Hospedes",
         wifiPassword: "corpflats2026",
-        googleReviewUrl: "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ"
+        googleReviewUrl: "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ",
+        guestGuidePdfUrl: "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
+        guestGuidePdfName: "Manual_do_Hospede_CorpFlats.pdf"
       };
-    } else if (!db.zapiConfig.deliveryMode) {
-      db.zapiConfig.deliveryMode = "text_links";
+    } else {
+      if (!db.zapiConfig.deliveryMode) {
+        db.zapiConfig.deliveryMode = "text_links";
+      }
+      if (!db.zapiConfig.guestGuidePdfName) {
+        db.zapiConfig.guestGuidePdfName = "Manual_do_Hospede_CorpFlats.pdf";
+      }
+      if (db.zapiConfig.guestGuidePdfUrl === undefined) {
+        db.zapiConfig.guestGuidePdfUrl = "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf";
+      }
     }
 
     if (!db.whatsappTemplates || db.whatsappTemplates.length === 0) {
@@ -1149,7 +1364,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
           db.whatsappTemplates.push(defTpl);
         }
       }
-      // Garante que templates existentes possuam a propriedade channels inicializada
+      // Garante que templates existentes possuam a propriedade channels e documentName inicializadas
       for (const tpl of db.whatsappTemplates) {
         if (!tpl.channels || !Array.isArray(tpl.channels) || tpl.channels.length === 0) {
           if (tpl.id === "tpl_breakfast_reminder") {
@@ -1157,6 +1372,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
           } else {
             tpl.channels = ["site", "whatsapp", "booking", "airbnb", "outros"];
           }
+        }
+        if (tpl.id === "tpl_checkin_completed") {
+          if (!tpl.documentName) tpl.documentName = "Manual_do_Hospede_CorpFlats.pdf";
+          if (tpl.documentUrl === undefined) tpl.documentUrl = "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf";
+          if (tpl.documentCaption === undefined) tpl.documentCaption = "Segue em anexo o Manual do Hóspede em PDF com todas as orientações! 📖";
         }
       }
     }
@@ -1325,6 +1545,63 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
     res.json({ success: true, quickMessages: db.whatsappQuickMessages });
   });
 
+  // 7.5. Upload de Documento / PDF para Automação WhatsApp
+  app.post("/api/whatsapp/upload-document", async (req, res) => {
+    try {
+      const { fileBase64, fileName = "documento.pdf", templateId } = req.body || {};
+      if (!fileBase64) {
+        return res.status(400).json({ error: "Arquivo em Base64 é obrigatório." });
+      }
+
+      const cleanFileName = String(fileName).replace(/[^a-zA-Z0-9._-]/g, "_");
+      const ext = path.extname(cleanFileName).toLowerCase() || ".pdf";
+      const baseName = path.basename(cleanFileName, ext);
+      const uniqueFileName = `${baseName}_${Date.now()}${ext}`;
+      
+      const docPath = path.join(DOCUMENTS_DIR, uniqueFileName);
+      
+      // Extrai dados binários do base64
+      const matches = fileBase64.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+      const rawBase64 = matches ? matches[2] : fileBase64;
+      const buffer = Buffer.from(rawBase64, "base64");
+      
+      fs.writeFileSync(docPath, buffer);
+      
+      const fileUrl = `/api/storage/files/documents/${uniqueFileName}`;
+      
+      // Vincula ao template se informado
+      const db = getDb();
+      if (templateId && db?.whatsappTemplates) {
+        const tpl = db.whatsappTemplates.find(t => t.id === templateId);
+        if (tpl) {
+          tpl.hasAttachment = true;
+          tpl.documentUrl = fileUrl;
+          tpl.documentName = cleanFileName;
+        }
+      }
+      
+      // Atualiza também nas configurações gerais se for o manual do hóspede
+      if (db?.zapiConfig && (templateId === "tpl_checkin_completed" || cleanFileName.toLowerCase().includes("manual") || cleanFileName.toLowerCase().includes("guia"))) {
+        db.zapiConfig.guestGuidePdfUrl = fileUrl;
+        db.zapiConfig.guestGuidePdfName = cleanFileName;
+      }
+
+      saveDatabase();
+
+      console.log(`[WhatsApp] Documento salvo: ${docPath} (${buffer.length} bytes) -> URL: ${fileUrl}`);
+      res.json({
+        success: true,
+        url: fileUrl,
+        fileName: cleanFileName,
+        uniqueFileName,
+        size: buffer.length
+      });
+    } catch (err) {
+      console.error("[WhatsApp] Erro no upload de documento:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
 
   // 8. Fila de Envios Agendados & Histórico
   app.get("/api/whatsapp/queue", (req, res) => {
@@ -1352,7 +1629,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
       message: item.renderedMessage,
       title: item.title,
       footer: item.footer,
-      buttons: item.renderedButtons
+      buttons: item.renderedButtons,
+      documentUrl: item.documentUrl,
+      documentName: item.documentName
     });
 
     item.status = result.success ? "sent" : "failed";
@@ -1370,6 +1649,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
       triggerEvent: item.triggerEvent,
       message: item.renderedMessage,
       buttons: item.renderedButtons,
+      documentUrl: item.documentUrl || null,
+      documentName: item.documentName || null,
       status: item.status,
       method: item.method,
       error: item.error,
@@ -1406,7 +1687,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
       footer = "", 
       buttons = [], 
       reservationId = null,
-      sendMode = "text" // Padrão seguro para entrega garantida em qualquer conta
+      sendMode = "text",
+      sendDocument = false,
+      documentUrl = "",
+      documentName = "",
+      documentCaption = ""
     } = req.body;
     
     if (!phone) {
@@ -1460,13 +1745,20 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
       }));
     }
 
+    const hasDocTest = Boolean(sendDocument || documentUrl);
+    const finalDocUrl = hasDocTest ? (documentUrl || db?.zapiConfig?.guestGuidePdfUrl || "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf") : undefined;
+    const finalDocName = hasDocTest ? (documentName || db?.zapiConfig?.guestGuidePdfName || "Manual_do_Hospede_CorpFlats.pdf") : undefined;
+
     const result = await sendZapiMessage(db?.zapiConfig, {
       phone,
       message: finalMessage,
       title,
       footer,
       buttons: finalButtons,
-      sendMode
+      sendMode,
+      documentUrl: finalDocUrl,
+      documentName: finalDocName,
+      documentCaption: hasDocTest ? documentCaption : undefined
     });
 
     // Grava log do teste
@@ -1478,6 +1770,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
       triggerEvent: "test_dispatch",
       message: finalMessage,
       buttons: finalButtons,
+      documentUrl: finalDocUrl || null,
+      documentName: finalDocName || null,
       status: result.success ? "sent" : "failed",
       method: result.method || (sendMode === "text" ? "text_links" : "buttons"),
       error: result.error || null,
@@ -1546,12 +1840,18 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
       phone: b.phone ? resolveWhatsAppTags(b.phone, reservation, db, baseUrl) : undefined
     }));
 
+    const hasAttachment = Boolean(template.hasAttachment || template.documentUrl);
+    const docUrl = hasAttachment ? (template.documentUrl || db?.zapiConfig?.guestGuidePdfUrl) : undefined;
+    const docName = hasAttachment ? (template.documentName || db?.zapiConfig?.guestGuidePdfName || "Manual_do_Hospede_CorpFlats.pdf") : undefined;
+
     const result = await sendZapiMessage(db?.zapiConfig, {
       phone: reservation.guestPhone,
       message: renderedMessage,
       title: template.title,
       footer: template.footer,
-      buttons: renderedButtons
+      buttons: renderedButtons,
+      documentUrl: docUrl,
+      documentName: docName
     });
 
     if (!db.whatsappHistory) db.whatsappHistory = [];
@@ -1739,6 +2039,8 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
             templateId: tpl.id,
             title: tpl.title,
             footer: tpl.footer,
+            documentUrl: (tpl.hasAttachment || tpl.documentUrl) ? tpl.documentUrl : undefined,
+            documentName: (tpl.hasAttachment || tpl.documentUrl) ? (tpl.documentName || db?.zapiConfig?.guestGuidePdfName || "Manual_do_Hospede_CorpFlats.pdf") : undefined,
             scheduledFor: scheduledTime,
             status: "scheduled",
             sentAt: null,
@@ -1788,14 +2090,21 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
         phone: b.phone ? resolveWhatsAppTags(b.phone, reservation, db, baseUrl) : undefined
       }));
 
-      console.log(`[Z-API Instant Trigger] Disparando '${tpl.title}' para ${reservation.guestName} (${reservation.guestPhone})...`);
+      const hasAttachment = Boolean(tpl.hasAttachment || tpl.documentUrl);
+      const docUrl = hasAttachment ? (tpl.documentUrl || db?.zapiConfig?.guestGuidePdfUrl) : undefined;
+      const docName = hasAttachment ? (tpl.documentName || db?.zapiConfig?.guestGuidePdfName || "Manual_do_Hospede_CorpFlats.pdf") : undefined;
+
+      console.log(`[Z-API Instant Trigger] Disparando '${tpl.title}' ${hasAttachment ? '(Com PDF Anexo) ' : ''}para ${reservation.guestName} (${reservation.guestPhone})...`);
 
       const result = await sendZapiMessage(db.zapiConfig, {
         phone: reservation.guestPhone,
         message: renderedMessage,
         title: tpl.title,
         footer: tpl.footer,
-        buttons: renderedButtons
+        buttons: renderedButtons,
+        documentUrl: docUrl,
+        documentName: docName,
+        documentCaption: hasAttachment ? tpl.documentCaption : undefined
       });
 
       if (!db.whatsappHistory) db.whatsappHistory = [];
@@ -1807,6 +2116,8 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
         triggerEvent: eventName,
         message: renderedMessage,
         buttons: renderedButtons,
+        documentUrl: docUrl || null,
+        documentName: docName || null,
         status: result.success ? "sent" : "failed",
         method: result.method || "instant_trigger",
         error: result.error || null,

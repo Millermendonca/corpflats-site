@@ -48,7 +48,8 @@ import {
   HelpCircle,
   Eye,
   ShieldCheck,
-  RotateCcw
+  RotateCcw,
+  FileText
 } from "lucide-react"
 import { AccessDenied } from "@/components/access-denied"
 import { useQuickMessages, WhatsAppQuickMessage, renderQuickMessage } from "@/hooks/use-quick-messages"
@@ -113,6 +114,10 @@ interface WhatsAppTemplate {
   message: string
   footer?: string
   buttons?: ButtonAction[]
+  hasAttachment?: boolean
+  documentUrl?: string
+  documentName?: string
+  documentCaption?: string
 }
 
 interface QueueItem {
@@ -133,6 +138,8 @@ interface QueueItem {
   method?: string
   renderedMessage: string
   renderedButtons?: ButtonAction[]
+  documentUrl?: string
+  documentName?: string
   createdAt?: string
 }
 
@@ -144,6 +151,8 @@ interface HistoryItem {
   triggerEvent: string
   message: string
   buttons?: ButtonAction[]
+  documentUrl?: string
+  documentName?: string
   status: "sent" | "failed"
   method: string
   error?: string | null
@@ -160,6 +169,8 @@ interface ZapiConfig {
   wifiNetwork: string
   wifiPassword: string
   googleReviewUrl: string
+  guestGuidePdfUrl?: string
+  guestGuidePdfName?: string
 }
 
 const TAG_GROUPS = [
@@ -219,6 +230,7 @@ const TAG_GROUPS = [
       { tag: "{{link_cafe_manha}}", label: "🥐 Link do Café da Manhã", example: "https://.../cafe/RES-..." },
       { tag: "{{link_checkout}}", label: "🚪 Check-out Expresso", example: "https://.../checkout/RES-..." },
       { tag: "{{link_avaliacao_google}}", label: "⭐ Avaliação Google Maps", example: "https://g.page/r/.../review" },
+      { tag: "{{link_guia_hospede}}", label: "📖 Manual do Hóspede (PDF)", example: "https://.../Manual_do_Hospede.pdf" },
     ]
   }
 ]
@@ -247,6 +259,11 @@ export default function WhatsappAutomation() {
   const [editingButtons, setEditingButtons] = useState<ButtonAction[]>([])
   const [editingChannels, setEditingChannels] = useState<string[]>(["site", "whatsapp", "booking", "airbnb", "outros"])
   const [editingEnabled, setEditingEnabled] = useState<boolean>(true)
+  const [editingHasAttachment, setEditingHasAttachment] = useState<boolean>(false)
+  const [editingDocumentUrl, setEditingDocumentUrl] = useState<string>("")
+  const [editingDocumentName, setEditingDocumentName] = useState<string>("Manual_do_Hospede_CorpFlats.pdf")
+  const [editingDocumentCaption, setEditingDocumentCaption] = useState<string>("")
+  const [uploadingDoc, setUploadingDoc] = useState<boolean>(false)
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -277,6 +294,7 @@ export default function WhatsappAutomation() {
   const [testMessage, setTestMessage] = useState<string>("")
   const [testReservationId, setTestReservationId] = useState<string>("")
   const [testIncludeButtons, setTestIncludeButtons] = useState<boolean>(true)
+  const [testIncludeDocument, setTestIncludeDocument] = useState<boolean>(false)
   const [testSendMode, setTestSendMode] = useState<"text" | "buttons">("text")
   const [sendingTest, setSendingTest] = useState<boolean>(false)
 
@@ -487,6 +505,10 @@ export default function WhatsappAutomation() {
       : ["site", "whatsapp", "booking", "airbnb", "outros"]
     setEditingChannels(tplChannels)
     setEditingEnabled(tpl.enabled !== false)
+    setEditingHasAttachment(Boolean(tpl.hasAttachment || tpl.documentUrl))
+    setEditingDocumentUrl(tpl.documentUrl || "")
+    setEditingDocumentName(tpl.documentName || "Manual_do_Hospede_CorpFlats.pdf")
+    setEditingDocumentCaption(tpl.documentCaption || "")
   }
 
   // Toggle individual channel for the current editing template
@@ -498,6 +520,73 @@ export default function WhatsappAutomation() {
         return [...prev, channelId]
       }
     })
+  }
+
+  // Upload de Documento / PDF do Manual do Hóspede
+  const handleUploadDocument = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    if (!file.name.toLowerCase().endsWith(".pdf") && file.type !== "application/pdf") {
+      toast({
+        title: "Formato inválido",
+        description: "Por favor, selecione um arquivo em formato PDF.",
+        variant: "destructive"
+      })
+      return
+    }
+
+    if (file.size > 25 * 1024 * 1024) {
+      toast({
+        title: "Arquivo muito grande",
+        description: "O tamanho máximo permitido para o documento é de 25 MB.",
+        variant: "destructive"
+      })
+      return
+    }
+
+    setUploadingDoc(true)
+    try {
+      const reader = new FileReader()
+      reader.onload = async () => {
+        try {
+          const fileBase64 = reader.result as string
+          const res = await fetch("/api/whatsapp/upload-document", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              fileBase64,
+              fileName: file.name,
+              templateId: currentTemplate?.id
+            })
+          })
+          const data = await res.json()
+          if (res.ok && data.success) {
+            setEditingHasAttachment(true)
+            setEditingDocumentUrl(data.url)
+            setEditingDocumentName(data.fileName)
+            toast({
+              title: "✓ Arquivo PDF anexado!",
+              description: `${data.fileName} carregado e configurado para disparo automático.`
+            })
+          } else {
+            toast({
+              title: "Falha no upload",
+              description: data.error || "Não foi possível carregar o arquivo.",
+              variant: "destructive"
+            })
+          }
+        } catch (err: any) {
+          toast({ title: "Erro ao enviar arquivo", description: err.message, variant: "destructive" })
+        } finally {
+          setUploadingDoc(false)
+        }
+      }
+      reader.readAsDataURL(file)
+    } catch (err: any) {
+      toast({ title: "Erro na leitura do arquivo", description: err.message, variant: "destructive" })
+      setUploadingDoc(false)
+    }
   }
 
   // Insert tag at current cursor position in the message textarea
@@ -563,7 +652,11 @@ export default function WhatsappAutomation() {
       fixedTime: editingFixedTime,
       buttons: editingButtons,
       channels: editingChannels,
-      enabled: editingEnabled
+      enabled: editingEnabled,
+      hasAttachment: editingHasAttachment,
+      documentUrl: editingHasAttachment ? editingDocumentUrl : "",
+      documentName: editingHasAttachment ? editingDocumentName : "",
+      documentCaption: editingHasAttachment ? editingDocumentCaption : ""
     }
 
     try {
@@ -679,6 +772,13 @@ export default function WhatsappAutomation() {
         }
       }
 
+      if (testIncludeDocument) {
+        payload.sendDocument = true
+        payload.documentUrl = editingDocumentUrl || config.guestGuidePdfUrl || "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf"
+        payload.documentName = editingDocumentName || config.guestGuidePdfName || "Manual_do_Hospede_CorpFlats.pdf"
+        payload.documentCaption = editingDocumentCaption || ""
+      }
+
       const res = await fetch("/api/whatsapp/send-test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -698,10 +798,10 @@ export default function WhatsappAutomation() {
               ? "✓ Teste enviado com Botões Interativos!" 
               : "✓ Teste enviado com sucesso!",
           description: isFallback
-            ? `Aviso Z-API: "${data.buttonError || 'Recurso de botões requer ativação prévia no painel'}". A mensagem foi entregue em texto com os links de acesso direto.`
+            ? `Aviso Z-API: "${data.buttonError || 'Recurso de botões requer ativação prévia no painel'}". A mensagem foi entregue em texto com os links de acesso direto.${testIncludeDocument ? ' PDF anexo enviado!' : ''}`
             : isSelf
-              ? `Entregue via Z-API (${isButtons ? "Com Botões Interativos" : "Texto com Links"}). Verifique sua conversa "Você" no WhatsApp!`
-              : `Entregue via Z-API (${isButtons ? "Com Botões Interativos" : "Texto com Links"}). Verifique o aparelho destinatário!`
+              ? `Entregue via Z-API (${isButtons ? "Com Botões Interativos" : "Texto com Links"}${testIncludeDocument ? " + PDF Guia" : ""}). Verifique sua conversa "Você" no WhatsApp!`
+              : `Entregue via Z-API (${isButtons ? "Com Botões Interativos" : "Texto com Links"}${testIncludeDocument ? " + PDF Guia" : ""}). Verifique o aparelho destinatário!`
         })
         setTestModalOpen(false)
         fetchQueue()
@@ -909,6 +1009,7 @@ export default function WhatsappAutomation() {
               onClick={() => {
                 setTestMessage(renderPreviewText(editingMessage))
                 setTestSendMode((config.deliveryMode || "text_links") === "buttons" ? "buttons" : "text")
+                setTestIncludeDocument(editingHasAttachment || Boolean(editingDocumentUrl))
                 setTestModalOpen(true)
               }}
             >
@@ -995,12 +1096,23 @@ export default function WhatsappAutomation() {
                   <Card key={tpl.id} className={`rounded-2xl border transition-all hover:shadow-md ${tpl.enabled ? 'border-border' : 'opacity-60 bg-muted/30'}`}>
                     <CardHeader className="pb-3">
                       <div className="flex items-start justify-between gap-2">
-                        <Badge 
-                          variant="secondary" 
-                          className="text-[11px] font-bold py-0.5 px-2 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 border border-emerald-200"
-                        >
-                          {timingLabel}
-                        </Badge>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <Badge 
+                            variant="secondary" 
+                            className="text-[11px] font-bold py-0.5 px-2 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 border border-emerald-200"
+                          >
+                            {timingLabel}
+                          </Badge>
+                          {(tpl.hasAttachment || tpl.documentUrl) && (
+                            <Badge 
+                              variant="secondary" 
+                              className="text-[10px] font-bold py-0.5 px-2 bg-blue-50 text-blue-800 dark:bg-blue-950/50 dark:text-blue-300 border border-blue-200 flex items-center gap-1"
+                            >
+                              <FileText className="w-2.5 h-2.5" />
+                              PDF Anexo
+                            </Badge>
+                          )}
+                        </div>
                         <Switch 
                           checked={tpl.enabled}
                           onCheckedChange={(checked) => handleToggleTemplate(tpl, checked)}
@@ -1035,38 +1147,46 @@ export default function WhatsappAutomation() {
                         </div>
                       )}
 
+                      {/* Documento PDF Anexo */}
+                      {(tpl.hasAttachment || tpl.documentUrl) && (
+                        <div className="p-2 rounded-lg bg-blue-50/60 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/50 flex items-center gap-2 text-xs text-blue-900 dark:text-blue-300">
+                          <FileText className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                          <div className="truncate flex-1 min-w-0">
+                            <span className="font-semibold truncate block">{tpl.documentName || "Manual_do_Hospede_CorpFlats.pdf"}</span>
+                            {tpl.documentCaption && (
+                              <p className="text-[10px] text-blue-700 dark:text-blue-400 truncate mt-0.5">{tpl.documentCaption}</p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
                       {/* Canais Destinatários Permitidos */}
                       <div className="space-y-1">
                         <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
-                          <ListFilter className="w-3 h-3 text-primary" /> Canais Destinatários:
+                          Canais de Reserva Alvo:
                         </span>
                         <div className="flex flex-wrap gap-1">
-                          {(!tpl.channels || tpl.channels.length === 0 || tpl.channels.length >= 5 || tpl.channels.includes("all")) ? (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
-                              🌐 Todos os Canais
-                            </span>
+                          {tpl.targetChannels && tpl.targetChannels.length > 0 ? (
+                            tpl.targetChannels.map((c) => (
+                              <Badge key={c} variant="outline" className="text-[10px] py-0 px-1.5 font-normal">
+                                {c}
+                              </Badge>
+                            ))
                           ) : (
-                            tpl.channels.map((chId) => {
-                              const opt = CHANNEL_OPTIONS.find(o => o.id === chId)
-                              return (
-                                <span key={chId} className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md border ${opt?.badgeClass || 'bg-muted text-foreground'}`}>
-                                  <span>{opt?.icon || "🏷️"}</span>
-                                  <span>{opt?.label || chId}</span>
-                                </span>
-                              )
-                            })
+                            <span className="text-[11px] text-muted-foreground italic">Todos os canais</span>
                           )}
                         </div>
                       </div>
 
-                      <div className="pt-2 flex items-center justify-between border-t border-border/50">
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          className="text-xs font-semibold gap-1 text-primary hover:text-primary hover:bg-primary/10 p-0 h-auto"
+                      <div className="pt-2 border-t flex items-center justify-between">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-[11px] px-2 gap-1 text-muted-foreground hover:text-foreground"
                           onClick={() => {
                             selectTemplateForEditing(tpl)
                             setActiveTab("editor")
+                            editorRef.current?.scrollIntoView({ behavior: "smooth" })
                           }}
                         >
                           <Edit3 className="w-3.5 h-3.5" />
@@ -1081,6 +1201,7 @@ export default function WhatsappAutomation() {
                             selectTemplateForEditing(tpl)
                             setTestMessage(renderPreviewText(tpl.message))
                             setTestSendMode((config.deliveryMode || "text_links") === "buttons" ? "buttons" : "text")
+                            setTestIncludeDocument(Boolean(tpl.hasAttachment || tpl.documentUrl))
                             setTestModalOpen(true)
                           }}
                         >
@@ -1521,6 +1642,128 @@ export default function WhatsappAutomation() {
                       )}
                     </div>
 
+                    {/* ANEXO DE DOCUMENTO / GUIA DO HÓSPEDE EM PDF (Z-API) */}
+                    <div className="p-3.5 rounded-xl border bg-blue-50/40 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800/60 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-900/50 flex items-center justify-center text-base shrink-0">
+                            📄
+                          </div>
+                          <div>
+                            <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                              Anexo de Documento / Guia em PDF (Z-API)
+                              {editingHasAttachment && (
+                                <Badge className="text-[10px] bg-blue-600 text-white font-semibold">Ativo</Badge>
+                              )}
+                            </span>
+                            <p className="text-[10px] text-muted-foreground">
+                              Envia o arquivo PDF (Manual do Hóspede / Regras) automaticamente anexado no WhatsApp.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <Label htmlFor="attach-switch" className="text-xs font-semibold cursor-pointer">
+                            {editingHasAttachment ? "Anexo Ativado" : "Sem Anexo"}
+                          </Label>
+                          <Switch 
+                            id="attach-switch"
+                            checked={editingHasAttachment}
+                            onCheckedChange={setEditingHasAttachment}
+                          />
+                        </div>
+                      </div>
+
+                      {editingHasAttachment && (
+                        <div className="space-y-3 pt-2 border-t border-blue-200/60 dark:border-blue-800/40">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                              <Label className="text-[11px] font-bold text-foreground">
+                                Nome do Arquivo no WhatsApp:
+                              </Label>
+                              <Input 
+                                value={editingDocumentName}
+                                onChange={(e) => setEditingDocumentName(e.target.value)}
+                                placeholder="Manual_do_Hospede_CorpFlats.pdf"
+                                className="text-xs h-8 bg-white dark:bg-neutral-900"
+                              />
+                            </div>
+
+                            <div className="space-y-1">
+                              <Label className="text-[11px] font-bold text-foreground">
+                                Carregar Novo Arquivo do Computador:
+                              </Label>
+                              <div className="flex items-center gap-2">
+                                <label className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-blue-300 dark:border-blue-700 bg-white dark:bg-neutral-800 text-xs font-semibold text-blue-700 dark:text-blue-300 cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-950 transition-colors shadow-2xs">
+                                  {uploadingDoc ? (
+                                    <>
+                                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                      Carregando...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Plus className="w-3.5 h-3.5" />
+                                      {editingDocumentUrl ? "Trocar Arquivo PDF" : "Selecionar Arquivo PDF"}
+                                    </>
+                                  )}
+                                  <input 
+                                    type="file" 
+                                    accept=".pdf,application/pdf" 
+                                    className="hidden" 
+                                    onChange={handleUploadDocument}
+                                    disabled={uploadingDoc}
+                                  />
+                                </label>
+
+                                {editingDocumentUrl && (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 text-xs text-muted-foreground hover:text-foreground"
+                                    onClick={() => window.open(editingDocumentUrl, "_blank")}
+                                  >
+                                    <Eye className="w-3 h-3 mr-1" />
+                                    Visualizar PDF
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1">
+                            <Label className="text-[11px] font-bold text-foreground">
+                              Legenda Opcional do Arquivo (WhatsApp Caption):
+                            </Label>
+                            <Input 
+                              value={editingDocumentCaption}
+                              onChange={(e) => setEditingDocumentCaption(e.target.value)}
+                              placeholder="Ex: Segue o Manual do Hóspede em PDF para sua comodidade! 📖"
+                              className="text-xs h-8 bg-white dark:bg-neutral-900"
+                            />
+                          </div>
+
+                          {editingDocumentUrl ? (
+                            <div className="p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-900 dark:text-emerald-300 flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <CheckCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                                <span className="font-medium truncate max-w-[280px] sm:max-w-[400px]">
+                                  Arquivo pronto para envio: <strong>{editingDocumentName || 'manual.pdf'}</strong>
+                                </span>
+                              </div>
+                              <Badge variant="outline" className="text-[10px] bg-white dark:bg-neutral-800 text-emerald-700 dark:text-emerald-300 border-emerald-300">
+                                PDF Configurado
+                              </Badge>
+                            </div>
+                          ) : (
+                            <div className="p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-300">
+                              ℹ️ Selecione o arquivo PDF do manual no seu computador acima para ativar o envio automático.
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
                     {/* Botões de Ação */}
                     <div className="flex items-center justify-between pt-3 border-t">
                       <Button 
@@ -1660,6 +1903,34 @@ export default function WhatsappAutomation() {
                                 <span className="truncate">{btn.label || "Ação Rápida"}</span>
                               </button>
                             ))}
+                          </div>
+                        )}
+
+                        {/* Balão do Documento PDF Anexo (se ativo) */}
+                        {editingHasAttachment && (
+                          <div className="relative self-end max-w-[92%] bg-[#D9FDD3] dark:bg-[#005C4B] rounded-2xl rounded-tr-xs shadow-xs p-2 text-xs border border-emerald-300/30 space-y-1.5 animate-in fade-in-50">
+                            <div className="flex items-center gap-2 p-2 rounded-xl bg-white/80 dark:bg-black/25 border border-emerald-200/50 dark:border-emerald-700/50">
+                              <div className="w-8 h-8 rounded-lg bg-red-100 dark:bg-red-950/60 flex items-center justify-center text-red-600 font-bold text-[10px] shrink-0 border border-red-200">
+                                PDF
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <span className="font-bold text-[11px] block truncate text-neutral-900 dark:text-neutral-100">
+                                  {editingDocumentName || "Manual_do_Hospede_CorpFlats.pdf"}
+                                </span>
+                                <span className="text-[9px] text-muted-foreground block">
+                                  Documento PDF • Guia do Hóspede
+                                </span>
+                              </div>
+                            </div>
+                            {editingDocumentCaption && (
+                              <p className="text-[11px] text-neutral-800 dark:text-neutral-200 px-0.5 whitespace-pre-wrap">
+                                {editingDocumentCaption}
+                              </p>
+                            )}
+                            <div className="flex justify-end items-center gap-1 text-[9px] text-neutral-500 dark:text-neutral-400">
+                              <span>14:32</span>
+                              <CheckCheck className="w-3 h-3 text-sky-500" />
+                            </div>
                           </div>
                         )}
 
@@ -2007,6 +2278,13 @@ export default function WhatsappAutomation() {
                                   )}
                                 </div>
                               )}
+
+                              {(item.hasAttachment || item.documentUrl) && (
+                                <Badge variant="outline" className="bg-blue-50 text-blue-800 dark:bg-blue-950/50 dark:text-blue-300 text-[10px] font-bold border-blue-200 flex items-center gap-1">
+                                  <FileText className="w-2.5 h-2.5" />
+                                  PDF
+                                </Badge>
+                              )}
                             </div>
 
                             <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
@@ -2107,6 +2385,12 @@ export default function WhatsappAutomation() {
                             <span className="font-mono text-muted-foreground">({hist.guestPhone})</span>
                             {hist.reservationCode && (
                               <Badge variant="outline" className="text-[10px] font-mono">{hist.reservationCode}</Badge>
+                            )}
+                            {(hist.hasAttachment || hist.documentUrl) && (
+                              <Badge variant="outline" className="bg-blue-50 text-blue-800 dark:bg-blue-950/50 dark:text-blue-300 text-[10px] font-bold border-blue-200 flex items-center gap-1">
+                                <FileText className="w-2.5 h-2.5" />
+                                PDF
+                              </Badge>
                             )}
                             <Badge className={hist.status === "sent" ? "bg-emerald-100 text-emerald-800 text-[10px]" : "bg-rose-100 text-rose-800 text-[10px]"}>
                               {hist.status === "sent" ? "✓ Entregue" : "✕ Erro"}
@@ -2331,6 +2615,41 @@ export default function WhatsappAutomation() {
                   )}
                 </div>
               )}
+
+              {/* Opção de Anexar Documento PDF no Teste */}
+              <div className="p-3 rounded-xl bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-blue-900 dark:text-blue-200 flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5 text-blue-600" />
+                    Anexar Guia / Manual em PDF
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-muted-foreground">{testIncludeDocument ? "Sim" : "Não"}</span>
+                    <Switch 
+                      checked={testIncludeDocument}
+                      onCheckedChange={setTestIncludeDocument}
+                    />
+                  </div>
+                </div>
+
+                {testIncludeDocument && (
+                  <div className="pt-1">
+                    <div className="flex items-center gap-2 p-2 bg-white dark:bg-background rounded-lg border border-blue-200 dark:border-blue-800 text-[11px]">
+                      <div className="w-6 h-6 rounded bg-red-100 dark:bg-red-950 flex items-center justify-center text-red-600 font-bold text-[9px] shrink-0 border border-red-200">
+                        PDF
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <span className="font-bold text-foreground block truncate">
+                          {editingDocumentName || config.guestGuidePdfName || "Manual_do_Hospede_CorpFlats.pdf"}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground block">
+                          Será enviado via Z-API como anexo oficial logo após a mensagem de texto.
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             <DialogFooter>
@@ -2379,6 +2698,25 @@ export default function WhatsappAutomation() {
                         <span className="text-[11px] font-mono text-muted-foreground truncate max-w-[180px]">{b.url || b.phone}</span>
                       </div>
                     ))}
+                  </div>
+                </div>
+              )}
+
+              {(previewModalItem?.hasAttachment || previewModalItem?.documentUrl) && (
+                <div className="space-y-1.5">
+                  <span className="text-[10px] font-bold text-muted-foreground uppercase">Documento anexo:</span>
+                  <div className="p-2.5 rounded-xl bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 flex items-center gap-2">
+                    <div className="w-7 h-7 rounded bg-red-100 dark:bg-red-950 flex items-center justify-center text-red-600 font-bold text-[9px] shrink-0 border border-red-200">
+                      PDF
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="font-bold text-foreground text-xs block truncate">
+                        {previewModalItem.documentName || "Manual_do_Hospede_CorpFlats.pdf"}
+                      </span>
+                      {previewModalItem.documentCaption && (
+                        <p className="text-[10px] text-muted-foreground truncate">{previewModalItem.documentCaption}</p>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
