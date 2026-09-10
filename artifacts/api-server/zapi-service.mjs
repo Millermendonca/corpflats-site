@@ -102,10 +102,10 @@ Para agilizar sua estadia ou pagar via cartão em até 12x, acesse seu portal:`,
   {
     id: "tpl_new_reservation",
     triggerEvent: "reservation_created",
-    title: "Nova Reserva • Confirmação & Resumo",
-    description: "Enviado imediatamente quando uma reserva é confirmada no sistema/site.",
-    enabled: true,
-    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    title: "Nova Reserva • Confirmação & Resumo (Todos os Canais)",
+    description: "Template genérico para nova reserva confirmada. Prefira usar os templates especializados tpl_new_reservation_direct (Site/WhatsApp) e tpl_new_reservation_ota (Booking/Airbnb) para experiência personalizada.",
+    enabled: false,
+    channels: ["outros"],
     triggerTiming: "immediate",
     offsetValue: 0,
     offsetUnit: "minutes",
@@ -138,10 +138,153 @@ Para agilizar sua entrada na portaria sem filas, realize com antecedência o seu
     ]
   },
   {
+    id: "tpl_new_reservation_direct",
+    triggerEvent: "reservation_created",
+    title: "Nova Reserva (Site/WhatsApp) • Confirmação + Early Check-in",
+    description: "Enviado para reservas via Site ou WhatsApp. Inclui benefício de early check-in antecipado (conforme disponibilidade) quando a reserva for criada com pelo menos 30 min antes do horário de check-in do dia.",
+    enabled: true,
+    channels: ["site", "whatsapp"],
+    triggerTiming: "immediate",
+    offsetValue: 0,
+    offsetUnit: "minutes",
+    fixedTime: "",
+    message: `Olá, *{{nome_hospede}}*! 🌟✨
+Sua reserva no *{{nome_hotel}}* está *Confirmada*!
+
+📋 *Resumo da sua Estadia:*
+• Código da Reserva: *{{numero_reserva}}*
+• Acomodação: *Flat {{quarto}}*
+• Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*
+• Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*
+• Total de Hóspedes: *{{num_hospedes}}*
+
+💰 *Situação Financeira:*
+• Valor Total: *{{valor_total}}*
+• Quanto foi Pago: *{{valor_pago}}*
+• Saldo a Quitar: *{{quanto_falta}}*
+
+{{instrucao_saldo}}
+
+{{early_checkin_beneficio}}
+
+📍 *Endereço:*
+{{endereco_hotel}}
+
+Para agilizar sua entrada na portaria sem filas, realize com antecedência o seu *Pré-Check-in Digital* pelo botão abaixo:`,
+    footer: "CorpFlats • Hospedagem Contemporânea",
+    buttons: [
+      { id: "btn_chk", type: "URL", label: "📝 Fazer Check-in Online", url: "{{link_checkin_digital}}" },
+      { id: "btn_portal", type: "URL", label: "🏨 Ver Detalhes da Reserva", url: "{{link_portal_hospede}}" }
+    ]
+  },
+  {
+    id: "tpl_new_reservation_ota",
+    triggerEvent: "reservation_created",
+    title: "Nova Reserva (Booking/Airbnb) • Confirmação sem revelar flat",
+    description: "Enviado para reservas via Booking.com ou Airbnb. Não revela o número do flat — informa que o apartamento será atribuído no dia do check-in. Promove reservas diretas.",
+    enabled: true,
+    channels: ["booking", "airbnb"],
+    triggerTiming: "immediate",
+    offsetValue: 0,
+    offsetUnit: "minutes",
+    fixedTime: "",
+    message: `Olá, *{{nome_hospede}}*! 🌟
+Sua reserva no *{{nome_hotel}}* está *Confirmada*!
+
+📋 *Resumo da sua Estadia:*
+• Código da Reserva: *{{numero_reserva}}*
+• Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*
+• Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*
+• Total de Hóspedes: *{{num_hospedes}}*
+
+🔑 *Sobre o seu apartamento:*
+O número do seu flat será atribuído e informado no dia do check-in, até as *{{horario_checkin}}*. Caso o apartamento esteja liberado antes, você será avisado(a) a partir das *12:00* para entrada antecipada.
+
+Se desejar garantir *Early Check-in antes das 12:00*, entre em contato conosco com antecedência — sujeito à disponibilidade.
+
+💡 *Sabia que reservando direto pelo nosso site ou WhatsApp você tem:*
+• Early check-in *sem custo adicional* (conforme disponibilidade) 🎁
+• Atendimento personalizado desde a reserva
+• Melhores tarifas sem taxas de intermediário
+
+📍 *Endereço:*
+{{endereco_hotel}}
+
+Realize seu *Pré-Check-in Digital* com antecedência para agilizar sua chegada:`,
+    footer: "CorpFlats • Hospedagem Contemporânea",
+    buttons: [
+      { id: "btn_chk", type: "URL", label: "📝 Fazer Check-in Online", url: "{{link_checkin_digital}}" },
+      { id: "btn_portal", type: "URL", label: "🏨 Ver Minha Reserva", url: "{{link_portal_hospede}}" }
+    ]
+  },
+  {
+    id: "tpl_room_ready_direct",
+    triggerEvent: "room_ready",
+    title: "Quarto Liberado • Early Check-in Disponível (Site/WhatsApp)",
+    description: "Disparado quando a limpeza do flat é concluída no dia do check-in, para reservas via Site ou WhatsApp. Avisa que o flat está pronto para entrada antecipada.",
+    enabled: true,
+    channels: ["site", "whatsapp"],
+    triggerTiming: "immediate",
+    offsetValue: 0,
+    offsetUnit: "minutes",
+    fixedTime: "",
+    message: `*{{primeiro_nome}}*, uma ótima notícia! 🎉🔑
+Seu *Flat {{quarto}}* no *{{nome_hotel}}* já está *Limpo e Pronto* para receber você!
+
+Como você reservou diretamente conosco, pode fazer o *Early Check-in agora mesmo*, sem precisar esperar as {{horario_checkin}}! 🚀
+
+📍 Ao chegar, basta se identificar na portaria 24h com seu nome e o número *{{quarto}}*.
+
+📶 *Wi-Fi do Flat:*
+• Rede: *{{wifi_rede}}*
+• Senha: *{{wifi_senha}}*
+
+Desejamos uma chegada tranquila e uma estadia incrível! Qualquer dúvida, estamos à disposição.`,
+    footer: "CorpFlats • Boas-vindas!",
+    buttons: [
+      { id: "btn_maps", type: "URL", label: "📍 Abrir no Google Maps", url: "{{link_maps}}" },
+      { id: "btn_portal", type: "URL", label: "🏨 Portal do Hóspede", url: "{{link_portal_hospede}}" }
+    ]
+  },
+  {
+    id: "tpl_room_ready_ota",
+    triggerEvent: "room_ready_ota",
+    title: "Quarto Liberado • Informação de Flat (Booking/Airbnb)",
+    description: "Disparado no dia do check-in para reservas Booking/Airbnb: às 12:00 se o flat já estiver limpo, ou às 14:00 (check-in padrão). Revela o número do flat e as instruções de acesso.",
+    enabled: true,
+    channels: ["booking", "airbnb"],
+    triggerTiming: "immediate",
+    offsetValue: 0,
+    offsetUnit: "minutes",
+    fixedTime: "",
+    message: `*{{primeiro_nome}}*, tudo pronto para sua chegada! 🔑🏡
+Seu apartamento no *{{nome_hotel}}* já foi definido:
+
+🏠 *Flat {{quarto}}*
+⏰ Liberado para entrada a partir de *agora*!
+
+📍 Ao chegar, vá à portaria 24h e informe seu nome e o número *{{quarto}}*.
+
+📶 *Wi-Fi do Flat:*
+• Rede: *{{wifi_rede}}*
+• Senha: *{{wifi_senha}}*
+
+📍 *Endereço:* {{endereco_hotel}}
+
+Desejamos uma estadia maravilhosa! Se precisar de algo, estamos à disposição.
+
+💡 _Na próxima vez, reserve pelo nosso site ou WhatsApp e ganhe early check-in sem custo adicional!_`,
+    footer: "CorpFlats • Boas-vindas!",
+    buttons: [
+      { id: "btn_maps", type: "URL", label: "📍 Abrir no Google Maps", url: "{{link_maps}}" },
+      { id: "btn_portal", type: "URL", label: "🏨 Portal do Hóspede", url: "{{link_portal_hospede}}" }
+    ]
+  },
+  {
     id: "tpl_reservation_updated",
     triggerEvent: "reservation_updated",
     title: "Modificação de Reserva • Dados Atualizados",
-    description: "Enviado quando datas, quarto ou número de hóspedes forem alterados.",
+    description: "Enviado quando datas, quarto ou número de hóspedes forem alterados. Detalha exatamente o que mudou.",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
     triggerTiming: "immediate",
@@ -149,8 +292,11 @@ Para agilizar sua entrada na portaria sem filas, realize com antecedência o seu
     offsetUnit: "minutes",
     fixedTime: "",
     message: `Olá, *{{primeiro_nome}}*! 🔄
-Informamos que sua reserva *{{numero_reserva}}* no *{{nome_hotel}}* foi atualizada com sucesso:
+Informamos que sua reserva *{{numero_reserva}}* no *{{nome_hotel}}* foi atualizada:
 
+{{resumo_alteracoes}}
+
+📋 *Situação Atual da Reserva:*
 • Quarto: *Flat {{quarto}}*
 • Período: *{{data_checkin}} às {{horario_checkin}}* até *{{data_checkout}} às {{horario_checkout}}*
 • Total de Hóspedes: *{{num_hospedes}}*
@@ -626,6 +772,55 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     if (diff > 0) totalNights = diff;
   }
 
+  // ── Tag: {{early_checkin_beneficio}} ────────────────────────────────────────
+  // Mostrar benefício de early check-in apenas para reservas com chegada futura
+  // OU para o próprio dia do check-in quando criadas com pelo menos 30min de antecedência.
+  let earlyCheckinBeneficio = "";
+  if (reservation.checkinDate) {
+    const checkinDate = reservation.checkinDate;
+    const todayStr = new Date().toISOString().substring(0, 10);
+    const isSameDayCheckin = checkinDate === todayStr;
+    const isFutureCheckin = checkinDate > todayStr;
+
+    if (isFutureCheckin) {
+      // Reserva para data futura: sempre exibir benefício
+      earlyCheckinBeneficio = `🎁 *Benefício Exclusivo — Early Check-in Gratuito:*\nPor ter reservado diretamente pelo nosso site/WhatsApp, seu flat será liberado assim que estiver limpo e pronto no dia da chegada, *sem precisar aguardar as ${checkinTime}*! Conforme disponibilidade.`;
+    } else if (isSameDayCheckin) {
+      // Reserva para hoje: só exibir se faltam pelo menos 30 minutos para o check-in
+      const now = new Date();
+      const [ciHour, ciMin] = checkinTime.split(":").map(Number);
+      const checkinDeadline = new Date();
+      checkinDeadline.setHours(ciHour, ciMin - 30, 0, 0); // 30 min antes do check-in
+      if (now < checkinDeadline) {
+        earlyCheckinBeneficio = `🎁 *Benefício Exclusivo — Early Check-in Gratuito:*\nPor ter reservado diretamente pelo nosso site/WhatsApp, seu flat será liberado assim que estiver limpo e pronto, *sem precisar aguardar as ${checkinTime}*! Conforme disponibilidade.`;
+      }
+    }
+  }
+
+  // ── Tag: {{resumo_alteracoes}} ────────────────────────────────────────────
+  // Formata a lista de campos alterados passada via reservation._changesContext
+  let resumoAlteracoes = "";
+  const changes = reservation._changesContext || [];
+  if (Array.isArray(changes) && changes.length > 0) {
+    const changeLines = changes
+      .filter(c => c.field && (c.oldValue !== undefined || c.newValue !== undefined))
+      .map(c => {
+        if (c.oldValue !== null && c.oldValue !== undefined && c.newValue !== null && c.newValue !== undefined) {
+          return `• *${c.label || c.field}*: ~~${c.oldValue}~~ → *${c.newValue}*`;
+        } else if (c.newValue !== null && c.newValue !== undefined) {
+          return `• *${c.label || c.field}*: *${c.newValue}*`;
+        }
+        return null;
+      })
+      .filter(Boolean);
+    if (changeLines.length > 0) {
+      resumoAlteracoes = `📝 *O que foi alterado:*\n${changeLines.join("\n")}`;
+    }
+  }
+  if (!resumoAlteracoes) {
+    resumoAlteracoes = "📝 *Sua reserva foi atualizada com sucesso.*";
+  }
+
   const tagsMap = {
     "{{nome_hospede}}": guestName,
     "{{primeiro_nome}}": firstName,
@@ -663,7 +858,9 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{link_checkout}}": linkCheckout,
     "{{link_avaliacao_google}}": googleReviewUrl,
     "{{link_guia_hospede}}": zapiCfg.guestGuidePdfUrl || `${appOrigin}/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf`,
-    "{{link_manual_hospede}}": zapiCfg.guestGuidePdfUrl || `${appOrigin}/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf`
+    "{{link_manual_hospede}}": zapiCfg.guestGuidePdfUrl || `${appOrigin}/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf`,
+    "{{early_checkin_beneficio}}": earlyCheckinBeneficio,
+    "{{resumo_alteracoes}}": resumoAlteracoes
   };
 
   let rendered = text;
@@ -2130,5 +2327,60 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     }
   } catch (err) {
     console.error(`[Z-API Instant Trigger Error]:`, err.message);
+  }
+}
+
+// ── Disparo de "Quarto Pronto" ao Concluir Limpeza no Dia do Check-in ─────────
+/**
+ * Chamado quando status de limpeza vai para "clean".
+ * Verifica se há reservas com check-in hoje naquele flat e dispara:
+ *  - `room_ready`      → para canais diretos (site / whatsapp)
+ *  - `room_ready_ota`  → para OTAs (booking / airbnb) — mas apenas SE for antes das 14:00;
+ *                        se já for 14:00 ou mais, o disparo OTA será feito pelo cron do check-in.
+ */
+export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId, flatNumber, baseUrl = "") {
+  try {
+    const db = typeof dbOrGetter === "function" ? dbOrGetter() : dbOrGetter;
+    if (!db || !db.zapiConfig?.enabled) return;
+
+    const todayStr = new Date().toISOString().substring(0, 10);
+
+    // Busca reservas com check-in hoje neste flat
+    const arrivingToday = (db.reservations || []).filter(r =>
+      r.status !== "cancelada" &&
+      r.status !== "checkout" &&
+      r.checkinDate === todayStr &&
+      (r.flatId === flatId || String(r.flatNumber) === String(flatNumber)) &&
+      r.guestPhone
+    );
+
+    if (arrivingToday.length === 0) return;
+
+    const checkinTime = db.settings?.checkinTime || "14:00";
+    const now = new Date();
+
+    for (const resv of arrivingToday) {
+      const resvChannel = normalizeReservationChannel(resv.channel || resv.source || "site");
+      const isOtaChannel = resvChannel === "booking" || resvChannel === "airbnb";
+
+      // OTA: só dispara "room_ready_ota" se ainda não chegou o horário padrão de check-in
+      // (evita enviar duplicado — o cron do dia já dispara às 14:00 se não houve limpeza antes)
+      if (isOtaChannel) {
+        const [ciHour, ciMin] = checkinTime.split(":").map(Number);
+        const checkinDateTime = new Date();
+        checkinDateTime.setHours(ciHour, ciMin, 0, 0);
+        // Só notifica via room_ready_ota se ainda não chegou a hora do check-in normal
+        if (now >= checkinDateTime) {
+          console.log(`[Room Ready OTA] Flat ${flatNumber} limpo mas já são ${now.toLocaleTimeString("pt-BR")} — disparo OTA pelo cron do check-in.`);
+          continue;
+        }
+      }
+
+      const eventName = isOtaChannel ? "room_ready_ota" : "room_ready";
+      console.log(`[Room Ready] Disparando '${eventName}' para ${resv.guestName} (Flat ${flatNumber} / Canal: ${resvChannel})...`);
+      await triggerImmediateWhatsApp(db, saveDatabase, eventName, resv, baseUrl);
+    }
+  } catch (err) {
+    console.error("[Room Ready WhatsApp Error]:", err.message);
   }
 }
