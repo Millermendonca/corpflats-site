@@ -38,6 +38,7 @@ import { uploadImageToStorage } from "./storage-service.mjs";
 import { MicrosoftGraphService } from "./microsoft-graph-service.mjs";
 import { initWhatsAppEngine, triggerImmediateWhatsApp, triggerRoomReadyWhatsApp, cleanWhatsAppPhone, sendZapiMessage } from "./zapi-service.mjs";
 import { initMaidAutomationEngine } from "./maid-automation-service.mjs";
+import { sendInterPix, isInterConfigured, INTER_ENV } from "./inter-pix-service.mjs";
 import { 
   getSmtpConfig, 
   verifySmtpConnection, 
@@ -16560,6 +16561,539 @@ if (fs.existsSync(distPath)) {
   });
   console.log(`[Production Server] Servindo frontend em: ${fallbackDistPath}`);
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// MÓDULO LISTA DE COMPRAS (COMPARTILHADA ENTRE CAMAREIRAS E ADMIN)
+// ════════════════════════════════════════════════════════════════════════════
+
+function ensureShoppingListDb() {
+  if (!Array.isArray(db.shoppingList)) {
+    db.shoppingList = [
+      {
+        id: "shop_init_1",
+        title: "Detergente Neutro 5L",
+        quantity: "4 galões",
+        category: "Limpeza",
+        notes: "Uso diário da governança",
+        completed: false,
+        createdBy: { id: 1, name: "Admin", role: "admin" },
+        createdAt: new Date().toISOString(),
+        completedBy: null,
+        completedAt: null
+      },
+      {
+        id: "shop_init_2",
+        title: "Papel Higiênico Folha Dupla",
+        quantity: "10 fardos",
+        category: "Cama & Banho",
+        notes: "Reposição dos flats",
+        completed: false,
+        createdBy: { id: 1, name: "Admin", role: "admin" },
+        createdAt: new Date().toISOString(),
+        completedBy: null,
+        completedAt: null
+      },
+      {
+        id: "shop_init_3",
+        title: "Sacos de Lixo 50L e 15L",
+        quantity: "5 pacotes cada",
+        category: "Limpeza",
+        notes: "Urgente para a semana",
+        completed: false,
+        createdBy: { id: 1, name: "Admin", role: "admin" },
+        createdAt: new Date().toISOString(),
+        completedBy: null,
+        completedAt: null
+      }
+    ];
+    saveDatabase();
+  }
+}
+
+app.get("/api/shopping-list", (req, res) => {
+  ensureShoppingListDb();
+  const { status, category } = req.query;
+  let items = [...db.shoppingList];
+
+  if (status === "pending") {
+    items = items.filter(i => !i.completed);
+  } else if (status === "completed") {
+    items = items.filter(i => i.completed);
+  }
+
+  if (category && category !== "all") {
+    items = items.filter(i => (i.category || "").toLowerCase() === String(category).toLowerCase());
+  }
+
+  // Pendentes primeiro (mais recentes primeiro), depois comprados (mais recentemente comprados primeiro)
+  items.sort((a, b) => {
+    if (a.completed === b.completed) {
+      const dateA = a.completed ? (a.completedAt || a.createdAt) : a.createdAt;
+      const dateB = b.completed ? (b.completedAt || b.createdAt) : b.createdAt;
+      return new Date(dateB).getTime() - new Date(dateA).getTime();
+    }
+    return a.completed ? 1 : -1;
+  });
+
+  res.json(items);
+});
+
+app.post("/api/shopping-list", (req, res) => {
+  ensureShoppingListDb();
+  const { title, quantity, category = "Limpeza", notes } = req.body || {};
+  if (!title || !String(title).trim()) {
+    return res.status(400).json({ error: "Título do item é obrigatório." });
+  }
+
+  const userAuth = getAuthUser(req);
+  const newItem = {
+    id: `shop_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    title: String(title).trim(),
+    quantity: quantity ? String(quantity).trim() : "",
+    category: category ? String(category).trim() : "Limpeza",
+    notes: notes ? String(notes).trim() : "",
+    completed: false,
+    createdBy: {
+      id: userAuth?.id || 1,
+      name: userAuth?.name || userAuth?.username || "Colaborador",
+      role: userAuth?.role || "camareira"
+    },
+    createdAt: new Date().toISOString(),
+    completedBy: null,
+    completedAt: null
+  };
+
+  db.shoppingList.unshift(newItem);
+  saveDatabase();
+
+  try {
+    createNotification({
+      category: "general",
+      title: "🛒 Novo item na Lista de Compras",
+      message: `${newItem.createdBy.name} adicionou: "${newItem.title}" (${newItem.quantity || "Qtd não especificada"})`,
+      severity: "info",
+      metadata: { itemId: newItem.id },
+      targetUrl: "/lista-compras"
+    });
+  } catch {}
+
+  res.status(201).json(newItem);
+});
+
+app.patch("/api/shopping-list/:id/toggle", (req, res) => {
+  ensureShoppingListDb();
+  const { id } = req.params;
+  const item = db.shoppingList.find(i => i.id === id);
+  if (!item) {
+    return res.status(404).json({ error: "Item não encontrado." });
+  }
+
+  const userAuth = getAuthUser(req);
+  const willComplete = req.body?.completed !== undefined ? Boolean(req.body.completed) : !item.completed;
+
+  item.completed = willComplete;
+  if (willComplete) {
+    item.completedAt = new Date().toISOString();
+    item.completedBy = {
+      id: userAuth?.id || 1,
+      name: userAuth?.name || userAuth?.username || "Colaborador",
+      role: userAuth?.role || "admin"
+    };
+  } else {
+    item.completedAt = null;
+    item.completedBy = null;
+  }
+
+  saveDatabase();
+  res.json(item);
+});
+
+app.delete("/api/shopping-list/:id", (req, res) => {
+  ensureShoppingListDb();
+  const { id } = req.params;
+  const idx = db.shoppingList.findIndex(i => i.id === id);
+  if (idx === -1) {
+    return res.status(404).json({ error: "Item não encontrado." });
+  }
+  db.shoppingList.splice(idx, 1);
+  saveDatabase();
+  res.json({ success: true });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// MÓDULO FINANCEIRO DE CAMAREIRAS — Pagamentos, Vales & Extrato
+// ════════════════════════════════════════════════════════════════════════════
+
+function generatePaymentId() {
+  return `pay_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+}
+
+function ensureMaidPaymentsDb() {
+  if (!db.maidPayments) {
+    db.maidPayments = [];
+  }
+  if (!db.maidStatementEntries) {
+    db.maidStatementEntries = [];
+  }
+}
+
+function getMaidBalance(userId) {
+  ensureMaidPaymentsDb();
+  const entries = db.maidStatementEntries.filter(e => e.userId === userId);
+  return entries.reduce((sum, e) => {
+    return e.entryType === "credit" ? sum + Number(e.amount) : sum - Number(e.amount);
+  }, 0);
+}
+
+function syncMaidCredits(userId) {
+  ensureMaidPaymentsDb();
+
+  const user = (db.users || []).find(u => u.id === userId);
+  if (!user) return;
+
+  const defaultRate = Number(db.cleaningRates?.defaultRatePerRoom || 22.50);
+  const userRate = db.cleaningRates?.userRates?.[userId] !== undefined
+    ? Number(db.cleaningRates.userRates[userId])
+    : defaultRate;
+
+  const cleanings = (db.cleaningRequests || []).filter(r => {
+    if (r.status !== "clean" || r.isBedAdjustmentOnly || r.isPaidCleaning === false) return false;
+    return r.assignedUserId === userId;
+  });
+
+  const existingCreditRefs = new Set(
+    db.maidStatementEntries
+      .filter(e => e.userId === userId && e.entryType === "credit" && e.cleaningRequestId)
+      .map(e => e.cleaningRequestId)
+  );
+
+  let newEntries = [];
+  for (const cleaning of cleanings) {
+    if (existingCreditRefs.has(cleaning.id)) continue;
+
+    const flat = (db.flats || []).find(f => f.id === cleaning.flatId);
+    const flatNum = flat ? flat.number : String(cleaning.flatId);
+    const entryDate = cleaning.completedAt
+      ? cleaning.completedAt.substring(0, 10)
+      : cleaning.requestDate;
+
+    newEntries.push({
+      id: generatePaymentId(),
+      userId,
+      cleaningRequestId: cleaning.id,
+      paymentId: null,
+      entryType: "credit",
+      amount: userRate,
+      description: `Diária — Flat ${flatNum}`,
+      entryDate,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  if (newEntries.length > 0) {
+    newEntries.sort((a, b) => a.entryDate.localeCompare(b.entryDate));
+    db.maidStatementEntries.push(...newEntries);
+    saveDatabase();
+  }
+}
+
+function buildStatement(userId) {
+  syncMaidCredits(userId);
+  ensureMaidPaymentsDb();
+
+  const entries = db.maidStatementEntries
+    .filter(e => e.userId === userId)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+  let balance = 0;
+  return entries.map(e => {
+    if (e.entryType === "credit") {
+      balance += Number(e.amount);
+    } else {
+      balance -= Number(e.amount);
+    }
+
+    const payment = e.paymentId
+      ? (db.maidPayments || []).find(p => p.id === e.paymentId)
+      : null;
+
+    return {
+      ...e,
+      balanceAfter: Math.round(balance * 100) / 100,
+      payment: payment ? {
+        id: payment.id,
+        type: payment.type,
+        interTxId: payment.interTxId || null,
+        interStatus: payment.interStatus || null,
+        interSimulated: payment.interSimulated || false,
+        createdAt: payment.createdAt,
+        paidAt: payment.paidAt || null,
+      } : null,
+    };
+  }).reverse();
+}
+
+app.get("/api/maids/statement/me", (req, res) => {
+  const authUser = getAuthUser(req);
+  if (!authUser) return res.status(401).json({ error: "Não autenticado." });
+
+  const statement = buildStatement(authUser.id);
+  const balance = statement.length > 0 ? statement[0].balanceAfter : 0;
+  const user = (db.users || []).find(u => u.id === authUser.id);
+
+  res.json({
+    userId: authUser.id,
+    userName: user?.name || user?.username || authUser.username,
+    pixKey: user?.pixKey || "",
+    balance: Math.round(balance * 100) / 100,
+    statement,
+  });
+});
+
+app.get("/api/maids/:userId/statement", (req, res) => {
+  const authUser = getAuthUser(req);
+  if (!authUser) return res.status(401).json({ error: "Não autenticado." });
+
+  const targetId = Number(req.params.userId);
+  if (authUser.role !== "admin" && authUser.id !== targetId) {
+    return res.status(403).json({ error: "Acesso negado." });
+  }
+
+  const user = (db.users || []).find(u => u.id === targetId);
+  if (!user) return res.status(404).json({ error: "Usuário não encontrado." });
+
+  const statement = buildStatement(targetId);
+  const balance = statement.length > 0 ? statement[0].balanceAfter : 0;
+
+  res.json({
+    userId: targetId,
+    userName: user.name || user.username,
+    pixKey: user.pixKey || "",
+    balance: Math.round(balance * 100) / 100,
+    statement,
+  });
+});
+
+app.get("/api/maids/all-balances", (req, res) => {
+  const authUser = getAuthUser(req);
+  if (!authUser || authUser.role !== "admin") {
+    return res.status(403).json({ error: "Acesso negado." });
+  }
+
+  const maids = (db.users || []).filter(
+    u => u.role === "camareira" || u.role === "cleaner"
+  );
+
+  const result = maids.map(u => {
+    syncMaidCredits(u.id);
+    const balance = getMaidBalance(u.id);
+    return {
+      id: u.id,
+      username: u.username,
+      name: u.name || u.username,
+      pixKey: u.pixKey || "",
+      whatsapp: u.whatsapp || u.phone || "",
+      active: u.active !== false,
+      balance: Math.round(balance * 100) / 100,
+    };
+  });
+
+  res.json(result);
+});
+
+app.post("/api/maids/:userId/pay", async (req, res) => {
+  const authUser = getAuthUser(req);
+  if (!authUser || authUser.role !== "admin") {
+    return res.status(403).json({ error: "Apenas administradores podem realizar pagamentos." });
+  }
+
+  const targetId = Number(req.params.userId);
+  const user = (db.users || []).find(u => u.id === targetId);
+  if (!user) return res.status(404).json({ error: "Usuário não encontrado." });
+
+  const {
+    amount,
+    type = "payment",
+    description,
+    referencePeriod,
+    sendWhatsApp = true,
+  } = req.body || {};
+
+  const numAmount = Number(amount);
+  if (!numAmount || numAmount <= 0) {
+    return res.status(400).json({ error: "Valor inválido. Informe um valor maior que zero." });
+  }
+
+  ensureMaidPaymentsDb();
+
+  const paymentId = generatePaymentId();
+  const idempotencyKey = paymentId;
+  const pixKey = user.pixKey || "";
+
+  let interResult = null;
+  let interError = null;
+
+  if (type === "payment" && pixKey) {
+    try {
+      interResult = await sendInterPix({
+        amount: numAmount,
+        pixKey,
+        description: description || `Pagamento quinzena — ${user.name || user.username}`,
+        idempotencyKey,
+      });
+    } catch (err) {
+      console.error("[Maid Pay] Erro Inter PIX:", err.message);
+      interError = err.message;
+    }
+  } else if (type === "payment" && !pixKey) {
+    console.warn(`[Maid Pay] Usuário ${targetId} sem chave PIX cadastrada. Pagamento registrado sem envio bancário.`);
+    interResult = {
+      simulated: true,
+      success: true,
+      txId: `NOPIX_${idempotencyKey}`,
+      status: "PENDENTE",
+      message: "Chave PIX não cadastrada para esta camareira.",
+    };
+  }
+
+  const payment = {
+    id: paymentId,
+    userId: targetId,
+    type,
+    amount: numAmount,
+    description: description || (type === "advance" ? `Vale — ${user.name || user.username}` : `Pagamento — ${user.name || user.username}`),
+    referencePeriod: referencePeriod || null,
+    interTxId: interResult?.txId || null,
+    interStatus: interResult?.status || (type === "advance" ? "VALE" : interError ? "FALHA" : "PENDENTE"),
+    interSimulated: interResult?.simulated || false,
+    interError: interError || null,
+    pixKey: type === "payment" ? pixKey : null,
+    whatsappSent: false,
+    createdBy: authUser.id,
+    createdAt: new Date().toISOString(),
+    paidAt: (interResult?.success || type === "advance") ? new Date().toISOString() : null,
+  };
+
+  db.maidPayments.push(payment);
+
+  const statementEntry = {
+    id: generatePaymentId(),
+    userId: targetId,
+    cleaningRequestId: null,
+    paymentId: paymentId,
+    entryType: "debit",
+    amount: numAmount,
+    description: payment.description,
+    entryDate: new Date().toISOString().substring(0, 10),
+    createdAt: new Date().toISOString(),
+  };
+
+  db.maidStatementEntries.push(statementEntry);
+  saveDatabase();
+
+  if (sendWhatsApp && (user.whatsapp || user.phone)) {
+    const cleanPh = cleanWhatsAppPhone(user.whatsapp || user.phone);
+    const balance = getMaidBalance(targetId);
+    const isAdvance = type === "advance";
+    const emoji = isAdvance ? "🎫" : "✅";
+    const typeLabel = isAdvance ? "Vale (adiantamento)" : "Pagamento PIX";
+    const valorFormatado = numAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+    const saldoFormatado = balance.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+    const dataHoje = new Date().toLocaleDateString("pt-BR");
+
+    const msg = `${emoji} *${typeLabel} Realizado! • CorpFlats* 💰\n\nOlá, *${user.name || user.username}*! Informamos que seu ${isAdvance ? "vale" : "pagamento"} foi processado:\n\n💵 *Valor:* ${valorFormatado}\n📅 *Data:* ${dataHoje}\n📌 *Tipo:* ${typeLabel}\n${payment.description ? `📋 *Descrição:* ${payment.description}\n` : ""}${!isAdvance && payment.interTxId ? `🔖 *TxID:* ${payment.interTxId}\n` : ""}${!isAdvance && interResult?.simulated ? "⚠️ _Pagamento simulado (configure PIX para produção)_\n" : ""}\n💼 *Saldo Atual:* ${saldoFormatado}\n\n_Acesse seu app para ver o extrato completo._ 📊`;
+
+    try {
+      const sendResult = await sendZapiMessage(db.zapiConfig, { phone: cleanPh, message: msg });
+      payment.whatsappSent = sendResult.success || false;
+      payment.whatsappSentAt = new Date().toISOString();
+      saveDatabase();
+    } catch (err) {
+      console.error("[Maid Pay] Erro WhatsApp:", err.message);
+    }
+  }
+
+  res.json({
+    success: true,
+    payment: {
+      id: payment.id,
+      type: payment.type,
+      amount: payment.amount,
+      description: payment.description,
+      interTxId: payment.interTxId,
+      interStatus: payment.interStatus,
+      interSimulated: payment.interSimulated,
+      interError: payment.interError,
+      whatsappSent: payment.whatsappSent,
+      paidAt: payment.paidAt,
+    },
+    balance: Math.round(getMaidBalance(targetId) * 100) / 100,
+    message: type === "advance"
+      ? `Vale de R$ ${numAmount.toFixed(2)} registrado para ${user.name || user.username}.`
+      : `Pagamento de R$ ${numAmount.toFixed(2)} processado para ${user.name || user.username}.`,
+  });
+});
+
+app.post("/api/maids/statement/send-whatsapp", async (req, res) => {
+  const authUser = getAuthUser(req);
+  if (!authUser) return res.status(401).json({ error: "Não autenticado." });
+
+  const targetId = req.body?.userId ? Number(req.body.userId) : authUser.id;
+  if (authUser.role !== "admin" && authUser.id !== targetId) {
+    return res.status(403).json({ error: "Acesso negado." });
+  }
+
+  const user = (db.users || []).find(u => u.id === targetId);
+  if (!user) return res.status(404).json({ error: "Usuário não encontrado." });
+
+  const phone = cleanWhatsAppPhone(user.whatsapp || user.phone || "");
+  if (!phone) {
+    return res.status(400).json({ error: "WhatsApp não cadastrado para esta camareira." });
+  }
+
+  const statement = buildStatement(targetId);
+  const balance = statement.length > 0 ? statement[0].balanceAfter : 0;
+
+  const recent = statement.slice(0, 20);
+  const lines = recent.map(e => {
+    const sign = e.entryType === "credit" ? "+" : "-";
+    const val = Number(e.amount).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+    const bal = Number(e.balanceAfter).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+    const dateStr = e.entryDate || e.createdAt?.substring(0, 10) || "";
+    const dateBr = dateStr.split("-").reverse().join("/");
+    return `${sign} ${val} | ${dateBr} | ${e.description} | Saldo: ${bal}`;
+  }).join("\n");
+
+  const balanceFormatted = balance.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  const msg = `📊 *Extrato Financeiro • CorpFlats* 💼\n\nOlá, *${user.name || user.username}*!\n\n💰 *Saldo Atual:* ${balanceFormatted}\n\n📋 *Últimas movimentações:*\n\`\`\`\n${lines || "Nenhuma movimentação ainda."}\n\`\`\`\n\n_Legenda: (+) Crédito (diária), (-) Débito (pagamento/vale)_\n_Para extrato completo, acesse o app._ ✨`;
+
+  try {
+    const sendResult = await sendZapiMessage(db.zapiConfig, { phone, message: msg });
+    res.json({
+      success: sendResult.success,
+      simulated: sendResult.simulated,
+      phone,
+      message: sendResult.success ? "Extrato enviado com sucesso!" : "Falha no envio do extrato.",
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/maids/inter-status", (req, res) => {
+  const authUser = getAuthUser(req);
+  if (!authUser || authUser.role !== "admin") {
+    return res.status(403).json({ error: "Acesso negado." });
+  }
+
+  res.json({
+    configured: isInterConfigured(),
+    env: INTER_ENV,
+    message: isInterConfigured()
+      ? `API Inter conectada (${INTER_ENV === "production" ? "🟢 Produção" : "🟡 Sandbox"})`
+      : "⚠️ Credenciais Inter não configuradas — pagamentos em modo simulação.",
+  });
+});
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`[Demo Server] API rodando em http://0.0.0.0:${PORT}`);

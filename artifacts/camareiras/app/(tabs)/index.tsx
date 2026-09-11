@@ -229,7 +229,7 @@ export default function DashboardScreen() {
           ListHeaderComponent={ListHeader}
           contentContainerStyle={[
             s.list,
-            { paddingBottom: insets.bottom + (Platform.OS === 'web' ? 34 : 0) + 100 },
+            { paddingBottom: 40 },
           ]}
           refreshControl={
             <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={colors.primary} />

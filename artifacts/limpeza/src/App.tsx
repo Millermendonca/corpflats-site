@@ -41,6 +41,7 @@ import SystemLogsPage from '@/pages/system-logs';
 import MyAccount from '@/pages/my-account';
 import WhatsappAutomation from '@/pages/whatsapp-automation';
 import MaidWhatsappAutomation from '@/pages/maid-whatsapp-automation';
+import ShoppingListPage from '@/pages/shopping-list';
 import ZapiConnection from '@/pages/zapi-connection';
 import NotFound from '@/pages/not-found';
 
@@ -125,6 +126,10 @@ function Router() {
         {/* Staff & Admin Routes */}
         <Route path="/login" component={Login} />
         <Route path="/dashboard" component={Dashboard} />
+        {/* Shopping List Routes */}
+        <Route path="/lista-compras" component={ShoppingListPage} />
+        <Route path="/compras" component={ShoppingListPage} />
+
         {/* WhatsApp Automation & Z-API Connection Routes */}
         <Route path="/automacoes-camareiras" component={MaidWhatsappAutomation} />
         <Route path="/camareiras-whatsapp" component={MaidWhatsappAutomation} />

@@ -1,40 +1,21 @@
 import React from 'react';
 import { Platform, StyleSheet, useColorScheme, View } from 'react-native';
 import { useColors } from '@/hooks/useColors';
-import { Feather } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
-import { isLiquidGlassAvailable } from 'expo-glass-effect';
+import { Feather, Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
-import { Icon, Label, NativeTabs } from 'expo-router/unstable-native-tabs';
 import { SymbolView } from 'expo-symbols';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-function NativeTabLayout() {
-  return (
-    <NativeTabs>
-      <NativeTabs.Trigger name="index">
-        <Icon sf={{ default: 'house', selected: 'house.fill' }} />
-        <Label>Dashboard</Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="financeiro">
-        <Icon sf={{ default: 'wallet.pass', selected: 'wallet.pass.fill' }} />
-        <Label>Financeiro</Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="observations">
-        <Icon sf={{ default: 'note.text', selected: 'note.text' }} />
-        <Label>Observações</Label>
-      </NativeTabs.Trigger>
-    </NativeTabs>
-  );
-}
-
-function ClassicTabLayout() {
+export default function TabLayout() {
   const colors = useColors();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   const isIOS = Platform.OS === 'ios';
-  const isWeb = Platform.OS === 'web';
   const insets = useSafeAreaInsets();
+
+  // Garante que o menu inferior fique sempre visível e com altura confortável em qualquer celular
+  const bottomPadding = Math.max(insets.bottom, isIOS ? 14 : 8);
+  const tabHeight = 54 + bottomPadding;
 
   return (
     <Tabs
@@ -42,76 +23,154 @@ function ClassicTabLayout() {
         headerShown: false,
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.mutedForeground,
+        tabBarHideOnKeyboard: false, // Menus sempre aparecem
         tabBarStyle: {
-          position: 'absolute',
-          backgroundColor: isIOS ? 'transparent' : colors.card,
-          borderTopWidth: isWeb ? 1 : 0,
+          position: 'relative', // Fixo no rodapé, sem sobrepor conteúdo
+          backgroundColor: colors.card,
+          borderTopWidth: 1,
           borderTopColor: colors.border,
-          elevation: 0,
-          paddingBottom: isIOS ? insets.bottom : 0,
-          ...(isWeb ? { height: 84 } : {}),
+          height: tabHeight,
+          paddingBottom: bottomPadding,
+          paddingTop: 8,
+          elevation: 12,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: -2 },
+          shadowOpacity: isDark ? 0.25 : 0.08,
+          shadowRadius: 4,
+          zIndex: 9999,
         },
-        tabBarBackground: () =>
-          isIOS ? (
-            <BlurView
-              intensity={100}
-              tint={isDark ? 'dark' : 'light'}
-              style={StyleSheet.absoluteFill}
-            />
-          ) : isWeb ? (
-            <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.card }]} />
-          ) : null,
+        tabBarLabelStyle: {
+          fontSize: 10.5,
+          fontWeight: '700',
+          letterSpacing: -0.2,
+          marginTop: 2,
+        },
       }}
     >
+      {/* 1. Limpeza */}
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Dashboard',
-          tabBarIcon: ({ color }) =>
+          title: 'Limpeza',
+          tabBarIcon: ({ color, focused }) =>
             isIOS ? (
-              <SymbolView name="house" tintColor={color} size={22} />
+              <SymbolView
+                name={focused ? 'sparkles' : 'sparkle'}
+                tintColor={color}
+                size={22}
+              />
             ) : (
-              <Feather name="home" size={22} color={color} />
+              <Ionicons
+                name={focused ? 'sparkles' : 'sparkles-outline'}
+                size={22}
+                color={color}
+              />
             ),
         }}
       />
+
+      {/* 2. Lista de Compras */}
+      <Tabs.Screen
+        name="compras"
+        options={{
+          title: 'Compras',
+          tabBarIcon: ({ color, focused }) =>
+            isIOS ? (
+              <SymbolView
+                name={focused ? 'cart.fill' : 'cart'}
+                tintColor={color}
+                size={22}
+              />
+            ) : (
+              <Ionicons
+                name={focused ? 'cart' : 'cart-outline'}
+                size={22}
+                color={color}
+              />
+            ),
+        }}
+      />
+
+      {/* 3. Extrato */}
       <Tabs.Screen
         name="financeiro"
         options={{
-          title: 'Financeiro',
-          tabBarIcon: ({ color }) =>
+          title: 'Extrato',
+          tabBarIcon: ({ color, focused }) =>
             isIOS ? (
-              <SymbolView name="wallet.pass" tintColor={color} size={22} />
+              <SymbolView
+                name={focused ? 'wallet.pass.fill' : 'wallet.pass'}
+                tintColor={color}
+                size={22}
+              />
             ) : (
-              <Feather name="credit-card" size={22} color={color} />
+              <Ionicons
+                name={focused ? 'wallet' : 'wallet-outline'}
+                size={22}
+                color={color}
+              />
             ),
         }}
       />
+
+      {/* 4. Manutenções */}
+      <Tabs.Screen
+        name="manutencoes"
+        options={{
+          title: 'Manutenções',
+          tabBarIcon: ({ color, focused }) =>
+            isIOS ? (
+              <SymbolView
+                name={focused ? 'wrench.and.screwdriver.fill' : 'wrench.and.screwdriver'}
+                tintColor={color}
+                size={22}
+              />
+            ) : (
+              <Ionicons
+                name={focused ? 'construct' : 'construct-outline'}
+                size={22}
+                color={color}
+              />
+            ),
+        }}
+      />
+
+      {/* 5. Mais */}
+      <Tabs.Screen
+        name="mais"
+        options={{
+          title: 'Mais',
+          tabBarIcon: ({ color, focused }) =>
+            isIOS ? (
+              <SymbolView
+                name={focused ? 'ellipsis.circle.fill' : 'ellipsis.circle'}
+                tintColor={color}
+                size={22}
+              />
+            ) : (
+              <Ionicons
+                name={focused ? 'grid' : 'grid-outline'}
+                size={22}
+                color={color}
+              />
+            ),
+        }}
+      />
+
+      {/* Rotas secundárias ocultas da barra */}
       <Tabs.Screen
         name="tasks"
         options={{
-          href: null, // hidden — tasks are now shown inline on each flat card
+          href: null,
         }}
       />
       <Tabs.Screen
         name="observations"
         options={{
-          title: 'Observações',
-          tabBarIcon: ({ color }) =>
-            isIOS ? (
-              <SymbolView name="note.text" tintColor={color} size={22} />
-            ) : (
-              <Feather name="file-text" size={22} color={color} />
-            ),
+          href: null,
         }}
       />
     </Tabs>
   );
 }
 
-export default function TabLayout() {
-  if (isLiquidGlassAvailable()) {
-    return <NativeTabLayout />;
-  }
-  return <ClassicTabLayout />;
-}
