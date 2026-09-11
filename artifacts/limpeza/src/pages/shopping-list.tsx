@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useMemo } from "react"
+import React, { useState, useEffect, useMemo } from "react"
 import { Shell } from "@/components/layout"
 import { useGetMe } from "@workspace/api-client-react"
 import { useToast } from "@/hooks/use-toast"
@@ -72,6 +72,7 @@ function formatDateBr(isoStr?: string | null): string {
 export default function ShoppingListPage() {
   const { data: user } = useGetMe()
   const { toast } = useToast()
+  const isAdmin = user?.role === "admin"
 
   const [items, setItems] = useState<ShoppingItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -162,8 +163,8 @@ export default function ShoppingListPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: newTitle.trim(),
-          quantity: newQuantity.trim(),
-          category: newCategory,
+          quantity: isAdmin ? newQuantity.trim() : "",
+          category: isAdmin ? newCategory : "Limpeza",
           notes: newNotes.trim(),
         }),
       })
@@ -317,65 +318,94 @@ export default function ShoppingListPage() {
           <CardHeader className="bg-primary/5 border-b border-border/60 p-4 sm:p-5">
             <CardTitle className="text-sm sm:text-base font-black flex items-center gap-2">
               <Plus className="w-4 h-4 text-primary" />
-              Adicionar Novo Item para Compra
+              {isAdmin ? "Adicionar Novo Item para Compra" : "Pedir Produto de Limpeza"}
             </CardTitle>
             <CardDescription className="text-xs">
-              Qualquer colaboradora ou administrador verá este pedido imediatamente no painel e no app mobile.
+              {isAdmin
+                ? "Qualquer colaboradora ou administrador verá este pedido imediatamente no painel e no app mobile."
+                : "Informe o produto que está faltando na governança. A administração definirá a quantidade e providenciará a compra."}
             </CardDescription>
           </CardHeader>
           <CardContent className="p-4 sm:p-5">
             <form onSubmit={handleCreate} className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
-                {/* Title */}
-                <div className="sm:col-span-5 space-y-1">
-                  <Label className="text-xs font-bold">Item a Comprar *</Label>
-                  <Input
-                    placeholder="Ex: Detergente Neutro 5L, Papel Toalha..."
-                    value={newTitle}
-                    onChange={e => setNewTitle(e.target.value)}
-                    className="rounded-xl h-10 text-xs font-semibold"
-                    required
-                  />
-                </div>
+              {isAdmin ? (
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                  {/* Title */}
+                  <div className="sm:col-span-5 space-y-1">
+                    <Label className="text-xs font-bold">Item a Comprar *</Label>
+                    <Input
+                      placeholder="Ex: Detergente Neutro 5L, Papel Toalha..."
+                      value={newTitle}
+                      onChange={e => setNewTitle(e.target.value)}
+                      className="rounded-xl h-10 text-xs font-semibold"
+                      required
+                    />
+                  </div>
 
-                {/* Quantity */}
-                <div className="sm:col-span-2 space-y-1">
-                  <Label className="text-xs font-bold">Qtd / Medida</Label>
-                  <Input
-                    placeholder="Ex: 4 galões, 10 un"
-                    value={newQuantity}
-                    onChange={e => setNewQuantity(e.target.value)}
-                    className="rounded-xl h-10 text-xs font-semibold"
-                  />
-                </div>
+                  {/* Quantity */}
+                  <div className="sm:col-span-2 space-y-1">
+                    <Label className="text-xs font-bold">Qtd / Medida</Label>
+                    <Input
+                      placeholder="Ex: 4 galões, 10 un"
+                      value={newQuantity}
+                      onChange={e => setNewQuantity(e.target.value)}
+                      className="rounded-xl h-10 text-xs font-semibold"
+                    />
+                  </div>
 
-                {/* Category */}
-                <div className="sm:col-span-2 space-y-1">
-                  <Label className="text-xs font-bold">Categoria</Label>
-                  <select
-                    value={newCategory}
-                    onChange={e => setNewCategory(e.target.value)}
-                    className="w-full h-10 rounded-xl border border-border bg-background px-3 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-primary"
-                  >
-                    {CATEGORIES.map(c => (
-                      <option key={c.label} value={c.label}>
-                        {c.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                  {/* Category */}
+                  <div className="sm:col-span-2 space-y-1">
+                    <Label className="text-xs font-bold">Categoria</Label>
+                    <select
+                      value={newCategory}
+                      onChange={e => setNewCategory(e.target.value)}
+                      className="w-full h-10 rounded-xl border border-border bg-background px-3 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-primary"
+                    >
+                      {CATEGORIES.map(c => (
+                        <option key={c.label} value={c.label}>
+                          {c.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
-                {/* Notes */}
-                <div className="sm:col-span-3 space-y-1">
-                  <Label className="text-xs font-bold">Observações (opcional)</Label>
-                  <Input
-                    placeholder="Ex: Urgente para o flat 212"
-                    value={newNotes}
-                    onChange={e => setNewNotes(e.target.value)}
-                    className="rounded-xl h-10 text-xs font-semibold"
-                  />
+                  {/* Notes */}
+                  <div className="sm:col-span-3 space-y-1">
+                    <Label className="text-xs font-bold">Observações (opcional)</Label>
+                    <Input
+                      placeholder="Ex: Urgente para o flat 212"
+                      value={newNotes}
+                      onChange={e => setNewNotes(e.target.value)}
+                      className="rounded-xl h-10 text-xs font-semibold"
+                    />
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                  {/* Title */}
+                  <div className="sm:col-span-7 space-y-1">
+                    <Label className="text-xs font-bold">O que está faltando na limpeza? *</Label>
+                    <Input
+                      placeholder="Ex: Detergente Neutro, Esponja, Água Sanitária, Sabonete líquido..."
+                      value={newTitle}
+                      onChange={e => setNewTitle(e.target.value)}
+                      className="rounded-xl h-10 text-xs font-semibold"
+                      required
+                    />
+                  </div>
+
+                  {/* Notes */}
+                  <div className="sm:col-span-5 space-y-1">
+                    <Label className="text-xs font-bold">Observações / Detalhes (opcional)</Label>
+                    <Input
+                      placeholder="Ex: Acabou na rouparia do 5º andar"
+                      value={newNotes}
+                      onChange={e => setNewNotes(e.target.value)}
+                      className="rounded-xl h-10 text-xs font-semibold"
+                    />
+                  </div>
+                </div>
+              )}
 
               <div className="flex justify-end">
                 <Button
@@ -384,7 +414,7 @@ export default function ShoppingListPage() {
                   className="rounded-xl h-9 text-xs font-bold gap-1.5 bg-primary text-primary-foreground shadow-sm hover:brightness-110 px-5"
                 >
                   <Plus className="w-4 h-4" />
-                  <span>{submitting ? "Adicionando..." : "Adicionar à Lista de Compras"}</span>
+                  <span>{submitting ? "Adicionando..." : isAdmin ? "Adicionar à Lista de Compras" : "Pedir Produto de Limpeza"}</span>
                 </Button>
               </div>
             </form>

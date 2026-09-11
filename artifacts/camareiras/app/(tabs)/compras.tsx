@@ -1,4 +1,4 @@
-﻿import React, { useState, useCallback, useEffect, useMemo } from "react";
+import React, { useState, useCallback, useEffect, useMemo } from "react";
 import {
   View,
   Text,
@@ -184,8 +184,8 @@ export default function ComprasScreen() {
         credentials: "include",
         body: JSON.stringify({
           title: newTitle.trim(),
-          quantity: newQuantity.trim(),
-          category: newCategory,
+          quantity: "",
+          category: "Limpeza",
           notes: newNotes.trim(),
         }),
       });
@@ -193,9 +193,7 @@ export default function ComprasScreen() {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         setModalOpen(false);
         setNewTitle("");
-        setNewQuantity("");
         setNewNotes("");
-        setNewCategory("Limpeza");
         fetchItems();
       } else {
         Alert.alert("Erro", "Não foi possível adicionar o item.");
@@ -431,53 +429,18 @@ export default function ComprasScreen() {
 
             <ScrollView showsVerticalScrollIndicator={false}>
               {/* Item Name */}
-              <Text style={[styles.inputLabel, { color: colors.foreground }]}>O que precisa comprar? *</Text>
+              <Text style={[styles.inputLabel, { color: colors.foreground }]}>O que está faltando comprar? *</Text>
               <TextInput
                 style={[styles.input, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
-                placeholder="Ex: Água Sanitária 5L, Sabonete líquido..."
+                placeholder="Ex: Água Sanitária, Sabonete líquido, Esponja..."
                 placeholderTextColor={colors.mutedForeground}
                 value={newTitle}
                 onChangeText={setNewTitle}
                 autoFocus
               />
 
-              {/* Quantity */}
-              <Text style={[styles.inputLabel, { color: colors.foreground }]}>Quantidade / Tamanho (opcional)</Text>
-              <TextInput
-                style={[styles.input, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
-                placeholder="Ex: 3 galões, 10 pacotes, 2 caixas..."
-                placeholderTextColor={colors.mutedForeground}
-                value={newQuantity}
-                onChangeText={setNewQuantity}
-              />
-
-              {/* Category selector */}
-              <Text style={[styles.inputLabel, { color: colors.foreground }]}>Categoria</Text>
-              <View style={styles.catPillsRow}>
-                {CATEGORIES.map(cat => {
-                  const isSel = newCategory === cat.label;
-                  return (
-                    <TouchableOpacity
-                      key={cat.label}
-                      onPress={() => setNewCategory(cat.label)}
-                      style={[
-                        styles.catPill,
-                        {
-                          borderColor: isSel ? cat.color : colors.border,
-                          backgroundColor: isSel ? cat.bg : colors.muted,
-                        },
-                      ]}
-                    >
-                      <Text style={[styles.catPillText, { color: isSel ? cat.color : colors.foreground, fontWeight: isSel ? "700" : "500" }]}>
-                        {cat.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-
               {/* Notes */}
-              <Text style={[styles.inputLabel, { color: colors.foreground }]}>Observação / Urgência (opcional)</Text>
+              <Text style={[styles.inputLabel, { color: colors.foreground }]}>Observação / Detalhes (opcional)</Text>
               <TextInput
                 style={[styles.input, styles.inputNotes, { backgroundColor: colors.muted, borderColor: colors.border, color: colors.foreground }]}
                 placeholder="Ex: Está quase acabando na rouparia do 5º andar"

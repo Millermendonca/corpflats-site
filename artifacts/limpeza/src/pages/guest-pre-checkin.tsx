@@ -79,6 +79,10 @@ export default function GuestPreCheckin() {
   const [signatureData, setSignatureData] = useState<string | null>(null)
   const [acceptedHouseRules, setAcceptedHouseRules] = useState(false)
   const [acceptedContract, setAcceptedContract] = useState(false)
+  const [legalDeclarationAccepted, setLegalDeclarationAccepted] = useState(false)
+  const [isEditingProfile, setIsEditingProfile] = useState(false)
+  const [generatedPdfInfo, setGeneratedPdfInfo] = useState<any | null>(null)
+  const [tokenInfo, setTokenInfo] = useState<{ valid: boolean, message?: string } | null>(null)
   const [termsModalOpen, setTermsModalOpen] = useState(false)
   const [termsModalTab, setTermsModalTab] = useState<"rules" | "contract">("rules")
   const [settings, setSettings] = useState<any>(null)
@@ -231,9 +235,15 @@ export default function GuestPreCheckin() {
 
   useEffect(() => {
     if (code) {
-      fetch(`/api/pms/pre-checkin/${code}`)
+      const sp = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : new URLSearchParams()
+      const queryToken = sp.get("token") || ""
+      const url = `/api/pms/pre-checkin/${code}${queryToken ? `?token=${encodeURIComponent(queryToken)}` : ""}`
+      fetch(url)
         .then(r => r.json())
         .then(data => {
+          if (data.tokenStatus) {
+            setTokenInfo(data.tokenStatus)
+          }
           if (data.reservation) {
             setReservation(data.reservation)
             loadGuestData(data, selectedGuestIndex)
@@ -346,6 +356,7 @@ export default function GuestPreCheckin() {
           code: code || reservation?.code,
           reservationId: reservation?.id,
           guestIndex: selectedGuestIndex,
+          token: typeof window !== "undefined" ? (new URLSearchParams(window.location.search).get("token") || "") : "",
           fullName,
           phone,
           email,
@@ -357,9 +368,10 @@ export default function GuestPreCheckin() {
           state,
           transportMethod,
           travelReason,
-          selfieBase64: selfiePhoto,
+          selfieBase64: null, // Selfie removida conforme simplificação
           docPhotoBase64: docPhoto,
           signatureBase64: signatureData,
+          legalTermsAccepted: legalDeclarationAccepted || acceptedHouseRules,
           isMinor: calculatedAge !== null && calculatedAge < 18,
           minorAge: calculatedAge,
           minorKinship: (calculatedAge !== null && calculatedAge < 18) ? minorKinship : null,
@@ -384,10 +396,16 @@ export default function GuestPreCheckin() {
         }
       }
 
+      const resData = await res.json()
       if (res.ok) {
+        if (resData.fnrhDocument) {
+          setGeneratedPdfInfo(resData.fnrhDocument)
+        }
         setIsCompleted(true)
         setIsEditing(false)
         setSuccess(true)
+      } else {
+        alert(resData.error || "Erro ao registrar check-in.")
       }
     } finally {
       setLoading(false)
@@ -638,6 +656,29 @@ export default function GuestPreCheckin() {
             </div>
 
             <div className="flex items-center gap-2">
+              {(generatedPdfInfo?.fileUrl || reservation?.fnrhPdfUrl || guestList[selectedGuestIndex - 1]?.fnrhPdfUrl) && (
+                <Button
+                  size="sm"
+                  onClick={() => window.open(generatedPdfInfo?.fileUrl || reservation?.fnrhPdfUrl || guestList[selectedGuestIndex - 1]?.fnrhPdfUrl, "_blank")}
+                  className="h-9 text-xs bg-slate-900 hover:bg-slate-800 text-white font-bold gap-1.5 rounded-xl shadow-2xs"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Baixar PDF Assinado</span>
+                </Button>
+              )}
+
+              {(generatedPdfInfo?.documentUuid || reservation?.fnrhDocumentUuid || guestList[selectedGuestIndex - 1]?.fnrhDocumentUuid) && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => window.open(`/verificar-ficha/${generatedPdfInfo?.documentUuid || reservation?.fnrhDocumentUuid || guestList[selectedGuestIndex - 1]?.fnrhDocumentUuid}`, "_blank")}
+                  className="h-9 text-xs bg-sky-50 text-sky-800 border-sky-200 hover:bg-sky-100 font-bold gap-1.5 rounded-xl shadow-2xs"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-sky-600" />
+                  <span>Selo de Autenticidade (QR Code)</span>
+                </Button>
+              )}
+
               <Button
                 variant="outline"
                 size="sm"
@@ -645,7 +686,7 @@ export default function GuestPreCheckin() {
                 className="h-9 text-xs bg-white border-slate-200 hover:bg-slate-50 text-slate-700 font-bold gap-1.5 rounded-xl shadow-2xs"
               >
                 <Printer className="w-3.5 h-3.5 text-slate-500" />
-                <span className="hidden sm:inline">Imprimir / Salvar PDF</span>
+                <span className="hidden sm:inline">Imprimir</span>
               </Button>
 
               {!isReadOnlyDocument ? (
@@ -1220,6 +1261,33 @@ export default function GuestPreCheckin() {
           </div>
         </div>
 
+        {/* Alerta de Token Expirado (Link de 2 horas) */}
+        {tokenInfo && !tokenInfo.valid && (
+          <div className="p-4 sm:p-5 bg-rose-50 border-2 border-rose-300 rounded-2xl text-center space-y-2.5 shadow-sm">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-rose-100 text-rose-800 rounded-full text-xs font-bold">
+              <Clock className="w-3.5 h-3.5 text-rose-600" />
+              <span>Link Temporário Expirado</span>
+            </div>
+            <h3 className="text-sm sm:text-base font-bold text-rose-950">
+              {tokenInfo.message || "Este link de assinatura expirou (validade máxima de 2 horas)."}
+            </h3>
+            <p className="text-xs text-rose-700 max-w-md mx-auto leading-relaxed">
+              Por motivos de segurança e validade jurídica, links de assinatura eletrônica possuem validade temporária. Solicite um novo link à nossa equipe.
+            </p>
+            <div className="pt-1">
+              <a
+                href={whatsappUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-colors shadow-xs"
+              >
+                <MessageCircle className="w-4 h-4" />
+                <span>Solicitar Novo Link no WhatsApp</span>
+              </a>
+            </div>
+          </div>
+        )}
+
         {/* Multi-Guest Selector (se a reserva for para mais de 1 pessoa) */}
         {guestList.length > 1 && (
           <div className="bg-white border border-slate-200/80 rounded-2xl p-3 sm:p-4 shadow-xs space-y-2">
@@ -1267,8 +1335,7 @@ export default function GuestPreCheckin() {
             {[
               { num: 1, label: "Dados" },
               { num: 2, label: "Documento" },
-              { num: 3, label: "Selfie" },
-              { num: 4, label: "Assinatura" }
+              { num: 3, label: "Assinatura" }
             ].map((s, idx) => (
               <div key={s.num} className="flex items-center gap-2">
                 <div className="flex flex-col items-center">
@@ -1285,8 +1352,8 @@ export default function GuestPreCheckin() {
                     {s.label}
                   </span>
                 </div>
-                {idx < 3 && (
-                  <div className={`w-8 sm:w-16 h-1 rounded-full -mt-4 ${step > s.num ? "bg-emerald-600" : "bg-slate-100"}`} />
+                {idx < 2 && (
+                  <div className={`w-12 sm:w-24 h-1 rounded-full -mt-4 ${step > s.num ? "bg-emerald-600" : "bg-slate-100"}`} />
                 )}
               </div>
             ))}
@@ -1301,11 +1368,87 @@ export default function GuestPreCheckin() {
               <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
                 <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
                   <User className="w-4 h-4 text-sky-600" />
-                  <span>1. Dados Pessoais & Ficha FNHR</span>
+                  <span>1. Dados Cadastrais do Hóspede</span>
                 </h3>
-                <span className="text-[11px] text-slate-400 font-medium">* Campos obrigatórios</span>
+                {Boolean(fullName.trim() && document.trim() && phone.trim() && email.trim() && address.trim()) && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setIsEditingProfile(!isEditingProfile)}
+                    className="h-8 text-xs font-bold text-sky-700 bg-sky-50 border-sky-200 hover:bg-sky-100 rounded-xl flex items-center gap-1.5"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                    <span>{isEditingProfile ? "Concluir Edição" : "Editar Dados"}</span>
+                  </Button>
+                )}
               </div>
 
+              {/* Card de Dados Já Preenchidos */}
+              {Boolean(fullName.trim() && document.trim() && phone.trim() && email.trim() && address.trim()) && !isEditingProfile ? (
+                <div className="space-y-4">
+                  <div className="p-4 sm:p-5 bg-gradient-to-br from-emerald-50/80 via-teal-50/60 to-slate-50 border border-emerald-200/90 rounded-2xl space-y-3 shadow-2xs">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        Cadastro Identificado no Sistema
+                      </span>
+                      <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200 text-[10px] font-bold">
+                        Dados Prontos
+                      </Badge>
+                    </div>
+
+                    <p className="text-xs text-slate-600 leading-relaxed">
+                      Seus dados cadastrais já constam em nosso sistema e não precisam ser digitados novamente. Confira as informações abaixo ou clique em editar se desejar atualizar algo:
+                    </p>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1 text-xs">
+                      <div className="bg-white p-2.5 rounded-xl border border-slate-200/70">
+                        <span className="text-[10px] font-semibold text-slate-400 block uppercase tracking-wider">Nome Completo</span>
+                        <span className="font-bold text-slate-900 text-xs sm:text-sm">{fullName}</span>
+                      </div>
+                      <div className="bg-white p-2.5 rounded-xl border border-slate-200/70">
+                        <span className="text-[10px] font-semibold text-slate-400 block uppercase tracking-wider">CPF / Documento</span>
+                        <span className="font-bold text-slate-900 font-mono text-xs sm:text-sm">{document}</span>
+                      </div>
+                      <div className="bg-white p-2.5 rounded-xl border border-slate-200/70">
+                        <span className="text-[10px] font-semibold text-slate-400 block uppercase tracking-wider">Telefone / WhatsApp</span>
+                        <span className="font-medium text-slate-800">{phone}</span>
+                      </div>
+                      <div className="bg-white p-2.5 rounded-xl border border-slate-200/70">
+                        <span className="text-[10px] font-semibold text-slate-400 block uppercase tracking-wider">E-mail</span>
+                        <span className="font-medium text-slate-800">{email}</span>
+                      </div>
+                      <div className="bg-white p-2.5 rounded-xl border border-slate-200/70 sm:col-span-2">
+                        <span className="text-[10px] font-semibold text-slate-400 block uppercase tracking-wider">Endereço Residencial</span>
+                        <span className="font-medium text-slate-800">{[address, city, state].filter(Boolean).join(" - ")}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <Button
+                    onClick={() => {
+                      if (isMinorGuest) {
+                        if (!minorKinship) {
+                          alert("Por favor, selecione o grau de parentesco do menor acompanhado.")
+                          return
+                        }
+                        if (minorKinship !== "filho" && !minorAuthDocPhoto) {
+                          alert("Atenção: Para hóspede menor de idade desacompanhado dos pais, é obrigatório anexar a autorização de cartório (Art. 82 do ECA).")
+                          return
+                        }
+                      }
+                      setStep(2)
+                    }}
+                    className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm h-12 rounded-xl gap-2 shadow-md"
+                  >
+                    <span>Avançar para Foto do Documento</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </Button>
+                </div>
+              ) : null}
+
+              {(!Boolean(fullName.trim() && document.trim() && phone.trim() && email.trim() && address.trim()) || isEditingProfile) && (
               <div className="space-y-3 sm:space-y-4">
                 <div className="space-y-1.5">
                   <Label className="text-xs font-bold text-slate-700">Nome Completo *</Label>
@@ -1567,31 +1710,33 @@ export default function GuestPreCheckin() {
                     </span>
                   </div>
                 )}
-              </div>
 
-              <Button 
-                onClick={() => {
-                  if (!fullName.trim() || !document.trim()) {
-                    alert("Por favor, preencha pelo menos seu Nome Completo e CPF/Passaporte.")
-                    return
-                  }
-                  if (isMinorGuest) {
-                    if (!minorKinship) {
-                      alert("Por favor, selecione o grau de parentesco do menor acompanhado.")
+                <Button 
+                  onClick={() => {
+                    if (!fullName.trim() || !document.trim() || !phone.trim() || !email.trim() || !address.trim()) {
+                      alert("Por favor, preencha todos os campos obrigatórios: Nome Completo, CPF, Telefone, Endereço e E-mail.")
                       return
                     }
-                    if (minorKinship !== "filho" && !minorAuthDocPhoto) {
-                      alert("Atenção: Para hóspede menor de idade desacompanhado dos pais, é obrigatório anexar a autorização com firma reconhecida em cartório (Art. 82 do ECA).")
-                      return
+                    if (isMinorGuest) {
+                      if (!minorKinship) {
+                        alert("Por favor, selecione o grau de parentesco do menor acompanhado.")
+                        return
+                      }
+                      if (minorKinship !== "filho" && !minorAuthDocPhoto) {
+                        alert("Atenção: Para hóspede menor de idade desacompanhado dos pais, é obrigatório anexar a autorização com firma reconhecida em cartório (Art. 82 do ECA).")
+                        return
+                      }
                     }
-                  }
-                  setStep(2)
-                }}
-                className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm h-12 rounded-xl mt-4 gap-2 shadow-md"
-              >
-                <span>Avançar para Foto do Documento</span>
-                <ArrowRight className="w-4 h-4" />
-              </Button>
+                    setIsEditingProfile(false)
+                    setStep(2)
+                  }}
+                  className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm h-12 rounded-xl mt-4 gap-2 shadow-md"
+                >
+                  <span>Avançar para Foto do Documento</span>
+                  <ArrowRight className="w-4 h-4" />
+                </Button>
+              </div>
+              )}
             </div>
           )}
 
@@ -1658,98 +1803,36 @@ export default function GuestPreCheckin() {
                   onClick={() => setStep(3)} 
                   className="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm h-11 rounded-xl gap-2 shadow-md"
                 >
-                  <span>Avançar para Selfie</span>
+                  <span>Avançar para Assinatura Eletrônica</span>
                   <ArrowRight className="w-4 h-4" />
                 </Button>
               </div>
             </div>
           )}
 
-          {/* ── Passo 3: Selfie do Hóspede ─────────────────────────────────── */}
+          {/* ── Passo 3: Assinatura Digital & Validade Jurídica ─────────── */}
           {step === 3 && (
             <div className="space-y-4 sm:space-y-5">
               <div className="border-b border-slate-100 pb-3">
                 <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
-                  <Camera className="w-4 h-4 text-sky-600" />
-                  <span>3. Biometria Facial (Selfie com Documento Oficial ao Lado)</span>
+                  <PenTool className="w-4 h-4 text-sky-600" />
+                  <span>3. Assinatura Digital com Validade Jurídica</span>
                 </h3>
+              </div>
+
+              <div className="p-3.5 bg-sky-50/70 border border-sky-200/80 rounded-2xl flex items-start gap-2.5">
+                <ShieldCheck className="w-5 h-5 text-sky-700 shrink-0 mt-0.5" />
+                <div className="text-xs text-sky-950 leading-relaxed">
+                  <span className="font-bold block">Assinatura Eletrônica Blindada</span>
+                  Esta assinatura possui admissibilidade jurídica nos termos do <strong>art. 10, § 2º da MP nº 2.200-2/2001</strong> e da <strong>Lei Federal nº 14.063/2020</strong>. Seus metadados de IP, dispositivo e carimbo de tempo serão vinculados ao hash criptográfico SHA-256 do documento.
+                </div>
               </div>
 
               <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                Tire uma selfie segurando seu documento oficial (RG ou CNH) ao lado do seu rosto com nitidez. Nossa inteligência artificial fará a conferência visual entre a sua selfie e o documento para sua total segurança.
+                Assine com o dedo ou mouse na área abaixo confirmando a exatidão dos seus dados:
               </p>
 
-              <div className="border-2 border-dashed border-slate-200 hover:border-sky-400 rounded-2xl p-6 sm:p-8 text-center bg-slate-50/50 relative overflow-hidden transition-colors">
-                {selfiePhoto ? (
-                  <div className="space-y-3">
-                    <img src={selfiePhoto} alt="Selfie" className="w-40 h-40 rounded-2xl mx-auto object-cover border-4 border-white shadow-md" />
-                    <div>
-                      <Button 
-                        type="button" 
-                        variant="outline" 
-                        size="sm" 
-                        onClick={() => setSelfiePhoto(null)}
-                        className="border-slate-200 text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 rounded-xl"
-                      >
-                        Tirar Outra Selfie
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <label className="cursor-pointer flex flex-col items-center gap-2 py-4">
-                    <div className="w-14 h-14 rounded-2xl bg-sky-50 border border-sky-100 flex items-center justify-center text-sky-600 shadow-2xs">
-                      {compressing ? <Sparkles className="w-7 h-7 animate-spin text-sky-600" /> : <Camera className="w-7 h-7" />}
-                    </div>
-                    <span className="font-bold text-sm text-slate-900 mt-1">
-                      {compressing ? "Processando selfie..." : "Abrir Câmera Frontal"}
-                    </span>
-                    <span className="text-xs text-slate-400">Segure o documento ao lado do rosto em local bem iluminado</span>
-                    <input 
-                      type="file" 
-                      accept="image/*" 
-                      capture="user"
-                      onChange={e => handleFileUpload(e, setSelfiePhoto, "selfie")} 
-                      className="hidden" 
-                      disabled={compressing}
-                    />
-                  </label>
-                )}
-              </div>
-
-              <div className="flex gap-2.5 pt-2">
-                <Button 
-                  variant="outline" 
-                  onClick={() => setStep(2)} 
-                  className="border-slate-200 text-slate-700 font-bold text-xs h-11 rounded-xl bg-white hover:bg-slate-50"
-                >
-                  <ArrowLeft className="w-4 h-4 mr-1" /> Voltar
-                </Button>
-                <Button 
-                  onClick={() => setStep(4)} 
-                  className="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm h-11 rounded-xl gap-2 shadow-md"
-                >
-                  <span>Avançar para Assinatura & Termos</span>
-                  <ArrowRight className="w-4 h-4" />
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {/* ── Passo 4: Assinatura Digital & Termos ────────────────────────── */}
-          {step === 4 && (
-            <div className="space-y-4 sm:space-y-5">
-              <div className="border-b border-slate-100 pb-3">
-                <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
-                  <PenTool className="w-4 h-4 text-sky-600" />
-                  <span>4. Assinatura Digital do Hóspede</span>
-                </h3>
-              </div>
-
-              <p className="text-xs sm:text-sm text-slate-500 leading-relaxed">
-                Assine com o dedo ou mouse no quadro abaixo confirmando a autenticidade dos dados da sua FNHR.
-              </p>
-
-              <div className="bg-white rounded-2xl p-2 border border-slate-200 overflow-hidden relative touch-none shadow-inner">
+              <div className="bg-white rounded-2xl p-2 border-2 border-slate-200 overflow-hidden relative touch-none shadow-inner">
                 <canvas 
                   ref={canvasRef}
                   width={340}
@@ -1771,59 +1854,45 @@ export default function GuestPreCheckin() {
                 </button>
               </div>
 
-              {/* 📜 Aceite Obrigatório dos Termos */}
-              <div className="space-y-2.5 p-4 bg-slate-50/80 rounded-2xl border border-slate-200/80">
-                <span className="font-bold text-slate-900 text-xs block">
-                  Aceite Obrigatório dos Termos de Hospedagem *
-                </span>
-
-                <label className={`flex items-start gap-2.5 p-3 rounded-xl border transition-all cursor-pointer select-none ${
-                  acceptedHouseRules ? "bg-emerald-50/70 border-emerald-300 text-emerald-900" : "bg-white border-slate-200 hover:border-slate-300"
+              {/* 📜 Checkbox Obrigatório de Termos e Declaração Legal */}
+              <div className="space-y-2.5 p-4 bg-slate-50/90 rounded-2xl border border-slate-200">
+                <label className={`flex items-start gap-3 p-3.5 rounded-xl border transition-all cursor-pointer select-none ${
+                  legalDeclarationAccepted ? "bg-emerald-50/80 border-emerald-300 text-emerald-950 ring-2 ring-emerald-500/20" : "bg-white border-slate-200 hover:border-slate-300"
                 }`}>
                   <input 
                     type="checkbox" 
-                    checked={acceptedHouseRules} 
-                    onChange={e => setAcceptedHouseRules(e.target.checked)}
+                    checked={legalDeclarationAccepted} 
+                    onChange={e => {
+                      setLegalDeclarationAccepted(e.target.checked)
+                      setAcceptedHouseRules(e.target.checked)
+                      setAcceptedContract(e.target.checked)
+                    }}
                     required
                     className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 mt-0.5 shrink-0"
                   />
-                  <div className="text-xs text-slate-700">
-                    <span className="font-bold text-slate-900">1. Regras do Imóvel e Conveniência</span>
-                    <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
-                      Concordo com horários (14h/12h), condomínio 100% não fumantes, vagas rotativas e normas do Edifício Soho.{" "}
+                  <div className="text-xs text-slate-700 leading-relaxed">
+                    <span className="font-bold text-slate-900 block mb-0.5">
+                      Declaração Legal de Responsabilidade e LGPD *
+                    </span>
+                    <p className="text-slate-800 font-medium">
+                      "Declaro que as informações prestadas são verdadeiras e estou ciente dos termos de hospedagem e política de privacidade/LGPD."
+                    </p>
+                    <div className="mt-1.5 flex flex-wrap gap-2 text-[11px]">
                       <button 
                         type="button" 
                         onClick={(e) => { e.preventDefault(); setTermsModalTab("rules"); setTermsModalOpen(true); }}
                         className="text-sky-600 hover:underline font-bold inline"
                       >
-                        [Ler Regras]
+                        [Ler Regras do Flat]
                       </button>
-                    </p>
-                  </div>
-                </label>
-
-                <label className={`flex items-start gap-2.5 p-3 rounded-xl border transition-all cursor-pointer select-none ${
-                  acceptedContract ? "bg-emerald-50/70 border-emerald-300 text-emerald-900" : "bg-white border-slate-200 hover:border-slate-300"
-                }`}>
-                  <input 
-                    type="checkbox" 
-                    checked={acceptedContract} 
-                    onChange={e => setAcceptedContract(e.target.checked)}
-                    required
-                    className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 mt-0.5 shrink-0"
-                  />
-                  <div className="text-xs text-slate-700">
-                    <span className="font-bold text-slate-900">2. Termos e Condições Contratuais</span>
-                    <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
-                      Aceito as cláusulas de locação por temporada autônoma, responsabilidade e políticas de estadia.{" "}
                       <button 
                         type="button" 
                         onClick={(e) => { e.preventDefault(); setTermsModalTab("contract"); setTermsModalOpen(true); }}
                         className="text-indigo-600 hover:underline font-bold inline"
                       >
-                        [Ler Contrato]
+                        [Ler Contrato de Estadia]
                       </button>
-                    </p>
+                    </div>
                   </div>
                 </label>
               </div>
@@ -1831,17 +1900,18 @@ export default function GuestPreCheckin() {
               <div className="flex gap-2.5 pt-2">
                 <Button 
                   variant="outline" 
-                  onClick={() => setStep(3)} 
-                  className="border-slate-200 text-slate-700 font-bold text-xs h-11 rounded-xl bg-white hover:bg-slate-50"
+                  onClick={() => setStep(2)} 
+                  className="border-slate-200 text-slate-700 font-bold text-xs h-12 rounded-xl bg-white hover:bg-slate-50"
                 >
                   <ArrowLeft className="w-4 h-4 mr-1" /> Voltar
                 </Button>
                 <Button 
-                  disabled={loading || !acceptedHouseRules || !acceptedContract}
+                  disabled={loading || !signatureData || !legalDeclarationAccepted}
                   onClick={handleSubmit} 
-                  className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm h-11 rounded-xl gap-2 shadow-md shadow-emerald-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm h-12 rounded-xl gap-2 shadow-md shadow-emerald-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {loading ? "Registrando..." : "Concluir Pré-Check-in"}
+                  <ShieldCheck className="w-4 h-4" />
+                  <span>{loading ? "Gerando Ficha e Auditoria..." : "Confirmar Check-in e Gerar Ficha"}</span>
                 </Button>
               </div>
             </div>
