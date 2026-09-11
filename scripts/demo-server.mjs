@@ -2644,7 +2644,7 @@ export function triggerGarageEmailNotification(db, saveDatabase, reservation, ve
     }
 
     if (typeof saveDatabase === "function") saveDatabase();
-    console.log(`[GarageService] ✓ Liberação de garagem enviada para ${garageEmail} (CC: ${ccEmail || 'nenhum'}) - Placa ${cleanPlate}, Flat ${flatNum}`);
+    console.log(`[GarageService] ✓ Liberação de garagem enviada para ${garageEmail} - Placa ${cleanPlate}, Flat ${flatNum}`);
     return { success: true, authRecord, commLog };
   } catch (err) {
     console.error("[GarageService] Erro ao disparar autorização de garagem:", err);
