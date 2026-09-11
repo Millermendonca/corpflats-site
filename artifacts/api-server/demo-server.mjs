@@ -6538,6 +6538,23 @@ app.post("/api/pms/reservations", (req, res) => {
     updatedAt: new Date().toISOString()
   };
 
+  const vehicleInput = req.body.vehicle || (req.body.vehiclePlate ? {
+    plate: req.body.vehiclePlate,
+    brand: req.body.vehicleBrand || "",
+    model: req.body.vehicleModel || "",
+    color: req.body.vehicleColor || ""
+  } : null);
+
+  if (vehicleInput && vehicleInput.plate) {
+    newReservation.vehicle = {
+      plate: String(vehicleInput.plate).toUpperCase().trim(),
+      brand: (vehicleInput.brand || "").trim(),
+      model: (vehicleInput.model || "").trim(),
+      color: (vehicleInput.color || "").trim(),
+      updatedAt: new Date().toISOString()
+    };
+  }
+
   addReservationAuditLog(newReservation, {
     action: "created",
     actor: {
@@ -6573,6 +6590,19 @@ app.post("/api/pms/reservations", (req, res) => {
   } else {
     triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", newReservation);
   }
+
+  // Gatilho Automático: Liberação de Garagem se informado veículo na reserva do PMS
+  if (newReservation.vehicle && newReservation.vehicle.plate) {
+    try {
+      triggerGarageEmailNotification(db, saveDatabase, newReservation, newReservation.vehicle, {
+        trigger: "pms_reservation_created",
+        source: "PMS Recepção"
+      });
+    } catch (gErr) {
+      console.warn("[GarageService] Erro ao disparar autorização de garagem na reserva PMS:", gErr.message);
+    }
+  }
+
   res.status(201).json(newReservation);
 });
 
@@ -6595,6 +6625,31 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   }
   if (req.body.checkoutDate && oldCheckout && oldCheckout !== req.body.checkoutDate) {
     r.previousCheckoutDate = oldCheckout;
+  }
+
+  const oldVehiclePlate = r.vehicle?.plate;
+  const vehicleBody = req.body.vehicle !== undefined ? req.body.vehicle : (req.body.vehiclePlate ? {
+    plate: req.body.vehiclePlate,
+    brand: req.body.vehicleBrand || r.vehicle?.brand || "",
+    model: req.body.vehicleModel || r.vehicle?.model || "",
+    color: req.body.vehicleColor || r.vehicle?.color || ""
+  } : undefined);
+
+  let vehicleChanged = false;
+  if (vehicleBody && vehicleBody.plate) {
+    const cleanPlate = String(vehicleBody.plate).toUpperCase().trim();
+    if (cleanPlate && cleanPlate !== oldVehiclePlate) {
+      r.vehicle = {
+        plate: cleanPlate,
+        brand: (vehicleBody.brand || "").trim(),
+        model: (vehicleBody.model || "").trim(),
+        color: (vehicleBody.color || "").trim(),
+        updatedAt: new Date().toISOString()
+      };
+      vehicleChanged = true;
+    }
+  } else if (vehicleBody === null) {
+    r.vehicle = null;
   }
 
   const fields = [

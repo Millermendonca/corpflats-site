@@ -6048,6 +6048,18 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
 
     triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", reservation);
 
+    // Gatilho Automático: Liberação de Garagem se o hóspede informou veículo no momento da reserva
+    if (reservation.vehicle && reservation.vehicle.plate) {
+      try {
+        triggerGarageEmailNotification(db, saveDatabase, reservation, reservation.vehicle, {
+          trigger: "direct_booking_vehicle",
+          source: "Site CorpFlats (Motor de Reservas)"
+        });
+      } catch (gErr) {
+        console.warn("[GarageService] Erro ao disparar autorização de garagem na reserva direta:", gErr.message);
+      }
+    }
+
     res.json({
       success: true,
       message: "Reserva realizada com sucesso!",
@@ -6526,6 +6538,23 @@ app.post("/api/pms/reservations", (req, res) => {
     updatedAt: new Date().toISOString()
   };
 
+  const vehicleInput = req.body.vehicle || (req.body.vehiclePlate ? {
+    plate: req.body.vehiclePlate,
+    brand: req.body.vehicleBrand || "",
+    model: req.body.vehicleModel || "",
+    color: req.body.vehicleColor || ""
+  } : null);
+
+  if (vehicleInput && vehicleInput.plate) {
+    newReservation.vehicle = {
+      plate: String(vehicleInput.plate).toUpperCase().trim(),
+      brand: (vehicleInput.brand || "").trim(),
+      model: (vehicleInput.model || "").trim(),
+      color: (vehicleInput.color || "").trim(),
+      updatedAt: new Date().toISOString()
+    };
+  }
+
   addReservationAuditLog(newReservation, {
     action: "created",
     actor: {
@@ -6561,6 +6590,19 @@ app.post("/api/pms/reservations", (req, res) => {
   } else {
     triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", newReservation);
   }
+
+  // Gatilho Automático: Liberação de Garagem se informado veículo na reserva do PMS
+  if (newReservation.vehicle && newReservation.vehicle.plate) {
+    try {
+      triggerGarageEmailNotification(db, saveDatabase, newReservation, newReservation.vehicle, {
+        trigger: "pms_reservation_created",
+        source: "PMS Recepção"
+      });
+    } catch (gErr) {
+      console.warn("[GarageService] Erro ao disparar autorização de garagem na reserva PMS:", gErr.message);
+    }
+  }
+
   res.status(201).json(newReservation);
 });
 
