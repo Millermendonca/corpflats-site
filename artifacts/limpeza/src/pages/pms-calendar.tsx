@@ -16,7 +16,7 @@ import {
   CalendarDays, Plus, ChevronLeft, ChevronRight, Search, 
   Calendar as CalendarIcon, User, Users, Phone, Mail, ShieldAlert, CheckCircle2,
   Clock, DollarSign, BedDouble, AlertTriangle, Lock, Trash2, Edit3, MessageCircle, KeyRound, Sparkles, FileText, Tag, Coffee, Building2, Wind, Zap, Bed, Check, RotateCcw, AlertCircle, RefreshCw, SlidersHorizontal, Copy,
-  LogIn, LogOut, TrendingUp, Send, ChevronDown, ChevronUp, History, ArrowRight, CreditCard, ExternalLink, QrCode, Link2, DoorOpen
+  LogIn, LogOut, TrendingUp, Send, ChevronDown, ChevronUp, History, ArrowRight, CreditCard, ExternalLink, QrCode, Link2, DoorOpen, Car
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { 
@@ -98,6 +98,10 @@ export default function PmsCalendar() {
   const [formNotes, setFormNotes] = useState("")
   const [formEarlyCheckin, setFormEarlyCheckin] = useState(false)
   const [formReceptionNotes, setFormReceptionNotes] = useState("")
+  const [formVehiclePlate, setFormVehiclePlate] = useState("")
+  const [formVehicleModel, setFormVehicleModel] = useState("")
+  const [formVehicleBrand, setFormVehicleBrand] = useState("")
+  const [formVehicleColor, setFormVehicleColor] = useState("")
   const [formAutoInvoice, setFormAutoInvoice] = useState(false)
   const [formPrefersHighFloor, setFormPrefersHighFloor] = useState(false)
   const [formTwinBeds, setFormTwinBeds] = useState(false)
@@ -1349,6 +1353,10 @@ export default function PmsCalendar() {
     setFormNotes("")
     setFormEarlyCheckin(false)
     setFormReceptionNotes("")
+    setFormVehiclePlate("")
+    setFormVehicleModel("")
+    setFormVehicleBrand("")
+    setFormVehicleColor("")
     setFormAutoInvoice(false)
     setFormPrefersHighFloor(false)
     setFormTwinBeds(false)
@@ -1486,6 +1494,10 @@ export default function PmsCalendar() {
     setFormNotes("")
     setFormEarlyCheckin(false)
     setFormReceptionNotes("")
+    setFormVehiclePlate("")
+    setFormVehicleModel("")
+    setFormVehicleBrand("")
+    setFormVehicleColor("")
     setFormAutoInvoice(false)
     setFormPrefersHighFloor(false)
     setFormTwinBeds(false)
@@ -1558,6 +1570,10 @@ export default function PmsCalendar() {
 
     setFormEarlyCheckin(Boolean(resItem.earlyCheckinAuthorized))
     setFormReceptionNotes(resItem.receptionNotes || "")
+    setFormVehiclePlate(resItem.vehicle?.plate || "")
+    setFormVehicleModel(resItem.vehicle?.model || "")
+    setFormVehicleBrand(resItem.vehicle?.brand || "")
+    setFormVehicleColor(resItem.vehicle?.color || "")
     setFormAutoInvoice(Boolean(resItem.autoEmitInvoice || matchedGuest?.autoEmitInvoice))
     setFormPrefersHighFloor(Boolean(resItem.prefersHighFloor))
     setFormTwinBeds(Boolean(resItem.twinBeds))
@@ -1830,7 +1846,13 @@ export default function PmsCalendar() {
         specialRequests: formSpecialRequests,
         isMonthlyGuest: Boolean(formIsMonthlyGuest),
         clientType: formIsMonthlyGuest ? "mensalista" : "avulso",
-        source: selectedRes ? "PMS Calendário (Edição Manual)" : "PMS Calendário (Nova Reserva)"
+        source: selectedRes ? "PMS Calendário (Edição Manual)" : "PMS Calendário (Nova Reserva)",
+        vehicle: formVehiclePlate.trim() ? {
+          plate: formVehiclePlate.trim().toUpperCase(),
+          brand: formVehicleBrand.trim(),
+          model: formVehicleModel.trim(),
+          color: formVehicleColor.trim()
+        } : null
       }
 
       if (selectedRes) {
@@ -3309,6 +3331,61 @@ export default function PmsCalendar() {
                     placeholder="Ex: Entregar chave extra, vaga de garagem G2-14 liberada..." 
                     className="text-xs border-amber-300 dark:border-amber-700 bg-amber-50/50 dark:bg-amber-950/30"
                   />
+                </div>
+
+                {/* Veículo & Garagem (Disparo automático p/ garagem e portaria) */}
+                <div className="p-3.5 bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/60 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                      <Car className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                      <span>Veículo & Garagem (Disparo Automático)</span>
+                    </span>
+                    <Badge variant="outline" className="text-[10px] bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 border-blue-300">
+                      Notifica PFB Estacionamento
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Placa</Label>
+                      <Input
+                        value={formVehiclePlate}
+                        onChange={e => setFormVehiclePlate(e.target.value.toUpperCase())}
+                        placeholder="ABC-1234"
+                        className="text-xs font-mono uppercase bg-white dark:bg-slate-900"
+                        maxLength={8}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Marca</Label>
+                      <Input
+                        value={formVehicleBrand}
+                        onChange={e => setFormVehicleBrand(e.target.value)}
+                        placeholder="Ex: Toyota"
+                        className="text-xs bg-white dark:bg-slate-900"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Modelo</Label>
+                      <Input
+                        value={formVehicleModel}
+                        onChange={e => setFormVehicleModel(e.target.value)}
+                        placeholder="Ex: Corolla"
+                        className="text-xs bg-white dark:bg-slate-900"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Cor</Label>
+                      <Input
+                        value={formVehicleColor}
+                        onChange={e => setFormVehicleColor(e.target.value)}
+                        placeholder="Ex: Preto"
+                        className="text-xs bg-white dark:bg-slate-900"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-blue-700/80 dark:text-blue-300/80">
+                    Ao cadastrar ou alterar a placa, o sistema envia e-mail com flat, dados da reserva e do veículo para <span className="font-semibold">promenadesoho@pfbestacionamentos.com.br</span> e para a portaria.
+                  </p>
                 </div>
 
                 {/* Configuração do Quarto para a Governança / Camareiras */}

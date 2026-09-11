@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { 
   Car, ShieldCheck, CheckCircle2, Send, Plus, RefreshCw,
-  Building2, Calendar, User, Phone, Check, Copy, FileText, AlertCircle, MessageCircle
+  Building2, Calendar, User, Phone, Check, Copy, FileText, AlertCircle, MessageCircle, Mail
 } from "lucide-react"
 
 export default function GarageDashboard() {
@@ -16,6 +16,7 @@ export default function GarageDashboard() {
   const [authModalOpen, setAuthModalOpen] = useState(false)
   const [sending, setSending] = useState(false)
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null)
+  const [resendingPlate, setResendingPlate] = useState<string | null>(null)
 
   // Form states for new vehicle authorization
   const [plate, setPlate] = useState("")
@@ -26,7 +27,39 @@ export default function GarageDashboard() {
   const [flatNumber, setFlatNumber] = useState("")
   const [checkinDate, setCheckinDate] = useState("")
   const [checkoutDate, setCheckoutDate] = useState("")
-  const [recipientEmail, setRecipientEmail] = useState("soho@promenade.com.br")
+  const [recipientEmail, setRecipientEmail] = useState("promenadesoho@pfbestacionamentos.com.br")
+
+  const handleResendGarageEmail = async (v: any) => {
+    setResendingPlate(v.plate)
+    try {
+      const res = await fetch("/api/pms/garage/send-authorization", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          plate: v.plate,
+          brand: v.brand,
+          model: v.model,
+          color: v.color,
+          guestName: v.guestName,
+          flatNumber: v.flatNumber,
+          checkinDate: v.checkinDate,
+          checkoutDate: v.checkoutDate,
+          recipientEmail: "promenadesoho@pfbestacionamentos.com.br"
+        })
+      })
+      if (res.ok) {
+        alert(`Autorização de garagem para a placa ${v.plate} (Flat ${v.flatNumber}) enviada com sucesso para promenadesoho@pfbestacionamentos.com.br!`)
+        fetchGarageData()
+      } else {
+        const err = await res.json()
+        alert("Erro ao enviar: " + (err.error || "Falha na comunicação"))
+      }
+    } catch (e: any) {
+      alert("Erro ao disparar e-mail: " + e.message)
+    } finally {
+      setResendingPlate(null)
+    }
+  }
 
   const fetchGarageData = async () => {
     setLoading(true)
@@ -238,7 +271,7 @@ export default function GarageDashboard() {
                     </div>
                   </div>
 
-                  <div className="pt-2 border-t border-slate-900 flex gap-2">
+                  <div className="pt-2 border-t border-slate-900 flex flex-wrap gap-2">
                     <Button
                       size="sm"
                       variant="outline"
@@ -246,7 +279,19 @@ export default function GarageDashboard() {
                       className="flex-1 bg-slate-900 border-slate-700 text-xs font-bold text-slate-200 hover:text-white gap-1.5 h-8.5 rounded-xl"
                     >
                       {copiedIndex === idx ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                      <span>{copiedIndex === idx ? "Copiado!" : "Copiar Texto"}</span>
+                      <span>{copiedIndex === idx ? "Copiado!" : "Copiar"}</span>
+                    </Button>
+
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={resendingPlate === v.plate}
+                      onClick={() => handleResendGarageEmail(v)}
+                      className="bg-blue-950/60 border-blue-800 text-blue-300 hover:bg-blue-900 hover:text-white text-xs font-bold gap-1.5 h-8.5 rounded-xl"
+                      title="Disparar autorização de entrada por e-mail para promenadesoho@pfbestacionamentos.com.br"
+                    >
+                      <Mail className="w-3.5 h-3.5 text-blue-400" />
+                      <span>{resendingPlate === v.plate ? "Enviando..." : "E-mail Garagem"}</span>
                     </Button>
 
                     {v.phone && (

@@ -57,7 +57,8 @@ export default function PropertySettings() {
   const [checkoutTimeInput, setCheckoutTimeInput] = useState("12:00")
   const [hotelAddressInput, setHotelAddressInput] = useState("CorpFlats")
   const [googleMapsUrlInput, setGoogleMapsUrlInput] = useState("https://www.google.com/maps/search/?api=1&query=CorpFlats")
-  const [receptionEmailInput, setReceptionEmailInput] = useState("soho@promenade.com.br")
+  const [receptionEmailInput, setReceptionEmailInput] = useState("portaria.soho@corpflats.com.br")
+  const [garageEmailInput, setGarageEmailInput] = useState("promenadesoho@pfbestacionamentos.com.br")
   const [buildingNameInput, setBuildingNameInput] = useState("Edifício Soho Residence Service")
 
   // Política Pet & Taxa de Higienização
@@ -107,6 +108,7 @@ export default function PropertySettings() {
       if (settings.hotelAddress) setHotelAddressInput(settings.hotelAddress)
       if (settings.googleMapsUrl) setGoogleMapsUrlInput(settings.googleMapsUrl)
       if (settings.receptionEmail) setReceptionEmailInput(settings.receptionEmail)
+      if ((settings as any).garageEmail) setGarageEmailInput((settings as any).garageEmail)
       if (settings.buildingName) setBuildingNameInput(settings.buildingName)
       if ((settings as any).petPolicy) {
         const p = (settings as any).petPolicy
@@ -138,6 +140,7 @@ export default function PropertySettings() {
           hotelAddress: hotelAddressInput,
           googleMapsUrl: googleMapsUrlInput,
           receptionEmail: receptionEmailInput,
+          garageEmail: garageEmailInput,
           buildingName: buildingNameInput,
           petPolicy: {
             enabled: petEnabled,
@@ -362,15 +365,31 @@ export default function PropertySettings() {
 
                 <div className="space-y-1.5">
                   <Label className="text-xs font-bold flex items-center gap-1.5">
-                    <Mail className="w-3.5 h-3.5 text-muted-foreground" /> E-mail Padrão da Portaria / Notificação
+                    <Mail className="w-3.5 h-3.5 text-muted-foreground" /> E-mail Padrão da Portaria / Recepção
                   </Label>
                   <Input 
                     type="email"
                     value={receptionEmailInput}
                     onChange={e => setReceptionEmailInput(e.target.value)}
-                    placeholder="soho@promenade.com.br"
+                    placeholder="portaria.soho@corpflats.com.br"
                     className="text-xs rounded-xl h-9.5"
                   />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-bold flex items-center gap-1.5">
+                    <Mail className="w-3.5 h-3.5 text-blue-500" /> E-mail da Garagem / Estacionamento
+                  </Label>
+                  <Input 
+                    type="email"
+                    value={garageEmailInput}
+                    onChange={e => setGarageEmailInput(e.target.value)}
+                    placeholder="promenadesoho@pfbestacionamentos.com.br"
+                    className="text-xs rounded-xl h-9.5 font-mono"
+                  />
+                  <span className="text-[11px] text-muted-foreground block">
+                    Receberá automaticamente as autorizações de entrada e liberação de veículos com o número do flat no assunto.
+                  </span>
                 </div>
 
                 <div className="space-y-1.5">
