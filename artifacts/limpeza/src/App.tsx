@@ -140,6 +140,9 @@ function Router() {
         <Route path="/alertas" component={NotificationsHub} />
         <Route path="/pedidos-cafe" component={BreakfastProduction} />
         <Route path="/cafe-dashboard" component={BreakfastProduction} />
+        <Route path="/historico-cafe" component={BreakfastProduction} />
+        <Route path="/relatorios-cafe" component={BreakfastProduction} />
+        <Route path="/insights-cafe" component={BreakfastProduction} />
         <Route path="/reservas" component={PmsCalendar} />
         <Route path="/relatorios-reservas" component={PmsReportsPage} />
         <Route path="/relatorio-reservas" component={PmsReportsPage} />
