@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { 
   Building2, User, Phone, Mail, Camera, FileText, CheckCircle2, 
   MapPin, ShieldCheck, ArrowRight, ArrowLeft, PenTool, Sparkles, AlertCircle, Zap, Car,
-  Printer, Edit3, Share2, Eye, ZoomIn, Download, ExternalLink, MessageCircle, Clock, Calendar, Check, Ban, Lock, Award, KeyRound, Search
+  Printer, Edit3, Share2, Eye, ZoomIn, Download, ExternalLink, MessageCircle, Clock, Calendar, Check, Ban, Lock, Award, KeyRound, Search, RefreshCw, Copy
 } from "lucide-react"
 import { compressImage } from "@/lib/image-compression"
 
@@ -83,6 +83,12 @@ export default function GuestPreCheckin() {
   const [isEditingProfile, setIsEditingProfile] = useState(false)
   const [generatedPdfInfo, setGeneratedPdfInfo] = useState<any | null>(null)
   const [tokenInfo, setTokenInfo] = useState<{ valid: boolean, message?: string } | null>(null)
+  // Token temporário de assinatura de 2 horas (MP 2.200-2/2001 e Lei 14.063/2020)
+  const [signatureToken, setSignatureToken] = useState<string>("")
+  const [tokenExpiresAt, setTokenExpiresAt] = useState<string | null>(null)
+  const [tokenSecondsRemaining, setTokenSecondsRemaining] = useState<number | null>(null)
+  const [isRefreshingToken, setIsRefreshingToken] = useState(false)
+  const [copiedLink, setCopiedLink] = useState(false)
   const [termsModalOpen, setTermsModalOpen] = useState(false)
   const [termsModalTab, setTermsModalTab] = useState<"rules" | "contract">("rules")
   const [settings, setSettings] = useState<any>(null)
@@ -238,11 +244,21 @@ export default function GuestPreCheckin() {
       const sp = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : new URLSearchParams()
       const queryToken = sp.get("token") || ""
       const url = `/api/pms/pre-checkin/${code}${queryToken ? `?token=${encodeURIComponent(queryToken)}` : ""}`
+      if (queryToken) {
+        setSignatureToken(queryToken)
+      }
       fetch(url)
         .then(r => r.json())
         .then(data => {
           if (data.tokenStatus) {
             setTokenInfo(data.tokenStatus)
+            if (data.tokenStatus.valid && data.tokenStatus.expiresAt) {
+              setTokenExpiresAt(data.tokenStatus.expiresAt)
+              const diff = Math.floor((new Date(data.tokenStatus.expiresAt).getTime() - Date.now()) / 1000)
+              setTokenSecondsRemaining(diff > 0 ? diff : 0)
+            } else if (!data.tokenStatus.valid) {
+              setTokenSecondsRemaining(0)
+            }
           }
           if (data.reservation) {
             setReservation(data.reservation)
@@ -262,6 +278,108 @@ export default function GuestPreCheckin() {
       .then(data => setSiteConfig(data))
       .catch(() => {})
   }, [code, selectedGuestIndex])
+
+  // Temporizador regressivo da sessão de assinatura (2 horas)
+  useEffect(() => {
+    if (!tokenExpiresAt) return
+
+    const tick = () => {
+      const diff = Math.floor((new Date(tokenExpiresAt).getTime() - Date.now()) / 1000)
+      if (diff <= 0) {
+        setTokenSecondsRemaining(0)
+        setTokenInfo({ valid: false, message: "Sua sessão de assinatura de 2 horas expirou por motivos de segurança jurídica." })
+      } else {
+        setTokenSecondsRemaining(diff)
+      }
+    }
+
+    tick()
+    const timer = setInterval(tick, 1000)
+    return () => clearInterval(timer)
+  }, [tokenExpiresAt])
+
+  // Função para garantir ou renovar o token temporário de 2 horas
+  const ensureOrRefreshToken = async (forceNew = false) => {
+    const activeCode = code || reservation?.code
+    if (!activeCode) return null
+
+    if (!forceNew && signatureToken && tokenExpiresAt) {
+      const diff = Math.floor((new Date(tokenExpiresAt).getTime() - Date.now()) / 1000)
+      if (diff > 60) {
+        return signatureToken
+      }
+    }
+
+    setIsRefreshingToken(true)
+    try {
+      const res = await fetch(`/api/pms/pre-checkin/${activeCode}/signature-token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          guestIndex: selectedGuestIndex,
+          phone,
+          email
+        })
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.token) {
+          setSignatureToken(data.token)
+          setTokenExpiresAt(data.expiresAt)
+          setTokenInfo({ valid: true })
+          const diff = Math.floor((new Date(data.expiresAt).getTime() - Date.now()) / 1000)
+          setTokenSecondsRemaining(diff > 0 ? diff : 7200)
+
+          if (typeof window !== "undefined") {
+            const currentUrl = new URL(window.location.href)
+            currentUrl.searchParams.set("token", data.token)
+            window.history.replaceState(null, "", currentUrl.toString())
+          }
+          return data.token
+        }
+      }
+    } catch (err) {
+      console.warn("Erro ao gerar/renovar token de assinatura:", err)
+    } finally {
+      setIsRefreshingToken(false)
+    }
+    return null
+  }
+
+  // Ao entrar no Passo 3, se não houver token ativo ou se expirado, assegura novo token de 2h
+  useEffect(() => {
+    if (step === 3 && !isCompleted) {
+      if (!signatureToken || (tokenSecondsRemaining !== null && tokenSecondsRemaining <= 0)) {
+        ensureOrRefreshToken()
+      }
+    }
+  }, [step, isCompleted])
+
+  const formatRemainingTime = (totalSeconds: number | null) => {
+    if (totalSeconds === null) return "--:--"
+    if (totalSeconds <= 0) return "00:00 (Expirado)"
+    const hours = Math.floor(totalSeconds / 3600)
+    const minutes = Math.floor((totalSeconds % 3600) / 60)
+    const seconds = totalSeconds % 60
+    if (hours > 0) {
+      return `${hours}h ${String(minutes).padStart(2, "0")}m ${String(seconds).padStart(2, "0")}s`
+    }
+    return `${String(minutes).padStart(2, "0")}m ${String(seconds).padStart(2, "0")}s`
+  }
+
+  const handleCopyLink = () => {
+    if (typeof window !== "undefined") {
+      const url = window.location.href
+      navigator.clipboard.writeText(url)
+      setCopiedLink(true)
+      setTimeout(() => setCopiedLink(false), 3000)
+    }
+  }
+
+  const isTokenSessionExpired = Boolean(
+    (tokenSecondsRemaining !== null && tokenSecondsRemaining <= 0) ||
+    (tokenInfo && !tokenInfo.valid)
+  )
 
   // Branding & Contacts
   const brandName = siteConfig?.branding?.brandName && !siteConfig.branding.brandName.includes("Macaé") 
@@ -356,7 +474,7 @@ export default function GuestPreCheckin() {
           code: code || reservation?.code,
           reservationId: reservation?.id,
           guestIndex: selectedGuestIndex,
-          token: typeof window !== "undefined" ? (new URLSearchParams(window.location.search).get("token") || "") : "",
+          token: signatureToken || (typeof window !== "undefined" ? (new URLSearchParams(window.location.search).get("token") || "") : ""),
           fullName,
           phone,
           email,
@@ -1261,28 +1379,37 @@ export default function GuestPreCheckin() {
           </div>
         </div>
 
-        {/* Alerta de Token Expirado (Link de 2 horas) */}
+        {/* Alerta de Token Expirado (Link de 2 horas) com Botão de Renovação */}
         {tokenInfo && !tokenInfo.valid && (
           <div className="p-4 sm:p-5 bg-rose-50 border-2 border-rose-300 rounded-2xl text-center space-y-2.5 shadow-sm">
             <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-rose-100 text-rose-800 rounded-full text-xs font-bold">
               <Clock className="w-3.5 h-3.5 text-rose-600" />
-              <span>Link Temporário Expirado</span>
+              <span>Link Temporário de Assinatura Expirado</span>
             </div>
             <h3 className="text-sm sm:text-base font-bold text-rose-950">
-              {tokenInfo.message || "Este link de assinatura expirou (validade máxima de 2 horas)."}
+              {tokenInfo.message || "Sua sessão de assinatura expirou (validade máxima de 2 horas)."}
             </h3>
             <p className="text-xs text-rose-700 max-w-md mx-auto leading-relaxed">
-              Por motivos de segurança e validade jurídica, links de assinatura eletrônica possuem validade temporária. Solicite um novo link à nossa equipe.
+              Por motivos de conformidade jurídica e segurança (MP 2.200-2/2001 e Lei 14.063/2020), o link expira após 2 horas. Fique tranquilo: você pode renovar sua sessão agora com 1 clique e manter todos os seus dados e fotos intactos!
             </p>
-            <div className="pt-1">
+            <div className="pt-2 flex flex-wrap items-center justify-center gap-2">
+              <Button
+                type="button"
+                onClick={() => ensureOrRefreshToken(true)}
+                disabled={isRefreshingToken}
+                className="bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold gap-1.5 rounded-xl h-10 px-4 shadow-sm"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingToken ? 'animate-spin' : ''}`} />
+                <span>{isRefreshingToken ? "Renovando Sessão..." : "🔄 Renovar Link Agora (+2 Horas)"}</span>
+              </Button>
               <a
                 href={whatsappUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-colors shadow-xs"
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-colors shadow-xs h-10"
               >
                 <MessageCircle className="w-4 h-4" />
-                <span>Solicitar Novo Link no WhatsApp</span>
+                <span>Falar no WhatsApp</span>
               </a>
             </div>
           </div>
@@ -1800,17 +1927,21 @@ export default function GuestPreCheckin() {
                   <ArrowLeft className="w-4 h-4 mr-1" /> Voltar
                 </Button>
                 <Button 
-                  onClick={() => setStep(3)} 
+                  onClick={async () => {
+                    setStep(3)
+                    await ensureOrRefreshToken()
+                  }} 
+                  disabled={isRefreshingToken}
                   className="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm h-11 rounded-xl gap-2 shadow-md"
                 >
-                  <span>Avançar para Assinatura Eletrônica</span>
+                  <span>{isRefreshingToken ? "Gerando Sessão de Assinatura..." : "Avançar para Assinatura Eletrônica"}</span>
                   <ArrowRight className="w-4 h-4" />
                 </Button>
               </div>
             </div>
           )}
 
-          {/* ── Passo 3: Assinatura Digital & Validade Jurídica ─────────── */}
+          {/* ── Passo 3: Assinatura Digital & Validade Jurídica de 2 Horas ── */}
           {step === 3 && (
             <div className="space-y-4 sm:space-y-5">
               <div className="border-b border-slate-100 pb-3">
@@ -1820,19 +1951,110 @@ export default function GuestPreCheckin() {
                 </h3>
               </div>
 
-              <div className="p-3.5 bg-sky-50/70 border border-sky-200/80 rounded-2xl flex items-start gap-2.5">
-                <ShieldCheck className="w-5 h-5 text-sky-700 shrink-0 mt-0.5" />
-                <div className="text-xs text-sky-950 leading-relaxed">
-                  <span className="font-bold block">Assinatura Eletrônica Blindada</span>
-                  Esta assinatura possui admissibilidade jurídica nos termos do <strong>art. 10, § 2º da MP nº 2.200-2/2001</strong> e da <strong>Lei Federal nº 14.063/2020</strong>. Seus metadados de IP, dispositivo e carimbo de tempo serão vinculados ao hash criptográfico SHA-256 do documento.
+              {/* CARD DE SESSÃO SEGURA & VALIDADE DE 2 HORAS */}
+              {isTokenSessionExpired ? (
+                <div className="p-4 sm:p-5 bg-rose-50 border-2 border-rose-300 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-rose-100 text-rose-800 rounded-full text-xs font-bold">
+                      <Clock className="w-3.5 h-3.5 text-rose-600" />
+                      <span>Sessão de Assinatura Expirada (2 Horas)</span>
+                    </span>
+                    <Badge variant="outline" className="bg-white border-rose-300 text-rose-700 text-[10px] font-bold">
+                      Tempo Esgotado
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-rose-900 leading-relaxed">
+                    Por exigência jurídica da <strong>MP nº 2.200-2/2001</strong> e <strong>Lei 14.063/2020</strong>, esta sessão de assinatura expirou após 2 horas para garantir que é você mesmo no seu dispositivo.
+                  </p>
+                  <div className="p-3 bg-white/90 rounded-xl border border-rose-200 text-xs text-slate-700 flex items-center justify-between gap-3">
+                    <span className="font-medium text-slate-800">
+                      💡 <strong>Fique tranquilo!</strong> Seus dados cadastrais e o documento anexado continuam 100% salvos. Basta renovar por mais 2 horas abaixo:
+                    </span>
+                  </div>
+                  <Button
+                    type="button"
+                    onClick={() => ensureOrRefreshToken(true)}
+                    disabled={isRefreshingToken}
+                    className="w-full h-11 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm rounded-xl gap-2 shadow-md"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isRefreshingToken ? 'animate-spin' : ''}`} />
+                    <span>{isRefreshingToken ? "Gerando Novo Link..." : "🔄 Renovar Sessão / Gerar Mais 2 Horas"}</span>
+                  </Button>
                 </div>
-              </div>
+              ) : (
+                <div className="p-4 bg-gradient-to-r from-sky-50 via-indigo-50/40 to-emerald-50/50 border border-sky-200/90 rounded-2xl space-y-3 shadow-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck className="w-4 h-4 text-sky-700" />
+                      <span className="font-bold text-xs sm:text-sm text-slate-900">
+                        Sessão de Assinatura Eletrônica Ativa
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <Badge className={`text-xs font-mono font-bold py-1 px-2.5 flex items-center gap-1.5 shadow-none ${
+                        tokenSecondsRemaining !== null && tokenSecondsRemaining <= 900
+                          ? "bg-amber-100 text-amber-900 border-amber-300 animate-pulse"
+                          : "bg-emerald-100 text-emerald-800 border-emerald-300"
+                      }`}>
+                        <Clock className="w-3.5 h-3.5" />
+                        <span>Validade: {formatRemainingTime(tokenSecondsRemaining)}</span>
+                      </Badge>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    Esta sessão possui <strong>validade máxima de 2 horas</strong> nos termos da <strong>MP nº 2.200-2/2001</strong> e <strong>Lei nº 14.063/2020</strong>. Seus metadados forenses de IP, dispositivo e carimbo de tempo serão vinculados ao hash criptográfico SHA-256 da FNRH.
+                  </p>
+
+                  <div className="pt-1 flex flex-wrap items-center justify-between gap-2 border-t border-sky-200/60 text-xs">
+                    <button
+                      type="button"
+                      onClick={handleCopyLink}
+                      className="inline-flex items-center gap-1.5 text-[11px] font-bold text-sky-700 hover:text-sky-900 bg-white/80 hover:bg-white px-3 py-1.5 rounded-lg border border-sky-200 transition-colors shadow-2xs"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>{copiedLink ? "✓ Link Copiado!" : "Copiar Link para Celular"}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => ensureOrRefreshToken(true)}
+                      disabled={isRefreshingToken}
+                      className="inline-flex items-center gap-1.5 text-[11px] font-bold text-slate-600 hover:text-slate-900 hover:bg-slate-100 px-2.5 py-1.5 rounded-lg transition-colors"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${isRefreshingToken ? 'animate-spin' : ''}`} />
+                      <span>Reiniciar 2 Horas</span>
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
                 Assine com o dedo ou mouse na área abaixo confirmando a exatidão dos seus dados:
               </p>
 
+              {/* CANVAS DE ASSINATURA */}
               <div className="bg-white rounded-2xl p-2 border-2 border-slate-200 overflow-hidden relative touch-none shadow-inner">
+                {isTokenSessionExpired && (
+                  <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-2xs z-10 flex flex-col items-center justify-center text-center p-4 space-y-2">
+                    <Clock className="w-6 h-6 text-amber-300" />
+                    <span className="text-xs font-bold text-white max-w-xs">
+                      Sessão de assinatura de 2 horas expirada.
+                    </span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => ensureOrRefreshToken(true)}
+                      disabled={isRefreshingToken}
+                      className="bg-white text-slate-900 hover:bg-slate-100 text-xs font-bold rounded-xl h-8 px-3"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingToken ? 'animate-spin' : ''}`} />
+                      <span>Renovar Sessão (+2h)</span>
+                    </Button>
+                  </div>
+                )}
+
                 <canvas 
                   ref={canvasRef}
                   width={340}
@@ -1848,7 +2070,8 @@ export default function GuestPreCheckin() {
                 <button
                   type="button"
                   onClick={clearCanvas}
-                  className="absolute bottom-2 right-2 text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-2.5 py-1 rounded-lg transition-colors"
+                  disabled={isTokenSessionExpired}
+                  className="absolute bottom-2 right-2 text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-2.5 py-1 rounded-lg transition-colors disabled:opacity-30"
                 >
                   Limpar Assinatura
                 </button>
@@ -1906,12 +2129,18 @@ export default function GuestPreCheckin() {
                   <ArrowLeft className="w-4 h-4 mr-1" /> Voltar
                 </Button>
                 <Button 
-                  disabled={loading || !signatureData || !legalDeclarationAccepted}
+                  disabled={loading || !signatureData || !legalDeclarationAccepted || isTokenSessionExpired}
                   onClick={handleSubmit} 
                   className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm h-12 rounded-xl gap-2 shadow-md shadow-emerald-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <ShieldCheck className="w-4 h-4" />
-                  <span>{loading ? "Gerando Ficha e Auditoria..." : "Confirmar Check-in e Gerar Ficha"}</span>
+                  <span>
+                    {loading 
+                      ? "Gerando Ficha e Auditoria..." 
+                      : isTokenSessionExpired 
+                      ? "Sessão Expirada - Renove Acima para Concluir" 
+                      : "Confirmar Check-in e Gerar Ficha"}
+                  </span>
                 </Button>
               </div>
             </div>

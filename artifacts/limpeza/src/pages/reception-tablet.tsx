@@ -53,41 +53,6 @@ export default function ReceptionTablet() {
     pendingGuests: any[]
   } | null>(null)
 
-  const [generatingTokenFor, setGeneratingTokenFor] = useState<number | null>(null)
-
-  const handleGenerateSecureToken = async (item: any, guestIndex: number, action: "copy" | "whatsapp") => {
-    setGeneratingTokenFor(guestIndex)
-    try {
-      const code = item.code || item.id
-      const res = await fetch(`/api/pms/pre-checkin/${encodeURIComponent(code)}/signature-token`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ guestIndex })
-      })
-      const data = await res.json()
-      if (res.ok && data.signatureUrl) {
-        if (action === "copy") {
-          navigator.clipboard.writeText(data.signatureUrl)
-          alert(`Link de assinatura com validade jurídica (expira em 2h) copiado com sucesso!\n\n${data.signatureUrl}`)
-        } else {
-          const rawGuests = item.guests || []
-          const g = rawGuests.find((x: any) => x.index === guestIndex) || {}
-          const phone = (g.phone || item.guestPhone || "").replace(/\D/g, "")
-          const msg = encodeURIComponent(
-            `Olá, ${g.name || item.guestName || 'Hóspede'}! 🏨\n\nSegue seu link seguro de Check-in Digital com validade de 2 horas (MP 2.200-2/2001 e Lei 14.063/2020):\n${data.signatureUrl}\n\nPreencha e assine no seu celular para autorização de entrada no Apt ${item.flatNumber}.`
-          )
-          window.open(phone ? `https://wa.me/55${phone}?text=${msg}` : `https://wa.me/?text=${msg}`, "_blank")
-        }
-      } else {
-        alert(data.error || "Erro ao gerar link de assinatura temporário.")
-      }
-    } catch {
-      alert("Erro ao conectar com servidor.")
-    } finally {
-      setGeneratingTokenFor(null)
-    }
-  }
-
   // Clock interval
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000)
@@ -1002,98 +967,38 @@ export default function ReceptionTablet() {
                   </div>
                 </div>
 
-                {/* Status dos Hóspedes e Links de Check-in Digital Jurídico */}
-                <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-[10px] uppercase block text-slate-400">
-                      Check-in Digital Jurídico (Token 2h) • {rawGuests.length} Hóspede(s)
-                    </span>
-                    <Badge className="bg-sky-950 text-sky-300 border-sky-800 text-[9px] font-bold">
-                      Validade Jurídica (MP 2.200-2/01)
-                    </Badge>
-                  </div>
-
-                  <div className="space-y-2">
-                    {rawGuests.map((g: any, i: number) => {
-                      const guestIdx = g.index || i + 1;
-                      const isGenerating = generatingTokenFor === guestIdx;
-                      const hasPdf = Boolean(g.fnrhPdfUrl || selectedItem.fnrhPdfUrl);
-                      const docUuid = g.fnrhDocumentUuid || selectedItem.fnrhDocumentUuid;
-
-                      return (
-                        <div key={i} className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs space-y-2">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <span className="w-5 h-5 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center font-bold text-[10px]">
-                                {guestIdx}
-                              </span>
-                              <div>
-                                <span className="font-bold text-slate-200 block">{g.name || `Hóspede ${guestIdx}`}</span>
-                                <span className="text-[10px] text-slate-400">
-                                  {g.hasCompletedCheckin ? "✅ Ficha & Assinatura Concluídas" : "⏳ Assinatura Pendente"}
-                                </span>
-                              </div>
+                {/* Status dos Hóspedes */}
+                <div className="p-3 bg-slate-950/80 rounded-xl border border-slate-800 space-y-2">
+                  <span className="font-bold text-[10px] uppercase block text-slate-400">
+                    Hóspedes Cadastrados ({rawGuests.length})
+                  </span>
+                  <div className="space-y-1.5">
+                    {rawGuests.map((g: any, i: number) => (
+                      <div key={i} className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="w-5 h-5 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center font-bold text-[10px]">
+                            {g.index || i + 1}
+                          </span>
+                          <div>
+                            <div className="font-bold text-slate-200">{g.name || `Hóspede ${g.index || i + 1}`}</div>
+                            <div className="text-[10px] text-slate-400">
+                              {g.hasCompletedCheckin ? "✅ Check-in Digital Realizado" : "⏳ Pendente de Preenchimento"}
                             </div>
-                            {g.hasCompletedCheckin ? (
-                              <Badge className="bg-emerald-950 text-emerald-300 border-emerald-800 text-[10px] font-bold">
-                                Concluído
-                              </Badge>
-                            ) : (
-                              <Badge className="bg-amber-950 text-amber-300 border-amber-800 text-[10px] font-bold">
-                                Pendente
-                              </Badge>
-                            )}
-                          </div>
-
-                          <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-800/80">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={isGenerating}
-                              onClick={() => handleGenerateSecureToken(selectedItem, guestIdx, "copy")}
-                              className="h-7 text-[10px] px-2.5 bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-200 font-bold rounded-lg"
-                            >
-                              <Clock className="w-3 h-3 mr-1 text-sky-400" />
-                              <span>{isGenerating ? "Gerando..." : "Copiar Link (2h)"}</span>
-                            </Button>
-
-                            <Button
-                              size="sm"
-                              disabled={isGenerating}
-                              onClick={() => handleGenerateSecureToken(selectedItem, guestIdx, "whatsapp")}
-                              className="h-7 text-[10px] px-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg shadow-xs"
-                            >
-                              <MessageCircle className="w-3 h-3 mr-1" />
-                              <span>WhatsApp Seguro (2h)</span>
-                            </Button>
-
-                            {hasPdf && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => window.open(g.fnrhPdfUrl || selectedItem.fnrhPdfUrl, "_blank")}
-                                className="h-7 text-[10px] px-2 bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-200 font-bold rounded-lg"
-                              >
-                                <Download className="w-3 h-3 mr-1 text-emerald-400" />
-                                <span>PDF FNRH</span>
-                              </Button>
-                            )}
-
-                            {docUuid && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => window.open(`/verificar-ficha/${docUuid}`, "_blank")}
-                                className="h-7 text-[10px] px-2 bg-sky-950 border-sky-800 hover:bg-sky-900 text-sky-300 font-bold rounded-lg"
-                              >
-                                <QrCode className="w-3 h-3 mr-1" />
-                                <span>Validar QR Code</span>
-                              </Button>
-                            )}
                           </div>
                         </div>
-                      );
-                    })}
+                        <div>
+                          {g.hasCompletedCheckin ? (
+                            <Badge className="bg-emerald-950 text-emerald-300 border-emerald-800 text-[10px] font-bold">
+                              Concluído
+                            </Badge>
+                          ) : (
+                            <Badge className="bg-amber-950 text-amber-300 border-amber-800 text-[10px] font-bold">
+                              Pendente
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
 

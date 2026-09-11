@@ -9995,6 +9995,18 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
 
   const r = (db.reservations || []).find(x => x.id === Number(reservationId) || x.code === code);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
+  // Validação estrita do token de assinatura de 2 horas (se fornecido)
+  if (req.body.token && Array.isArray(db.fnrhSignatureTokens)) {
+    const tRec = db.fnrhSignatureTokens.find(t => t.token === req.body.token && (t.reservationCode === r.code || String(t.reservationId) === String(r.id)));
+    if (tRec) {
+      if (tRec.isRevoked) {
+        return res.status(400).json({ error: "Este link de assinatura temporário foi revogado. Gere um novo link para assinar." });
+      }
+      if (new Date(tRec.expiresAt).getTime() < Date.now()) {
+        return res.status(400).json({ error: "Sua sessão de assinatura de 2 horas expirou por motivos de conformidade jurídica. Clique em 'Renovar Sessão' para gerar mais 2 horas." });
+      }
+    }
+  }
 
   if (!db.guests) db.guests = [];
 
