@@ -131,7 +131,7 @@ export default function SystemSettings() {
   const [mpSuccessMsg, setMpSuccessMsg] = useState<string | null>(null)
 
   // Zoho SMTP states
-  const [smtpHost, setSmtpHost] = useState("smtppro.zoho.com")
+  const [smtpHost, setSmtpHost] = useState("smtp.zoho.com")
   const [smtpPort, setSmtpPort] = useState("465")
   const [smtpUser, setSmtpUser] = useState("")
   const [smtpPass, setSmtpPass] = useState("")
@@ -228,7 +228,9 @@ export default function SystemSettings() {
       const res = await fetch("/api/settings/email")
       if (res.ok) {
         const data = await res.json()
-        if (data.host) setSmtpHost(data.host)
+        if (data.host) {
+          setSmtpHost(data.host === "smtppro.zoho.com" ? "smtp.zoho.com" : data.host)
+        }
         if (data.port) setSmtpPort(String(data.port))
         if (data.user) setSmtpUser(data.user)
         if (data.fromName) setSmtpFromName(data.fromName)
@@ -389,7 +391,16 @@ export default function SystemSettings() {
       const res = await fetch("/api/settings/email/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ toEmail: smtpTestEmail.trim() })
+        body: JSON.stringify({ 
+          testEmail: smtpTestEmail.trim(),
+          toEmail: smtpTestEmail.trim(),
+          host: smtpHost.trim(),
+          port: Number(smtpPort) || 465,
+          user: smtpUser.trim(),
+          pass: smtpPass || undefined,
+          fromName: smtpFromName.trim(),
+          fromEmail: smtpFromEmail.trim()
+        })
       })
       const d = await res.json()
       if (d.success) {
@@ -1174,10 +1185,13 @@ export default function SystemSettings() {
                   <Input 
                     value={smtpHost} 
                     onChange={e => setSmtpHost(e.target.value)} 
-                    placeholder="smtppro.zoho.com" 
+                    placeholder="smtp.zoho.com" 
                     required 
                     className="text-xs rounded-xl h-9 font-mono" 
                   />
+                  <p className="text-[10px] text-muted-foreground">
+                    Padrão: <span className="font-mono font-semibold text-foreground">smtp.zoho.com</span> (o host antigo <em>smtppro.zoho.com</em> causa erro 554).
+                  </p>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs font-bold">Porta *</Label>
@@ -1188,6 +1202,9 @@ export default function SystemSettings() {
                     required 
                     className="text-xs rounded-xl h-9 font-mono" 
                   />
+                  <p className="text-[10px] text-muted-foreground">
+                    465 (SSL) ou 587 (TLS)
+                  </p>
                 </div>
               </div>
 
@@ -1196,8 +1213,14 @@ export default function SystemSettings() {
                 <Input 
                   type="email"
                   value={smtpUser} 
-                  onChange={e => setSmtpUser(e.target.value)} 
-                  placeholder="ex: contato@corpflats.com.br" 
+                  onChange={e => {
+                    const val = e.target.value;
+                    setSmtpUser(val);
+                    if (!smtpFromEmail || smtpFromEmail.includes("@gmail.com")) {
+                      setSmtpFromEmail(val);
+                    }
+                  }} 
+                  placeholder="ex: miller@corpflats.com.br" 
                   required 
                   className="text-xs rounded-xl h-9 font-mono" 
                 />
@@ -1205,7 +1228,7 @@ export default function SystemSettings() {
 
               <div className="space-y-1">
                 <Label className="text-xs font-bold">
-                  Senha de Aplicativo Zoho {smtpHasPass && "(Deixe vazio para manter)"}
+                  Senha de Aplicativo Zoho {smtpHasPass && "(Deixe vazio para manter a atual)"}
                 </Label>
                 <Input 
                   type="password" 
@@ -1216,7 +1239,7 @@ export default function SystemSettings() {
                   className="text-xs rounded-xl h-9 font-mono" 
                 />
                 <p className="text-[10px] text-muted-foreground">
-                  Dica: Se a conta Zoho tiver 2FA, crie uma "Senha de Aplicativo" em zoho.com &gt; Segurança.
+                  Se a conta Zoho tiver 2FA, gere uma "Senha de Aplicativo" em <strong>accounts.zoho.com &gt; Segurança &gt; Senhas de Aplicativo</strong>.
                 </p>
               </div>
 
@@ -1236,11 +1259,26 @@ export default function SystemSettings() {
                     type="email"
                     value={smtpFromEmail} 
                     onChange={e => setSmtpFromEmail(e.target.value)} 
-                    placeholder="contato@corpflats.com.br" 
+                    placeholder="ex: miller@corpflats.com.br" 
                     className="text-xs rounded-xl h-9 font-mono" 
                   />
+                  <p className="text-[10px] text-muted-foreground">
+                    Deve ser o seu e-mail Zoho ou alias do seu domínio corporativo.
+                  </p>
                 </div>
               </div>
+
+              {smtpFromEmail.toLowerCase().includes("@gmail.com") && (
+                <div className="p-3 rounded-2xl bg-amber-500/10 text-amber-800 dark:text-amber-400 border border-amber-500/20 text-xs space-y-1">
+                  <div className="font-bold flex items-center gap-1.5">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                    Atenção com o e-mail de remetente
+                  </div>
+                  <div>
+                    O Zoho Mail rejeita envios onde o remetente é <strong>@gmail.com</strong> utilizando credenciais do seu domínio corporativo. Altere o "E-mail do Remetente" para o mesmo do seu login Zoho (ex: <strong>{smtpUser || "miller@corpflats.com.br"}</strong>).
+                  </div>
+                </div>
+              )}
 
               {/* Seção Teste */}
               <div className="p-3.5 rounded-2xl bg-muted/40 border border-border/80 space-y-2 mt-2">

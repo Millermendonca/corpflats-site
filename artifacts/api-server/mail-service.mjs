@@ -35,14 +35,23 @@ try {
 /**
  * Obtém as configurações SMTP consolidadas (Variáveis de Ambiente > Banco de Dados > Padrões Zoho)
  */
-export function getSmtpConfig(db) {
+export function getSmtpConfig(db, overrides = {}) {
   const emailSettings = db?.settings?.emailSettings || {};
-  const host = process.env.SMTP_HOST || emailSettings.host || "smtppro.zoho.com";
-  const port = Number(process.env.SMTP_PORT || emailSettings.port || 465);
-  const user = process.env.SMTP_USER || emailSettings.user || "";
-  const pass = process.env.SMTP_PASS || emailSettings.pass || "";
-  const fromName = process.env.SMTP_FROM_NAME || emailSettings.fromName || "CorpFlats";
-  const fromEmail = process.env.SMTP_FROM_EMAIL || emailSettings.fromEmail || user || "reservas@corpflats.com.br";
+  let host = overrides.host || process.env.SMTP_HOST || emailSettings.host || "smtp.zoho.com";
+  // Migra automaticamente hosts antigos que o Zoho bloqueou
+  if (host === "smtppro.zoho.com") {
+    host = "smtp.zoho.com";
+  }
+
+  const port = Number(overrides.port || process.env.SMTP_PORT || emailSettings.port || 465);
+  const user = (overrides.user !== undefined && overrides.user !== "") 
+    ? overrides.user 
+    : (process.env.SMTP_USER || emailSettings.user || "");
+  const pass = (overrides.pass !== undefined && overrides.pass !== "" && overrides.pass !== "••••••••") 
+    ? overrides.pass 
+    : (process.env.SMTP_PASS || emailSettings.pass || "");
+  const fromName = overrides.fromName || process.env.SMTP_FROM_NAME || emailSettings.fromName || "CorpFlats";
+  const fromEmail = overrides.fromEmail || process.env.SMTP_FROM_EMAIL || emailSettings.fromEmail || user || "reservas@corpflats.com.br";
   const secure = port === 465;
 
   return {
@@ -60,8 +69,8 @@ export function getSmtpConfig(db) {
 /**
  * Cria ou obtém instância do transporter Nodemailer
  */
-export function createTransporter(db) {
-  const config = getSmtpConfig(db);
+export function createTransporter(db, overrides = {}) {
+  const config = getSmtpConfig(db, overrides);
   if (!config.user || !config.pass) {
     return null;
   }
@@ -83,8 +92,8 @@ export function createTransporter(db) {
 /**
  * Testa a conexão com o servidor SMTP Zoho
  */
-export async function verifySmtpConnection(db) {
-  const config = getSmtpConfig(db);
+export async function verifySmtpConnection(db, overrides = {}) {
+  const config = getSmtpConfig(db, overrides);
   if (!config.user || !config.pass) {
     return {
       ok: false,
@@ -93,7 +102,7 @@ export async function verifySmtpConnection(db) {
   }
 
   try {
-    const transporter = createTransporter(db);
+    const transporter = createTransporter(db, overrides);
     if (!transporter) {
       return { ok: false, error: "Falha ao instanciar o transporte SMTP." };
     }
@@ -103,9 +112,16 @@ export async function verifySmtpConnection(db) {
       message: `Conexão SMTP estabelecida com sucesso com ${config.host}:${config.port} via conta ${config.user}!`
     };
   } catch (err) {
+    let friendlyError = `Falha na verificação SMTP: ${err.message}`;
+    if (err.message?.includes("554") && err.message?.includes("Access Restricted")) {
+      friendlyError = `Erro 554 (Acesso Restrito do Zoho): Altere o servidor para "smtp.zoho.com" (o host antigo smtppro.zoho.com foi descontinuado pelo Zoho). Verifique também se o E-mail do Remetente é do seu domínio corporativo e se o "Acesso SMTP" está ativo na sua conta Zoho.`;
+    } else if (err.message?.includes("535") || err.message?.includes("Authentication Failed")) {
+      friendlyError = `Erro de Autenticação (535): Usuário ou senha incorretos. Caso utilize autenticação em 2 etapas (2FA) no Zoho, você deve gerar uma "Senha de Aplicativo" em zoho.com > Segurança > Senhas de Aplicativo.`;
+    }
+
     return {
       ok: false,
-      error: `Falha na verificação SMTP: ${err.message}`
+      error: friendlyError
     };
   }
 }
@@ -408,7 +424,8 @@ export function sendEmailAsync({
   bodyText = "",
   type = "email",
   direction = "outbound",
-  metadata = {}
+  metadata = {},
+  overrides = {}
 }) {
   if (!recipient || !subject) {
     console.warn("[MailService] Destinatário ou assunto ausentes. Abortando.");
@@ -447,12 +464,12 @@ export function sendEmailAsync({
   // Execução assíncrona não bloqueante
   setImmediate(async () => {
     try {
-      const config = getSmtpConfig(db);
+      const config = getSmtpConfig(db, overrides);
       if (!config.user || !config.pass) {
         throw new Error("SMTP não configurado no backend (credenciais de SMTP_USER/SMTP_PASS ausentes).");
       }
 
-      const transporter = createTransporter(db);
+      const transporter = createTransporter(db, overrides);
       if (!transporter) {
         throw new Error("Não foi possível criar transporte SMTP.");
       }

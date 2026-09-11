@@ -9134,12 +9134,32 @@ app.post("/api/reception/undo-checkout/:reservationId", (req, res) => {
 
   r.status = r.previousStatus || "in_house";
   r.actualCheckoutAt = null;
+  r.actualCheckoutTime = null;
   r.updatedAt = new Date().toISOString();
 
   const flat = db.flats.find(f => f.id === r.flatId);
   if (flat) {
     flat.isOccupied = true;
     flat.updatedAt = new Date().toISOString();
+  }
+
+  // Reativar pedidos de café da manhã vinculados caso tenham sido cancelados por checkout
+  if (db.breakfastOrders) {
+    const todayStr = getBrasiliaNow().date;
+    db.breakfastOrders.forEach(o => {
+      const isMatch = (o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) ||
+                      o.reservationId === r.id ||
+                      (String(o.roomNumber) === String(r.flatNumber));
+      if (isMatch && o.status === "cancelled" && o.date >= todayStr && (
+        o.cancelReason?.includes("Early check-out") || 
+        o.cancelReason?.includes("early check-out") || 
+        o.cancelReason?.includes("check-out")
+      )) {
+        o.status = "pending";
+        o.cancelReason = null;
+        o.updatedAt = new Date().toISOString();
+      }
+    });
   }
 
   saveDatabase();
@@ -9227,11 +9247,20 @@ app.post("/api/pms/reservations/communications/:commId/resend", async (req, res)
 // 4. Obter configurações de e-mail (Zoho SMTP)
 app.get("/api/settings/email", (req, res) => {
   const config = getSmtpConfig(db);
+  if (config.host === "smtppro.zoho.com") {
+    config.host = "smtp.zoho.com";
+  }
   res.json({
     config: {
       ...config,
       pass: config.pass ? "••••••••" : ""
     },
+    host: config.host,
+    port: config.port,
+    user: config.user,
+    fromName: config.fromName,
+    fromEmail: config.fromEmail,
+    hasPass: Boolean(config.pass),
     isConfigured: config.isConfigured,
     receptionEmail: db.settings?.receptionEmail || "portaria.soho@corpflats.com.br",
     buildingName: db.settings?.buildingName || "Edifício Soho Residence Service"
@@ -9240,11 +9269,15 @@ app.get("/api/settings/email", (req, res) => {
 
 // 5. Salvar configurações de e-mail (Zoho SMTP)
 app.post("/api/settings/email", (req, res) => {
-  const { host, port, user, pass, fromName, fromEmail, receptionEmail, buildingName } = req.body;
+  let { host, port, user, pass, fromName, fromEmail, receptionEmail, buildingName } = req.body;
   if (!db.settings) db.settings = {};
   if (!db.settings.emailSettings) db.settings.emailSettings = {};
 
-  if (host !== undefined) db.settings.emailSettings.host = host.trim();
+  if (host !== undefined) {
+    let cleanHost = host.trim();
+    if (cleanHost === "smtppro.zoho.com") cleanHost = "smtp.zoho.com";
+    db.settings.emailSettings.host = cleanHost;
+  }
   if (port !== undefined) db.settings.emailSettings.port = Number(port);
   if (user !== undefined) db.settings.emailSettings.user = user.trim();
   if (pass !== undefined && pass !== "••••••••" && pass !== "") {
@@ -9262,19 +9295,46 @@ app.post("/api/settings/email", (req, res) => {
 
 // 6. Testar conexão SMTP / Disparo de e-mail de teste
 app.post("/api/settings/email/test", async (req, res) => {
-  const { testEmail } = req.body;
-  const verifyRes = await verifySmtpConnection(db);
+  const { testEmail, toEmail, host, port, user, pass, fromName, fromEmail } = req.body;
+  const targetEmail = testEmail || toEmail;
+
+  // Permite testar credenciais informadas no formulário (mesmo antes de salvar)
+  const overrides = {};
+  if (host) {
+    let cleanHost = host.trim();
+    if (cleanHost === "smtppro.zoho.com") cleanHost = "smtp.zoho.com";
+    overrides.host = cleanHost;
+  }
+  if (port) overrides.port = Number(port);
+  if (user) overrides.user = user.trim();
+  if (pass && pass !== "••••••••" && pass !== "") overrides.pass = pass.trim();
+  if (fromName) overrides.fromName = fromName.trim();
+  if (fromEmail) overrides.fromEmail = fromEmail.trim();
+
+  // Validação preventiva de Remetente Zoho (não permite enviar como @gmail.com usando conta corporativa)
+  const finalConfig = getSmtpConfig(db, overrides);
+  if (finalConfig.user && finalConfig.fromEmail) {
+    const userDomain = finalConfig.user.split("@")[1]?.toLowerCase();
+    const fromDomain = finalConfig.fromEmail.split("@")[1]?.toLowerCase();
+    if (userDomain && fromDomain && userDomain !== fromDomain && fromDomain === "gmail.com") {
+      return res.status(400).json({ 
+        error: `Incompatibilidade de remetente: A conta autenticada é "@${userDomain}", mas o Remetente informado é "@${fromDomain}". O Zoho Mail bloqueia envios com remetente externo (@gmail.com). Altere o "E-mail do Remetente" para ${finalConfig.user} ou outro endereço do seu domínio.`
+      });
+    }
+  }
+
+  const verifyRes = await verifySmtpConnection(db, overrides);
   if (!verifyRes.ok) {
     return res.status(400).json({ error: verifyRes.error });
   }
 
-  if (testEmail) {
-    const config = getSmtpConfig(db);
-    const commLog = await sendEmailAsync({
+  if (targetEmail) {
+    const config = getSmtpConfig(db, overrides);
+    const commLog = sendEmailAsync({
       db,
       saveDatabase,
       reservationId: "TEST",
-      recipient: testEmail.trim(),
+      recipient: targetEmail.trim(),
       subject: `[TESTE] Conexão Zoho Mail SMTP CorpFlats - ${new Date().toLocaleTimeString('pt-BR')}`,
       bodyHtml: `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 25px; background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; max-width: 550px; margin: 20px auto;">
         <h2 style="color: #0f172a; margin-top: 0;">🚀 Teste de Conexão SMTP Bem-Sucedido!</h2>
@@ -9287,9 +9347,10 @@ app.post("/api/settings/email/test", async (req, res) => {
         <p style="color: #059669; font-weight: bold; margin-bottom: 0;">✓ Status: Operacional e pronto para envios à portaria e aos hóspedes!</p>
       </div>`,
       bodyText: "Teste de Conexão SMTP CorpFlats bem-sucedido!",
-      metadata: { trigger: "smtp_test" }
+      metadata: { trigger: "smtp_test" },
+      overrides
     });
-    return res.json({ success: true, message: `Conexão SMTP validada e e-mail de teste disparado para ${testEmail}!`, communication: commLog });
+    return res.json({ success: true, message: `Conexão SMTP validada e e-mail de teste disparado para ${targetEmail}!`, communication: commLog });
   }
 
   res.json({ success: true, message: verifyRes.message });
@@ -11859,51 +11920,29 @@ function computeBreakfastCancellationReason(order, matchingRes, todayStr, nowBrl
   }
 
   // 2. Early Check-out no mesmo dia do café (Hóspede desocupou o quarto antes do horário do café)
-  const flatObj = (dbInstance.flats || []).find(f => f.id === matchingRes.flatId || String(f.number) === String(matchingRes.flatNumber));
-  const flatNumber = String(matchingRes.flatNumber || flatObj?.number || order.roomNumber);
+  // Apenas deve ser considerado se a data do pedido for exatamente o dia do check-out ou checkout real concluído hoje
+  const isCheckoutDay = matchingRes.checkoutDate === order.date || (matchingRes.actualCheckoutAt && matchingRes.actualCheckoutAt.startsWith(order.date));
+  const isCompletedRes = matchingRes.status === "completed" || Boolean(matchingRes.actualCheckoutAt);
 
-  let checkoutTime = matchingRes.actualCheckoutTime || null;
-  if (!checkoutTime && matchingRes.actualCheckoutAt) {
-    const actDate = matchingRes.actualCheckoutAt.split("T")[0];
-    if (actDate === order.date) {
-      try {
-        const d = new Date(matchingRes.actualCheckoutAt);
-        const brH = String((d.getUTCHours() - 3 + 24) % 24).padStart(2, "0");
-        const brM = String(d.getUTCMinutes()).padStart(2, "0");
-        checkoutTime = `${brH}:${brM}`;
-      } catch {}
-    }
-  }
-
-  const cleaningReqToday = (dbInstance.cleaningRequests || []).find(c => 
-    (c.flatId === matchingRes.flatId || String(c.flatNumber) === flatNumber) && 
-    c.requestDate === order.date
-  );
-
-  const isRoomVacantToday = (order.date === todayStr) && (
-    matchingRes.status === "completed" || 
-    cleaningReqToday?.isVacant === true || 
-    Boolean(checkoutTime) ||
-    (cleaningReqToday?.pendingObservation && cleaningReqToday.pendingObservation.includes("Check-out"))
-  );
-
-  if (isRoomVacantToday) {
-    if (!checkoutTime && cleaningReqToday?.updatedAt) {
-      try {
-        const d = new Date(cleaningReqToday.updatedAt);
-        const brH = String((d.getUTCHours() - 3 + 24) % 24).padStart(2, "0");
-        const brM = String(d.getUTCMinutes()).padStart(2, "0");
-        checkoutTime = `${brH}:${brM}`;
-      } catch {}
+  if (isCheckoutDay && isCompletedRes) {
+    let checkoutTime = null;
+    if (matchingRes.actualCheckoutTime) {
+      checkoutTime = matchingRes.actualCheckoutTime;
+    } else if (matchingRes.actualCheckoutAt) {
+      const actDate = matchingRes.actualCheckoutAt.split("T")[0];
+      if (actDate === order.date) {
+        try {
+          const d = new Date(matchingRes.actualCheckoutAt);
+          const brH = String((d.getUTCHours() - 3 + 24) % 24).padStart(2, "0");
+          const brM = String(d.getUTCMinutes()).padStart(2, "0");
+          checkoutTime = `${brH}:${brM}`;
+        } catch {}
+      }
     }
 
     const orderTime = order.deliveryTime || "08:00";
-    if (checkoutTime) {
-      if (isTimeBefore(checkoutTime, orderTime)) {
-        return `Early check-out: Hóspede desocupou o quarto e saiu às ${checkoutTime} antes do café agendado para às ${orderTime}`;
-      }
-    } else if (isTimeBefore(nowBrl.timeStr, orderTime)) {
-      return `Early check-out: Hóspede já desocupou o quarto hoje antes da entrega do café (${orderTime})`;
+    if (checkoutTime && isTimeBefore(checkoutTime, orderTime)) {
+      return `Early check-out: Hóspede desocupou o quarto e saiu às ${checkoutTime} antes do café agendado para às ${orderTime}`;
     }
   }
 
@@ -12163,25 +12202,26 @@ app.get("/api/breakfast/orders", (req, res) => {
 
       // Checa se houve early check-out no mesmo dia antes do horário do café
       const orderDeliveryTime = order.deliveryTime || "08:00";
+      const isCheckoutDay = matchingRes.checkoutDate === order.date || (matchingRes.actualCheckoutAt && matchingRes.actualCheckoutAt.startsWith(order.date));
+      const isCompletedToday = (matchingRes.status === "completed" || Boolean(matchingRes.actualCheckoutAt)) && isCheckoutDay;
       const checkoutTimeCandidate = matchingRes.actualCheckoutTime || "";
-      const isCheckoutCompleted = matchingRes.status === "completed" || Boolean(matchingRes.actualCheckoutAt) || Boolean(matchingRes.actualCheckoutTime);
-      const isEarlyCheckoutToday = (order.date === todayStr) && isCheckoutCompleted && (
-        checkoutTimeCandidate ? isTimeBefore(checkoutTimeCandidate, orderDeliveryTime) : isTimeBefore(nowBrl.timeStr, orderDeliveryTime)
-      );
+      const isEarlyCheckoutToday = (order.date === todayStr) && isCompletedToday && Boolean(checkoutTimeCandidate) && isTimeBefore(checkoutTimeCandidate, orderDeliveryTime);
 
       if (isResCancelled || isBeforeCheckin || isAfterCheckout || !hasBf || isEarlyCheckoutToday) {
         order.status = "cancelled";
         order.cancelReason = computeBreakfastCancellationReason(order, matchingRes, todayStr, nowBrl, db);
       } else if (order.status === "cancelled" && (
+        order.cancelReason?.includes("Early check-out") || 
+        order.cancelReason?.includes("early check-out") || 
         order.cancelReason?.includes("Check-in") || 
         order.cancelReason?.includes("check-out") || 
         order.cancelReason?.includes("antecipou") || 
-        order.cancelReason?.includes("anterior") ||
-        order.cancelReason?.includes("desmarcado") ||
-        order.cancelReason?.includes("Diária removida") ||
+        order.cancelReason?.includes("anterior") || 
+        order.cancelReason?.includes("desmarcado") || 
+        order.cancelReason?.includes("Diária removida") || 
         order.cancelReason?.includes("Estadia reduzida")
       )) {
-        // Reativa caso a reserva tenha sido estendida de volta para cobrir esta data com café
+        // Reativa caso a reserva esteja válida com café e sem saída antes da entrega
         order.status = "pending";
         order.cancelReason = null;
       }
@@ -12306,6 +12346,273 @@ app.get("/api/breakfast/orders", (req, res) => {
     orders: dayOrders,
     itemTotals,
     timeSlots
+  });
+});
+
+// GET /api/breakfast/orders/history - Histórico completo de pedidos com filtros
+app.get("/api/breakfast/orders/history", (req, res) => {
+  initBreakfastData();
+  const { startDate, endDate, status, roomNumber, search } = req.query;
+  let list = (db.breakfastOrders || []).slice();
+
+  if (startDate) {
+    list = list.filter(o => o.date >= startDate);
+  }
+  if (endDate) {
+    list = list.filter(o => o.date <= endDate);
+  }
+  if (status && status !== "all") {
+    list = list.filter(o => o.status === status);
+  }
+  if (roomNumber && roomNumber !== "all") {
+    list = list.filter(o => String(o.roomNumber) === String(roomNumber));
+  }
+  if (search && typeof search === "string" && search.trim()) {
+    const q = search.trim().toLowerCase();
+    list = list.filter(o => 
+      (o.clientName && o.clientName.toLowerCase().includes(q)) ||
+      (o.roomNumber && String(o.roomNumber).includes(q)) ||
+      (o.notes && o.notes.toLowerCase().includes(q)) ||
+      (o.reservationCode && o.reservationCode.toLowerCase().includes(q)) ||
+      (o.items && o.items.some(i => (i.name || "").toLowerCase().includes(q)))
+    );
+  }
+
+  // Ordena por data decrescente e horário crescente
+  list.sort((a, b) => {
+    if (a.date !== b.date) return b.date.localeCompare(a.date);
+    return (a.deliveryTime || "").localeCompare(b.deliveryTime || "");
+  });
+
+  res.json({
+    total: list.length,
+    orders: list
+  });
+});
+
+// GET /api/breakfast/orders/insights - Relatórios analíticos e inteligência de café da manhã
+app.get("/api/breakfast/orders/insights", (req, res) => {
+  initBreakfastData();
+  initBreakfastIngredients();
+  const { period = "all", startDate, endDate } = req.query;
+  const nowBrl = getBrasiliaNow();
+  const todayStr = nowBrl.date;
+
+  let orders = (db.breakfastOrders || []).slice();
+
+  // Filtragem por período
+  if (startDate && endDate) {
+    orders = orders.filter(o => o.date >= startDate && o.date <= endDate);
+  } else if (period === "7d") {
+    const d = new Date(todayStr + "T12:00:00");
+    d.setDate(d.getDate() - 7);
+    const startStr = d.toISOString().substring(0, 10);
+    orders = orders.filter(o => o.date >= startStr && o.date <= todayStr);
+  } else if (period === "30d") {
+    const d = new Date(todayStr + "T12:00:00");
+    d.setDate(d.getDate() - 30);
+    const startStr = d.toISOString().substring(0, 10);
+    orders = orders.filter(o => o.date >= startStr && o.date <= todayStr);
+  } else if (period === "90d") {
+    const d = new Date(todayStr + "T12:00:00");
+    d.setDate(d.getDate() - 90);
+    const startStr = d.toISOString().substring(0, 10);
+    orders = orders.filter(o => o.date >= startStr && o.date <= todayStr);
+  }
+
+  const allFilteredOrders = orders.slice();
+  const activeOrders = orders.filter(o => o.status !== "cancelled");
+
+  // 1. Top Itens (Mais pedidos)
+  const itemMap = new Map();
+  for (const order of activeOrders) {
+    for (const it of (order.items || [])) {
+      const canonical = normalizeBreakfastItem(it.name || it);
+      if (!canonical || isExcludedBreakfastItem(canonical)) continue;
+      const q = Number(it.quantity) || 1;
+      const current = itemMap.get(canonical) || { name: canonical, totalQuantity: 0, ordersCount: 0 };
+      current.totalQuantity += q;
+      current.ordersCount += 1;
+      itemMap.set(canonical, current);
+    }
+  }
+  const topItems = [...itemMap.values()]
+    .sort((a, b) => b.totalQuantity - a.totalQuantity);
+
+  const totalItemsCount = topItems.reduce((acc, i) => acc + i.totalQuantity, 0);
+  topItems.forEach(item => {
+    item.percentage = totalItemsCount > 0 ? Math.round((item.totalQuantity / totalItemsCount) * 100) : 0;
+  });
+
+  // 2. Pedidos por Dia da Semana
+  const PT_DAYS = ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"];
+  const dayCounts = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+  for (const order of activeOrders) {
+    if (!order.date) continue;
+    const d = new Date(order.date + "T12:00:00");
+    if (!isNaN(d.getTime())) {
+      dayCounts[d.getDay()] += 1;
+    }
+  }
+  const dayOrderIndices = [1, 2, 3, 4, 5, 6, 0]; // Segunda a Domingo
+  const ordersByDay = dayOrderIndices.map(idx => ({
+    day: PT_DAYS[idx],
+    count: dayCounts[idx]
+  }));
+
+  // 3. Horários de Pico
+  const timeCounts = new Map();
+  for (const order of activeOrders) {
+    const t = order.deliveryTime || "08:00";
+    timeCounts.set(t, (timeCounts.get(t) || 0) + 1);
+  }
+  const peakTimes = [...timeCounts.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([time, count]) => ({ time, count }));
+
+  // 4. Melhores Clientes / Hóspedes mais recorrentes
+  const customerMap = new Map();
+  for (const order of orders) {
+    const name = (order.clientName || "Hóspede").trim();
+    const existing = customerMap.get(name) || { 
+      name, 
+      roomNumber: order.roomNumber, 
+      orderCount: 0, 
+      activeOrderCount: 0, 
+      totalItems: 0, 
+      lastOrderDate: order.date 
+    };
+    existing.orderCount += 1;
+    if (order.status !== "cancelled") {
+      existing.activeOrderCount += 1;
+      const count = (order.items || []).reduce((s, i) => s + (Number(i.quantity) || 1), 0);
+      existing.totalItems += count;
+    }
+    if (order.date > existing.lastOrderDate) {
+      existing.lastOrderDate = order.date;
+      existing.roomNumber = order.roomNumber;
+    }
+    customerMap.set(name, existing);
+  }
+  const topCustomers = [...customerMap.values()]
+    .sort((a, b) => b.orderCount - a.orderCount)
+    .slice(0, 15);
+
+  // 5. Consumo Médio por Mês (últimos 3 meses + geral)
+  const PT_MONTHS = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+  const refDate = new Date(todayStr + "T12:00:00");
+  const monthKeys = [];
+  for (let i = 0; i < 3; i++) {
+    const d = new Date(refDate.getFullYear(), refDate.getMonth() - i, 1);
+    monthKeys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+  }
+  const monthSet = new Set(monthKeys);
+  const monthlyOrders = new Map();
+  monthKeys.forEach(m => monthlyOrders.set(m, []));
+  const coveredOrders = [];
+
+  for (const order of activeOrders) {
+    const ym = order.date ? order.date.slice(0, 7) : null;
+    if (ym && monthSet.has(ym)) {
+      monthlyOrders.get(ym).push(order);
+      coveredOrders.push(order);
+    }
+  }
+
+  const buildPeriod = (periodOrders, label, month) => {
+    const tot = periodOrders.length;
+    const iMap = new Map();
+    const withItemMap = new Map();
+
+    for (const ord of periodOrders) {
+      const seen = new Set();
+      for (const it of (ord.items || [])) {
+        const canonical = normalizeBreakfastItem(it.name || it);
+        if (!canonical || isExcludedBreakfastItem(canonical)) continue;
+        const q = Number(it.quantity) || 1;
+        iMap.set(canonical, (iMap.get(canonical) || 0) + q);
+        if (!seen.has(canonical)) {
+          withItemMap.set(canonical, (withItemMap.get(canonical) || 0) + 1);
+          seen.add(canonical);
+        }
+      }
+    }
+
+    const items = [...iMap.entries()]
+      .map(([name, totalQty]) => ({
+        name,
+        totalQty,
+        ordersWithItem: withItemMap.get(name) || 0,
+        avgQtyPerOrder: tot > 0 ? Math.round((totalQty / tot) * 100) / 100 : 0
+      }))
+      .sort((a, b) => b.avgQtyPerOrder - a.avgQtyPerOrder);
+
+    return { label, month, totalOrders: tot, items };
+  };
+
+  const consumptionByMonth = monthKeys.map(ym => {
+    const [y, m] = ym.split("-");
+    const mLabel = `${PT_MONTHS[parseInt(m, 10) - 1]} ${y}`;
+    return buildPeriod(monthlyOrders.get(ym), mLabel, ym);
+  });
+  consumptionByMonth.push(buildPeriod(coveredOrders, "Geral (Últimos 3 meses)", null));
+
+  // 6. Custo e Ficha Técnica
+  const ingredientsList = db.breakfastIngredients || [];
+  let totalCalculatedCost = 0;
+  let totalPricedOrders = 0;
+  let totalGuestsServed = 0;
+  const ingredientTotalsMap = new Map();
+
+  for (const order of activeOrders) {
+    const guests = Math.max(Number(order.guestCount) || 1, 1);
+    totalGuestsServed += guests;
+    totalPricedOrders += 1;
+
+    for (const item of (order.items || [])) {
+      const canonical = normalizeBreakfastItem(item.name || item);
+      const qty = Number(item.quantity) || 1;
+      const matchedIng = ingredientsList.find(ing => ing.name.toLowerCase().includes(canonical.toLowerCase()) || canonical.toLowerCase().includes(ing.name.toLowerCase()));
+      if (matchedIng) {
+        const costVal = (matchedIng.cost || 0) * qty;
+        totalCalculatedCost += costVal;
+        const key = `${matchedIng.name}||${matchedIng.unit}`;
+        const prev = ingredientTotalsMap.get(key) || { ingredient: matchedIng.name, totalQuantity: 0, unit: matchedIng.unit, totalCost: 0 };
+        prev.totalQuantity += qty;
+        prev.totalCost += costVal;
+        ingredientTotalsMap.set(key, prev);
+      }
+    }
+  }
+
+  const costInsights = {
+    averageCostPerPerson: totalGuestsServed > 0 ? Math.round((totalCalculatedCost / totalGuestsServed) * 100) / 100 : 0,
+    averageCostPerOrder: totalPricedOrders > 0 ? Math.round((totalCalculatedCost / totalPricedOrders) * 100) / 100 : 0,
+    totalCost: Math.round(totalCalculatedCost * 100) / 100,
+    ingredientTotals: [...ingredientTotalsMap.values()].sort((a, b) => b.totalCost - a.totalCost)
+  };
+
+  // Datas de início e fim
+  const allDates = allFilteredOrders.map(o => o.date).filter(Boolean).sort();
+  const dataRangeStart = allDates.length > 0 ? allDates[0] : null;
+  const dataRangeEnd = allDates.length > 0 ? allDates[allDates.length - 1] : null;
+
+  res.json({
+    totalOrders: allFilteredOrders.length,
+    activeOrders: activeOrders.length,
+    cancelledOrders: allFilteredOrders.length - activeOrders.length,
+    uniqueCustomers: customerMap.size,
+    totalGuests: totalGuestsServed,
+    totalItems: totalItemsCount,
+    averageItemsPerOrder: activeOrders.length > 0 ? Math.round((totalItemsCount / activeOrders.length) * 10) / 10 : 0,
+    topItems,
+    ordersByDay,
+    peakTimes,
+    topCustomers,
+    consumptionByMonth,
+    costInsights,
+    dataRangeStart,
+    dataRangeEnd
   });
 });
 
