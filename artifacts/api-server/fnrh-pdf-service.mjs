@@ -43,24 +43,35 @@ export function formatToBrasiliaDateTime(isoDateString) {
  * @returns {Promise<{ filePath: string, fileName: string, fileUrl: string, documentUuid: string, sha256Hash: string, signedAt: string, auditTrail: Object }>}
  */
 export async function generateFnrhPdf({
-  reservation,
+  reservation = {},
   guestData,
+  guest,
   signatureBase64,
+  signatureDataUrl,
   signerIp,
+  ipAddress,
   signerUserAgent,
-  appOrigin = "https://corpflats.onrender.com"
+  userAgent,
+  appOrigin,
+  baseUrl = "https://corpflats.onrender.com"
 }) {
+  const g = guestData || guest || {};
+  const sig = signatureBase64 || signatureDataUrl || null;
+  const ip = signerIp || ipAddress || "127.0.0.1";
+  const ua = signerUserAgent || userAgent || "Navegador Web / Dispositivo Pessoal";
+  const origin = appOrigin || baseUrl || "https://corpflats.onrender.com";
+
   const documentUuid = crypto.randomUUID();
   const signedAtIso = new Date().toISOString();
   const signedAtBrasilia = formatToBrasiliaDateTime(signedAtIso);
 
-  const cleanCpf = (guestData.document || guestData.cpf || reservation.guestDocument || "00000000000").replace(/\D/g, "");
+  const cleanCpf = (g.document || g.cpf || reservation.guestDocument || "00000000000").replace(/\D/g, "");
   const reservationId = reservation.id || reservation.code || "res";
   const timestamp = Date.now();
   const fileName = `fnrh_${reservationId}_${cleanCpf}_${timestamp}.pdf`;
   const filePath = path.join(FNRH_UPLOADS_DIR, fileName);
 
-  const verifyUrl = `${appOrigin.replace(/\/$/, "")}/verificar-ficha/${documentUuid}`;
+  const verifyUrl = `${origin.replace(/\/$/, "")}/verificar-ficha/${documentUuid}`;
 
   // Gera o QR Code em buffer de alta resolução
   const qrCodeBuffer = await QRCode.toBuffer(verifyUrl, {
@@ -74,9 +85,9 @@ export async function generateFnrhPdf({
 
   // Converte assinatura Base64 para Buffer caso exista
   let signatureBuffer = null;
-  if (signatureBase64 && typeof signatureBase64 === "string" && signatureBase64.includes("base64,")) {
+  if (sig && typeof sig === "string" && sig.includes("base64,")) {
     try {
-      const b64Data = signatureBase64.split("base64,")[1];
+      const b64Data = sig.split("base64,")[1];
       signatureBuffer = Buffer.from(b64Data, "base64");
     } catch (sigErr) {
       console.warn("[FNRH PDF] Falha ao decodificar assinatura base64:", sigErr.message);
@@ -88,7 +99,7 @@ export async function generateFnrhPdf({
     size: "A4",
     margins: { top: 32, bottom: 32, left: 36, right: 36 },
     info: {
-      Title: `Ficha de Registro de Hóspede - ${guestData.fullName || guestData.name || "Hóspede"}`,
+      Title: `Ficha de Registro de Hóspede - ${g.fullName || g.name || "Hóspede"}`,
       Author: "CorpFlats Hospedagem",
       Subject: "FNRH - Ficha de Registro de Hóspede e Trilha de Auditoria Forense",
       Keywords: "FNRH, Check-in, Assinatura Eletrônica, CorpFlats",
@@ -172,14 +183,14 @@ export async function generateFnrhPdf({
   currentY += 18;
   doc.rect(36, currentY, 523, 62).fill("#f8fafc").stroke("#e2e8f0");
 
-  const guestFullName = (guestData.fullName || guestData.name || reservation.guestName || "Hóspede").trim();
-  const guestDoc = guestData.document || guestData.cpf || reservation.guestDocument || "-";
-  const guestPhone = guestData.phone || reservation.guestPhone || "-";
-  const guestEmail = guestData.email || reservation.guestEmail || "-";
+  const guestFullName = (g.fullName || g.name || reservation.guestName || "Hóspede").trim();
+  const guestDoc = g.document || g.cpf || reservation.guestDocument || "-";
+  const guestPhone = g.phone || reservation.guestPhone || "-";
+  const guestEmail = g.email || reservation.guestEmail || "-";
   const guestAddress = [
-    guestData.address || reservation.guestAddress || "",
-    guestData.city || "",
-    guestData.state || ""
+    g.address || reservation.guestAddress || "",
+    g.city || "",
+    g.state || ""
   ].filter(Boolean).join(" - ") || "Endereço não informado";
 
   // Linha 1: Nome e Documento
@@ -293,11 +304,11 @@ export async function generateFnrhPdf({
 
   auditY += 15;
   doc.fillColor("#0f172a").fontSize(8).font("Helvetica-Bold").text("Endereço IP do Signatário:", auditX, auditY);
-  doc.fillColor("#334155").fontSize(8).font("Courier").text(signerIp || "127.0.0.1 (Local/Totem)", auditX + 130, auditY);
+  doc.fillColor("#334155").fontSize(8).font("Courier").text(ip, auditX + 130, auditY);
 
   auditY += 15;
   doc.fillColor("#0f172a").fontSize(8).font("Helvetica-Bold").text("Dispositivo / Navegador (User-Agent):", auditX, auditY);
-  const cleanUa = (signerUserAgent || "Navegador Web / Dispositivo Pessoal").substring(0, 75);
+  const cleanUa = ua.substring(0, 75);
   doc.fillColor("#475569").fontSize(7.5).font("Courier").text(cleanUa, auditX + 165, auditY, { width: 225 });
 
   auditY += 22;
@@ -323,8 +334,8 @@ export async function generateFnrhPdf({
     guestCpf: cleanCpf,
     guestName: guestFullName,
     signedAt: signedAtIso,
-    signerIp: signerIp || "",
-    signerUserAgent: signerUserAgent || ""
+    signerIp: ip,
+    signerUserAgent: ua
   });
   const canonicalHash = crypto.createHash("sha256").update(canonicalSignaturePayload).digest("hex");
 

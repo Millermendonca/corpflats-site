@@ -5782,6 +5782,10 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       guestPhone,
       guestEmail,
       guestDocument,
+      guestAddress = "",
+      guestCity = "",
+      guestState = "",
+      guestCep = "",
       checkinDate,
       checkoutDate,
       numGuests = 2,
@@ -5920,6 +5924,10 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       guestPhone: guestPhone.trim(),
       guestEmail: guestEmail.trim().toLowerCase(),
       guestDocument: (guestDocument || "").trim(),
+      guestAddress: (guestAddress || "").trim(),
+      guestCity: (guestCity || "").trim(),
+      guestState: (guestState || "").trim() || "RJ",
+      guestCep: (guestCep || "").trim(),
       checkinDate,
       checkoutDate,
       guestCount: totalGuestsCount,
@@ -6012,6 +6020,10 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
         phone: guestPhone.trim(),
         email: cleanEmail,
         document: (guestDocument || "").trim(),
+        address: (guestAddress || "").trim(),
+        city: (guestCity || "").trim(),
+        state: (guestState || "").trim() || "RJ",
+        cep: (guestCep || "").trim(),
         createdAt: new Date().toISOString()
       };
       db.guests.push(guest);
@@ -6021,6 +6033,10 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       if (guestPhone) guest.phone = guestPhone.trim();
       if (guestEmail) guest.email = cleanEmail;
       if (guestName) guest.name = guestName.trim();
+      if (guestAddress && !guest.address) guest.address = guestAddress.trim();
+      if (guestCity && !guest.city) guest.city = guestCity.trim();
+      if (guestState && !guest.state) guest.state = guestState.trim();
+      if (guestCep && !guest.cep) guest.cep = guestCep.trim();
     }
 
     reservation.guestId = guest.id;
@@ -6041,9 +6057,10 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
         email: guest.email || cleanEmail,
         birthDate: guest.birthDate || "",
         gender: guest.gender || "masculino",
-        address: guest.address || "",
-        city: guest.city || "",
-        state: guest.state || "RJ",
+        address: guest.address || (guestAddress || "").trim(),
+        city: guest.city || (guestCity || "").trim(),
+        state: guest.state || (guestState || "").trim() || "RJ",
+        cep: guest.cep || (guestCep || "").trim(),
         docPhotoUrl: guest.docPhotoUrl || null,
         selfieUrl: guest.photoUrl || null,
         signatureUrl: guest.signatureUrl || null,
@@ -10142,6 +10159,10 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     r.guestPhone = phone || r.guestPhone;
     r.guestEmail = cleanEmail || r.guestEmail;
     r.guestDocument = document || r.guestDocument;
+    if (address) r.guestAddress = address;
+    if (city) r.guestCity = city;
+    if (state) r.guestState = state;
+    if (req.body.cep) r.guestCep = req.body.cep;
     if (selfieUrl) r.selfieUrl = selfieUrl;
     if (docPhotoUrl) r.docPhotoUrl = docPhotoUrl;
     if (signatureUrl) r.signatureUrl = signatureUrl;
@@ -14500,7 +14521,7 @@ app.get("/api/guest-auth/me", (req, res) => {
 // 1.5 Atualizar Perfil e Veículo do Hóspede
 app.patch("/api/guest-auth/profile", (req, res) => {
   try {
-    const { email, name, phone, document, companyData, vehicle } = req.body;
+    const { email, name, phone, document, address, city, state, cep, companyData, vehicle } = req.body;
     if (!email) {
       return res.status(400).json({ error: "E-mail não informado." });
     }
@@ -14515,6 +14536,10 @@ app.patch("/api/guest-auth/profile", (req, res) => {
     if (name) account.name = name.trim();
     if (phone) account.phone = phone.trim();
     if (document) account.document = document.trim();
+    if (address !== undefined) account.address = address.trim();
+    if (city !== undefined) account.city = city.trim();
+    if (state !== undefined) account.state = state.trim();
+    if (cep !== undefined) account.cep = cep.trim();
     if (companyData !== undefined) account.companyData = companyData;
     if (vehicle !== undefined) {
       account.vehicle = vehicle;
@@ -14849,10 +14874,14 @@ app.patch("/api/v2/auth/profile", (req, res) => {
     const user = getAuthV2User(req);
     if (!user) return res.status(401).json({ error: "Não autenticado." });
 
-    const { name, phone, document, vehicle, companyData } = req.body;
+    const { name, phone, document, address, city, state, cep, vehicle, companyData } = req.body;
     if (name) user.name = name.trim();
     if (phone !== undefined) user.phone = phone.trim();
     if (document !== undefined) user.document = document.trim();
+    if (address !== undefined) user.address = address.trim();
+    if (city !== undefined) user.city = city.trim();
+    if (state !== undefined) user.state = state.trim();
+    if (cep !== undefined) user.cep = cep.trim();
     if (vehicle !== undefined) {
       user.vehicle = vehicle;
       if (vehicle && vehicle.plate) {
@@ -15704,6 +15733,98 @@ app.post("/api/pms/reservations/:code/vehicle", (req, res) => {
       message: `Veículo ${cleanPlate} cadastrado e liberação enviada para a garagem (promenadesoho@pfbestacionamentos.com.br) com sucesso!`,
       vehicle: vehicleData,
       authorization: garageRes?.authRecord
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 5.4 Registrar / Atualizar Dados Cadastrais do Hóspede (Pós-Reserva ou no Pré-Checkin)
+app.post("/api/pms/reservations/:code/guest-data", (req, res) => {
+  try {
+    const { code } = req.params;
+    const { name, phone, email, document, address, city, state, cep } = req.body;
+
+    const reservation = (db.reservations || []).find(r => r.code === code || String(r.id) === code);
+    if (!reservation) {
+      return res.status(404).json({ error: "Reserva não encontrada." });
+    }
+
+    if (name) reservation.guestName = name.trim();
+    if (phone) reservation.guestPhone = phone.trim();
+    if (email) reservation.guestEmail = email.trim().toLowerCase();
+    if (document) reservation.guestDocument = document.trim();
+    if (address) reservation.guestAddress = address.trim();
+    if (city) reservation.guestCity = city.trim();
+    if (state) reservation.guestState = state.trim();
+    if (cep) reservation.guestCep = cep.trim();
+    reservation.updatedAt = new Date().toISOString();
+
+    // Atualiza também no primeiro hóspede da reserva (titular)
+    if (Array.isArray(reservation.guests) && reservation.guests.length > 0) {
+      const g0 = reservation.guests[0];
+      if (name) g0.name = name.trim();
+      if (phone) g0.phone = phone.trim();
+      if (email) g0.email = email.trim().toLowerCase();
+      if (document) g0.cpf = document.trim();
+      if (address) g0.address = address.trim();
+      if (city) g0.city = city.trim();
+      if (state) g0.state = state.trim();
+      if (cep) g0.cep = cep.trim();
+    }
+
+    // Sincroniza com db.guests
+    if (!db.guests) db.guests = [];
+    const cleanDoc = (document || reservation.guestDocument || "").replace(/\D/g, "");
+    const cleanEmail = (email || reservation.guestEmail || "").trim().toLowerCase();
+    let guest = db.guests.find(g => 
+      (cleanDoc && (g.documentNumber || g.document || "").replace(/\D/g, "") === cleanDoc) ||
+      (cleanEmail && (g.email || "").trim().toLowerCase() === cleanEmail)
+    );
+    if (guest) {
+      if (name) guest.name = name.trim();
+      if (phone) guest.phone = phone.trim();
+      if (email) guest.email = cleanEmail;
+      if (document) guest.document = document.trim();
+      if (address) guest.address = address.trim();
+      if (city) guest.city = city.trim();
+      if (state) guest.state = state.trim();
+      if (cep) guest.cep = cep.trim();
+      guest.updatedAt = new Date().toISOString();
+    }
+
+    // Sincroniza com conta de usuário se existir
+    const accEmail = cleanEmail || (reservation.guestEmail || "").trim().toLowerCase();
+    if (accEmail) {
+      const account = (db.guestAccounts || []).find(g => g.email.toLowerCase() === accEmail);
+      if (account) {
+        if (name) account.name = name.trim();
+        if (phone) account.phone = phone.trim();
+        if (document) account.document = document.trim();
+        if (address) account.address = address.trim();
+        if (city) account.city = city.trim();
+        if (state) account.state = state.trim();
+        if (cep) account.cep = cep.trim();
+        account.updatedAt = new Date().toISOString();
+      }
+    }
+
+    saveDatabase();
+
+    res.json({
+      success: true,
+      message: "Dados cadastrais atualizados com sucesso!",
+      reservation: {
+        code: reservation.code,
+        guestName: reservation.guestName,
+        guestPhone: reservation.guestPhone,
+        guestEmail: reservation.guestEmail,
+        guestDocument: reservation.guestDocument,
+        guestAddress: reservation.guestAddress,
+        guestCity: reservation.guestCity,
+        guestState: reservation.guestState,
+        guestCep: reservation.guestCep
+      }
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

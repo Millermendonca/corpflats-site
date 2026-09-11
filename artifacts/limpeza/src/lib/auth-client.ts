@@ -10,6 +10,10 @@ export interface UserProfile {
   avatarUrl?: string
   phone?: string
   document?: string
+  address?: string
+  city?: string
+  state?: string
+  cep?: string
   companyData?: {
     cnpj?: string
     companyName?: string

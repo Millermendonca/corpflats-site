@@ -8,7 +8,8 @@ import { Badge } from "@/components/ui/badge"
 import { 
   Calendar, Coffee, Building2, Sparkles, User, ShieldCheck, Check, ArrowRight, ArrowLeft,
   QrCode, CreditCard, Copy, ExternalLink, Clock, Car, Heart, AlertTriangle, MessageCircle,
-  Lock, CheckCircle2, Shield, Flame, Zap, HelpCircle, PhoneCall, RefreshCw
+  Lock, CheckCircle2, Shield, Flame, Zap, HelpCircle, PhoneCall, RefreshCw,
+  MapPin, FileText, Home
 } from "lucide-react"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
@@ -105,6 +106,13 @@ export function BookingFunnelModal({
   const [guestPhone, setGuestPhone] = useState(() => maskPhone(guestAccount?.phone || getCachedProfile()?.phone || ""))
   const [guestEmail, setGuestEmail] = useState(() => guestAccount?.email || getCachedProfile()?.email || (typeof window !== "undefined" ? localStorage.getItem("corpflats_guest_email") || "" : ""))
   const [guestDocument, setGuestDocument] = useState(() => maskCpf(guestAccount?.document || getCachedProfile()?.document || ""))
+  const [guestAddress, setGuestAddress] = useState(() => guestAccount?.address || getCachedProfile()?.address || "")
+  const [guestCity, setGuestCity] = useState(() => guestAccount?.city || getCachedProfile()?.city || "")
+  const [guestState, setGuestState] = useState(() => guestAccount?.state || getCachedProfile()?.state || "RJ")
+  const [guestCep, setGuestCep] = useState(() => guestAccount?.cep || getCachedProfile()?.cep || "")
+  const [loadingFunnelCep, setLoadingFunnelCep] = useState(false)
+  const [isSavingPostRegistration, setIsSavingPostRegistration] = useState(false)
+  const [postRegistrationSaved, setPostRegistrationSaved] = useState(false)
 
   // PJ Corporate Billing
   const [isWorkTrip, setIsWorkTrip] = useState(false)
@@ -217,6 +225,10 @@ export function BookingFunnelModal({
       if (acc.phone) setGuestPhone(maskPhone(acc.phone))
       if (acc.email && (!guestEmail || guestEmail !== acc.email)) setGuestEmail(acc.email)
       if (acc.document) setGuestDocument(maskCpf(acc.document))
+      if (acc.address && (!guestAddress || guestAddress !== acc.address)) setGuestAddress(acc.address)
+      if (acc.city && (!guestCity || guestCity !== acc.city)) setGuestCity(acc.city)
+      if (acc.state && (!guestState || guestState !== acc.state)) setGuestState(acc.state)
+      if (acc.cep && (!guestCep || guestCep !== acc.cep)) setGuestCep(acc.cep)
       if (acc.vehicle?.plate) {
         setHasVehicle(true)
         setVehiclePlate(acc.vehicle.plate)
@@ -238,6 +250,10 @@ export function BookingFunnelModal({
         if (user.email) setGuestEmail(user.email)
         if (user.phone) setGuestPhone(maskPhone(user.phone))
         if (user.document) setGuestDocument(maskCpf(user.document))
+        if (user.address) setGuestAddress(user.address)
+        if (user.city) setGuestCity(user.city)
+        if (user.state) setGuestState(user.state)
+        if (user.cep) setGuestCep(user.cep)
         if (user.vehicle?.plate) {
           setHasVehicle(true)
           setVehiclePlate(user.vehicle.plate)
@@ -468,6 +484,10 @@ export function BookingFunnelModal({
           name: guestName.trim(),
           phone: guestPhone.trim(),
           document: guestDocument.trim(),
+          address: guestAddress.trim(),
+          city: guestCity.trim(),
+          state: guestState.trim(),
+          cep: guestCep.trim(),
           vehicle: hasVehicle && vehiclePlate ? { plate: vehiclePlate.toUpperCase().trim(), model: vehicleModel.trim() } : null,
           companyData: isWorkTrip && companyCnpj ? { cnpj: companyCnpj.trim(), companyName: companyName.trim() } : null
         }).then(res => {
@@ -493,6 +513,10 @@ export function BookingFunnelModal({
         guestPhone: guestPhone.trim(),
         guestEmail: guestEmail.trim(),
         guestDocument: guestDocument.trim(),
+        guestAddress: guestAddress.trim(),
+        guestCity: guestCity.trim(),
+        guestState: guestState.trim(),
+        guestCep: guestCep.trim(),
         checkinDate: checkin,
         checkoutDate: checkout,
         numGuests: rooms.reduce((acc, r) => acc + (Number(r.adults) || 2), 0),
@@ -550,6 +574,56 @@ export function BookingFunnelModal({
       alert("Erro ao conectar ao servidor. Tente novamente.")
     } finally {
       setIsProcessing(false)
+    }
+  }
+
+  // Complementação cadastral pós-pagamento na Etapa 4
+  const handleSavePostPaymentRegistration = async () => {
+    if (!guestAddress.trim()) {
+      alert("Por favor, informe seu endereço residencial completo.")
+      return
+    }
+    setIsSavingPostRegistration(true)
+    try {
+      const resCode = confirmedReservation?.code || confirmedReservation?.reservationCode || confirmedReservation?.id
+      if (resCode) {
+        await fetch(`/api/pms/reservations/${encodeURIComponent(resCode)}/guest-data`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: guestName.trim(),
+            phone: guestPhone.trim(),
+            email: guestEmail.trim(),
+            document: guestDocument.trim(),
+            address: guestAddress.trim(),
+            city: guestCity.trim(),
+            state: guestState.trim(),
+            cep: guestCep.trim()
+          })
+        })
+      }
+
+      await updateAccountProfile({
+        name: guestName.trim(),
+        phone: guestPhone.trim(),
+        document: guestDocument.trim(),
+        address: guestAddress.trim(),
+        city: guestCity.trim(),
+        state: guestState.trim(),
+        cep: guestCep.trim()
+      })
+
+      setPostRegistrationSaved(true)
+      if (confirmedReservation) {
+        confirmedReservation.guestAddress = guestAddress.trim()
+        confirmedReservation.guestCity = guestCity.trim()
+        confirmedReservation.guestState = guestState.trim()
+        confirmedReservation.guestCep = guestCep.trim()
+      }
+    } catch {
+      alert("Erro ao salvar dados cadastrais no servidor. Seus dados básicos continuam válidos.")
+    } finally {
+      setIsSavingPostRegistration(false)
     }
   }
 
@@ -1151,6 +1225,50 @@ export function BookingFunnelModal({
                   className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800 font-mono"
                 />
               </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                  <span>CEP Residencial (Opcional)</span>
+                  {loadingFunnelCep && <span className="text-[10px] text-sky-600 font-normal">Buscando...</span>}
+                </Label>
+                <Input
+                  value={guestCep}
+                  onChange={async e => {
+                    const val = e.target.value.replace(/\D/g, "");
+                    setGuestCep(val);
+                    if (val.length === 8) {
+                      setLoadingFunnelCep(true);
+                      try {
+                        const res = await fetch(`/api/lookup-cep/${val}`);
+                        if (res.ok) {
+                          const data = await res.json();
+                          if (data.logradouro) setGuestAddress(`${data.logradouro}, ${data.bairro || ''}`.trim());
+                          if (data.cidade) setGuestCity(data.cidade);
+                          if (data.uf) setGuestState(data.uf);
+                        }
+                      } catch {}
+                      finally {
+                        setLoadingFunnelCep(false);
+                      }
+                    }
+                  }}
+                  placeholder="00000-000"
+                  maxLength={9}
+                  className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800 font-mono"
+                />
+              </div>
+
+              <div className="space-y-1 sm:col-span-2">
+                <Label className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                  Endereço Residencial (Opcional agora ou após o pagamento)
+                </Label>
+                <Input
+                  value={guestAddress}
+                  onChange={e => setGuestAddress(e.target.value)}
+                  placeholder="Ex: Av. Pelinca, 250 - Parque Tamandaré, Campos dos Goytacazes/RJ"
+                  className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800"
+                />
+              </div>
             </div>
 
             {/* Veículo & Portaria */}
@@ -1585,6 +1703,152 @@ export function BookingFunnelModal({
                 </Button>
               </div>
             )}
+
+            {/* ── CADASTRO DE HÓSPEDE PÓS-PAGAMENTO & PRÉ-CHECKIN DIGITAL ──── */}
+            {(() => {
+              const hasCompleteRegistration = Boolean(
+                guestName.trim() &&
+                guestDocument.trim() &&
+                guestPhone.trim() &&
+                guestEmail.trim() &&
+                (guestAddress.trim() || confirmedReservation?.guestAddress)
+              );
+
+              if (hasCompleteRegistration || postRegistrationSaved) {
+                return (
+                  <div className="p-3.5 bg-emerald-50/90 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-2xl text-left space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-emerald-900 dark:text-emerald-200 flex items-center gap-1.5">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>Cadastro de Hóspede Completo & Salvo</span>
+                      </span>
+                      <Badge className="bg-emerald-600 text-white font-bold text-[10px]">
+                        100% Pronto
+                      </Badge>
+                    </div>
+                    <p className="text-[11px] text-emerald-800 dark:text-emerald-300 leading-relaxed">
+                      Seus 5 dados cadastrais (Nome, CPF, Telefone, E-mail e Endereço) já constam no sistema e foram vinculados à sua reserva. No seu pré check-in digital, você <strong>não precisará preencher tudo de novo</strong>, bastando conferir, fotografar o documento e assinar!
+                    </p>
+                    <div className="pt-1 flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          const resCode = confirmedReservation.code || confirmedReservation.reservationCode || confirmedReservation.id;
+                          window.open(`/pre-checkin/${resCode}`, "_blank");
+                        }}
+                        className="text-xs h-8 bg-white dark:bg-slate-900 border-emerald-300 text-emerald-800 dark:text-emerald-300 font-bold hover:bg-emerald-50 rounded-xl"
+                      >
+                        <FileText className="w-3.5 h-3.5 mr-1" />
+                        <span>Acessar Pré Check-in Digital</span>
+                      </Button>
+                    </div>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="p-4 bg-gradient-to-br from-sky-50/90 via-indigo-50/30 to-slate-50 dark:from-slate-800 dark:to-slate-900 border-2 border-sky-200 dark:border-slate-700 rounded-2xl text-left space-y-3 shadow-xs">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-xl bg-sky-600 text-white flex items-center justify-center font-bold shadow-xs shrink-0">
+                        <FileText className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100">
+                          Finalize seu Cadastro para Agilizar o Check-in Digital
+                        </h4>
+                        <p className="text-[11px] text-slate-500">
+                          Preencha seu endereço para agilizar a liberação da portaria e emissão da FNRH.
+                        </p>
+                      </div>
+                    </div>
+                    <Badge className="bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 border border-sky-200 text-[10px] font-bold shrink-0">
+                      Faltam poucos dados
+                    </Badge>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1 text-xs">
+                    {!guestDocument.trim() && (
+                      <div className="space-y-1 sm:col-span-2">
+                        <Label className="text-[11px] font-bold text-slate-700 dark:text-slate-300">CPF ou Passaporte *</Label>
+                        <Input
+                          value={guestDocument}
+                          onChange={e => setGuestDocument(maskCpf(e.target.value))}
+                          placeholder="000.000.000-00"
+                          className="text-xs h-9 rounded-xl bg-white dark:bg-slate-900 font-mono"
+                        />
+                      </div>
+                    )}
+
+                    <div className="space-y-1">
+                      <Label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                        <span>CEP Residencial *</span>
+                        {loadingFunnelCep && <span className="text-[10px] text-sky-600 font-normal">Buscando...</span>}
+                      </Label>
+                      <Input
+                        value={guestCep}
+                        onChange={async e => {
+                          const val = e.target.value.replace(/\D/g, "");
+                          setGuestCep(val);
+                          if (val.length === 8) {
+                            setLoadingFunnelCep(true);
+                            try {
+                              const res = await fetch(`/api/lookup-cep/${val}`);
+                              if (res.ok) {
+                                const data = await res.json();
+                                if (data.logradouro) setGuestAddress(`${data.logradouro}, ${data.bairro || ''}`.trim());
+                                if (data.cidade) setGuestCity(data.cidade);
+                                if (data.uf) setGuestState(data.uf);
+                              }
+                            } catch {}
+                            finally {
+                              setLoadingFunnelCep(false);
+                            }
+                          }
+                        }}
+                        placeholder="00000-000"
+                        maxLength={9}
+                        className="text-xs h-9 rounded-xl bg-white dark:bg-slate-900 font-mono"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-[11px] font-bold text-slate-700 dark:text-slate-300">Cidade / UF *</Label>
+                      <Input
+                        value={guestCity ? `${guestCity} / ${guestState}` : ""}
+                        onChange={e => {
+                          const [c, s] = e.target.value.split("/");
+                          if (c) setGuestCity(c.trim());
+                          if (s) setGuestState(s.trim());
+                        }}
+                        placeholder="Cidade / UF"
+                        className="text-xs h-9 rounded-xl bg-white dark:bg-slate-900"
+                      />
+                    </div>
+
+                    <div className="space-y-1 sm:col-span-2">
+                      <Label className="text-[11px] font-bold text-slate-700 dark:text-slate-300">Endereço Residencial (Rua, Número, Bairro) *</Label>
+                      <Input
+                        value={guestAddress}
+                        onChange={e => setGuestAddress(e.target.value)}
+                        placeholder="Ex: Av. Pelinca, 250 - Parque Tamandaré"
+                        className="text-xs h-9 rounded-xl bg-white dark:bg-slate-900"
+                      />
+                    </div>
+                  </div>
+
+                  <Button
+                    onClick={handleSavePostPaymentRegistration}
+                    disabled={isSavingPostRegistration}
+                    className="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs h-10 rounded-xl shadow-md gap-2"
+                  >
+                    <Check className="w-4 h-4" />
+                    <span>{isSavingPostRegistration ? "Salvando Cadastro..." : "Salvar Dados Cadastrais"}</span>
+                  </Button>
+                </div>
+              );
+            })()}
 
             {/* Ações Pós-Venda: Calendário & WhatsApp */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
