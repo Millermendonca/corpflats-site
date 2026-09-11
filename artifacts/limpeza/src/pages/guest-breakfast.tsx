@@ -1497,7 +1497,10 @@ export default function GuestBreakfast() {
                   <button
                     key={opt}
                     type="button"
-                    onClick={() => updateCurrentPref({ fruit: opt })}
+                    onClick={() => updateCurrentPref({ 
+                      fruit: opt,
+                      ...(opt === "Salada de frutas" && !currentPref.fruitSaladOption ? { fruitSaladOption: "Salada pura" } : {})
+                    })}
                     className={`p-3 rounded-xl text-xs font-bold border transition-all text-left truncate ${
                       currentPref.fruit === opt
                         ? "bg-emerald-600 text-white border-emerald-600 shadow-xs ring-1 ring-emerald-400"
@@ -1545,20 +1548,28 @@ export default function GuestBreakfast() {
                 <div className="p-3.5 bg-sky-50/80 border border-sky-200/80 rounded-2xl space-y-2 animate-in fade-in">
                   <span className="text-xs font-bold text-sky-900 block">Como prefere sua Salada de Frutas?</span>
                   <div className="grid grid-cols-3 gap-2">
-                    {["Salada pura", "Mel", "Leite condensado"].map(opt => (
-                      <button
-                        key={opt}
-                        type="button"
-                        onClick={() => updateCurrentPref({ fruitSaladOption: opt })}
-                        className={`p-2.5 rounded-xl text-xs font-bold border truncate transition-all ${
-                          currentPref.fruitSaladOption === opt 
-                            ? "bg-sky-600 text-white border-sky-600 shadow-xs" 
-                            : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
-                        }`}
-                      >
-                        {opt}
-                      </button>
-                    ))}
+                    {[
+                      { id: "Salada pura", label: "Salada pura", icon: "🥣" },
+                      { id: "Mel", label: "Mel", icon: "🍯" },
+                      { id: "Leite condensado", label: "Leite condensado", icon: "🥛" }
+                    ].map(item => {
+                      const isSelected = (currentPref.fruitSaladOption || "Salada pura") === item.id
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => updateCurrentPref({ fruitSaladOption: item.id })}
+                          className={`p-2.5 rounded-xl text-xs font-bold border truncate transition-all flex items-center justify-center gap-1.5 ${
+                            isSelected 
+                              ? "bg-sky-600 text-white border-sky-600 shadow-xs ring-1 ring-sky-400" 
+                              : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+                          }`}
+                        >
+                          <span>{item.icon}</span>
+                          <span>{isSelected ? "✓ " : ""}{item.label}</span>
+                        </button>
+                      )
+                    })}
                   </div>
                 </div>
               )}

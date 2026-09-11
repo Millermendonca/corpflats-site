@@ -11636,6 +11636,8 @@ const CANONICAL_BREAKFAST_ALIASES = [
   { pattern: /^manteiga\s+dupla$/i, canonical: "Manteiga dupla" },
   { pattern: /^requeij[aã]o(\s+cremoso)?$/i, canonical: "Requeijão" },
   { pattern: /^requeij[aã]o\s+duplo$/i, canonical: "Requeijão duplo" },
+  { pattern: /^mel(\s+de\s+abelha)?$/i, canonical: "Mel" },
+  { pattern: /^leite\s+condensado$/i, canonical: "Leite condensado" },
 
   // Doces & Biscoitos
   { pattern: /^bolo(\s+do\s+dia)?$/i, canonical: "Bolo do dia" },
@@ -12633,6 +12635,10 @@ app.get("/api/breakfast/consumption-summary", (req, res) => {
         usageMap["Mamão Papaya/Formosa"] = (usageMap["Mamão Papaya/Formosa"] || 0) + (0.5 * itQty);
       } else if (canonical === "Salada de frutas") {
         usageMap["Salada de Frutas Mista"] = (usageMap["Salada de Frutas Mista"] || 0) + itQty;
+      } else if (canonical === "Mel") {
+        usageMap["Mel de Abelha"] = (usageMap["Mel de Abelha"] || 0) + itQty;
+      } else if (canonical === "Leite condensado") {
+        usageMap["Leite Condensado"] = (usageMap["Leite Condensado"] || 0) + (20 * itQty);
       } else if (canonical === "Suco de laranja") {
         usageMap["Suco de Laranja Integral"] = (usageMap["Suco de Laranja Integral"] || 0) + (300 * itQty);
       } else if (canonical === "Água mineral") {
@@ -12850,7 +12856,19 @@ app.post("/api/breakfast/orders", (req, res) => {
       (go.sweets || []).forEach(sw => addCanonicalItem(sw, 1));
 
       // Frutas: normaliza para fruta canônica (ex: Banana, Maçã, Mamão, Salada de frutas)
-      if (go.fruit) addCanonicalItem(go.fruit, 1);
+      if (go.fruit) {
+        addCanonicalItem(go.fruit, 1);
+        if (go.fruit === "Salada de frutas") {
+          const opt = go.fruitSaladOption || "Salada pura";
+          if (opt === "Mel" || /mel/i.test(opt)) {
+            addCanonicalItem("Mel", 1);
+          } else if (opt === "Leite condensado" || /condensado/i.test(opt)) {
+            addCanonicalItem("Leite condensado", 1);
+          }
+        } else if (go.fruit === "Mamão" && go.fruitHoney) {
+          addCanonicalItem("Mel", 1);
+        }
+      }
 
       // Adoçante / Açúcar
       if (go.sweetener) addCanonicalItem(go.sweetener, 1);
@@ -12863,7 +12881,19 @@ app.post("/api/breakfast/orders", (req, res) => {
     (p.accompaniments || []).forEach(a => addCanonicalItem(a, gCount));
     (p.complements || []).forEach(c => addCanonicalItem(c, gCount));
     (p.sweets || []).forEach(s => addCanonicalItem(s, gCount));
-    if (p.fruit) addCanonicalItem(p.fruit, gCount);
+    if (p.fruit) {
+      addCanonicalItem(p.fruit, gCount);
+      if (p.fruit === "Salada de frutas") {
+        const opt = p.fruitSaladOption || "Salada pura";
+        if (opt === "Mel" || /mel/i.test(opt)) {
+          addCanonicalItem("Mel", gCount);
+        } else if (opt === "Leite condensado" || /condensado/i.test(opt)) {
+          addCanonicalItem("Leite condensado", gCount);
+        }
+      } else if (p.fruit === "Mamão" && p.fruitHoney) {
+        addCanonicalItem("Mel", gCount);
+      }
+    }
     if (p.sweetener) addCanonicalItem(p.sweetener, gCount);
   } else if (Array.isArray(items) && items.length > 0) {
     items.forEach(it => {
@@ -12934,6 +12964,8 @@ app.post("/api/breakfast/orders", (req, res) => {
       existing.isStandard = Boolean(isStandard);
       existing.orderMode = orderMode;
       existing.guestOrders = Array.isArray(guestOrders) ? guestOrders : null;
+      existing.guestChoices = Array.isArray(guestChoices) ? guestChoices : (Array.isArray(guestOrders) ? guestOrders : null);
+      existing.preferences = preferences || null;
       existing.items = finalItems;
       existing.notes = notes ? notes.trim() : "";
       existing.phone = phone ? phone.trim() : "";
@@ -12956,6 +12988,8 @@ app.post("/api/breakfast/orders", (req, res) => {
         isStandard: Boolean(isStandard),
         orderMode,
         guestOrders: Array.isArray(guestOrders) ? guestOrders : null,
+        guestChoices: Array.isArray(guestChoices) ? guestChoices : (Array.isArray(guestOrders) ? guestOrders : null),
+        preferences: preferences || null,
         items: finalItems,
         notes: notes ? notes.trim() : "",
         status: "pending",

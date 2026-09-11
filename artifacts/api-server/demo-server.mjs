@@ -11609,6 +11609,8 @@ const CANONICAL_BREAKFAST_ALIASES = [
   { pattern: /^manteiga\s+dupla$/i, canonical: "Manteiga dupla" },
   { pattern: /^requeij[aã]o(\s+cremoso)?$/i, canonical: "Requeijão" },
   { pattern: /^requeij[aã]o\s+duplo$/i, canonical: "Requeijão duplo" },
+  { pattern: /^mel(\s+de\s+abelha)?$/i, canonical: "Mel" },
+  { pattern: /^leite\s+condensado$/i, canonical: "Leite condensado" },
 
   // Doces & Biscoitos
   { pattern: /^bolo(\s+do\s+dia)?$/i, canonical: "Bolo do dia" },
