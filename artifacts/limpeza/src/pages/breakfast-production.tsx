@@ -352,7 +352,15 @@ export default function BreakfastProduction() {
       data.timeSlots.forEach((slot: any) => {
         lines.push(`\n*Horário: ${slot.time}* (${slot.orders?.length || 0} quarto${(slot.orders?.length || 0) > 1 ? 's' : ''})`)
         slot.orders?.forEach((o: any) => {
-          lines.push(`  → Apt ${o.roomNumber} (${o.guestCount} ${o.guestCount === 1 ? 'pessoa' : 'pessoas'}) - ${o.isStandard ? '☕ Padrão' : '🎨 Personalizado'} - ${o.clientName}`)
+          let fruitDetail = ""
+          if (o.orderMode === "individual" && o.guestChoices && o.guestChoices.length > 0) {
+            fruitDetail = " | " + o.guestChoices.map((gc: any) => 
+              `${gc.guestName ? gc.guestName.split(' ')[0] : `H${gc.guestIndex}`}: ${gc.fruit || 'Sem fruta'}${gc.fruitHoney ? ' (c/ mel)' : ''}${gc.fruit === 'Salada de frutas' ? ` (${gc.fruitSaladOption || 'Salada pura'})` : ''}`
+            ).join(", ")
+          } else if (o.preferences?.fruit) {
+            fruitDetail = ` | Fruta: ${o.preferences.fruit}${o.preferences.fruitHoney ? ' (c/ mel)' : ''}${o.preferences.fruit === 'Salada de frutas' ? ` (${o.preferences.fruitSaladOption || 'Salada pura'})` : ''}`
+          }
+          lines.push(`  → Apt ${o.roomNumber} (${o.guestCount} ${o.guestCount === 1 ? 'pessoa' : 'pessoas'}) - ${o.isStandard ? '☕ Padrão' : '🎨 Personalizado'} - ${o.clientName}${fruitDetail}`)
         })
       })
     }
