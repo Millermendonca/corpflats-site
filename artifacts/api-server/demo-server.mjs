@@ -6897,6 +6897,20 @@ app.put("/api/pms/reservations/:id", (req, res) => {
 
   r.updatedAt = new Date().toISOString();
   saveDatabase();
+
+  // Gatilho Automático: Se o veículo foi adicionado ou a placa alterada nesta edição da reserva
+  if (vehicleChanged && r.vehicle && r.vehicle.plate) {
+    try {
+      triggerGarageEmailNotification(db, saveDatabase, r, r.vehicle, {
+        trigger: "pms_reservation_updated",
+        source: "PMS Edição de Reserva",
+        force: true
+      });
+    } catch (gErr) {
+      console.warn("[GarageService] Erro ao disparar autorização de garagem na edição da reserva:", gErr.message);
+    }
+  }
+
   if (oldStatus === "pre_reserva" && r.status === "confirmada") {
     triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", r);
   } else {

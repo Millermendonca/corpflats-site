@@ -6627,6 +6627,31 @@ app.put("/api/pms/reservations/:id", (req, res) => {
     r.previousCheckoutDate = oldCheckout;
   }
 
+  const oldVehiclePlate = r.vehicle?.plate;
+  const vehicleBody = req.body.vehicle !== undefined ? req.body.vehicle : (req.body.vehiclePlate ? {
+    plate: req.body.vehiclePlate,
+    brand: req.body.vehicleBrand || r.vehicle?.brand || "",
+    model: req.body.vehicleModel || r.vehicle?.model || "",
+    color: req.body.vehicleColor || r.vehicle?.color || ""
+  } : undefined);
+
+  let vehicleChanged = false;
+  if (vehicleBody && vehicleBody.plate) {
+    const cleanPlate = String(vehicleBody.plate).toUpperCase().trim();
+    if (cleanPlate && cleanPlate !== oldVehiclePlate) {
+      r.vehicle = {
+        plate: cleanPlate,
+        brand: (vehicleBody.brand || "").trim(),
+        model: (vehicleBody.model || "").trim(),
+        color: (vehicleBody.color || "").trim(),
+        updatedAt: new Date().toISOString()
+      };
+      vehicleChanged = true;
+    }
+  } else if (vehicleBody === null) {
+    r.vehicle = null;
+  }
+
   const fields = [
     "flatId", "checkinDate", "checkoutDate", "checkinTime", "checkoutTime", "status", "channel", 
     "dailyRate", "totalAmount", "paidAmount", "paymentStatus", 
@@ -6872,6 +6897,20 @@ app.put("/api/pms/reservations/:id", (req, res) => {
 
   r.updatedAt = new Date().toISOString();
   saveDatabase();
+
+  // Gatilho Automático: Se o veículo foi adicionado ou a placa alterada nesta edição da reserva
+  if (vehicleChanged && r.vehicle && r.vehicle.plate) {
+    try {
+      triggerGarageEmailNotification(db, saveDatabase, r, r.vehicle, {
+        trigger: "pms_reservation_updated",
+        source: "PMS Edição de Reserva",
+        force: true
+      });
+    } catch (gErr) {
+      console.warn("[GarageService] Erro ao disparar autorização de garagem na edição da reserva:", gErr.message);
+    }
+  }
+
   if (oldStatus === "pre_reserva" && r.status === "confirmada") {
     triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", r);
   } else {
