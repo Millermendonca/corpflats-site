@@ -315,6 +315,21 @@ export default function PmsCalendar() {
   const [crmGuests, setCrmGuests] = useState<any[]>([])
   const [formGuestId, setFormGuestId] = useState("")
   const [guestSearchFilter, setGuestSearchFilter] = useState("")
+  const [showGuestSuggestions, setShowGuestSuggestions] = useState(false)
+  const guestSuggestionsRef = useRef<HTMLDivElement>(null)
+
+  // Quick Company Creation Modal States
+  const [newCompanyModalOpen, setNewCompanyModalOpen] = useState(false)
+  const [newCompCorporateName, setNewCompCorporateName] = useState("")
+  const [newCompTradeName, setNewCompTradeName] = useState("")
+  const [newCompCnpj, setNewCompCnpj] = useState("")
+  const [newCompFinancialEmail, setNewCompFinancialEmail] = useState("")
+  const [newCompPhone, setNewCompPhone] = useState("")
+  const [newCompContactPerson, setNewCompContactPerson] = useState("")
+  const [newCompBillingTerms, setNewCompBillingTerms] = useState("30 dias")
+  const [newCompNotes, setNewCompNotes] = useState("")
+  const [savingNewCompany, setSavingNewCompany] = useState(false)
+  const [loadingNewCompanyCnpj, setLoadingNewCompanyCnpj] = useState(false)
 
   // Guests individual fields
   const [formGuest1Cpf, setFormGuest1Cpf] = useState("")
@@ -1323,11 +1338,14 @@ export default function PmsCalendar() {
     setFormGuest3Phone("")
     setFormGuest3Email("")
     setFormChannel("whatsapp")
+    const rangeNights = Math.max(1, differenceInDays(parseISO(cout), parseISO(cin))) || 1
+    const initialTotal = rangeNights * 250
     setFormDailyRate("250")
-    setFormTotalAmount("")
-    setFormPaidAmount("0")
-    setFormPaymentStatus("pendente")
-    setFormStatus("pre_reserva")
+    setFormTotalAmount(String(initialTotal))
+    setFormPaidAmount(String(initialTotal)) // 100% pago como padrão!
+    setFormPaymentStatus("pago_total")
+    setFormStatus("confirmada")
+    setShowGuestSuggestions(false)
     setFormNotes("")
     setFormEarlyCheckin(false)
     setFormReceptionNotes("")
@@ -1457,11 +1475,14 @@ export default function PmsCalendar() {
     setFormGuest3Phone("")
     setFormGuest3Email("")
     setFormChannel("whatsapp")
+    const initialNights = 1
+    const initialTotal = initialNights * 250
     setFormDailyRate("250")
-    setFormTotalAmount("")
-    setFormPaidAmount("0")
-    setFormPaymentStatus("pendente")
-    setFormStatus("pre_reserva")
+    setFormTotalAmount(String(initialTotal))
+    setFormPaidAmount(String(initialTotal)) // 100% pago como padrão!
+    setFormPaymentStatus("pago_total")
+    setFormStatus("confirmada")
+    setShowGuestSuggestions(false)
     setFormNotes("")
     setFormEarlyCheckin(false)
     setFormReceptionNotes("")
@@ -1602,6 +1623,115 @@ export default function PmsCalendar() {
     const cleanQ = q.replace(/\D/g, "")
     return name.includes(q) || (cleanQ && doc.includes(cleanQ)) || (cleanQ && phone.includes(cleanQ))
   })
+
+  // Live real-time filtered matches as the user types guest name
+  const liveGuestMatches = useMemo(() => {
+    const query = (formGuestName || "").toLowerCase().trim()
+    if (!query) return []
+    const cleanQ = query.replace(/\D/g, "")
+    return crmGuests.filter(g => {
+      const name = (g.name || g.fullName || "").toLowerCase()
+      const doc = (g.documentNumber || g.document || "").replace(/\D/g, "")
+      const phone = (g.phone || "").replace(/\D/g, "")
+      const comp = (g.companyName || "").toLowerCase()
+      return name.includes(query) || (cleanQ && doc.includes(cleanQ)) || (cleanQ && phone.includes(cleanQ)) || comp.includes(query)
+    }).slice(0, 8)
+  }, [crmGuests, formGuestName])
+
+  // Close live guest suggestions when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (guestSuggestionsRef.current && !guestSuggestionsRef.current.contains(event.target as Node)) {
+        setShowGuestSuggestions(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [])
+
+  // Handlers para Cadastro Rápido de Empresa Parceira
+  const handleOpenNewCompanyModal = () => {
+    setNewCompCorporateName("")
+    setNewCompTradeName("")
+    setNewCompCnpj("")
+    setNewCompFinancialEmail("")
+    setNewCompPhone("")
+    setNewCompContactPerson("")
+    setNewCompBillingTerms("30 dias")
+    setNewCompNotes("")
+    setNewCompanyModalOpen(true)
+  }
+
+  const handleLookupNewCompanyCnpj = async (rawCnpj: string) => {
+    const clean = rawCnpj.replace(/\D/g, "")
+    if (clean.length === 14) {
+      setLoadingNewCompanyCnpj(true)
+      try {
+        const res = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${clean}`)
+        if (res.ok) {
+          const resData = await res.json()
+          if (resData.razao_social) setNewCompCorporateName(resData.razao_social)
+          if (resData.nome_fantasia) setNewCompTradeName(resData.nome_fantasia)
+          if (resData.email) setNewCompFinancialEmail(resData.email)
+          if (resData.ddd_telefone_1) setNewCompPhone(resData.ddd_telefone_1)
+          toast({
+            title: "Dados da Empresa Localizados!",
+            description: `${resData.razao_social || resData.nome_fantasia} carregada da Receita Federal.`
+          })
+        }
+      } catch {}
+      setLoadingNewCompanyCnpj(false)
+    }
+  }
+
+  const handleSaveNewCompany = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!newCompCorporateName.trim()) {
+      toast({ title: "Razão Social Obrigatória", description: "Informe o nome ou razão social da empresa.", variant: "destructive" })
+      return
+    }
+
+    setSavingNewCompany(true)
+    try {
+      const payload = {
+        corporateName: newCompCorporateName.trim(),
+        tradeName: (newCompTradeName || newCompCorporateName).trim(),
+        cnpj: newCompCnpj.trim() || "Isento / Não informado",
+        financialEmail: newCompFinancialEmail.trim(),
+        phone: newCompPhone.trim(),
+        contactPerson: newCompContactPerson.trim(),
+        billingTerms: newCompBillingTerms.trim(),
+        notes: newCompNotes.trim()
+      }
+
+      const res = await fetch("/api/companies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        credentials: "include"
+      })
+
+      if (res.ok) {
+        const createdComp = await res.json()
+        setCompanies(prev => [...prev.filter(c => c.id !== createdComp.id), createdComp])
+        fetchCompanies()
+        setFormCompanyId(String(createdComp.id))
+        setFormCompanyName(createdComp.tradeName || createdComp.corporateName)
+        setNewCompanyModalOpen(false)
+        toast({
+          title: "Empresa Cadastrada com Sucesso!",
+          description: `${createdComp.tradeName || createdComp.corporateName} foi cadastrada e vinculada a esta reserva.`
+        })
+      } else {
+        const errJson = await res.json()
+        toast({ title: "Erro ao cadastrar empresa", description: errJson.error || "Verifique os dados.", variant: "destructive" })
+      }
+    } catch (err: any) {
+      toast({ title: "Erro de comunicação", description: err.message, variant: "destructive" })
+    } finally {
+      setSavingNewCompany(false)
+    }
+  }
 
   const calculateTotal = () => {
     try {
@@ -3387,45 +3517,106 @@ export default function PmsCalendar() {
                     <div className="p-2.5 bg-background border border-primary/20 rounded-xl space-y-2 mt-2">
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] uppercase font-black text-primary block">
-                          Selecione o Hóspede Cadastrado (CRM 360°)
+                          Buscar Hóspede Cadastrado (CRM 360°)
                         </span>
                         {formGuestId && formGuestId !== "manual" && (
                           <button
                             type="button"
                             onClick={() => {
-                              setFormGuestId("")
+                              setFormGuestId("manual")
                               setFormGuestName("")
                               setFormGuest1Cpf("")
                               setFormGuestPhone("")
                               setFormGuestEmail("")
                             }}
-                            className="text-[10px] text-muted-foreground hover:text-rose-600 underline font-semibold transition-colors"
+                            className="text-[10px] text-muted-foreground hover:text-rose-600 underline font-semibold transition-colors cursor-pointer"
                           >
-                            Limpar seleção
+                            Desvincular / Novo Hóspede
                           </button>
                         )}
                       </div>
 
-                      {crmGuests.length > 5 && (
-                        <div className="relative">
-                          <Input
-                            value={guestSearchFilter}
-                            onChange={e => setGuestSearchFilter(e.target.value)}
-                            placeholder="🔍 Filtrar por nome, CPF ou WhatsApp..."
-                            className="text-xs h-7 mb-1 bg-muted/40"
-                          />
-                        </div>
-                      )}
+                      {/* Dropdown com filtro em tempo real ao digitar */}
+                      <div className="relative">
+                        <Input
+                          value={guestSearchFilter}
+                          onChange={e => setGuestSearchFilter(e.target.value)}
+                          placeholder="🔍 Digite para filtrar no CRM por nome, CPF ou WhatsApp..."
+                          className="text-xs h-8 bg-muted/40"
+                        />
+                        {guestSearchFilter.trim() && (
+                          <div className="absolute left-0 right-0 top-full mt-1 bg-popover/95 backdrop-blur-sm border border-border shadow-2xl rounded-2xl z-50 overflow-hidden max-h-56 overflow-y-auto animate-in fade-in zoom-in-95">
+                            <div className="px-2.5 py-1 bg-muted/60 text-[10px] font-bold text-muted-foreground flex items-center justify-between border-b">
+                              <span>Resultados no CRM ({filteredGuests.length})</span>
+                              <span className="text-[9px]">Clique para selecionar</span>
+                            </div>
 
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setFormGuestId("manual")
+                                setFormGuestName(guestSearchFilter)
+                                setGuestSearchFilter("")
+                              }}
+                              className="w-full text-left p-2 hover:bg-primary/10 text-primary font-bold text-xs flex items-center gap-2 border-b cursor-pointer"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>➕ Cadastrar "{guestSearchFilter}" como Novo Hóspede</span>
+                            </button>
+
+                            {filteredGuests.length > 0 ? (
+                              <div className="divide-y divide-border/40">
+                                {filteredGuests.slice(0, 10).map((g: any) => (
+                                  <button
+                                    key={g.id}
+                                    type="button"
+                                    onClick={() => {
+                                      handleSelectGuest(String(g.id))
+                                      setGuestSearchFilter("")
+                                    }}
+                                    className="w-full text-left p-2 hover:bg-primary/10 transition-colors flex items-start gap-2 group cursor-pointer"
+                                  >
+                                    <div className="w-6 h-6 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
+                                      <User className="w-3.5 h-3.5" />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="text-xs font-bold text-foreground truncate">
+                                        {g.name || g.fullName}
+                                      </div>
+                                      <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 flex-wrap">
+                                        {g.documentNumber || g.document ? (
+                                          <span>CPF: {g.documentNumber || g.document}</span>
+                                        ) : null}
+                                        {g.phone ? (
+                                          <span>• Tel: {g.phone}</span>
+                                        ) : null}
+                                        {g.companyName ? (
+                                          <span className="text-indigo-600 dark:text-indigo-400 font-semibold">• {g.companyName}</span>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                  </button>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="p-3 text-center text-xs text-muted-foreground">
+                                Nenhum hóspede localizado com esse termo.
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Lista Suspensa Select tradicional com opção de Novo Hóspede */}
                       <Select value={formGuestId} onValueChange={handleSelectGuest}>
                         <SelectTrigger className="text-xs h-8">
-                          <SelectValue placeholder="Selecione um Hóspede Cadastrado no CRM..." />
+                          <SelectValue placeholder="Ou selecione um Hóspede Cadastrado..." />
                         </SelectTrigger>
                         <SelectContent className="max-h-64">
                           <SelectItem value="manual" className="text-primary font-bold">
                             ➕ Novo Hóspede (Digitar manualmente)
                           </SelectItem>
-                          {filteredGuests.map((g: any) => (
+                          {crmGuests.map((g: any) => (
                             <SelectItem key={g.id} value={String(g.id)}>
                               <span className="font-semibold">{g.name || g.fullName}</span>
                               {g.documentNumber || g.document ? ` • CPF: ${g.documentNumber || g.document}` : ""}
@@ -3436,8 +3627,8 @@ export default function PmsCalendar() {
                         </SelectContent>
                       </Select>
                       {formGuestId && formGuestId !== "manual" && (
-                        <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1 mt-0.5">
-                          <CheckCircle2 className="w-3 h-3" /> Hóspede carregado do CRM. Dados preenchidos abaixo.
+                        <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1 mt-0.5">
+                          <CheckCircle2 className="w-3.5 h-3.5" /> Hóspede vinculado do CRM ({formGuestName}). Dados preenchidos abaixo.
                         </div>
                       )}
                     </div>
@@ -3457,23 +3648,50 @@ export default function PmsCalendar() {
                   {/* Detalhes do Solicitante Empresa */}
                   {formRequesterType === "company" && (
                     <div className="p-2.5 bg-background border border-primary/20 rounded-xl space-y-2 mt-2">
-                      <span className="text-[10px] uppercase font-black text-primary block">Selecione a Empresa Cadastrada</span>
-                      <Select value={formCompanyId} onValueChange={(val) => {
-                        setFormCompanyId(val)
-                        const c = companies.find(comp => String(comp.id) === val)
-                        if (c) setFormCompanyName(c.tradeName || c.corporateName)
-                      }}>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] uppercase font-black text-primary block">Selecione a Empresa Cadastrada</span>
+                        <button
+                          type="button"
+                          onClick={handleOpenNewCompanyModal}
+                          className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline font-bold flex items-center gap-1 cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" /> Cadastrar Empresa
+                        </button>
+                      </div>
+
+                      <Select 
+                        value={formCompanyId} 
+                        onValueChange={(val) => {
+                          if (val === "__NEW_COMPANY__") {
+                            handleOpenNewCompanyModal();
+                            return;
+                          }
+                          setFormCompanyId(val);
+                          const c = companies.find(comp => String(comp.id) === val);
+                          if (c) setFormCompanyName(c.tradeName || c.corporateName);
+                        }}
+                      >
                         <SelectTrigger className="text-xs h-8">
                           <SelectValue placeholder="Selecione a Empresa Parceira..." />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent className="max-h-64">
+                          <SelectItem value="__NEW_COMPANY__" className="text-indigo-600 dark:text-indigo-400 font-bold cursor-pointer bg-indigo-50/60 dark:bg-indigo-950/40">
+                            ➕ Cadastrar Nova Empresa Parceira...
+                          </SelectItem>
                           {companies.map((c: any) => (
                             <SelectItem key={c.id} value={String(c.id)}>
-                              {c.tradeName || c.corporateName} • CNPJ: {c.cnpj}
+                              <span className="font-semibold">{c.tradeName || c.corporateName}</span>
+                              {c.cnpj ? ` • CNPJ: ${c.cnpj}` : ""}
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
+
+                      {formCompanyId && (
+                        <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1 mt-0.5">
+                          <CheckCircle2 className="w-3 h-3" /> Empresa vinculada para faturamento corporativo ({formCompanyName}).
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -3512,7 +3730,90 @@ export default function PmsCalendar() {
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
-                      <Input value={formGuestName} onChange={e => setFormGuestName(e.target.value)} placeholder="Nome Completo *" required className="text-xs h-8" />
+                      <div className="relative" ref={guestSuggestionsRef}>
+                        <Input 
+                          value={formGuestName} 
+                          onChange={e => {
+                            setFormGuestName(e.target.value)
+                            setShowGuestSuggestions(true)
+                          }} 
+                          onFocus={() => {
+                            if (formGuestName.trim().length > 0) setShowGuestSuggestions(true)
+                          }}
+                          placeholder="Nome Completo *" 
+                          required 
+                          className="text-xs h-8" 
+                        />
+
+                        {/* Floating live matches dropdown when typing guest name */}
+                        {showGuestSuggestions && formGuestName.trim().length > 0 && (
+                          <div className="absolute left-0 right-0 top-full mt-1 bg-popover/95 backdrop-blur-sm border border-border shadow-2xl rounded-2xl z-50 overflow-hidden max-h-64 overflow-y-auto animate-in fade-in zoom-in-95">
+                            <div className="px-2.5 py-1.5 bg-muted/60 text-[10px] font-bold text-muted-foreground flex items-center justify-between border-b">
+                              <span>Hóspedes no CRM ({liveGuestMatches.length})</span>
+                              <span className="text-[9px]">Clique para preencher</span>
+                            </div>
+
+                            {liveGuestMatches.length > 0 ? (
+                              <div className="divide-y divide-border/40">
+                                {liveGuestMatches.map((g: any) => (
+                                  <button
+                                    key={g.id}
+                                    type="button"
+                                    onClick={() => {
+                                      handleSelectGuest(String(g.id))
+                                      setShowGuestSuggestions(false)
+                                    }}
+                                    className="w-full text-left p-2 hover:bg-primary/10 transition-colors flex items-start gap-2 group cursor-pointer"
+                                  >
+                                    <div className="w-6 h-6 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
+                                      <User className="w-3.5 h-3.5" />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="text-xs font-bold text-foreground truncate">
+                                        {g.name || g.fullName}
+                                      </div>
+                                      <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 flex-wrap">
+                                        {g.documentNumber || g.document ? (
+                                          <span>CPF: {g.documentNumber || g.document}</span>
+                                        ) : null}
+                                        {g.phone ? (
+                                          <span>• Tel: {g.phone}</span>
+                                        ) : null}
+                                        {g.companyName ? (
+                                          <span className="text-indigo-600 dark:text-indigo-400 font-semibold">• {g.companyName}</span>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                  </button>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="p-3 text-center text-[11px] text-muted-foreground">
+                                Nenhum hóspede localizado no CRM com este nome.
+                              </div>
+                            )}
+
+                            {/* Ação para registrar como Novo Hóspede */}
+                            <div className="p-1.5 bg-muted/30 border-t border-border">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setFormGuestId("manual")
+                                  setShowGuestSuggestions(false)
+                                  toast({
+                                    title: "Novo Hóspede",
+                                    description: `Preencha os dados de '${formGuestName}' para registrá-lo.`
+                                  })
+                                }}
+                                className="w-full py-1.5 px-2 text-[11px] font-bold text-primary hover:bg-primary/10 rounded-lg flex items-center gap-1.5 justify-center transition-colors cursor-pointer"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                                <span>Cadastrar como Novo Hóspede: "{formGuestName}"</span>
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                       <Input value={formGuest1Cpf} onChange={e => setFormGuest1Cpf(e.target.value)} placeholder="CPF / Documento" className="text-xs h-8" />
                     </div>
                     <div className="grid grid-cols-2 gap-2">
@@ -3656,9 +3957,8 @@ export default function PmsCalendar() {
                             if (val !== "") {
                               const newTot = nights * (Number(val) || 0);
                               setFormTotalAmount(String(newTot));
-                              if (formPaymentStatus === "pago_total" || formChannel === "booking" || formChannel === "airbnb") {
-                                setFormPaidAmount(String(newTot));
-                              }
+                              setFormPaidAmount(String(newTot)); // 100% pago como padrão!
+                              setFormPaymentStatus(newTot > 0 ? "pago_total" : "pendente");
                             }
                           } catch {}
                         }} 
@@ -3671,14 +3971,14 @@ export default function PmsCalendar() {
                     <div className="space-y-1">
                       <Label className="text-xs font-semibold">Valor Total (R$)</Label>
                       <Input 
-                        type="number"
+                        type="number" 
                         value={formTotalAmount !== "" ? formTotalAmount : (calculateTotal() > 0 ? String(calculateTotal()) : "")}
                         onChange={e => {
                           const val = e.target.value;
                           setFormTotalAmount(val);
-                          if (formPaymentStatus === "pago_total" || formChannel === "booking" || formChannel === "airbnb") {
-                            setFormPaidAmount(val);
-                          }
+                          setFormPaidAmount(val); // 100% pago como padrão!
+                          const numVal = Number(val) || 0;
+                          setFormPaymentStatus(numVal > 0 ? "pago_total" : "pendente");
                           try {
                             const d1 = parseISO(formCheckin);
                             const d2 = parseISO(formCheckout);
@@ -5391,6 +5691,135 @@ export default function PmsCalendar() {
                 </DialogFooter>
               </div>
             )}
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal: Cadastro Rápido de Nova Empresa Parceira */}
+        <Dialog open={newCompanyModalOpen} onOpenChange={setNewCompanyModalOpen}>
+          <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl shadow-2xl">
+            <DialogHeader>
+              <DialogTitle className="text-base font-black flex items-center gap-2">
+                <Building2 className="w-5 h-5 text-indigo-600" />
+                <span>Nova Empresa Parceira (PJ / Faturamento)</span>
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                Cadastre a empresa corporativa e vincule diretamente a esta reserva.
+              </DialogDescription>
+            </DialogHeader>
+
+            <form onSubmit={handleSaveNewCompany} className="space-y-3 pt-2 text-xs">
+              <div className="space-y-1">
+                <Label className="font-bold flex items-center justify-between">
+                  <span>CNPJ (Opcional)</span>
+                  {loadingNewCompanyCnpj && (
+                    <span className="text-[10px] text-indigo-600 flex items-center gap-1 font-normal">
+                      <RefreshCw className="w-3 h-3 animate-spin" /> Buscando na Receita Federal...
+                    </span>
+                  )}
+                </Label>
+                <Input 
+                  value={newCompCnpj} 
+                  onChange={e => {
+                    setNewCompCnpj(e.target.value)
+                    handleLookupNewCompanyCnpj(e.target.value)
+                  }} 
+                  placeholder="00.000.000/0000-00 (Opcional)"
+                  className="h-8 text-xs rounded-xl font-mono" 
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label className="font-bold">Razão Social / Nome da Empresa *</Label>
+                <Input 
+                  value={newCompCorporateName} 
+                  onChange={e => setNewCompCorporateName(e.target.value)} 
+                  required 
+                  placeholder="Ex: Petrobras Transporte S.A."
+                  className="h-8 text-xs rounded-xl" 
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label className="font-bold">Nome Fantasia (Opcional)</Label>
+                <Input 
+                  value={newCompTradeName} 
+                  onChange={e => setNewCompTradeName(e.target.value)} 
+                  placeholder="Ex: Transpetro"
+                  className="h-8 text-xs rounded-xl" 
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="font-bold">E-mail Financeiro</Label>
+                  <Input 
+                    type="email"
+                    value={newCompFinancialEmail} 
+                    onChange={e => setNewCompFinancialEmail(e.target.value)} 
+                    placeholder="financeiro@empresa.com"
+                    className="h-8 text-xs rounded-xl" 
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="font-bold">Telefone / WhatsApp</Label>
+                  <Input 
+                    value={newCompPhone} 
+                    onChange={e => setNewCompPhone(e.target.value)} 
+                    placeholder="(22) 99999-9999"
+                    className="h-8 text-xs rounded-xl" 
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="font-bold">Responsável / Contato</Label>
+                  <Input 
+                    value={newCompContactPerson} 
+                    onChange={e => setNewCompContactPerson(e.target.value)} 
+                    placeholder="Ex: Roberto Silva"
+                    className="h-8 text-xs rounded-xl" 
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="font-bold">Condição de Faturamento</Label>
+                  <Input 
+                    value={newCompBillingTerms} 
+                    onChange={e => setNewCompBillingTerms(e.target.value)} 
+                    placeholder="Ex: 30 dias"
+                    className="h-8 text-xs rounded-xl" 
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="font-bold">Observações (Opcional)</Label>
+                <Input 
+                  value={newCompNotes} 
+                  onChange={e => setNewCompNotes(e.target.value)} 
+                  placeholder="Ex: Centro de Custo, regras de faturamento..."
+                  className="h-8 text-xs rounded-xl" 
+                />
+              </div>
+
+              <DialogFooter className="gap-2 pt-3 border-t border-border">
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  onClick={() => setNewCompanyModalOpen(false)} 
+                  className="rounded-xl h-8 text-xs font-bold"
+                >
+                  Cancelar
+                </Button>
+                <Button 
+                  type="submit" 
+                  disabled={savingNewCompany} 
+                  className="rounded-xl h-8 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs"
+                >
+                  {savingNewCompany ? "Salvando..." : "Salvar e Vincular à Reserva"}
+                </Button>
+              </DialogFooter>
+            </form>
           </DialogContent>
         </Dialog>
 

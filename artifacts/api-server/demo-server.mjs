@@ -12324,15 +12324,15 @@ app.post("/api/companies", (req, res) => {
     notes = ""
   } = req.body;
 
-  if (!corporateName || !cnpj) {
-    return res.status(400).json({ error: "Razão Social e CNPJ são obrigatórios." });
+  if (!corporateName || !corporateName.trim()) {
+    return res.status(400).json({ error: "Razão Social é obrigatória." });
   }
 
   const newCompany = {
     id: db.companies.length > 0 ? Math.max(...db.companies.map(c => c.id)) + 1 : 1,
     corporateName: corporateName.trim(),
     tradeName: (tradeName || corporateName).trim(),
-    cnpj: cnpj.trim(),
+    cnpj: (cnpj || "Isento / Não informado").trim(),
     stateRegistration: stateRegistration.trim(),
     municipalRegistration: municipalRegistration.trim(),
     financialEmail: financialEmail.trim(),

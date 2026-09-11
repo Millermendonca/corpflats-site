@@ -36,7 +36,7 @@ import { fileURLToPath } from "url";
 import pg from "pg";
 import { uploadImageToStorage } from "./storage-service.mjs";
 import { MicrosoftGraphService } from "./microsoft-graph-service.mjs";
-import { initWhatsAppEngine, triggerImmediateWhatsApp, cleanWhatsAppPhone } from "./zapi-service.mjs";
+import { initWhatsAppEngine, triggerImmediateWhatsApp, triggerRoomReadyWhatsApp, cleanWhatsAppPhone } from "./zapi-service.mjs";
 import { initMaidAutomationEngine } from "./maid-automation-service.mjs";
 import { 
   getSmtpConfig, 
@@ -4398,6 +4398,15 @@ app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
     source: "cleaning_dashboard"
   });
 
+  // ── WhatsApp: Notificar hóspedes que chegam hoje neste flat ─────────────────
+  if (status === "clean") {
+    const flatNum = flat ? flat.number : (item.flatNumber || String(item.flatId));
+    const reqBaseUrl = `${req.protocol}://${req.get("host")}`;
+    triggerRoomReadyWhatsApp(db, saveDatabase, item.flatId, flatNum, reqBaseUrl).catch(e =>
+      console.warn("[Room Ready WhatsApp] Erro ao notificar:", e.message)
+    );
+  }
+
   res.json({
     ...item,
     flatNumber: flat ? flat.number : String(item.flatId),
@@ -6573,7 +6582,10 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   if (oldStatus === "pre_reserva" && r.status === "confirmada") {
     triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", r);
   } else {
+    // Passa as alterações como contexto temporário para resolver a tag {{resumo_alteracoes}}
+    r._changesContext = diffs;
     triggerImmediateWhatsApp(db, saveDatabase, "reservation_updated", r);
+    delete r._changesContext; // Remove o campo temporário após o disparo
   }
   res.json(r);
 });
@@ -12312,15 +12324,15 @@ app.post("/api/companies", (req, res) => {
     notes = ""
   } = req.body;
 
-  if (!corporateName || !cnpj) {
-    return res.status(400).json({ error: "Razão Social e CNPJ são obrigatórios." });
+  if (!corporateName || !corporateName.trim()) {
+    return res.status(400).json({ error: "Razão Social é obrigatória." });
   }
 
   const newCompany = {
     id: db.companies.length > 0 ? Math.max(...db.companies.map(c => c.id)) + 1 : 1,
     corporateName: corporateName.trim(),
     tradeName: (tradeName || corporateName).trim(),
-    cnpj: cnpj.trim(),
+    cnpj: (cnpj || "Isento / Não informado").trim(),
     stateRegistration: stateRegistration.trim(),
     municipalRegistration: municipalRegistration.trim(),
     financialEmail: financialEmail.trim(),
