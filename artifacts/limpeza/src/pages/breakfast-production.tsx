@@ -912,11 +912,30 @@ export default function BreakfastProduction() {
                                   Itens Totais do Pedido:
                                 </span>
                                 <div className="flex flex-wrap gap-1">
-                                  {order.items?.map((it: any, idx: number) => (
-                                    <Badge key={idx} variant="outline" className="text-[11px] py-0.5 px-2 bg-muted/30">
-                                      {it.quantity}x {it.name}
-                                    </Badge>
-                                  ))}
+                                  {order.items?.map((it: any, idx: number) => {
+                                    let extraLabel = ""
+                                    if (it.name === "Salada de frutas") {
+                                      const opt = order.preferences?.fruitSaladOption || order.guestChoices?.find((g: any) => g.fruit === "Salada de frutas")?.fruitSaladOption
+                                      extraLabel = opt ? ` (${opt})` : " (Salada pura)"
+                                    } else if (it.name === "Mamão") {
+                                      const hasHoney = order.preferences?.fruitHoney || order.guestChoices?.some((g: any) => g.fruit === "Mamão" && g.fruitHoney)
+                                      if (hasHoney) extraLabel = " (c/ mel)"
+                                    }
+                                    const isHighlight = it.name === "Mel" || it.name === "Leite condensado" || extraLabel.includes("Mel") || extraLabel.includes("Leite")
+                                    return (
+                                      <Badge 
+                                        key={idx} 
+                                        variant="outline" 
+                                        className={`text-[11px] py-0.5 px-2 ${
+                                          isHighlight 
+                                            ? "bg-amber-100/90 border-amber-300 text-amber-900 dark:bg-amber-950/40 dark:border-amber-700 dark:text-amber-200 font-bold" 
+                                            : "bg-muted/30"
+                                        }`}
+                                      >
+                                        {it.quantity}x {it.name === "Mel" ? "🍯 Mel" : it.name === "Leite condensado" ? "🥛 Leite condensado" : it.name}{extraLabel}
+                                      </Badge>
+                                    )
+                                  })}
                                 </div>
                               </div>
 
@@ -940,7 +959,7 @@ export default function BreakfastProduction() {
                                             ...(gc.accompaniments || []),
                                             ...(gc.complements || []),
                                             ...(gc.sweets || []),
-                                            gc.fruit ? `${gc.fruit}${gc.fruitHoney ? ' (c/ mel)' : ''}${gc.fruitSaladOption ? ` (${gc.fruitSaladOption})` : ''}` : null,
+                                            gc.fruit ? `${gc.fruit}${gc.fruitHoney ? ' (c/ mel)' : ''}${gc.fruit === 'Salada de frutas' ? ` (${gc.fruitSaladOption || 'Salada pura'})` : (gc.fruitSaladOption ? ` (${gc.fruitSaladOption})` : '')}` : null,
                                             gc.sweetener
                                           ].filter(Boolean).filter(v => v !== 'Não quero café' && v !== 'Nenhuma outra bebida' && v !== 'Nenhuma fruta' && v !== 'Não quero nenhum desses' && v !== 'Nenhum').join(", ")}
                                         </span>
@@ -951,12 +970,37 @@ export default function BreakfastProduction() {
                               )}
 
                               {/* Conditional questions / details (Ex: Mel no mamão, salada de frutas) */}
-                              {order.preferences && (
+                              {order.orderMode === "individual" && order.guestChoices && order.guestChoices.length > 0 && !order.isStandard ? (
+                                <div className="p-2 bg-amber-500/10 rounded-xl border border-amber-500/20 text-[11px] space-y-1">
+                                  <span className="font-bold text-amber-800 dark:text-amber-300 block text-[10px] uppercase">
+                                    Frutas & Adoçamento por Hóspede:
+                                  </span>
+                                  <div className="space-y-0.5">
+                                    {order.guestChoices.map((gc: any, idx: number) => (
+                                      <div key={idx} className="flex items-center gap-1">
+                                        <span className="font-bold text-amber-900 dark:text-amber-200">
+                                          👤 {gc.guestName ? gc.guestName.split(' ')[0] : `Hóspede ${gc.guestIndex}`}:
+                                        </span>
+                                        <span>
+                                          {gc.fruit || "Sem fruta"}
+                                          {gc.fruitHoney ? " (com mel)" : ""}
+                                          {gc.fruit === "Salada de frutas" ? ` (${gc.fruitSaladOption || "Salada pura"})` : ""}
+                                          {gc.sweetener ? ` • ${gc.sweetener}` : ""}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : order.preferences && !order.isStandard ? (
                                 <div className="p-2 bg-amber-500/10 rounded-xl border border-amber-500/20 text-[11px] space-y-1">
                                   {order.preferences.fruit && (
                                     <div>
                                       <span className="font-bold text-amber-800 dark:text-amber-300">Fruta: </span>
-                                      <span>{order.preferences.fruit} {order.preferences.fruitHoney ? "(com mel)" : ""} {order.preferences.fruitSaladOption ? `(${order.preferences.fruitSaladOption})` : ""}</span>
+                                      <span>
+                                        {order.preferences.fruit}
+                                        {order.preferences.fruitHoney ? " (com mel)" : ""}
+                                        {order.preferences.fruit === "Salada de frutas" ? ` (${order.preferences.fruitSaladOption || "Salada pura"})` : (order.preferences.fruitSaladOption ? ` (${order.preferences.fruitSaladOption})` : "")}
+                                      </span>
                                     </div>
                                   )}
                                   {order.preferences.sweetener && (
@@ -966,7 +1010,7 @@ export default function BreakfastProduction() {
                                     </div>
                                   )}
                                 </div>
-                              )}
+                              ) : null}
 
                               {order.notes && (
                                 <div className="p-2 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 rounded-xl text-xs text-rose-800 dark:text-rose-300">

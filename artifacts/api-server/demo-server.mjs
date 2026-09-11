@@ -1158,8 +1158,12 @@ async function loadDatabase() {
               "INSERT INTO system_store (key, value, updated_at) VALUES ('db_state', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()",
               [JSON.stringify(pgLoaded)]
             ).catch(e => console.warn("[PostgreSQL] Erro ao sincronizar tarefas preventivas na nuvem:", e.message));
+          } else if ((!pgLoaded.periodicExecutions || pgLoaded.periodicExecutions.length === 0) && (db.periodicExecutions && db.periodicExecutions.length > 0)) {
+            pgLoaded.periodicExecutions = db.periodicExecutions;
           }
           Object.assign(db, pgLoaded);
+          if (!Array.isArray(db.periodicTasks)) db.periodicTasks = [];
+          if (!Array.isArray(db.periodicExecutions)) db.periodicExecutions = [];
           console.log("[PostgreSQL] Estado restaurado da nuvem com sucesso!");
           sanitizeAndRecoverCleanings();
           sanitizeLostAndFound();
@@ -2438,6 +2442,31 @@ const BRAZIL_DATE_FORMATTER = new Intl.DateTimeFormat("en-CA", {
 
 function getTodayStr() {
   return BRAZIL_DATE_FORMATTER.format(new Date());
+}
+
+function getExecutionDateStr(isoString) {
+  if (!isoString) return getTodayStr();
+  try {
+    return BRAZIL_DATE_FORMATTER.format(new Date(isoString));
+  } catch {
+    return String(isoString).substring(0, 10);
+  }
+}
+
+function addDaysToDateStr(dateStr, days) {
+  const parts = String(dateStr).substring(0, 10).split("-").map(Number);
+  if (parts.length < 3 || isNaN(parts[0])) return String(dateStr).substring(0, 10);
+  const d = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], 12, 0, 0));
+  d.setUTCDate(d.getUTCDate() + Number(days));
+  return d.toISOString().substring(0, 10);
+}
+
+function calcDaysDiff(todayStr, targetDateStr) {
+  const tParts = String(todayStr).substring(0, 10).split("-").map(Number);
+  const dParts = String(targetDateStr).substring(0, 10).split("-").map(Number);
+  const tTime = Date.UTC(tParts[0], tParts[1] - 1, tParts[2], 12, 0, 0);
+  const dTime = Date.UTC(dParts[0], dParts[1] - 1, dParts[2], 12, 0, 0);
+  return Math.round((tTime - dTime) / 86400000);
 }
 
 function getBrasiliaNow() {
@@ -3782,18 +3811,17 @@ app.get("/api/reservations/checkouts", (req, res) => {
     const hasCheckinToday = Boolean(req_.arrivingGuest) || (db.reservations || []).some(r => (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) && r.checkinDate === dateStr && r.status !== "cancelada");
 
     const pendingTasks = [];
-    for (const pt of db.periodicTasks.filter(t => t.isActive && t.assignToHousekeeping !== false && (t.flatIds.length === 0 || t.flatIds.includes(flat.id)))) {
-      const executions = (db.periodicExecutions || []).filter(e => e.periodicTaskId === pt.id && e.flatId === flat.id);
+    for (const pt of (db.periodicTasks || []).filter(t => t.isActive && t.assignToHousekeeping !== false && (!Array.isArray(t.flatIds) || t.flatIds.length === 0 || t.flatIds.map(Number).includes(Number(flat.id))))) {
+      const executions = (db.periodicExecutions || []).filter(e => Number(e.periodicTaskId) === Number(pt.id) && Number(e.flatId) === Number(flat.id));
       executions.sort((a, b) => new Date(b.executedAt).getTime() - new Date(a.executedAt).getTime());
       const lastExec = executions[0] || null;
 
       let nextDueAt;
       if (lastExec) {
-        const d = new Date(lastExec.executedAt.substring(0, 10));
-        d.setDate(d.getDate() + pt.periodDays);
-        nextDueAt = d.toISOString().substring(0, 10);
+        const lastDateStr = getExecutionDateStr(lastExec.executedAt);
+        nextDueAt = addDaysToDateStr(lastDateStr, Number(pt.periodDays) || 1);
       } else {
-        nextDueAt = pt.firstDueDate || (pt.createdAt ? pt.createdAt.substring(0, 10) : dateStr);
+        nextDueAt = pt.firstDueDate || (pt.createdAt ? getExecutionDateStr(pt.createdAt) : dateStr);
       }
       // Vence hoje ou ficou pendente de dias anteriores (aguardando a próxima limpeza)
       if (nextDueAt <= dateStr) {
@@ -4786,30 +4814,27 @@ app.post("/api/periodic-tasks/:id/execute", (req, res) => {
 
 app.get("/api/periodic-tasks/pending", (req, res) => {
   const todayStr = getTodayStr();
-  const todayTime = new Date(todayStr).getTime();
   const result = [];
 
   for (const task of (db.periodicTasks || []).filter(t => t.isActive)) {
-    const targetFlats = Array.isArray(task.flatIds) && task.flatIds.length > 0 ? task.flatIds : db.flats.map(f => f.id);
+    const targetFlats = Array.isArray(task.flatIds) && task.flatIds.length > 0 ? task.flatIds.map(Number) : db.flats.map(f => Number(f.id));
     for (const flatId of targetFlats) {
-      const flat = db.flats.find(f => f.id === flatId);
+      const flat = db.flats.find(f => Number(f.id) === Number(flatId));
       if (!flat) continue;
 
-      const executions = (db.periodicExecutions || []).filter(e => e.periodicTaskId === task.id && e.flatId === flatId);
+      const executions = (db.periodicExecutions || []).filter(e => Number(e.periodicTaskId) === Number(task.id) && Number(e.flatId) === Number(flatId));
       executions.sort((a, b) => new Date(b.executedAt).getTime() - new Date(a.executedAt).getTime());
       const lastExec = executions[0] || null;
 
       let nextDueAt;
       if (lastExec) {
-        const d = new Date(lastExec.executedAt.substring(0, 10));
-        d.setDate(d.getDate() + task.periodDays);
-        nextDueAt = d.toISOString().substring(0, 10);
+        const lastDateStr = getExecutionDateStr(lastExec.executedAt);
+        nextDueAt = addDaysToDateStr(lastDateStr, Number(task.periodDays) || 1);
       } else {
-        nextDueAt = task.firstDueDate || (task.createdAt ? task.createdAt.substring(0, 10) : todayStr);
+        nextDueAt = task.firstDueDate || (task.createdAt ? getExecutionDateStr(task.createdAt) : todayStr);
       }
 
-      const dueDateTime = new Date(nextDueAt).getTime();
-      const daysDiff = Math.round((todayTime - dueDateTime) / 86400000);
+      const daysDiff = calcDaysDiff(todayStr, nextDueAt);
 
       result.push({
         taskId: task.id,

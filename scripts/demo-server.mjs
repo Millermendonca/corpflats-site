@@ -3685,9 +3685,7 @@ function getRequestsForDate(dateStr) {
   }
 
   // 3. Monta os cards de limpeza dinâmicos a partir dos checkouts do PMS
-  let virtualCardIndex = 0;
   for (const [flatNumber, pmsRes] of pmsCheckoutsByFlat.entries()) {
-    virtualCardIndex++;
     const flat = db.flats.find(f => String(f.number) === flatNumber) || { id: pmsRes.flatId, number: flatNumber, isOccupied: true };
 
     const arrivingRes = (db.reservations || []).find(r => 
@@ -3697,14 +3695,14 @@ function getRequestsForDate(dateStr) {
     );
 
     const matchingCleanings = (db.cleaningRequests || []).filter(c => 
-      (String(c.flatNumber) === flatNumber || Number(c.flatId) === Number(flat.id)) && 
+      (String(c.flatNumber) === flatNumber || c.flatId === flat.id) && 
       c.requestDate === dateStr
     );
     const existingCleaning = matchingCleanings.find(c => c.status === "clean") || matchingCleanings[0];
 
     const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
     const card = {
-      id: existingCleaning ? existingCleaning.id : (maxId + virtualCardIndex),
+      id: existingCleaning ? existingCleaning.id : (maxId + 1),
       flatId: flat.id,
       flatNumber: flat.number,
       requestDate: dateStr,
@@ -3759,7 +3757,7 @@ function getRequestsForDate(dateStr) {
       // Se o flat já possui qualquer limpeza concluída (status === "clean") nessa mesma data ou em data posterior,
       // ele já foi higienizado e NÃO deve ser considerado pendência nem reaparecer para limpar!
       const alreadyCleanedOnOrAfter = (db.cleaningRequests || []).some(c => 
-        (String(c.flatNumber) === fNumber || Number(c.flatId) === Number(r.flatId)) &&
+        (String(c.flatNumber) === fNumber || c.flatId === r.flatId) &&
         c.requestDate >= r.requestDate &&
         c.status === "clean"
       );
@@ -3808,9 +3806,9 @@ app.get("/api/reservations/checkouts", (req, res) => {
   const activeSurveys = db.surveys.filter(s => s.isActive);
 
   const result = requestsForDate.map(req_ => {
-    const flat = db.flats.find(f => Number(f.id) === Number(req_.flatId) || String(f.number) === String(req_.flatNumber)) || { id: req_.flatId, number: req_.flatNumber || String(req_.flatId), isOccupied: true };
-    const assignedUser = db.users.find(u => Number(u.id) === Number(req_.assignedUserId));
-    const hasCheckinToday = Boolean(req_.arrivingGuest) || (db.reservations || []).some(r => (Number(r.flatId) === Number(flat.id) || String(r.flatNumber) === String(flat.number)) && r.checkinDate === dateStr && r.status !== "cancelada");
+    const flat = db.flats.find(f => f.id === req_.flatId) || { id: req_.flatId, number: req_.flatNumber || String(req_.flatId), isOccupied: true };
+    const assignedUser = db.users.find(u => u.id === req_.assignedUserId);
+    const hasCheckinToday = Boolean(req_.arrivingGuest) || (db.reservations || []).some(r => (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) && r.checkinDate === dateStr && r.status !== "cancelada");
 
     const pendingTasks = [];
     for (const pt of (db.periodicTasks || []).filter(t => t.isActive && t.assignToHousekeeping !== false && (!Array.isArray(t.flatIds) || t.flatIds.length === 0 || t.flatIds.map(Number).includes(Number(flat.id))))) {

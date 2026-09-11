@@ -281,29 +281,31 @@
       "updatedAt": "2026-09-02T13:45:43.914Z"
     },
     {
-      "id": 3,
+      "id": 173,
       "flatId": 13,
       "flatNumber": "605",
       "requestDate": "2026-09-02",
-      "source": "checkout",
-      "status": "dirty",
-      "assignedUserId": null,
-      "assignedUsername": null,
-      "assignedUserName": null,
-      "isVacant": false,
+      "effectiveDate": "2026-09-02",
+      "status": "clean",
       "isPriority": false,
+      "source": "checkout",
+      "assignedUserId": 2,
+      "assignedUsername": "Cris",
+      "pendingObservation": null,
+      "cleaningStartedAt": "2026-09-02T16:46:34.593Z",
+      "completedAt": "2026-09-02T17:24:27.669Z",
+      "durationMinutes": 38,
+      "createdAt": "2026-09-01T06:13:30.624Z",
+      "assignedUserName": "Cris",
+      "isVacant": true,
       "isExtended": false,
       "twinBeds": false,
       "extraMattress": false,
       "adminNote": null,
       "leavingGuest": "Luiz",
-      "arrivingGuest": null,
-      "pendingObservation": null,
-      "willCleanAt": null,
-      "cleaningStartedAt": null,
-      "completedAt": null,
-      "createdAt": "2026-09-02T13:44:09.213Z",
-      "updatedAt": "2026-09-02T13:45:43.919Z"
+      "arrivingGuest": "William",
+      "willCleanAt": "2026-09-02T16:46:34.593Z",
+      "updatedAt": "2026-09-02T17:24:27.669Z"
     },
     {
       "id": 172,
@@ -412,33 +414,6 @@
       "arrivingGuest": null,
       "willCleanAt": "2026-09-02T17:23:04.450Z",
       "updatedAt": "2026-09-02T17:58:51.359Z"
-    },
-    {
-      "id": 173,
-      "flatId": 13,
-      "flatNumber": "605",
-      "requestDate": "2026-09-02",
-      "effectiveDate": "2026-09-02",
-      "status": "clean",
-      "isPriority": false,
-      "source": "checkout",
-      "assignedUserId": 2,
-      "assignedUsername": "Cris",
-      "pendingObservation": null,
-      "cleaningStartedAt": "2026-09-02T16:46:34.593Z",
-      "completedAt": "2026-09-02T17:24:27.669Z",
-      "durationMinutes": 38,
-      "createdAt": "2026-09-01T06:13:30.624Z",
-      "assignedUserName": "Cris",
-      "isVacant": true,
-      "isExtended": false,
-      "twinBeds": false,
-      "extraMattress": false,
-      "adminNote": null,
-      "leavingGuest": "Luiz",
-      "arrivingGuest": "William",
-      "willCleanAt": "2026-09-02T16:46:34.593Z",
-      "updatedAt": "2026-09-02T17:24:27.669Z"
     },
     {
       "id": 227,
@@ -2775,7 +2750,8 @@
           "email": "",
           "hasCompletedCheckin": false,
           "checkinCompletedAt": null,
-          "guestId": 7
+          "guestId": 7,
+          "guestCode": "HOSP-00007"
         }
       ],
       "requesterType": "guest",
@@ -2888,7 +2864,8 @@
           "type": "system"
         },
         "source": "PMS Calendário (Edição Manual)"
-      }
+      },
+      "guestCode": "HOSP-00007"
     },
     {
       "id": 33,
@@ -2909,7 +2886,8 @@
           "email": "",
           "hasCompletedCheckin": false,
           "checkinCompletedAt": null,
-          "guestId": 7
+          "guestId": 7,
+          "guestCode": "HOSP-00007"
         }
       ],
       "requesterType": "guest",
@@ -2978,7 +2956,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00007"
     },
     {
       "id": 32,
@@ -4975,7 +4954,8 @@
           "phone": "2299881122",
           "checkinCompletedAt": null,
           "hasCompletedCheckin": false,
-          "guestId": 1
+          "guestId": 1,
+          "guestCode": "HOSP-00001"
         }
       ],
       "status": "confirmada",
@@ -5056,7 +5036,8 @@
             }
           ]
         }
-      ]
+      ],
+      "guestCode": "HOSP-00001"
     },
     {
       "id": 9,
