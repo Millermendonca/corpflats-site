@@ -410,6 +410,101 @@ export function renderManualEmail({ subject, message, bodyText, reservation, fla
 }
 
 /**
+ * Gatilho C: Template de Liberação / Autorização de Garagem
+ * Destinado ao estacionamento (promenadesoho@pfbestacionamentos.com.br) e portaria
+ */
+export function renderGarageAuthorizationEmail({ reservation, flat, vehicle, settings }) {
+  const rawFlat = flat?.number || reservation?.flatNumber || "Não informado";
+  const cleanFlat = String(rawFlat).replace(/^flat\s*/i, "").trim();
+  const flatDisplay = cleanFlat ? `Flat ${cleanFlat}` : "Flat Não informado";
+  const buildingName = flat?.buildingName || flat?.building || settings?.buildingName || "Edifício Soho Residence Service";
+  const guestName = reservation?.guestName || "Hóspede CorpFlats";
+  const checkinDateBr = formatDateBr(reservation?.checkinDate);
+  const checkoutDateBr = formatDateBr(reservation?.checkoutDate);
+  const checkinTime = settings?.checkinTime || reservation?.checkinTime || "14:00";
+  const checkoutTime = settings?.checkoutTime || reservation?.checkoutTime || "12:00";
+
+  const v = vehicle || reservation?.vehicle || {};
+  const vPlate = String(v.plate || "NÃO INFORMADA").toUpperCase().trim();
+  const vBrand = (v.brand || "").trim();
+  const vModel = (v.model || "").trim();
+  const vColor = (v.color || "").trim();
+  const vehicleDesc = [vBrand, vModel].filter(Boolean).join(" - ") || "Veículo de Passeio";
+
+  // Sempre colocar no assunto do e-mail o número do flat conforme instrução
+  const subject = `[LIBERAÇÃO DE GARAGEM] ${flatDisplay} - ${guestName} - Veículo: ${vPlate}`;
+
+  const contentHtml = `
+    <div style="margin-bottom: 20px;">
+      <h2 style="font-size: 17px; font-weight: 800; color: #0f172a; margin: 0 0 6px 0;">Olá, Equipe de Garagem & Portaria!</h2>
+      <p style="font-size: 13px; color: #475569; margin: 0; line-height: 1.5;">
+        Solicitamos a <strong>liberação de entrada e acesso à vaga de garagem</strong> para o veículo cadastrado abaixo, referente à acomodação no <strong>${flatDisplay}</strong> (${buildingName}):
+      </p>
+    </div>
+
+    <div class="section-title">🚗 Veículo Autorizado</div>
+    <div class="info-card" style="background: #f0f9ff; border-color: #bae6fd; padding: 16px;">
+      <table class="info-table">
+        <tr>
+          <td class="label" style="color: #0369a1; font-weight: 800; font-size: 13px;">Placa do Veículo:</td>
+          <td class="val">
+            <span style="font-family: monospace; font-size: 17px; font-weight: 900; color: #0284c7; background: #ffffff; padding: 4px 12px; border-radius: 6px; border: 1px solid #7dd3fc; letter-spacing: 1px; display: inline-block;">
+              ${vPlate}
+            </span>
+          </td>
+        </tr>
+        <tr>
+          <td class="label" style="color: #0369a1;">Modelo / Marca:</td>
+          <td class="val" style="color: #0f172a; font-size: 14px;">${vehicleDesc}</td>
+        </tr>
+        <tr>
+          <td class="label" style="color: #0369a1;">Cor:</td>
+          <td class="val" style="color: #0f172a;">${vColor || "Não informada"}</td>
+        </tr>
+        <tr>
+          <td class="label" style="color: #0369a1;">Status de Entrada:</td>
+          <td class="val" style="color: #059669; font-weight: 800; font-size: 13px;">✓ ENTRADA LIBERADA NA GARAGEM</td>
+        </tr>
+      </table>
+    </div>
+
+    <div class="section-title">🏢 Identificação da Unidade & Hóspede</div>
+    <div class="info-card">
+      <table class="info-table">
+        <tr><td class="label">Apartamento:</td><td class="val" style="font-size: 15px; color: #d97706; font-weight: 800;">${flatDisplay}</td></tr>
+        <tr><td class="label">Edifício / Condomínio:</td><td class="val">${buildingName}</td></tr>
+        <tr><td class="label">Código da Reserva:</td><td class="val" style="font-family: monospace;">#${reservation?.code || reservation?.id || "-"}</td></tr>
+        <tr><td class="label">Hóspede Titular:</td><td class="val">${guestName}</td></tr>
+        ${reservation?.guestDocument ? `<tr><td class="label">Documento / CPF:</td><td class="val">${reservation.guestDocument}</td></tr>` : ""}
+        ${reservation?.guestPhone ? `<tr><td class="label">Telefone / WhatsApp:</td><td class="val">${reservation.guestPhone}</td></tr>` : ""}
+      </table>
+    </div>
+
+    <div class="section-title">📅 Período da Estadia Autorizada</div>
+    <div class="info-card">
+      <table class="info-table">
+        <tr><td class="label">Entrada (Check-in):</td><td class="val">${checkinDateBr} (a partir das ${checkinTime})</td></tr>
+        <tr><td class="label">Saída (Check-out):</td><td class="val">${checkoutDateBr} (até às ${checkoutTime})</td></tr>
+      </table>
+    </div>
+
+    ${reservation?.receptionNotes || reservation?.specialRequests || reservation?.notes ? `
+      <div class="section-title">⚠️ Observações Adicionais</div>
+      <div class="info-card" style="background: #fffbeb; border-color: #fde68a;">
+        <div style="font-size: 13px; color: #92400e; font-weight: 600;">
+          ${[reservation?.receptionNotes, reservation?.specialRequests, reservation?.notes].filter(Boolean).join(" • ")}
+        </div>
+      </div>
+    ` : ""}
+  `;
+
+  const badge = `<span class="badge" style="background-color: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd;">🚗 Garagem Autorizada</span>`;
+  const bodyHtml = wrapEmailTemplate({ title: subject, badge, contentHtml });
+
+  return { subject, bodyHtml, html: bodyHtml };
+}
+
+/**
  * Fila / Serviço Assíncrono de Disparo de E-mail
  * Grava o log imediatamente no histórico e despacha em background sem bloquear a requisição HTTP.
  */
@@ -418,6 +513,8 @@ export function sendEmailAsync({
   saveDatabase,
   reservationId,
   recipient,
+  cc,
+  bcc,
   subject,
   bodyHtml,
   html,
@@ -442,11 +539,15 @@ export function sendEmailAsync({
     type: type || "email",
     direction: direction || "outbound",
     recipient: recipient.trim(),
+    cc: cc ? String(cc).trim() : null,
+    bcc: bcc ? String(bcc).trim() : null,
     subject: subject.trim(),
     body: finalHtml || bodyText || "",
     status: "pending",
     metadata: {
       ...metadata,
+      cc: cc ? String(cc).trim() : undefined,
+      bcc: bcc ? String(bcc).trim() : undefined,
       attempts: 1,
       queuedAt: now
     },
@@ -477,6 +578,8 @@ export function sendEmailAsync({
       const mailOptions = {
         from: `"${config.fromName}" <${config.fromEmail}>`,
         to: recipient.trim(),
+        ...(cc ? { cc: String(cc).trim() } : {}),
+        ...(bcc ? { bcc: String(bcc).trim() } : {}),
         subject: subject.trim(),
         html: finalHtml || `<p>${bodyText}</p>`,
         text: bodyText || subject

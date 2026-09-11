@@ -3246,7 +3246,7 @@
       "checkinDate": "2026-08-20",
       "checkoutDate": "2026-08-23",
       "sentAt": "2026-08-19T14:51:29.977Z",
-      "recipientEmail": "portaria.soho@corpflats.com.br",
+      "recipientEmail": "soho@promenade.com.br",
       "status": "autorizado"
     },
     {
@@ -3260,7 +3260,7 @@
       "checkinDate": "2026-08-20",
       "checkoutDate": "2026-08-23",
       "sentAt": "2026-08-19T14:50:12.245Z",
-      "recipientEmail": "portaria.soho@corpflats.com.br",
+      "recipientEmail": "soho@promenade.com.br",
       "status": "autorizado"
     }
   ],

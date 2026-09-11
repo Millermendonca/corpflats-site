@@ -26,7 +26,7 @@ export default function GarageDashboard() {
   const [flatNumber, setFlatNumber] = useState("")
   const [checkinDate, setCheckinDate] = useState("")
   const [checkoutDate, setCheckoutDate] = useState("")
-  const [recipientEmail, setRecipientEmail] = useState("portaria.soho@corpflats.com.br")
+  const [recipientEmail, setRecipientEmail] = useState("soho@promenade.com.br")
 
   const fetchGarageData = async () => {
     setLoading(true)

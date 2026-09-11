@@ -46,6 +46,7 @@ import {
   resendEmailAsync, 
   renderCheckinConfirmedEmail, 
   renderReservationUpdateEmail, 
+  renderGarageAuthorizationEmail,
   renderManualEmail 
 } from "./mail-service.mjs";
 
@@ -380,7 +381,7 @@ let db = {
     checkoutTime: "12:00",
     autoEarlyCheckinForSite: true,
     buildingName: "Edifício Soho Residence Service",
-    receptionEmail: "portaria.soho@corpflats.com.br",
+    receptionEmail: "soho@promenade.com.br",
     emailSettings: {
       host: "smtppro.zoho.com",
       port: 465,
@@ -2386,6 +2387,147 @@ function diffReservationFields(oldRes, newBody, flatsList = []) {
   }
 
   return changes;
+}
+
+// ── Serviço de Notificação & Autorização Automática de Garagem ───────────────
+export function triggerGarageEmailNotification(db, saveDatabase, reservation, vehicleInput = null, options = {}) {
+  try {
+    if (!reservation) return null;
+
+    const vehicle = vehicleInput || reservation.vehicle;
+    if (!vehicle || !vehicle.plate) {
+      return null;
+    }
+
+    const cleanPlate = String(vehicle.plate).toUpperCase().trim();
+    if (!cleanPlate) return null;
+
+    // Normaliza os dados do veículo
+    const vehicleData = {
+      plate: cleanPlate,
+      brand: (vehicle.brand || "").trim(),
+      model: (vehicle.model || "").trim(),
+      color: (vehicle.color || "").trim(),
+      updatedAt: vehicle.updatedAt || new Date().toISOString()
+    };
+    reservation.vehicle = { ...(reservation.vehicle || {}), ...vehicleData };
+
+    // Evita duplicatas idênticas num curto período, a não ser que forçado explicitamente
+    const force = Boolean(options.force);
+    if (!force && reservation.vehicle?.garageNotifiedAt && reservation.vehicle?.lastNotifiedPlate === cleanPlate) {
+      console.log(`[GarageService] Notificação já enviada para placa ${cleanPlate} da reserva ${reservation.code || reservation.id}. Ignorando duplicata.`);
+      return null;
+    }
+
+    const flat = (db.flats || []).find(f => f.id === Number(reservation.flatId) || String(f.number) === String(reservation.flatNumber));
+    const rawFlat = flat?.number || reservation.flatNumber || "113";
+    const cleanFlat = String(rawFlat).replace(/^flat\s*/i, "").trim();
+    const flatNum = cleanFlat || "113";
+    const guestName = reservation.guestName || "Hóspede CorpFlats";
+
+    // Configuração dos destinatários:
+    // Garagem Promenade Soho (destinatário principal obrigatório: promenadesoho@pfbestacionamentos.com.br)
+    const garageEmail = options.recipientEmail || db.settings?.garageEmail || process.env.GARAGE_EMAIL || "promenadesoho@pfbestacionamentos.com.br";
+    // Portaria / Recepção Soho (cópia CC para garantir liberação na guarita)
+    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br";
+
+    // Renderiza template oficial CorpFlats com número do Flat no assunto do e-mail
+    const { subject, bodyHtml } = renderGarageAuthorizationEmail({
+      reservation,
+      flat,
+      vehicle: vehicleData,
+      settings: db.settings
+    });
+
+    const isSameEmail = receptionEmail && receptionEmail.toLowerCase() === garageEmail.toLowerCase();
+    const ccEmail = isSameEmail ? undefined : receptionEmail;
+
+    // Disparo imediato e assíncrono via Nodemailer SMTP CorpFlats
+    const commLog = sendEmailAsync({
+      db,
+      saveDatabase,
+      reservationId: reservation.code || reservation.id,
+      recipient: garageEmail,
+      cc: ccEmail,
+      subject,
+      bodyHtml,
+      type: "email",
+      direction: "outbound",
+      metadata: {
+        trigger: options.trigger || "garage_authorization",
+        flatNumber: flatNum,
+        guestName,
+        plate: cleanPlate,
+        vehicleBrand: vehicleData.brand,
+        vehicleModel: vehicleData.model,
+        garageEmail,
+        receptionEmail: ccEmail
+      }
+    });
+
+    // Registra ou atualiza histórico em db.garageAuthorizations
+    if (!db.garageAuthorizations) db.garageAuthorizations = [];
+    const checkinStr = reservation.checkinDate || new Date().toISOString().slice(0, 10);
+    const checkoutStr = reservation.checkoutDate || new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+
+    const authRecord = {
+      id: Date.now(),
+      plate: cleanPlate,
+      brand: vehicleData.brand,
+      model: vehicleData.model,
+      color: vehicleData.color,
+      guestName,
+      flatNumber: String(flatNum),
+      checkinDate: checkinStr,
+      checkoutDate: checkoutStr,
+      sentAt: new Date().toISOString(),
+      recipientEmail: garageEmail,
+      status: "autorizado",
+      reservationCode: reservation.code || reservation.reservationCode || String(reservation.id)
+    };
+    db.garageAuthorizations.unshift(authRecord);
+
+    // Notificação interna para a administração e painel
+    if (db.notifications) {
+      db.notifications.unshift({
+        id: Date.now(),
+        type: "garagem",
+        title: `Veículo Autorizado: ${cleanPlate} (Flat ${flatNum})`,
+        message: `Flat ${flatNum} • ${guestName} (${[vehicleData.brand, vehicleData.model].filter(Boolean).join(" ") || 'Carro'}) - Enviado para ${garageEmail}`,
+        read: false,
+        createdAt: new Date().toISOString()
+      });
+    }
+
+    // Carimbo de envio na reserva
+    reservation.vehicle.garageNotifiedAt = new Date().toISOString();
+    reservation.vehicle.lastNotifiedPlate = cleanPlate;
+
+    // Registro na trilha de auditoria da reserva
+    if (typeof addReservationAuditLog === "function") {
+      addReservationAuditLog(reservation, {
+        action: "vehicle_authorized",
+        actor: {
+          id: options.actorId || null,
+          name: options.actorName || "Sistema de Garagem CorpFlats",
+          role: options.actorRole || "system",
+          type: "system"
+        },
+        source: options.source || "Automação de Garagem",
+        description: `Liberação de garagem enviada para ${garageEmail} (Placa ${cleanPlate})`,
+        changes: [
+          { field: "vehicle", label: "Autorização de Garagem", oldValue: null, newValue: `${cleanPlate} (${[vehicleData.brand, vehicleData.model].filter(Boolean).join(" ")})` }
+        ]
+      });
+    }
+
+    if (typeof saveDatabase === "function") saveDatabase();
+    console.log(`[GarageService] ✓ Liberação de garagem enviada para ${garageEmail} (CC: ${ccEmail || 'nenhum'}) - Placa ${cleanPlate}, Flat ${flatNum}`);
+    return { success: true, authRecord, commLog };
+  } catch (err) {
+    console.error("[GarageService] Erro ao disparar autorização de garagem:", err);
+    return null;
+  }
 }
 
 // ── Spreadsheet Path & Cloud Download ────────────────────────────────────────
@@ -5906,6 +6048,18 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
 
     triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", reservation);
 
+    // Gatilho Automático: Liberação de Garagem se o hóspede informou veículo no momento da reserva
+    if (reservation.vehicle && reservation.vehicle.plate) {
+      try {
+        triggerGarageEmailNotification(db, saveDatabase, reservation, reservation.vehicle, {
+          trigger: "direct_booking_vehicle",
+          source: "Site CorpFlats (Motor de Reservas)"
+        });
+      } catch (gErr) {
+        console.warn("[GarageService] Erro ao disparar autorização de garagem na reserva direta:", gErr.message);
+      }
+    }
+
     res.json({
       success: true,
       message: "Reserva realizada com sucesso!",
@@ -6630,7 +6784,7 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   if (changes.length > 0) {
     try {
       const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
-      const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "portaria.soho@corpflats.com.br";
+      const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br";
       const { subject, bodyHtml } = renderReservationUpdateEmail({ reservation: r, flat, changes, settings: db.settings });
 
       sendEmailAsync({
@@ -7206,7 +7360,7 @@ app.post("/api/pms/guest-portal/:code/cancel", (req, res) => {
   // Gatilho B: Notificação de cancelamento para a recepção/portaria
   try {
     const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
-    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "portaria.soho@corpflats.com.br";
+    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br";
     const changes = [{ field: "status", label: "Status da Reserva", oldValue: "Confirmada", newValue: "CANCELADA (Portal do Hóspede)" }];
     const { subject, bodyHtml } = renderReservationUpdateEmail({ reservation: r, flat, changes, settings: db.settings });
 
@@ -7429,7 +7583,7 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
   // Gatilho B: Notificação de alteração de datas para a recepção/portaria
   try {
     const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
-    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "portaria.soho@corpflats.com.br";
+    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br";
     const changes = [
       { field: "dates", label: "Novo Período", oldValue: `${formatDateBr(r.modificationHistory[r.modificationHistory.length - 1]?.oldCheckin)} a ${formatDateBr(r.modificationHistory[r.modificationHistory.length - 1]?.oldCheckout)}`, newValue: `${formatDateBr(newCheckinDate)} a ${formatDateBr(newCheckoutDate)}` }
     ];
@@ -7863,7 +8017,7 @@ app.delete("/api/pms/reservations/:id", (req, res) => {
   // Gatilho B: Notificação de cancelamento para a recepção/portaria
   try {
     const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
-    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "portaria.soho@corpflats.com.br";
+    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br";
     const changes = [{ field: "status", label: "Status da Reserva", oldValue: "Confirmada", newValue: "CANCELADA" }];
     const { subject, bodyHtml } = renderReservationUpdateEmail({ reservation: r, flat, changes, settings: db.settings });
 
@@ -9311,7 +9465,7 @@ app.get("/api/settings/email", (req, res) => {
     fromEmail: config.fromEmail,
     hasPass: Boolean(config.pass),
     isConfigured: config.isConfigured,
-    receptionEmail: db.settings?.receptionEmail || "portaria.soho@corpflats.com.br",
+    receptionEmail: db.settings?.receptionEmail || "soho@promenade.com.br",
     buildingName: db.settings?.buildingName || "Edifício Soho Residence Service"
   });
 });
@@ -9781,7 +9935,7 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   // Gatilho A: Envio Automático de Notificação à Recepção/Portaria do Edifício
   try {
     const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
-    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "portaria.soho@corpflats.com.br";
+    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br";
     const { subject, bodyHtml } = renderCheckinConfirmedEmail({ reservation: r, flat, settings: db.settings });
 
     sendEmailAsync({
@@ -9802,6 +9956,18 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     });
   } catch (mailErr) {
     console.warn("[MailService] Erro ao disparar aviso de check-in à portaria:", mailErr.message);
+  }
+
+  // Gatilho C: Envio Automático de Liberação à Garagem Soho se houver veículo cadastrado
+  if (r.vehicle && r.vehicle.plate) {
+    try {
+      triggerGarageEmailNotification(db, saveDatabase, r, r.vehicle, {
+        trigger: "pre_checkin_vehicle",
+        source: "Check-in Digital (FNHR)"
+      });
+    } catch (garageErr) {
+      console.warn("[GarageService] Erro ao disparar autorização à garagem no pré-checkin:", garageErr.message);
+    }
   }
 
   reconcileAndMergeGuests(db);
@@ -15014,41 +15180,53 @@ app.post("/api/pms/garage/send-authorization", (req, res) => {
     }
 
     const cleanPlate = plate.toUpperCase().trim();
-    const newAuth = {
-      id: Date.now(),
+    const vehicleData = {
       plate: cleanPlate,
       brand: brand || "",
       model: model || "",
-      color: color || "",
-      guestName: guestName || "Hóspede CorpFlats",
-      flatNumber: String(flatNumber),
-      checkinDate: checkinDate || getIsoDateStr(new Date()),
-      checkoutDate: checkoutDate || getIsoDateStr(addDaysNative(new Date(), 1)),
-      sentAt: new Date().toISOString(),
-      recipientEmail: recipientEmail || "portaria.soho@corpflats.com.br",
-      status: "autorizado"
+      color: color || ""
     };
 
-    if (!db.garageAuthorizations) db.garageAuthorizations = [];
-    db.garageAuthorizations.unshift(newAuth);
-    saveDatabase();
+    // Procura reserva correspondente ao flat ou cria estrutura sintética
+    let targetReservation = (db.reservations || []).find(r => 
+      (String(r.flatNumber) === String(flatNumber) || String(r.flatId) === String(flatNumber)) &&
+      r.status !== "cancelada"
+    );
 
-    // Notificação interna
-    if (db.notifications) {
-      db.notifications.unshift({
+    if (!targetReservation) {
+      targetReservation = {
         id: Date.now(),
-        type: "garagem",
-        title: `Veículo Autorizado: ${cleanPlate}`,
-        message: `Apt ${flatNumber} • ${newAuth.guestName} (${brand || ''} ${model || ''}) - Estadia até ${checkoutDate}`,
-        read: false,
-        createdAt: new Date().toISOString()
-      });
+        code: `GAR-${flatNumber}-${Date.now().toString().slice(-4)}`,
+        flatNumber: String(flatNumber),
+        guestName: guestName || "Hóspede CorpFlats",
+        checkinDate: checkinDate || new Date().toISOString().slice(0, 10),
+        checkoutDate: checkoutDate || new Date(Date.now() + 86400000).toISOString().slice(0, 10),
+        vehicle: vehicleData
+      };
+    } else {
+      targetReservation.vehicle = vehicleData;
+      if (guestName && !targetReservation.guestName) targetReservation.guestName = guestName;
+      if (checkinDate) targetReservation.checkinDate = checkinDate;
+      if (checkoutDate) targetReservation.checkoutDate = checkoutDate;
     }
+
+    const garageRes = triggerGarageEmailNotification(db, saveDatabase, targetReservation, vehicleData, {
+      recipientEmail: recipientEmail || db.settings?.garageEmail || "promenadesoho@pfbestacionamentos.com.br",
+      trigger: "manual_garage_dashboard",
+      source: "Painel de Garagem Soho",
+      force: true
+    });
 
     res.json({
       success: true,
-      message: `Autorização de garagem para a placa ${cleanPlate} gerada e enviada com sucesso!`,
-      authorization: newAuth
+      message: `Autorização de garagem para a placa ${cleanPlate} gerada e enviada com sucesso para ${recipientEmail || db.settings?.garageEmail || "promenadesoho@pfbestacionamentos.com.br"}!`,
+      authorization: garageRes?.authRecord || {
+        plate: cleanPlate,
+        flatNumber,
+        guestName: targetReservation.guestName,
+        checkinDate: targetReservation.checkinDate,
+        checkoutDate: targetReservation.checkoutDate
+      }
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -15089,43 +15267,18 @@ app.post("/api/pms/reservations/:code/vehicle", (req, res) => {
       }
     }
 
-    // Cria registro de autorização de garagem
-    const newAuth = {
-      id: Date.now(),
-      plate: cleanPlate,
-      brand: vehicleData.brand,
-      model: vehicleData.model,
-      color: vehicleData.color,
-      guestName: reservation.guestName || "Hóspede CorpFlats",
-      flatNumber: String(reservation.flatNumber || reservation.flatId || "113"),
-      checkinDate: reservation.checkinDate || getIsoDateStr(new Date()),
-      checkoutDate: reservation.checkoutDate || getIsoDateStr(addDaysNative(new Date(), 1)),
-      sentAt: new Date().toISOString(),
-      recipientEmail: "portaria.soho@corpflats.com.br",
-      status: "autorizado"
-    };
-
-    if (!db.garageAuthorizations) db.garageAuthorizations = [];
-    db.garageAuthorizations.unshift(newAuth);
-
-    if (db.notifications) {
-      db.notifications.unshift({
-        id: Date.now(),
-        type: "garagem",
-        title: `Veículo Autorizado: ${cleanPlate}`,
-        message: `Apt ${newAuth.flatNumber} • ${newAuth.guestName} (${vehicleData.brand} ${vehicleData.model}) - Estadia até ${newAuth.checkoutDate}`,
-        read: false,
-        createdAt: new Date().toISOString()
-      });
-    }
-
-    saveDatabase();
+    // Disparo imediato e automático do e-mail de autorização para a garagem e portaria
+    const garageRes = triggerGarageEmailNotification(db, saveDatabase, reservation, vehicleData, {
+      trigger: "guest_vehicle_registration",
+      source: "Portal do Hóspede / Pré-Checkin",
+      force: true
+    });
 
     res.json({
       success: true,
-      message: `Veículo ${cleanPlate} cadastrado e autorizado na portaria com sucesso!`,
+      message: `Veículo ${cleanPlate} cadastrado e liberação enviada para a garagem (promenadesoho@pfbestacionamentos.com.br) com sucesso!`,
       vehicle: vehicleData,
-      authorization: newAuth
+      authorization: garageRes?.authRecord
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

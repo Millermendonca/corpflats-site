@@ -2674,7 +2674,7 @@
       "checkinDate": "2026-08-20",
       "checkoutDate": "2026-08-23",
       "sentAt": "2026-08-19T14:51:29.977Z",
-      "recipientEmail": "portaria.soho@corpflats.com.br",
+      "recipientEmail": "soho@promenade.com.br",
       "status": "autorizado"
     },
     {
@@ -2688,7 +2688,7 @@
       "checkinDate": "2026-08-20",
       "checkoutDate": "2026-08-23",
       "sentAt": "2026-08-19T14:50:12.245Z",
-      "recipientEmail": "portaria.soho@corpflats.com.br",
+      "recipientEmail": "soho@promenade.com.br",
       "status": "autorizado"
     }
   ],
@@ -5667,7 +5667,7 @@
       "reservation_id": "RES-113-0034",
       "type": "email",
       "direction": "outbound",
-      "recipient": "portaria.soho@corpflats.com.br",
+      "recipient": "soho@promenade.com.br",
       "subject": "[ATUALIZAÇÃO DE RESERVA] Flat 113 - Carlos Silva",
       "body": "<!DOCTYPE html>\n<html lang=\"pt-BR\">\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <title>[ATUALIZAÇÃO DE RESERVA] Flat 113 - Carlos Silva</title>\n  <style>\n    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #f8fafc; color: #1e293b; }\n    .wrapper { max-width: 620px; margin: 20px auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; }\n    .header { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); padding: 24px 30px; text-align: left; }\n    .brand { color: #f59e0b; font-size: 20px; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase; margin: 0; }\n    .subbrand { color: #94a3b8; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 2px; }\n    .badge-bar { margin-top: 14px; }\n    .badge { display: inline-block; padding: 5px 12px; border-radius: 20px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; }\n    .badge-checkin { background-color: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }\n    .badge-update { background-color: #fffbeb; color: #b45309; border: 1px solid #fde68a; }\n    .badge-cancel { background-color: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }\n    .badge-general { background-color: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; }\n    .content { padding: 30px; }\n    .section-title { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #64748b; margin-top: 20px; margin-bottom: 8px; border-bottom: 1px solid #f1f5f9; padding-bottom: 4px; }\n    .info-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; }\n    .info-table { width: 100%; border-collapse: collapse; }\n    .info-table td { padding: 5px 0; font-size: 13px; vertical-align: top; }\n    .info-table .label { color: #64748b; font-weight: 600; width: 38%; }\n    .info-table .val { color: #0f172a; font-weight: 700; width: 62%; }\n    .guest-box { background: #ffffff; border: 1px solid #cbd5e1; border-radius: 10px; padding: 12px 14px; margin-top: 8px; }\n    .callout-alert { background: #fffbeb; border-left: 4px solid #f59e0b; padding: 14px 16px; border-radius: 6px; margin-bottom: 18px; }\n    .callout-cancel { background: #fef2f2; border-left: 4px solid #ef4444; padding: 14px 16px; border-radius: 6px; margin-bottom: 18px; }\n    .footer { background: #f1f5f9; padding: 18px 30px; text-align: center; font-size: 11px; color: #64748b; border-top: 1px solid #e2e8f0; }\n    .btn-action { display: inline-block; padding: 9px 18px; background: #0f172a; color: #ffffff !important; text-decoration: none; border-radius: 8px; font-size: 12px; font-weight: 700; margin-top: 10px; }\n  </style>\n</head>\n<body>\n  <div class=\"wrapper\">\n    <div class=\"header\">\n      <div class=\"brand\">CorpFlats</div>\n      <div class=\"subbrand\">Gestão Inteligente de Hospedagem</div>\n      <div class=\"badge-bar\">\n        <span class=\"badge badge-update\">⚡ Reserva Alterada</span>\n      </div>\n    </div>\n    <div class=\"content\">\n      \n    <div style=\"margin-bottom: 18px;\">\n      <h2 style=\"font-size: 17px; font-weight: 800; color: #0f172a; margin: 0 0 6px 0;\">Aviso de Modificação de Reserva</h2>\n      <p style=\"font-size: 13px; color: #475569; margin: 0; line-height: 1.5;\">\n        A reserva referente ao <strong>Flat 113</strong> no condomínio <strong>Edifício Soho Residence Service</strong> sofreu alterações no sistema:\n      </p>\n    </div>\n\n    \n      <div class=\"callout-alert\">\n        <strong style=\"color: #92400e; font-size: 14px;\">⚡ Modificações Realizadas:</strong>\n        <ul style=\"margin: 8px 0 0 16px; padding: 0; font-size: 13px; color: #78350f;\">\n          \n      <li style=\"margin-bottom: 6px;\">\n        <strong>Data de Entrada (Check-in):</strong> \n        <span style=\"text-decoration: line-through; color: #94a3b8;\">2026-09-03</span> \n        ➔ <strong style=\"color: #047857;\">2026-09-04</strong>\n      </li>\n    \n      <li style=\"margin-bottom: 6px;\">\n        <strong>Data de Saída (Check-out):</strong> \n        <span style=\"text-decoration: line-through; color: #94a3b8;\">2026-09-05</span> \n        ➔ <strong style=\"color: #047857;\">2026-09-07</strong>\n      </li>\n    \n        </ul>\n      </div>\n    \n\n    <div class=\"section-title\">📋 Resumo Atualizado da Reserva</div>\n    <div class=\"info-card\">\n      <table class=\"info-table\">\n        <tr><td class=\"label\">Apartamento:</td><td class=\"val\">Flat 113 (Edifício Soho Residence Service)</td></tr>\n        <tr><td class=\"label\">Hóspede Titular:</td><td class=\"val\">Carlos Silva</td></tr>\n        <tr><td class=\"label\">Entrada (Check-in):</td><td class=\"val\">04/09/2026</td></tr>\n        <tr><td class=\"label\">Saída (Check-out):</td><td class=\"val\">07/09/2026</td></tr>\n        <tr><td class=\"label\">Status Atual:</td><td class=\"val\" style=\"text-transform: uppercase; color: #059669; font-weight: 800;\">confirmada</td></tr>\n      </table>\n    </div>\n  \n    </div>\n    <div class=\"footer\">\n      Este é um e-mail transacional automatizado gerado pelo sistema CorpFlats.<br/>\n      Para suporte ou dúvidas operacionais, consulte a administração do hotel.\n    </div>\n  </div>\n</body>\n</html>",
       "status": "failed",
@@ -5849,6 +5849,8 @@
     "checkinTime": "14:00",
     "checkoutTime": "12:00",
     "autoEarlyCheckinForSite": true,
+    "buildingName": "Edifício Soho Residence Service",
+    "receptionEmail": "soho@promenade.com.br",
     "hotelAddress": "Edifício Soho Residence Service, Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ",
     "googleMapsUrl": "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ",
     "mercadoPagoConfig": {

@@ -57,7 +57,7 @@ export default function PropertySettings() {
   const [checkoutTimeInput, setCheckoutTimeInput] = useState("12:00")
   const [hotelAddressInput, setHotelAddressInput] = useState("CorpFlats")
   const [googleMapsUrlInput, setGoogleMapsUrlInput] = useState("https://www.google.com/maps/search/?api=1&query=CorpFlats")
-  const [receptionEmailInput, setReceptionEmailInput] = useState("portaria.soho@corpflats.com.br")
+  const [receptionEmailInput, setReceptionEmailInput] = useState("soho@promenade.com.br")
   const [buildingNameInput, setBuildingNameInput] = useState("Edifício Soho Residence Service")
 
   // Política Pet & Taxa de Higienização
@@ -368,7 +368,7 @@ export default function PropertySettings() {
                     type="email"
                     value={receptionEmailInput}
                     onChange={e => setReceptionEmailInput(e.target.value)}
-                    placeholder="portaria.soho@corpflats.com.br"
+                    placeholder="soho@promenade.com.br"
                     className="text-xs rounded-xl h-9.5"
                   />
                 </div>
@@ -608,7 +608,7 @@ export default function PropertySettings() {
                   type="email"
                   value={flatEmailInput}
                   onChange={e => setFlatEmailInput(e.target.value)}
-                  placeholder="Ex: portaria.soho@corpflats.com.br"
+                  placeholder="Ex: soho@promenade.com.br"
                   className="text-xs rounded-xl h-9.5"
                 />
                 <p className="text-[10px] text-muted-foreground">Se vazio, utilizará o e-mail padrão da portaria configurado abaixo.</p>

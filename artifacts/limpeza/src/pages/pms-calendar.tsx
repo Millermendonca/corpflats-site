@@ -117,7 +117,7 @@ export default function PmsCalendar() {
   const [manualSubject, setManualSubject] = useState("")
   const [manualBody, setManualBody] = useState("")
   const [resendingCommId, setResendingCommId] = useState<string | null>(null)
-  const [portariaEmail, setPortariaEmail] = useState("portaria.soho@corpflats.com.br")
+  const [portariaEmail, setPortariaEmail] = useState("soho@promenade.com.br")
   const [copiedLinkKey, setCopiedLinkKey] = useState<string | null>(null)
 
   const fetchAuditLogs = async (resIdOrCode: string | number) => {
@@ -1570,7 +1570,7 @@ export default function PmsCalendar() {
     fetchAuditLogs(resItem.code || resItem.id)
     fetchCommunications(resItem.code || resItem.id)
     const flatItem = data.flats.find(f => f.id === resItem.flatId || String(f.number) === String(resItem.flatNumber))
-    const pEmail = flatItem?.receptionEmail || "portaria.soho@corpflats.com.br"
+    const pEmail = flatItem?.receptionEmail || "soho@promenade.com.br"
     setPortariaEmail(pEmail)
     setManualRecipient(resItem.guestEmail || pEmail)
     setManualSubject(`[CorpFlats] Flat ${resItem.flatNumber} - ${resItem.guestName}`)
