@@ -49,6 +49,7 @@ import {
   renderGarageAuthorizationEmail,
   renderManualEmail 
 } from "./mail-service.mjs";
+import { generateFnrhPdf, formatToBrasiliaDateTime } from "./fnrh-pdf-service.mjs";
 
 const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
@@ -338,6 +339,8 @@ let db = {
   reservationCommunications: [],
   roomBlocks: [],
   notifications: [],
+  fnrhAuditDocuments: [],
+  fnrhSignatureTokens: [],
   notificationSettings: {
     soundEnabled: true,
     adminWhatsApp: "5522997124021",
@@ -9878,11 +9881,72 @@ app.get("/api/pms/pre-checkin/:code", (req, res) => {
     };
   }
 
+  // Validação do Token Temporário de Assinatura (se enviado via URL ?token=...)
+  const queryToken = req.query.token;
+  let tokenStatus = null;
+  if (queryToken) {
+    if (!db.fnrhSignatureTokens) db.fnrhSignatureTokens = [];
+    const tokenRecord = db.fnrhSignatureTokens.find(t => t.token === queryToken && (t.reservationCode === r.code || String(t.reservationId) === String(r.id)));
+    if (!tokenRecord) {
+      tokenStatus = { valid: false, reason: "invalid", message: "Token de assinatura não encontrado ou inválido." };
+    } else if (tokenRecord.isRevoked) {
+      tokenStatus = { valid: false, reason: "revoked", message: "Este link de assinatura temporário foi revogado." };
+    } else if (new Date(tokenRecord.expiresAt).getTime() < Date.now()) {
+      tokenStatus = { valid: false, reason: "expired", message: "Este link de assinatura expirou (validade máxima de 2 horas). Solicite um novo link à recepção." };
+    } else {
+      tokenStatus = {
+        valid: true,
+        expiresAt: tokenRecord.expiresAt,
+        guestIndex: tokenRecord.guestIndex,
+        usedAt: tokenRecord.usedAt || null
+      };
+    }
+  }
+
   res.json({
     reservation: r,
     guest: guest || {},
     guestCount,
-    guests: r.guests
+    guests: r.guests,
+    tokenStatus
+  });
+});
+
+// Endpoint para Gerar Link Temporário de Assinatura com Token Único (2 horas)
+app.post("/api/pms/pre-checkin/:code/signature-token", (req, res) => {
+  const code = req.params.code;
+  const { guestIndex = 1, phone, email } = req.body || {};
+  const r = (db.reservations || []).find(x => x.code === code || String(x.id) === code);
+  if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
+
+  const token = crypto.randomBytes(24).toString("hex");
+  const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(); // 2 horas a partir de agora
+
+  if (!db.fnrhSignatureTokens) db.fnrhSignatureTokens = [];
+  const tokenRecord = {
+    token,
+    reservationCode: r.code || code,
+    reservationId: r.id,
+    guestIndex: Number(guestIndex) || 1,
+    guestPhone: phone || r.guestPhone || "",
+    guestEmail: email || r.guestEmail || "",
+    expiresAt,
+    createdAt: new Date().toISOString(),
+    isRevoked: false
+  };
+  db.fnrhSignatureTokens.push(tokenRecord);
+  saveDatabase();
+
+  const originHeader = req.headers.origin || (req.headers.host ? `${req.protocol || "https"}://${req.headers.host}` : "https://corpflats.onrender.com");
+  const signatureUrl = `${originHeader}/pre-checkin/${r.code || code}?token=${token}&guest=${guestIndex}`;
+
+  res.json({
+    success: true,
+    token,
+    expiresAt,
+    expiresInMinutes: 120,
+    signatureUrl,
+    message: "Link de assinatura temporário gerado com sucesso (válido por 2 horas)."
   });
 });
 
@@ -10173,6 +10237,67 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     }
   }
 
+  // ── Geração do PDF da Ficha com Trilha Forense, Hash SHA-256 e QR Code ──────
+  let fnrhDocument = null;
+  if (signatureBase64) {
+    try {
+      const signerIp = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || req.connection?.remoteAddress || "127.0.0.1";
+      const signerUserAgent = req.headers["user-agent"] || "Dispositivo Pessoal do Hóspede";
+      const originHeader = req.headers.origin || (req.headers.host ? `${req.protocol || "https"}://${req.headers.host}` : "https://corpflats.onrender.com");
+
+      fnrhDocument = await generateFnrhPdf({
+        reservation: r,
+        guestData: {
+          fullName: validName,
+          document: document || targetGuest.cpf,
+          phone: phone || targetGuest.phone,
+          email: cleanEmail || targetGuest.email,
+          address: address || targetGuest.address,
+          city: city || targetGuest.city,
+          state: state || targetGuest.state
+        },
+        signatureBase64,
+        signerIp,
+        signerUserAgent,
+        appOrigin: originHeader
+      });
+
+      if (fnrhDocument) {
+        if (!db.fnrhAuditDocuments) db.fnrhAuditDocuments = [];
+        db.fnrhAuditDocuments.unshift(fnrhDocument.auditTrail);
+
+        targetGuest.fnrhDocumentUuid = fnrhDocument.documentUuid;
+        targetGuest.fnrhPdfUrl = fnrhDocument.fileUrl;
+        targetGuest.fnrhSha256Hash = fnrhDocument.sha256Hash;
+        targetGuest.fnrhVerifyUrl = fnrhDocument.verifyUrl;
+        targetGuest.fnrhSignedAt = fnrhDocument.signedAt;
+        targetGuest.fnrhAuditTrail = fnrhDocument.auditTrail;
+        targetGuest.status = "CHECKED_IN";
+
+        // Reserva marcada como CHECKED_IN no sistema
+        r.status = "CHECKED_IN";
+        r.checkedInAt = fnrhDocument.signedAt;
+        r.fnrhPdfUrl = fnrhDocument.fileUrl;
+        r.fnrhDocumentUuid = fnrhDocument.documentUuid;
+        r.fnrhSha256Hash = fnrhDocument.sha256Hash;
+        r.fnrhVerifyUrl = fnrhDocument.verifyUrl;
+        r.fnrhSignedAt = fnrhDocument.signedAt;
+        r.fnrhAuditTrail = fnrhDocument.auditTrail;
+
+        // Se a assinatura foi realizada com token temporário de 2 horas, registra uso
+        if (req.body.token && Array.isArray(db.fnrhSignatureTokens)) {
+          const tRec = db.fnrhSignatureTokens.find(t => t.token === req.body.token);
+          if (tRec) {
+            tRec.usedAt = new Date().toISOString();
+            tRec.documentUuid = fnrhDocument.documentUuid;
+          }
+        }
+      }
+    } catch (pdfErr) {
+      console.error("[FNRH PDF] Erro ao compilar ficha e auditoria forense:", pdfErr);
+    }
+  }
+
   reconcileAndMergeGuests(db);
   saveDatabase();
 
@@ -10180,7 +10305,63 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     success: true,
     message: "Ficha de Check-in Digital registrada com sucesso! Entrada autorizada.",
     reservation: r,
-    guest
+    guest,
+    fnrhDocument: fnrhDocument ? {
+      documentUuid: fnrhDocument.documentUuid,
+      fileUrl: fnrhDocument.fileUrl,
+      sha256Hash: fnrhDocument.sha256Hash,
+      verifyUrl: fnrhDocument.verifyUrl,
+      signedAtBrasilia: fnrhDocument.signedAtBrasilia
+    } : null
+  });
+});
+
+// ── Rota Pública de Validação do QR Code (MP nº 2.200-2/2001 e Lei nº 14.063/2020) ─
+app.get("/api/public/verify-fnrh/:uuid", (req, res) => {
+  const uuid = req.params.uuid;
+  if (!uuid) return res.status(400).json({ error: "UUID não fornecido" });
+
+  let docRecord = (db.fnrhAuditDocuments || []).find(d => d.documentUuid === uuid);
+  if (!docRecord) {
+    for (const r of (db.reservations || [])) {
+      if (r.fnrhDocumentUuid === uuid && r.fnrhAuditTrail) {
+        docRecord = r.fnrhAuditTrail;
+        break;
+      }
+      if (Array.isArray(r.guests)) {
+        const g = r.guests.find(x => x.fnrhDocumentUuid === uuid && x.fnrhAuditTrail);
+        if (g) {
+          docRecord = g.fnrhAuditTrail;
+          break;
+        }
+      }
+    }
+  }
+
+  if (!docRecord) {
+    return res.status(404).json({
+      isValid: false,
+      error: "Documento de FNRH não localizado no registro de autenticidade do sistema."
+    });
+  }
+
+  res.json({
+    isValid: true,
+    status: "DOCUMENTO_AUTENTICO",
+    legalFramework: "Documento assinado eletronicamente nos termos do art. 10, § 2º da MP nº 2.200-2/2001 e da Lei Federal nº 14.063/2020.",
+    document: {
+      documentUuid: docRecord.documentUuid,
+      reservationCode: docRecord.reservationCode,
+      guestName: docRecord.guestName,
+      guestCpfMasked: (docRecord.guestCpf || "").replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.***.***-$4"),
+      signedAt: docRecord.signedAt,
+      signedAtBrasilia: docRecord.signedAtBrasilia || formatToBrasiliaDateTime(docRecord.signedAt),
+      signerIp: docRecord.signerIp,
+      signerUserAgent: docRecord.signerUserAgent,
+      sha256Hash: docRecord.sha256Hash,
+      canonicalHash: docRecord.canonicalHash,
+      fileUrl: docRecord.fileUrl
+    }
   });
 });
 

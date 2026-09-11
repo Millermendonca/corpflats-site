@@ -21,6 +21,7 @@ import PmsReportsPage from '@/pages/pms-reports';
 import CrmGuests from '@/pages/crm-guests';
 import ReceptionTablet from '@/pages/reception-tablet';
 import GuestPreCheckin from '@/pages/guest-pre-checkin';
+import VerifyFnrh from '@/pages/verify-fnrh';
 import BookingEngine from '@/pages/booking-engine';
 import FinancialDashboard from '@/pages/financial-dashboard';
 import MarketingTraffic from '@/pages/marketing-traffic';
@@ -42,6 +43,7 @@ import MyAccount from '@/pages/my-account';
 import WhatsappAutomation from '@/pages/whatsapp-automation';
 import MaidWhatsappAutomation from '@/pages/maid-whatsapp-automation';
 import ShoppingListPage from '@/pages/shopping-list';
+import MaidStatementPage from '@/pages/maid-statement';
 import ZapiConnection from '@/pages/zapi-connection';
 import NotFound from '@/pages/not-found';
 
@@ -83,6 +85,8 @@ function Router() {
         <Route path="/guest-portal" component={GuestPortal} />
         <Route path="/pre-checkin/:code" component={GuestPreCheckin} />
         <Route path="/pre-checkin" component={GuestPreCheckin} />
+        <Route path="/verificar-ficha/:uuid" component={VerifyFnrh} />
+        <Route path="/verificar-ficha" component={VerifyFnrh} />
 
         {/* Reception Tablet Portaria Route */}
         <Route path="/portaria" component={ReceptionTablet} />
@@ -129,6 +133,11 @@ function Router() {
         {/* Shopping List Routes */}
         <Route path="/lista-compras" component={ShoppingListPage} />
         <Route path="/compras" component={ShoppingListPage} />
+
+        {/* Maid Financial Statement Routes */}
+        <Route path="/extrato" component={MaidStatementPage} />
+        <Route path="/meu-extrato" component={MaidStatementPage} />
+        <Route path="/extrato-camareiras" component={MaidStatementPage} />
 
         {/* WhatsApp Automation & Z-API Connection Routes */}
         <Route path="/automacoes-camareiras" component={MaidWhatsappAutomation} />

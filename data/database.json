@@ -5837,6 +5837,8 @@
       "createdAt": "2026-08-19T14:50:12.246Z"
     }
   ],
+  "fnrhAuditDocuments": [],
+  "fnrhSignatureTokens": [],
   "notificationSettings": {
     "soundEnabled": true,
     "adminWhatsApp": "5522997124021",

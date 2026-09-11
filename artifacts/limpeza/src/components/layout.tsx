@@ -10,7 +10,7 @@ import {
   MessageSquareWarning, BarChart3, Bell, ClipboardCheck, Sparkles, Key, Check, AlertCircle,
   CalendarDays, Users, Tablet, Globe, DollarSign, Bot, FileText, Coffee, Menu, X, Search, ChevronRight,
   CreditCard, Palette, Coins, ScrollText, Building2, Package, TrendingUp, Car, ThumbsUp, MessageSquare,
-  Smartphone, ShoppingCart
+  Smartphone, ShoppingCart, Wallet
 } from "lucide-react"
 import { Button } from "./ui/button"
 import { Skeleton } from "./ui/skeleton"
@@ -216,6 +216,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       items: [
         { href: "/dashboard", label: "Painel de Limpeza", icon: LayoutDashboard, description: "Quartos sujos, limpos e em andamento" },
         { href: "/lista-compras", label: "Lista de Compras", icon: ShoppingCart, description: "Itens para reposição, compras e governança" },
+        { href: "/extrato", label: isAdmin ? "Extrato Financeiro Camareiras" : "Meu Extrato Financeiro", icon: Wallet, description: "Extrato em tempo real, diárias, vales e PIX" },
         { href: "/achados-perdidos", label: "Achados & Perdidos", icon: Package, description: "Objetos esquecidos, custódia e devoluções" },
         { href: "/tasks", label: "Tarefas Preventivas", icon: ClipboardList, description: "Trocas de filtro, dedetizações e rotinas" },
         { href: "/observations", label: "Ocorrências & Avarias", icon: MessageSquareWarning, description: "Defeitos e manutenções relatadas" },
@@ -520,54 +521,54 @@ export function Shell({ children }: { children: React.ReactNode }) {
         {children}
       </main>
 
-      {/* Barra de Navegação Inferior Móvel (Bottom Bar para Celular) */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-card/95 backdrop-blur border-t border-border px-2 py-1.5 flex items-center justify-around shadow-2xl print:hidden">
+      {/* Barra de Navegação Inferior Móvel (Menus Permanentes no Rodapé) */}
+      <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-card border-t border-border px-2 py-1.5 flex items-center justify-around shadow-2xl print:hidden">
+        {/* 1. Limpeza */}
         <Link href="/dashboard">
-          <div className={`flex flex-col items-center py-1 px-2 rounded-xl transition-all ${
-            location === "/dashboard" ? "text-primary font-black scale-105" : "text-muted-foreground"
+          <div className={`flex flex-col items-center py-1 px-2.5 rounded-xl transition-all ${
+            location === "/dashboard" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
           }`}>
             <LayoutDashboard className="w-5 h-5" />
-            <span className="text-[10px] mt-0.5">Limpeza</span>
+            <span className="text-[10px] mt-0.5 font-bold">Limpeza</span>
           </div>
         </Link>
 
-        {isAdmin && (
-          <Link href="/portaria">
-            <div className={`flex flex-col items-center py-1 px-2 rounded-xl transition-all ${
-              location === "/portaria" ? "text-primary font-black scale-105" : "text-muted-foreground"
-            }`}>
-              <Tablet className="w-5 h-5" />
-              <span className="text-[10px] mt-0.5">Portaria</span>
-            </div>
-          </Link>
-        )}
+        {/* 2. Lista de Compras */}
+        <Link href="/lista-compras">
+          <div className={`flex flex-col items-center py-1 px-2.5 rounded-xl transition-all ${
+            location === "/lista-compras" || location === "/compras" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
+          }`}>
+            <ShoppingCart className="w-5 h-5" />
+            <span className="text-[10px] mt-0.5 font-bold">Compras</span>
+          </div>
+        </Link>
 
-        {isAdmin && (
-          <Link href="/pedidos-cafe">
-            <div className={`flex flex-col items-center py-1 px-2 rounded-xl transition-all ${
-              location === "/pedidos-cafe" ? "text-primary font-black scale-105" : "text-muted-foreground"
-            }`}>
-              <Coffee className="w-5 h-5" />
-              <span className="text-[10px] mt-0.5">Café</span>
-            </div>
-          </Link>
-        )}
+        {/* 3. Extrato */}
+        <Link href="/extrato">
+          <div className={`flex flex-col items-center py-1 px-2.5 rounded-xl transition-all ${
+            location === "/extrato" || location === "/meu-extrato" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
+          }`}>
+            <Wallet className="w-5 h-5" />
+            <span className="text-[10px] mt-0.5 font-bold">Extrato</span>
+          </div>
+        </Link>
 
-        {isAdmin && (
-          <Link href="/reservas">
-            <div className={`flex flex-col items-center py-1 px-2 rounded-xl transition-all ${
-              location === "/reservas" ? "text-primary font-black scale-105" : "text-muted-foreground"
-            }`}>
-              <CalendarDays className="w-5 h-5" />
-              <span className="text-[10px] mt-0.5">Reservas</span>
-            </div>
-          </Link>
-        )}
+        {/* 4. Manutenções */}
+        <Link href="/observations">
+          <div className={`flex flex-col items-center py-1 px-2.5 rounded-xl transition-all ${
+            location === "/observations" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
+          }`}>
+            <MessageSquareWarning className="w-5 h-5" />
+            <span className="text-[10px] mt-0.5 font-bold">Manutenções</span>
+          </div>
+        </Link>
 
+        {/* 5. Mais */}
         <button 
+          type="button"
           onClick={() => setMobileMenuOpen(true)}
-          className={`flex flex-col items-center py-1 px-2 rounded-xl transition-all ${
-            mobileMenuOpen ? "text-primary font-black" : "text-muted-foreground"
+          className={`flex flex-col items-center py-1 px-2.5 rounded-xl transition-all ${
+            mobileMenuOpen ? "text-primary font-black" : "text-muted-foreground hover:text-foreground"
           }`}
         >
           <Menu className="w-5 h-5" />

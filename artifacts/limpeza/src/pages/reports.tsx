@@ -21,7 +21,7 @@ import {
   CheckCircle2, Clock, Sparkles, User, Calendar, BarChart3, Printer, 
   DollarSign, Users, FileText, Check, Sliders, ChevronLeft, ChevronRight,
   Receipt, MessageSquare, Building2, CheckCheck, Star, ArrowRight, RefreshCw, ListFilter,
-  Plus, Trash2, AlertTriangle, Info
+  Plus, Trash2, AlertTriangle, Info, Banknote, Gift, Wallet, Send, ArrowUpRight, ArrowDownLeft
 } from "lucide-react"
 
 const COLORS = ["#6366f1", "#22c55e", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4"]
@@ -607,6 +607,100 @@ export default function Reports() {
   const [cleaningToDelete, setCleaningToDelete] = useState<any | null>(null)
   const [isDeletingCleaning, setIsDeletingCleaning] = useState(false)
 
+  // ── Módulo de Pagamentos, Vales & Extratos da Camareira ──
+  const [payModalOpen, setPayModalOpen] = useState(false)
+  const [activePayCleaner, setActivePayCleaner] = useState<any | null>(null)
+  const [payType, setPayType] = useState<"payment" | "advance">("payment")
+  const [payAmount, setPayAmount] = useState("")
+  const [payDescription, setPayDescription] = useState("")
+  const [payingLoading, setPayingLoading] = useState(false)
+
+  // Modal de Extrato
+  const [statementModalOpen, setStatementModalOpen] = useState(false)
+  const [activeStatementCleaner, setActiveStatementCleaner] = useState<any | null>(null)
+  const [statementData, setStatementData] = useState<any | null>(null)
+  const [loadingStatement, setLoadingStatement] = useState(false)
+  const [sendingWa, setSendingWa] = useState(false)
+
+  const handleOpenPay = (cleaner: any, type: "payment" | "advance") => {
+    setActivePayCleaner(cleaner)
+    setPayType(type)
+    setPayAmount(type === "payment" ? String(Number(cleaner.totalToPay || 0).toFixed(2)) : "")
+    setPayDescription("")
+    setPayModalOpen(true)
+  }
+
+  const handleOpenStatement = async (cleaner: any) => {
+    setActiveStatementCleaner(cleaner)
+    setStatementModalOpen(true)
+    setLoadingStatement(true)
+    try {
+      const res = await fetch(`/api/maids/${cleaner.userId}/statement`)
+      if (res.ok) {
+        setStatementData(await res.json())
+      }
+    } catch (err: any) {
+      console.error("Erro ao carregar extrato:", err)
+    } finally {
+      setLoadingStatement(false)
+    }
+  }
+
+  const handleConfirmPay = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!activePayCleaner) return
+    const amount = parseFloat(payAmount.replace(",", "."))
+    if (!amount || amount <= 0) return alert("Informe um valor válido.")
+
+    try {
+      setPayingLoading(true)
+      const res = await fetch(`/api/maids/${activePayCleaner.userId}/pay`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount,
+          type: payType,
+          description: payDescription.trim() || undefined,
+          sendWhatsApp: true,
+        }),
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        alert(payType === "advance" ? "✓ Vale registrado com sucesso e abatido do extrato!" : "✓ Pagamento realizado com sucesso!")
+        setPayModalOpen(false)
+        fetchReport()
+      } else {
+        alert(data.error || "Erro ao processar pagamento.")
+      }
+    } catch (err: any) {
+      alert("Erro de conexão: " + err.message)
+    } finally {
+      setPayingLoading(false)
+    }
+  }
+
+  const handleSendStatementWhatsApp = async () => {
+    if (!activeStatementCleaner) return
+    try {
+      setSendingWa(true)
+      const res = await fetch("/api/maids/statement/send-whatsapp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: activeStatementCleaner.userId }),
+      })
+      const data = await res.json()
+      if (res.ok && (data.success || data.simulated)) {
+        alert("✓ Extrato detalhado enviado com sucesso para o WhatsApp da camareira!")
+      } else {
+        alert(data.error || data.message || "Erro ao enviar extrato via WhatsApp.")
+      }
+    } catch (err: any) {
+      alert("Erro: " + err.message)
+    } finally {
+      setSendingWa(false)
+    }
+  }
+
   const handleOpenAddCleaningModal = () => {
     setAddFlatNumber(flatsList[0]?.number || "101")
     setAddRequestDate(startDate || format(new Date(), "yyyy-MM-dd"))
@@ -1064,17 +1158,53 @@ export default function Reports() {
                                   </td>
 
                                   <td className="p-3.5 text-right print:hidden">
-                                    <Button
-                                      size="sm"
-                                      onClick={() => {
-                                        setActiveCleanerReceipt(c)
-                                        setReceiptModalOpen(true)
-                                      }}
-                                      className="h-8 px-2.5 text-[11px] font-bold rounded-xl gap-1 bg-emerald-600 hover:bg-emerald-700 text-white"
-                                    >
-                                      <Receipt className="w-3.5 h-3.5" />
-                                      <span>Ver Recibo</span>
-                                    </Button>
+                                    <div className="flex items-center justify-end gap-1.5">
+                                      <Button
+                                        size="sm"
+                                        onClick={() => handleOpenPay(c, "payment")}
+                                        className="h-8 px-2.5 text-[11px] font-bold rounded-xl gap-1 bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs"
+                                        title="Pagar via PIX com comprovante"
+                                      >
+                                        <Banknote className="w-3.5 h-3.5" />
+                                        <span>Pagar PIX</span>
+                                      </Button>
+
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => handleOpenPay(c, "advance")}
+                                        className="h-8 px-2 text-[11px] font-bold rounded-xl gap-1 border-amber-500/40 text-amber-700 dark:text-amber-400 hover:bg-amber-500/10"
+                                        title="Lançar vale / adiantamento para abater do saldo"
+                                      >
+                                        <Gift className="w-3.5 h-3.5" />
+                                        <span>Vale</span>
+                                      </Button>
+
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => handleOpenStatement(c)}
+                                        className="h-8 px-2 text-[11px] font-bold rounded-xl gap-1 hover:border-primary/40"
+                                        title="Ver extrato completo com histórico de entradas e saídas"
+                                      >
+                                        <Wallet className="w-3.5 h-3.5 text-primary" />
+                                        <span>Extrato</span>
+                                      </Button>
+
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        onClick={() => {
+                                          setActiveCleanerReceipt(c)
+                                          setReceiptModalOpen(true)
+                                        }}
+                                        className="h-8 px-2 text-[11px] font-bold rounded-xl gap-1 text-muted-foreground hover:text-foreground"
+                                        title="Gerar recibo A4 para impressão"
+                                      >
+                                        <Receipt className="w-3.5 h-3.5" />
+                                        <span>Recibo</span>
+                                      </Button>
+                                    </div>
                                   </td>
                                 </tr>
                               ))
@@ -1914,6 +2044,189 @@ export default function Reports() {
                 className="rounded-xl font-bold"
               >
                 {isDeletingCleaning ? "Excluindo..." : "Sim, Excluir Diária"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ── MODAL: PAGAR PIX / LANÇAR VALE ── */}
+        <Dialog open={payModalOpen} onOpenChange={setPayModalOpen}>
+          <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl">
+            <DialogHeader>
+              <DialogTitle className="text-base font-black flex items-center gap-2">
+                {payType === "advance" ? (
+                  <><Gift className="w-5 h-5 text-amber-500" /> Dar Vale (Adiantamento)</>
+                ) : (
+                  <><Banknote className="w-5 h-5 text-emerald-600" /> Pagar Camareira via PIX</>
+                )}
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                {activePayCleaner?.name || activePayCleaner?.username} — Saldo a Pagar: {" "}
+                <strong>R$ {Number(activePayCleaner?.totalToPay || 0).toFixed(2)}</strong>
+              </DialogDescription>
+            </DialogHeader>
+
+            <form onSubmit={handleConfirmPay} className="space-y-4 pt-2">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPayType("payment")}
+                  className={`flex items-center justify-center gap-2 p-3 rounded-2xl border text-xs font-bold transition-all ${payType === "payment" ? "bg-emerald-600 text-white border-emerald-600 shadow-xs" : "bg-card border-border/60 text-muted-foreground"}`}
+                >
+                  <Banknote className="w-4 h-4" /> Pagamento PIX
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPayType("advance")}
+                  className={`flex items-center justify-center gap-2 p-3 rounded-2xl border text-xs font-bold transition-all ${payType === "advance" ? "bg-amber-500 text-white border-amber-500 shadow-xs" : "bg-card border-border/60 text-muted-foreground"}`}
+                >
+                  <Gift className="w-4 h-4" /> Vale (Adiantamento)
+                </button>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold">Valor (R$)</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  placeholder="0,00"
+                  value={payAmount}
+                  onChange={e => setPayAmount(e.target.value)}
+                  className="rounded-xl h-11 text-lg font-black text-center"
+                  required
+                />
+                {payType === "payment" && activePayCleaner && Number(activePayCleaner.totalToPay) > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setPayAmount(Number(activePayCleaner.totalToPay).toFixed(2))}
+                    className="text-[10px] text-primary underline font-bold"
+                  >
+                    Usar total da quinzena (R$ {Number(activePayCleaner.totalToPay).toFixed(2)})
+                  </button>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold">Descrição (opcional)</Label>
+                <Input
+                  placeholder={payType === "advance" ? "ex: Vale para despesas pessoais" : "ex: Pagamento quinzenal de diárias"}
+                  value={payDescription}
+                  onChange={e => setPayDescription(e.target.value)}
+                  className="rounded-xl h-9 text-xs"
+                />
+              </div>
+
+              <div className="text-[10px] text-muted-foreground p-3 rounded-xl bg-muted/40 border border-border/40">
+                {payType === "payment"
+                  ? "✅ O pagamento será processado via Banco Inter (ou modo simulação se sem credenciais) e uma notificação com comprovante será enviada automaticamente para o WhatsApp da camareira."
+                  : "🎫 O valor do vale será imediatamente lançado como saída no extrato da camareira e abaterá dos próximos pagamentos. Ela será avisada no WhatsApp."}
+              </div>
+
+              <DialogFooter className="gap-2 pt-1">
+                <Button type="button" variant="outline" onClick={() => setPayModalOpen(false)} className="rounded-xl h-9 text-xs font-bold">
+                  Cancelar
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={payingLoading || !payAmount}
+                  className={`rounded-xl h-9 text-xs font-bold gap-1.5 ${payType === "advance" ? "bg-amber-500 hover:bg-amber-600" : "bg-emerald-600 hover:bg-emerald-700"} text-white`}
+                >
+                  {payingLoading ? "Processando..." : payType === "advance" ? "Confirmar Vale" : "Pagar Agora (PIX)"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+
+        {/* ── MODAL: EXTRATO COMPLETO COM COMPROVANTES E WHATSAPP ── */}
+        <Dialog open={statementModalOpen} onOpenChange={setStatementModalOpen}>
+          <DialogContent className="sm:max-w-2xl bg-card border border-border rounded-3xl max-h-[85vh] flex flex-col">
+            <DialogHeader>
+              <DialogTitle className="text-base font-black flex items-center gap-2">
+                <Wallet className="w-5 h-5 text-primary" />
+                Extrato Financeiro — {statementData?.userName || activeStatementCleaner?.name || activeStatementCleaner?.username}
+              </DialogTitle>
+              <DialogDescription className="text-xs flex items-center gap-4">
+                <span>
+                  Saldo Atual: <strong className={statementData && statementData.balance >= 0 ? "text-emerald-600" : "text-rose-600"}>
+                    R$ {Number(statementData?.balance || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                  </strong>
+                </span>
+                {statementData?.pixKey && (
+                  <span>PIX: <code className="text-[10px] bg-muted px-1.5 py-0.5 rounded font-mono">{statementData.pixKey}</code></span>
+                )}
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="overflow-y-auto flex-1 -mx-2 px-2">
+              {loadingStatement ? (
+                <div className="text-center py-10 text-muted-foreground text-xs">Carregando extrato completo...</div>
+              ) : !statementData?.statement?.length ? (
+                <div className="text-center py-10 text-muted-foreground text-xs">Nenhuma movimentação registrada neste extrato.</div>
+              ) : (
+                <div className="space-y-2 py-2">
+                  {statementData.statement.map((entry: any) => {
+                    const isCredit = entry.entryType === "credit"
+                    const isAdvance = entry.payment?.type === "advance"
+                    return (
+                      <div
+                        key={entry.id}
+                        className={`flex items-center gap-3 p-3 rounded-2xl border ${isCredit ? "bg-emerald-500/5 border-emerald-500/15" : "bg-rose-500/5 border-rose-500/15"}`}
+                      >
+                        <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${isCredit ? "bg-emerald-500/15 text-emerald-600" : "bg-rose-500/15 text-rose-600"}`}>
+                          {isCredit ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownLeft className="w-4 h-4" />}
+                        </div>
+
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-bold text-foreground truncate">{entry.description}</p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-[10px] text-muted-foreground">
+                              {entry.entryDate ? entry.entryDate.split("-").reverse().join("/") : "—"}
+                            </span>
+                            {entry.payment?.interTxId && (
+                              <span className="text-[10px] text-primary font-mono bg-primary/10 px-1.5 rounded">
+                                TxID: {entry.payment.interTxId.substring(0, 16)}…
+                              </span>
+                            )}
+                            {entry.payment?.interSimulated && (
+                              <Badge variant="secondary" className="text-[9px] px-1 py-0 h-3.5">Simulado</Badge>
+                            )}
+                            {isAdvance && (
+                              <Badge className="text-[9px] px-1 py-0 h-3.5 bg-amber-500/15 text-amber-700 border-amber-500/20">Vale</Badge>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="text-right shrink-0">
+                          <p className={`text-sm font-black ${isCredit ? "text-emerald-600" : "text-rose-600"}`}>
+                            {isCredit ? "+" : "−"} R$ {Number(entry.amount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground">
+                            Saldo: R$ {Number(entry.balanceAfter || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                          </p>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            <DialogFooter className="pt-3 border-t border-border/60 flex-row justify-between items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleSendStatementWhatsApp}
+                disabled={sendingWa}
+                className="rounded-xl text-xs font-bold gap-1.5 h-9 bg-[#25d366]/10 text-[#25d366] border-[#25d366]/30 hover:bg-[#25d366]/20"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>{sendingWa ? "Enviando..." : "Enviar Extrato p/ WhatsApp"}</span>
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => setStatementModalOpen(false)} className="rounded-xl h-9 text-xs font-bold">
+                Fechar
               </Button>
             </DialogFooter>
           </DialogContent>
