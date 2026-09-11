@@ -14201,7 +14201,27 @@ app.patch("/api/guest-auth/profile", (req, res) => {
     if (phone) account.phone = phone.trim();
     if (document) account.document = document.trim();
     if (companyData !== undefined) account.companyData = companyData;
-    if (vehicle !== undefined) account.vehicle = vehicle;
+    if (vehicle !== undefined) {
+      account.vehicle = vehicle;
+      if (vehicle && vehicle.plate) {
+        const today = new Date().toISOString().slice(0, 10);
+        const activeReservations = (db.reservations || []).filter(r => 
+          ((r.guestEmail && r.guestEmail.toLowerCase() === cleanEmail) || (account.phone && r.guestPhone && r.guestPhone.replace(/\D/g, "") === account.phone.replace(/\D/g, ""))) &&
+          r.status !== "cancelada" &&
+          r.checkoutDate >= today
+        );
+        for (const resItem of activeReservations) {
+          if (!resItem.vehicle || resItem.vehicle.plate !== vehicle.plate) {
+            resItem.vehicle = vehicle;
+            triggerGarageEmailNotification(db, saveDatabase, resItem, vehicle, {
+              trigger: "guest_profile_update",
+              source: "Perfil do Hóspede",
+              force: true
+            });
+          }
+        }
+      }
+    }
     if (req.body.newPassword) {
       account.passwordHash = hashPassword(req.body.newPassword);
     }
@@ -14518,7 +14538,28 @@ app.patch("/api/v2/auth/profile", (req, res) => {
     if (name) user.name = name.trim();
     if (phone !== undefined) user.phone = phone.trim();
     if (document !== undefined) user.document = document.trim();
-    if (vehicle !== undefined) user.vehicle = vehicle;
+    if (vehicle !== undefined) {
+      user.vehicle = vehicle;
+      if (vehicle && vehicle.plate) {
+        const userEmail = (user.email || "").trim().toLowerCase();
+        const today = new Date().toISOString().slice(0, 10);
+        const activeReservations = (db.reservations || []).filter(r => 
+          ((userEmail && r.guestEmail && r.guestEmail.toLowerCase() === userEmail) || (user.phone && r.guestPhone && r.guestPhone.replace(/\D/g, "") === user.phone.replace(/\D/g, ""))) &&
+          r.status !== "cancelada" &&
+          r.checkoutDate >= today
+        );
+        for (const resItem of activeReservations) {
+          if (!resItem.vehicle || resItem.vehicle.plate !== vehicle.plate) {
+            resItem.vehicle = vehicle;
+            triggerGarageEmailNotification(db, saveDatabase, resItem, vehicle, {
+              trigger: "guest_profile_update_v2",
+              source: "Perfil do Hóspede V2",
+              force: true
+            });
+          }
+        }
+      }
+    }
     if (companyData !== undefined) user.companyData = companyData;
 
     saveDatabase();
