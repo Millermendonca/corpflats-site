@@ -1075,14 +1075,9 @@ export default function BookingEngine() {
             {/* Seletor Compacto de Datas */}
             <div className="grid grid-cols-2 gap-2 pb-2.5 border-b border-slate-100">
               <div className="space-y-1">
-                <label className="text-[10.5px] font-semibold text-slate-500 flex items-center justify-between">
-                  <span className="flex items-center gap-1">
-                    <Calendar className="w-3 h-3 text-sky-600" />
-                    <span>Entrada</span>
-                  </span>
-                  <span className="text-[10px] sm:text-[11px] text-sky-700 font-bold">
-                    {formatDisplayDate(checkin)}
-                  </span>
+                <label className="text-[10.5px] font-semibold text-slate-500 flex items-center gap-1">
+                  <Calendar className="w-3 h-3 text-sky-600" />
+                  <span>Entrada</span>
                 </label>
                 <Input 
                   type="date" 
@@ -1094,14 +1089,9 @@ export default function BookingEngine() {
               </div>
 
               <div className="space-y-1">
-                <label className="text-[10.5px] font-semibold text-slate-500 flex items-center justify-between">
-                  <span className="flex items-center gap-1">
-                    <Calendar className="w-3 h-3 text-sky-600" />
-                    <span>Saída</span>
-                  </span>
-                  <span className="text-[10px] sm:text-[11px] text-indigo-700 font-bold">
-                    {formatDisplayDate(checkout)}
-                  </span>
+                <label className="text-[10.5px] font-semibold text-slate-500 flex items-center gap-1">
+                  <Calendar className="w-3 h-3 text-sky-600" />
+                  <span>Saída</span>
                 </label>
                 <Input 
                   type="date" 
