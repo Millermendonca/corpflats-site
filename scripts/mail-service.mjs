@@ -436,7 +436,7 @@ export function renderGarageAuthorizationEmail({ reservation, flat, vehicle, set
 
   const contentHtml = `
     <div style="margin-bottom: 20px;">
-      <h2 style="font-size: 17px; font-weight: 800; color: #0f172a; margin: 0 0 6px 0;">Olá, Equipe de Garagem & Portaria!</h2>
+      <h2 style="font-size: 17px; font-weight: 800; color: #0f172a; margin: 0 0 6px 0;">Olá, Equipe da Garagem (PFB Estacionamentos)!</h2>
       <p style="font-size: 13px; color: #475569; margin: 0; line-height: 1.5;">
         Solicitamos a <strong>liberação de entrada e acesso à vaga de garagem</strong> para o veículo cadastrado abaixo, referente à acomodação no <strong>${flatDisplay}</strong> (${buildingName}):
       </p>

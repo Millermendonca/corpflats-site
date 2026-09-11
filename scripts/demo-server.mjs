@@ -172,32 +172,20 @@ app.post("/api/cleaning/assignments/:requestId/no-show", (req, res) => {
   const item = db.cleaningRequests.find(r => r.id === reqId);
   if (!item) return res.status(404).json({ error: "Solicitação não encontrada" });
 
+  if (item.status === "clean") {
+    return res.status(400).json({ error: "Este quarto já foi higienizado e concluído pela governança. Não é permitido marcar No Show sobre uma limpeza realizada." });
+  }
+
   const now = new Date().toISOString();
   const flat = db.flats.find(f => f.id === item.flatId);
   const fNum = flat ? flat.number : (item.flatNumber || String(item.flatId));
 
-  // Marca o request selecionado com status no_show
+  // Marca APENAS o request selecionado com status no_show (não altera históricos nem propaga para outras datas)
   item.status = "no_show";
   item.isVacant = true;
   item.completedAt = now;
   item.pendingObservation = "No Show - Quarto não utilizado / Limpo";
   item.updatedAt = now;
-
-  // Baixa apenas pendências antigas NÃO limpas (requestDate < item.requestDate e status === "dirty") do mesmo flat.
-  // JAMAIS altera datas futuras (requestDate > item.requestDate) nem outros check-outs subsequentes!
-  for (const r of db.cleaningRequests) {
-    if (r.id !== item.id &&
-        (r.flatId === item.flatId || String(r.flatNumber) === String(fNum)) &&
-        r.requestDate && item.requestDate &&
-        r.requestDate < item.requestDate &&
-        r.status === "dirty") {
-      r.status = "no_show";
-      r.isVacant = true;
-      r.completedAt = now;
-      r.pendingObservation = "No Show - Quarto não utilizado / Limpo";
-      r.updatedAt = now;
-    }
-  }
 
   createNotification({
     category: "checkout",
@@ -288,26 +276,19 @@ app.post("/api/admin/restore-historical-cleanings", (req, res) => {
   for (const num of hojeCrisClean) applyStatus(num, "2026-08-17", "clean", 2, "Cris");
   for (const num of hojeGraziClean) applyStatus(num, "2026-08-17", "clean", 3, "Grazi");
 
-  // Aplicar No Show (1304)
-  for (const num of noShowFlats) {
-    const flatObj = db.flats.find(f => f.number === num);
-    for (const r of db.cleaningRequests) {
-      if (r.flatNumber === num || (flatObj && r.flatId === flatObj.id)) {
-        r.status = "no_show";
-        r.isVacant = true;
-        r.pendingObservation = "No Show - Quarto não utilizado / Limpo";
-        r.updatedAt = new Date().toISOString();
-      }
-    }
-  }
-
+  sanitizeAndRecoverCleanings();
+  sanitizeReservationFlags();
   saveDatabase();
+
+  const septGrazi = (db.cleaningRequests || []).filter(r => r.status === "clean" && r.assignedUserId === 3 && (r.requestDate >= "2026-09-01" && r.requestDate <= "2026-09-15")).length;
+  const septCris = (db.cleaningRequests || []).filter(r => r.status === "clean" && r.assignedUserId === 2 && (r.requestDate >= "2026-09-01" && r.requestDate <= "2026-09-15")).length;
 
   res.json({
     success: true,
-    message: "Histórico de limpezas de ontem e hoje restaurado e No Show aplicado no PostgreSQL Cloud!",
+    message: "Histórico de limpezas reconciliado e restaurado no PostgreSQL Cloud!",
     totalRequests: db.cleaningRequests.length,
-    todayCleanCount: db.cleaningRequests.filter(r => r.requestDate === "2026-08-17" && r.status === "clean").length
+    septemberGraziCleanCount: septGrazi,
+    septemberCrisCleanCount: septCris
   });
 });
 
@@ -970,14 +951,154 @@ function sanitizeAndRecoverCleanings() {
       durationMinutes: 63,
       createdAt: "2026-09-02T14:24:27.919Z",
       updatedAt: "2026-09-02T19:01:30.862Z"
+    },
+    // 03/09/2026 - Cris (Flat 215)
+    {
+      id: 231,
+      flatId: 6,
+      flatNumber: "215",
+      requestDate: "2026-09-03",
+      effectiveDate: "2026-09-03",
+      source: "checkout",
+      status: "clean",
+      assignedUserId: 2,
+      assignedUsername: "Cris",
+      assignedUserName: "Cris",
+      isVacant: true,
+      isPriority: false,
+      isExtended: false,
+      twinBeds: false,
+      extraMattress: false,
+      adminNote: null,
+      leavingGuest: "Hóspede",
+      arrivingGuest: null,
+      pendingObservation: null,
+      willCleanAt: "2026-09-03T17:51:15.681Z",
+      cleaningStartedAt: "2026-09-03T17:51:16.789Z",
+      completedAt: "2026-09-03T18:10:23.771Z",
+      durationMinutes: 19,
+      createdAt: "2026-09-03T08:00:00.000Z",
+      updatedAt: "2026-09-03T18:10:23.771Z"
+    },
+    // 04/09/2026 - Grazi (Flat 313)
+    {
+      id: 236,
+      flatId: 7,
+      flatNumber: "313",
+      requestDate: "2026-09-04",
+      effectiveDate: "2026-09-04",
+      source: "checkout",
+      status: "clean",
+      assignedUserId: 3,
+      assignedUsername: "Grazi",
+      assignedUserName: "Grazi",
+      isVacant: true,
+      isPriority: false,
+      isExtended: false,
+      twinBeds: false,
+      extraMattress: false,
+      adminNote: null,
+      leavingGuest: "Hóspede",
+      arrivingGuest: null,
+      pendingObservation: null,
+      willCleanAt: "2026-09-04T18:02:16.037Z",
+      cleaningStartedAt: "2026-09-04T18:02:17.192Z",
+      completedAt: "2026-09-04T18:14:11.581Z",
+      durationMinutes: 12,
+      createdAt: "2026-09-04T08:00:00.000Z",
+      updatedAt: "2026-09-04T18:14:11.581Z"
+    },
+    // 07/09/2026 - Grazi (Flat 313)
+    {
+      id: 245,
+      flatId: 7,
+      flatNumber: "313",
+      requestDate: "2026-09-07",
+      effectiveDate: "2026-09-07",
+      source: "checkout",
+      status: "clean",
+      assignedUserId: 3,
+      assignedUsername: "Grazi",
+      assignedUserName: "Grazi",
+      isVacant: true,
+      isPriority: false,
+      isExtended: false,
+      twinBeds: false,
+      extraMattress: false,
+      adminNote: null,
+      leavingGuest: "Hóspede",
+      arrivingGuest: null,
+      pendingObservation: null,
+      willCleanAt: "2026-09-07T18:27:49.404Z",
+      cleaningStartedAt: "2026-09-07T18:27:50.584Z",
+      completedAt: "2026-09-07T18:48:59.587Z",
+      durationMinutes: 21,
+      createdAt: "2026-09-06T08:00:00.000Z",
+      updatedAt: "2026-09-07T18:48:59.587Z"
+    },
+    // 08/09/2026 - Grazi (Flat 212)
+    {
+      id: 266,
+      flatId: 5,
+      flatNumber: "212",
+      requestDate: "2026-09-08",
+      effectiveDate: "2026-09-08",
+      source: "checkout",
+      status: "clean",
+      assignedUserId: 3,
+      assignedUsername: "Grazi",
+      assignedUserName: "Grazi",
+      isVacant: true,
+      isPriority: false,
+      isExtended: false,
+      twinBeds: false,
+      extraMattress: false,
+      adminNote: null,
+      leavingGuest: "Hóspede",
+      arrivingGuest: null,
+      pendingObservation: null,
+      willCleanAt: "2026-09-08T10:46:29.925Z",
+      cleaningStartedAt: "2026-09-08T13:14:27.967Z",
+      completedAt: "2026-09-08T13:27:52.497Z",
+      durationMinutes: 13,
+      createdAt: "2026-09-07T15:25:12.378Z",
+      updatedAt: "2026-09-08T13:27:52.497Z"
+    },
+    // 08/09/2026 - Grazi (Flat 215)
+    {
+      id: 270,
+      flatId: 6,
+      flatNumber: "215",
+      requestDate: "2026-09-08",
+      effectiveDate: "2026-09-08",
+      source: "checkout",
+      status: "clean",
+      assignedUserId: 3,
+      assignedUsername: "Grazi",
+      assignedUserName: "Grazi",
+      isVacant: true,
+      isPriority: false,
+      isExtended: false,
+      twinBeds: false,
+      extraMattress: false,
+      adminNote: null,
+      leavingGuest: "Hóspede",
+      arrivingGuest: null,
+      pendingObservation: null,
+      willCleanAt: "2026-09-08T10:46:29.925Z",
+      cleaningStartedAt: "2026-09-08T12:56:32.161Z",
+      completedAt: "2026-09-08T13:14:25.262Z",
+      durationMinutes: 18,
+      createdAt: "2026-09-08T08:00:00.000Z",
+      updatedAt: "2026-09-08T13:14:25.262Z"
     }
   ];
 
-  // 3. Atualiza ou insere os 10 registros canônicos garantindo integridade
+  // 3. Atualiza ou insere os registros canônicos garantindo integridade
   for (const canon of canonicalCleanings) {
     const existingIdx = db.cleaningRequests.findIndex(r => 
       (r.id === canon.id) || 
-      (String(r.flatNumber) === String(canon.flatNumber) && r.requestDate === canon.requestDate && r.status === "clean")
+      (String(r.flatNumber) === String(canon.flatNumber) && r.requestDate === canon.requestDate)
     );
     if (existingIdx >= 0) {
       db.cleaningRequests[existingIdx] = { ...db.cleaningRequests[existingIdx], ...canon };
@@ -1117,11 +1238,20 @@ function sanitizeReservationFlags() {
   }
 
   // Auto-recuperação/correção para solicitações de limpeza marcadas indevidamente como no_show
-  // Se houver uma reserva ativa/confirmada com check-out ou estadia na data, o quarto NÃO pode ser no_show!
   if (db.cleaningRequests) {
     let fixCount = 0;
     for (const req of db.cleaningRequests) {
       if (req.status === "no_show") {
+        // Se este quarto já possui trabalho realizado por camareira, recupera como LIMPO (clean)!
+        if (req.cleaningStartedAt || req.durationMinutes || req.assignedUserId) {
+          req.status = "clean";
+          req.completedAt = req.completedAt || req.cleaningStartedAt || `${req.requestDate}T16:00:00.000Z`;
+          req.pendingObservation = null;
+          req.isVacant = true;
+          fixCount++;
+          continue;
+        }
+
         const hasActiveStay = (db.reservations || []).some(r =>
           (r.flatId === req.flatId || String(r.flatNumber) === String(req.flatNumber)) &&
           r.status !== "cancelada" && r.status !== "cancelado" &&
@@ -1139,7 +1269,7 @@ function sanitizeReservationFlags() {
     }
     if (fixCount > 0) {
       saveDatabase();
-      console.log(`[Auto-Fix] ${fixCount} solicitação(ões) de limpeza restaurada(s) de no_show indevido para dirty.`);
+      console.log(`[Auto-Fix] ${fixCount} solicitação(ões) de limpeza reconciliada(s).`);
     }
   }
 }
@@ -2425,11 +2555,8 @@ export function triggerGarageEmailNotification(db, saveDatabase, reservation, ve
     const flatNum = cleanFlat || "113";
     const guestName = reservation.guestName || "Hóspede CorpFlats";
 
-    // Configuração dos destinatários:
-    // Garagem Promenade Soho (destinatário principal obrigatório: promenadesoho@pfbestacionamentos.com.br)
+    // Destinatário: Garagem Promenade Soho (apenas para a garagem: promenadesoho@pfbestacionamentos.com.br)
     const garageEmail = options.recipientEmail || db.settings?.garageEmail || process.env.GARAGE_EMAIL || "promenadesoho@pfbestacionamentos.com.br";
-    // Portaria / Recepção Soho (cópia CC para garantir liberação na guarita)
-    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br";
 
     // Renderiza template oficial CorpFlats com número do Flat no assunto do e-mail
     const { subject, bodyHtml } = renderGarageAuthorizationEmail({
@@ -2439,16 +2566,12 @@ export function triggerGarageEmailNotification(db, saveDatabase, reservation, ve
       settings: db.settings
     });
 
-    const isSameEmail = receptionEmail && receptionEmail.toLowerCase() === garageEmail.toLowerCase();
-    const ccEmail = isSameEmail ? undefined : receptionEmail;
-
-    // Disparo imediato e assíncrono via Nodemailer SMTP CorpFlats
+    // Disparo imediato e assíncrono via Nodemailer SMTP CorpFlats (exclusivo para a garagem)
     const commLog = sendEmailAsync({
       db,
       saveDatabase,
       reservationId: reservation.code || reservation.id,
       recipient: garageEmail,
-      cc: ccEmail,
       subject,
       bodyHtml,
       type: "email",
@@ -2460,8 +2583,7 @@ export function triggerGarageEmailNotification(db, saveDatabase, reservation, ve
         plate: cleanPlate,
         vehicleBrand: vehicleData.brand,
         vehicleModel: vehicleData.model,
-        garageEmail,
-        receptionEmail: ccEmail
+        garageEmail
       }
     });
 
@@ -3883,12 +4005,20 @@ function getRequestsForDate(dateStr) {
     const existingCleaning = matchingCleanings.find(c => c.status === "clean") || matchingCleanings[0];
 
     // Se o flat possui checkout ativo nesta data de uma estadia confirmada (o hóspede realmente se hospedou),
-    // mas o existingCleaning estava com status 'no_show', recupera automaticamente para 'dirty'
+    // mas o existingCleaning estava com status 'no_show', recupera adequadamente:
+    // Se já tinha sido limpo pela camareira, recupera como 'clean'. Se não, como 'dirty'.
     if (existingCleaning && existingCleaning.status === "no_show" && pmsRes && (pmsRes.checkinDate < dateStr || pmsRes.paidAmount > 0 || pmsRes.status === "confirmada")) {
-      existingCleaning.status = "dirty";
-      existingCleaning.pendingObservation = null;
-      existingCleaning.isVacant = false;
-      existingCleaning.completedAt = null;
+      if (existingCleaning.cleaningStartedAt || existingCleaning.durationMinutes || existingCleaning.assignedUserId) {
+        existingCleaning.status = "clean";
+        existingCleaning.completedAt = existingCleaning.completedAt || existingCleaning.cleaningStartedAt || `${dateStr}T16:00:00.000Z`;
+        existingCleaning.pendingObservation = null;
+        existingCleaning.isVacant = true;
+      } else {
+        existingCleaning.status = "dirty";
+        existingCleaning.pendingObservation = null;
+        existingCleaning.isVacant = false;
+        existingCleaning.completedAt = null;
+      }
     }
 
     const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;

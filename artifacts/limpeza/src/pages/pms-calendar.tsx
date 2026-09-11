@@ -3384,7 +3384,7 @@ export default function PmsCalendar() {
                     </div>
                   </div>
                   <p className="text-[11px] text-blue-700/80 dark:text-blue-300/80">
-                    Ao cadastrar ou alterar a placa, o sistema envia e-mail com flat, dados da reserva e do veículo para <span className="font-semibold">promenadesoho@pfbestacionamentos.com.br</span> e para a portaria.
+                    Ao cadastrar ou alterar a placa, o sistema envia e-mail com flat, dados da reserva e do veículo diretamente para a garagem (<span className="font-semibold">promenadesoho@pfbestacionamentos.com.br</span>).
                   </p>
                 </div>
 
