@@ -42,7 +42,16 @@ import {
   ShieldCheck,
   CheckCircle2,
   Hourglass,
-  Sliders
+  Sliders,
+  DollarSign,
+  CreditCard,
+  TrendingUp,
+  ArrowUpRight,
+  ArrowDownLeft,
+  Wallet,
+  AlertTriangle,
+  Banknote,
+  Gift,
 } from "lucide-react"
 import { AccessDenied } from "@/components/access-denied"
 
@@ -82,6 +91,44 @@ interface HistoryItem {
   error?: string | null
   sentAt: string
 }
+
+interface MaidBalance {
+  id: number
+  username: string
+  name: string
+  pixKey: string
+  whatsapp: string
+  active: boolean
+  balance: number
+}
+
+interface StatementEntry {
+  id: string
+  userId: number
+  entryType: "credit" | "debit"
+  amount: number
+  description: string
+  entryDate: string
+  createdAt: string
+  balanceAfter: number
+  payment: {
+    id: string
+    type: string
+    interTxId: string | null
+    interStatus: string | null
+    interSimulated: boolean
+    paidAt: string | null
+  } | null
+}
+
+interface MaidStatement {
+  userId: number
+  userName: string
+  pixKey: string
+  balance: number
+  statement: StatementEntry[]
+}
+
 
 // Formatador visual de texto estilo WhatsApp (*bold*, _italic_, \n)
 function WhatsAppMessageBubble({ text, time = "18:00" }: { text: string; time?: string }) {
@@ -158,6 +205,22 @@ export default function MaidWhatsappAutomation() {
   const [historyModalOpen, setHistoryModalOpen] = useState(false)
   const [selectedHistoryItem, setSelectedHistoryItem] = useState<HistoryItem | null>(null)
 
+  // ── Estados de Pagamento ──────────────────────────────────────────────────
+  const [maidBalances, setMaidBalances] = useState<MaidBalance[]>([])
+  const [loadingBalances, setLoadingBalances] = useState(false)
+  const [selectedMaidStatement, setSelectedMaidStatement] = useState<MaidStatement | null>(null)
+  const [statementModalOpen, setStatementModalOpen] = useState(false)
+  const [loadingStatement, setLoadingStatement] = useState(false)
+  const [interStatus, setInterStatus] = useState<{ configured: boolean; env: string; message: string } | null>(null)
+
+  // Modal de Pagamento
+  const [payModalOpen, setPayModalOpen] = useState(false)
+  const [payingMaid, setPayingMaid] = useState<MaidBalance | null>(null)
+  const [payType, setPayType] = useState<"payment" | "advance">("payment")
+  const [payAmount, setPayAmount] = useState("")
+  const [payDescription, setPayDescription] = useState("")
+  const [payingLoading, setPayingLoading] = useState(false)
+
   // Refs de Textarea para inserir tags no cursor
   const textareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({})
 
@@ -201,6 +264,91 @@ export default function MaidWhatsappAutomation() {
   useEffect(() => {
     fetchAllData()
   }, [])
+
+  // Carrega saldos e status Inter
+  const fetchBalances = async () => {
+    try {
+      setLoadingBalances(true)
+      const [resBalances, resInter] = await Promise.all([
+        fetch("/api/maids/all-balances"),
+        fetch("/api/maids/inter-status"),
+      ])
+      if (resBalances.ok) setMaidBalances(await resBalances.json())
+      if (resInter.ok) setInterStatus(await resInter.json())
+    } catch (err: any) {
+      console.error("Erro ao carregar saldos:", err.message)
+    } finally {
+      setLoadingBalances(false)
+    }
+  }
+
+  // Abre extrato de uma camareira
+  const openStatement = async (maid: MaidBalance) => {
+    try {
+      setLoadingStatement(true)
+      setStatementModalOpen(true)
+      const res = await fetch(`/api/maids/${maid.id}/statement`)
+      if (res.ok) {
+        setSelectedMaidStatement(await res.json())
+      }
+    } catch (err: any) {
+      toast({ title: "Erro ao carregar extrato", description: err.message, variant: "destructive" })
+    } finally {
+      setLoadingStatement(false)
+    }
+  }
+
+  // Abre modal de pagamento
+  const openPayModal = (maid: MaidBalance, type: "payment" | "advance") => {
+    setPayingMaid(maid)
+    setPayType(type)
+    setPayAmount(type === "payment" ? String(Math.max(0, maid.balance).toFixed(2)) : "")
+    setPayDescription("")
+    setPayModalOpen(true)
+  }
+
+  // Executa pagamento / vale
+  const handlePay = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!payingMaid) return
+    const amount = parseFloat(payAmount.replace(",", "."))
+    if (!amount || amount <= 0) {
+      toast({ title: "Valor inválido", description: "Informe um valor maior que zero.", variant: "destructive" })
+      return
+    }
+    try {
+      setPayingLoading(true)
+      const res = await fetch(`/api/maids/${payingMaid.id}/pay`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount,
+          type: payType,
+          description: payDescription.trim() || undefined,
+          sendWhatsApp: true,
+        }),
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        toast({
+          title: payType === "advance" ? "✓ Vale Registrado!" : "✓ Pagamento Realizado!",
+          description: data.message,
+        })
+        setPayModalOpen(false)
+        fetchBalances()
+        // Recarrega extrato se estiver aberto
+        if (selectedMaidStatement?.userId === payingMaid.id) {
+          openStatement(payingMaid)
+        }
+      } else {
+        toast({ title: "Erro no pagamento", description: data.error || "Falha ao processar.", variant: "destructive" })
+      }
+    } catch (err: any) {
+      toast({ title: "Erro de conexão", description: err.message, variant: "destructive" })
+    } finally {
+      setPayingLoading(false)
+    }
+  }
 
   // Salva alterações de templates e gatilhos
   const handleSaveConfig = async () => {
@@ -586,11 +734,15 @@ export default function MaidWhatsappAutomation() {
         </div>
 
         {/* Main Tabs */}
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+        <Tabs value={activeTab} onValueChange={(v) => { setActiveTab(v); if (v === "payments") fetchBalances(); }} className="space-y-6">
           <TabsList className="bg-muted/60 p-1 rounded-2xl border border-border/60">
             <TabsTrigger value="triggers" className="rounded-xl text-xs font-bold gap-2 data-[state=active]:bg-background data-[state=active]:shadow-xs">
               <Zap className="w-4 h-4 text-amber-500" />
               <span>Gatilhos & Mensagens</span>
+            </TabsTrigger>
+            <TabsTrigger value="payments" className="rounded-xl text-xs font-bold gap-2 data-[state=active]:bg-background data-[state=active]:shadow-xs">
+              <DollarSign className="w-4 h-4 text-emerald-500" />
+              <span>Pagamentos</span>
             </TabsTrigger>
             <TabsTrigger value="cleaners" className="rounded-xl text-xs font-bold gap-2 data-[state=active]:bg-background data-[state=active]:shadow-xs">
               <Users className="w-4 h-4 text-primary" />
@@ -609,6 +761,119 @@ export default function MaidWhatsappAutomation() {
               )}
             </TabsTrigger>
           </TabsList>
+
+
+          {/* ══════════════════════════════════════════════════════════════════════
+              ABA: PAGAMENTOS
+              ══════════════════════════════════════════════════════════════════════ */}
+          <TabsContent value="payments" className="space-y-5">
+
+            {/* Status Inter PIX */}
+            {interStatus && (
+              <div className={`flex items-center gap-3 p-3.5 rounded-2xl text-xs font-medium border ${interStatus.configured ? "bg-emerald-500/5 border-emerald-500/20 text-emerald-700" : "bg-amber-500/5 border-amber-500/20 text-amber-700"}`}>
+                {interStatus.configured
+                  ? <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  : <AlertTriangle className="w-4 h-4 shrink-0" />}
+                <span>{interStatus.message}</span>
+              </div>
+            )}
+
+            {/* Header da aba */}
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-black text-foreground flex items-center gap-2">
+                  <Wallet className="w-5 h-5 text-emerald-600" />
+                  Controle Financeiro das Camareiras
+                </h2>
+                <p className="text-xs text-muted-foreground mt-0.5">Pague diárias, registre vales e veja o extrato completo de cada colaboradora.</p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={fetchBalances}
+                disabled={loadingBalances}
+                className="rounded-xl text-xs font-bold gap-1.5 h-9"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingBalances ? "animate-spin" : ""}`} />
+                Atualizar
+              </Button>
+            </div>
+
+            {/* Cards de Saldo por Camareira */}
+            {loadingBalances ? (
+              <div className="text-center py-12 text-muted-foreground text-sm">Carregando saldos...</div>
+            ) : maidBalances.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground text-sm">
+                <DollarSign className="w-10 h-10 mx-auto mb-3 opacity-20" />
+                <p>Nenhuma camareira encontrada.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                {maidBalances.map((maid) => (
+                  <Card key={maid.id} className="rounded-3xl border border-border/80 shadow-xs bg-card overflow-hidden">
+                    <CardContent className="p-5 space-y-4">
+                      {/* Header da camareira */}
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-2xl bg-primary/10 text-primary flex items-center justify-center font-black text-sm shrink-0">
+                            {(maid.name || maid.username).charAt(0).toUpperCase()}
+                          </div>
+                          <div>
+                            <p className="font-black text-sm text-foreground">{maid.name || maid.username}</p>
+                            <p className="text-[10px] text-muted-foreground">
+                              {maid.pixKey ? `PIX: ${maid.pixKey.substring(0, 20)}${maid.pixKey.length > 20 ? "…" : ""}` : "⚠️ Sem chave PIX"}
+                            </p>
+                          </div>
+                        </div>
+                        {!maid.active && <Badge variant="secondary" className="text-[10px]">Inativa</Badge>}
+                      </div>
+
+                      {/* Saldo */}
+                      <div className={`p-3.5 rounded-2xl ${maid.balance >= 0 ? "bg-emerald-500/8 border border-emerald-500/20" : "bg-rose-500/8 border border-rose-500/20"}`}>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1">Saldo a Pagar</p>
+                        <p className={`text-2xl font-black ${maid.balance >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                          {maid.balance.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground mt-0.5">Diárias − pagamentos/vales</p>
+                      </div>
+
+                      {/* Botões */}
+                      <div className="grid grid-cols-3 gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => openPayModal(maid, "payment")}
+                          disabled={!maid.active}
+                          className="h-9 rounded-xl text-xs font-bold gap-1 bg-emerald-600 hover:bg-emerald-700 text-white col-span-1"
+                        >
+                          <Banknote className="w-3.5 h-3.5" />
+                          Pagar
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => openPayModal(maid, "advance")}
+                          disabled={!maid.active}
+                          className="h-9 rounded-xl text-xs font-bold gap-1 border-amber-500/40 text-amber-700 hover:bg-amber-500/10 col-span-1"
+                        >
+                          <Gift className="w-3.5 h-3.5" />
+                          Vale
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => openStatement(maid)}
+                          className="h-9 rounded-xl text-xs font-bold gap-1 col-span-1"
+                        >
+                          <Receipt className="w-3.5 h-3.5" />
+                          Extrato
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </TabsContent>
 
           {/* ══════════════════════════════════════════════════════════════════════
               ABA 1: GATILHOS & MENSAGENS
@@ -1518,6 +1783,218 @@ export default function MaidWhatsappAutomation() {
                 onClick={() => setHistoryModalOpen(false)}
                 className="rounded-xl h-9 text-xs font-bold"
               >
+                Fechar
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ══════════════════════════════════════════════════════════════════════
+            MODAL: PAGAR / VALE
+            ══════════════════════════════════════════════════════════════════════ */}
+        <Dialog open={payModalOpen} onOpenChange={setPayModalOpen}>
+          <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl">
+            <DialogHeader>
+              <DialogTitle className="text-base font-black flex items-center gap-2">
+                {payType === "advance"
+                  ? <><Gift className="w-5 h-5 text-amber-500" /> Dar Vale</>
+                  : <><Banknote className="w-5 h-5 text-emerald-600" /> Pagar Camareira</>}
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                {payingMaid?.name || payingMaid?.username} — Saldo atual: {" "}
+                <strong>{payingMaid?.balance.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong>
+              </DialogDescription>
+            </DialogHeader>
+
+            <form onSubmit={handlePay} className="space-y-4 pt-2">
+              {/* Tipo */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPayType("payment")}
+                  className={`flex items-center justify-center gap-2 p-3 rounded-2xl border text-xs font-bold transition-all ${payType === "payment" ? "bg-emerald-600 text-white border-emerald-600" : "bg-card border-border/60 text-muted-foreground hover:border-emerald-500/40"}`}
+                >
+                  <Banknote className="w-4 h-4" /> Pagamento PIX
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPayType("advance")}
+                  className={`flex items-center justify-center gap-2 p-3 rounded-2xl border text-xs font-bold transition-all ${payType === "advance" ? "bg-amber-500 text-white border-amber-500" : "bg-card border-border/60 text-muted-foreground hover:border-amber-500/40"}`}
+                >
+                  <Gift className="w-4 h-4" /> Vale (adiantamento)
+                </button>
+              </div>
+
+              {payType === "payment" && !payingMaid?.pixKey && (
+                <div className="flex items-center gap-2 p-3 rounded-2xl bg-amber-500/8 border border-amber-500/20 text-amber-700 text-xs">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  Esta camareira não tem chave PIX cadastrada. O pagamento será registrado sem envio bancário.
+                </div>
+              )}
+
+              {/* Valor */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold">Valor (R\$)</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  placeholder="0,00"
+                  value={payAmount}
+                  onChange={(e) => setPayAmount(e.target.value)}
+                  className="rounded-xl h-11 text-lg font-black text-center"
+                  required
+                />
+                {payType === "payment" && payingMaid && payingMaid.balance > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setPayAmount(payingMaid.balance.toFixed(2))}
+                    className="text-[10px] text-primary underline font-bold"
+                  >
+                    Usar saldo completo ({payingMaid.balance.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })})
+                  </button>
+                )}
+              </div>
+
+              {/* Descrição */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold">Descrição (opcional)</Label>
+                <Input
+                  placeholder={payType === "advance" ? "ex: Vale para compras" : "ex: Pagamento 1ª quinzena de setembro"}
+                  value={payDescription}
+                  onChange={(e) => setPayDescription(e.target.value)}
+                  className="rounded-xl h-9 text-xs"
+                />
+              </div>
+
+              <div className="text-[10px] text-muted-foreground p-2.5 rounded-xl bg-muted/40 border border-border/40">
+                {payType === "payment"
+                  ? "✅ O PIX será enviado automaticamente para a chave cadastrada da camareira, e ela receberá uma notificação no WhatsApp."
+                  : "🎫 O vale será descontado do próximo pagamento e registrado no extrato. A camareira será notificada no WhatsApp."}
+              </div>
+
+              <DialogFooter className="gap-2 pt-1">
+                <Button type="button" variant="outline" onClick={() => setPayModalOpen(false)} className="rounded-xl h-9 text-xs font-bold">
+                  Cancelar
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={payingLoading || !payAmount}
+                  className={`rounded-xl h-9 text-xs font-bold gap-1.5 ${payType === "advance" ? "bg-amber-500 hover:bg-amber-600" : "bg-emerald-600 hover:bg-emerald-700"} text-white`}
+                >
+                  {payingLoading ? "Processando..." : payType === "advance" ? "Registrar Vale" : "Pagar Agora"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+
+        {/* ══════════════════════════════════════════════════════════════════════
+            MODAL: EXTRATO DA CAMAREIRA
+            ══════════════════════════════════════════════════════════════════════ */}
+        <Dialog open={statementModalOpen} onOpenChange={setStatementModalOpen}>
+          <DialogContent className="sm:max-w-2xl bg-card border border-border rounded-3xl max-h-[85vh] flex flex-col">
+            <DialogHeader>
+              <DialogTitle className="text-base font-black flex items-center gap-2">
+                <TrendingUp className="w-5 h-5 text-primary" />
+                Extrato — {selectedMaidStatement?.userName}
+              </DialogTitle>
+              <DialogDescription className="text-xs flex items-center gap-4">
+                <span>
+                  Saldo atual: <strong className={selectedMaidStatement && selectedMaidStatement.balance >= 0 ? "text-emerald-600" : "text-rose-600"}>
+                    {selectedMaidStatement?.balance.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) ?? "—"}
+                  </strong>
+                </span>
+                {selectedMaidStatement?.pixKey && (
+                  <span>PIX: <code className="text-[10px] bg-muted px-1 rounded">{selectedMaidStatement.pixKey}</code></span>
+                )}
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="overflow-y-auto flex-1 -mx-2 px-2">
+              {loadingStatement ? (
+                <div className="text-center py-8 text-muted-foreground text-sm">Carregando extrato...</div>
+              ) : !selectedMaidStatement?.statement?.length ? (
+                <div className="text-center py-8 text-muted-foreground text-sm">Nenhuma movimentação ainda.</div>
+              ) : (
+                <div className="space-y-2 py-2">
+                  {selectedMaidStatement.statement.map((entry) => (
+                    <div
+                      key={entry.id}
+                      className={`flex items-center gap-3 p-3 rounded-2xl border ${entry.entryType === "credit" ? "bg-emerald-500/5 border-emerald-500/15" : "bg-rose-500/5 border-rose-500/15"}`}
+                    >
+                      {/* Ícone */}
+                      <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${entry.entryType === "credit" ? "bg-emerald-500/15 text-emerald-600" : "bg-rose-500/15 text-rose-600"}`}>
+                        {entry.entryType === "credit"
+                          ? <ArrowUpRight className="w-4 h-4" />
+                          : <ArrowDownLeft className="w-4 h-4" />}
+                      </div>
+
+                      {/* Descrição */}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-bold text-foreground truncate">{entry.description}</p>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-[10px] text-muted-foreground">
+                            {entry.entryDate ? entry.entryDate.split("-").reverse().join("/") : "—"}
+                          </span>
+                          {entry.payment?.interTxId && (
+                            <span className="text-[10px] text-primary font-mono">
+                              TxID: {entry.payment.interTxId.substring(0, 16)}…
+                            </span>
+                          )}
+                          {entry.payment?.interSimulated && (
+                            <Badge variant="secondary" className="text-[9px] px-1 py-0 h-3.5">Simulado</Badge>
+                          )}
+                          {entry.payment?.type === "advance" && (
+                            <Badge className="text-[9px] px-1 py-0 h-3.5 bg-amber-500/15 text-amber-700 border-amber-500/20">Vale</Badge>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Valor */}
+                      <div className="text-right shrink-0">
+                        <p className={`text-sm font-black ${entry.entryType === "credit" ? "text-emerald-600" : "text-rose-600"}`}>
+                          {entry.entryType === "credit" ? "+" : "−"}{Number(entry.amount).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground">
+                          Saldo: {Number(entry.balanceAfter).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <DialogFooter className="pt-3 border-t border-border/60 flex-row justify-between items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  if (!selectedMaidStatement) return
+                  try {
+                    const res = await fetch("/api/maids/statement/send-whatsapp", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ userId: selectedMaidStatement.userId }),
+                    })
+                    const data = await res.json()
+                    toast({
+                      title: data.success ? "✓ Extrato Enviado!" : "Falha no envio",
+                      description: data.message || data.error,
+                      variant: data.success ? "default" : "destructive",
+                    })
+                  } catch (err: any) {
+                    toast({ title: "Erro", description: err.message, variant: "destructive" })
+                  }
+                }}
+                className="rounded-xl text-xs font-bold gap-1.5 h-9"
+              >
+                <Send className="w-3.5 h-3.5" />
+                Enviar p/ WhatsApp
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => setStatementModalOpen(false)} className="rounded-xl h-9 text-xs font-bold">
                 Fechar
               </Button>
             </DialogFooter>

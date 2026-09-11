@@ -36,7 +36,7 @@ import { fileURLToPath } from "url";
 import pg from "pg";
 import { uploadImageToStorage } from "./storage-service.mjs";
 import { MicrosoftGraphService } from "./microsoft-graph-service.mjs";
-import { initWhatsAppEngine, triggerImmediateWhatsApp, triggerRoomReadyWhatsApp, cleanWhatsAppPhone } from "./zapi-service.mjs";
+import { initWhatsAppEngine, triggerImmediateWhatsApp, triggerRoomReadyWhatsApp, cleanWhatsAppPhone, sendZapiMessage } from "./zapi-service.mjs";
 import { initMaidAutomationEngine } from "./maid-automation-service.mjs";
 import { 
   getSmtpConfig, 
@@ -4170,26 +4170,35 @@ function findOrUpsertCleaningRequest(reqId, flatNumber, flatId, dateStr = null) 
   if (!db.cleaningRequests) db.cleaningRequests = [];
   const targetDate = dateStr || getTodayStr();
 
-  // 1. Procura por ID numérico direto
-  let item = db.cleaningRequests.find(r => r.id === Number(reqId));
+  let item = null;
 
-  // 2. Procura por Flat e Data (priorizando clean se houver múltiplos)
-  if (!item && flatNumber) {
+  // 1. Se informou flatNumber ou flatId, prioriza encontrar por quarto e data para evitar colisão de IDs virtuais
+  if (flatNumber) {
     const matching = db.cleaningRequests.filter(r => String(r.flatNumber) === String(flatNumber) && r.requestDate === targetDate);
     item = matching.find(r => r.status === "clean") || matching[0];
   }
   if (!item && flatId) {
-    const matching = db.cleaningRequests.filter(r => r.flatId === Number(flatId) && r.requestDate === targetDate);
+    const matching = db.cleaningRequests.filter(r => Number(r.flatId) === Number(flatId) && r.requestDate === targetDate);
     item = matching.find(r => r.status === "clean") || matching[0];
+  }
+
+  // 2. Procura por ID numérico direto (apenas se bater com o flat informado, ou se não informou flat)
+  if (!item && reqId) {
+    const candidate = db.cleaningRequests.find(r => Number(r.id) === Number(reqId));
+    if (candidate) {
+      if ((!flatNumber || String(candidate.flatNumber) === String(flatNumber)) && (!flatId || Number(candidate.flatId) === Number(flatId))) {
+        item = candidate;
+      }
+    }
   }
 
   // 3. Se ainda não achou, procura nos cards dinâmicos gerados para a data
   if (!item) {
     const virtualList = getRequestsForDate(targetDate);
     const virtualCard = virtualList.find(c => 
-      c.id === Number(reqId) || 
       (flatNumber && String(c.flatNumber) === String(flatNumber)) ||
-      (flatId && c.flatId === Number(flatId))
+      (flatId && Number(c.flatId) === Number(flatId)) ||
+      (reqId && Number(c.id) === Number(reqId))
     );
 
     const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
@@ -4197,9 +4206,9 @@ function findOrUpsertCleaningRequest(reqId, flatNumber, flatId, dateStr = null) 
     const now = new Date().toISOString();
 
     const targetFlatObj = db.flats.find(f => 
-      (virtualCard && (f.id === virtualCard.flatId || String(f.number) === String(virtualCard.flatNumber))) ||
       (flatNumber && String(f.number) === String(flatNumber)) ||
-      (flatId && f.id === Number(flatId))
+      (flatId && Number(f.id) === Number(flatId)) ||
+      (virtualCard && (Number(f.id) === Number(virtualCard.flatId) || String(f.number) === String(virtualCard.flatNumber)))
     );
 
     item = {
@@ -4339,12 +4348,38 @@ app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
         });
       }
 
-      for (const ptId of executedPeriodicTaskIds) {
+      let tasksToExecute = Array.isArray(executedPeriodicTaskIds) ? [...executedPeriodicTaskIds] : [];
+      if (status === "clean" && tasksToExecute.length === 0) {
+        // Auto-conclui tarefas preventivas pendentes deste quarto para governança caso não passadas explicitamente
+        const flatTargetId = Number(item.flatId);
+        const pendingForFlat = (db.periodicTasks || []).filter(t => 
+          t.isActive && 
+          t.assignToHousekeeping !== false && 
+          (!Array.isArray(t.flatIds) || t.flatIds.length === 0 || t.flatIds.map(Number).includes(flatTargetId))
+        );
+        for (const pt of pendingForFlat) {
+          const executions = (db.periodicExecutions || []).filter(e => Number(e.periodicTaskId) === Number(pt.id) && Number(e.flatId) === flatTargetId);
+          executions.sort((a, b) => new Date(b.executedAt).getTime() - new Date(a.executedAt).getTime());
+          const lastExec = executions[0] || null;
+          let nextDueAt;
+          if (lastExec) {
+            nextDueAt = addDaysToDateStr(getExecutionDateStr(lastExec.executedAt), Number(pt.periodDays) || 1);
+          } else {
+            nextDueAt = pt.firstDueDate || (pt.createdAt ? getExecutionDateStr(pt.createdAt) : getTodayStr());
+          }
+          if (nextDueAt <= (date || item.requestDate || getTodayStr())) {
+            tasksToExecute.push(pt.id);
+          }
+        }
+      }
+
+      for (const ptId of tasksToExecute) {
+        if (!db.periodicExecutions) db.periodicExecutions = [];
         db.periodicExecutions.push({
-          id: db.periodicExecutions.length + 1,
+          id: db.periodicExecutions.length > 0 ? Math.max(...db.periodicExecutions.map(e => e.id)) + 1 : 1,
           periodicTaskId: Number(ptId),
-          flatId: item.flatId,
-          executedByUserId: item.assignedUserId || (userAuth ? userAuth.id : 2),
+          flatId: Number(item.flatId),
+          executedByUserId: item.assignedUserId ? Number(item.assignedUserId) : (userAuth ? Number(userAuth.id) : 2),
           executedAt: now,
           notes: "Executado durante a limpeza do checkout",
           createdAt: now,
@@ -12987,7 +13022,7 @@ app.patch("/api/breakfast/orders/:id/status", (req, res) => {
   if (req.body.status) order.status = req.body.status;
   if (req.body.cancelReason !== undefined) {
     order.cancelReason = req.body.cancelReason;
-  } else if (req.body.status === "pending" || req.body.status === "ready" || req.body.status === "delivered") {
+  } else if (req.body.status === "pending" || req.body.status === "in_production" || req.body.status === "ready" || req.body.status === "delivered") {
     order.cancelReason = null;
   }
   order.updatedAt = new Date().toISOString();
@@ -13009,21 +13044,82 @@ app.delete("/api/breakfast/orders/:id", (req, res) => {
   res.json({ success: true, message: "Pedido cancelado com sucesso." });
 });
 
-// POST /api/breakfast/orders/:id/whatsapp
-app.post("/api/breakfast/orders/:id/whatsapp", (req, res) => {
+// POST /api/breakfast/orders/:id/whatsapp (Disparo direto via WhatsApp API oficial / Z-API)
+app.post("/api/breakfast/orders/:id/whatsapp", async (req, res) => {
   initBreakfastData();
   const id = Number(req.params.id);
   const order = db.breakfastOrders.find(o => o.id === id);
   if (!order) return res.status(404).json({ error: "Pedido não encontrado" });
 
-  const cleanPhone = (order.phone || "").replace(/\D/g, "");
-  const firstName = (order.clientName || "Hóspede").split(" ")[0];
-  const msg = encodeURIComponent(
-    `Bom dia, ${firstName}! ☕🥐\n\nSeu pedido de café da manhã para o Apt ${order.roomNumber} está pronto e saindo para entrega no seu quarto!\n\nHorário previsto: ${order.deliveryTime}\n\nTenha um excelente dia e bom apetite! ✨`
-  );
-  const whatsappUrl = `https://wa.me/55${cleanPhone}?text=${msg}`;
+  const rawPhone = order.phone || "";
+  const cleanPhone = cleanWhatsAppPhone(rawPhone) || rawPhone.replace(/\D/g, "");
+  if (!cleanPhone) {
+    return res.status(400).json({ error: "O pedido não possui telefone/WhatsApp válido cadastrado." });
+  }
 
-  res.json({ success: true, whatsappUrl });
+  const type = req.body?.type === "in_production" ? "in_production" : "on_the_way";
+  const firstName = (order.clientName || "Hóspede").split(" ")[0];
+
+  let msgText = "";
+  if (type === "in_production") {
+    msgText = req.body?.customMessage || 
+      `Bom dia, ${firstName}! ☕👨‍🍳\n\nSeu pedido de café da manhã para o Apt ${order.roomNumber} já começou a ser preparado com todo carinho pela nossa cozinha!\n\nHorário agendado para entrega: ${order.deliveryTime || "08:00"}\n\nAssim que sair para entrega no seu quarto, avisaremos por aqui! ✨`;
+    if (order.status === "pending") {
+      order.status = "in_production";
+    }
+    order.inProductionNotifiedAt = new Date().toISOString();
+  } else {
+    msgText = req.body?.customMessage || 
+      `Bom dia, ${firstName}! ☕🥐\n\nSeu pedido de café da manhã para o Apt ${order.roomNumber} está pronto e a caminho do seu quarto!\n\nHorário previsto: ${order.deliveryTime || "08:00"}\n\nTenha um excelente dia e bom apetite! ✨`;
+    if (order.status !== "ready" && order.status !== "delivered") {
+      order.status = "ready";
+    }
+    order.onTheWayNotifiedAt = new Date().toISOString();
+  }
+
+  order.updatedAt = new Date().toISOString();
+
+  // Enviar diretamente via Z-API se configurada (ou mock seguro de dev)
+  let apiResult = { success: true, simulated: true };
+  try {
+    apiResult = await sendZapiMessage(db.zapiConfig, {
+      phone: cleanPhone,
+      message: msgText
+    });
+  } catch (err) {
+    console.error("[Breakfast WhatsApp Dispatch Error]", err);
+    apiResult = { success: false, error: err?.message || String(err) };
+  }
+
+  // Gravar no histórico geral do WhatsApp se inicializado
+  if (!db.whatsappHistory) db.whatsappHistory = [];
+  db.whatsappHistory.push({
+    id: `bfk_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    reservationCode: order.reservationCode || null,
+    guestName: order.clientName,
+    guestPhone: cleanPhone,
+    triggerEvent: type === "in_production" ? "breakfast_in_production" : "breakfast_on_the_way",
+    message: msgText,
+    status: apiResult.success ? "sent" : "failed",
+    method: apiResult.simulated ? "mock" : "api",
+    error: apiResult.error || null,
+    createdAt: new Date().toISOString()
+  });
+
+  saveDatabase();
+
+  const fallbackUrl = `https://wa.me/55${cleanPhone}?text=${encodeURIComponent(msgText)}`;
+
+  res.json({
+    success: apiResult.success,
+    sentViaApi: true,
+    simulated: Boolean(apiResult.simulated),
+    type,
+    message: msgText,
+    order,
+    error: apiResult.error || null,
+    whatsappUrl: fallbackUrl
+  });
 });
 
 // ── Storage & Cloudflare R2 Management Endpoints ─────────────────────────

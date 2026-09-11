@@ -16,6 +16,10 @@ function NativeTabLayout() {
         <Icon sf={{ default: 'house', selected: 'house.fill' }} />
         <Label>Dashboard</Label>
       </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="financeiro">
+        <Icon sf={{ default: 'wallet.pass', selected: 'wallet.pass.fill' }} />
+        <Label>Financeiro</Label>
+      </NativeTabs.Trigger>
       <NativeTabs.Trigger name="observations">
         <Icon sf={{ default: 'note.text', selected: 'note.text' }} />
         <Label>Observações</Label>
@@ -68,6 +72,18 @@ function ClassicTabLayout() {
               <SymbolView name="house" tintColor={color} size={22} />
             ) : (
               <Feather name="home" size={22} color={color} />
+            ),
+        }}
+      />
+      <Tabs.Screen
+        name="financeiro"
+        options={{
+          title: 'Financeiro',
+          tabBarIcon: ({ color }) =>
+            isIOS ? (
+              <SymbolView name="wallet.pass" tintColor={color} size={22} />
+            ) : (
+              <Feather name="credit-card" size={22} color={color} />
             ),
         }}
       />

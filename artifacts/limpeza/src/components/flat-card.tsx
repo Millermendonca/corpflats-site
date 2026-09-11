@@ -6,6 +6,8 @@ import {
   useUpdateFlat,
   getListCheckoutsQueryKey,
   getGetDashboardSummaryQueryKey,
+  getListPendingPeriodicTasksQueryKey,
+  getListPeriodicTasksQueryKey,
 } from "@workspace/api-client-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -276,7 +278,8 @@ export function FlatCard({
             assignedUserId: parseInt(selectedMaidId),
             flatNumber: flat.flatNumber,
             flatId: flat.flatId,
-            date: date
+            date: date,
+            executedPeriodicTaskIds: pendingPeriodicTasks.map((t: any) => t.id)
           }),
           credentials: "include"
         })
@@ -470,6 +473,8 @@ export function FlatCard({
   const refreshData = () => {
     queryClient.invalidateQueries({ queryKey: getListCheckoutsQueryKey({ date }) })
     queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey({ date }) })
+    queryClient.invalidateQueries({ queryKey: getListPendingPeriodicTasksQueryKey() })
+    queryClient.invalidateQueries({ queryKey: getListPeriodicTasksQueryKey() })
   }
 
   // Acknowledge Extended Stay ("Ciente")
@@ -667,6 +672,9 @@ export function FlatCard({
           status: "clean",
           executedPeriodicTaskIds: taskIds,
           surveyAnswers,
+          flatNumber: flat.flatNumber,
+          flatId: flat.flatId,
+          date: date,
         }),
         credentials: "include"
       })
@@ -685,7 +693,13 @@ export function FlatCard({
       await fetch(`/api/cleaning/assignments/${request.id}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "pending_issue", observation: issueText.trim() }),
+        body: JSON.stringify({ 
+          status: "pending_issue", 
+          observation: issueText.trim(),
+          flatNumber: flat.flatNumber,
+          flatId: flat.flatId,
+          date: date,
+        }),
         credentials: "include"
       })
       setIssueDialogOpen(false)
@@ -1820,6 +1834,18 @@ export function FlatCard({
                     Esta limpeza será creditada integralmente na contagem e nos relatórios de produtividade da colaboradora selecionada.
                   </p>
                 </div>
+
+                {pendingPeriodicTasks.length > 0 && (
+                  <div className="p-3.5 rounded-2xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60 space-y-1 text-xs">
+                    <span className="font-bold text-amber-900 dark:text-amber-200 flex items-center gap-1">
+                      <ClipboardCheck className="w-3.5 h-3.5 text-amber-600" />
+                      {pendingPeriodicTasks.length} tarefa(s) preventiva(s) vinculada(s)
+                    </span>
+                    <p className="text-[11px] text-amber-800 dark:text-amber-300 leading-relaxed">
+                      {pendingPeriodicTasks.map((t: any) => t.name).join(", ")} — serão concluídas e a contagem de dias será zerada automaticamente.
+                    </p>
+                  </div>
+                )}
               </div>
 
               <DialogFooter className="gap-2 pt-2 border-t border-border">

@@ -417,10 +417,16 @@ export default function GuestBreakfast() {
       fruit: "Fruta do dia" 
     }
 
+    const sanitizePref = (p: GuestPreference): GuestPreference => ({
+      ...p,
+      fruitSaladOption: p.fruit === "Salada de frutas" ? (p.fruitSaladOption || "Salada pura") : undefined,
+      fruitHoney: p.fruit === "Mamão" ? Boolean(p.fruitHoney) : false
+    })
+
     let isOverallStandard = false
-    let p1 = guest1Pref
-    let p2 = guest2Pref
-    let p3 = guest3Pref
+    let p1 = sanitizePref(guest1Pref)
+    let p2 = sanitizePref(guest2Pref)
+    let p3 = sanitizePref(guest3Pref)
 
     if (orderDistribution === "same_for_all" || guestCount === 1) {
       if (breakfastType === "standard") {
@@ -430,15 +436,15 @@ export default function GuestBreakfast() {
         p3 = stdItemPref
       } else {
         isOverallStandard = false
-        p1 = guest1Pref
-        p2 = guest1Pref
-        p3 = guest1Pref
+        p1 = sanitizePref(guest1Pref)
+        p2 = sanitizePref(guest1Pref)
+        p3 = sanitizePref(guest1Pref)
       }
     } else {
       isOverallStandard = (guest1Type === "standard" && guest2Type === "standard" && (guestCount < 3 || guest3Type === "standard"))
-      p1 = guest1Type === "standard" ? stdItemPref : guest1Pref
-      p2 = guest2Type === "standard" ? stdItemPref : guest2Pref
-      p3 = guest3Type === "standard" ? stdItemPref : guest3Pref
+      p1 = guest1Type === "standard" ? stdItemPref : sanitizePref(guest1Pref)
+      p2 = guest2Type === "standard" ? stdItemPref : sanitizePref(guest2Pref)
+      p3 = guest3Type === "standard" ? stdItemPref : sanitizePref(guest3Pref)
     }
 
     await executeSubmit(g1, g2, g3, isOverallStandard, p1, p2, p3)

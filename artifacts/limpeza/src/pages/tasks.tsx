@@ -15,6 +15,7 @@ import {
   PendingPeriodicTask,
 } from "@workspace/api-client-react"
 import { Shell } from "@/components/layout"
+import { useToast } from "@/hooks/use-toast"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -275,6 +276,7 @@ function overdueBadge(daysOverdue: number, nextDueAt?: string) {
 }
 
 export default function Tasks() {
+  const { toast } = useToast()
   const { data: user } = useGetMe()
   const isAdmin = user?.role === "admin"
   const qc = useQueryClient()
@@ -307,9 +309,14 @@ export default function Tasks() {
     mutation: {
       onSuccess: () => {
         qc.invalidateQueries({ queryKey: getListPendingPeriodicTasksQueryKey() })
+        qc.invalidateQueries({ queryKey: ["/api/reservations/checkouts"] })
         setExecDialogTaskId(null)
         setExecFlatId(null)
         setExecNotes("")
+        toast({
+          title: "Tarefa concluída!",
+          description: "Execução registrada com sucesso e contagem de dias reiniciada.",
+        })
       }
     }
   })

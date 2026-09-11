@@ -36,7 +36,7 @@ import { fileURLToPath } from "url";
 import pg from "pg";
 import { uploadImageToStorage } from "./storage-service.mjs";
 import { MicrosoftGraphService } from "./microsoft-graph-service.mjs";
-import { initWhatsAppEngine, triggerImmediateWhatsApp, triggerRoomReadyWhatsApp, cleanWhatsAppPhone } from "./zapi-service.mjs";
+import { initWhatsAppEngine, triggerImmediateWhatsApp, triggerRoomReadyWhatsApp, cleanWhatsAppPhone, sendZapiMessage } from "./zapi-service.mjs";
 import { initMaidAutomationEngine } from "./maid-automation-service.mjs";
 import { 
   getSmtpConfig, 
@@ -1158,8 +1158,12 @@ async function loadDatabase() {
               "INSERT INTO system_store (key, value, updated_at) VALUES ('db_state', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()",
               [JSON.stringify(pgLoaded)]
             ).catch(e => console.warn("[PostgreSQL] Erro ao sincronizar tarefas preventivas na nuvem:", e.message));
+          } else if ((!pgLoaded.periodicExecutions || pgLoaded.periodicExecutions.length === 0) && (db.periodicExecutions && db.periodicExecutions.length > 0)) {
+            pgLoaded.periodicExecutions = db.periodicExecutions;
           }
           Object.assign(db, pgLoaded);
+          if (!Array.isArray(db.periodicTasks)) db.periodicTasks = [];
+          if (!Array.isArray(db.periodicExecutions)) db.periodicExecutions = [];
           console.log("[PostgreSQL] Estado restaurado da nuvem com sucesso!");
           sanitizeAndRecoverCleanings();
           sanitizeLostAndFound();
@@ -2440,6 +2444,31 @@ function getTodayStr() {
   return BRAZIL_DATE_FORMATTER.format(new Date());
 }
 
+function getExecutionDateStr(isoString) {
+  if (!isoString) return getTodayStr();
+  try {
+    return BRAZIL_DATE_FORMATTER.format(new Date(isoString));
+  } catch {
+    return String(isoString).substring(0, 10);
+  }
+}
+
+function addDaysToDateStr(dateStr, days) {
+  const parts = String(dateStr).substring(0, 10).split("-").map(Number);
+  if (parts.length < 3 || isNaN(parts[0])) return String(dateStr).substring(0, 10);
+  const d = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], 12, 0, 0));
+  d.setUTCDate(d.getUTCDate() + Number(days));
+  return d.toISOString().substring(0, 10);
+}
+
+function calcDaysDiff(todayStr, targetDateStr) {
+  const tParts = String(todayStr).substring(0, 10).split("-").map(Number);
+  const dParts = String(targetDateStr).substring(0, 10).split("-").map(Number);
+  const tTime = Date.UTC(tParts[0], tParts[1] - 1, tParts[2], 12, 0, 0);
+  const dTime = Date.UTC(dParts[0], dParts[1] - 1, dParts[2], 12, 0, 0);
+  return Math.round((tTime - dTime) / 86400000);
+}
+
 function getBrasiliaNow() {
   const now = new Date();
   const dateStr = BRAZIL_DATE_FORMATTER.format(now);
@@ -3656,7 +3685,9 @@ function getRequestsForDate(dateStr) {
   }
 
   // 3. Monta os cards de limpeza dinâmicos a partir dos checkouts do PMS
+  let virtualCardIndex = 0;
   for (const [flatNumber, pmsRes] of pmsCheckoutsByFlat.entries()) {
+    virtualCardIndex++;
     const flat = db.flats.find(f => String(f.number) === flatNumber) || { id: pmsRes.flatId, number: flatNumber, isOccupied: true };
 
     const arrivingRes = (db.reservations || []).find(r => 
@@ -3666,14 +3697,14 @@ function getRequestsForDate(dateStr) {
     );
 
     const matchingCleanings = (db.cleaningRequests || []).filter(c => 
-      (String(c.flatNumber) === flatNumber || c.flatId === flat.id) && 
+      (String(c.flatNumber) === flatNumber || Number(c.flatId) === Number(flat.id)) && 
       c.requestDate === dateStr
     );
     const existingCleaning = matchingCleanings.find(c => c.status === "clean") || matchingCleanings[0];
 
     const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
     const card = {
-      id: existingCleaning ? existingCleaning.id : (maxId + 1),
+      id: existingCleaning ? existingCleaning.id : (maxId + virtualCardIndex),
       flatId: flat.id,
       flatNumber: flat.number,
       requestDate: dateStr,
@@ -3728,7 +3759,7 @@ function getRequestsForDate(dateStr) {
       // Se o flat já possui qualquer limpeza concluída (status === "clean") nessa mesma data ou em data posterior,
       // ele já foi higienizado e NÃO deve ser considerado pendência nem reaparecer para limpar!
       const alreadyCleanedOnOrAfter = (db.cleaningRequests || []).some(c => 
-        (String(c.flatNumber) === fNumber || c.flatId === r.flatId) &&
+        (String(c.flatNumber) === fNumber || Number(c.flatId) === Number(r.flatId)) &&
         c.requestDate >= r.requestDate &&
         c.status === "clean"
       );
@@ -3777,23 +3808,22 @@ app.get("/api/reservations/checkouts", (req, res) => {
   const activeSurveys = db.surveys.filter(s => s.isActive);
 
   const result = requestsForDate.map(req_ => {
-    const flat = db.flats.find(f => f.id === req_.flatId) || { id: req_.flatId, number: req_.flatNumber || String(req_.flatId), isOccupied: true };
-    const assignedUser = db.users.find(u => u.id === req_.assignedUserId);
-    const hasCheckinToday = Boolean(req_.arrivingGuest) || (db.reservations || []).some(r => (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) && r.checkinDate === dateStr && r.status !== "cancelada");
+    const flat = db.flats.find(f => Number(f.id) === Number(req_.flatId) || String(f.number) === String(req_.flatNumber)) || { id: req_.flatId, number: req_.flatNumber || String(req_.flatId), isOccupied: true };
+    const assignedUser = db.users.find(u => Number(u.id) === Number(req_.assignedUserId));
+    const hasCheckinToday = Boolean(req_.arrivingGuest) || (db.reservations || []).some(r => (Number(r.flatId) === Number(flat.id) || String(r.flatNumber) === String(flat.number)) && r.checkinDate === dateStr && r.status !== "cancelada");
 
     const pendingTasks = [];
-    for (const pt of db.periodicTasks.filter(t => t.isActive && t.assignToHousekeeping !== false && (t.flatIds.length === 0 || t.flatIds.includes(flat.id)))) {
-      const executions = (db.periodicExecutions || []).filter(e => e.periodicTaskId === pt.id && e.flatId === flat.id);
+    for (const pt of (db.periodicTasks || []).filter(t => t.isActive && t.assignToHousekeeping !== false && (!Array.isArray(t.flatIds) || t.flatIds.length === 0 || t.flatIds.map(Number).includes(Number(flat.id))))) {
+      const executions = (db.periodicExecutions || []).filter(e => Number(e.periodicTaskId) === Number(pt.id) && Number(e.flatId) === Number(flat.id));
       executions.sort((a, b) => new Date(b.executedAt).getTime() - new Date(a.executedAt).getTime());
       const lastExec = executions[0] || null;
 
       let nextDueAt;
       if (lastExec) {
-        const d = new Date(lastExec.executedAt.substring(0, 10));
-        d.setDate(d.getDate() + pt.periodDays);
-        nextDueAt = d.toISOString().substring(0, 10);
+        const lastDateStr = getExecutionDateStr(lastExec.executedAt);
+        nextDueAt = addDaysToDateStr(lastDateStr, Number(pt.periodDays) || 1);
       } else {
-        nextDueAt = pt.firstDueDate || (pt.createdAt ? pt.createdAt.substring(0, 10) : dateStr);
+        nextDueAt = pt.firstDueDate || (pt.createdAt ? getExecutionDateStr(pt.createdAt) : dateStr);
       }
       // Vence hoje ou ficou pendente de dias anteriores (aguardando a próxima limpeza)
       if (nextDueAt <= dateStr) {
@@ -4170,26 +4200,35 @@ function findOrUpsertCleaningRequest(reqId, flatNumber, flatId, dateStr = null) 
   if (!db.cleaningRequests) db.cleaningRequests = [];
   const targetDate = dateStr || getTodayStr();
 
-  // 1. Procura por ID numérico direto
-  let item = db.cleaningRequests.find(r => r.id === Number(reqId));
+  let item = null;
 
-  // 2. Procura por Flat e Data (priorizando clean se houver múltiplos)
-  if (!item && flatNumber) {
+  // 1. Se informou flatNumber ou flatId, prioriza encontrar por quarto e data para evitar colisão de IDs virtuais
+  if (flatNumber) {
     const matching = db.cleaningRequests.filter(r => String(r.flatNumber) === String(flatNumber) && r.requestDate === targetDate);
     item = matching.find(r => r.status === "clean") || matching[0];
   }
   if (!item && flatId) {
-    const matching = db.cleaningRequests.filter(r => r.flatId === Number(flatId) && r.requestDate === targetDate);
+    const matching = db.cleaningRequests.filter(r => Number(r.flatId) === Number(flatId) && r.requestDate === targetDate);
     item = matching.find(r => r.status === "clean") || matching[0];
+  }
+
+  // 2. Procura por ID numérico direto (apenas se bater com o flat informado, ou se não informou flat)
+  if (!item && reqId) {
+    const candidate = db.cleaningRequests.find(r => Number(r.id) === Number(reqId));
+    if (candidate) {
+      if ((!flatNumber || String(candidate.flatNumber) === String(flatNumber)) && (!flatId || Number(candidate.flatId) === Number(flatId))) {
+        item = candidate;
+      }
+    }
   }
 
   // 3. Se ainda não achou, procura nos cards dinâmicos gerados para a data
   if (!item) {
     const virtualList = getRequestsForDate(targetDate);
     const virtualCard = virtualList.find(c => 
-      c.id === Number(reqId) || 
       (flatNumber && String(c.flatNumber) === String(flatNumber)) ||
-      (flatId && c.flatId === Number(flatId))
+      (flatId && Number(c.flatId) === Number(flatId)) ||
+      (reqId && Number(c.id) === Number(reqId))
     );
 
     const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
@@ -4197,9 +4236,9 @@ function findOrUpsertCleaningRequest(reqId, flatNumber, flatId, dateStr = null) 
     const now = new Date().toISOString();
 
     const targetFlatObj = db.flats.find(f => 
-      (virtualCard && (f.id === virtualCard.flatId || String(f.number) === String(virtualCard.flatNumber))) ||
       (flatNumber && String(f.number) === String(flatNumber)) ||
-      (flatId && f.id === Number(flatId))
+      (flatId && Number(f.id) === Number(flatId)) ||
+      (virtualCard && (Number(f.id) === Number(virtualCard.flatId) || String(f.number) === String(virtualCard.flatNumber)))
     );
 
     item = {
@@ -4339,12 +4378,38 @@ app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
         });
       }
 
-      for (const ptId of executedPeriodicTaskIds) {
+      let tasksToExecute = Array.isArray(executedPeriodicTaskIds) ? [...executedPeriodicTaskIds] : [];
+      if (status === "clean" && tasksToExecute.length === 0) {
+        // Auto-conclui tarefas preventivas pendentes deste quarto para governança caso não passadas explicitamente
+        const flatTargetId = Number(item.flatId);
+        const pendingForFlat = (db.periodicTasks || []).filter(t => 
+          t.isActive && 
+          t.assignToHousekeeping !== false && 
+          (!Array.isArray(t.flatIds) || t.flatIds.length === 0 || t.flatIds.map(Number).includes(flatTargetId))
+        );
+        for (const pt of pendingForFlat) {
+          const executions = (db.periodicExecutions || []).filter(e => Number(e.periodicTaskId) === Number(pt.id) && Number(e.flatId) === flatTargetId);
+          executions.sort((a, b) => new Date(b.executedAt).getTime() - new Date(a.executedAt).getTime());
+          const lastExec = executions[0] || null;
+          let nextDueAt;
+          if (lastExec) {
+            nextDueAt = addDaysToDateStr(getExecutionDateStr(lastExec.executedAt), Number(pt.periodDays) || 1);
+          } else {
+            nextDueAt = pt.firstDueDate || (pt.createdAt ? getExecutionDateStr(pt.createdAt) : getTodayStr());
+          }
+          if (nextDueAt <= (date || item.requestDate || getTodayStr())) {
+            tasksToExecute.push(pt.id);
+          }
+        }
+      }
+
+      for (const ptId of tasksToExecute) {
+        if (!db.periodicExecutions) db.periodicExecutions = [];
         db.periodicExecutions.push({
-          id: db.periodicExecutions.length + 1,
+          id: db.periodicExecutions.length > 0 ? Math.max(...db.periodicExecutions.map(e => e.id)) + 1 : 1,
           periodicTaskId: Number(ptId),
-          flatId: item.flatId,
-          executedByUserId: item.assignedUserId || (userAuth ? userAuth.id : 2),
+          flatId: Number(item.flatId),
+          executedByUserId: item.assignedUserId ? Number(item.assignedUserId) : (userAuth ? Number(userAuth.id) : 2),
           executedAt: now,
           notes: "Executado durante a limpeza do checkout",
           createdAt: now,
@@ -4751,30 +4816,27 @@ app.post("/api/periodic-tasks/:id/execute", (req, res) => {
 
 app.get("/api/periodic-tasks/pending", (req, res) => {
   const todayStr = getTodayStr();
-  const todayTime = new Date(todayStr).getTime();
   const result = [];
 
   for (const task of (db.periodicTasks || []).filter(t => t.isActive)) {
-    const targetFlats = Array.isArray(task.flatIds) && task.flatIds.length > 0 ? task.flatIds : db.flats.map(f => f.id);
+    const targetFlats = Array.isArray(task.flatIds) && task.flatIds.length > 0 ? task.flatIds.map(Number) : db.flats.map(f => Number(f.id));
     for (const flatId of targetFlats) {
-      const flat = db.flats.find(f => f.id === flatId);
+      const flat = db.flats.find(f => Number(f.id) === Number(flatId));
       if (!flat) continue;
 
-      const executions = (db.periodicExecutions || []).filter(e => e.periodicTaskId === task.id && e.flatId === flatId);
+      const executions = (db.periodicExecutions || []).filter(e => Number(e.periodicTaskId) === Number(task.id) && Number(e.flatId) === Number(flatId));
       executions.sort((a, b) => new Date(b.executedAt).getTime() - new Date(a.executedAt).getTime());
       const lastExec = executions[0] || null;
 
       let nextDueAt;
       if (lastExec) {
-        const d = new Date(lastExec.executedAt.substring(0, 10));
-        d.setDate(d.getDate() + task.periodDays);
-        nextDueAt = d.toISOString().substring(0, 10);
+        const lastDateStr = getExecutionDateStr(lastExec.executedAt);
+        nextDueAt = addDaysToDateStr(lastDateStr, Number(task.periodDays) || 1);
       } else {
-        nextDueAt = task.firstDueDate || (task.createdAt ? task.createdAt.substring(0, 10) : todayStr);
+        nextDueAt = task.firstDueDate || (task.createdAt ? getExecutionDateStr(task.createdAt) : todayStr);
       }
 
-      const dueDateTime = new Date(nextDueAt).getTime();
-      const daysDiff = Math.round((todayTime - dueDateTime) / 86400000);
+      const daysDiff = calcDaysDiff(todayStr, nextDueAt);
 
       result.push({
         taskId: task.id,
@@ -12987,7 +13049,7 @@ app.patch("/api/breakfast/orders/:id/status", (req, res) => {
   if (req.body.status) order.status = req.body.status;
   if (req.body.cancelReason !== undefined) {
     order.cancelReason = req.body.cancelReason;
-  } else if (req.body.status === "pending" || req.body.status === "ready" || req.body.status === "delivered") {
+  } else if (req.body.status === "pending" || req.body.status === "in_production" || req.body.status === "ready" || req.body.status === "delivered") {
     order.cancelReason = null;
   }
   order.updatedAt = new Date().toISOString();
@@ -13009,21 +13071,82 @@ app.delete("/api/breakfast/orders/:id", (req, res) => {
   res.json({ success: true, message: "Pedido cancelado com sucesso." });
 });
 
-// POST /api/breakfast/orders/:id/whatsapp
-app.post("/api/breakfast/orders/:id/whatsapp", (req, res) => {
+// POST /api/breakfast/orders/:id/whatsapp (Disparo direto via WhatsApp API oficial / Z-API)
+app.post("/api/breakfast/orders/:id/whatsapp", async (req, res) => {
   initBreakfastData();
   const id = Number(req.params.id);
   const order = db.breakfastOrders.find(o => o.id === id);
   if (!order) return res.status(404).json({ error: "Pedido não encontrado" });
 
-  const cleanPhone = (order.phone || "").replace(/\D/g, "");
-  const firstName = (order.clientName || "Hóspede").split(" ")[0];
-  const msg = encodeURIComponent(
-    `Bom dia, ${firstName}! ☕🥐\n\nSeu pedido de café da manhã para o Apt ${order.roomNumber} está pronto e saindo para entrega no seu quarto!\n\nHorário previsto: ${order.deliveryTime}\n\nTenha um excelente dia e bom apetite! ✨`
-  );
-  const whatsappUrl = `https://wa.me/55${cleanPhone}?text=${msg}`;
+  const rawPhone = order.phone || "";
+  const cleanPhone = cleanWhatsAppPhone(rawPhone) || rawPhone.replace(/\D/g, "");
+  if (!cleanPhone) {
+    return res.status(400).json({ error: "O pedido não possui telefone/WhatsApp válido cadastrado." });
+  }
 
-  res.json({ success: true, whatsappUrl });
+  const type = req.body?.type === "in_production" ? "in_production" : "on_the_way";
+  const firstName = (order.clientName || "Hóspede").split(" ")[0];
+
+  let msgText = "";
+  if (type === "in_production") {
+    msgText = req.body?.customMessage || 
+      `Bom dia, ${firstName}! ☕👨‍🍳\n\nSeu pedido de café da manhã para o Apt ${order.roomNumber} já começou a ser preparado com todo carinho pela nossa cozinha!\n\nHorário agendado para entrega: ${order.deliveryTime || "08:00"}\n\nAssim que sair para entrega no seu quarto, avisaremos por aqui! ✨`;
+    if (order.status === "pending") {
+      order.status = "in_production";
+    }
+    order.inProductionNotifiedAt = new Date().toISOString();
+  } else {
+    msgText = req.body?.customMessage || 
+      `Bom dia, ${firstName}! ☕🥐\n\nSeu pedido de café da manhã para o Apt ${order.roomNumber} está pronto e a caminho do seu quarto!\n\nHorário previsto: ${order.deliveryTime || "08:00"}\n\nTenha um excelente dia e bom apetite! ✨`;
+    if (order.status !== "ready" && order.status !== "delivered") {
+      order.status = "ready";
+    }
+    order.onTheWayNotifiedAt = new Date().toISOString();
+  }
+
+  order.updatedAt = new Date().toISOString();
+
+  // Enviar diretamente via Z-API se configurada (ou mock seguro de dev)
+  let apiResult = { success: true, simulated: true };
+  try {
+    apiResult = await sendZapiMessage(db.zapiConfig, {
+      phone: cleanPhone,
+      message: msgText
+    });
+  } catch (err) {
+    console.error("[Breakfast WhatsApp Dispatch Error]", err);
+    apiResult = { success: false, error: err?.message || String(err) };
+  }
+
+  // Gravar no histórico geral do WhatsApp se inicializado
+  if (!db.whatsappHistory) db.whatsappHistory = [];
+  db.whatsappHistory.push({
+    id: `bfk_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    reservationCode: order.reservationCode || null,
+    guestName: order.clientName,
+    guestPhone: cleanPhone,
+    triggerEvent: type === "in_production" ? "breakfast_in_production" : "breakfast_on_the_way",
+    message: msgText,
+    status: apiResult.success ? "sent" : "failed",
+    method: apiResult.simulated ? "mock" : "api",
+    error: apiResult.error || null,
+    createdAt: new Date().toISOString()
+  });
+
+  saveDatabase();
+
+  const fallbackUrl = `https://wa.me/55${cleanPhone}?text=${encodeURIComponent(msgText)}`;
+
+  res.json({
+    success: apiResult.success,
+    sentViaApi: true,
+    simulated: Boolean(apiResult.simulated),
+    type,
+    message: msgText,
+    order,
+    error: apiResult.error || null,
+    whatsappUrl: fallbackUrl
+  });
 });
 
 // ── Storage & Cloudflare R2 Management Endpoints ─────────────────────────

@@ -10,10 +10,11 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useToast } from "@/hooks/use-toast"
 import { 
   Coffee, Clock, Home as HomeIcon, Users, CheckCircle2, 
   Package, MessageCircle, Plus, ChevronRight, RefreshCw, AlertTriangle, Trash2, ExternalLink,
-  Edit2, Scale, DollarSign, Layers, Check, Copy
+  Edit2, Scale, DollarSign, Layers, Check, Copy, Flame, Send, Loader2, ChefHat
 } from "lucide-react"
 import { format, addDays } from "date-fns"
 import { ptBR } from "date-fns/locale"
@@ -33,6 +34,8 @@ export default function BreakfastProduction() {
   const [ingredients, setIngredients] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [copiedSummary, setCopiedSummary] = useState(false)
+  const { toast } = useToast()
+  const [sendingNotify, setSendingNotify] = useState<{ [key: string]: boolean }>({})
 
   // Ingredient Modal
   const [ingredientModalOpen, setIngredientModalOpen] = useState(false)
@@ -185,22 +188,72 @@ export default function BreakfastProduction() {
     }
   }
 
-  const handleToggleStatus = async (orderId: number, currentStatus: string) => {
-    const nextStatus = currentStatus === "ready" || currentStatus === "delivered" ? "pending" : "ready"
-    await fetch(`/api/breakfast/orders/${orderId}/status`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: nextStatus }),
-      credentials: "include"
-    })
-    fetchOrders()
+  const handleSetStatus = async (orderId: number, nextStatus: string) => {
+    try {
+      await fetch(`/api/breakfast/orders/${orderId}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: nextStatus }),
+        credentials: "include"
+      })
+      fetchOrders()
+    } catch {}
   }
 
-  const handleSendWhatsApp = async (orderId: number) => {
-    const res = await fetch(`/api/breakfast/orders/${orderId}/whatsapp`, { method: "POST", credentials: "include" })
-    const json = await res.json()
-    if (json.whatsappUrl) {
-      window.open(json.whatsappUrl, "_blank")
+  const handleToggleStatus = async (orderId: number, currentStatus: string) => {
+    const nextStatus = currentStatus === "ready" || currentStatus === "delivered" ? "pending" : "ready"
+    handleSetStatus(orderId, nextStatus)
+  }
+
+  const handleNotifyGuest = async (order: any, type: "in_production" | "on_the_way") => {
+    const phone = (order.phone || "").replace(/\D/g, "")
+    if (!phone) {
+      toast({
+        variant: "destructive",
+        title: "Telefone não cadastrado",
+        description: `O pedido do Apt ${order.roomNumber} (${order.clientName}) não possui WhatsApp válido cadastrado.`
+      })
+      return
+    }
+
+    const notifyKey = `${order.id}_${type}`
+    setSendingNotify(prev => ({ ...prev, [notifyKey]: true }))
+
+    try {
+      const res = await fetch(`/api/breakfast/orders/${order.id}/whatsapp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type }),
+        credentials: "include"
+      })
+      const json = await res.json()
+
+      if (res.ok && json.success) {
+        toast({
+          title: type === "in_production" ? "🍳 Pedido em Produção Avisado!" : "🚀 Café a Caminho Avisado!",
+          description: json.simulated
+            ? `[Simulação API] Mensagem enviada para ${order.clientName} (Apt ${order.roomNumber})!`
+            : `Mensagem enviada com sucesso via WhatsApp para ${order.clientName} (Apt ${order.roomNumber})!`
+        })
+        fetchOrders()
+      } else {
+        toast({
+          variant: "destructive",
+          title: "Falha no envio da API",
+          description: json.error || "Não foi possível enviar a mensagem. Abrindo WhatsApp Web..."
+        })
+        if (json.whatsappUrl) {
+          window.open(json.whatsappUrl, "_blank")
+        }
+      }
+    } catch (err: any) {
+      toast({
+        variant: "destructive",
+        title: "Falha de conexão",
+        description: err?.message || "Erro ao conectar com o servidor."
+      })
+    } finally {
+      setSendingNotify(prev => ({ ...prev, [notifyKey]: false }))
     }
   }
 
@@ -705,6 +758,7 @@ export default function BreakfastProduction() {
                       {slot.orders.map((order: any) => {
                         const isCancelled = order.status === "cancelled"
                         const isReady = order.status === "ready" || order.status === "delivered"
+                        const isInProduction = order.status === "in_production"
                         return (
                           <Card 
                             key={order.id} 
@@ -713,13 +767,15 @@ export default function BreakfastProduction() {
                                 ? "bg-rose-50/70 dark:bg-rose-950/20 border-rose-300 dark:border-rose-800 opacity-85"
                                 : isReady 
                                   ? "bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-800" 
-                                  : "bg-card hover:border-amber-400"
+                                  : isInProduction
+                                    ? "bg-amber-50/50 dark:bg-amber-950/20 border-amber-400 dark:border-amber-600 ring-1 ring-amber-400/40"
+                                    : "bg-card hover:border-amber-400"
                             }`}
                           >
                             <CardHeader className="p-4 pb-2">
                               <div className="flex items-start justify-between gap-2">
                                 <div>
-                                  <div className="flex items-center gap-2">
+                                  <div className="flex items-center gap-2 flex-wrap">
                                     <span className={`text-xl font-black ${isCancelled ? 'line-through text-rose-700 dark:text-rose-400' : 'text-slate-900 dark:text-slate-100'}`}>
                                       Apt {order.roomNumber}
                                     </span>
@@ -729,6 +785,23 @@ export default function BreakfastProduction() {
                                       </Badge>
                                     ) : (
                                       <>
+                                        {isInProduction && (
+                                          <Badge className="bg-amber-500 hover:bg-amber-500 text-white font-bold text-[10px] flex items-center gap-1 shadow-2xs">
+                                            <Flame className="w-3 h-3 animate-pulse" />
+                                            <span>Em Produção</span>
+                                          </Badge>
+                                        )}
+                                        {isReady && (
+                                          <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white font-bold text-[10px] flex items-center gap-1 shadow-2xs">
+                                            <CheckCircle2 className="w-3 h-3" />
+                                            <span>Pronto / Saiu</span>
+                                          </Badge>
+                                        )}
+                                        {!isInProduction && !isReady && (
+                                          <Badge variant="outline" className="text-slate-600 dark:text-slate-400 text-[10px] font-bold border-slate-300 dark:border-slate-700">
+                                            ⏳ Na Fila
+                                          </Badge>
+                                        )}
                                         <Badge className="bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300 text-[10px] font-bold">
                                           👥 {order.guestCount} {order.guestCount === 1 ? 'Pessoa' : 'Pessoas'}
                                         </Badge>
@@ -749,31 +822,46 @@ export default function BreakfastProduction() {
                                       Não Produzir
                                     </Badge>
                                   ) : (
-                                    <Button 
-                                      size="sm" 
-                                      onClick={() => handleToggleStatus(order.id, order.status)}
-                                      className={`h-8 text-xs font-bold px-2.5 rounded-lg ${
-                                        isReady 
-                                          ? "bg-emerald-600 hover:bg-emerald-700 text-white" 
-                                          : "bg-slate-800 hover:bg-slate-700 text-slate-200"
-                                      }`}
-                                    >
-                                      {isReady ? (
-                                        <>
-                                          <Check className="w-3.5 h-3.5 mr-1" />
-                                          <span>Pronto / Entregue</span>
-                                        </>
-                                      ) : (
-                                        <span>Marcar Pronto</span>
-                                      )}
-                                    </Button>
+                                    <div className="flex items-center gap-1 bg-muted/40 p-0.5 rounded-lg border">
+                                      <Button 
+                                        type="button"
+                                        size="sm" 
+                                        variant={isInProduction ? "default" : "ghost"}
+                                        onClick={() => handleSetStatus(order.id, isInProduction ? "pending" : "in_production")}
+                                        className={`h-7 text-[11px] font-bold px-2 rounded-md transition-all ${
+                                          isInProduction
+                                            ? "bg-amber-600 hover:bg-amber-700 text-white shadow-2xs" 
+                                            : "text-amber-700 dark:text-amber-400 hover:bg-amber-100/50"
+                                        }`}
+                                        title={isInProduction ? "Clique para voltar para Na Fila" : "Marcar como Em Produção"}
+                                      >
+                                        <Flame className="w-3 h-3 mr-1" />
+                                        <span>{isInProduction ? "Produzindo" : "Produzir"}</span>
+                                      </Button>
+
+                                      <Button 
+                                        type="button"
+                                        size="sm" 
+                                        variant={isReady ? "default" : "ghost"}
+                                        onClick={() => handleSetStatus(order.id, isReady ? "pending" : "ready")}
+                                        className={`h-7 text-[11px] font-bold px-2 rounded-md transition-all ${
+                                          isReady 
+                                            ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs" 
+                                            : "text-slate-700 dark:text-slate-300 hover:bg-slate-200/50 dark:hover:bg-slate-800"
+                                        }`}
+                                        title={isReady ? "Clique para voltar para Na Fila" : "Marcar como Pronto / Entregue"}
+                                      >
+                                        <Check className="w-3 h-3 mr-1" />
+                                        <span>{isReady ? "Pronto" : "Concluir"}</span>
+                                      </Button>
+                                    </div>
                                   )}
 
                                   <Button 
                                     variant="ghost" 
                                     size="icon" 
                                     onClick={() => handleCancelOrDeleteOrder(order)}
-                                    className="h-8 w-8 text-muted-foreground hover:text-rose-600"
+                                    className="h-7 w-7 text-muted-foreground hover:text-rose-600"
                                     title={isCancelled ? "Excluir registro permanentemente" : "Cancelar pedido com motivo"}
                                   >
                                     <Trash2 className="w-3.5 h-3.5" />
@@ -879,17 +967,81 @@ export default function BreakfastProduction() {
                                 </div>
                               )}
 
-                              {/* WhatsApp Direct Notify */}
-                              {order.phone && (
-                                <Button 
-                                  variant="outline" 
-                                  size="sm" 
-                                  onClick={() => handleSendWhatsApp(order.id)}
-                                  className="w-full text-xs font-semibold h-8 gap-1.5 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800 hover:bg-emerald-50 dark:hover:bg-emerald-950"
-                                >
-                                  <MessageCircle className="w-3.5 h-3.5" />
-                                  <span>Avisar no WhatsApp que o Café Saiu</span>
-                                </Button>
+                              {/* WhatsApp Direct API Actions */}
+                              {!isCancelled && (
+                                <div className="space-y-1.5 pt-2 border-t border-border/60">
+                                  <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-muted-foreground px-0.5">
+                                    <span className="flex items-center gap-1">
+                                      <MessageCircle className="w-3 h-3 text-emerald-600" />
+                                      <span>Avisos ao Hóspede (WhatsApp API)</span>
+                                    </span>
+                                    {order.phone && <span className="font-mono text-muted-foreground/80">{order.phone}</span>}
+                                  </div>
+
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    {/* Botão: Pedido em Produção */}
+                                    <Button 
+                                      type="button"
+                                      variant="outline" 
+                                      size="sm" 
+                                      disabled={!order.phone || Boolean(sendingNotify[`${order.id}_in_production`])}
+                                      onClick={() => handleNotifyGuest(order, "in_production")}
+                                      className={`h-8 text-xs font-bold gap-1.5 transition-all ${
+                                        order.inProductionNotifiedAt 
+                                          ? "border-amber-500/50 bg-amber-500/10 text-amber-800 dark:text-amber-300 hover:bg-amber-500/20"
+                                          : "border-amber-400 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+                                      }`}
+                                      title={!order.phone ? "Hóspede sem telefone cadastrado" : "Disparar mensagem via API informando que o café está sendo preparado"}
+                                    >
+                                      {sendingNotify[`${order.id}_in_production`] ? (
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                      ) : (
+                                        <Flame className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                      )}
+                                      <span className="truncate">
+                                        {sendingNotify[`${order.id}_in_production`] 
+                                          ? "Enviando..." 
+                                          : order.inProductionNotifiedAt 
+                                            ? `✓ Produção às ${format(new Date(order.inProductionNotifiedAt), "HH:mm")}` 
+                                            : "Avisar em Produção"}
+                                      </span>
+                                    </Button>
+
+                                    {/* Botão: Café a Caminho */}
+                                    <Button 
+                                      type="button"
+                                      variant="outline" 
+                                      size="sm" 
+                                      disabled={!order.phone || Boolean(sendingNotify[`${order.id}_on_the_way`])}
+                                      onClick={() => handleNotifyGuest(order, "on_the_way")}
+                                      className={`h-8 text-xs font-bold gap-1.5 transition-all ${
+                                        order.onTheWayNotifiedAt 
+                                          ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-500/20"
+                                          : "border-emerald-400 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+                                      }`}
+                                      title={!order.phone ? "Hóspede sem telefone cadastrado" : "Disparar mensagem via API informando que o café está pronto e a caminho"}
+                                    >
+                                      {sendingNotify[`${order.id}_on_the_way`] ? (
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                      ) : (
+                                        <Send className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                      )}
+                                      <span className="truncate">
+                                        {sendingNotify[`${order.id}_on_the_way`] 
+                                          ? "Enviando..." 
+                                          : order.onTheWayNotifiedAt 
+                                            ? `✓ A caminho às ${format(new Date(order.onTheWayNotifiedAt), "HH:mm")}` 
+                                            : "Avisar Café a Caminho"}
+                                      </span>
+                                    </Button>
+                                  </div>
+
+                                  {!order.phone && (
+                                    <div className="text-[10px] text-amber-700 dark:text-amber-400 italic text-center py-0.5">
+                                      ⚠️ Hóspede sem WhatsApp cadastrado no pedido
+                                    </div>
+                                  )}
+                                </div>
                               )}
                             </CardContent>
                           </Card>
