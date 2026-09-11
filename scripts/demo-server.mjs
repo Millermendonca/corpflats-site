@@ -5424,6 +5424,7 @@ app.post("/api/site-content/reset", (req, res) => {
 app.get("/api/settings", (req, res) => {
   const petPolicy = db.siteConfig?.petPolicy || db.settings?.petPolicy || DEFAULT_SITE_CONFIG.petPolicy;
   res.json({
+    garageEmail: db.settings?.garageEmail || "promenadesoho@pfbestacionamentos.com.br",
     ...db.settings,
     petPolicy,
     houseRules: db.settings.houseRules || DEFAULT_HOUSE_RULES,
@@ -5433,7 +5434,7 @@ app.get("/api/settings", (req, res) => {
 });
 
 app.patch("/api/settings", (req, res) => {
-  const { onedriveShareUrl, syncIntervalMinutes, sheetName, alertHour, termsAndRules, houseRules, contractTerms, adminWhatsApp, autoEarlyCheckinForSite, checkinTime, checkoutTime, hotelAddress, googleMapsUrl, receptionEmail, buildingName, petPolicy } = req.body;
+  const { onedriveShareUrl, syncIntervalMinutes, sheetName, alertHour, termsAndRules, houseRules, contractTerms, adminWhatsApp, autoEarlyCheckinForSite, checkinTime, checkoutTime, hotelAddress, googleMapsUrl, receptionEmail, garageEmail, buildingName, petPolicy } = req.body;
   if (onedriveShareUrl !== undefined) db.settings.onedriveShareUrl = onedriveShareUrl;
   if (syncIntervalMinutes !== undefined) db.settings.syncIntervalMinutes = syncIntervalMinutes;
   if (sheetName !== undefined) db.settings.sheetName = sheetName;
@@ -5448,6 +5449,7 @@ app.patch("/api/settings", (req, res) => {
   if (hotelAddress !== undefined) db.settings.hotelAddress = hotelAddress;
   if (googleMapsUrl !== undefined) db.settings.googleMapsUrl = googleMapsUrl;
   if (receptionEmail !== undefined) db.settings.receptionEmail = receptionEmail;
+  if (garageEmail !== undefined) db.settings.garageEmail = garageEmail ? String(garageEmail).trim() : "promenadesoho@pfbestacionamentos.com.br";
   if (buildingName !== undefined) db.settings.buildingName = buildingName;
   if (petPolicy !== undefined) {
     if (!db.siteConfig) db.siteConfig = {};
@@ -9535,13 +9537,14 @@ app.get("/api/settings/email", (req, res) => {
     hasPass: Boolean(config.pass),
     isConfigured: config.isConfigured,
     receptionEmail: db.settings?.receptionEmail || "soho@promenade.com.br",
+    garageEmail: db.settings?.garageEmail || "promenadesoho@pfbestacionamentos.com.br",
     buildingName: db.settings?.buildingName || "Edifício Soho Residence Service"
   });
 });
 
 // 5. Salvar configurações de e-mail (Zoho SMTP)
 app.post("/api/settings/email", (req, res) => {
-  let { host, port, user, pass, fromName, fromEmail, receptionEmail, buildingName } = req.body;
+  let { host, port, user, pass, fromName, fromEmail, receptionEmail, garageEmail, buildingName } = req.body;
   if (!db.settings) db.settings = {};
   if (!db.settings.emailSettings) db.settings.emailSettings = {};
 
@@ -9559,6 +9562,7 @@ app.post("/api/settings/email", (req, res) => {
   if (fromEmail !== undefined) db.settings.emailSettings.fromEmail = fromEmail.trim();
 
   if (receptionEmail !== undefined) db.settings.receptionEmail = receptionEmail.trim();
+  if (garageEmail !== undefined) db.settings.garageEmail = garageEmail ? String(garageEmail).trim() : "promenadesoho@pfbestacionamentos.com.br";
   if (buildingName !== undefined) db.settings.buildingName = buildingName.trim();
 
   saveDatabase();
