@@ -175,9 +175,21 @@ app.post("/api/cleaning/assignments/:requestId/no-show", (req, res) => {
   const flat = db.flats.find(f => f.id === item.flatId);
   const fNum = flat ? flat.number : (item.flatNumber || String(item.flatId));
 
-  // Marca TODOS os requests desse flat com status no_show para não aparecer em nenhuma data pendente
+  // Marca o request selecionado com status no_show
+  item.status = "no_show";
+  item.isVacant = true;
+  item.completedAt = now;
+  item.pendingObservation = "No Show - Quarto não utilizado / Limpo";
+  item.updatedAt = now;
+
+  // Baixa apenas pendências antigas NÃO limpas (requestDate < item.requestDate e status === "dirty") do mesmo flat.
+  // JAMAIS altera datas futuras (requestDate > item.requestDate) nem outros check-outs subsequentes!
   for (const r of db.cleaningRequests) {
-    if (r.flatId === item.flatId || r.flatNumber === fNum) {
+    if (r.id !== item.id &&
+        (r.flatId === item.flatId || String(r.flatNumber) === String(fNum)) &&
+        r.requestDate && item.requestDate &&
+        r.requestDate < item.requestDate &&
+        r.status === "dirty") {
       r.status = "no_show";
       r.isVacant = true;
       r.completedAt = now;
@@ -1101,6 +1113,33 @@ function sanitizeReservationFlags() {
     res212.totalAmount = 181;
     saveDatabase();
     console.log("[Auto-Fix] Reserva CORP-212-0066 atualizada com PIX oficial Banco Inter!");
+  }
+
+  // Auto-recuperação/correção para solicitações de limpeza marcadas indevidamente como no_show
+  // Se houver uma reserva ativa/confirmada com check-out ou estadia na data, o quarto NÃO pode ser no_show!
+  if (db.cleaningRequests) {
+    let fixCount = 0;
+    for (const req of db.cleaningRequests) {
+      if (req.status === "no_show") {
+        const hasActiveStay = (db.reservations || []).some(r =>
+          (r.flatId === req.flatId || String(r.flatNumber) === String(req.flatNumber)) &&
+          r.status !== "cancelada" && r.status !== "cancelado" &&
+          (r.checkoutDate === req.requestDate || (r.checkinDate < req.requestDate && r.checkoutDate >= req.requestDate)) &&
+          (r.status === "confirmada" || r.paidAmount > 0 || r.checkinDate < req.requestDate)
+        );
+        if (hasActiveStay) {
+          req.status = "dirty";
+          req.pendingObservation = null;
+          req.isVacant = false;
+          req.completedAt = null;
+          fixCount++;
+        }
+      }
+    }
+    if (fixCount > 0) {
+      saveDatabase();
+      console.log(`[Auto-Fix] ${fixCount} solicitação(ões) de limpeza restaurada(s) de no_show indevido para dirty.`);
+    }
   }
 }
 
@@ -3701,6 +3740,15 @@ function getRequestsForDate(dateStr) {
     );
     const existingCleaning = matchingCleanings.find(c => c.status === "clean") || matchingCleanings[0];
 
+    // Se o flat possui checkout ativo nesta data de uma estadia confirmada (o hóspede realmente se hospedou),
+    // mas o existingCleaning estava com status 'no_show', recupera automaticamente para 'dirty'
+    if (existingCleaning && existingCleaning.status === "no_show" && pmsRes && (pmsRes.checkinDate < dateStr || pmsRes.paidAmount > 0 || pmsRes.status === "confirmada")) {
+      existingCleaning.status = "dirty";
+      existingCleaning.pendingObservation = null;
+      existingCleaning.isVacant = false;
+      existingCleaning.completedAt = null;
+    }
+
     const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
     const card = {
       id: existingCleaning ? existingCleaning.id : (maxId + 1),
@@ -3858,7 +3906,7 @@ app.get("/api/reservations/checkouts", (req, res) => {
     const hasTwinBeds = Boolean(req_.twinBeds || (arrivingRes && arrivingRes.twinBeds));
     const hasExtraMattress = Boolean(req_.extraMattress || (arrivingRes && arrivingRes.extraMattress));
     const hasPrefersHighFloor = Boolean(arrivingRes && arrivingRes.prefersHighFloor);
-    const specialRequests = req_.adminNote || req_.pendingObservation || (arrivingRes && (arrivingRes.specialRequests || arrivingRes.notes)) || null;
+    const specialRequests = req_.adminNote || (arrivingRes && (arrivingRes.specialRequests || arrivingRes.notes)) || null;
 
     const setupInfo = (hasTwinBeds || hasExtraMattress || hasPrefersHighFloor || specialRequests) ? {
       twinBeds: hasTwinBeds,

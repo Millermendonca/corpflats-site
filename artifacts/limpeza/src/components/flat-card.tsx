@@ -29,7 +29,7 @@ import {
 import { compressImage } from "@/lib/image-compression"
 import { cn } from "@/lib/utils"
 
-export type FlatStatus = "dirty" | "will_clean" | "cleaning_now" | "pending_issue" | "clean" | "extended"
+export type FlatStatus = "dirty" | "will_clean" | "cleaning_now" | "pending_issue" | "clean" | "extended" | "no_show"
 
 const statusStyles: Record<FlatStatus, { label: string; cardBg: string; badgeClass: string; icon: React.ElementType }> = {
   dirty: { 
@@ -67,6 +67,12 @@ const statusStyles: Record<FlatStatus, { label: string; cardBg: string; badgeCla
     cardBg: "bg-purple-50/95 border-purple-300 text-purple-950 dark:bg-purple-950/30 dark:border-purple-800",
     badgeClass: "bg-purple-100 text-purple-900 border-purple-300 font-bold",
     icon: CalendarX,
+  },
+  no_show: {
+    label: "No Show",
+    cardBg: "bg-slate-50/90 border-slate-300 text-slate-900 dark:bg-slate-900/40 dark:border-slate-800",
+    badgeClass: "bg-slate-200 text-slate-800 border-slate-400 font-bold",
+    icon: UserX,
   }
 }
 
@@ -1219,6 +1225,21 @@ export function FlatCard({
                   </div>
                 )}
 
+                {currentStatus === "no_show" && (
+                  <div className="space-y-1.5">
+                    <Button 
+                      size="sm" 
+                      variant="outline" 
+                      className="w-full text-xs text-rose-700 border-rose-300 hover:bg-rose-50 font-bold" 
+                      onClick={() => handleStatusChange("dirty")}
+                      disabled={isProcessing}
+                      title="Reabrir apartamento para a lista de limpeza como Sujo"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 mr-1" /> Reabrir como Sujo (Limpar Quarto)
+                    </Button>
+                  </div>
+                )}
+
                 {/* Lost Item button for maids & admin */}
                 <Button 
                   type="button"
@@ -1232,7 +1253,7 @@ export function FlatCard({
                 </Button>
 
                 {/* Extend Stay Button (Admin & Maids, when not clean) */}
-                {currentStatus !== "clean" && (
+                {currentStatus !== "clean" && currentStatus !== "no_show" && (
                   <Button 
                     type="button"
                     variant="ghost"
@@ -1248,7 +1269,7 @@ export function FlatCard({
                 )}
 
                 {/* No Show Button (Admin Only, available when room not clean) */}
-                {isAdmin && currentStatus !== "clean" && (
+                {isAdmin && currentStatus !== "clean" && currentStatus !== "no_show" && (
                   <Button 
                     type="button"
                     variant="ghost"

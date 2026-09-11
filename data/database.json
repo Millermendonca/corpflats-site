@@ -548,6 +548,28 @@
       "durationMinutes": null,
       "createdAt": "2026-09-06T08:00:00.000Z",
       "updatedAt": "2026-09-06T08:00:00.000Z"
+    },
+    {
+      "id": 289,
+      "flatId": 7,
+      "flatNumber": "313",
+      "requestDate": "2026-09-11",
+      "source": "checkout",
+      "status": "dirty",
+      "isPriority": false,
+      "isExtended": false,
+      "isPendingFromPreviousDay": false,
+      "originalRequestDate": null,
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "pendingObservation": null,
+      "isVacant": false,
+      "leavingGuest": "Alessandra Dias",
+      "willCleanAt": null,
+      "cleaningStartedAt": null,
+      "completedAt": null,
+      "createdAt": "2026-09-11T08:00:00.000Z",
+      "updatedAt": "2026-09-11T10:51:24.457Z"
     }
   ],
   "periodicTasks": [
@@ -5615,6 +5637,28 @@
         }
       ],
       "guestCode": "HOSP-00008"
+    },
+    {
+      "id": 92,
+      "code": "RES-313-0092",
+      "notes": "",
+      "adults": 1,
+      "flatId": 7,
+      "status": "confirmada",
+      "channel": "whatsapp",
+      "guestName": "Alessandra Dias",
+      "flatNumber": "313",
+      "guestCount": 1,
+      "paidAmount": 240,
+      "checkinDate": "2026-09-10",
+      "totalAmount": 240,
+      "checkoutDate": "2026-09-11",
+      "dailyRate": 240,
+      "paymentStatus": "pago_total",
+      "includeBreakfast": true,
+      "clientType": "avulso",
+      "createdAt": "2026-09-10T18:11:41.197Z",
+      "updatedAt": "2026-09-10T21:38:33.150Z"
     }
   ],
   "reservationCommunications": [
