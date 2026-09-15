@@ -13,6 +13,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { getSmtpConfig, createTransporter } from "./mail-service.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1520,8 +1521,479 @@ export function calculateScheduledTime(template, reservation, db) {
   return now.toISOString();
 }
 
+// ── Renderizadores de E-mail de Alerta de Conexão Z-API ───────────────────────
+
+export function renderDisconnectionAlertEmailHtml({ hotelName, disconnectedAt, reason, source, targetUrl }) {
+  const dateFormatted = disconnectedAt ? new Date(disconnectedAt).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" }) : new Date().toLocaleString("pt-BR");
+  return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ALERTA CRÍTICO: WhatsApp Desconectado</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #f8fafc; color: #1e293b; }
+    .wrapper { max-width: 600px; margin: 24px auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.08); border: 1px solid #fee2e2; }
+    .header { background: linear-gradient(135deg, #b91c1c 0%, #991b1b 100%); padding: 24px 30px; text-align: left; }
+    .brand { color: #fef2f2; font-size: 20px; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase; margin: 0; }
+    .subbrand { color: #fca5a5; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 2px; }
+    .badge-bar { margin-top: 12px; }
+    .badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; background: #ffffff; color: #b91c1c; }
+    .content { padding: 30px; }
+    .alert-box { background: #fef2f2; border: 1px solid #fecaca; border-left: 5px solid #ef4444; border-radius: 10px; padding: 16px; margin-bottom: 20px; }
+    .alert-title { font-size: 16px; font-weight: 800; color: #991b1b; margin-bottom: 6px; }
+    .alert-text { font-size: 13px; color: #7f1d1d; line-height: 1.5; margin: 0; }
+    .impact-box { background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px; padding: 14px 16px; margin-bottom: 20px; }
+    .impact-title { font-size: 13px; font-weight: 700; color: #92400e; margin-bottom: 8px; }
+    .impact-list { margin: 0; padding-left: 20px; font-size: 12px; color: #78350f; line-height: 1.6; }
+    .info-table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+    .info-table td { padding: 6px 0; font-size: 13px; border-bottom: 1px solid #f1f5f9; }
+    .info-table .label { color: #64748b; font-weight: 600; width: 35%; }
+    .info-table .val { color: #0f172a; font-weight: 700; }
+    .btn-container { text-align: center; margin: 28px 0 16px 0; }
+    .btn-action { display: inline-block; padding: 14px 28px; background: #059669; color: #ffffff !important; text-decoration: none; border-radius: 10px; font-size: 14px; font-weight: 800; box-shadow: 0 4px 12px rgba(5,150,105,0.3); }
+    .footer { background: #f8fafc; padding: 18px 30px; text-align: center; font-size: 11px; color: #94a3b8; border-top: 1px solid #f1f5f9; }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <div class="header">
+      <div class="brand">${hotelName}</div>
+      <div class="subbrand">Alerta de Monitoramento de Infraestrutura</div>
+      <div class="badge-bar">
+        <span class="badge">🚨 WhatsApp Desconectado</span>
+      </div>
+    </div>
+    <div class="content">
+      <div class="alert-box">
+        <div class="alert-title">⚠️ A conexão do WhatsApp com a Z-API foi interrompida!</div>
+        <p class="alert-text">
+          O sistema detectou que a instância de WhatsApp da CorpFlats perdeu a conexão com o servidor. A sessão no celular pode ter expirado, o aparelho pode estar desligado ou desconectado da internet.
+        </p>
+      </div>
+
+      <div class="impact-box">
+        <div class="impact-title">Impacto Imediato nas Operações:</div>
+        <ul class="impact-list">
+          <li><strong>Mensagens de Pré-Check-in e Confirmação:</strong> Não serão entregues aos hóspedes.</li>
+          <li><strong>Instruções de Chegada e Senhas de Wi-Fi:</strong> Pausadas até reconexão.</li>
+          <li><strong>Avisos de Café da Manhã e Check-out:</strong> Permanecerão retidos na fila.</li>
+        </ul>
+      </div>
+
+      <table class="info-table">
+        <tr>
+          <td class="label">Data/Hora da Queda:</td>
+          <td class="val">${dateFormatted}</td>
+        </tr>
+        <tr>
+          <td class="label">Origem da Detecção:</td>
+          <td class="val">${source === "webhook" ? "Webhook em Tempo Real (Z-API)" : "Watchdog Automático do Sistema"}</td>
+        </tr>
+        <tr>
+          <td class="label">Motivo Informado:</td>
+          <td class="val">${reason || "Desconexão de sessão / aparelho indisponível"}</td>
+        </tr>
+      </table>
+
+      <div class="btn-container">
+        <a href="${targetUrl}" class="btn-action" target="_blank">
+          📱 Reconectar WhatsApp via QR Code Agora
+        </a>
+      </div>
+    </div>
+    <div class="footer">
+      Alerta automático gerado pela plataforma CorpFlats / Guest Flow Manager.<br/>
+      Para alterar preferências de alerta, acesse o painel em Conexão Z-API.
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+export function renderReconnectionAlertEmailHtml({ hotelName, connectedAt, phone, targetUrl }) {
+  const dateFormatted = connectedAt ? new Date(connectedAt).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" }) : new Date().toLocaleString("pt-BR");
+  return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WhatsApp Reconectado com Sucesso</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #f8fafc; color: #1e293b; }
+    .wrapper { max-width: 600px; margin: 24px auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.08); border: 1px solid #d1fae5; }
+    .header { background: linear-gradient(135deg, #065f46 0%, #047857 100%); padding: 24px 30px; text-align: left; }
+    .brand { color: #ecfdf5; font-size: 20px; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase; margin: 0; }
+    .subbrand { color: #a7f3d0; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 2px; }
+    .badge-bar { margin-top: 12px; }
+    .badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; background: #ffffff; color: #047857; }
+    .content { padding: 30px; }
+    .success-box { background: #ecfdf5; border: 1px solid #a7f3d0; border-left: 5px solid #10b981; border-radius: 10px; padding: 16px; margin-bottom: 20px; }
+    .success-title { font-size: 16px; font-weight: 800; color: #065f46; margin-bottom: 6px; }
+    .success-text { font-size: 13px; color: #064e3b; line-height: 1.5; margin: 0; }
+    .info-table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+    .info-table td { padding: 6px 0; font-size: 13px; border-bottom: 1px solid #f1f5f9; }
+    .info-table .label { color: #64748b; font-weight: 600; width: 35%; }
+    .info-table .val { color: #0f172a; font-weight: 700; }
+    .btn-container { text-align: center; margin: 28px 0 16px 0; }
+    .btn-action { display: inline-block; padding: 14px 28px; background: #0f172a; color: #ffffff !important; text-decoration: none; border-radius: 10px; font-size: 14px; font-weight: 800; }
+    .footer { background: #f8fafc; padding: 18px 30px; text-align: center; font-size: 11px; color: #94a3b8; border-top: 1px solid #f1f5f9; }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <div class="header">
+      <div class="brand">${hotelName}</div>
+      <div class="subbrand">Alerta de Monitoramento de Infraestrutura</div>
+      <div class="badge-bar">
+        <span class="badge">🟢 Conexão Restabelecida</span>
+      </div>
+    </div>
+    <div class="content">
+      <div class="success-box">
+        <div class="success-title">✅ WhatsApp Reconectado com Sucesso!</div>
+        <p class="success-text">
+          A conexão entre o WhatsApp e a Z-API foi restabelecida normalmente. O motor de automação voltou a operar e os disparos agendados estão sendo processados.
+        </p>
+      </div>
+
+      <table class="info-table">
+        <tr>
+          <td class="label">Data/Hora da Reconexão:</td>
+          <td class="val">${dateFormatted}</td>
+        </tr>
+        ${phone ? `<tr><td class="label">Número Conectado:</td><td class="val">+${phone}</td></tr>` : ""}
+        <tr>
+          <td class="label">Status das Operações:</td>
+          <td class="val" style="color: #059669;">100% Operacional</td>
+        </tr>
+      </table>
+
+      <div class="btn-container">
+        <a href="${targetUrl}" class="btn-action" target="_blank">
+          Ver Painel Z-API
+        </a>
+      </div>
+    </div>
+    <div class="footer">
+      Alerta automático gerado pela plataforma CorpFlats / Guest Flow Manager.
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+// ── Disparadores de Alertas de Infraestrutura (E-mail e Webhook Externo) ──────
+
+export async function sendDisconnectionAlertEmail({ db, recipient, reason, source, disconnectedAt }) {
+  if (!recipient) return { success: false, error: "E-mail destinatário não fornecido" };
+  const hotelName = db?.siteConfig?.branding?.brandName || "CorpFlats";
+  const targetUrl = "https://corpflats.onrender.com/zapi-connection";
+  const html = renderDisconnectionAlertEmailHtml({ hotelName, disconnectedAt, reason, source, targetUrl });
+  const subject = `🚨 [URGENTE] WhatsApp CorpFlats Desconectado (Z-API) - Reconexão Necessária`;
+
+  try {
+    const config = getSmtpConfig(db);
+    if (!config.user || !config.pass) {
+      console.warn("[Z-API Alert] SMTP não configurado para envio de e-mail de alerta.");
+      return { success: false, error: "SMTP não configurado" };
+    }
+
+    const transporter = createTransporter(db);
+    if (!transporter) return { success: false, error: "Erro ao criar transporte SMTP" };
+
+    const mailOptions = {
+      from: `"${config.fromName} - Alertas" <${config.fromEmail}>`,
+      to: recipient.trim(),
+      subject,
+      html,
+      text: `🚨 [URGENTE] WhatsApp CorpFlats Desconectado na Z-API.\nData/Hora: ${disconnectedAt || new Date().toISOString()}\nMotivo: ${reason || 'Desconexão'}\nReconecte agora acessando: ${targetUrl}`
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log(`[Z-API Alert] ✓ E-mail de alerta de desconexão enviado para ${recipient} (ID: ${info.messageId})`);
+    return { success: true, messageId: info.messageId };
+  } catch (err) {
+    console.error(`[Z-API Alert] ✗ Falha ao enviar e-mail de alerta:`, err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+export async function sendReconnectedAlertEmail({ db, recipient, connectedAt, phone }) {
+  if (!recipient) return { success: false, error: "E-mail destinatário não fornecido" };
+  const hotelName = db?.siteConfig?.branding?.brandName || "CorpFlats";
+  const targetUrl = "https://corpflats.onrender.com/zapi-connection";
+  const html = renderReconnectionAlertEmailHtml({ hotelName, connectedAt, phone, targetUrl });
+  const subject = `✅ [RESTABELECIDO] WhatsApp Reconectado com Sucesso - Z-API CorpFlats`;
+
+  try {
+    const config = getSmtpConfig(db);
+    if (!config.user || !config.pass) return { success: false, error: "SMTP não configurado" };
+
+    const transporter = createTransporter(db);
+    if (!transporter) return { success: false, error: "Erro ao criar transporte SMTP" };
+
+    const mailOptions = {
+      from: `"${config.fromName} - Alertas" <${config.fromEmail}>`,
+      to: recipient.trim(),
+      subject,
+      html,
+      text: `✅ [RESTABELECIDO] WhatsApp Reconectado com Sucesso na Z-API.\nData/Hora: ${connectedAt || new Date().toISOString()}\nNúmero: +${phone || 'Aparelho ativo'}\nPainel: ${targetUrl}`
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log(`[Z-API Alert] ✓ E-mail de reconexão enviado para ${recipient} (ID: ${info.messageId})`);
+    return { success: true, messageId: info.messageId };
+  } catch (err) {
+    console.error(`[Z-API Alert] ✗ Falha ao enviar e-mail de reconexão:`, err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+export async function sendExternalAlertWebhook(webhookUrl, payload) {
+  if (!webhookUrl) return;
+  try {
+    let bodyPayload = payload;
+    if (webhookUrl.includes("discord.com")) {
+      bodyPayload = {
+        content: payload.event === "disconnected"
+          ? `🚨 **[URGENTE - CorpFlats]** WhatsApp Desconectado na Z-API!\n${payload.message}\nReconecte agora: ${payload.targetUrl || "https://corpflats.onrender.com/zapi-connection"}`
+          : `✅ **[CorpFlats]** WhatsApp Reconectado com sucesso na Z-API!`,
+        embeds: [{
+          title: payload.title || "Alerta Z-API CorpFlats",
+          description: payload.message,
+          color: payload.event === "disconnected" ? 15158332 : 3066993,
+          timestamp: new Date().toISOString()
+        }]
+      };
+    } else if (webhookUrl.includes("slack.com")) {
+      bodyPayload = {
+        text: payload.event === "disconnected"
+          ? `🚨 *[URGENTE - CorpFlats]* WhatsApp Desconectado na Z-API!\n${payload.message}\nReconecte: ${payload.targetUrl || "https://corpflats.onrender.com/zapi-connection"}`
+          : `✅ *[CorpFlats]* WhatsApp Reconectado com sucesso!`
+      };
+    }
+
+    await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(bodyPayload)
+    });
+  } catch (err) {
+    console.warn("[Z-API Alert] Falha ao disparar webhook externo de alerta:", err.message);
+  }
+}
+
+// ── Sincronização Automática de Webhooks com a API da Z-API ───────────────────
+
+export async function syncZapiWebhooks(config, appBaseUrl) {
+  const instanceId = config?.instanceId?.trim();
+  const token = config?.token?.trim();
+  const clientToken = config?.clientToken?.trim();
+
+  if (!instanceId || !token) {
+    return { success: false, error: "Credenciais da Z-API incompletas (Instance ID e Token necessários)." };
+  }
+
+  const baseUrl = config.baseUrl?.replace(/\/+$/, "") || "https://api.z-api.io";
+  const cleanAppUrl = (appBaseUrl || "https://corpflats.onrender.com").replace(/\/+$/, "");
+  const disconnectedWebhookUrl = `${cleanAppUrl}/api/whatsapp/webhook/disconnected`;
+  const connectedWebhookUrl = `${cleanAppUrl}/api/whatsapp/webhook/connected`;
+
+  const headers = { "Content-Type": "application/json" };
+  if (clientToken) headers["Client-Token"] = clientToken;
+
+  const results = {
+    disconnected: { ok: false },
+    connected: { ok: false },
+    disconnectedUrl: disconnectedWebhookUrl,
+    connectedUrl: connectedWebhookUrl
+  };
+
+  try {
+    const resDisc = await fetch(`${baseUrl}/instances/${instanceId}/token/${token}/update-webhook-disconnected`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ value: disconnectedWebhookUrl })
+    });
+    results.disconnected.ok = resDisc.ok;
+    results.disconnected.status = resDisc.status;
+    results.disconnected.data = await resDisc.json().catch(() => ({}));
+  } catch (err) {
+    results.disconnected.error = err.message;
+  }
+
+  try {
+    const resConn = await fetch(`${baseUrl}/instances/${instanceId}/token/${token}/update-webhook-connected`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ value: connectedWebhookUrl })
+    });
+    results.connected.ok = resConn.ok;
+    results.connected.status = resConn.status;
+    results.connected.data = await resConn.json().catch(() => ({}));
+  } catch (err) {
+    results.connected.error = err.message;
+  }
+
+  const overallSuccess = results.disconnected.ok || results.connected.ok;
+  return {
+    success: overallSuccess,
+    results,
+    disconnectedUrl: disconnectedWebhookUrl,
+    connectedUrl: connectedWebhookUrl
+  };
+}
+
+// ── Manipuladores Centrais de Eventos de Queda & Reconexão ────────────────────
+
+export async function handleDisconnectionEvent({ db, saveDatabase, createNotification, reason, source, details, isTest = false }) {
+  if (!db) return;
+  const now = new Date();
+  const nowIso = now.toISOString();
+
+  // Cooldown de segurança (evita spam de e-mails em menos de 15 min a menos que seja teste ou troca de status)
+  const lastState = db.zapiConfig?.connectionState;
+  const lastAlertTime = db.zapiConfig?.lastAlertSentAt ? new Date(db.zapiConfig.lastAlertSentAt).getTime() : 0;
+  const cooldownPassed = (now.getTime() - lastAlertTime) > 15 * 60 * 1000;
+
+  if (!isTest && lastState === "disconnected" && !cooldownPassed) {
+    console.log(`[Z-API Watchdog] Instância já marcada como desconectada (alerta enviado há menos de 15 min).`);
+    return;
+  }
+
+  if (!isTest) {
+    db.zapiConfig.connectionState = "disconnected";
+    db.zapiConfig.disconnectedAt = nowIso;
+    db.zapiConfig.lastDisconnectReason = reason || "Desconexão do WhatsApp / Instância inativa";
+    db.zapiConfig.lastAlertSentAt = nowIso;
+
+    if (!db.zapiConnectionLogs) db.zapiConnectionLogs = [];
+    db.zapiConnectionLogs.unshift({
+      id: `conn_${Date.now()}`,
+      event: "disconnected",
+      timestamp: nowIso,
+      source: source || "webhook",
+      reason: reason || "Desconexão detectada",
+      details: details || null
+    });
+    if (db.zapiConnectionLogs.length > 50) {
+      db.zapiConnectionLogs = db.zapiConnectionLogs.slice(0, 50);
+    }
+    if (typeof saveDatabase === "function") saveDatabase();
+  }
+
+  // 1. Notificação no PMS (Banner sonoro / alta prioridade)
+  if (typeof createNotification === "function") {
+    createNotification({
+      category: "system",
+      title: isTest ? "🔔 [TESTE] WhatsApp Desconectado (Simulação)" : "🚨 ALERTA CRÍTICO: WhatsApp Desconectado!",
+      message: isTest 
+        ? "Simulação de teste concluída com sucesso. O sistema de monitoramento está ativo e pronto para avisar sobre quedas da Z-API."
+        : "A conexão do WhatsApp com a Z-API foi interrompida. Mensagens automáticas para hóspedes estão pausadas. Reconecte o QR Code imediatamente.",
+      severity: "critical",
+      targetUrl: "/zapi-connection",
+      metadata: {
+        source,
+        reason,
+        timestamp: nowIso,
+        isTest
+      }
+    });
+  }
+
+  // 2. Disparo de E-mail Urgente
+  const recipientEmail = db.zapiConfig?.alertEmail || db.settings?.adminEmail || "millerpessanha@gmail.com";
+  if (db.zapiConfig?.alertEmailEnabled !== false && recipientEmail) {
+    sendDisconnectionAlertEmail({
+      db,
+      recipient: recipientEmail,
+      reason: isTest ? "Disparo de Teste / Simulação Manual pelo Painel" : reason,
+      source,
+      disconnectedAt: nowIso
+    }).catch(() => {});
+  }
+
+  // 3. Disparo de Webhook Externo (Slack / Discord / n8n)
+  const extWebhook = db.zapiConfig?.externalWebhookUrl;
+  if (db.zapiConfig?.externalWebhookEnabled && extWebhook) {
+    sendExternalAlertWebhook(extWebhook, {
+      event: "disconnected",
+      title: isTest ? "🔔 [TESTE] Z-API CorpFlats Desconectado" : "🚨 [URGENTE] Z-API CorpFlats Desconectado!",
+      message: `WhatsApp perdeu conexão com a Z-API às ${now.toLocaleTimeString("pt-BR")}. Motivo: ${reason || 'Queda de sessão'}.`,
+      targetUrl: "https://corpflats.onrender.com/zapi-connection",
+      timestamp: nowIso,
+      details
+    }).catch(() => {});
+  }
+}
+
+export async function handleConnectionEvent({ db, saveDatabase, createNotification, source, details }) {
+  if (!db) return;
+  const now = new Date();
+  const nowIso = now.toISOString();
+
+  const prevState = db.zapiConfig?.connectionState;
+  db.zapiConfig.connectionState = "connected";
+  db.zapiConfig.connectedAt = nowIso;
+  db.zapiConfig.disconnectedAt = null;
+
+  if (!db.zapiConnectionLogs) db.zapiConnectionLogs = [];
+  db.zapiConnectionLogs.unshift({
+    id: `conn_${Date.now()}`,
+    event: "connected",
+    timestamp: nowIso,
+    source: source || "webhook",
+    phone: details?.phone || details?.smartphone?.phone || "",
+    details: details || null
+  });
+  if (db.zapiConnectionLogs.length > 50) {
+    db.zapiConnectionLogs = db.zapiConnectionLogs.slice(0, 50);
+  }
+  if (typeof saveDatabase === "function") saveDatabase();
+
+  // Se o estado anterior era "disconnected", emite notificação de resolução!
+  if (prevState === "disconnected") {
+    if (typeof createNotification === "function") {
+      createNotification({
+        category: "system",
+        title: "✅ WhatsApp Reconectado com Sucesso!",
+        message: "A conexão do WhatsApp com a Z-API foi restabelecida. O envio das mensagens automáticas aos hóspedes foi retomado.",
+        severity: "normal",
+        targetUrl: "/zapi-connection",
+        metadata: {
+          source,
+          timestamp: nowIso
+        }
+      });
+    }
+
+    const recipientEmail = db.zapiConfig?.alertEmail || db.settings?.adminEmail || "millerpessanha@gmail.com";
+    if (db.zapiConfig?.alertOnReconnect !== false && recipientEmail) {
+      sendReconnectedAlertEmail({
+        db,
+        recipient: recipientEmail,
+        connectedAt: nowIso,
+        phone: details?.phone || details?.smartphone?.phone || ""
+      }).catch(() => {});
+    }
+
+    const extWebhook = db.zapiConfig?.externalWebhookUrl;
+    if (db.zapiConfig?.externalWebhookEnabled && extWebhook) {
+      sendExternalAlertWebhook(extWebhook, {
+        event: "connected",
+        title: "✅ [RESTABELECIDO] Z-API WhatsApp Conectado",
+        message: `A conexão do WhatsApp foi restabelecida com sucesso às ${now.toLocaleTimeString("pt-BR")}.`,
+        targetUrl: "https://corpflats.onrender.com/zapi-connection",
+        timestamp: nowIso,
+        details
+      }).catch(() => {});
+    }
+  }
+}
+
 // ── Gerenciador da Fila & Background Scheduler ────────────────────────────────
-export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
+export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotification) {
   const getDb = typeof dbOrGetter === "function" ? dbOrGetter : () => dbOrGetter;
 
   function ensureDbDefaults() {
@@ -1539,7 +2011,19 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
         wifiPassword: "corpflats2026",
         googleReviewUrl: "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ",
         guestGuidePdfUrl: "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
-        guestGuidePdfName: "Manual_do_Hospede_CorpFlats.pdf"
+        guestGuidePdfName: "Manual_do_Hospede_CorpFlats.pdf",
+        alertEmail: "millerpessanha@gmail.com",
+        alertEmailEnabled: true,
+        alertOnReconnect: true,
+        externalWebhookUrl: "",
+        externalWebhookEnabled: false,
+        connectionState: "unknown",
+        disconnectedAt: null,
+        connectedAt: null,
+        lastDisconnectReason: null,
+        lastAlertSentAt: null,
+        webhookDisconnectedUrl: "https://corpflats.onrender.com/api/whatsapp/webhook/disconnected",
+        webhookConnectedUrl: "https://corpflats.onrender.com/api/whatsapp/webhook/connected"
       };
     } else {
       if (!db.zapiConfig.deliveryMode) {
@@ -1551,6 +2035,34 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
       if (db.zapiConfig.guestGuidePdfUrl === undefined) {
         db.zapiConfig.guestGuidePdfUrl = "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf";
       }
+      if (db.zapiConfig.alertEmail === undefined) {
+        db.zapiConfig.alertEmail = "millerpessanha@gmail.com";
+      }
+      if (db.zapiConfig.alertEmailEnabled === undefined) {
+        db.zapiConfig.alertEmailEnabled = true;
+      }
+      if (db.zapiConfig.alertOnReconnect === undefined) {
+        db.zapiConfig.alertOnReconnect = true;
+      }
+      if (db.zapiConfig.externalWebhookUrl === undefined) {
+        db.zapiConfig.externalWebhookUrl = "";
+      }
+      if (db.zapiConfig.externalWebhookEnabled === undefined) {
+        db.zapiConfig.externalWebhookEnabled = false;
+      }
+      if (!db.zapiConfig.connectionState) {
+        db.zapiConfig.connectionState = "unknown";
+      }
+      if (!db.zapiConfig.webhookDisconnectedUrl) {
+        db.zapiConfig.webhookDisconnectedUrl = "https://corpflats.onrender.com/api/whatsapp/webhook/disconnected";
+      }
+      if (!db.zapiConfig.webhookConnectedUrl) {
+        db.zapiConfig.webhookConnectedUrl = "https://corpflats.onrender.com/api/whatsapp/webhook/connected";
+      }
+    }
+
+    if (!db.zapiConnectionLogs) {
+      db.zapiConnectionLogs = [];
     }
 
     if (!db.whatsappTemplates || db.whatsappTemplates.length === 0) {
@@ -2102,7 +2614,107 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
     res.json(result);
   });
 
+  // 17. Webhook Z-API: WhatsApp Desconectado (/api/whatsapp/webhook/disconnected)
+  app.post("/api/whatsapp/webhook/disconnected", async (req, res) => {
+    const db = getDb();
+    console.log("[Z-API Webhook] Recebido evento de Desconexão:", JSON.stringify(req.body));
+    const reason = req.body?.reason || req.body?.error || req.body?.message || "Desconexão reportada pelo Webhook da Z-API";
+    await handleDisconnectionEvent({
+      db,
+      saveDatabase,
+      createNotification,
+      reason,
+      source: "webhook",
+      details: req.body
+    });
+    res.status(200).json({ success: true, message: "Evento de desconexão processado com sucesso" });
+  });
+
+  // 18. Webhook Z-API: WhatsApp Conectado (/api/whatsapp/webhook/connected)
+  app.post("/api/whatsapp/webhook/connected", async (req, res) => {
+    const db = getDb();
+    console.log("[Z-API Webhook] Recebido evento de Conexão:", JSON.stringify(req.body));
+    await handleConnectionEvent({
+      db,
+      saveDatabase,
+      createNotification,
+      source: "webhook",
+      details: req.body
+    });
+    res.status(200).json({ success: true, message: "Evento de conexão processado com sucesso" });
+  });
+
+  // 19. Webhook Z-API: Genérico / Fallback (/api/whatsapp/webhook)
+  app.post("/api/whatsapp/webhook", async (req, res) => {
+    const db = getDb();
+    const eventType = String(req.body?.event || req.body?.type || "").toLowerCase();
+    console.log(`[Z-API Webhook Geral] Evento '${eventType}':`, JSON.stringify(req.body));
+
+    if (eventType.includes("disconnect") || req.body?.connected === false || req.body?.status === "disconnected") {
+      await handleDisconnectionEvent({
+        db,
+        saveDatabase,
+        createNotification,
+        reason: req.body?.reason || req.body?.error || "Queda reportada via webhook geral",
+        source: "webhook",
+        details: req.body
+      });
+    } else if (eventType.includes("connect") || req.body?.connected === true || req.body?.status === "connected") {
+      await handleConnectionEvent({
+        db,
+        saveDatabase,
+        createNotification,
+        source: "webhook",
+        details: req.body
+      });
+    }
+    res.status(200).json({ success: true, message: "Webhook processado" });
+  });
+
+  // 20. Sincronizar Webhooks com a Z-API via API (/api/whatsapp/sync-webhooks)
+  app.post("/api/whatsapp/sync-webhooks", async (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const host = req.get("host") || "corpflats.onrender.com";
+    const protocol = req.protocol || "https";
+    const appBaseUrl = req.body?.baseUrl || (host.includes("localhost") ? "https://corpflats.onrender.com" : `${protocol}://${host}`);
+
+    const result = await syncZapiWebhooks(db.zapiConfig, appBaseUrl);
+    if (result.success) {
+      db.zapiConfig.webhookDisconnectedUrl = result.disconnectedUrl;
+      db.zapiConfig.webhookConnectedUrl = result.connectedUrl;
+      db.zapiConfig.webhooksSyncedAt = new Date().toISOString();
+      saveDatabase();
+    }
+    res.json(result);
+  });
+
+  // 21. Consultar Histórico de Conexões (/api/whatsapp/connection-logs)
+  app.get("/api/whatsapp/connection-logs", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    res.json(db.zapiConnectionLogs || []);
+  });
+
+  // 22. Disparo de Teste de Alerta de Desconexão (/api/whatsapp/test-disconnection-alert)
+  app.post("/api/whatsapp/test-disconnection-alert", async (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    console.log("[Z-API Alert Test] Iniciando simulação de alerta de desconexão...");
+    await handleDisconnectionEvent({
+      db,
+      saveDatabase,
+      createNotification,
+      reason: "Simulação de teste manual solicitada pelo administrador",
+      source: "manual_test",
+      details: { testedBy: req.body?.user || "admin", testAt: new Date().toISOString() },
+      isTest: true
+    });
+    res.json({ success: true, message: "Simulação de alerta disparada com sucesso!" });
+  });
+
   // ── Background Runner Contínuo (Verifica e Dispara a Cada 60 Segundos) ──────
+  let cronCounter = 0;
   setInterval(async () => {
     try {
       const db = getDb();
@@ -2110,6 +2722,36 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase) {
 
       const now = new Date();
       const nowIso = now.toISOString();
+      cronCounter++;
+
+      // A cada 3 minutos (3 ciclos de 60s): Watchdog Heartbeat Proativo da Conexão Z-API
+      if (cronCounter % 3 === 0 && db.zapiConfig.instanceId && db.zapiConfig.token) {
+        try {
+          const status = await getZapiStatus(db.zapiConfig);
+          if (!status.connected && db.zapiConfig.connectionState !== "disconnected") {
+            console.log("[Z-API Watchdog] Queda de conexão detectada pelo heartbeat proativo!");
+            await handleDisconnectionEvent({
+              db,
+              saveDatabase,
+              createNotification,
+              reason: status.error || "Desconexão detectada pelo watchdog de integridade da Z-API",
+              source: "watchdog_heartbeat",
+              details: status
+            });
+          } else if (status.connected && db.zapiConfig.connectionState === "disconnected") {
+            console.log("[Z-API Watchdog] Reconexão detectada pelo heartbeat proativo!");
+            await handleConnectionEvent({
+              db,
+              saveDatabase,
+              createNotification,
+              source: "watchdog_heartbeat",
+              details: status
+            });
+          }
+        } catch (watchdogErr) {
+          console.warn("[Z-API Watchdog Error]:", watchdogErr.message);
+        }
+      }
 
       // 1. Processa itens da fila que atingiram o horário de disparo
       const pendingItems = (db.whatsappQueue || []).filter(item => 

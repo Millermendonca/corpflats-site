@@ -19,6 +19,7 @@ import {
 } from "./ui/dialog"
 import { Input } from "./ui/input"
 import { Label } from "./ui/label"
+import { QuickShoppingModal } from "./quick-shopping-modal"
 
 interface NavItem {
   href: string
@@ -47,6 +48,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     cancelGoogleOneTap()
   }, [location])
+
+  // Quick Shopping Modal state
+  const [quickShoppingOpen, setQuickShoppingOpen] = useState(false)
+  const [pendingShoppingCount, setPendingShoppingCount] = useState(0)
 
   // Change password modal state
   const [pwModalOpen, setPwModalOpen] = useState(false)
@@ -522,58 +527,118 @@ export function Shell({ children }: { children: React.ReactNode }) {
       </main>
 
       {/* Barra de Navegação Inferior Móvel (Menus Permanentes no Rodapé) */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-card border-t border-border px-2 py-1.5 flex items-center justify-around shadow-2xl print:hidden">
-        {/* 1. Limpeza */}
-        <Link href="/dashboard">
-          <div className={`flex flex-col items-center py-1 px-2.5 rounded-xl transition-all ${
-            location === "/dashboard" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
-          }`}>
-            <LayoutDashboard className="w-5 h-5" />
-            <span className="text-[10px] mt-0.5 font-bold">Limpeza</span>
-          </div>
-        </Link>
+      <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-card border-t border-border px-1 py-1.5 flex items-center justify-around shadow-2xl print:hidden">
+        {isAdmin ? (
+          <>
+            {/* 1. Mapa de Reservas */}
+            <Link href="/reservas" className="flex-1">
+              <div className={`flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
+                location === "/reservas" || location === "/relatorios-reservas" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
+              }`}>
+                <CalendarDays className="w-5 h-5" />
+                <span className="text-[9.5px] sm:text-[10.5px] mt-0.5 font-bold text-center leading-tight">Mapa Reservas</span>
+              </div>
+            </Link>
 
-        {/* 2. Lista de Compras */}
-        <Link href="/lista-compras">
-          <div className={`flex flex-col items-center py-1 px-2.5 rounded-xl transition-all ${
-            location === "/lista-compras" || location === "/compras" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
-          }`}>
-            <ShoppingCart className="w-5 h-5" />
-            <span className="text-[10px] mt-0.5 font-bold">Compras</span>
-          </div>
-        </Link>
+            {/* 2. Painel de Limpeza */}
+            <Link href="/dashboard" className="flex-1">
+              <div className={`flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
+                location === "/dashboard" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
+              }`}>
+                <LayoutDashboard className="w-5 h-5" />
+                <span className="text-[9.5px] sm:text-[10.5px] mt-0.5 font-bold text-center leading-tight">Painel Limpeza</span>
+              </div>
+            </Link>
 
-        {/* 3. Extrato */}
-        <Link href="/extrato">
-          <div className={`flex flex-col items-center py-1 px-2.5 rounded-xl transition-all ${
-            location === "/extrato" || location === "/meu-extrato" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
-          }`}>
-            <Wallet className="w-5 h-5" />
-            <span className="text-[10px] mt-0.5 font-bold">Extrato</span>
-          </div>
-        </Link>
+            {/* 3. Café da Manhã */}
+            <Link href="/pedidos-cafe" className="flex-1">
+              <div className={`flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
+                location === "/pedidos-cafe" || location === "/cafe-dashboard" || location === "/historico-cafe" || location === "/relatorios-cafe" || location === "/insights-cafe"
+                  ? "text-primary font-black scale-105" 
+                  : "text-muted-foreground hover:text-foreground"
+              }`}>
+                <Coffee className="w-5 h-5" />
+                <span className="text-[9.5px] sm:text-[10.5px] mt-0.5 font-bold text-center leading-tight">Café da Manhã</span>
+              </div>
+            </Link>
 
-        {/* 4. Manutenções */}
-        <Link href="/observations">
-          <div className={`flex flex-col items-center py-1 px-2.5 rounded-xl transition-all ${
-            location === "/observations" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
-          }`}>
-            <MessageSquareWarning className="w-5 h-5" />
-            <span className="text-[10px] mt-0.5 font-bold">Manutenções</span>
-          </div>
-        </Link>
+            {/* 4. Lista de Compras */}
+            <Link href="/lista-compras" className="flex-1">
+              <div className={`flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
+                location === "/lista-compras" || location === "/compras" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
+              }`}>
+                <ShoppingCart className="w-5 h-5" />
+                <span className="text-[9.5px] sm:text-[10.5px] mt-0.5 font-bold text-center leading-tight">Lista Compras</span>
+              </div>
+            </Link>
 
-        {/* 5. Mais */}
-        <button 
-          type="button"
-          onClick={() => setMobileMenuOpen(true)}
-          className={`flex flex-col items-center py-1 px-2.5 rounded-xl transition-all ${
-            mobileMenuOpen ? "text-primary font-black" : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          <Menu className="w-5 h-5" />
-          <span className="text-[10px] mt-0.5 font-bold">Mais</span>
-        </button>
+            {/* 5. Mais */}
+            <button 
+              type="button"
+              onClick={() => setMobileMenuOpen(true)}
+              className={`flex-1 flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
+                mobileMenuOpen ? "text-primary font-black" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Menu className="w-5 h-5" />
+              <span className="text-[9.5px] sm:text-[10.5px] mt-0.5 font-bold text-center leading-tight">Mais</span>
+            </button>
+          </>
+        ) : (
+          <>
+            {/* 1. Limpeza */}
+            <Link href="/dashboard" className="flex-1">
+              <div className={`flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
+                location === "/dashboard" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
+              }`}>
+                <LayoutDashboard className="w-5 h-5" />
+                <span className="text-[10px] mt-0.5 font-bold text-center leading-tight">Limpeza</span>
+              </div>
+            </Link>
+
+            {/* 2. Lista de Compras */}
+            <Link href="/lista-compras" className="flex-1">
+              <div className={`flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
+                location === "/lista-compras" || location === "/compras" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
+              }`}>
+                <ShoppingCart className="w-5 h-5" />
+                <span className="text-[10px] mt-0.5 font-bold text-center leading-tight">Compras</span>
+              </div>
+            </Link>
+
+            {/* 3. Extrato */}
+            <Link href="/extrato" className="flex-1">
+              <div className={`flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
+                location === "/extrato" || location === "/meu-extrato" || location === "/extrato-camareiras" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
+              }`}>
+                <Wallet className="w-5 h-5" />
+                <span className="text-[10px] mt-0.5 font-bold text-center leading-tight">Extrato</span>
+              </div>
+            </Link>
+
+            {/* 4. Manutenções */}
+            <Link href="/observations" className="flex-1">
+              <div className={`flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
+                location === "/observations" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
+              }`}>
+                <MessageSquareWarning className="w-5 h-5" />
+                <span className="text-[10px] mt-0.5 font-bold text-center leading-tight">Manutenções</span>
+              </div>
+            </Link>
+
+            {/* 5. Mais */}
+            <button 
+              type="button"
+              onClick={() => setMobileMenuOpen(true)}
+              className={`flex-1 flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
+                mobileMenuOpen ? "text-primary font-black" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Menu className="w-5 h-5" />
+              <span className="text-[10px] mt-0.5 font-bold text-center leading-tight">Mais</span>
+            </button>
+          </>
+        )}
       </div>
 
       {/* Drawer / Gaveta Lateral Completa Mobile */}

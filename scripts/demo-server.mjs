@@ -2217,7 +2217,7 @@ function createNotification({ category, title, message, severity = "info", metad
 await loadDatabase();
 ensureUniqueRequestIds();
 reconcileCleaningRequests();
-initWhatsAppEngine(app, () => db, saveDatabase);
+initWhatsAppEngine(app, () => db, saveDatabase, createNotification);
 initMaidAutomationEngine(app, () => db, saveDatabase);
 
 let checkinsList = [];

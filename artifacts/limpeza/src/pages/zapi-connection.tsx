@@ -30,7 +30,16 @@ import {
   ChevronRight,
   Info,
   Phone,
-  Sparkles
+  Sparkles,
+  Bell,
+  BellRing,
+  Mail,
+  Copy,
+  CheckCircle2,
+  History,
+  AlertTriangle,
+  Activity,
+  Webhook
 } from "lucide-react"
 import { AccessDenied } from "@/components/access-denied"
 
@@ -44,6 +53,19 @@ interface ZapiConfig {
   wifiNetwork: string
   wifiPassword: string
   googleReviewUrl: string
+  alertEmail?: string
+  alertEmailEnabled?: boolean
+  alertOnReconnect?: boolean
+  externalWebhookUrl?: string
+  externalWebhookEnabled?: boolean
+  connectionState?: "connected" | "disconnected" | "unknown"
+  disconnectedAt?: string | null
+  connectedAt?: string | null
+  lastDisconnectReason?: string | null
+  lastAlertSentAt?: string | null
+  webhookDisconnectedUrl?: string
+  webhookConnectedUrl?: string
+  webhooksSyncedAt?: string
 }
 
 export default function ZapiConnection() {
@@ -61,11 +83,26 @@ export default function ZapiConnection() {
     fallbackToText: true,
     wifiNetwork: "CorpFlats-Hospedes",
     wifiPassword: "corpflats2026",
-    googleReviewUrl: "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ"
+    googleReviewUrl: "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ",
+    alertEmail: "millerpessanha@gmail.com",
+    alertEmailEnabled: true,
+    alertOnReconnect: true,
+    externalWebhookUrl: "",
+    externalWebhookEnabled: false,
+    connectionState: "unknown",
+    webhookDisconnectedUrl: "https://corpflats.onrender.com/api/whatsapp/webhook/disconnected",
+    webhookConnectedUrl: "https://corpflats.onrender.com/api/whatsapp/webhook/connected"
   })
   const [statusInfo, setStatusInfo] = useState<any>(null)
   const [loadingStatus, setLoadingStatus] = useState<boolean>(false)
   const [savingConfig, setSavingConfig] = useState<boolean>(false)
+
+  // State: Webhooks & Monitoring
+  const [syncingWebhooks, setSyncingWebhooks] = useState<boolean>(false)
+  const [testingAlert, setTestingAlert] = useState<boolean>(false)
+  const [connectionLogs, setConnectionLogs] = useState<any[]>([])
+  const [loadingLogs, setLoadingLogs] = useState<boolean>(false)
+  const [showLogs, setShowLogs] = useState<boolean>(false)
 
   // State: QR Code Modal
   const [qrModalOpen, setQrModalOpen] = useState<boolean>(false)
