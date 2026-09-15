@@ -2005,6 +2005,10 @@ export async function handleConnectionEvent({ db, saveDatabase, createNotificati
         timestamp: nowIso,
         details
       }).catch(() => {});
+    }
+  }
+}
+
 // ── Monitoramento Inteligente do Grupo da Portaria (WhatsApp Concierge) ────────
 
 export function getBrasiliaNow() {

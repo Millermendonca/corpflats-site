@@ -39,7 +39,9 @@ import {
   History,
   AlertTriangle,
   Activity,
-  Webhook
+  Webhook,
+  Building,
+  DoorOpen
 } from "lucide-react"
 import { AccessDenied } from "@/components/access-denied"
 
@@ -65,7 +67,12 @@ interface ZapiConfig {
   lastAlertSentAt?: string | null
   webhookDisconnectedUrl?: string
   webhookConnectedUrl?: string
+  webhookReceivedUrl?: string
   webhooksSyncedAt?: string
+  conciergeMonitoringEnabled?: boolean
+  conciergeGroupId?: string
+  conciergeGroupName?: string
+  conciergeRequireKeywords?: boolean
 }
 
 export default function ZapiConnection() {
@@ -104,6 +111,16 @@ export default function ZapiConnection() {
   const [loadingLogs, setLoadingLogs] = useState<boolean>(false)
   const [showLogs, setShowLogs] = useState<boolean>(false)
 
+  // State: Monitoramento Grupo da Portaria
+  const [conciergeGroups, setConciergeGroups] = useState<any[]>([])
+  const [loadingGroups, setLoadingGroups] = useState<boolean>(false)
+  const [conciergeLogs, setConciergeLogs] = useState<any[]>([])
+  const [loadingConciergeLogs, setLoadingConciergeLogs] = useState<boolean>(false)
+  const [showConciergeLogs, setShowConciergeLogs] = useState<boolean>(true)
+  const [testSimMessage, setTestSimMessage] = useState<string>("Check-outs de hoje: 113, 215, 302 e 508. Chaves na portaria.")
+  const [simulatingMessage, setSimulatingMessage] = useState<boolean>(false)
+  const [simulationResult, setSimulationResult] = useState<any>(null)
+
   // State: QR Code Modal
   const [qrModalOpen, setQrModalOpen] = useState<boolean>(false)
   const [qrImageData, setQrImageData] = useState<string | null>(null)
@@ -127,7 +144,95 @@ export default function ZapiConnection() {
     fetchConfig()
     checkStatus()
     fetchLogs()
+    fetchConciergeLogs()
   }, [])
+
+  const fetchConciergeLogs = async () => {
+    setLoadingConciergeLogs(true)
+    try {
+      const res = await fetch("/api/whatsapp/concierge-logs")
+      if (res.ok) {
+        const data = await res.json()
+        setConciergeLogs(data)
+      }
+    } catch (e) {
+      console.error("Erro ao buscar logs da portaria:", e)
+    } finally {
+      setLoadingConciergeLogs(false)
+    }
+  }
+
+  const fetchConciergeGroups = async () => {
+    setLoadingGroups(true)
+    try {
+      const res = await fetch("/api/whatsapp/groups")
+      if (res.ok) {
+        const data = await res.json()
+        setConciergeGroups(data.groups || [])
+        if (data.groups?.length > 0) {
+          toast({ title: `${data.groups.length} grupos encontrados no WhatsApp!` })
+        } else {
+          toast({ title: "Nenhum grupo retornado", description: "Verifique se a conta WhatsApp participa de grupos." })
+        }
+      }
+    } catch (e: any) {
+      toast({ title: "Erro ao buscar grupos", description: e.message, variant: "destructive" })
+    } finally {
+      setLoadingGroups(false)
+    }
+  }
+
+  const handleSimulateMessage = async () => {
+    if (!testSimMessage.trim()) {
+      toast({ title: "Mensagem obrigatória", description: "Digite a mensagem para testar.", variant: "destructive" })
+      return
+    }
+    setSimulatingMessage(true)
+    setSimulationResult(null)
+    try {
+      const res = await fetch("/api/whatsapp/test-concierge-message", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: testSimMessage.trim(),
+          groupName: config.conciergeGroupName || "Portaria Residencial",
+          senderName: "Porteiro Teste"
+        })
+      })
+      const data = await res.json()
+      setSimulationResult(data)
+      if (data.success) {
+        const count = data.updatedFlats?.length || 0
+        toast({
+          title: `✓ Teste Concluído! ${count} flat(s) CorpFlats liberado(s).`,
+          description: count > 0 
+            ? `Flats desocupados: ${data.updatedFlats.join(", ")}. Outros proprietários ignorados: ${data.otherFlatsIgnored?.join(", ") || "Nenhum"}`
+            : "Nenhum flat seu encontrado na mensagem."
+        })
+        fetchConciergeLogs()
+      } else {
+        toast({
+          title: "Mensagem ignorada ou sem flats",
+          description: data.reason || "Nenhum flat CorpFlats detectado no texto.",
+          variant: "destructive"
+        })
+      }
+    } catch (e: any) {
+      toast({ title: "Erro na simulação", description: e.message, variant: "destructive" })
+    } finally {
+      setSimulatingMessage(false)
+    }
+  }
+
+  const handleClearConciergeLogs = async () => {
+    try {
+      await fetch("/api/whatsapp/concierge-logs", { method: "DELETE" })
+      setConciergeLogs([])
+      toast({ title: "Histórico de portaria limpo com sucesso!" })
+    } catch (e) {
+      console.error(e)
+    }
+  }
 
   const fetchLogs = async () => {
     setLoadingLogs(true)
@@ -868,6 +973,327 @@ export default function ZapiConnection() {
                 )}
               </div>
             )}
+          </CardContent>
+        </Card>
+
+        {/* ── CARD: MONITORAMENTO DE CHECK-OUTS DA PORTARIA (GRUPO WHATSAPP) ── */}
+        <Card className="rounded-3xl border border-border shadow-sm overflow-hidden">
+          <CardHeader className="p-5 border-b border-border pb-3 bg-muted/20">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <CardTitle className="text-base font-black text-foreground flex items-center gap-2">
+                  <DoorOpen className="w-5 h-5 text-emerald-600" />
+                  Monitoramento de Check-outs da Portaria (Grupo WhatsApp)
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  Escuta em tempo real do grupo de WhatsApp da portaria. Toda vez que informarem saída de flats, o sistema identifica seus apartamentos, marca como desocupado e libera no dashboard de limpeza.
+                </CardDescription>
+              </div>
+
+              <div>
+                {config.conciergeMonitoringEnabled !== false ? (
+                  <Badge className="bg-emerald-600 text-white gap-1.5 text-xs py-1 px-3 shadow-xs">
+                    <Activity className="w-3.5 h-3.5" />
+                    Monitoramento Portaria Ativo
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="text-muted-foreground gap-1.5 text-xs py-1 px-3">
+                    Monitoramento Pausado
+                  </Badge>
+                )}
+              </div>
+            </div>
+          </CardHeader>
+
+          <CardContent className="p-5 space-y-5">
+            {/* Switch Principal do Monitoramento da Portaria */}
+            <div className="flex items-center justify-between p-4 rounded-2xl border bg-muted/30">
+              <div className="space-y-0.5">
+                <span className="text-sm font-bold text-foreground block">
+                  Ativar Check-out Automático via Grupo da Portaria
+                </span>
+                <p className="text-xs text-muted-foreground">
+                  Quando ativo, mensagens recebidas no grupo configurado mudarão o flat para "Desocupado" e atualizarão o dashboard de limpeza imediatamente.
+                </p>
+              </div>
+              <Switch 
+                checked={config.conciergeMonitoringEnabled !== false}
+                onCheckedChange={(checked) => setConfig({ ...config, conciergeMonitoringEnabled: checked })}
+              />
+            </div>
+
+            {/* Configuração do Grupo da Portaria */}
+            <div className="p-4 rounded-2xl border bg-card space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                  <Building className="w-4 h-4 text-primary" />
+                  Grupo da Portaria no WhatsApp
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={fetchConciergeGroups}
+                  disabled={loadingGroups || !statusInfo?.connected}
+                  className="h-7 text-xs rounded-lg gap-1.5"
+                >
+                  <RefreshCw className={`w-3 h-3 ${loadingGroups ? "animate-spin" : ""}`} />
+                  {loadingGroups ? "Buscando grupos..." : "Carregar Grupos do WhatsApp"}
+                </Button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold">Grupo Específico (ID / Seleção)</Label>
+                  {conciergeGroups.length > 0 ? (
+                    <div className="space-y-1">
+                      <select
+                        value={config.conciergeGroupId || ""}
+                        onChange={(e) => {
+                          const selected = conciergeGroups.find(g => g.id === e.target.value)
+                          setConfig({
+                            ...config,
+                            conciergeGroupId: e.target.value,
+                            conciergeGroupName: selected?.name || config.conciergeGroupName || ""
+                          })
+                        }}
+                        className="w-full h-9 rounded-xl border border-input bg-background px-3 py-1 text-xs shadow-xs focus:outline-hidden focus:ring-1 focus:ring-ring"
+                      >
+                        <option value="">-- Qualquer grupo ou filtrar por nome ao lado --</option>
+                        {conciergeGroups.map(g => (
+                          <option key={g.id} value={g.id}>
+                            👥 {g.name}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="text-[10px] text-muted-foreground block">
+                        Selecionado: {config.conciergeGroupName ? `"${config.conciergeGroupName}"` : "Nenhum grupo específico fixado"}
+                      </span>
+                    </div>
+                  ) : (
+                    <Input 
+                      placeholder="Ex: 120363028392819283@g.us (ou clique acima para listar)"
+                      value={config.conciergeGroupId || ""}
+                      onChange={(e) => setConfig({ ...config, conciergeGroupId: e.target.value })}
+                      className="text-xs h-9 rounded-xl"
+                    />
+                  )}
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold">Filtro por Nome do Grupo / Palavra-chave</Label>
+                  <Input 
+                    placeholder="Ex: Portaria, Condomínio, Recepção..."
+                    value={config.conciergeGroupName || ""}
+                    onChange={(e) => setConfig({ ...config, conciergeGroupName: e.target.value })}
+                    className="text-xs h-9 rounded-xl"
+                  />
+                  <span className="text-[10px] text-muted-foreground block">
+                    Se o ID estiver vazio, qualquer grupo cujo título contenha este nome será monitorado.
+                  </span>
+                </div>
+              </div>
+
+              {/* Opção de exigir palavras-chave */}
+              <div className="flex items-center justify-between pt-2 border-t border-border">
+                <div className="space-y-0.5">
+                  <span className="text-xs font-bold text-foreground">Exigir Palavras de Check-out</span>
+                  <p className="text-[11px] text-muted-foreground">
+                    Quando desmarcado, qualquer mensagem no grupo contendo números dos seus flats marcará o check-out. Quando marcado, exige termos como "checkout", "saída", "desocupado", "chaves".
+                  </p>
+                </div>
+                <Switch 
+                  checked={Boolean(config.conciergeRequireKeywords)}
+                  onCheckedChange={(checked) => setConfig({ ...config, conciergeRequireKeywords: checked })}
+                />
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <Button 
+                  onClick={handleSaveConfig}
+                  disabled={savingConfig}
+                  size="sm"
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold h-8.5 rounded-xl gap-1.5"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  Salvar Preferências da Portaria
+                </Button>
+              </div>
+            </div>
+
+            {/* Caixa de Simulação / Teste Rápido */}
+            <div className="p-4 rounded-2xl border bg-muted/20 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-amber-500" />
+                  Simulador de Mensagens da Portaria (Teste Imediato)
+                </span>
+                <Badge variant="outline" className="text-[10px]">
+                  Ambiente de Teste
+                </Badge>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Digite um exemplo de mensagem enviada pela portaria (com flats seus e de outros proprietários misturados) para validar a extração e o comportamento do sistema.
+              </p>
+
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Input 
+                  value={testSimMessage}
+                  onChange={(e) => setTestSimMessage(e.target.value)}
+                  placeholder="Ex: Check-outs hoje: 113, 215, 302 e 508. Chaves na portaria."
+                  className="text-xs h-9 rounded-xl flex-1"
+                />
+                <Button 
+                  onClick={handleSimulateMessage}
+                  disabled={simulatingMessage}
+                  className="bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-bold h-9 rounded-xl gap-1.5 shrink-0"
+                >
+                  <Send className={`w-3.5 h-3.5 ${simulatingMessage ? "animate-spin" : ""}`} />
+                  {simulatingMessage ? "Testando..." : "Simular Mensagem"}
+                </Button>
+              </div>
+
+              {simulationResult && (
+                <div className="p-3 rounded-xl border bg-card text-xs space-y-1.5 animate-in fade-in">
+                  <div className="flex items-center gap-2 font-bold text-foreground">
+                    <span>Resultado do Teste:</span>
+                    <Badge className={simulationResult.success ? "bg-emerald-600 text-white" : "bg-amber-600 text-white"}>
+                      {simulationResult.success ? "Processado com Sucesso" : "Ignorado"}
+                    </Badge>
+                  </div>
+                  {simulationResult.updatedFlats?.length > 0 && (
+                    <p className="text-emerald-700 dark:text-emerald-300 font-medium">
+                      ✓ Flats da CorpFlats desocupados: <strong>{simulationResult.updatedFlats.join(", ")}</strong>
+                    </p>
+                  )}
+                  {simulationResult.otherFlatsIgnored?.length > 0 && (
+                    <p className="text-muted-foreground">
+                      • Flats de outros proprietários (ignorados com segurança): <strong>{simulationResult.otherFlatsIgnored.join(", ")}</strong>
+                    </p>
+                  )}
+                  {simulationResult.reason && (
+                    <p className="text-amber-600 dark:text-amber-400">
+                      Motivo: {simulationResult.reason}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Histórico dos Últimos Check-outs Detectados */}
+            <div className="space-y-3 pt-2">
+              <div className="flex items-center justify-between">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    if (!showConciergeLogs) fetchConciergeLogs();
+                    setShowConciergeLogs(!showConciergeLogs);
+                  }}
+                  className="h-8 text-xs font-bold gap-1.5 p-0 hover:bg-transparent"
+                >
+                  <History className="w-4 h-4 text-primary" />
+                  <span>Histórico de Check-outs Processados da Portaria ({conciergeLogs.length})</span>
+                  <Badge variant="secondary" className="text-[10px] ml-1">
+                    {showConciergeLogs ? "Ocultar" : "Ver Lista"}
+                  </Badge>
+                </Button>
+
+                {showConciergeLogs && (
+                  <div className="flex items-center gap-1.5">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={fetchConciergeLogs}
+                      disabled={loadingConciergeLogs}
+                      className="h-6 text-[11px] px-2"
+                    >
+                      <RefreshCw className={`w-3 h-3 mr-1 ${loadingConciergeLogs ? "animate-spin" : ""}`} />
+                      Atualizar
+                    </Button>
+                    {conciergeLogs.length > 0 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleClearConciergeLogs}
+                        className="h-6 text-[11px] px-2 text-rose-600 hover:text-rose-700 hover:bg-rose-50"
+                      >
+                        Limpar
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {showConciergeLogs && (
+                <div className="p-4 rounded-2xl border bg-muted/25 space-y-2">
+                  {loadingConciergeLogs ? (
+                    <div className="py-6 text-center text-xs text-muted-foreground">
+                      <RefreshCw className="w-4 h-4 animate-spin mx-auto mb-1 text-muted-foreground" />
+                      Carregando histórico da portaria...
+                    </div>
+                  ) : conciergeLogs.length === 0 ? (
+                    <p className="text-xs text-muted-foreground py-3 text-center">
+                      Nenhuma mensagem da portaria processada ainda. Assim que postarem no grupo, os registros aparecerão aqui em tempo real.
+                    </p>
+                  ) : (
+                    <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                      {conciergeLogs.map((log: any, idx: number) => {
+                        const hasOurFlats = log.matchedFlats && log.matchedFlats.length > 0
+                        return (
+                          <div
+                            key={log.id || idx}
+                            className={`p-3 rounded-xl border text-xs space-y-1.5 ${
+                              hasOurFlats
+                                ? "bg-emerald-50/60 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-900/60"
+                                : "bg-card border-border"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span className={`w-2 h-2 rounded-full ${hasOurFlats ? "bg-emerald-500" : "bg-amber-500"} shrink-0`} />
+                                <span className="font-bold text-foreground">
+                                  {log.senderName || "Portaria"} • {log.groupName || "Grupo WhatsApp"}
+                                </span>
+                                {log.isTest && (
+                                  <Badge variant="outline" className="text-[9px] py-0 px-1 font-normal">
+                                    Simulação
+                                  </Badge>
+                                )}
+                              </div>
+                              <span className="text-[11px] text-muted-foreground font-mono shrink-0">
+                                {new Date(log.timestamp).toLocaleString("pt-BR")}
+                              </span>
+                            </div>
+
+                            <p className="text-muted-foreground text-[11px] bg-muted/40 p-2 rounded-lg italic">
+                              "{log.rawText}"
+                            </p>
+
+                            <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                              {hasOurFlats ? (
+                                <Badge className="bg-emerald-600 text-white text-[10px] py-0.5">
+                                  🚪 Desocupado(s) CorpFlats: {log.matchedFlats.join(", ")}
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-muted-foreground text-[10px] py-0.5">
+                                  Nenhum flat seu na mensagem
+                                </Badge>
+                              )}
+
+                              {log.otherFlats && log.otherFlats.length > 0 && (
+                                <span className="text-[10px] text-muted-foreground">
+                                  Outros proprietários (ignorados): {log.otherFlats.join(", ")}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </CardContent>
         </Card>
 

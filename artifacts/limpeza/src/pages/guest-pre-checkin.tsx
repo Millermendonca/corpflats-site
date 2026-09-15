@@ -58,6 +58,8 @@ export default function GuestPreCheckin() {
   const [guestList, setGuestList] = useState<any[]>([])
   const [selectedGuestIndex, setSelectedGuestIndex] = useState(1)
   const [completedTimestamp, setCompletedTimestamp] = useState<string | null>(null)
+  const [guestCode, setGuestCode] = useState<string>("")
+  const [isReturningGuest, setIsReturningGuest] = useState<boolean>(false)
 
   const [fullName, setFullName] = useState("")
   const [phone, setPhone] = useState("")
@@ -168,9 +170,12 @@ export default function GuestPreCheckin() {
 
     const isTitular = gIdx === 1
 
+    const gCode = currentG?.guestCode || (isTitular ? (res.guestCode || guest.guestCode || "") : "")
+    setGuestCode(gCode)
+
     const gName = currentG?.name && !currentG.name.startsWith("Hóspede")
       ? currentG.name
-      : (isTitular ? (res.guestName || guest.name || "") : "")
+      : (isTitular ? (res.guestName || guest.fullName || guest.name || "") : "")
 
     const gPhone = currentG?.phone
       ? currentG.phone
@@ -180,25 +185,30 @@ export default function GuestPreCheckin() {
       ? currentG.email
       : (isTitular ? (res.guestEmail || guest.email || "") : "")
 
-    const gDoc = currentG?.cpf
-      ? currentG.cpf
-      : (isTitular ? (res.guestDocument || guest.document || "") : "")
+    const gDoc = currentG?.cpf || currentG?.document
+      ? (currentG.cpf || currentG.document)
+      : (isTitular ? (res.guestDocument || res.document || guest.document || guest.documentNumber || "") : "")
 
     setFullName(gName)
     setPhone(gPhone)
     setEmail(gEmail)
     setDocument(gDoc)
 
-    setBirthDate(currentG?.birthDate || (isTitular ? (guest.birthDate || "") : ""))
-    setGender(currentG?.gender || (isTitular ? (guest.gender || "masculino") : "masculino"))
-    setAddress(currentG?.address || (isTitular ? (guest.address || "") : ""))
-    setCity(currentG?.city || (isTitular ? (guest.city || "") : ""))
-    setState(currentG?.state || (isTitular ? (guest.state || "RJ") : "RJ"))
+    setBirthDate(currentG?.birthDate || (isTitular ? (guest.birthDate || res.birthDate || "") : ""))
+    setGender(currentG?.gender || (isTitular ? (guest.gender || res.gender || "masculino") : "masculino"))
+    setAddress(currentG?.address || (isTitular ? (guest.address || res.guestAddress || "") : ""))
+    setCity(currentG?.city || (isTitular ? (guest.city || res.guestCity || "") : ""))
+    setState(currentG?.state || (isTitular ? (guest.state || res.guestState || "RJ") : "RJ"))
 
     setMinorKinship(currentG?.minorKinship || "filho")
     setMinorAuthDocPhoto(currentG?.minorAuthDocUrl || null)
 
-    const v = res.vehicle || guest.vehicle
+    const v = res.vehicle || guest.vehicle || (guest.vehiclePlate ? {
+      plate: guest.vehiclePlate,
+      brand: guest.vehicleBrand || "",
+      model: guest.vehicleModel || "",
+      color: guest.vehicleColor || ""
+    } : null)
     if (v && v.plate) {
       setVehiclePlate(v.plate)
       setVehicleModel(v.model || "")
@@ -223,6 +233,14 @@ export default function GuestPreCheckin() {
       currentG?.hasCompletedCheckin || 
       (isTitular && (res.fnhrCompleted || guest.fnhrCompleted) && selfie && sig)
     )
+
+    // Detecção de cadastro prévio / hóspede frequente salvo
+    const hasPreviousProfile = Boolean(
+      (isTitular && guest.fnhrCompleted) ||
+      (doc && sig && gName && gDoc) ||
+      currentG?.hasCompletedCheckin
+    )
+    setIsReturningGuest(hasPreviousProfile)
 
     if (currentG?.checkinCompletedAt || (isTitular && res.updatedAt)) {
       setCompletedTimestamp(currentG?.checkinCompletedAt || res.updatedAt)
@@ -467,6 +485,11 @@ export default function GuestPreCheckin() {
   const handleSubmit = async () => {
     setLoading(true)
     try {
+      const cleanPlate = transportMethod === "carro" ? vehiclePlate.trim().toUpperCase() : ""
+      const cleanBrand = transportMethod === "carro" ? vehicleBrand.trim() : ""
+      const cleanModel = transportMethod === "carro" ? vehicleModel.trim() : ""
+      const cleanColor = transportMethod === "carro" ? vehicleColor.trim() : ""
+
       const res = await fetch("/api/pms/pre-checkin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -486,29 +509,33 @@ export default function GuestPreCheckin() {
           state,
           transportMethod,
           travelReason,
-          selfieBase64: null, // Selfie removida conforme simplificação
+          selfieBase64: selfiePhoto,
           docPhotoBase64: docPhoto,
           signatureBase64: signatureData,
           legalTermsAccepted: legalDeclarationAccepted || acceptedHouseRules,
           isMinor: calculatedAge !== null && calculatedAge < 18,
           minorAge: calculatedAge,
           minorKinship: (calculatedAge !== null && calculatedAge < 18) ? minorKinship : null,
-          minorAuthDocBase64: (calculatedAge !== null && calculatedAge < 18 && minorKinship !== "filho") ? minorAuthDocPhoto : null
+          minorAuthDocBase64: (calculatedAge !== null && calculatedAge < 18 && minorKinship !== "filho") ? minorAuthDocPhoto : null,
+          vehiclePlate: cleanPlate,
+          vehicleBrand: cleanBrand,
+          vehicleModel: cleanModel,
+          vehicleColor: cleanColor
         })
       })
 
-      // Se informou carro, registra veículo e autorização de garagem
-      if (transportMethod === "carro" && vehiclePlate.trim()) {
+      // Se informou carro, garante registro na autorização de portaria e garagem
+      if (transportMethod === "carro" && cleanPlate) {
         const resCode = code || reservation?.code
         if (resCode) {
           fetch(`/api/pms/reservations/${resCode}/vehicle`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              plate: vehiclePlate.trim().toUpperCase(),
-              brand: vehicleBrand.trim(),
-              model: vehicleModel.trim(),
-              color: vehicleColor.trim()
+              plate: cleanPlate,
+              brand: cleanBrand,
+              model: cleanModel,
+              color: cleanColor
             })
           }).catch(() => {})
         }
@@ -518,6 +545,11 @@ export default function GuestPreCheckin() {
       if (res.ok) {
         if (resData.fnrhDocument) {
           setGeneratedPdfInfo(resData.fnrhDocument)
+        }
+        if (resData.guest?.guestCode) {
+          setGuestCode(resData.guest.guestCode)
+        } else if (resData.reservation?.guestCode) {
+          setGuestCode(resData.reservation.guestCode)
         }
         setIsCompleted(true)
         setIsEditing(false)
@@ -583,15 +615,15 @@ export default function GuestPreCheckin() {
           </div>
 
           <div className="relative z-10 max-w-xl mx-auto space-y-1.5 text-white">
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/20 backdrop-blur-md border border-white/25 text-[11px] font-semibold tracking-wide text-white/95 mb-1 shadow-xs">
+            <div className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-white/20 backdrop-blur-md border border-white/25 text-[11px] font-semibold tracking-wide text-white/95 mb-1 shadow-xs">
               <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-              <span>Autoatendimento Digital • 100% Rápido & Seguro</span>
+              <span>✨ Cadastro Único • Preencha apenas 1x para todas as suas estadias</span>
             </div>
             <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight drop-shadow-md text-white">
               Pré-Check-in Digital
             </h1>
             <p className="text-xs sm:text-sm font-normal text-white/90 drop-shadow-sm tracking-normal">
-              Ficha Nacional de Registro de Hóspedes (FNHR) & Acesso Facilitado
+              Ficha Nacional de Registro de Hóspedes (FNHR) • Seus dados ficam salvos permanentemente
             </p>
           </div>
         </header>
@@ -763,11 +795,17 @@ export default function GuestPreCheckin() {
           
           {/* Top Actions Bar */}
           <div className="flex flex-wrap items-center justify-between gap-2.5 bg-white border border-slate-200/80 p-3 sm:p-4 rounded-2xl shadow-sm print:hidden">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs font-bold py-1 px-3 flex items-center gap-1.5 shadow-none">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                 <span>Documento Registrado</span>
               </Badge>
+              {(guestCode || reservation?.guestCode) && (
+                <Badge className="bg-sky-50 text-sky-800 border-sky-200 text-xs font-mono font-bold py-1 px-2.5 flex items-center gap-1 shadow-none">
+                  <Award className="w-3.5 h-3.5 text-sky-600" />
+                  <span>{guestCode || reservation?.guestCode}</span>
+                </Badge>
+              )}
               <span className="text-xs text-slate-500 font-medium hidden sm:inline">
                 Reserva <strong className="text-slate-900 font-mono">#{reservation?.code || code}</strong>
               </span>
@@ -915,9 +953,12 @@ export default function GuestPreCheckin() {
                 </Badge>
               </div>
 
-              <div className="flex flex-wrap items-center justify-between text-xs text-slate-500 pt-1 border-t border-slate-100">
+              <div className="flex flex-wrap items-center justify-between text-xs text-slate-500 pt-1 border-t border-slate-100 gap-y-1">
                 <span>Apartamento: <strong className="text-slate-900 font-bold">Studio Apt {reservation?.flatNumber}</strong></span>
                 <span>Localizador: <strong className="text-sky-600 font-mono font-bold">{reservation?.code || code}</strong></span>
+                {(guestCode || reservation?.guestCode) && (
+                  <span>Cadastro CorpFlats: <strong className="text-emerald-700 font-mono font-bold">{guestCode || reservation?.guestCode}</strong></span>
+                )}
                 {completedTimestamp && (
                   <span>Registro: <strong className="text-slate-700">{new Date(completedTimestamp).toLocaleString("pt-BR")}</strong></span>
                 )}
@@ -939,6 +980,12 @@ export default function GuestPreCheckin() {
                   <span className="text-slate-400 block text-[10px] uppercase font-bold">CPF / Documento</span>
                   <span className="font-semibold text-slate-800 font-mono">{document || "Não informado"}</span>
                 </div>
+                {(guestCode || reservation?.guestCode) && (
+                  <div>
+                    <span className="text-slate-400 block text-[10px] uppercase font-bold">Código do Hóspede</span>
+                    <span className="font-bold text-sky-700 font-mono text-sm">{guestCode || reservation?.guestCode}</span>
+                  </div>
+                )}
                 <div>
                   <span className="text-slate-400 block text-[10px] uppercase font-bold">WhatsApp / Telefone</span>
                   <span className="font-semibold text-slate-800">{phone || "Não informado"}</span>
@@ -1360,21 +1407,21 @@ export default function GuestPreCheckin() {
         )}
 
         {/* Banner de Preenchimento Único CorpFlats */}
-        <div className="p-4 bg-gradient-to-r from-sky-50 via-indigo-50/50 to-emerald-50/40 border border-sky-200/80 rounded-2xl flex items-start gap-3 shadow-xs">
-          <div className="p-2 bg-slate-900 text-white rounded-xl shrink-0 mt-0.5 shadow-2xs">
-            <Sparkles className="w-4 h-4 text-amber-400" />
+        <div className="p-4 sm:p-5 bg-gradient-to-r from-sky-50 via-indigo-50/50 to-emerald-50/50 border border-sky-200/90 rounded-2xl flex items-start gap-3.5 shadow-xs">
+          <div className="p-2.5 bg-slate-900 text-white rounded-xl shrink-0 mt-0.5 shadow-2xs">
+            <Sparkles className="w-5 h-5 text-amber-400" />
           </div>
           <div className="space-y-1 text-xs">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="font-bold text-slate-900 text-xs sm:text-sm">
-                ⚡ Preenchimento Único CorpFlats
+                ✨ Preencha seus dados cadastrais apenas 1 única vez!
               </span>
-              <Badge className="bg-sky-100 text-sky-800 text-[10px] font-bold border-sky-200 py-0 px-2">
-                1x Apenas
+              <Badge className="bg-emerald-100 text-emerald-800 text-[10px] font-bold border-emerald-300 py-0.5 px-2">
+                1x Apenas • Permanente
               </Badge>
             </div>
             <p className="text-slate-600 leading-relaxed text-[11px] sm:text-xs">
-              Seus dados cadastrais precisam ser preenchidos <strong>apenas 1 única vez</strong>. Nas próximas reservas que fizer conosco, seu cadastro já estará pronto automaticamente e você não precisará preencher tudo de novo! Cada hóspede possui um cadastro único, seguro e intransferível.
+              Na CorpFlats seus dados cadastrais precisam ser preenchidos <strong>apenas 1 única vez</strong>. Nas suas próximas reservas conosco, sua ficha cadastral (FNHR) já estará pronta e você não precisará preencher tudo novamente! Cada hóspede possui um cadastro único, seguro e intransferível.
             </p>
           </div>
         </div>
@@ -1511,22 +1558,35 @@ export default function GuestPreCheckin() {
                 )}
               </div>
 
-              {/* Card de Dados Já Preenchidos */}
+              {/* Card de Dados Já Preenchidos & Reconhecimento de Hóspede Frequente */}
               {Boolean(fullName.trim() && document.trim() && phone.trim() && email.trim() && address.trim()) && !isEditingProfile ? (
                 <div className="space-y-4">
-                  <div className="p-4 sm:p-5 bg-gradient-to-br from-emerald-50/80 via-teal-50/60 to-slate-50 border border-emerald-200/90 rounded-2xl space-y-3 shadow-2xs">
-                    <div className="flex items-center justify-between">
+                  <div className={`p-4 sm:p-5 rounded-2xl space-y-3 shadow-2xs border ${
+                    isReturningGuest && (docPhoto || reservation?.docPhotoUrl)
+                      ? "bg-gradient-to-br from-emerald-50 via-teal-50/70 to-sky-50 border-emerald-300"
+                      : "bg-gradient-to-br from-emerald-50/80 via-teal-50/60 to-slate-50 border-emerald-200/90"
+                  }`}>
+                    <div className="flex items-center justify-between flex-wrap gap-2">
                       <span className="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
                         <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                        Cadastro Identificado no Sistema
+                        {isReturningGuest ? "Hóspede Frequente • Cadastro Completo Identificado" : "Cadastro Identificado no Sistema"}
                       </span>
-                      <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200 text-[10px] font-bold">
-                        Dados Prontos
-                      </Badge>
+                      <div className="flex items-center gap-1.5">
+                        {(guestCode || reservation?.guestCode) && (
+                          <Badge className="bg-sky-100 text-sky-800 border-sky-200 text-[10px] font-mono font-bold">
+                            {guestCode || reservation?.guestCode}
+                          </Badge>
+                        )}
+                        <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200 text-[10px] font-bold">
+                          {isReturningGuest && (docPhoto || reservation?.docPhotoUrl) ? "Ficha & Documentos Salvos" : "Dados Prontos"}
+                        </Badge>
+                      </div>
                     </div>
 
                     <p className="text-xs text-slate-600 leading-relaxed">
-                      Seus dados cadastrais já constam em nosso sistema e não precisam ser digitados novamente. Confira as informações abaixo ou clique em editar se desejar atualizar algo:
+                      {isReturningGuest && (docPhoto || reservation?.docPhotoUrl)
+                        ? `Olá, ${fullName.split(" ")[0]}! Seus dados cadastrais, foto do documento e assinatura já estão salvos e autenticados de suas estadias anteriores. Você pode confirmar sua entrada no Flat ${reservation?.flatNumber || ''} com apenas 1 clique!`
+                        : "Seus dados cadastrais já constam em nosso sistema e não precisam ser digitados novamente. Confira as informações abaixo ou clique em editar se desejar atualizar algo:"}
                     </p>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1 text-xs">
@@ -1550,28 +1610,84 @@ export default function GuestPreCheckin() {
                         <span className="text-[10px] font-semibold text-slate-400 block uppercase tracking-wider">Endereço Residencial</span>
                         <span className="font-medium text-slate-800">{[address, city, state].filter(Boolean).join(" - ")}</span>
                       </div>
+                      {vehiclePlate && (
+                        <div className="bg-sky-50/80 p-2.5 rounded-xl border border-sky-200 sm:col-span-2 flex items-center justify-between gap-2">
+                          <div>
+                            <span className="text-[10px] font-semibold text-sky-700 block uppercase tracking-wider">Veículo para Garagem</span>
+                            <span className="font-bold text-slate-900 font-mono text-xs sm:text-sm">{vehiclePlate} • {vehicleBrand} {vehicleModel}</span>
+                          </div>
+                          <Badge className="bg-sky-200/80 text-sky-900 text-[10px] border-0 font-bold">1 Vaga Soho</Badge>
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  <Button
-                    onClick={() => {
-                      if (isMinorGuest) {
-                        if (!minorKinship) {
-                          alert("Por favor, selecione o grau de parentesco do menor acompanhado.")
-                          return
+                  {/* Ação para Hóspede com Documentos & Assinatura Já Salvos: Confirmação Rápida de 1 Toque */}
+                  {isReturningGuest && (docPhoto || reservation?.docPhotoUrl) && (signatureData || reservation?.signatureUrl) ? (
+                    <div className="space-y-2.5 pt-1">
+                      <Button
+                        type="button"
+                        disabled={loading}
+                        onClick={async () => {
+                          if (isMinorGuest) {
+                            if (!minorKinship) {
+                              alert("Por favor, selecione o grau de parentesco do menor acompanhado.")
+                              return
+                            }
+                            if (minorKinship !== "filho" && !minorAuthDocPhoto) {
+                              alert("Atenção: Para hóspede menor de idade desacompanhado dos pais, é obrigatório anexar a autorização de cartório (Art. 82 do ECA).")
+                              return
+                            }
+                          }
+                          setLegalDeclarationAccepted(true)
+                          setAcceptedHouseRules(true)
+                          setAcceptedContract(true)
+                          await handleSubmit()
+                        }}
+                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm h-12 rounded-xl gap-2 shadow-md shadow-emerald-600/20"
+                      >
+                        <CheckCircle2 className="w-5 h-5" />
+                        <span>{loading ? "Validando Entrada..." : `⚡ Confirmar Estadia no Flat ${reservation?.flatNumber || ''} (1 Toque)`}</span>
+                      </Button>
+
+                      <div className="flex items-center justify-between text-xs px-1 text-slate-500">
+                        <button
+                          type="button"
+                          onClick={() => setIsEditingProfile(true)}
+                          className="hover:text-slate-900 font-semibold underline"
+                        >
+                          Alterar telefone, veículo ou endereço
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setStep(2)}
+                          className="text-sky-700 hover:text-sky-900 font-bold"
+                        >
+                          Rever fotos e assinatura →
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <Button
+                      onClick={() => {
+                        if (isMinorGuest) {
+                          if (!minorKinship) {
+                            alert("Por favor, selecione o grau de parentesco do menor acompanhado.")
+                            return
+                          }
+                          if (minorKinship !== "filho" && !minorAuthDocPhoto) {
+                            alert("Atenção: Para hóspede menor de idade desacompanhado dos pais, é obrigatório anexar a autorização de cartório (Art. 82 do ECA).")
+                            return
+                          }
                         }
-                        if (minorKinship !== "filho" && !minorAuthDocPhoto) {
-                          alert("Atenção: Para hóspede menor de idade desacompanhado dos pais, é obrigatório anexar a autorização de cartório (Art. 82 do ECA).")
-                          return
-                        }
-                      }
-                      setStep(2)
-                    }}
-                    className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm h-12 rounded-xl gap-2 shadow-md"
-                  >
-                    <span>Avançar para Foto do Documento</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </Button>
+                        setStep(2)
+                      }}
+                      className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm h-12 rounded-xl gap-2 shadow-md"
+                    >
+                      <span>Avançar para Foto do Documento</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </Button>
+                  )}
                 </div>
               ) : null}
 
