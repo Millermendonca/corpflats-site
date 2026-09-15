@@ -563,14 +563,22 @@ export function Shell({ children }: { children: React.ReactNode }) {
             </Link>
 
             {/* 4. Lista de Compras */}
-            <Link href="/lista-compras" className="flex-1">
-              <div className={`flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
-                location === "/lista-compras" || location === "/compras" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
-              }`}>
+            <button 
+              type="button"
+              onClick={() => setQuickShoppingOpen(true)}
+              className="flex-1 flex flex-col items-center py-1 px-1 rounded-xl transition-all relative text-muted-foreground hover:text-foreground active:scale-95 cursor-pointer"
+              title="Pedir / Ver Lista de Compras"
+            >
+              <div className="relative">
                 <ShoppingCart className="w-5 h-5" />
-                <span className="text-[9.5px] sm:text-[10.5px] mt-0.5 font-bold text-center leading-tight">Lista Compras</span>
+                {pendingShoppingCount > 0 && (
+                  <span className="absolute -top-1.5 -right-2.5 bg-amber-500 text-white font-black text-[9px] min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center shadow-xs">
+                    {pendingShoppingCount > 9 ? "9+" : pendingShoppingCount}
+                  </span>
+                )}
               </div>
-            </Link>
+              <span className="text-[9.5px] sm:text-[10.5px] mt-0.5 font-bold text-center leading-tight">Lista Compras</span>
+            </button>
 
             {/* 5. Mais */}
             <button 
@@ -596,15 +604,23 @@ export function Shell({ children }: { children: React.ReactNode }) {
               </div>
             </Link>
 
-            {/* 2. Lista de Compras */}
-            <Link href="/lista-compras" className="flex-1">
-              <div className={`flex flex-col items-center py-1 px-1 rounded-xl transition-all ${
-                location === "/lista-compras" || location === "/compras" ? "text-primary font-black scale-105" : "text-muted-foreground hover:text-foreground"
-              }`}>
+            {/* 2. Atalho Rápido para Lista de Compras */}
+            <button 
+              type="button"
+              onClick={() => setQuickShoppingOpen(true)}
+              className="flex-1 flex flex-col items-center py-1 px-1 rounded-xl transition-all relative text-muted-foreground hover:text-foreground active:scale-95 cursor-pointer"
+              title="Pedir / Ver Lista de Compras"
+            >
+              <div className="relative">
                 <ShoppingCart className="w-5 h-5" />
-                <span className="text-[10px] mt-0.5 font-bold text-center leading-tight">Compras</span>
+                {pendingShoppingCount > 0 && (
+                  <span className="absolute -top-1.5 -right-2.5 bg-amber-500 text-white font-black text-[9px] min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center shadow-xs">
+                    {pendingShoppingCount > 9 ? "9+" : pendingShoppingCount}
+                  </span>
+                )}
               </div>
-            </Link>
+              <span className="text-[10px] mt-0.5 font-bold text-center leading-tight">Compras</span>
+            </button>
 
             {/* 3. Extrato */}
             <Link href="/extrato" className="flex-1">
@@ -841,6 +857,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Modal Rápido da Lista de Compras (Acionado pelo atalho inferior) */}
+      <QuickShoppingModal 
+        open={quickShoppingOpen} 
+        onOpenChange={setQuickShoppingOpen} 
+        onPendingCountChange={setPendingShoppingCount} 
+      />
     </div>
   )
 }

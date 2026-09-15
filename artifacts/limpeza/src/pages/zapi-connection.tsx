@@ -126,7 +126,108 @@ export default function ZapiConnection() {
   useEffect(() => {
     fetchConfig()
     checkStatus()
+    fetchLogs()
   }, [])
+
+  const fetchLogs = async () => {
+    setLoadingLogs(true)
+    try {
+      const res = await fetch("/api/whatsapp/connection-logs")
+      if (res.ok) {
+        const data = await res.json()
+        setConnectionLogs(data)
+      }
+    } catch (e) {
+      console.error("Erro ao buscar histórico de conexões:", e)
+    } finally {
+      setLoadingLogs(false)
+    }
+  }
+
+  const handleSyncWebhooks = async () => {
+    if (!config.instanceId || !config.token) {
+      toast({
+        title: "Credenciais necessárias",
+        description: "Preencha e salve o Instance ID e Token antes de sincronizar os webhooks.",
+        variant: "destructive"
+      })
+      return
+    }
+
+    setSyncingWebhooks(true)
+    try {
+      const res = await fetch("/api/whatsapp/sync-webhooks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ baseUrl: window.location.origin })
+      })
+      const data = await res.json()
+
+      if (res.ok && data.success) {
+        toast({
+          title: "⚡ Webhooks Sincronizados com a Z-API!",
+          description: "Os webhooks de Desconexão e Conexão foram cadastrados com sucesso na sua instância Z-API."
+        })
+        fetchConfig()
+      } else {
+        toast({
+          title: "Falha na sincronização automática",
+          description: data.error || "A Z-API não confirmou a operação. Verifique as credenciais ou insira as URLs manualmente.",
+          variant: "destructive"
+        })
+      }
+    } catch (e: any) {
+      toast({
+        title: "Erro ao sincronizar",
+        description: e.message,
+        variant: "destructive"
+      })
+    } finally {
+      setSyncingWebhooks(false)
+    }
+  }
+
+  const handleTestDisconnectionAlert = async () => {
+    setTestingAlert(true)
+    try {
+      const res = await fetch("/api/whatsapp/test-disconnection-alert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user: user?.name || user?.username || "admin" })
+      })
+      const data = await res.json()
+
+      if (res.ok && data.success) {
+        toast({
+          title: "🔔 Alerta de Teste Disparado com Sucesso!",
+          description: `Notificação crítica enviada para o painel do sistema e e-mail de teste para ${config.alertEmail || "o e-mail configurado"}.`
+        })
+        fetchLogs()
+      } else {
+        toast({
+          title: "Falha no teste",
+          description: data.error || "Não foi possível disparar o teste.",
+          variant: "destructive"
+        })
+      }
+    } catch (e: any) {
+      toast({
+        title: "Erro ao disparar teste",
+        description: e.message,
+        variant: "destructive"
+      })
+    } finally {
+      setTestingAlert(false)
+    }
+  }
+
+  const copyToClipboard = (text: string, label: string) => {
+    navigator.clipboard.writeText(text)
+    toast({
+      title: "✓ Copiado com sucesso!",
+      description: `${label} copiado para a área de transferência.`
+    })
+  }
 
   const fetchConfig = async () => {
     try {
@@ -446,6 +547,327 @@ export default function ZapiConnection() {
                 onCheckedChange={(checked) => setConfig({ ...config, enabled: checked })}
               />
             </div>
+          </CardContent>
+        </Card>
+
+        {/* ── CARD: MONITORAMENTO DE QUEDAS & ALERTAS DE DESCONEXÃO (WEBHOOKS Z-API) ── */}
+        <Card className="rounded-3xl border border-border shadow-sm overflow-hidden">
+          <CardHeader className="p-5 border-b border-border pb-3 bg-muted/20">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <CardTitle className="text-base font-black text-foreground flex items-center gap-2">
+                  <BellRing className="w-5 h-5 text-rose-600" />
+                  Monitoramento de Quedas &amp; Alertas de Desconexão (Webhooks Z-API)
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  Detecção instantânea de deslogamento ou queda do WhatsApp na Z-API com alertas automáticos por E-mail, Notificação Sonora no PMS e Webhook externo.
+                </CardDescription>
+              </div>
+
+              <div>
+                {config.connectionState === "disconnected" ? (
+                  <Badge className="bg-rose-600 text-white gap-1.5 text-xs py-1 px-3 shadow-xs animate-pulse">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    🚨 WhatsApp Desconectado!
+                  </Badge>
+                ) : statusInfo?.connected ? (
+                  <Badge className="bg-emerald-600 text-white gap-1.5 text-xs py-1 px-3 shadow-xs">
+                    <Activity className="w-3.5 h-3.5" />
+                    Monitoramento Ativo (Webhook + Watchdog)
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="text-muted-foreground gap-1.5 text-xs py-1 px-3">
+                    <Activity className="w-3.5 h-3.5" />
+                    Monitoramento em Espera
+                  </Badge>
+                )}
+              </div>
+            </div>
+          </CardHeader>
+
+          <CardContent className="p-5 space-y-5">
+            {/* Aviso de Desconexão Ativa se estiver caído */}
+            {config.connectionState === "disconnected" && (
+              <div className="p-4 rounded-2xl border bg-rose-50/80 dark:bg-rose-950/40 border-rose-300 dark:border-rose-800 space-y-2">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" />
+                  <span className="text-sm font-black text-rose-900 dark:text-rose-200">
+                    Atenção: A instância Z-API está desconectada do WhatsApp!
+                  </span>
+                </div>
+                <p className="text-xs text-rose-800 dark:text-rose-300 leading-relaxed">
+                  As mensagens agendadas e automáticas para hóspedes não estão sendo entregues. 
+                  {config.lastDisconnectReason && ` Motivo registrado: "${config.lastDisconnectReason}".`}
+                </p>
+                <div className="pt-1 flex items-center gap-3">
+                  <Button
+                    size="sm"
+                    onClick={handleShowQrCode}
+                    className="bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl h-8 gap-1.5 shadow-xs"
+                  >
+                    <QrCode className="w-3.5 h-3.5" />
+                    Escanear QR Code para Reconectar
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* SEÇÃO 1: WEBHOOKS DA Z-API (CONFIGURAÇÃO AUTOMÁTICA & MANUAL) */}
+            <div className="p-4 rounded-2xl border bg-card space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                    <Webhook className="w-4 h-4 text-emerald-600" />
+                    URLs dos Webhooks de Monitoramento (HTTPS)
+                  </span>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                    A Z-API chama estes endpoints instantaneamente quando o WhatsApp cai ou reconecta.
+                  </p>
+                </div>
+
+                <Button
+                  size="sm"
+                  onClick={handleSyncWebhooks}
+                  disabled={syncingWebhooks || !config.instanceId || !config.token}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold h-8.5 rounded-xl gap-1.5 shadow-xs shrink-0"
+                >
+                  <Zap className={`w-3.5 h-3.5 ${syncingWebhooks ? "animate-spin" : ""}`} />
+                  {syncingWebhooks ? "Sincronizando..." : "Sincronizar na Z-API Automaticamente"}
+                </Button>
+              </div>
+
+              {config.webhooksSyncedAt && (
+                <div className="flex items-center gap-1.5 text-[11px] text-emerald-700 dark:text-emerald-400 font-medium">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  Sincronizado automaticamente com sua instância Z-API em {new Date(config.webhooksSyncedAt).toLocaleString("pt-BR")}.
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                {/* Webhook Desconexão */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-[11px] font-bold text-foreground flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-rose-500" />
+                      Webhook de Desconexão (on-whatsapp-disconnected)
+                    </Label>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(config.webhookDisconnectedUrl || "https://corpflats.onrender.com/api/whatsapp/webhook/disconnected", "URL de Desconexão")}
+                      className="text-[10px] text-primary hover:underline flex items-center gap-1 font-semibold cursor-pointer"
+                    >
+                      <Copy className="w-3 h-3" />
+                      Copiar
+                    </button>
+                  </div>
+                  <Input
+                    readOnly
+                    value={config.webhookDisconnectedUrl || "https://corpflats.onrender.com/api/whatsapp/webhook/disconnected"}
+                    className="text-[11px] font-mono h-8.5 rounded-xl bg-muted/40 text-muted-foreground"
+                  />
+                </div>
+
+                {/* Webhook Conexão */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-[11px] font-bold text-foreground flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                      Webhook de Reconexão (on-whatsapp-connected)
+                    </Label>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(config.webhookConnectedUrl || "https://corpflats.onrender.com/api/whatsapp/webhook/connected", "URL de Reconexão")}
+                      className="text-[10px] text-primary hover:underline flex items-center gap-1 font-semibold cursor-pointer"
+                    >
+                      <Copy className="w-3 h-3" />
+                      Copiar
+                    </button>
+                  </div>
+                  <Input
+                    readOnly
+                    value={config.webhookConnectedUrl || "https://corpflats.onrender.com/api/whatsapp/webhook/connected"}
+                    className="text-[11px] font-mono h-8.5 rounded-xl bg-muted/40 text-muted-foreground"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* SEÇÃO 2: CANAIS DE DISPARO DE ALERTA */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Alerta por E-mail */}
+              <div className="p-4 rounded-2xl border bg-muted/15 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center">
+                      <Mail className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="text-xs font-bold text-foreground block">Alerta Urgente por E-mail</span>
+                      <span className="text-[10px] text-muted-foreground">Dispara e-mail com botão direto para o QR Code</span>
+                    </div>
+                  </div>
+                  <Switch
+                    checked={config.alertEmailEnabled !== false}
+                    onCheckedChange={(c) => setConfig({ ...config, alertEmailEnabled: c })}
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-[11px] font-medium text-foreground">E-mail para Recebimento do Alerta</Label>
+                  <Input
+                    type="email"
+                    placeholder="Ex: miller@corpflats.com.br"
+                    value={config.alertEmail || ""}
+                    onChange={(e) => setConfig({ ...config, alertEmail: e.target.value })}
+                    className="text-xs h-8.5 rounded-xl"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-[11px] text-muted-foreground">Avisar também quando for reconectado</span>
+                  <Switch
+                    checked={config.alertOnReconnect !== false}
+                    onCheckedChange={(c) => setConfig({ ...config, alertOnReconnect: c })}
+                  />
+                </div>
+              </div>
+
+              {/* Alerta por Webhook Externo (Slack, Discord, n8n) */}
+              <div className="p-4 rounded-2xl border bg-muted/15 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-indigo-500/10 text-indigo-600 flex items-center justify-center">
+                      <Webhook className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="text-xs font-bold text-foreground block">Webhook Externo (TI / Equipe)</span>
+                      <span className="text-[10px] text-muted-foreground">Discord, Slack, n8n ou Zapier</span>
+                    </div>
+                  </div>
+                  <Switch
+                    checked={Boolean(config.externalWebhookEnabled)}
+                    onCheckedChange={(c) => setConfig({ ...config, externalWebhookEnabled: c })}
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-[11px] font-medium text-foreground">URL do Webhook Externo (Opcional)</Label>
+                  <Input
+                    placeholder="https://discord.com/api/webhooks/... ou n8n webhook"
+                    value={config.externalWebhookUrl || ""}
+                    onChange={(e) => setConfig({ ...config, externalWebhookUrl: e.target.value })}
+                    className="text-xs h-8.5 rounded-xl font-mono"
+                  />
+                </div>
+
+                <p className="text-[10px] text-muted-foreground pt-1 leading-relaxed">
+                  Envia um payload JSON instantâneo para automações ou canais da equipe quando a sessão cair.
+                </p>
+              </div>
+            </div>
+
+            {/* SEÇÃO 3: BOTÕES DE TESTE E HISTÓRICO */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-1 border-t border-border pt-4">
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleTestDisconnectionAlert}
+                  disabled={testingAlert}
+                  className="text-xs h-9 rounded-xl gap-1.5 border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/40 w-full sm:w-auto cursor-pointer"
+                >
+                  <Bell className={`w-3.5 h-3.5 text-rose-600 ${testingAlert ? "animate-bounce" : ""}`} />
+                  {testingAlert ? "Disparando Simulação..." : "🔔 Simular Alerta de Desconexão"}
+                </Button>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setShowLogs(!showLogs)
+                    if (!showLogs) fetchLogs()
+                  }}
+                  className="text-xs h-9 rounded-xl gap-1.5 w-full sm:w-auto cursor-pointer"
+                >
+                  <History className="w-3.5 h-3.5 text-muted-foreground" />
+                  {showLogs ? "Ocultar Histórico" : `Histórico de Quedas (${connectionLogs.length})`}
+                </Button>
+              </div>
+
+              <span className="text-[11px] text-muted-foreground text-center sm:text-right">
+                Watchdog ativo: verifica integridade a cada 3 minutos como segurança redundante.
+              </span>
+            </div>
+
+            {/* LISTA EXPANSÍVEL DE HISTÓRICO DE CONEXÕES */}
+            {showLogs && (
+              <div className="p-4 rounded-2xl border bg-muted/25 space-y-2 mt-2">
+                <div className="flex items-center justify-between pb-1 border-b border-border">
+                  <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                    <History className="w-3.5 h-3.5 text-primary" />
+                    Registros Recentes de Conexão e Desconexão
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={fetchLogs}
+                    disabled={loadingLogs}
+                    className="h-6 text-[11px] px-2"
+                  >
+                    <RefreshCw className={`w-3 h-3 mr-1 ${loadingLogs ? "animate-spin" : ""}`} />
+                    Atualizar
+                  </Button>
+                </div>
+
+                {loadingLogs ? (
+                  <div className="py-6 text-center text-xs text-muted-foreground">
+                    <RefreshCw className="w-4 h-4 animate-spin mx-auto mb-1 text-muted-foreground" />
+                    Carregando eventos...
+                  </div>
+                ) : connectionLogs.length === 0 ? (
+                  <p className="text-xs text-muted-foreground py-3 text-center">
+                    Nenhum registro de queda recente. Conexão operando normalmente!
+                  </p>
+                ) : (
+                  <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                    {connectionLogs.map((log: any, idx: number) => {
+                      const isDisc = log.event === "disconnected"
+                      return (
+                        <div
+                          key={log.id || idx}
+                          className={`p-2.5 rounded-xl border flex items-center justify-between gap-3 text-xs ${
+                            isDisc
+                              ? "bg-rose-50/60 dark:bg-rose-950/30 border-rose-200 dark:border-rose-900/60"
+                              : "bg-emerald-50/60 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-900/60"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            {isDisc ? (
+                              <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0" />
+                            ) : (
+                              <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                            )}
+                            <div>
+                              <span className="font-bold block">
+                                {isDisc ? "🚨 WhatsApp Desconectado" : "✅ WhatsApp Reconectado"}
+                              </span>
+                              <span className="text-[10px] text-muted-foreground">
+                                {log.reason ? `Motivo: ${log.reason} • ` : ""}
+                                Origem: {log.source === "webhook" ? "Webhook Z-API" : log.source === "watchdog_heartbeat" ? "Watchdog Periódico" : "Simulação Manual"}
+                              </span>
+                            </div>
+                          </div>
+
+                          <span className="text-[11px] text-muted-foreground font-mono shrink-0">
+                            {new Date(log.timestamp).toLocaleString("pt-BR")}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
 
