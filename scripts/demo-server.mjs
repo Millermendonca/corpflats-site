@@ -4618,7 +4618,21 @@ function findOrUpsertCleaningRequest(reqId, flatNumber, flatId, dateStr = null) 
 // ── Cleaning Status Change & Execution ──────────────────────────────────────
 app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
   const reqId = Number(req.params.requestId);
-  const { status, observation, isVacant, executedPeriodicTaskIds = [], surveyAnswers = [], flatNumber, flatId, date, assignedUserId } = req.body;
+  const { 
+    status, 
+    observation, 
+    isVacant, 
+    executedPeriodicTaskIds = [], 
+    surveyAnswers = [], 
+    flatNumber, 
+    flatId, 
+    date, 
+    assignedUserId,
+    completedAt: customCompletedAt,
+    cleaningStartedAt: customStartedAt,
+    effectiveDate: customEffectiveDate,
+    durationMinutes: customDuration
+  } = req.body;
   
   let item = findOrUpsertCleaningRequest(reqId, flatNumber, flatId, date);
   if (!item) return res.status(404).json({ error: "Solicitação não encontrada" });
@@ -4630,7 +4644,7 @@ app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
   }
 
   // Minimum time enforcement: 10 minutes minimum from cleaningStartedAt
-  if (status === "clean" && item.cleaningStartedAt) {
+  if (status === "clean" && item.cleaningStartedAt && !customCompletedAt) {
     const started = new Date(item.cleaningStartedAt).getTime();
     const elapsedMinutes = (Date.now() - started) / 60000;
     if (elapsedMinutes < 10 && userAuth?.role !== "admin") {
@@ -4659,7 +4673,7 @@ app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
       item.pendingObservation = null;
       item.effectiveDate = null;
     } else if (status === "will_clean") {
-      item.effectiveDate = item.effectiveDate || date || now.substring(0, 10);
+      item.effectiveDate = customEffectiveDate || item.effectiveDate || date || getTodayStr();
       if (assignedUserId) {
         item.assignedUserId = Number(assignedUserId);
       } else {
@@ -4672,8 +4686,8 @@ app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
       }
       item.willCleanAt = now;
     } else if (status === "cleaning_now") {
-      item.effectiveDate = item.effectiveDate || date || now.substring(0, 10);
-      item.cleaningStartedAt = now;
+      item.effectiveDate = customEffectiveDate || item.effectiveDate || date || getTodayStr();
+      item.cleaningStartedAt = customStartedAt || now;
       if (assignedUserId) {
         item.assignedUserId = Number(assignedUserId);
       } else if (!item.assignedUserId) {
@@ -4685,8 +4699,9 @@ app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
         item.assignedUserName = assignedU.name || assignedU.username;
       }
     } else if (status === "clean" || status === "pending_issue") {
-      item.effectiveDate = date || now.substring(0, 10);
-      item.completedAt = now;
+      item.completedAt = customCompletedAt || now;
+      if (customStartedAt) item.cleaningStartedAt = customStartedAt;
+      item.effectiveDate = customEffectiveDate || date || getExecutionDateStr(item.completedAt);
       if (assignedUserId) {
         item.assignedUserId = Number(assignedUserId);
       } else if (!item.assignedUserId) {
@@ -4699,7 +4714,9 @@ app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
       }
       item.pendingObservation = status === "pending_issue" ? (observation || "Pendência registrada") : null;
 
-      if (status === "clean") {
+      if (customDuration !== undefined) {
+        item.durationMinutes = Number(customDuration);
+      } else if (status === "clean") {
         if (item.cleaningStartedAt && item.completedAt) {
           const startMs = new Date(item.cleaningStartedAt).getTime();
           const endMs = new Date(item.completedAt).getTime();
@@ -4859,7 +4876,7 @@ app.get("/api/cleaning/history", (req, res) => {
 
   let list = db.cleaningRequests.filter(r => {
     if (r.status !== "clean") return false;
-    const effectiveDate = (r.completedAt ? r.completedAt.substring(0, 10) : r.requestDate);
+    const effectiveDate = r.effectiveDate || (r.completedAt ? getExecutionDateStr(r.completedAt) : r.requestDate);
     if (effectiveDate < "2026-09-01") return false;
     if (effectiveDate < startDate || effectiveDate > endDate) return false;
     if (userAuth?.role === "camareira" && r.assignedUserId !== userAuth.id) return false;
@@ -4870,8 +4887,8 @@ app.get("/api/cleaning/history", (req, res) => {
     const flat = db.flats.find(f => f.id === r.flatId);
     const assignedUser = db.users.find(u => u.id === r.assignedUserId);
     
-    let durationMinutes = 35;
-    if (r.cleaningStartedAt && r.completedAt) {
+    let durationMinutes = r.durationMinutes || 35;
+    if (!r.durationMinutes && r.cleaningStartedAt && r.completedAt) {
       const startMs = new Date(r.cleaningStartedAt).getTime();
       const endMs = new Date(r.completedAt).getTime();
       if (endMs > startMs) {
@@ -4879,13 +4896,15 @@ app.get("/api/cleaning/history", (req, res) => {
       }
     }
 
+    const effDate = r.effectiveDate || (r.completedAt ? getExecutionDateStr(r.completedAt) : r.requestDate);
+
     return {
       id: r.id,
       flatId: r.flatId,
       flatNumber: flat ? flat.number : (r.flatNumber || String(r.flatId)),
       requestDate: r.requestDate,
-      effectiveDate: (r.completedAt ? r.completedAt.substring(0, 10) : r.requestDate),
-      executionDate: (r.completedAt ? r.completedAt.substring(0, 10) : r.requestDate),
+      effectiveDate: effDate,
+      executionDate: effDate,
       status: r.status,
       isPriority: r.isPriority || false,
       source: r.source || "checkout",
@@ -5011,6 +5030,56 @@ app.delete("/api/cleaning/admin/record/:id", (req, res) => {
   });
 
   res.json({ success: true, message: `Diária do Flat ${removed.flatNumber} em ${removed.requestDate} removida com sucesso.` });
+});
+
+app.patch("/api/cleaning/admin/record/:id", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (userAuth?.role !== "admin") {
+    return res.status(403).json({ error: "Apenas administradores podem editar registros de limpeza." });
+  }
+
+  const id = Number(req.params.id);
+  const item = (db.cleaningRequests || []).find(r => r.id === id);
+  if (!item) {
+    return res.status(404).json({ error: "Registro de limpeza não encontrado." });
+  }
+
+  const { flatNumber, requestDate, effectiveDate, status, assignedUserId, cleaningStartedAt, completedAt, durationMinutes, leavingGuest, adminNote, observation } = req.body;
+  if (flatNumber) item.flatNumber = String(flatNumber);
+  if (requestDate) item.requestDate = requestDate;
+  if (effectiveDate !== undefined) item.effectiveDate = effectiveDate;
+  if (status) item.status = status;
+  if (assignedUserId !== undefined) {
+    item.assignedUserId = assignedUserId ? Number(assignedUserId) : null;
+    const u = db.users.find(x => x.id === item.assignedUserId);
+    item.assignedUsername = u ? u.username : null;
+    item.assignedUserName = u ? (u.name || u.username) : null;
+  }
+  if (cleaningStartedAt !== undefined) item.cleaningStartedAt = cleaningStartedAt;
+  if (completedAt !== undefined) item.completedAt = completedAt;
+  if (durationMinutes !== undefined) item.durationMinutes = Number(durationMinutes);
+  if (leavingGuest !== undefined) item.leavingGuest = leavingGuest;
+  if (adminNote !== undefined) item.adminNote = adminNote;
+  if (observation !== undefined) item.pendingObservation = observation;
+  item.updatedAt = new Date().toISOString();
+  saveDatabase();
+
+  logAuditEvent({
+    level: "info",
+    category: "cleaning",
+    action: "CLEANING_RECORD_UPDATED_BY_ADMIN",
+    actor: { name: userAuth.username || "admin", role: "admin" },
+    details: {
+      requestId: id,
+      flatNumber: item.flatNumber,
+      requestDate: item.requestDate,
+      effectiveDate: item.effectiveDate,
+      assignedMaidName: item.assignedUsername || "Sem camareira",
+      updatedBy: userAuth.username || "admin"
+    }
+  });
+
+  res.json({ success: true, item });
 });
 
 // ── Surveys Endpoints ───────────────────────────────────────────────────────
@@ -5309,7 +5378,7 @@ app.get("/api/analytics/report", (req, res) => {
   // Filtra limpezas concluídas no período [startDate, endDate]
   const completedCleanings = (db.cleaningRequests || []).filter(r => {
     if (r.status !== "clean" || r.isBedAdjustmentOnly || r.isPaidCleaning === false) return false;
-    const effectiveDate = (r.completedAt ? r.completedAt.substring(0, 10) : r.requestDate);
+    const effectiveDate = r.effectiveDate || (r.completedAt ? getExecutionDateStr(r.completedAt) : r.requestDate);
     if (effectiveDate < "2026-09-01") return false;
     return effectiveDate >= startDate && effectiveDate <= endDate;
   });
@@ -5322,8 +5391,8 @@ app.get("/api/analytics/report", (req, res) => {
     const userCleanings = completedCleanings
       .filter(c => c.assignedUserId === u.id)
       .sort((a, b) => {
-        const dateA = a.completedAt ? a.completedAt.substring(0, 10) : (a.requestDate || "");
-        const dateB = b.completedAt ? b.completedAt.substring(0, 10) : (b.requestDate || "");
+        const dateA = a.effectiveDate || (a.completedAt ? getExecutionDateStr(a.completedAt) : (a.requestDate || ""));
+        const dateB = b.effectiveDate || (b.completedAt ? getExecutionDateStr(b.completedAt) : (b.requestDate || ""));
         const c = dateA.localeCompare(dateB);
         if (c !== 0) return c;
         return Number(String(a.flatNumber).replace(/\D/g, "") || 0) - Number(String(b.flatNumber).replace(/\D/g, "") || 0);
@@ -5375,7 +5444,7 @@ app.get("/api/analytics/report", (req, res) => {
           id: c.id,
           flatNumber: flat ? flat.number : (c.flatNumber || String(c.flatId)),
           requestDate: c.requestDate,
-          effectiveDate: (c.completedAt ? c.completedAt.substring(0, 10) : c.requestDate),
+          effectiveDate: c.effectiveDate || (c.completedAt ? getExecutionDateStr(c.completedAt) : c.requestDate),
           cleaningStartedAt: c.cleaningStartedAt,
           completedAt: c.completedAt,
           durationMinutes: c.durationMinutes || itemDuration,
@@ -5398,7 +5467,7 @@ app.get("/api/analytics/report", (req, res) => {
   const daysOfWeek = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
   const dayCounts = [0, 0, 0, 0, 0, 0, 0];
   completedCleanings.forEach(c => {
-    const dStr = c.completedAt ? c.completedAt.substring(0, 10) : c.requestDate;
+    const dStr = c.effectiveDate || (c.completedAt ? getExecutionDateStr(c.completedAt) : c.requestDate);
     if (dStr) {
       const d = new Date(dStr + "T12:00:00Z");
       const dayIndex = d.getUTCDay();
