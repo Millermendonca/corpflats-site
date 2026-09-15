@@ -4069,6 +4069,26 @@ function getRequestsForDate(dateStr) {
     }
   }
 
+  // 4.5. Solicitações de dias anteriores que foram trabalhadas ou concluídas nesta data (ex: carry-over limpo hoje)
+  for (const r of (db.cleaningRequests || [])) {
+    const fNumber = String(r.flatNumber || "");
+    if (!existingFlatNumbersForDate.has(fNumber) && !stayoverFlatNumbers.has(fNumber)) {
+      const execDate = r.effectiveDate || 
+        (r.completedAt ? r.completedAt.substring(0, 10) : null) || 
+        (r.cleaningStartedAt ? r.cleaningStartedAt.substring(0, 10) : null) ||
+        (r.willCleanAt ? r.willCleanAt.substring(0, 10) : null);
+
+      if (execDate === dateStr && r.requestDate !== dateStr) {
+        requestsForDate.push({
+          ...r,
+          isPendingFromPreviousDay: true,
+          originalRequestDate: r.requestDate
+        });
+        existingFlatNumbersForDate.add(fNumber);
+      }
+    }
+  }
+
   // 5. Carry-Over de pendências não limpas de dias anteriores (apenas se o quarto NÃO virou stayover e APENAS PARA HOJE)
   if (dateStr === getTodayStr()) {
     const previousUncleaned = (db.cleaningRequests || []).filter(r => {
@@ -4082,7 +4102,7 @@ function getRequestsForDate(dateStr) {
       // ele já foi higienizado e NÃO deve ser considerado pendência nem reaparecer para limpar!
       const alreadyCleanedOnOrAfter = (db.cleaningRequests || []).some(c => 
         (String(c.flatNumber) === fNumber || c.flatId === r.flatId) &&
-        c.requestDate >= r.requestDate &&
+        (c.effectiveDate || (c.completedAt ? c.completedAt.substring(0, 10) : c.requestDate)) >= r.requestDate &&
         c.status === "clean"
       );
       if (alreadyCleanedOnOrAfter) return false;
@@ -4637,7 +4657,9 @@ app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
       item.cleaningStartedAt = null;
       item.completedAt = null;
       item.pendingObservation = null;
+      item.effectiveDate = null;
     } else if (status === "will_clean") {
+      item.effectiveDate = item.effectiveDate || date || now.substring(0, 10);
       if (assignedUserId) {
         item.assignedUserId = Number(assignedUserId);
       } else {
@@ -4650,6 +4672,7 @@ app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
       }
       item.willCleanAt = now;
     } else if (status === "cleaning_now") {
+      item.effectiveDate = item.effectiveDate || date || now.substring(0, 10);
       item.cleaningStartedAt = now;
       if (assignedUserId) {
         item.assignedUserId = Number(assignedUserId);
@@ -4662,6 +4685,7 @@ app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
         item.assignedUserName = assignedU.name || assignedU.username;
       }
     } else if (status === "clean" || status === "pending_issue") {
+      item.effectiveDate = date || now.substring(0, 10);
       item.completedAt = now;
       if (assignedUserId) {
         item.assignedUserId = Number(assignedUserId);

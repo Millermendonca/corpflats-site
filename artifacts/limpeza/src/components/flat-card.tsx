@@ -119,6 +119,7 @@ export function FlatCard({
 
   // Live elapsed time for cleaning_now
   const [elapsedMinutes, setElapsedMinutes] = useState<number>(0)
+  const [revertDirtyModalOpen, setRevertDirtyModalOpen] = useState(false)
 
   // Lost & Found (Item Encontrado no Quarto)
   const [lostItemModalOpen, setLostItemModalOpen] = useState(false)
@@ -1205,7 +1206,7 @@ export function FlatCard({
                       size="sm" 
                       variant="outline" 
                       className="flex-1 text-xs text-slate-600 border-slate-300 hover:bg-slate-100" 
-                      onClick={() => handleStatusChange("dirty")}
+                      onClick={() => setRevertDirtyModalOpen(true)}
                       disabled={isProcessing}
                       title="Devolver quarto para o estado sujo e desfazer o registro de limpeza"
                     >
@@ -1288,6 +1289,36 @@ export function FlatCard({
           </div>
         </CardContent>
       </Card>
+
+      {/* Reverter Quarto Limpo para Sujo Confirmation Dialog */}
+      <Dialog open={revertDirtyModalOpen} onOpenChange={setRevertDirtyModalOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-600">
+              <RotateCcw className="w-5 h-5" />
+              Devolver Quarto {flat.flatNumber} para Sujo?
+            </DialogTitle>
+            <DialogDescription>
+              Tem certeza que deseja devolver este apartamento para o estado <strong>Sujo</strong>? Isso cancelará a conclusão da limpeza registrada e recolocará o quarto na lista de pendências para ser limpo novamente.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0 mt-4">
+            <Button variant="outline" onClick={() => setRevertDirtyModalOpen(false)} disabled={isProcessing}>
+              Cancelar
+            </Button>
+            <Button 
+              className="bg-amber-600 hover:bg-amber-700 text-white font-semibold shadow-xs"
+              onClick={async () => {
+                setRevertDirtyModalOpen(false)
+                await handleStatusChange("dirty")
+              }}
+              disabled={isProcessing}
+            >
+              Sim, Devolver Quarto
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* No Show Confirmation Dialog */}
       <Dialog open={noShowModalOpen} onOpenChange={setNoShowModalOpen}>
