@@ -227,12 +227,42 @@ export default function ComprasScreen() {
 
         <TouchableOpacity
           onPress={() => setModalOpen(true)}
-          style={[styles.addBtn, { backgroundColor: colors.primary }]}
+          style={[styles.addBtn, { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border }]}
           activeOpacity={0.8}
         >
-          <Ionicons name="add" size={20} color="#fff" />
-          <Text style={styles.addBtnText}>Pedir Item</Text>
+          <Ionicons name="options-outline" size={16} color={colors.foreground} />
+          <Text style={[styles.addBtnText, { color: colors.foreground }]}>Mais Detalhes</Text>
         </TouchableOpacity>
+      </View>
+
+      {/* Barra de Digitação Direta do Item */}
+      <View style={[styles.quickInputContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <View style={styles.quickInputRow}>
+          <TextInput
+            style={[styles.quickTextInput, { color: colors.foreground, backgroundColor: colors.background, borderColor: colors.border }]}
+            placeholder="O que está faltando comprar?"
+            placeholderTextColor={colors.mutedForeground}
+            value={newTitle}
+            onChangeText={setNewTitle}
+            onSubmitEditing={handleCreate}
+            returnKeyType="done"
+          />
+          <TouchableOpacity
+            onPress={handleCreate}
+            disabled={!newTitle.trim() || submitting}
+            style={[styles.quickAddButton, { backgroundColor: colors.primary, opacity: !newTitle.trim() || submitting ? 0.6 : 1 }]}
+            activeOpacity={0.8}
+          >
+            {submitting ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="add" size={18} color="#fff" />
+                <Text style={styles.quickAddButtonText}>Pedir</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Filter Tabs */}
@@ -513,6 +543,41 @@ const styles = StyleSheet.create({
     borderRadius: 14,
   },
   addBtnText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  quickInputContainer: {
+    marginHorizontal: 20,
+    marginBottom: 12,
+    borderRadius: 16,
+    padding: 8,
+    borderWidth: 1,
+  },
+  quickInputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  quickTextInput: {
+    flex: 1,
+    height: 42,
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  quickAddButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    height: 42,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+  },
+  quickAddButtonText: {
     color: "#fff",
     fontSize: 13,
     fontWeight: "800",
