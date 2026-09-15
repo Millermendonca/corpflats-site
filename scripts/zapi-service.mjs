@@ -1799,6 +1799,7 @@ export async function syncZapiWebhooks(config, appBaseUrl) {
   const cleanAppUrl = (appBaseUrl || "https://corpflats.onrender.com").replace(/\/+$/, "");
   const disconnectedWebhookUrl = `${cleanAppUrl}/api/whatsapp/webhook/disconnected`;
   const connectedWebhookUrl = `${cleanAppUrl}/api/whatsapp/webhook/connected`;
+  const receivedWebhookUrl = `${cleanAppUrl}/api/whatsapp/webhook/received`;
 
   const headers = { "Content-Type": "application/json" };
   if (clientToken) headers["Client-Token"] = clientToken;
@@ -1806,8 +1807,10 @@ export async function syncZapiWebhooks(config, appBaseUrl) {
   const results = {
     disconnected: { ok: false },
     connected: { ok: false },
+    received: { ok: false },
     disconnectedUrl: disconnectedWebhookUrl,
-    connectedUrl: connectedWebhookUrl
+    connectedUrl: connectedWebhookUrl,
+    receivedUrl: receivedWebhookUrl
   };
 
   try {
@@ -1836,12 +1839,26 @@ export async function syncZapiWebhooks(config, appBaseUrl) {
     results.connected.error = err.message;
   }
 
-  const overallSuccess = results.disconnected.ok || results.connected.ok;
+  try {
+    const resRecv = await fetch(`${baseUrl}/instances/${instanceId}/token/${token}/update-webhook-received`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ value: receivedWebhookUrl })
+    });
+    results.received.ok = resRecv.ok;
+    results.received.status = resRecv.status;
+    results.received.data = await resRecv.json().catch(() => ({}));
+  } catch (err) {
+    results.received.error = err.message;
+  }
+
+  const overallSuccess = results.disconnected.ok || results.connected.ok || results.received.ok;
   return {
     success: overallSuccess,
     results,
     disconnectedUrl: disconnectedWebhookUrl,
-    connectedUrl: connectedWebhookUrl
+    connectedUrl: connectedWebhookUrl,
+    receivedUrl: receivedWebhookUrl
   };
 }
 
@@ -1988,7 +2005,354 @@ export async function handleConnectionEvent({ db, saveDatabase, createNotificati
         timestamp: nowIso,
         details
       }).catch(() => {});
+// ── Monitoramento Inteligente do Grupo da Portaria (WhatsApp Concierge) ────────
+
+export function getBrasiliaNow() {
+  const d = new Date();
+  const utc = d.getTime() + (d.getTimezoneOffset() * 60000);
+  const brl = new Date(utc - (3 * 3600000));
+  const date = brl.toISOString().split("T")[0];
+  const timeStr = brl.toTimeString().split(" ")[0].slice(0, 5);
+  return { date, timeStr, fullDate: brl };
+}
+
+export function isTimeBefore(t1, t2) {
+  if (!t1 || !t2) return false;
+  return String(t1).localeCompare(String(t2)) < 0;
+}
+
+export function extractIncomingMessageInfo(body) {
+  if (!body || typeof body !== "object") return null;
+
+  const isGroup = Boolean(
+    body.isGroup ||
+    body.chatType === "group" ||
+    String(body.phone || "").includes("@g.us") ||
+    String(body.phone || "").includes("-group") ||
+    String(body.chatId || "").includes("@g.us") ||
+    String(body.data?.key?.remoteJid || "").includes("@g.us") ||
+    String(body.key?.remoteJid || "").includes("@g.us")
+  );
+
+  const groupId = isGroup
+    ? String(body.phone || body.chatId || body.data?.key?.remoteJid || body.key?.remoteJid || "").trim()
+    : null;
+
+  const groupName = String(
+    body.chatName || body.groupName || body.chat?.name || body.name || ""
+  ).trim();
+
+  const senderPhone = String(
+    body.participantPhone || body.participant || body.senderPhone || body.sender || body.data?.participant || ""
+  ).replace(/\D/g, "");
+
+  const senderName = String(
+    body.senderName || body.pushName || body.notifyName || body.data?.senderName || ""
+  ).trim();
+
+  let text = "";
+  if (typeof body.text === "string") {
+    text = body.text;
+  } else if (body.text && typeof body.text.message === "string") {
+    text = body.text.message;
+  } else if (body.message) {
+    if (typeof body.message === "string") text = body.message;
+    else if (body.message.conversation) text = body.message.conversation;
+    else if (body.message.extendedTextMessage?.text) text = body.message.extendedTextMessage.text;
+  } else if (body.data?.message) {
+    if (typeof body.data.message === "string") text = body.data.message;
+    else if (body.data.message.conversation) text = body.data.message.conversation;
+    else if (body.data.message.extendedTextMessage?.text) text = body.data.message.extendedTextMessage.text;
+  } else if (typeof body.body === "string") {
+    text = body.body;
+  } else if (typeof body.content === "string") {
+    text = body.content;
+  }
+
+  return {
+    isGroup,
+    groupId,
+    groupName,
+    senderPhone,
+    senderName,
+    text: text ? text.trim() : ""
+  };
+}
+
+export function parseConciergeCheckoutMessage(text, registeredFlats = []) {
+  if (!text || typeof text !== "string") {
+    return { matchedFlats: [], otherFlats: [], extractedNumbers: [] };
+  }
+
+  // Sanitiza o texto mascarando datas (ex: 15/09/2026), horários (ex: 11:30) e telefones/CPFs (ex: 5522997124021)
+  let cleanText = text
+    .replace(/\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/g, " ") // Remove datas
+    .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, " ")       // Remove horários
+    .replace(/\b\d{7,}\b/g, " ");                       // Remove telefones/documentos longos
+
+  // Extrai candidatos numéricos com 2 a 4 dígitos
+  const matches = cleanText.match(/\b\d{2,4}\b/g) || [];
+  const uniqueCandidates = [...new Set(matches)];
+
+  const matchedFlats = [];
+  const otherFlats = [];
+  const commonYears = new Set(["2024", "2025", "2026", "2027", "2028"]);
+
+  for (const cand of uniqueCandidates) {
+    const foundFlat = registeredFlats.find(f => {
+      const numStr = String(f.number || "").replace(/\D/g, "");
+      return numStr === cand;
+    });
+
+    if (foundFlat) {
+      if (!matchedFlats.some(m => m.id === foundFlat.id)) {
+        matchedFlats.push(foundFlat);
+      }
+    } else {
+      // Flats de terceiros (somente 3 ou 4 dígitos e não ano comum)
+      if (cand.length >= 3 && cand.length <= 4 && !commonYears.has(cand)) {
+        if (!otherFlats.includes(cand)) {
+          otherFlats.push(cand);
+        }
+      }
     }
+  }
+
+  return {
+    matchedFlats,
+    otherFlats,
+    extractedNumbers: uniqueCandidates
+  };
+}
+
+export async function handleConciergeGroupMessage({
+  db,
+  saveDatabase,
+  createNotification,
+  incomingInfo,
+  isTest = false
+}) {
+  if (!db) return { success: false, error: "Database not available" };
+  const config = db.zapiConfig || {};
+
+  // Se monitoramento estiver desativado nas configs e não for teste
+  if (config.conciergeMonitoringEnabled === false && !isTest) {
+    return { success: false, ignored: true, reason: "Monitoramento do grupo da portaria desativado" };
+  }
+
+  const registeredFlats = db.flats || [];
+
+  // Se não for teste, valida se a mensagem é de grupo e do grupo correto
+  if (!isTest) {
+    if (!incomingInfo.isGroup) {
+      return { success: false, ignored: true, reason: "Mensagem individual (não é de grupo)" };
+    }
+
+    const targetGroupId = config.conciergeGroupId?.trim();
+    const targetGroupName = config.conciergeGroupName?.trim();
+
+    if (targetGroupId) {
+      const incomingGid = String(incomingInfo.groupId || "").toLowerCase();
+      if (!incomingGid.includes(targetGroupId.toLowerCase())) {
+        return { success: false, ignored: true, reason: "Mensagem de outro grupo (ID não corresponde ao da portaria)" };
+      }
+    } else if (targetGroupName) {
+      const incomingGname = String(incomingInfo.groupName || "").toLowerCase();
+      if (!incomingGname.includes(targetGroupName.toLowerCase())) {
+        return { success: false, ignored: true, reason: "Mensagem de outro grupo (Nome não corresponde ao da portaria)" };
+      }
+    } else {
+      // Se nenhum grupo foi configurado ainda, aceita se o nome do grupo contiver 'portaria', 'recepção' ou 'condom'
+      const gName = String(incomingInfo.groupName || "").toLowerCase();
+      const isConciergeGroup = /portaria|recep[cç][aã]o|condom/i.test(gName);
+      if (!isConciergeGroup) {
+        return { success: false, ignored: true, reason: "Grupo não configurado e nome não contém 'Portaria'" };
+      }
+    }
+
+    // Se estiver ativado exigir palavras-chave
+    if (config.conciergeRequireKeywords) {
+      const hasKeywords = /check-?out|sa[ií]da|desocupad|liberad|chave|entreg|saiu|livre|vago/i.test(incomingInfo.text);
+      if (!hasKeywords) {
+        return { success: false, ignored: true, reason: "Mensagem sem palavras-chave de check-out" };
+      }
+    }
+  }
+
+  const { matchedFlats, otherFlats, extractedNumbers } = parseConciergeCheckoutMessage(incomingInfo.text, registeredFlats);
+
+  if (matchedFlats.length === 0 && otherFlats.length === 0) {
+    return { success: false, ignored: true, reason: "Nenhum número de apartamento identificado no texto", text: incomingInfo.text };
+  }
+
+  const now = new Date().toISOString();
+  const nowBrl = getBrasiliaNow();
+  const todayStr = nowBrl.date;
+  const timeStr = nowBrl.timeStr;
+  const senderLabel = incomingInfo.senderName ? `${incomingInfo.senderName}` : "Portaria";
+
+  const updatedFlatsList = [];
+
+  for (const flat of matchedFlats) {
+    // 1. Marca o flat como desocupado
+    flat.isOccupied = false;
+    flat.updatedAt = now;
+
+    // 2. Cria ou atualiza solicitação de limpeza no dashboard
+    if (!db.cleaningRequests) db.cleaningRequests = [];
+    let cleanReq = db.cleaningRequests.find(r => r.flatId === flat.id && r.requestDate === todayStr);
+
+    if (cleanReq) {
+      cleanReq.isVacant = true; // Quarto desocupado
+      cleanReq.leavingGuest = senderLabel;
+      if (!cleanReq.pendingObservation) {
+        cleanReq.pendingObservation = `Check-out confirmado no grupo da portaria (${senderLabel})`;
+      } else if (!cleanReq.pendingObservation.includes("portaria") && !cleanReq.pendingObservation.includes("Check-out")) {
+        cleanReq.pendingObservation = `${cleanReq.pendingObservation} | Check-out Portaria (${senderLabel})`;
+      }
+      cleanReq.updatedAt = now;
+    } else {
+      cleanReq = {
+        id: db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => r.id)) + 1 : 1,
+        flatId: flat.id,
+        flatNumber: flat.number,
+        requestDate: todayStr,
+        source: "whatsapp_concierge",
+        status: "dirty",
+        assignedUserId: null,
+        isVacant: true, // Já desocupado
+        isPriority: false,
+        leavingGuest: senderLabel,
+        arrivingGuest: null,
+        pendingObservation: `Check-out confirmado no grupo da portaria (${senderLabel})`,
+        willCleanAt: null,
+        cleaningStartedAt: null,
+        completedAt: null,
+        createdAt: now,
+        updatedAt: now
+      };
+      db.cleaningRequests.unshift(cleanReq);
+    }
+
+    // 3. Atualiza reservas ativas correspondentes
+    const matchingResList = (db.reservations || []).filter(r => 
+      (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
+      r.status !== "cancelada" && r.status !== "cancelado" &&
+      r.checkinDate <= todayStr && r.checkoutDate >= todayStr
+    );
+    matchingResList.forEach(r => {
+      r.actualCheckoutAt = now;
+      r.actualCheckoutTime = timeStr;
+      r.status = "completed";
+      r.updatedAt = now;
+    });
+
+    // 4. Reconciliação de café da manhã para hoje (cancela se checkout ocorreu antes do horário do café)
+    if (!db.breakfastOrders) db.breakfastOrders = [];
+    db.breakfastOrders.forEach(o => {
+      const isMatch = String(o.roomNumber) === String(flat.number) || matchingResList.some(mr => mr.code === o.reservationCode || mr.id === o.reservationId);
+      const deliveryTime = o.deliveryTime || "08:00";
+      if (isMatch && o.date === todayStr && o.status !== "cancelled" && isTimeBefore(timeStr, deliveryTime)) {
+        o.status = "cancelled";
+        o.cancelReason = `Check-out Portaria (WhatsApp): Quarto desocupado às ${timeStr} antes do café (${deliveryTime})`;
+      }
+    });
+
+    // 5. Notificação no sino do sistema
+    if (typeof createNotification === "function") {
+      createNotification({
+        category: "checkout",
+        title: `🚪 Check-out Portaria - Apt ${flat.number}`,
+        message: `Saída do Apt ${flat.number} informada no WhatsApp por ${senderLabel}. Quarto desocupado e pronto para limpeza!`,
+        severity: "info",
+        metadata: { flatId: flat.id, flatNumber: flat.number, source: "whatsapp_concierge", sender: senderLabel, isTest },
+        targetUrl: "/dashboard"
+      });
+    }
+
+    updatedFlatsList.push(flat.number);
+  }
+
+  // 6. Registro no histórico de auditoria da portaria
+  if (!db.conciergeWhatsappLogs) db.conciergeWhatsappLogs = [];
+  const logEntry = {
+    id: `concierge_log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    timestamp: now,
+    timeStr,
+    groupName: incomingInfo.groupName || (isTest ? "Simulação de Teste" : "Grupo da Portaria"),
+    groupId: incomingInfo.groupId || "",
+    senderName: senderLabel,
+    senderPhone: incomingInfo.senderPhone || "",
+    rawText: incomingInfo.text,
+    matchedFlats: updatedFlatsList,
+    otherFlats: otherFlats,
+    extractedNumbers,
+    isTest
+  };
+  db.conciergeWhatsappLogs.unshift(logEntry);
+  if (db.conciergeWhatsappLogs.length > 100) {
+    db.conciergeWhatsappLogs = db.conciergeWhatsappLogs.slice(0, 100);
+  }
+
+  if (typeof saveDatabase === "function") {
+    saveDatabase();
+  }
+
+  return {
+    success: true,
+    processedCount: updatedFlatsList.length,
+    updatedFlats: updatedFlatsList,
+    otherFlatsIgnored: otherFlats,
+    log: logEntry
+  };
+}
+
+export async function getZapiGroups(config) {
+  const instanceId = config?.instanceId?.trim();
+  const token = config?.token?.trim();
+  const clientToken = config?.clientToken?.trim();
+
+  if (!instanceId || !token) {
+    return { success: false, error: "Credenciais da Z-API incompletas.", groups: [] };
+  }
+
+  const baseUrl = config.baseUrl?.replace(/\/+$/, "") || "https://api.z-api.io";
+  const headers = { "Content-Type": "application/json" };
+  if (clientToken) headers["Client-Token"] = clientToken;
+
+  try {
+    let res = await fetch(`${baseUrl}/instances/${instanceId}/token/${token}/chats`, {
+      method: "GET",
+      headers
+    });
+    
+    if (!res.ok && res.status === 404) {
+      res = await fetch(`${baseUrl}/instances/${instanceId}/token/${token}/groups`, {
+        method: "GET",
+        headers
+      });
+    }
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      return { success: false, error: errData.message || `Erro status ${res.status}`, groups: [] };
+    }
+
+    const data = await res.json();
+    const list = Array.isArray(data) ? data : (data.chats || data.groups || data.value || []);
+    
+    const groups = list
+      .filter(c => c.isGroup || String(c.phone || c.id || "").includes("@g.us") || String(c.phone || c.id || "").includes("-group"))
+      .map(c => ({
+        id: String(c.phone || c.id || c.chatId || "").trim(),
+        name: String(c.name || c.chatName || c.title || c.phone || "Grupo sem nome").trim(),
+        unread: c.unread || 0,
+        participantsCount: c.participantsCount || c.participants?.length || null
+      }));
+
+    return { success: true, groups };
+  } catch (err) {
+    return { success: false, error: err.message, groups: [] };
   }
 }
 
@@ -2023,7 +2387,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         lastDisconnectReason: null,
         lastAlertSentAt: null,
         webhookDisconnectedUrl: "https://corpflats.onrender.com/api/whatsapp/webhook/disconnected",
-        webhookConnectedUrl: "https://corpflats.onrender.com/api/whatsapp/webhook/connected"
+        webhookConnectedUrl: "https://corpflats.onrender.com/api/whatsapp/webhook/connected",
+        webhookReceivedUrl: "https://corpflats.onrender.com/api/whatsapp/webhook/received",
+        conciergeMonitoringEnabled: true,
+        conciergeGroupId: "",
+        conciergeGroupName: "",
+        conciergeRequireKeywords: false
       };
     } else {
       if (!db.zapiConfig.deliveryMode) {
@@ -2059,10 +2428,29 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       if (!db.zapiConfig.webhookConnectedUrl) {
         db.zapiConfig.webhookConnectedUrl = "https://corpflats.onrender.com/api/whatsapp/webhook/connected";
       }
+      if (!db.zapiConfig.webhookReceivedUrl) {
+        db.zapiConfig.webhookReceivedUrl = "https://corpflats.onrender.com/api/whatsapp/webhook/received";
+      }
+      if (db.zapiConfig.conciergeMonitoringEnabled === undefined) {
+        db.zapiConfig.conciergeMonitoringEnabled = true;
+      }
+      if (db.zapiConfig.conciergeGroupId === undefined) {
+        db.zapiConfig.conciergeGroupId = "";
+      }
+      if (db.zapiConfig.conciergeGroupName === undefined) {
+        db.zapiConfig.conciergeGroupName = "";
+      }
+      if (db.zapiConfig.conciergeRequireKeywords === undefined) {
+        db.zapiConfig.conciergeRequireKeywords = false;
+      }
     }
 
     if (!db.zapiConnectionLogs) {
       db.zapiConnectionLogs = [];
+    }
+
+    if (!db.conciergeWhatsappLogs) {
+      db.conciergeWhatsappLogs = [];
     }
 
     if (!db.whatsappTemplates || db.whatsappTemplates.length === 0) {
@@ -2614,7 +3002,28 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     res.json(result);
   });
 
-  // 17. Webhook Z-API: WhatsApp Desconectado (/api/whatsapp/webhook/disconnected)
+  // 17. Webhook Z-API: Mensagem Recebida (/api/whatsapp/webhook/received)
+  app.post("/api/whatsapp/webhook/received", async (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    console.log("[Z-API Webhook] Mensagem recebida:", JSON.stringify(req.body));
+    const incomingInfo = extractIncomingMessageInfo(req.body);
+    if (!incomingInfo || !incomingInfo.text) {
+      return res.status(200).json({ success: true, message: "Mensagem vazia ou sem texto ignorada" });
+    }
+
+    const result = await handleConciergeGroupMessage({
+      db,
+      saveDatabase,
+      createNotification,
+      incomingInfo,
+      isTest: false
+    });
+
+    res.status(200).json({ success: true, result });
+  });
+
+  // 18. Webhook Z-API: WhatsApp Desconectado (/api/whatsapp/webhook/disconnected)
   app.post("/api/whatsapp/webhook/disconnected", async (req, res) => {
     const db = getDb();
     console.log("[Z-API Webhook] Recebido evento de Desconexão:", JSON.stringify(req.body));
@@ -2630,7 +3039,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     res.status(200).json({ success: true, message: "Evento de desconexão processado com sucesso" });
   });
 
-  // 18. Webhook Z-API: WhatsApp Conectado (/api/whatsapp/webhook/connected)
+  // 19. Webhook Z-API: WhatsApp Conectado (/api/whatsapp/webhook/connected)
   app.post("/api/whatsapp/webhook/connected", async (req, res) => {
     const db = getDb();
     console.log("[Z-API Webhook] Recebido evento de Conexão:", JSON.stringify(req.body));
@@ -2644,9 +3053,10 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     res.status(200).json({ success: true, message: "Evento de conexão processado com sucesso" });
   });
 
-  // 19. Webhook Z-API: Genérico / Fallback (/api/whatsapp/webhook)
+  // 20. Webhook Z-API: Genérico / Fallback (/api/whatsapp/webhook)
   app.post("/api/whatsapp/webhook", async (req, res) => {
     const db = getDb();
+    ensureDbDefaults();
     const eventType = String(req.body?.event || req.body?.type || "").toLowerCase();
     console.log(`[Z-API Webhook Geral] Evento '${eventType}':`, JSON.stringify(req.body));
 
@@ -2667,11 +3077,22 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         source: "webhook",
         details: req.body
       });
+    } else {
+      const incomingInfo = extractIncomingMessageInfo(req.body);
+      if (incomingInfo && incomingInfo.text) {
+        await handleConciergeGroupMessage({
+          db,
+          saveDatabase,
+          createNotification,
+          incomingInfo,
+          isTest: false
+        });
+      }
     }
     res.status(200).json({ success: true, message: "Webhook processado" });
   });
 
-  // 20. Sincronizar Webhooks com a Z-API via API (/api/whatsapp/sync-webhooks)
+  // 21. Sincronizar Webhooks com a Z-API via API (/api/whatsapp/sync-webhooks)
   app.post("/api/whatsapp/sync-webhooks", async (req, res) => {
     const db = getDb();
     ensureDbDefaults();
@@ -2683,10 +3104,61 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     if (result.success) {
       db.zapiConfig.webhookDisconnectedUrl = result.disconnectedUrl;
       db.zapiConfig.webhookConnectedUrl = result.connectedUrl;
+      db.zapiConfig.webhookReceivedUrl = result.receivedUrl;
       db.zapiConfig.webhooksSyncedAt = new Date().toISOString();
       saveDatabase();
     }
     res.json(result);
+  });
+
+  // 22. Listar Grupos do WhatsApp (/api/whatsapp/groups)
+  app.get("/api/whatsapp/groups", async (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const result = await getZapiGroups(db?.zapiConfig);
+    res.json(result);
+  });
+
+  // 23. Disparo de Simulação / Teste de Mensagem da Portaria (/api/whatsapp/test-concierge-message)
+  app.post("/api/whatsapp/test-concierge-message", async (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const { message, groupName, senderName } = req.body;
+    if (!message || !message.trim()) {
+      return res.status(400).json({ error: "Informe o texto da mensagem para simular." });
+    }
+    const incomingInfo = {
+      isGroup: true,
+      groupId: db?.zapiConfig?.conciergeGroupId || "120363000000000000@g.us",
+      groupName: groupName || db?.zapiConfig?.conciergeGroupName || "Grupo Portaria (Simulação)",
+      senderPhone: "5522999990000",
+      senderName: senderName || "Porteiro de Plantão",
+      text: message.trim()
+    };
+    const result = await handleConciergeGroupMessage({
+      db,
+      saveDatabase,
+      createNotification,
+      incomingInfo,
+      isTest: true
+    });
+    res.json(result);
+  });
+
+  // 24. Histórico de Check-outs Recebidos pela Portaria (/api/whatsapp/concierge-logs)
+  app.get("/api/whatsapp/concierge-logs", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    res.json(db?.conciergeWhatsappLogs || []);
+  });
+
+  // 25. Limpar Histórico de Check-outs da Portaria (/api/whatsapp/concierge-logs)
+  app.delete("/api/whatsapp/concierge-logs", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    db.conciergeWhatsappLogs = [];
+    saveDatabase();
+    res.json({ success: true });
   });
 
   // 21. Consultar Histórico de Conexões (/api/whatsapp/connection-logs)
