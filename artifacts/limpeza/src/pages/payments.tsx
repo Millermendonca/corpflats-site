@@ -18,6 +18,7 @@ import {
 import { format, parseISO } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { AccessDenied } from "@/components/access-denied"
+import { PaymentMethodsModal } from "@/components/payment-methods-modal"
 
 export default function Payments() {
   const [, setLocation] = useLocation()
@@ -52,6 +53,7 @@ export default function Payments() {
   const [feeAirbnb, setFeeAirbnb] = useState("3.0")
   const [savingFees, setSavingFees] = useState(false)
   const [feeSuccessMsg, setFeeSuccessMsg] = useState("")
+  const [paymentMethodsModalOpen, setPaymentMethodsModalOpen] = useState(false)
 
   // Conciliação Ativa
   const [reconcilingCode, setReconcilingCode] = useState<string | null>(null)
@@ -441,11 +443,26 @@ export default function Payments() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">Todos os Métodos</SelectItem>
-                      <SelectItem value="pix">⚡ PIX Banco Inter</SelectItem>
-                      <SelectItem value="cartao">💳 Cartão (Mercado Pago)</SelectItem>
-                      <SelectItem value="booking_payments">🔵 Booking Payments</SelectItem>
-                      <SelectItem value="airbnb_payout">🔴 Airbnb Payout</SelectItem>
-                      <SelectItem value="direto_manual">💵 Dinheiro / Manual</SelectItem>
+                      {(paymentsData?.paymentMethods || [
+                        { id: "pix", name: "PIX Banco Inter" },
+                        { id: "cartao_credito", name: "Cartão de Crédito" },
+                        { id: "booking", name: "Booking.com" },
+                        { id: "airbnb", name: "Airbnb" },
+                        { id: "dinheiro", name: "Dinheiro em Espécie" },
+                        { id: "mercadopago", name: "Mercado Pago" }
+                      ]).map((m: any) => {
+                        const isB = m.id === "booking";
+                        const isA = m.id === "airbnb";
+                        const isP = m.id.includes("pix");
+                        const isC = m.id.includes("cartao") || m.id.includes("card") || m.id.includes("mercadopago");
+                        const isCash = m.id.includes("dinheiro");
+                        const icon = isB ? "🔵" : (isA ? "🔴" : (isP ? "⚡" : (isC ? "💳" : (isCash ? "💵" : "💰"))));
+                        return (
+                          <SelectItem key={m.id} value={m.id}>
+                            {icon} {m.name}
+                          </SelectItem>
+                        );
+                      })}
                     </SelectContent>
                   </Select>
                 </div>
@@ -563,27 +580,54 @@ export default function Payments() {
 
                             {/* Forma de Pagamento */}
                             <td className="p-3 whitespace-nowrap">
-                              {isPix ? (
-                                <div className="flex items-center gap-1.5 font-semibold text-emerald-700 dark:text-emerald-400">
-                                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                                  <span>⚡ PIX Banco Inter</span>
-                                </div>
-                              ) : isCard ? (
-                                <div className="flex items-center gap-1.5 font-semibold text-sky-700 dark:text-sky-400">
-                                  <CreditCard className="w-3.5 h-3.5" />
-                                  <span>💳 Cartão Mercado Pago</span>
-                                </div>
-                              ) : isBooking ? (
-                                <div className="flex items-center gap-1.5 font-semibold text-blue-700 dark:text-blue-400">
-                                  <span>🔵 Booking Payments</span>
-                                </div>
-                              ) : isAirbnb ? (
-                                <div className="flex items-center gap-1.5 font-semibold text-rose-700 dark:text-rose-400">
-                                  <span>🔴 Airbnb Payout</span>
-                                </div>
-                              ) : (
-                                <span className="text-muted-foreground font-medium">💵 Manual / Direto</span>
-                              )}
+                              {(() => {
+                                const pmObj = (paymentsData?.paymentMethods || []).find((m: any) => m.id === p.paymentMethod);
+                                if (pmObj) {
+                                  const isB = pmObj.id === "booking";
+                                  const isA = pmObj.id === "airbnb";
+                                  const isP = pmObj.id.includes("pix");
+                                  const isC = pmObj.id.includes("cartao") || pmObj.id.includes("card") || pmObj.id.includes("mercadopago");
+                                  const isCash = pmObj.id.includes("dinheiro");
+                                  const icon = isB ? "🔵" : (isA ? "🔴" : (isP ? "⚡" : (isC ? "💳" : (isCash ? "💵" : "💰"))));
+                                  return (
+                                    <div className="flex items-center gap-1.5 font-semibold text-slate-800 dark:text-slate-200">
+                                      <span>{icon}</span>
+                                      <span>{pmObj.name}</span>
+                                    </div>
+                                  );
+                                }
+                                if (isPix) {
+                                  return (
+                                    <div className="flex items-center gap-1.5 font-semibold text-emerald-700 dark:text-emerald-400">
+                                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                                      <span>⚡ PIX Banco Inter</span>
+                                    </div>
+                                  );
+                                }
+                                if (isCard) {
+                                  return (
+                                    <div className="flex items-center gap-1.5 font-semibold text-sky-700 dark:text-sky-400">
+                                      <CreditCard className="w-3.5 h-3.5" />
+                                      <span>💳 Cartão Mercado Pago</span>
+                                    </div>
+                                  );
+                                }
+                                if (isBooking) {
+                                  return (
+                                    <div className="flex items-center gap-1.5 font-semibold text-blue-700 dark:text-blue-400">
+                                      <span>🔵 Booking.com</span>
+                                    </div>
+                                  );
+                                }
+                                if (isAirbnb) {
+                                  return (
+                                    <div className="flex items-center gap-1.5 font-semibold text-rose-700 dark:text-rose-400">
+                                      <span>🔴 Airbnb</span>
+                                    </div>
+                                  );
+                                }
+                                return <span className="text-muted-foreground font-medium">💵 {p.paymentMethod || "Manual"}</span>;
+                              })()}
                             </td>
 
                             {/* Valor Bruto */}
@@ -774,14 +818,26 @@ export default function Payments() {
         {activeTab === "feeSettings" && (
           <div className="max-w-2xl mx-auto space-y-4">
             <Card className="border-border/60 bg-card">
-              <CardHeader>
-                <CardTitle className="text-base font-bold flex items-center gap-2">
-                  <Sliders className="w-5 h-5 text-primary" />
-                  <span>Configuração de Taxas e Comissões</span>
-                </CardTitle>
-                <CardDescription className="text-xs">
-                  Ajuste as taxas praticadas pelos seus intermediadores para cálculo automático e conciliação do valor líquido.
-                </CardDescription>
+              <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3">
+                <div>
+                  <CardTitle className="text-base font-bold flex items-center gap-2">
+                    <Sliders className="w-5 h-5 text-primary" />
+                    <span>Configuração de Taxas e Comissões</span>
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    Ajuste as taxas praticadas pelos seus intermediadores para cálculo automático e conciliação do valor líquido.
+                  </CardDescription>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setPaymentMethodsModalOpen(true)}
+                  className="text-xs font-bold gap-1.5 shrink-0"
+                >
+                  <CreditCard className="w-3.5 h-3.5 text-primary" />
+                  Gerenciar Todas as Formas & Taxas
+                </Button>
               </CardHeader>
               <CardContent>
                 <form onSubmit={handleSaveFees} className="space-y-4 text-xs">
@@ -1101,6 +1157,13 @@ export default function Payments() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Modal de Gestão de Formas de Pagamento & Taxas */}
+      <PaymentMethodsModal
+        open={paymentMethodsModalOpen}
+        onOpenChange={setPaymentMethodsModalOpen}
+        onSaved={fetchPayments}
+      />
     </Shell>
   )
 }

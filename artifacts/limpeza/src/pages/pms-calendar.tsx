@@ -37,6 +37,16 @@ import { AccessDenied } from "@/components/access-denied"
 import { FLAT_AMENITIES_CATALOG, AMENITY_CATEGORIES, renderAmenityIcon, getFlatActiveAmenities, FlatAmenityDefinition } from "@/lib/flat-amenities"
 import { ReservationHoverCard } from "@/components/reservation-hover-card"
 import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage } from "@/hooks/use-quick-messages"
+import { PaymentMethodsModal, PaymentMethod } from "@/components/payment-methods-modal"
+
+const DEFAULT_CLIENT_PAYMENT_METHODS: PaymentMethod[] = [
+  { id: "booking", name: "Booking.com", gatewayFeeRate: 0, commissionRate: 13, active: true, isSystem: true },
+  { id: "airbnb", name: "Airbnb", gatewayFeeRate: 0, commissionRate: 3, active: true, isSystem: true },
+  { id: "pix", name: "PIX", gatewayFeeRate: 0, commissionRate: 0, active: true, isSystem: true },
+  { id: "cartao_credito", name: "Cartão de Crédito", gatewayFeeRate: 3.99, commissionRate: 0, active: true, isSystem: true },
+  { id: "dinheiro", name: "Dinheiro", gatewayFeeRate: 0, commissionRate: 0, active: true, isSystem: true },
+  { id: "mercadopago", name: "Mercado Pago", gatewayFeeRate: 3.99, commissionRate: 0, active: true, isSystem: false }
+]
 
 
 
@@ -90,6 +100,25 @@ export default function PmsCalendar() {
   const [defaultCheckinTime, setDefaultCheckinTime] = useState("14:00")
   const [defaultCheckoutTime, setDefaultCheckoutTime] = useState("12:00")
   const [formChannel, setFormChannel] = useState("whatsapp")
+  const [formPaymentMethod, setFormPaymentMethod] = useState("pix")
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>(DEFAULT_CLIENT_PAYMENT_METHODS)
+  const [paymentConfigModalOpen, setPaymentConfigModalOpen] = useState(false)
+  const [initialNewPaymentMethodName, setInitialNewPaymentMethodName] = useState("")
+
+  const fetchPaymentMethods = async () => {
+    try {
+      const res = await fetch("/api/finance/payment-methods", { credentials: "include" })
+      if (res.ok) {
+        const json = await res.json()
+        if (Array.isArray(json) && json.length > 0) {
+          setPaymentMethods(json)
+        }
+      }
+    } catch (e) {
+      console.error("Erro ao carregar formas de pagamento:", e)
+    }
+  }
+
   const [formDailyRate, setFormDailyRate] = useState("250")
   const [formTotalAmount, setFormTotalAmount] = useState("")
   const [formPaidAmount, setFormPaidAmount] = useState("0")
@@ -1093,6 +1122,7 @@ export default function PmsCalendar() {
         lastAuxFetchRef.current = now;
         fetchCompanies();
         fetchCrmGuests();
+        fetchPaymentMethods();
 
         try {
           const todayStr = format(new Date(), "yyyy-MM-dd");
@@ -1342,6 +1372,7 @@ export default function PmsCalendar() {
     setFormGuest3Phone("")
     setFormGuest3Email("")
     setFormChannel("whatsapp")
+    setFormPaymentMethod("pix")
     const rangeNights = Math.max(1, differenceInDays(parseISO(cout), parseISO(cin))) || 1
     const initialTotal = rangeNights * 250
     setFormDailyRate("250")
@@ -1483,6 +1514,7 @@ export default function PmsCalendar() {
     setFormGuest3Phone("")
     setFormGuest3Email("")
     setFormChannel("whatsapp")
+    setFormPaymentMethod("pix")
     const initialNights = 1
     const initialTotal = initialNights * 250
     setFormDailyRate("250")
@@ -1554,6 +1586,15 @@ export default function PmsCalendar() {
     const totCalculated = Number(resItem.totalAmount) > 0 ? resItem.totalAmount : (Number(resItem.dailyRate || 0) * nights)
 
     setFormChannel(chan)
+    let resolvedMethod = resItem.paymentMethod
+    if (!resolvedMethod) {
+      if (chan === "booking") resolvedMethod = "booking"
+      else if (chan === "airbnb") resolvedMethod = "airbnb"
+      else if (resItem.pixTxId || chan === "site") resolvedMethod = "pix"
+      else if (resItem.mpPaymentId) resolvedMethod = "cartao_credito"
+      else resolvedMethod = "pix"
+    }
+    setFormPaymentMethod(resolvedMethod)
     setFormDailyRate(String(resItem.dailyRate || 0))
     setFormTotalAmount(totCalculated > 0 ? String(totCalculated) : "")
     setFormPaidAmount(String(resItem.paidAmount !== undefined ? resItem.paidAmount : (isResCurrentlyPaid ? totCalculated : 0)))
@@ -1831,6 +1872,7 @@ export default function PmsCalendar() {
         checkoutTime: formCheckoutTime || defaultCheckoutTime || "12:00",
         status: formStatus,
         channel: formChannel,
+        paymentMethod: formPaymentMethod,
         dailyRate: Number(formDailyRate) || 0,
         totalAmount,
         paidAmount: resolvedPaidAmount,
@@ -3134,10 +3176,18 @@ export default function PmsCalendar() {
                       value={formChannel} 
                       onValueChange={val => {
                         setFormChannel(val);
-                        if (val === "booking" || val === "airbnb") {
+                        if (val === "booking") {
                           setFormPaymentStatus("pago_total");
+                          setFormPaymentMethod("booking");
                           const tot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
                           if (tot > 0) setFormPaidAmount(String(tot));
+                        } else if (val === "airbnb") {
+                          setFormPaymentStatus("pago_total");
+                          setFormPaymentMethod("airbnb");
+                          const tot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
+                          if (tot > 0) setFormPaidAmount(String(tot));
+                        } else if (val === "site") {
+                          setFormPaymentMethod("pix");
                         }
                       }}
                     >
@@ -4017,7 +4067,7 @@ export default function PmsCalendar() {
                     )}
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-2.5">
                     {/* Valor da Diária */}
                     <div className="space-y-1">
                       <Label className="text-xs font-semibold">Valor da Diária (R$)</Label>
@@ -4134,6 +4184,61 @@ export default function PmsCalendar() {
                         </SelectContent>
                       </Select>
                     </div>
+
+                    {/* Forma de Pagamento */}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs font-semibold">Forma de Pagamento</Label>
+                        <button
+                          type="button"
+                          onClick={() => setPaymentConfigModalOpen(true)}
+                          className="text-[10px] text-primary hover:underline flex items-center gap-0.5 cursor-pointer font-medium"
+                          title="Configurar Taxas e Comissões"
+                        >
+                          <SlidersHorizontal className="w-2.5 h-2.5" />
+                          <span>Taxas</span>
+                        </button>
+                      </div>
+                      <Select 
+                        value={formPaymentMethod} 
+                        onValueChange={val => {
+                          if (val === "__add_new__") {
+                            setInitialNewPaymentMethodName("");
+                            setPaymentConfigModalOpen(true);
+                          } else {
+                            setFormPaymentMethod(val);
+                          }
+                        }}
+                      >
+                        <SelectTrigger className="text-xs font-bold bg-white dark:bg-slate-900">
+                          <SelectValue placeholder="Forma de Pagamento" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {paymentMethods.filter(m => m.active !== false).map(m => {
+                            const isBooking = m.id === "booking";
+                            const isAirbnb = m.id === "airbnb";
+                            const isPix = m.id.includes("pix");
+                            const isCard = m.id.includes("cartao") || m.id.includes("card") || m.id.includes("mercadopago");
+                            const isCash = m.id.includes("dinheiro");
+                            const icon = isBooking ? "🔵" : (isAirbnb ? "🔴" : (isPix ? "⚡" : (isCard ? "💳" : (isCash ? "💵" : "💰"))));
+                            const rateInfo = m.commissionRate > 0 
+                              ? `(${m.commissionRate}% comissão)` 
+                              : (m.gatewayFeeRate > 0 ? `(${m.gatewayFeeRate}% taxa)` : '');
+                            return (
+                              <SelectItem key={m.id} value={m.id} className="text-xs font-semibold">
+                                <span>{icon} {m.name}</span>
+                                {rateInfo && <span className="ml-1 text-[10px] text-muted-foreground font-normal">{rateInfo}</span>}
+                              </SelectItem>
+                            );
+                          })}
+                          <div className="p-1 border-t border-border/50 my-1">
+                            <SelectItem value="__add_new__" className="text-xs font-bold text-primary focus:bg-primary/10 cursor-pointer">
+                              ➕ Adicionar nova forma...
+                            </SelectItem>
+                          </div>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
 
                   {/* Atalhos Rápidos de Valor Pago & Saldo Restante */}
@@ -4231,14 +4336,23 @@ export default function PmsCalendar() {
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
                         <div>
                           <span className="text-muted-foreground block font-medium">Forma de Pagamento:</span>
-                          <span className="font-semibold text-slate-900 dark:text-slate-100">
-                            {isOta 
-                              ? (chanLower.includes("booking") ? "🌐 Booking.com" : "🔴 Airbnb")
-                              : (selectedRes.pixTxId || selectedRes.paymentMethod === "pix" 
-                                  ? "⚡ PIX Instantâneo (Banco Inter)" 
-                                  : (selectedRes.mpPaymentId || selectedRes.paymentMethod === "cartao_credito" 
-                                      ? "💳 Cartão de Crédito (Mercado Pago)" 
-                                      : (selectedRes.channel === "whatsapp" ? "💬 WhatsApp / CorpFlats" : "Reserva Manual / Direta")))}
+                          <span className="font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-1">
+                            {(() => {
+                              const activePm = formPaymentMethod || selectedRes.paymentMethod;
+                              const pmObj = paymentMethods.find(m => m.id === activePm);
+                              if (pmObj) {
+                                const isB = pmObj.id === "booking";
+                                const isA = pmObj.id === "airbnb";
+                                const isP = pmObj.id.includes("pix");
+                                const isC = pmObj.id.includes("cartao") || pmObj.id.includes("card") || pmObj.id.includes("mercadopago");
+                                const isCash = pmObj.id.includes("dinheiro");
+                                const icon = isB ? "🔵" : (isA ? "🔴" : (isP ? "⚡" : (isC ? "💳" : (isCash ? "💵" : "💰"))));
+                                return `${icon} ${pmObj.name}`;
+                              }
+                              return isOta 
+                                ? (chanLower.includes("booking") ? "🌐 Booking.com" : "🔴 Airbnb")
+                                : (selectedRes.pixTxId ? "⚡ PIX Instantâneo" : (selectedRes.mpPaymentId ? "💳 Cartão de Crédito" : "PIX"));
+                            })()}
                           </span>
                         </div>
 
@@ -5967,6 +6081,15 @@ export default function PmsCalendar() {
             </form>
           </DialogContent>
         </Dialog>
+
+        {/* Modal de Configuração de Formas de Pagamento, Taxas & Comissões */}
+        <PaymentMethodsModal
+          open={paymentConfigModalOpen}
+          onOpenChange={setPaymentConfigModalOpen}
+          onSaved={(updated) => setPaymentMethods(updated)}
+          onSelectMethod={(newMethodId) => setFormPaymentMethod(newMethodId)}
+          initialNewName={initialNewPaymentMethodName}
+        />
       </div>
     </Shell>
   )

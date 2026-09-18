@@ -2418,6 +2418,7 @@ function diffReservationFields(oldRes, newBody, flatsList = []) {
     guestPhone: "WhatsApp / Telefone",
     guestEmail: "E-mail do Hóspede",
     channel: "Canal de Origem",
+    paymentMethod: "Forma de Pagamento",
     dailyRate: "Valor da Diária",
     totalAmount: "Valor Total",
     paidAmount: "Valor Pago",
@@ -5845,6 +5846,110 @@ function generateStaticPixPayload({ pixKey = "47964813000165", amount = 0, merch
   return `${toCrc}${crc16(toCrc)}`;
 }
 
+// ── Configurações e Formas de Pagamento (PMS & Motor de Reservas) ───────────
+export const DEFAULT_PAYMENT_METHODS = [
+  {
+    id: "booking",
+    name: "Booking.com",
+    channelDefault: "booking",
+    gatewayFeeRate: 0.0,
+    gatewayFeeFixed: 0.0,
+    commissionRate: 13.0,
+    description: "Pagamentos processados pela Booking.com (comissão padrão 13% a 15%)",
+    active: true,
+    isSystem: true
+  },
+  {
+    id: "airbnb",
+    name: "Airbnb",
+    channelDefault: "airbnb",
+    gatewayFeeRate: 0.0,
+    gatewayFeeFixed: 0.0,
+    commissionRate: 3.0,
+    description: "Repasse direto Airbnb (taxa de serviço de anfitrião 3%)",
+    active: true,
+    isSystem: true
+  },
+  {
+    id: "pix",
+    name: "PIX",
+    channelDefault: "site",
+    gatewayFeeRate: 0.0,
+    gatewayFeeFixed: 0.0,
+    commissionRate: 0.0,
+    description: "Transferência instantânea PIX (0% de taxa / gratuito)",
+    active: true,
+    isSystem: true
+  },
+  {
+    id: "cartao_credito",
+    name: "Cartão de Crédito",
+    channelDefault: null,
+    gatewayFeeRate: 3.99,
+    gatewayFeeFixed: 0.0,
+    commissionRate: 0.0,
+    description: "Cartão de Crédito à vista (taxa padrão 3.99%)",
+    active: true,
+    isSystem: true
+  },
+  {
+    id: "dinheiro",
+    name: "Dinheiro",
+    channelDefault: null,
+    gatewayFeeRate: 0.0,
+    gatewayFeeFixed: 0.0,
+    commissionRate: 0.0,
+    description: "Pagamento em espécie na recepção (sem taxas)",
+    active: true,
+    isSystem: true
+  },
+  {
+    id: "mercadopago",
+    name: "Mercado Pago",
+    channelDefault: null,
+    gatewayFeeRate: 3.99,
+    gatewayFeeFixed: 0.0,
+    commissionRate: 0.0,
+    description: "Checkout Mercado Pago (taxa de processamento 3.99%)",
+    active: true,
+    isSystem: false
+  }
+];
+
+export function getPaymentMethodsList() {
+  if (!db.settings) db.settings = {};
+  if (!Array.isArray(db.settings.paymentMethods) || db.settings.paymentMethods.length === 0) {
+    db.settings.paymentMethods = JSON.parse(JSON.stringify(DEFAULT_PAYMENT_METHODS));
+  }
+  return db.settings.paymentMethods;
+}
+
+export function ensurePaymentMethodExists(methodId, methodName) {
+  if (!methodId) return null;
+  const methods = getPaymentMethodsList();
+  const cleanId = String(methodId).toLowerCase().trim().replace(/[^a-z0-9_-]/g, "_");
+  let existing = methods.find(m => m.id === cleanId || m.name.toLowerCase() === String(methodName || methodId).toLowerCase());
+  if (!existing) {
+    const isBooking = cleanId.includes("booking");
+    const isAirbnb = cleanId.includes("airbnb");
+    const isCard = cleanId.includes("cartao") || cleanId.includes("card") || cleanId.includes("mercadopago");
+    existing = {
+      id: cleanId,
+      name: methodName || cleanId.toUpperCase(),
+      channelDefault: isBooking ? "booking" : (isAirbnb ? "airbnb" : null),
+      gatewayFeeRate: isCard ? 3.99 : 0.0,
+      gatewayFeeFixed: 0.0,
+      commissionRate: isBooking ? 13.0 : (isAirbnb ? 3.0 : 0.0),
+      description: `Forma de pagamento ${methodName || cleanId} cadastrada automaticamente`,
+      active: true,
+      isSystem: false
+    };
+    methods.push(existing);
+    saveDatabase();
+  }
+  return existing;
+}
+
 // ── Endpoint de Reserva Direta com Rodízio e Governança Inteligente ──────────
 app.post("/api/reservations/direct-booking", async (req, res) => {
   try {
@@ -6028,7 +6133,7 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       totalAmount: Number(totalAmount),
       paidAmount: paymentMethod === "pix" || paymentMethod === "card" || paymentMethod === "cartao_credito" ? 0 : Number(totalAmount),
       paymentStatus: paymentMethod === "pix" ? "pendente_pix" : (paymentMethod === "card" || paymentMethod === "cartao_credito" ? "pendente_cartao" : "pago_total"),
-      paymentMethod,
+      paymentMethod: paymentMethod === "card" ? "cartao_credito" : (paymentMethod || "pix"),
       isWorkTrip: Boolean(isWorkTrip),
       companyData: isWorkTrip ? companyData : null,
       vehicle: vehicle || null,
@@ -6542,6 +6647,7 @@ app.post("/api/pms/reservations", (req, res) => {
     checkinTime,
     checkoutTime,
     channel = "direta",
+    paymentMethod = null,
     dailyRate = 0,
     totalAmount = 0,
     paidAmount = 0,
@@ -6574,6 +6680,15 @@ app.post("/api/pms/reservations", (req, res) => {
   if (isOta && (resolvedPaymentStatus === "pendente" || !resolvedPaymentStatus)) {
     resolvedPaymentStatus = "pago_total";
   }
+
+  let resolvedPaymentMethod = paymentMethod;
+  if (!resolvedPaymentMethod) {
+    if (chanLower.includes("booking")) resolvedPaymentMethod = "booking";
+    else if (chanLower.includes("airbnb")) resolvedPaymentMethod = "airbnb";
+    else if (chanLower.includes("site")) resolvedPaymentMethod = "pix";
+    else resolvedPaymentMethod = "pix";
+  }
+  ensurePaymentMethodExists(resolvedPaymentMethod);
   if (resolvedPaymentStatus === "pago_total" && Number(totalAmount) > 0 && resolvedPaidAmount === 0) {
     resolvedPaidAmount = Number(totalAmount);
   }
@@ -6732,6 +6847,7 @@ app.post("/api/pms/reservations", (req, res) => {
     checkoutTime: String(checkoutTime || db.settings?.checkoutTime || "12:00").trim(),
     status: resolvedStatus,
     channel,
+    paymentMethod: resolvedPaymentMethod,
     dailyRate: Number(dailyRate),
     totalAmount: Number(totalAmount),
     paidAmount: resolvedPaidAmount,
@@ -6794,6 +6910,7 @@ app.post("/api/pms/reservations", (req, res) => {
       { field: "dates", label: "Período da Estadia", oldValue: null, newValue: `${checkinDate} a ${checkoutDate}` },
       { field: "guestName", label: "Hóspede Titular", oldValue: null, newValue: primaryName },
       { field: "channel", label: "Canal de Origem", oldValue: null, newValue: channel },
+      { field: "paymentMethod", label: "Forma de Pagamento", oldValue: null, newValue: resolvedPaymentMethod },
       { field: "status", label: "Status da Reserva", oldValue: null, newValue: resolvedStatus === "confirmada" ? "Confirmada" : "Pré-Reserva" },
       { field: "totalAmount", label: "Valor Total", oldValue: null, newValue: `R$ ${Number(totalAmount).toFixed(2)}` },
       { field: "paidAmount", label: "Valor Pago", oldValue: null, newValue: `R$ ${Number(resolvedPaidAmount).toFixed(2)}` },
@@ -6878,6 +6995,7 @@ app.put("/api/pms/reservations/:id", (req, res) => {
 
   const fields = [
     "flatId", "checkinDate", "checkoutDate", "checkinTime", "checkoutTime", "status", "channel", 
+    "paymentMethod",
     "dailyRate", "totalAmount", "paidAmount", "paymentStatus", 
     "adults", "children", "notes", "prefersHighFloor", "twinBeds", 
     "extraMattress", "specialRequests", "isMonthlyGuest", "clientType", "includeBreakfast",
@@ -6887,6 +7005,9 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   ];
   for (const f of fields) {
     if (req.body[f] !== undefined) r[f] = req.body[f];
+  }
+  if (r.paymentMethod) {
+    ensurePaymentMethodExists(r.paymentMethod);
   }
   if (req.body.isMonthlyGuest !== undefined || req.body.clientType !== undefined) {
     const isMonthly = Boolean(req.body.isMonthlyGuest || req.body.clientType === "mensalista");
@@ -16769,23 +16890,108 @@ const DEFAULT_FEE_SETTINGS = {
   issTaxRate: 2.0               // 2.0% ISS Municipal Estimado
 };
 
-// 8.1 Obter e Atualizar Configuração de Taxas
+// 8.1 Obter e Atualizar Configuração de Taxas e Formas de Pagamento
+app.get("/api/finance/payment-methods", (req, res) => {
+  res.json(getPaymentMethodsList());
+});
+
+app.post("/api/finance/payment-methods", (req, res) => {
+  try {
+    const { id, name, gatewayFeeRate, gatewayFeeFixed, commissionRate, description, channelDefault, active } = req.body;
+    if (!name && !id) {
+      return res.status(400).json({ error: "Nome da forma de pagamento é obrigatório." });
+    }
+    const cleanId = String(id || name).toLowerCase().trim().replace(/[^a-z0-9_-]/g, "_");
+    const methods = getPaymentMethodsList();
+    let item = methods.find(m => m.id === cleanId);
+    if (item) {
+      if (name) item.name = name;
+      if (gatewayFeeRate !== undefined) item.gatewayFeeRate = Number(gatewayFeeRate) || 0;
+      if (gatewayFeeFixed !== undefined) item.gatewayFeeFixed = Number(gatewayFeeFixed) || 0;
+      if (commissionRate !== undefined) item.commissionRate = Number(commissionRate) || 0;
+      if (description !== undefined) item.description = description;
+      if (channelDefault !== undefined) item.channelDefault = channelDefault;
+      if (active !== undefined) item.active = Boolean(active);
+    } else {
+      item = {
+        id: cleanId,
+        name: name || cleanId.toUpperCase(),
+        gatewayFeeRate: Number(gatewayFeeRate) || 0,
+        gatewayFeeFixed: Number(gatewayFeeFixed) || 0,
+        commissionRate: Number(commissionRate) || 0,
+        description: description || "",
+        channelDefault: channelDefault || null,
+        active: active !== false,
+        isSystem: false
+      };
+      methods.push(item);
+    }
+    saveDatabase();
+    res.json({ success: true, paymentMethod: item, paymentMethods: methods });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put("/api/finance/payment-methods/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    const methods = getPaymentMethodsList();
+    const item = methods.find(m => m.id === id);
+    if (!item) return res.status(404).json({ error: "Forma de pagamento não encontrada." });
+
+    if (req.body.name !== undefined) item.name = req.body.name;
+    if (req.body.gatewayFeeRate !== undefined) item.gatewayFeeRate = Number(req.body.gatewayFeeRate) || 0;
+    if (req.body.gatewayFeeFixed !== undefined) item.gatewayFeeFixed = Number(req.body.gatewayFeeFixed) || 0;
+    if (req.body.commissionRate !== undefined) item.commissionRate = Number(req.body.commissionRate) || 0;
+    if (req.body.description !== undefined) item.description = req.body.description;
+    if (req.body.channelDefault !== undefined) item.channelDefault = req.body.channelDefault;
+    if (req.body.active !== undefined) item.active = Boolean(req.body.active);
+
+    saveDatabase();
+    res.json({ success: true, paymentMethod: item, paymentMethods: methods });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/finance/payment-methods/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    const methods = getPaymentMethodsList();
+    const idx = methods.findIndex(m => m.id === id);
+    if (idx === -1) return res.status(404).json({ error: "Forma de pagamento não encontrada." });
+    if (methods[idx].isSystem) {
+      methods[idx].active = false;
+    } else {
+      methods.splice(idx, 1);
+    }
+    saveDatabase();
+    res.json({ success: true, paymentMethods: methods });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/finance/fee-settings", (req, res) => {
   const fees = db.settings?.feeSettings || DEFAULT_FEE_SETTINGS;
-  res.json(fees);
+  res.json({ ...fees, paymentMethods: getPaymentMethodsList() });
 });
 
 app.post("/api/finance/fee-settings", (req, res) => {
   try {
     const fees = req.body;
     if (!db.settings) db.settings = {};
+    if (fees.paymentMethods && Array.isArray(fees.paymentMethods)) {
+      db.settings.paymentMethods = fees.paymentMethods;
+    }
     db.settings.feeSettings = {
       ...DEFAULT_FEE_SETTINGS,
       ...fees,
       updatedAt: new Date().toISOString()
     };
     saveDatabase();
-    res.json({ success: true, feeSettings: db.settings.feeSettings });
+    res.json({ success: true, feeSettings: db.settings.feeSettings, paymentMethods: getPaymentMethodsList() });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -16795,6 +17001,7 @@ app.post("/api/finance/fee-settings", (req, res) => {
 app.get("/api/finance/payments", (req, res) => {
   try {
     const feeConfig = db.settings?.feeSettings || DEFAULT_FEE_SETTINGS;
+    const paymentMethodsList = getPaymentMethodsList();
     const { startDate, endDate, method, channel, status, flatId, search } = req.query;
 
     const allPayments = [];
@@ -16810,32 +17017,40 @@ app.get("/api/finance/payments", (req, res) => {
       // Determinar método de pagamento
       let paymentMethod = r.paymentMethod;
       if (!paymentMethod) {
-        if (r.pixTxId || r.pixEndToEndId) paymentMethod = "pix_inter";
-        else if (r.mpPaymentId) paymentMethod = "cartao_mercadopago";
-        else if (r.channel === "booking") paymentMethod = "booking_payments";
-        else if (r.channel === "airbnb") paymentMethod = "airbnb_payout";
-        else if (r.channel === "site") paymentMethod = "pix_inter";
-        else paymentMethod = "direto_manual";
+        if (r.pixTxId || r.pixEndToEndId) paymentMethod = "pix";
+        else if (r.mpPaymentId) paymentMethod = "cartao_credito";
+        else if (r.channel === "booking") paymentMethod = "booking";
+        else if (r.channel === "airbnb") paymentMethod = "airbnb";
+        else if (r.channel === "site") paymentMethod = "pix";
+        else paymentMethod = "pix";
       }
 
-      // Calcular Taxas de Gateway e Comissões de Canal
-      let gatewayFeePct = 0;
-      let channelCommissionPct = 0;
+      // Buscar configuração da forma de pagamento
+      const pmConfig = paymentMethodsList.find(m => 
+        m.id === paymentMethod || 
+        (paymentMethod.includes("booking") && m.id === "booking") ||
+        (paymentMethod.includes("airbnb") && m.id === "airbnb") ||
+        (paymentMethod.includes("pix") && m.id === "pix") ||
+        ((paymentMethod.includes("cartao") || paymentMethod.includes("card")) && m.id === "cartao_credito") ||
+        (paymentMethod.includes("mercadopago") && m.id === "mercadopago") ||
+        (paymentMethod.includes("dinheiro") && m.id === "dinheiro")
+      );
 
-      if (paymentMethod === "pix_inter" || paymentMethod === "pix") {
-        gatewayFeePct = Number(feeConfig.pixInterRate || 0);
-      } else if (paymentMethod === "cartao_mercadopago" || paymentMethod === "cartao_credito") {
-        gatewayFeePct = Number(feeConfig.mpCreditSpotRate || 3.99);
-      }
+      let gatewayFeePct = pmConfig ? Number(pmConfig.gatewayFeeRate || 0) : 0;
+      let gatewayFeeFixed = pmConfig ? Number(pmConfig.gatewayFeeFixed || 0) : 0;
+      let channelCommissionPct = pmConfig ? Number(pmConfig.commissionRate || 0) : 0;
 
+      // Se não houver comissão explícita no método mas o canal for OTA:
       const resChannel = r.channel || (paymentMethod.includes("booking") ? "booking" : (paymentMethod.includes("airbnb") ? "airbnb" : "site"));
-      if (resChannel === "booking") {
-        channelCommissionPct = Number(feeConfig.bookingCommissionRate || 13.0);
-      } else if (resChannel === "airbnb") {
-        channelCommissionPct = Number(feeConfig.airbnbCommissionRate || 3.0);
+      if (channelCommissionPct === 0) {
+        if (resChannel === "booking") {
+          channelCommissionPct = Number(feeConfig.bookingCommissionRate || 13.0);
+        } else if (resChannel === "airbnb") {
+          channelCommissionPct = Number(feeConfig.airbnbCommissionRate || 3.0);
+        }
       }
 
-      const gatewayFeeAmount = Number((grossAmount * (gatewayFeePct / 100)).toFixed(2));
+      const gatewayFeeAmount = Number(((grossAmount * (gatewayFeePct / 100)) + (grossAmount > 0 ? gatewayFeeFixed : 0)).toFixed(2));
       const channelCommissionAmount = Number((grossAmount * (channelCommissionPct / 100)).toFixed(2));
       const totalDeductions = gatewayFeeAmount + channelCommissionAmount;
       const netAmount = Number((grossAmount - totalDeductions).toFixed(2));
@@ -16880,9 +17095,11 @@ app.get("/api/finance/payments", (req, res) => {
     for (const rec of (db.receivables || [])) {
       const grossAmount = Number(rec.amount || 0);
       const isPaid = rec.status === "recebido" || rec.status === "pago";
-      let paymentMethod = rec.paymentMethod || "pix_inter";
-      let gatewayFeePct = paymentMethod === "cartao_credito" ? Number(feeConfig.mpCreditSpotRate || 3.99) : Number(feeConfig.pixInterRate || 0);
-      let gatewayFeeAmount = Number((grossAmount * (gatewayFeePct / 100)).toFixed(2));
+      let paymentMethod = rec.paymentMethod || "pix";
+      const pmConfig = paymentMethodsList.find(m => m.id === paymentMethod || (paymentMethod.includes("cartao") && m.id === "cartao_credito") || (paymentMethod.includes("pix") && m.id === "pix"));
+      let gatewayFeePct = pmConfig ? Number(pmConfig.gatewayFeeRate || 0) : (paymentMethod === "cartao_credito" ? Number(feeConfig.mpCreditSpotRate || 3.99) : Number(feeConfig.pixInterRate || 0));
+      let gatewayFeeFixed = pmConfig ? Number(pmConfig.gatewayFeeFixed || 0) : 0;
+      let gatewayFeeAmount = Number(((grossAmount * (gatewayFeePct / 100)) + (grossAmount > 0 ? gatewayFeeFixed : 0)).toFixed(2));
       let netAmount = Number((grossAmount - gatewayFeeAmount).toFixed(2));
 
       allPayments.push({
@@ -16927,7 +17144,15 @@ app.get("/api/finance/payments", (req, res) => {
       filtered = filtered.filter(p => p.date <= endDate);
     }
     if (method && method !== "all") {
-      filtered = filtered.filter(p => p.paymentMethod === method || (method === "pix" && p.paymentMethod.includes("pix")) || (method === "cartao" && p.paymentMethod.includes("cartao")));
+      filtered = filtered.filter(p => {
+        if (!p.paymentMethod) return false;
+        if (p.paymentMethod === method) return true;
+        if (method === "pix" && p.paymentMethod.includes("pix")) return true;
+        if (method === "cartao" && (p.paymentMethod.includes("cartao") || p.paymentMethod.includes("card"))) return true;
+        if (method === "booking" && p.paymentMethod.includes("booking")) return true;
+        if (method === "airbnb" && p.paymentMethod.includes("airbnb")) return true;
+        return false;
+      });
     }
     if (channel && channel !== "all") {
       filtered = filtered.filter(p => p.channel === channel);
@@ -17011,7 +17236,8 @@ app.get("/api/finance/payments", (req, res) => {
         byMethod: Object.values(byMethodMap),
         byChannel: Object.values(byChannelMap)
       },
-      feeSettings: feeConfig
+      feeSettings: feeConfig,
+      paymentMethods: paymentMethodsList
     });
   } catch (err) {
     console.error("[Payments API] Erro:", err);
