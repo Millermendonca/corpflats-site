@@ -512,15 +512,33 @@ export function FlatCard({
         activeReqId = created.id
       }
       if (activeReqId) {
-        await fetch(`/api/cleaning/assignments/${activeReqId}/no-show`, {
+        const res = await fetch(`/api/cleaning/assignments/${activeReqId}/no-show`, {
           method: "POST",
           credentials: "include"
         })
+        if (res.ok) {
+          toast({
+            title: "🚫 No Show Confirmado",
+            description: `Flat ${flat.flatNumber || flat.number} marcado como No Show. Quarto liberado e mantido limpo.`
+          })
+        } else {
+          const errData = await res.json().catch(() => ({}))
+          toast({
+            title: "Erro ao registrar No Show",
+            description: errData.error || "Não foi possível registrar o No Show.",
+            variant: "destructive"
+          })
+        }
       }
       setNoShowModalOpen(false)
       refreshData()
     } catch (err) {
       console.error("Erro ao registrar No Show:", err)
+      toast({
+        title: "Erro de conexão",
+        description: "Falha ao registrar No Show. Verifique sua conexão.",
+        variant: "destructive"
+      })
     } finally {
       setIsSubmittingNoShow(false)
     }

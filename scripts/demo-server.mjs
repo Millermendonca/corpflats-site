@@ -181,12 +181,24 @@ app.post("/api/cleaning/assignments/:requestId/no-show", (req, res) => {
   const flat = db.flats.find(f => f.id === item.flatId);
   const fNum = flat ? flat.number : (item.flatNumber || String(item.flatId));
 
-  // Marca APENAS o request selecionado com status no_show (não altera históricos nem propaga para outras datas)
+  // Marca o request com status no_show
   item.status = "no_show";
   item.isVacant = true;
   item.completedAt = now;
   item.pendingObservation = "No Show - Quarto não utilizado / Limpo";
   item.updatedAt = now;
+
+  // Atualiza também a reserva no PMS para status no_show para não gerar pendência de limpeza
+  const resMatches = (db.reservations || []).filter(r => 
+    (r.flatId === item.flatId || String(r.flatNumber) === String(fNum)) &&
+    (r.checkoutDate === item.requestDate || r.checkinDate === item.requestDate || (r.checkinDate <= item.requestDate && r.checkoutDate >= item.requestDate)) &&
+    r.status !== "cancelada"
+  );
+  for (const r of resMatches) {
+    r.status = "no_show";
+    r.checkoutDone = true;
+    r.updatedAt = now;
+  }
 
   createNotification({
     category: "checkout",
@@ -1240,41 +1252,6 @@ function sanitizeReservationFlags() {
     console.log("[Auto-Fix] Reserva CORP-212-0066 atualizada com PIX oficial Banco Inter!");
   }
 
-  // Auto-recuperação/correção para solicitações de limpeza marcadas indevidamente como no_show
-  if (db.cleaningRequests) {
-    let fixCount = 0;
-    for (const req of db.cleaningRequests) {
-      if (req.status === "no_show") {
-        // Se este quarto já possui trabalho realizado por camareira, recupera como LIMPO (clean)!
-        if (req.cleaningStartedAt || req.durationMinutes || req.assignedUserId) {
-          req.status = "clean";
-          req.completedAt = req.completedAt || req.cleaningStartedAt || `${req.requestDate}T16:00:00.000Z`;
-          req.pendingObservation = null;
-          req.isVacant = true;
-          fixCount++;
-          continue;
-        }
-
-        const hasActiveStay = (db.reservations || []).some(r =>
-          (r.flatId === req.flatId || String(r.flatNumber) === String(req.flatNumber)) &&
-          r.status !== "cancelada" && r.status !== "cancelado" &&
-          (r.checkoutDate === req.requestDate || (r.checkinDate < req.requestDate && r.checkoutDate >= req.requestDate)) &&
-          (r.status === "confirmada" || r.paidAmount > 0 || r.checkinDate < req.requestDate)
-        );
-        if (hasActiveStay) {
-          req.status = "dirty";
-          req.pendingObservation = null;
-          req.isVacant = false;
-          req.completedAt = null;
-          fixCount++;
-        }
-      }
-    }
-    if (fixCount > 0) {
-      saveDatabase();
-      console.log(`[Auto-Fix] ${fixCount} solicitação(ões) de limpeza reconciliada(s).`);
-    }
-  }
 }
 
 async function loadDatabase() {
@@ -2052,16 +2029,21 @@ function reconcileCleaningRequests() {
     if (items.length === 1) {
       reconciled.push(items[0]);
     } else {
-      // Prioridade absoluta: registro com status === "clean"
+      // Prioridade absoluta: registro com status === "clean" ou "no_show"
       const cleanItem = items.find(i => i.status === "clean");
       if (cleanItem) {
         reconciled.push(cleanItem);
       } else {
-        const inProgress = items.find(i => i.status === "cleaning_now" || i.status === "will_clean");
-        if (inProgress) {
-          reconciled.push(inProgress);
+        const noShowItem = items.find(i => i.status === "no_show");
+        if (noShowItem) {
+          reconciled.push(noShowItem);
         } else {
-          reconciled.push(items[0]);
+          const inProgress = items.find(i => i.status === "cleaning_now" || i.status === "will_clean");
+          if (inProgress) {
+            reconciled.push(inProgress);
+          } else {
+            reconciled.push(items[0]);
+          }
         }
       }
     }
@@ -3005,6 +2987,10 @@ function parseSpreadsheetBuffer(buf) {
     const preservedRequests = db.cleaningRequests.filter(req => {
       const isValidFlat = validFlatNumbers.has(req.flatNumber) || validFlatIds.has(req.flatId);
       if (!isValidFlat) return false;
+      // Sempre preserva registros limpos, com no-show, manuais de admin ou com camareira/conclusão
+      if (req.status === "clean" || req.status === "no_show" || req.source === "admin_manual" || req.source === "manual" || req.assignedUserId || req.completedAt) {
+        return true;
+      }
       const kNum = `${req.flatNumber}-${req.requestDate}`;
       const kId = `${req.flatId}-${req.requestDate}`;
       return !processedKeys.has(kNum) && !processedKeys.has(kId) && !datesToProcess.includes(req.requestDate);
@@ -3018,7 +3004,13 @@ function parseSpreadsheetBuffer(buf) {
 
     const seenReqKeys = new Set();
     const deduplicatedRequests = [];
-    for (const r of [...newRequests, ...preservedRequests]) {
+    // Prioriza requests preservados que tenham status definitivo (clean ou no_show) sobre novos dirty
+    const sortedCandidates = [...newRequests, ...preservedRequests].sort((a, b) => {
+      const aScore = a.status === "clean" ? 3 : (a.status === "no_show" ? 2 : (a.assignedUserId ? 1 : 0));
+      const bScore = b.status === "clean" ? 3 : (b.status === "no_show" ? 2 : (b.assignedUserId ? 1 : 0));
+      return bScore - aScore;
+    });
+    for (const r of sortedCandidates) {
       const k = `${r.flatId}-${r.requestDate}`;
       if (!seenReqKeys.has(k) && (validFlatNumbers.has(r.flatNumber) || validFlatIds.has(r.flatId))) {
         seenReqKeys.add(k);
@@ -3979,6 +3971,7 @@ function getRequestsForDate(dateStr) {
   // 2. Busca todas as reservas ativas que possuem CHECKOUT na data consultada (checkoutDate === dateStr)
   const pmsCheckouts = (db.reservations || []).filter(r => 
     r.status !== "cancelada" && 
+    r.status !== "no_show" &&
     r.checkoutDate === dateStr
   );
 
@@ -4005,24 +3998,7 @@ function getRequestsForDate(dateStr) {
       (String(c.flatNumber) === flatNumber || c.flatId === flat.id) && 
       c.requestDate === dateStr
     );
-    const existingCleaning = matchingCleanings.find(c => c.status === "clean") || matchingCleanings[0];
-
-    // Se o flat possui checkout ativo nesta data de uma estadia confirmada (o hóspede realmente se hospedou),
-    // mas o existingCleaning estava com status 'no_show', recupera adequadamente:
-    // Se já tinha sido limpo pela camareira, recupera como 'clean'. Se não, como 'dirty'.
-    if (existingCleaning && existingCleaning.status === "no_show" && pmsRes && (pmsRes.checkinDate < dateStr || pmsRes.paidAmount > 0 || pmsRes.status === "confirmada")) {
-      if (existingCleaning.cleaningStartedAt || existingCleaning.durationMinutes || existingCleaning.assignedUserId) {
-        existingCleaning.status = "clean";
-        existingCleaning.completedAt = existingCleaning.completedAt || existingCleaning.cleaningStartedAt || `${dateStr}T16:00:00.000Z`;
-        existingCleaning.pendingObservation = null;
-        existingCleaning.isVacant = true;
-      } else {
-        existingCleaning.status = "dirty";
-        existingCleaning.pendingObservation = null;
-        existingCleaning.isVacant = false;
-        existingCleaning.completedAt = null;
-      }
-    }
+    const existingCleaning = matchingCleanings.find(c => c.status === "clean") || matchingCleanings.find(c => c.status === "no_show") || matchingCleanings[0];
 
     const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
     const card = {
@@ -4445,6 +4421,9 @@ app.get("/api/dashboard/summary", (req, res) => {
     else if (r.status === "pending_issue") totalPending++;
     else if (r.status === "cleaning_now") totalCleaning++;
     else if (r.status === "will_clean") totalWillClean++;
+    else if (r.status === "no_show" || r.status === "extended") {
+      // No Show e Estendeu não contam como sujos/pendentes de faxina
+    }
     else totalDirty++;
   }
 
@@ -4464,7 +4443,7 @@ app.get("/api/dashboard/summary", (req, res) => {
 
   res.json({
     date: dateStr,
-    totalCheckouts: requestsForDate.length,
+    totalCheckouts: requestsForDate.filter(r => r.status !== "no_show").length,
     totalClean,
     totalPending,
     totalCleaning,

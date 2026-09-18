@@ -201,18 +201,23 @@ export default function Dashboard() {
   // Filtered flats according to active status filter
   const filteredFlats = useMemo(() => {
     if (!sortedFlats || !Array.isArray(sortedFlats)) return []
-    if (statusFilter === "all") return sortedFlats
+    // Para camareiras, quartos com No Show não entram na fila de quartos para higienização
+    const baseFlats = !isAdmin 
+      ? sortedFlats.filter((f: any) => (f?.cleaningRequest?.status || f?.status) !== "no_show")
+      : sortedFlats
+
+    if (statusFilter === "all") return baseFlats
     if (statusFilter === "cleaning_now") {
-      return sortedFlats.filter((f: any) => {
+      return baseFlats.filter((f: any) => {
         const st = f?.cleaningRequest?.status || "dirty"
         return st === "cleaning_now" || st === "will_clean"
       })
     }
-    return sortedFlats.filter((f: any) => {
+    return baseFlats.filter((f: any) => {
       const st = f?.cleaningRequest?.status || "dirty"
       return st === statusFilter
     })
-  }, [sortedFlats, statusFilter])
+  }, [sortedFlats, statusFilter, isAdmin])
 
   const toggleFilter = (targetStatus: string) => {
     if (statusFilter === targetStatus) {
