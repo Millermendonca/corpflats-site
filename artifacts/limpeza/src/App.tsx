@@ -134,10 +134,12 @@ function Router() {
         <Route path="/lista-compras" component={ShoppingListPage} />
         <Route path="/compras" component={ShoppingListPage} />
 
-        {/* Maid Financial Statement Routes */}
-        <Route path="/extrato" component={MaidStatementPage} />
-        <Route path="/meu-extrato" component={MaidStatementPage} />
-        <Route path="/extrato-camareiras" component={MaidStatementPage} />
+        {/* Maid Financial Statement & Fechamento Routes */}
+        <Route path="/extrato" component={Reports} />
+        <Route path="/meu-extrato" component={Reports} />
+        <Route path="/extrato-camareiras" component={Reports} />
+        <Route path="/fechamento" component={Reports} />
+        <Route path="/fechamento-limpeza" component={Reports} />
 
         {/* WhatsApp Automation & Z-API Connection Routes */}
         <Route path="/automacoes-camareiras" component={MaidWhatsappAutomation} />

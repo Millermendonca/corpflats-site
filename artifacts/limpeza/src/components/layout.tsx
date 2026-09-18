@@ -220,13 +220,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
       title: "🧹 Governança & Camareiras",
       items: [
         { href: "/dashboard", label: "Painel de Limpeza", icon: LayoutDashboard, description: "Quartos sujos, limpos e em andamento" },
+        { href: "/reports", label: isAdmin ? "Fechamento & Diárias das Camareiras" : "Meu Fechamento & Extrato", icon: Wallet, description: "Fechamento quinzenal, extrato em tempo real, vales e PIX" },
         { href: "/lista-compras", label: "Lista de Compras", icon: ShoppingCart, description: "Itens para reposição, compras e governança" },
-        { href: "/extrato", label: isAdmin ? "Extrato Financeiro Camareiras" : "Meu Extrato Financeiro", icon: Wallet, description: "Extrato em tempo real, diárias, vales e PIX" },
         { href: "/achados-perdidos", label: "Achados & Perdidos", icon: Package, description: "Objetos esquecidos, custódia e devoluções" },
         { href: "/tasks", label: "Tarefas Preventivas", icon: ClipboardList, description: "Trocas de filtro, dedetizações e rotinas" },
         { href: "/observations", label: "Ocorrências & Avarias", icon: MessageSquareWarning, description: "Defeitos e manutenções relatadas" },
         ...(isAdmin ? [{ href: "/surveys", label: "Vistorias de Saída", icon: ClipboardCheck, description: "Conferência de itens e fotos pós checkout" }] : []),
-        { href: "/reports", label: isAdmin ? "Relatório & Fechamento de Limpeza" : "Meu Relatório", icon: BarChart3, description: "Fechamento quinzenal, histórico e métricas" },
         ...(isAdmin ? [{ href: "/automacoes-camareiras", label: "Automação WhatsApp Camareiras", icon: MessageSquare, description: "Gatilhos automáticos, alertas de quarto e fechamentos" }] : []),
       ]
     },

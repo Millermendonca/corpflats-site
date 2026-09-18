@@ -5364,10 +5364,36 @@ app.get("/api/analytics/report", (req, res) => {
   });
 
   let grandTotalToPay = 0;
+  let grandTotalAdvances = 0;
+  let grandTotalNetToPay = 0;
+  let grandTotalPayments = 0;
 
   // Camareiras / Usuários
   const candidateUsers = (db.users || []).filter(u => u.role === "camareira" || u.role === "cleaner" || u.role === "admin");
   const cleaningsByUser = candidateUsers.map(u => {
+    syncMaidCredits(u.id);
+    const currentBalance = Math.round(getMaidBalance(u.id) * 100) / 100;
+
+    // Vales / Adiantamentos concedidos no período [startDate, endDate]
+    const userVales = (db.maidStatementEntries || []).filter(e => {
+      if (e.userId !== u.id || e.entryType !== "debit") return false;
+      const d = e.entryDate || (e.createdAt ? e.createdAt.substring(0, 10) : "");
+      if (!d || d < startDate || d > endDate) return false;
+      const payment = e.paymentId ? (db.maidPayments || []).find(p => p.id === e.paymentId) : null;
+      return payment ? payment.type === "advance" : true;
+    });
+    const advancesInPeriod = userVales.reduce((acc, v) => acc + Number(v.amount || 0), 0);
+
+    // Pagamentos PIX realizados no período [startDate, endDate]
+    const userPayments = (db.maidStatementEntries || []).filter(e => {
+      if (e.userId !== u.id || e.entryType !== "debit") return false;
+      const d = e.entryDate || (e.createdAt ? e.createdAt.substring(0, 10) : "");
+      if (!d || d < startDate || d > endDate) return false;
+      const payment = e.paymentId ? (db.maidPayments || []).find(p => p.id === e.paymentId) : null;
+      return payment ? payment.type === "payment" : false;
+    });
+    const paymentsInPeriod = userPayments.reduce((acc, p) => acc + Number(p.amount || 0), 0);
+
     const userCleanings = completedCleanings
       .filter(c => c.assignedUserId === u.id)
       .sort((a, b) => {
@@ -5401,17 +5427,28 @@ app.get("/api/analytics/report", (req, res) => {
       : defaultRate;
 
     const totalToPay = userCleanings.length * ratePerRoom;
+    const netToPay = Math.max(0, Number((totalToPay - advancesInPeriod).toFixed(2)));
+
     grandTotalToPay += totalToPay;
+    grandTotalAdvances += advancesInPeriod;
+    grandTotalNetToPay += netToPay;
+    grandTotalPayments += paymentsInPeriod;
 
     return {
       userId: u.id,
       username: u.username,
       name: u.name || u.username,
       role: u.role,
+      pixKey: u.pixKey || "",
+      whatsapp: u.whatsapp || u.phone || "",
       count: userCleanings.length,
       avgDurationMinutes: avgMinutes,
       ratePerRoom,
       totalToPay: Number(totalToPay.toFixed(2)),
+      advancesInPeriod: Number(advancesInPeriod.toFixed(2)),
+      paymentsInPeriod: Number(paymentsInPeriod.toFixed(2)),
+      netToPay: Number(netToPay.toFixed(2)),
+      currentBalance,
       cleanings: userCleanings.map(c => {
         const flat = (db.flats || []).find(f => f.id === c.flatId);
         let itemDuration = 35;
@@ -5442,6 +5479,26 @@ app.get("/api/analytics/report", (req, res) => {
     ? Number(db.cleaningRates.userRates[userAuth.id])
     : defaultRate;
   const myTotalToPay = myCleanings.length * myRate;
+  let myAdvancesInPeriod = 0;
+  let myPaymentsInPeriod = 0;
+  let myCurrentBalance = 0;
+
+  if (userAuth) {
+    syncMaidCredits(userAuth.id);
+    myCurrentBalance = Math.round(getMaidBalance(userAuth.id) * 100) / 100;
+    (db.maidStatementEntries || []).forEach(e => {
+      if (e.userId !== userAuth.id || e.entryType !== "debit") return;
+      const d = e.entryDate || (e.createdAt ? e.createdAt.substring(0, 10) : "");
+      if (!d || d < startDate || d > endDate) return;
+      const payment = e.paymentId ? (db.maidPayments || []).find(p => p.id === e.paymentId) : null;
+      if (payment && payment.type === "payment") {
+        myPaymentsInPeriod += Number(e.amount || 0);
+      } else {
+        myAdvancesInPeriod += Number(e.amount || 0);
+      }
+    });
+  }
+  const myNetToPay = Math.max(0, Number((myTotalToPay - myAdvancesInPeriod).toFixed(2)));
 
   // Cleanings by day of week
   const daysOfWeek = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
@@ -5496,9 +5553,17 @@ app.get("/api/analytics/report", (req, res) => {
     isCamareira,
     totalCleanings: completedCleanings.length,
     grandTotalToPay: Number(grandTotalToPay.toFixed(2)),
+    grandTotalAdvances: Number(grandTotalAdvances.toFixed(2)),
+    grandTotalNetToPay: Number(grandTotalNetToPay.toFixed(2)),
+    grandTotalPayments: Number(grandTotalPayments.toFixed(2)),
     defaultRatePerRoom: defaultRate,
     myTotalToPay: Number(myTotalToPay.toFixed(2)),
+    myAdvancesInPeriod: Number(myAdvancesInPeriod.toFixed(2)),
+    myNetToPay: Number(myNetToPay.toFixed(2)),
+    myPaymentsInPeriod: Number(myPaymentsInPeriod.toFixed(2)),
+    myCurrentBalance,
     myRatePerRoom: myRate,
+    myPixKey: userAuth?.pixKey || "",
     myTotalCleanings: userAuth ? completedCleanings.filter(c => c.assignedUserId === userAuth.id).length : completedCleanings.length,
     myAvgDurationMinutes: (() => {
       let myTotalMins = 0;
