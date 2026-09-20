@@ -3037,12 +3037,12 @@ export default function PmsCalendar() {
 
         {/* Modal: New / Edit Reservation */}
         <Dialog open={resModalOpen} onOpenChange={setResModalOpen}>
-          <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogContent className="w-full max-w-[100vw] sm:max-w-2xl max-h-[92dvh] sm:max-h-[90vh] overflow-y-auto overflow-x-hidden p-3.5 sm:p-6">
             <DialogHeader>
-              <div className="flex items-center justify-between gap-2">
-                <DialogTitle className="flex items-center gap-2">
+              <div className="flex items-center justify-between gap-2 pr-6 sm:pr-0">
+                <DialogTitle className="flex items-center gap-2 text-base sm:text-lg min-w-0">
                   <CalendarDays className="w-5 h-5 text-primary shrink-0" />
-                  <span>{selectedRes ? `Editar Reserva: ${selectedRes.code}` : "Nova Reserva"}</span>
+                  <span className="truncate">{selectedRes ? `Editar Reserva: ${selectedRes.code}` : "Nova Reserva"}</span>
                 </DialogTitle>
                 {selectedRes && (
                   <Badge variant="outline" className="text-xs font-mono font-bold text-amber-700 dark:text-amber-300 border-amber-300 shrink-0">
@@ -3050,7 +3050,7 @@ export default function PmsCalendar() {
                   </Badge>
                 )}
               </div>
-              <DialogDescription>
+              <DialogDescription className="text-xs text-muted-foreground">
                 {selectedRes 
                   ? "Gerencie os dados da estadia, consulte o histórico de e-mails transacionais ou envie novas mensagens." 
                   : "Preencha os dados do hóspede, datas da estadia e valores."}
@@ -3058,64 +3058,66 @@ export default function PmsCalendar() {
             </DialogHeader>
 
             {selectedRes && (
-              <Tabs value={resModalTab} onValueChange={(v: any) => setResModalTab(v)} className="w-full mt-1 mb-2">
-                <TabsList className="flex w-full items-center overflow-x-auto p-1 bg-muted/60 rounded-xl sm:grid sm:grid-cols-4 gap-1 h-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                  <TabsTrigger
-                    value="details"
-                    className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs"
-                  >
-                    <CalendarDays className="w-3.5 h-3.5 shrink-0 text-primary" />
-                    <span><span className="hidden sm:inline">Dados da </span>Reserva</span>
-                  </TabsTrigger>
-                  <TabsTrigger
-                    value="audit"
-                    className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs relative"
-                  >
-                    <Clock className="w-3.5 h-3.5 shrink-0 text-blue-500" />
-                    <span>Histórico<span className="hidden sm:inline"> & Logs</span></span>
-                    {auditLogs.length > 0 && (
-                      <Badge variant="secondary" className="text-[10px] h-4 px-1.5 py-0 font-bold ml-0.5 bg-blue-500/15 text-blue-700 dark:text-blue-300 shrink-0">
-                        {auditLogs.length}
-                      </Badge>
-                    )}
-                  </TabsTrigger>
-                  <TabsTrigger
-                    value="communications"
-                    className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs relative"
-                  >
-                    <MessageCircle className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
-                    <span>Mensagens</span>
-                    {(communications.length + scheduledEmails.length + whatsappQueue.length + whatsappHistory.length) > 0 && (
-                      <Badge variant="secondary" className="text-[10px] h-4 px-1.5 py-0 font-bold ml-0.5 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 shrink-0">
-                        {communications.length + scheduledEmails.length + whatsappQueue.length + whatsappHistory.length}
-                      </Badge>
-                    )}
-                  </TabsTrigger>
-                  <TabsTrigger
-                    value="links"
-                    className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs relative"
-                  >
-                    <Link2 className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
-                    <span>Links Úteis</span>
-                  </TabsTrigger>
-                </TabsList>
+              <Tabs value={resModalTab} onValueChange={(v: any) => setResModalTab(v)} className="w-full mt-1 mb-2 min-w-0">
+                <div className="w-full overflow-x-auto -mx-0.5 px-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                  <TabsList className="flex w-max sm:w-full min-w-full items-center p-1 bg-muted/60 rounded-xl sm:grid sm:grid-cols-4 gap-1 h-auto">
+                    <TabsTrigger
+                      value="details"
+                      className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs"
+                    >
+                      <CalendarDays className="w-3.5 h-3.5 shrink-0 text-primary" />
+                      <span><span className="hidden sm:inline">Dados da </span>Reserva</span>
+                    </TabsTrigger>
+                    <TabsTrigger
+                      value="audit"
+                      className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs relative"
+                    >
+                      <Clock className="w-3.5 h-3.5 shrink-0 text-blue-500" />
+                      <span>Histórico<span className="hidden sm:inline"> & Logs</span></span>
+                      {auditLogs.length > 0 && (
+                        <Badge variant="secondary" className="text-[10px] h-4 px-1.5 py-0 font-bold ml-0.5 bg-blue-500/15 text-blue-700 dark:text-blue-300 shrink-0">
+                          {auditLogs.length}
+                        </Badge>
+                      )}
+                    </TabsTrigger>
+                    <TabsTrigger
+                      value="communications"
+                      className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs relative"
+                    >
+                      <MessageCircle className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
+                      <span>Mensagens</span>
+                      {(communications.length + scheduledEmails.length + whatsappQueue.length + whatsappHistory.length) > 0 && (
+                        <Badge variant="secondary" className="text-[10px] h-4 px-1.5 py-0 font-bold ml-0.5 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 shrink-0">
+                          {communications.length + scheduledEmails.length + whatsappQueue.length + whatsappHistory.length}
+                        </Badge>
+                      )}
+                    </TabsTrigger>
+                    <TabsTrigger
+                      value="links"
+                      className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs relative"
+                    >
+                      <Link2 className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
+                      <span>Links Úteis</span>
+                    </TabsTrigger>
+                  </TabsList>
+                </div>
               </Tabs>
             )}
 
             {(!selectedRes || resModalTab === "details") && (
               <form onSubmit={handleSaveRes}>
 
-              <div className="py-3 space-y-3.5">
+              <div className="py-2.5 space-y-3">
                 {/* Banner de Acesso Rápido aos Links da Reserva */}
                 {selectedRes && (
-                  <div className="p-3 bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/80 dark:border-emerald-800/60 rounded-2xl flex items-center justify-between gap-3 text-xs shadow-2xs">
-                    <div className="flex items-center gap-2.5">
+                  <div className="p-3 bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/80 dark:border-emerald-800/60 rounded-2xl flex items-center justify-between gap-2.5 text-xs shadow-2xs">
+                    <div className="flex items-center gap-2.5 min-w-0">
                       <div className="w-8 h-8 rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
                         <Link2 className="w-4 h-4" />
                       </div>
-                      <div>
-                        <div className="font-bold text-slate-800 dark:text-slate-200">Central de Links da Reserva</div>
-                        <div className="text-[11px] text-muted-foreground">Portal Minha Reserva, Café, Pré Check-in e Check-out Expresso</div>
+                      <div className="min-w-0">
+                        <div className="font-bold text-slate-800 dark:text-slate-200 truncate">Central de Links da Reserva</div>
+                        <div className="text-[11px] text-muted-foreground truncate">Portal Minha Reserva, Café, Pré Check-in e Check-out</div>
                       </div>
                     </div>
                     <Button
@@ -3123,10 +3125,11 @@ export default function PmsCalendar() {
                       variant="outline"
                       size="sm"
                       onClick={() => setResModalTab("links")}
-                      className="h-7 px-2.5 text-xs font-bold text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700 hover:bg-emerald-100/50 dark:hover:bg-emerald-900/40 shrink-0 rounded-xl"
+                      className="h-7 px-2 text-xs font-bold text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700 hover:bg-emerald-100/50 dark:hover:bg-emerald-900/40 shrink-0 rounded-xl"
                     >
                       <Link2 className="w-3.5 h-3.5 mr-1" />
-                      Ver todos ➔
+                      <span>Ver todos</span>
+                      <span className="hidden sm:inline ml-0.5">➔</span>
                     </Button>
                   </div>
                 )}
@@ -3199,8 +3202,8 @@ export default function PmsCalendar() {
                     </div>
                   </div>
                 )}
-                <div className="grid grid-cols-2 gap-3 items-start">
-                  <div className="space-y-1.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 items-start">
+                  <div className="space-y-1.5 min-w-0">
                     <div className="flex items-center justify-between">
                       <Label className="text-xs font-semibold block leading-none h-4 flex items-center">Apartamento</Label>
                       {!selectedRes && fairShareResult?.bestFlatId && String(formFlatId) === String(fairShareResult.bestFlatId) && (
@@ -3217,7 +3220,7 @@ export default function PmsCalendar() {
                         setFormForceReplace(false); 
                       }}
                     >
-                      <SelectTrigger className="text-xs font-bold h-9">
+                      <SelectTrigger className="text-xs font-bold h-9 w-full min-w-0">
                         <SelectValue placeholder={loadingFairShare ? "✨ Buscando quarto sugerido..." : "Selecione o Flat"}>
                           {formFlatId 
                             ? `Apt ${data.flats.find(f => String(f.id) === String(formFlatId))?.number || formFlatId}${!selectedRes && String(formFlatId) === String(fairShareResult?.bestFlatId) ? " ✨ (Sugerido)" : ""}` 
@@ -3236,9 +3239,9 @@ export default function PmsCalendar() {
                               <div className="flex items-center justify-between gap-2 w-full py-0.5">
                                 <span className="font-bold">Apt {f.number}</span>
                                 {isBest && (
-                                  <span className="text-[9px] bg-amber-500 text-white font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5">
-                                    ✨ Quarto da Vez (Sugerido)
-                                  </span>
+                                   <span className="text-[9px] bg-amber-500 text-white font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                                     ✨ Quarto da Vez (Sugerido)
+                                   </span>
                                 )}
                                 {!isAvail && (
                                   <span className="text-[9px] bg-rose-500/20 text-rose-600 dark:text-rose-400 font-bold px-1.5 py-0.5 rounded">
@@ -3258,7 +3261,7 @@ export default function PmsCalendar() {
                     </Select>
                   </div>
 
-                  <div className="space-y-1.5">
+                  <div className="space-y-1.5 min-w-0">
                     <Label className="text-xs font-semibold block leading-none h-4 flex items-center">Canal de Origem</Label>
                     <Select 
                       value={formChannel} 
@@ -3279,7 +3282,7 @@ export default function PmsCalendar() {
                         }
                       }}
                     >
-                      <SelectTrigger className="text-xs h-9">
+                      <SelectTrigger className="text-xs h-9 w-full min-w-0">
                         <SelectValue placeholder="Canal" />
                       </SelectTrigger>
                       <SelectContent>
@@ -3322,9 +3325,9 @@ export default function PmsCalendar() {
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 items-start">
                   {/* Entrada / Check-in */}
-                  <div className="space-y-1.5 p-2.5 rounded-xl bg-slate-50/80 dark:bg-slate-900/50 border border-border/70">
+                  <div className="space-y-1.5 p-2.5 rounded-xl bg-slate-50/80 dark:bg-slate-900/50 border border-border/70 min-w-0">
                     <Label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center justify-between">
                       <span className="flex items-center gap-1.5">
                         <LogIn className="w-3.5 h-3.5 text-emerald-600" />
@@ -3333,24 +3336,24 @@ export default function PmsCalendar() {
                       <span className="text-[10px] text-muted-foreground font-normal">Padrão: {defaultCheckinTime}</span>
                     </Label>
                     <div className="grid grid-cols-5 gap-2 items-center">
-                      <div className="col-span-3">
+                      <div className="col-span-3 min-w-0">
                         <Label className="text-[10px] text-muted-foreground block mb-0.5">Data</Label>
                         <Input 
                           type="date" 
                           value={formCheckin} 
                           onChange={e => setFormCheckin(e.target.value)} 
                           required 
-                          className="text-xs h-9"
+                          className="text-xs h-9 w-full min-w-0 px-2"
                         />
                       </div>
-                      <div className="col-span-2">
+                      <div className="col-span-2 min-w-0">
                         <Label className="text-[10px] text-muted-foreground block mb-0.5">Horário</Label>
                         <Input 
                           type="time" 
                           value={formCheckinTime} 
                           onChange={e => setFormCheckinTime(e.target.value)} 
                           required 
-                          className="text-xs h-9 font-medium"
+                          className="text-xs h-9 font-medium w-full min-w-0 px-2"
                           title="Horário previsto para início do Check-in"
                         />
                       </div>
@@ -3358,7 +3361,7 @@ export default function PmsCalendar() {
                   </div>
 
                   {/* Saída / Check-out */}
-                  <div className="space-y-1.5 p-2.5 rounded-xl bg-slate-50/80 dark:bg-slate-900/50 border border-border/70">
+                  <div className="space-y-1.5 p-2.5 rounded-xl bg-slate-50/80 dark:bg-slate-900/50 border border-border/70 min-w-0">
                     <Label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center justify-between">
                       <span className="flex items-center gap-1.5">
                         <LogOut className="w-3.5 h-3.5 text-rose-600" />
@@ -3367,24 +3370,24 @@ export default function PmsCalendar() {
                       <span className="text-[10px] text-muted-foreground font-normal">Padrão: {defaultCheckoutTime}</span>
                     </Label>
                     <div className="grid grid-cols-5 gap-2 items-center">
-                      <div className="col-span-3">
+                      <div className="col-span-3 min-w-0">
                         <Label className="text-[10px] text-muted-foreground block mb-0.5">Data</Label>
                         <Input 
                           type="date" 
                           value={formCheckout} 
                           onChange={e => setFormCheckout(e.target.value)} 
                           required 
-                          className="text-xs h-9"
+                          className="text-xs h-9 w-full min-w-0 px-2"
                         />
                       </div>
-                      <div className="col-span-2">
+                      <div className="col-span-2 min-w-0">
                         <Label className="text-[10px] text-muted-foreground block mb-0.5">Horário</Label>
                         <Input 
                           type="time" 
                           value={formCheckoutTime} 
                           onChange={e => setFormCheckoutTime(e.target.value)} 
                           required 
-                          className="text-xs h-9 font-medium"
+                          className="text-xs h-9 font-medium w-full min-w-0 px-2"
                           title="Horário limite para conclusão do Check-out"
                         />
                       </div>
