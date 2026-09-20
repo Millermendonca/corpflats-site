@@ -529,6 +529,12 @@ export function sendEmailAsync({
     return null;
   }
 
+  // Verifica se o motor automático de e-mails está pausado pelo usuário
+  if (metadata?.isAutomated && db?.settings?.emailSettings?.enabled === false) {
+    console.log(`[MailService ⏸️] Motor de e-mails automáticos pausado. Disparo para ${recipient} ('${subject}') suspenso.`);
+    return null;
+  }
+
   const finalHtml = bodyHtml || html || "";
   const commId = crypto.randomUUID();
   const now = new Date().toISOString();

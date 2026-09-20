@@ -376,10 +376,12 @@ let db = {
     checkinTime: "14:00",
     checkoutTime: "12:00",
     autoEarlyCheckinForSite: true,
+    googleMapsUrl: "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac",
     buildingName: "Edifício Soho Residence Service",
     receptionEmail: "soho@promenade.com.br",
     emailSettings: {
-      host: "smtppro.zoho.com",
+      enabled: true,
+      host: "smtp.zoho.com",
       port: 465,
       user: "",
       pass: "",
@@ -2445,10 +2447,33 @@ function diffReservationFields(oldRes, newBody, flatsList = []) {
     const newFlatNum = flatsList.find(f => f.id === Number(newBody.flatId))?.number || newBody.flatId;
     changes.push({
       field: "flatNumber",
-      label: "Apartamento (Transferência)",
+      label: "Acomodação / Quarto",
       oldValue: `Flat ${oldFlatNum}`,
       newValue: `Flat ${newFlatNum}`
     });
+  } else if (newBody.flatNumber !== undefined && String(newBody.flatNumber).trim() !== String(oldRes.flatNumber || "").trim()) {
+    changes.push({
+      field: "flatNumber",
+      label: "Acomodação / Quarto",
+      oldValue: `Flat ${oldRes.flatNumber}`,
+      newValue: `Flat ${newBody.flatNumber}`
+    });
+  }
+
+  // Veículo / Placa
+  const oldPlate = oldRes.vehicle?.plate;
+  const newPlate = newBody.vehicle?.plate || newBody.vehiclePlate;
+  if (newPlate !== undefined) {
+    const cleanOld = String(oldPlate || "").toUpperCase().trim();
+    const cleanNew = String(newPlate || "").toUpperCase().trim();
+    if (cleanNew && cleanNew !== cleanOld) {
+      changes.push({
+        field: "vehiclePlate",
+        label: "Veículo / Garagem",
+        oldValue: cleanOld ? `Placa ${cleanOld}` : "(sem veículo)",
+        newValue: `Placa ${cleanNew}`
+      });
+    }
   }
 
   for (const [key, label] of Object.entries(FIELD_MAP)) {
@@ -2503,6 +2528,33 @@ function diffReservationFields(oldRes, newBody, flatsList = []) {
   }
 
   return changes;
+}
+
+// ── Campos de Reserva Voltados ao Hóspede (Exclui notas internas de recepção) ─
+export const GUEST_FACING_RESERVATION_FIELDS = new Set([
+  "flatNumber",
+  "checkinDate",
+  "checkoutDate",
+  "checkinTime",
+  "checkoutTime",
+  "guestCount",
+  "adults",
+  "children",
+  "totalAmount",
+  "paidAmount",
+  "paymentStatus",
+  "includeBreakfast",
+  "guestName",
+  "twinBeds",
+  "extraMattress",
+  "prefersHighFloor",
+  "vehiclePlate",
+  "specialRequests"
+]);
+
+export function filterGuestFacingDiffs(diffs = []) {
+  if (!Array.isArray(diffs)) return [];
+  return diffs.filter(d => GUEST_FACING_RESERVATION_FIELDS.has(d.field));
 }
 
 // ── Serviço de Notificação & Autorização Automática de Garagem ───────────────
@@ -7337,12 +7389,21 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   }
 
   if (oldStatus === "pre_reserva" && r.status === "confirmada") {
-    triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", r);
+    triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", r).catch(err => {
+      console.warn("[WhatsApp Trigger] Erro ao disparar reservation_created:", err.message);
+    });
   } else {
-    // Passa as alterações como contexto temporário para resolver a tag {{resumo_alteracoes}}
-    r._changesContext = diffs;
-    triggerImmediateWhatsApp(db, saveDatabase, "reservation_updated", r);
-    delete r._changesContext; // Remove o campo temporário após o disparo
+    // Filtra apenas as alterações voltadas ao hóspede (ex: quarto, datas, valor, hóspedes, café, cama)
+    const guestFacingDiffs = filterGuestFacingDiffs(diffs);
+    if (guestFacingDiffs.length > 0) {
+      console.log(`[WhatsApp Trigger] Disparando aviso de alteração de reserva (${r.code} - ${r.guestName}) com ${guestFacingDiffs.length} itens modificados.`);
+      const resvForTrigger = { ...r, _changesContext: guestFacingDiffs };
+      triggerImmediateWhatsApp(db, saveDatabase, "reservation_updated", resvForTrigger).catch(err => {
+        console.warn("[WhatsApp Trigger] Erro ao disparar reservation_updated:", err.message);
+      });
+    } else {
+      console.log(`[WhatsApp Trigger] Edição da reserva ${r.code} (${r.guestName}) não teve alterações de itens voltados ao hóspede. Disparo ao WhatsApp suprimido.`);
+    }
   }
   res.json(r);
 });
@@ -9995,24 +10056,124 @@ app.post("/api/reception/undo-checkout/:reservationId", (req, res) => {
 
 // ── Communications & Messaging History Engine (Zoho Mail SMTP & Portaria) ────
 
-// 1. Obter histórico de comunicações vinculado à reserva
+// Gerador de E-mails Agendados para Reserva (Fila de Pré/Pós Estadia)
+export function ensureReservationScheduledEmails(db, saveDatabase, r) {
+  if (!r || !r.guestEmail || r.status === "cancelada") return;
+  if (!db.emailQueue) db.emailQueue = [];
+
+  const resCode = r.code || `RES-${r.flatNumber || '00'}-${r.id}`;
+  const guestEmail = r.guestEmail.trim();
+
+  // 1. E-mail de Pré-Check-in / Instruções de Chegada (véspera ou dia do check-in às 09:00)
+  const hasWelcome = db.emailQueue.some(q => 
+    (q.reservationCode === resCode || q.reservationId === String(r.id)) && 
+    q.triggerEvent === "checkin_welcome" && 
+    q.status !== "cancelled"
+  );
+  if (!hasWelcome && r.checkinDate) {
+    let schedDate = r.checkinDate;
+    try {
+      const d = new Date(r.checkinDate + "T09:00:00Z");
+      d.setDate(d.getDate() - 1);
+      schedDate = d.toISOString().split("T")[0];
+    } catch {}
+
+    db.emailQueue.push({
+      id: `em_q_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      reservationId: String(r.id),
+      reservationCode: resCode,
+      guestName: r.guestName || "Hóspede",
+      recipient: guestEmail,
+      subject: `[INSTRUÇÕES DE CHEGADA] Flat ${r.flatNumber} - CorpFlats Soho`,
+      bodyHtml: `<p>Olá, <strong>${r.guestName}</strong>!</p><p>Sua estadia no <strong>Flat ${r.flatNumber}</strong> está próxima! Lembramos que o check-in inicia às 14:00. Preencha sua ficha de check-in digital antecipadamente para agilizar sua entrada na portaria.</p>`,
+      bodyText: `Olá, ${r.guestName}! Sua estadia no Flat ${r.flatNumber} está próxima! Check-in a partir das 14:00.`,
+      status: "pending",
+      scheduledFor: `${schedDate}T09:00:00.000Z`,
+      triggerEvent: "checkin_welcome",
+      createdAt: new Date().toISOString(),
+      sentAt: null,
+      error: null
+    });
+  }
+
+  // 2. E-mail de Lembrete de Check-out (dia de saída às 08:30)
+  const hasCheckout = db.emailQueue.some(q => 
+    (q.reservationCode === resCode || q.reservationId === String(r.id)) && 
+    q.triggerEvent === "checkout_reminder" && 
+    q.status !== "cancelled"
+  );
+  if (!hasCheckout && r.checkoutDate) {
+    db.emailQueue.push({
+      id: `em_q_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      reservationId: String(r.id),
+      reservationCode: resCode,
+      guestName: r.guestName || "Hóspede",
+      recipient: guestEmail,
+      subject: `[LEMBRETE DE CHECK-OUT] Flat ${r.flatNumber} - CorpFlats Soho`,
+      bodyHtml: `<p>Bom dia, <strong>${r.guestName}</strong>!</p><p>Lembramos que hoje encerra sua estadia no <strong>Flat ${r.flatNumber}</strong>. O horário limite de saída é às 12:00. Ao desocupar a unidade, basta entregar a chave na portaria.</p>`,
+      bodyText: `Bom dia, ${r.guestName}! Lembramos que hoje é a data de saída do Flat ${r.flatNumber} até as 12:00.`,
+      status: "pending",
+      scheduledFor: `${r.checkoutDate}T08:30:00.000Z`,
+      triggerEvent: "checkout_reminder",
+      createdAt: new Date().toISOString(),
+      sentAt: null,
+      error: null
+    });
+  }
+
+  if (typeof saveDatabase === "function") saveDatabase();
+}
+
+// 1. Obter histórico de comunicações vinculado à reserva (E-mails e WhatsApp: Enviados e Agendados)
 app.get("/api/pms/reservations/:id/communications", (req, res) => {
   const paramId = String(req.params.id || "").trim();
   const r = (db.reservations || []).find(x => String(x.id) === paramId || x.code === paramId);
   const resIdStr = r ? String(r.id) : paramId;
   const resCode = r?.code;
+  const cleanPhone = r?.guestPhone ? String(r.guestPhone).replace(/\D/g, "") : null;
+
+  if (r) {
+    ensureReservationScheduledEmails(db, saveDatabase, r);
+  }
 
   if (!db.reservationCommunications) db.reservationCommunications = [];
-
-  const list = db.reservationCommunications.filter(c => 
+  const emailsSent = db.reservationCommunications.filter(c => 
     String(c.reservation_id) === resIdStr || 
     (resCode && String(c.reservation_id) === String(resCode))
   );
+  emailsSent.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
-  // Ordena em ordem cronológica reversa (mais recente primeiro)
-  list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  if (!db.emailQueue) db.emailQueue = [];
+  const emailsScheduled = db.emailQueue.filter(q => 
+    (q.reservationCode && q.reservationCode === resCode) ||
+    (q.reservationId && (String(q.reservationId) === resIdStr || String(q.reservationId) === String(resCode)))
+  );
 
-  res.json(list);
+  const whatsappQueue = (db.whatsappQueue || []).filter(q => {
+    if (resCode && q.reservationCode === resCode) return true;
+    if (cleanPhone && q.guestPhone) {
+      const qPhone = String(q.guestPhone).replace(/\D/g, "");
+      return qPhone.endsWith(cleanPhone) || cleanPhone.endsWith(qPhone);
+    }
+    return false;
+  });
+
+  const whatsappHistory = (db.whatsappHistory || []).filter(h => {
+    if (resCode && h.reservationCode === resCode) return true;
+    if (cleanPhone && h.guestPhone) {
+      const hPhone = String(h.guestPhone).replace(/\D/g, "");
+      return hPhone.endsWith(cleanPhone) || cleanPhone.endsWith(hPhone);
+    }
+    return false;
+  });
+
+  res.json({
+    emails: emailsSent,
+    emailsScheduled,
+    whatsappQueue,
+    whatsappHistory,
+    legacy: emailsSent
+  });
 });
 
 // 2. Envio manual rápido de e-mail a partir do painel da reserva
@@ -10183,6 +10344,162 @@ app.post("/api/settings/email/test", async (req, res) => {
   }
 
   res.json({ success: true, message: verifyRes.message });
+});
+
+// ── Central de E-mails & Hub de Comunicação ──────────────────────────────────
+
+// 7. Obter status e configuração do motor de e-mail
+app.get("/api/emails/config", (req, res) => {
+  const config = getSmtpConfig(db);
+  res.json({
+    enabled: db.settings?.emailSettings?.enabled !== false,
+    isConfigured: config.isConfigured,
+    host: config.host,
+    port: config.port,
+    user: config.user,
+    fromName: config.fromName,
+    fromEmail: config.fromEmail,
+    receptionEmail: db.settings?.receptionEmail || "soho@promenade.com.br",
+    garageEmail: db.settings?.garageEmail || "promenadesoho@pfbestacionamentos.com.br",
+    buildingName: db.settings?.buildingName || "Edifício Soho Residence Service"
+  });
+});
+
+// 8. Atualizar status (Pausar / Ativar) e configurações do motor de e-mail
+app.post("/api/emails/config", (req, res) => {
+  if (!db.settings) db.settings = {};
+  if (!db.settings.emailSettings) db.settings.emailSettings = {};
+  const { enabled, host, port, user, pass, fromName, fromEmail, receptionEmail, garageEmail, buildingName } = req.body;
+  if (enabled !== undefined) {
+    db.settings.emailSettings.enabled = Boolean(enabled);
+    console.log(`[MailEngine] Motor de e-mails automáticos agora está: ${db.settings.emailSettings.enabled ? 'ATIVADO 🟢' : 'PAUSADO ⏸️'}`);
+  }
+  if (host) {
+    let cleanHost = host.trim();
+    if (cleanHost === "smtppro.zoho.com") cleanHost = "smtp.zoho.com";
+    db.settings.emailSettings.host = cleanHost;
+  }
+  if (port !== undefined) db.settings.emailSettings.port = Number(port);
+  if (user !== undefined) db.settings.emailSettings.user = user.trim();
+  if (pass && pass !== "••••••••" && pass !== "") db.settings.emailSettings.pass = pass.trim();
+  if (fromName !== undefined) db.settings.emailSettings.fromName = fromName.trim();
+  if (fromEmail !== undefined) db.settings.emailSettings.fromEmail = fromEmail.trim();
+  if (receptionEmail !== undefined) db.settings.receptionEmail = receptionEmail.trim();
+  if (garageEmail !== undefined) db.settings.garageEmail = garageEmail.trim();
+  if (buildingName !== undefined) db.settings.buildingName = buildingName.trim();
+
+  saveDatabase();
+  res.json({ 
+    success: true, 
+    enabled: db.settings.emailSettings.enabled !== false,
+    message: db.settings.emailSettings.enabled !== false 
+      ? "Motor de e-mails automáticos ativado com sucesso!" 
+      : "Motor de e-mails automáticos pausado."
+  });
+});
+
+// 9. Histórico de todos os e-mails enviados
+app.get("/api/emails/history", (req, res) => {
+  if (!db.reservationCommunications) db.reservationCommunications = [];
+  const list = [...db.reservationCommunications];
+  list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  res.json(list);
+});
+
+// 10. Fila de e-mails agendados
+app.get("/api/emails/queue", (req, res) => {
+  if (!db.emailQueue) db.emailQueue = [];
+  const list = [...db.emailQueue];
+  list.sort((a, b) => new Date(a.scheduledFor || a.createdAt).getTime() - new Date(b.scheduledFor || b.createdAt).getTime());
+  res.json(list);
+});
+
+// 11. Ação "Enviar Agora" (Antecipar E-mail Agendado)
+app.post("/api/emails/queue/:id/send-now", async (req, res) => {
+  const id = req.params.id;
+  if (!db.emailQueue) db.emailQueue = [];
+  const item = db.emailQueue.find(q => q.id === id);
+  if (!item) {
+    return res.status(404).json({ error: "Item da fila de e-mails não encontrado." });
+  }
+
+  console.log(`[EmailQueue] Disparo manual/antecipado solicitado para fila ${id} (${item.recipient})...`);
+  const commLog = await sendEmailAsync({
+    db,
+    saveDatabase,
+    reservationId: item.reservationCode || item.reservationId || "0",
+    recipient: item.recipient,
+    subject: item.subject,
+    bodyHtml: item.bodyHtml,
+    bodyText: item.bodyText || item.subject,
+    type: "email",
+    direction: "outbound",
+    metadata: {
+      trigger: "queue_send_now",
+      queueId: item.id,
+      guestName: item.guestName
+    }
+  });
+
+  item.status = commLog ? "sent" : "failed";
+  item.sentAt = new Date().toISOString();
+  saveDatabase();
+
+  res.json({ success: true, queueItem: item, communication: commLog });
+});
+
+// 12. Cancelar e-mail agendado na fila
+app.delete("/api/emails/queue/:id", (req, res) => {
+  const id = req.params.id;
+  if (!db.emailQueue) db.emailQueue = [];
+  const item = db.emailQueue.find(q => q.id === id);
+  if (!item) {
+    return res.status(404).json({ error: "Item da fila não encontrado." });
+  }
+  item.status = "cancelled";
+  item.updatedAt = new Date().toISOString();
+  saveDatabase();
+  res.json({ success: true, message: "E-mail agendado cancelado com sucesso." });
+});
+
+// 13. Envio manual de e-mail a partir do Hub de E-mails
+app.post("/api/emails/send-manual", async (req, res) => {
+  const { recipient, subject, body, reservationCode, cc, bcc } = req.body;
+  if (!recipient || !subject || !body) {
+    return res.status(400).json({ error: "Destinatário, assunto e corpo da mensagem são obrigatórios." });
+  }
+
+  const r = (db.reservations || []).find(x => x.code === reservationCode || String(x.id) === reservationCode);
+  const flat = r ? (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber)) : null;
+
+  const { bodyHtml } = renderManualEmail({
+    subject: subject.trim(),
+    message: body.trim(),
+    reservation: r,
+    flat,
+    settings: db.settings
+  });
+
+  const commLog = await sendEmailAsync({
+    db,
+    saveDatabase,
+    reservationId: r?.code || r?.id || "MANUAL",
+    recipient: recipient.trim(),
+    cc,
+    bcc,
+    subject: subject.trim(),
+    bodyHtml,
+    bodyText: body.trim(),
+    type: "email",
+    direction: "outbound",
+    metadata: {
+      trigger: "manual_hub",
+      reservationCode: r?.code || null,
+      guestName: r?.guestName || null
+    }
+  });
+
+  res.json({ success: true, communication: commLog });
 });
 
 // ── FNHR Pre-Checkin Digital Endpoints ──────────────────────────────────────

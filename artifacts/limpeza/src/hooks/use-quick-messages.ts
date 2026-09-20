@@ -178,6 +178,8 @@ Para agendar o café da manhã no *Flat {{quarto}}*, você pode montar a sua ban
 
 {{link_cafe_manha}}
 
+_(Lembrando: nosso café da manhã é servido exclusivamente com entrega no seu flat, não servido no restaurante do condomínio)._
+
 Escolha seus itens favoritos e o horário desejado!`,
     footer: "CorpFlats • Café Artesanal",
     buttons: [
@@ -365,8 +367,8 @@ export function renderQuickMessage(
   const linkCheckin = `${origin}/pre-checkin/${resCode}`
   const linkCafe = `${origin}/minha-reserva/${resCode}/cafe`
   const linkCheckout = `${origin}/checkout/${resCode}`
-  const linkMaps = "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ"
-  const linkAvaliacao = "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ"
+  const linkMaps = "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac"
+  const linkAvaliacao = "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac"
 
   const tagMap: Record<string, string> = {
     "{{nome_hospede}}": guestName,

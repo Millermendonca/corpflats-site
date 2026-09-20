@@ -90,7 +90,7 @@ export default function ZapiConnection() {
     fallbackToText: true,
     wifiNetwork: "CorpFlats-Hospedes",
     wifiPassword: "corpflats2026",
-    googleReviewUrl: "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ",
+    googleReviewUrl: "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac",
     alertEmail: "millerpessanha@gmail.com",
     alertEmailEnabled: true,
     alertOnReconnect: true,

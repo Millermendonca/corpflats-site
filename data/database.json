@@ -5922,7 +5922,7 @@
     "buildingName": "Edifício Soho Residence Service",
     "receptionEmail": "soho@promenade.com.br",
     "hotelAddress": "Edifício Soho Residence Service, Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ",
-    "googleMapsUrl": "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ",
+    "googleMapsUrl": "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac",
     "mercadoPagoConfig": {
       "accessToken": "APP_USR-2731253548432791-081914-0cf47f75d865fb5ce9f5a1b95c744ca1-3628826676",
       "publicKey": "APP_USR-3c0fcec7-8a2f-436f-b471-dac950fd9933",
@@ -7108,7 +7108,8 @@
     "conciergeGroupName": "Checkout Flats",
     "conciergeMonitoringEnabled": true,
     "conciergeRequireKeywords": false,
-    "webhooksSyncedAt": "2026-09-20T03:12:12.879Z"
+    "webhooksSyncedAt": "2026-09-20T03:12:12.879Z",
+    "googleReviewUrl": "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac"
   },
   "whatsappTemplates": [
     {
@@ -7182,21 +7183,27 @@
     {
       "id": "tpl_reservation_updated",
       "triggerEvent": "reservation_updated",
-      "title": "Modificação de Reserva • Dados Atualizados",
-      "description": "Enviado quando datas, quarto ou número de hóspedes forem alterados.",
+      "title": "Modificação de Reserva • O que foi alterado",
+      "description": "Enviado quando houver alterações de datas, quarto, valores ou hóspedes. Informa com precisão e clareza apenas os itens alterados (De ➔ Para), sem reenviar os demais dados da reserva.",
       "enabled": true,
       "triggerTiming": "immediate",
       "offsetValue": 0,
       "offsetUnit": "minutes",
       "fixedTime": "",
-      "message": "Olá, *{{primeiro_nome}}*! 🔄\nInformamos que sua reserva *{{numero_reserva}}* no *{{nome_hotel}}* foi atualizada com sucesso:\n\n• Quarto: *Flat {{quarto}}*\n• Período: *{{data_checkin}} às {{horario_checkin}}* até *{{data_checkout}} às {{horario_checkout}}*\n• Total de Hóspedes: *{{num_hospedes}}*\n• Situação do Pagamento: *{{status_pagamento}}*\n\nQualquer dúvida, estamos à inteira disposição!",
-      "footer": "CorpFlats • Central de Reservas",
+      "message": "Olá, *{{primeiro_nome}}*! 🔄\nSua reserva (*{{numero_reserva}}*) no *{{nome_hotel}}* foi alterada.\n\nConfira o que foi atualizado:\n{{resumo_alteracoes}}\n\nOs demais dados da sua reserva permanecem inalterados. Você pode consultar todos os detalhes atualizados pelo seu portal do hóspede:",
+      "footer": "CorpFlats • Central de Atendimento",
       "buttons": [
         {
           "id": "btn_portal",
           "type": "URL",
-          "label": "🏨 Acessar Minha Reserva",
+          "label": "🏨 Ver Detalhes da Reserva",
           "url": "{{link_portal_hospede}}"
+        },
+        {
+          "id": "btn_admin",
+          "type": "CALL",
+          "label": "📞 Falar com Atendimento",
+          "phone": "{{telefone_hotel}}"
         }
       ],
       "channels": [
@@ -7317,7 +7324,7 @@
       "offsetValue": 0,
       "offsetUnit": "hours",
       "fixedTime": "18:00",
-      "message": "Olá, *{{primeiro_nome}}*! ☕🥐\nEstá na hora de montar a sua bandeja de café da manhã para amanhã no *Flat {{quarto}}*!\n\nPreparamos tudo fresquinho com frutas, pães e café quente no horário de sua preferência. Escolha seus itens favoritos clicando no botão abaixo:",
+      "message": "Olá, *{{primeiro_nome}}*! ☕🥐\nEstá na hora de agendar a sua bandeja de café da manhã para amanhã no *Flat {{quarto}}*!\n\nPreparamos tudo fresquinho e entregamos diretamente no seu flat (o serviço é exclusivo no quarto, não servido no restaurante do condomínio).\n\nEscolha seus itens favoritos clicando no botão abaixo:",
       "footer": "CorpFlats • Café Artesanal no Quarto",
       "buttons": [
         {
@@ -7771,7 +7778,7 @@
       "description": "Cardápio e montagem da bandeja de café no quarto.",
       "category": "Serviços",
       "enabled": true,
-      "message": "Olá, *{{primeiro_nome}}*! ☕🥐\nPara agendar o café da manhã no *Flat {{quarto}}*, você pode montar a sua bandeja diretamente pelo link abaixo:\n\n{{link_cafe_manha}}\n\nEscolha seus itens favoritos e o horário desejado!",
+      "message": "Olá, *{{primeiro_nome}}*! ☕🥐\nPara agendar o café da manhã no *Flat {{quarto}}*, você pode montar a sua bandeja diretamente pelo link abaixo:\n\n{{link_cafe_manha}}\n\n_(Lembrando: nosso café da manhã é servido exclusivamente com entrega no seu flat, não servido no restaurante do condomínio).\n\nEscolha seus itens favoritos e o horário desejado!",
       "footer": "CorpFlats • Café Artesanal",
       "buttons": [
         {

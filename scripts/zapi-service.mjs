@@ -288,8 +288,8 @@ Desejamos uma estadia maravilhosa! Se precisar de algo, estamos à disposição.
   {
     id: "tpl_reservation_updated",
     triggerEvent: "reservation_updated",
-    title: "Modificação de Reserva • Dados Atualizados",
-    description: "Enviado quando datas, quarto ou número de hóspedes forem alterados. Detalha exatamente o que mudou.",
+    title: "Modificação de Reserva • O que foi alterado",
+    description: "Enviado quando houver alterações de datas, quarto, valores ou hóspedes. Informa com precisão e clareza apenas os itens alterados (De ➔ Para), sem reenviar os demais dados da reserva.",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
     recipientTarget: "guest",
@@ -298,20 +298,16 @@ Desejamos uma estadia maravilhosa! Se precisar de algo, estamos à disposição.
     offsetUnit: "minutes",
     fixedTime: "",
     message: `Olá, *{{primeiro_nome}}*! 🔄
-Informamos que sua reserva *{{numero_reserva}}* no *{{nome_hotel}}* foi atualizada:
+Sua reserva (*{{numero_reserva}}*) no *{{nome_hotel}}* foi alterada.
 
+Confira o que foi atualizado:
 {{resumo_alteracoes}}
 
-📋 *Situação Atual da Reserva:*
-• Quarto: *Flat {{quarto}}*
-• Período: *{{data_checkin}} às {{horario_checkin}}* até *{{data_checkout}} às {{horario_checkout}}*
-• Total de Hóspedes: *{{num_hospedes}}*
-• Situação do Pagamento: *{{status_pagamento}}*
-
-Qualquer dúvida, estamos à inteira disposição!`,
-    footer: "CorpFlats • Central de Reservas",
+Os demais dados da sua reserva permanecem inalterados. Você pode consultar todos os detalhes atualizados pelo seu portal do hóspede:`,
+    footer: "CorpFlats • Central de Atendimento",
     buttons: [
-      { id: "btn_portal", type: "URL", label: "🏨 Acessar Minha Reserva", url: "{{link_portal_hospede}}" }
+      { id: "btn_portal", type: "URL", label: "🏨 Ver Detalhes da Reserva", url: "{{link_portal_hospede}}" },
+      { id: "btn_admin", type: "CALL", label: "📞 Falar com Atendimento", phone: "{{telefone_hotel}}" }
     ]
   },
   {
@@ -410,9 +406,11 @@ Tenha uma estadia incrível!`,
     offsetUnit: "hours",
     fixedTime: "18:00",
     message: `Olá, *{{primeiro_nome}}*! ☕🥐
-Está na hora de montar a sua bandeja de café da manhã para amanhã no *Flat {{quarto}}*!
+Está na hora de agendar a sua bandeja de café da manhã para amanhã no *Flat {{quarto}}*!
 
-Preparamos tudo fresquinho com frutas, pães e café quente no horário de sua preferência. Escolha seus itens favoritos clicando no botão abaixo:`,
+Preparamos tudo fresquinho e entregamos diretamente no seu flat (o serviço é exclusivo no quarto, não servido no restaurante do condomínio).
+
+Escolha seus itens favoritos clicando no botão abaixo:`,
     footer: "CorpFlats • Café Artesanal no Quarto",
     buttons: [
       { id: "btn_cafe", type: "URL", label: "🥐 Montar Café da Manhã", url: "{{link_cafe_manha}}" }
@@ -645,6 +643,8 @@ Para agendar o café da manhã no *Flat {{quarto}}*, você pode montar a sua ban
 
 {{link_cafe_manha}}
 
+_(Lembrando: nosso café da manhã é servido exclusivamente com entrega no seu flat, não servido no restaurante do condomínio)._
+
 Escolha seus itens favoritos e o horário desejado!`,
     footer: "CorpFlats • Café Artesanal",
     buttons: [
@@ -775,6 +775,109 @@ function formatDateBr(isoDate) {
 function formatCurrency(amount) {
   const n = Number(amount) || 0;
   return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+// ── Formatação de Alterações da Reserva para o WhatsApp (De ➔ Para) ─────────
+export function formatWhatsAppChangesSummary(changes = []) {
+  if (!Array.isArray(changes) || changes.length === 0) {
+    return "• *Status da Reserva:* Atualizada no sistema.";
+  }
+
+  const lines = [];
+
+  for (const c of changes) {
+    if (!c) continue;
+    let label = c.label || c.field;
+    let oldV = c.oldValue;
+    let newV = c.newValue;
+
+    // Normaliza rótulos para comunicação direta e amigável com o hóspede
+    if (c.field === "flatNumber") label = "Acomodação / Quarto";
+    if (c.field === "checkinDate") label = "Data de Entrada (Check-in)";
+    if (c.field === "checkoutDate") label = "Data de Saída (Check-out)";
+    if (c.field === "checkinTime") label = "Horário de Entrada";
+    if (c.field === "checkoutTime") label = "Horário de Saída";
+    if (c.field === "totalAmount") label = "Valor Total";
+    if (c.field === "paidAmount") label = "Valor Pago";
+    if (c.field === "paymentStatus") label = "Situação do Pagamento";
+    if (c.field === "guestCount" || c.field === "adults") label = "Total de Hóspedes";
+    if (c.field === "includeBreakfast") label = "Café da Manhã";
+    if (c.field === "twinBeds") label = "Configuração de Camas";
+    if (c.field === "extraMattress") label = "Colchão Extra";
+    if (c.field === "prefersHighFloor") label = "Andar Alto";
+    if (c.field === "guestName") label = "Hóspede Titular";
+    if (c.field === "vehiclePlate") label = "Veículo / Garagem";
+
+    // Formata datas YYYY-MM-DD -> DD/MM/YYYY
+    if (typeof oldV === "string" && /^\d{4}-\d{2}-\d{2}$/.test(oldV.trim())) {
+      oldV = formatDateBr(oldV.trim());
+    }
+    if (typeof newV === "string" && /^\d{4}-\d{2}-\d{2}$/.test(newV.trim())) {
+      newV = formatDateBr(newV.trim());
+    }
+
+    // Formata booleanos
+    if (typeof oldV === "boolean" || oldV === "Sim" || oldV === "Não") {
+      oldV = (oldV === true || oldV === "Sim") ? "Sim" : "Não";
+    }
+    if (typeof newV === "boolean" || newV === "Sim" || newV === "Não") {
+      newV = (newV === true || newV === "Sim") ? "Sim" : "Não";
+    }
+
+    // Formata café da manhã
+    if (c.field === "includeBreakfast") {
+      oldV = (oldV === "Sim" || oldV === true || oldV === "Incluso") ? "Incluso" : "Não incluso";
+      newV = (newV === "Sim" || newV === true || newV === "Incluso") ? "Incluso" : "Não incluso";
+    }
+
+    // Formata camas de solteiro
+    if (c.field === "twinBeds") {
+      oldV = (oldV === "Sim" || oldV === true) ? "2 Camas de Solteiro" : "Cama de Casal";
+      newV = (newV === "Sim" || newV === true) ? "2 Camas de Solteiro" : "Cama de Casal";
+    }
+
+    // Formata status de pagamento
+    if (c.field === "paymentStatus") {
+      const mapPay = {
+        pago: "Confirmado / Pago (100%)",
+        pago_total: "Confirmado / Pago (100%)",
+        pendente: "Aguardando Pagamento",
+        parcial: "Sinal Pago / Parcial",
+        estornado: "Estornado"
+      };
+      if (mapPay[String(oldV).toLowerCase()]) oldV = mapPay[String(oldV).toLowerCase()];
+      if (mapPay[String(newV).toLowerCase()]) newV = mapPay[String(newV).toLowerCase()];
+    }
+
+    // Formata quantidade de hóspedes
+    if (c.field === "guestCount" || c.field === "adults") {
+      const nOld = parseInt(oldV, 10);
+      const nNew = parseInt(newV, 10);
+      if (!isNaN(nOld)) oldV = `${nOld} ${nOld === 1 ? 'pessoa' : 'pessoas'}`;
+      if (!isNaN(nNew)) newV = `${nNew} ${nNew === 1 ? 'pessoa' : 'pessoas'}`;
+    }
+
+    // Formata valores monetários se forem números puros
+    if (c.field === "totalAmount" || c.field === "paidAmount" || c.field === "dailyRate") {
+      if (typeof oldV === "number" || (typeof oldV === "string" && !oldV.includes("R$"))) {
+        const n = Number(oldV) || 0;
+        oldV = formatCurrency(n);
+      }
+      if (typeof newV === "number" || (typeof newV === "string" && !newV.includes("R$"))) {
+        const n = Number(newV) || 0;
+        newV = formatCurrency(n);
+      }
+    }
+
+    const hasOld = oldV !== undefined && oldV !== null && oldV !== "" && oldV !== "(vazio)" && oldV !== "null";
+    if (hasOld && String(oldV) !== String(newV)) {
+      lines.push(`• *${label}:* ${oldV} ➔ *${newV}*`);
+    } else {
+      lines.push(`• *${label}:* *${newV}*`);
+    }
+  }
+
+  return lines.join("\n");
 }
 
 // ── Identificação Unificada de Destinatários (Hóspede e Solicitante) ──────────
@@ -923,13 +1026,13 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   
   const hotelName = db.siteConfig?.branding?.brandName || "CorpFlats";
   const hotelAddress = db.settings?.hotelAddress || "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ";
-  const mapsUrl = db.settings?.googleMapsUrl || "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ";
+  const mapsUrl = db.settings?.googleMapsUrl || "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac";
   
   const zapiCfg = db.zapiConfig || {};
   const wifiNetwork = zapiCfg.wifiNetwork || "CorpFlats-Hospedes";
   const wifiPassword = zapiCfg.wifiPassword || "corpflats2026";
   const adminWhatsApp = db.settings?.adminWhatsApp || "5522997124021";
-  const googleReviewUrl = zapiCfg.googleReviewUrl || "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ";
+  const googleReviewUrl = zapiCfg.googleReviewUrl || "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac";
 
   // URL Base pública do sistema (prioriza domínio de produção ou host)
   const appOrigin = baseUrl || "https://corpflats.onrender.com";
@@ -975,27 +1078,14 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   }
 
   // ── Tag: {{resumo_alteracoes}} ────────────────────────────────────────────
-  // Formata a lista de campos alterados passada via reservation._changesContext
+  // Formata a lista de campos alterados (apenas o que mudou, De ➔ Para)
   let resumoAlteracoes = "";
   const changes = reservation._changesContext || [];
   if (Array.isArray(changes) && changes.length > 0) {
-    const changeLines = changes
-      .filter(c => c.field && (c.oldValue !== undefined || c.newValue !== undefined))
-      .map(c => {
-        if (c.oldValue !== null && c.oldValue !== undefined && c.newValue !== null && c.newValue !== undefined) {
-          return `• *${c.label || c.field}*: ~~${c.oldValue}~~ → *${c.newValue}*`;
-        } else if (c.newValue !== null && c.newValue !== undefined) {
-          return `• *${c.label || c.field}*: *${c.newValue}*`;
-        }
-        return null;
-      })
-      .filter(Boolean);
-    if (changeLines.length > 0) {
-      resumoAlteracoes = `📝 *O que foi alterado:*\n${changeLines.join("\n")}`;
-    }
+    resumoAlteracoes = formatWhatsAppChangesSummary(changes);
   }
   if (!resumoAlteracoes) {
-    resumoAlteracoes = "📝 *Sua reserva foi atualizada com sucesso.*";
+    resumoAlteracoes = "• *Status da Reserva:* Dados atualizados no sistema.";
   }
 
   const tagsMap = {
@@ -1221,7 +1311,7 @@ export async function sendZapiMessage(config, {
       phone: cleanPhone,
       document: fileBase64 || documentUrl,
       fileName: documentName || "Manual_do_Hospede_CorpFlats.pdf",
-      caption: documentCaption || title || ""
+      caption: documentCaption || ""
     });
   }
 
@@ -1340,7 +1430,7 @@ export async function sendZapiMessage(config, {
     const buttonActionsPayload = {
       phone: cleanPhone,
       message: message,
-      ...(title ? { title } : {}),
+      // Omitido 'title' para que a mensagem inicie direto com a saudação, sem cabeçalho com o nome interno do template
       ...(footer ? { footer } : {}),
       buttonActions: formattedActions
     };
@@ -2901,7 +2991,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         fallbackToText: true,
         wifiNetwork: "CorpFlats-Hospedes",
         wifiPassword: "corpflats2026",
-        googleReviewUrl: "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ",
+        googleReviewUrl: "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac",
         guestGuidePdfUrl: "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
         guestGuidePdfName: "Manual_do_Hospede_CorpFlats.pdf",
         alertEmail: "millerpessanha@gmail.com",
@@ -2923,6 +3013,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         conciergeRequireKeywords: false
       };
     } else {
+      if (!db.zapiConfig.googleReviewUrl || db.zapiConfig.googleReviewUrl.includes("maps.google.com/?q=") || db.zapiConfig.googleReviewUrl.includes("g.page/r/corpflats")) {
+        db.zapiConfig.googleReviewUrl = "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac";
+      }
       if (!db.zapiConfig.deliveryMode) {
         db.zapiConfig.deliveryMode = "text_links";
       }
@@ -3005,6 +3098,26 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           if (!tpl.documentName) tpl.documentName = "Manual_do_Hospede_CorpFlats.pdf";
           if (tpl.documentUrl === undefined) tpl.documentUrl = "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf";
           if (tpl.documentCaption === undefined) tpl.documentCaption = "Segue em anexo o Manual do Hóspede em PDF com todas as orientações! 📖";
+        }
+        if (tpl.id === "tpl_reservation_updated") {
+          // Atualiza automaticamente caso o template ainda contenha a lista estática que repetia todos os dados da reserva
+          if (!tpl.message.includes("{{resumo_alteracoes}}") || tpl.message.includes("• Quarto: *Flat {{quarto}}*")) {
+            const defUpd = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_reservation_updated");
+            if (defUpd) {
+              tpl.title = defUpd.title;
+              tpl.description = defUpd.description;
+              tpl.message = defUpd.message;
+              tpl.buttons = defUpd.buttons;
+            }
+          }
+        }
+        if (tpl.id === "tpl_breakfast_reminder") {
+          if (!tpl.message.includes("restaurante")) {
+            const defB = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_breakfast_reminder");
+            if (defB) {
+              tpl.message = defB.message;
+            }
+          }
         }
       }
     }

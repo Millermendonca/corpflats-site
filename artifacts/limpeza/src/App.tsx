@@ -46,6 +46,7 @@ import MaidWhatsappAutomation from '@/pages/maid-whatsapp-automation';
 import ShoppingListPage from '@/pages/shopping-list';
 import MaidStatementPage from '@/pages/maid-statement';
 import ZapiConnection from '@/pages/zapi-connection';
+import EmailHub from '@/pages/email-hub';
 import NotFound from '@/pages/not-found';
 
 const queryClient = new QueryClient({
@@ -142,7 +143,10 @@ function Router() {
         <Route path="/fechamento" component={Reports} />
         <Route path="/fechamento-limpeza" component={Reports} />
 
-        {/* WhatsApp Automation & Z-API Connection Routes */}
+        {/* WhatsApp Automation, Email Hub & Z-API Connection Routes */}
+        <Route path="/emails" component={EmailHub} />
+        <Route path="/email-hub" component={EmailHub} />
+        <Route path="/gerenciador-emails" component={EmailHub} />
         <Route path="/whatsapp-chat" component={WhatsappChat} />
         <Route path="/chat" component={WhatsappChat} />
         <Route path="/whatsapp-web" component={WhatsappChat} />

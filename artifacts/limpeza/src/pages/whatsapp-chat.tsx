@@ -451,7 +451,7 @@ Tenha um ótimo retorno!`
       case 'location':
         text = `Olá, *${guestFirstName}*! Segue a localização do CorpFlats:
 📍 *Endereço:* Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ
-🗺️ *Google Maps:* https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209
+🗺️ *Google Maps:* https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac
 
 Estamos te aguardando!`
         break
@@ -464,7 +464,7 @@ Desejamos uma ótima hospedagem!`
       case 'review':
         text = `Olá, *${guestFirstName}*! Foi um prazer recebê-lo no CorpFlats!
 Poderia nos avaliar com 5 estrelas no Google Maps? Leva menos de 1 minuto e nos ajuda muito:
-⭐ https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209
+⭐ https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac
 
 Muito obrigado!`
         break

@@ -209,6 +209,12 @@ const TAG_GROUPS = [
     ]
   },
   {
+    category: "🔄 Alterações na Reserva",
+    tags: [
+      { tag: "{{resumo_alteracoes}}", label: "Itens Alterados (De ➔ Para)", example: "• Quarto: Flat 101 ➔ Flat 104\n• Check-in: 20/09 ➔ 22/09" },
+    ]
+  },
+  {
     category: "💳 Pagamento & PIX",
     tags: [
       { tag: "{{valor_total}}", label: "Valor Total da Reserva", example: "R$ 450,00" },
@@ -305,7 +311,7 @@ export default function WhatsappAutomation() {
     fallbackToText: true,
     wifiNetwork: "CorpFlats-Hospedes",
     wifiPassword: "corpflats2026",
-    googleReviewUrl: "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ"
+    googleReviewUrl: "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac"
   })
   const [statusInfo, setStatusInfo] = useState<any>(null)
   const [loadingStatus, setLoadingStatus] = useState<boolean>(false)
@@ -898,7 +904,7 @@ export default function WhatsappAutomation() {
 
     const firstName = (targetRes.guestName || "Hóspede").split(" ")[0]
     const code = targetRes.code || `RES-${targetRes.flatNumber || "113"}-0001`
-    const mapsUrl = config.googleReviewUrl || "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209"
+    const mapsUrl = config.googleReviewUrl || "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac"
 
     const totalAmount = Number(targetRes.totalAmount) || 450
     const paidAmount = Number(targetRes.paidAmount ?? (targetRes.paymentStatus === "pago" ? totalAmount : 0))
@@ -946,7 +952,8 @@ export default function WhatsappAutomation() {
       "{{link_portal_hospede}}": `https://corpflats.onrender.com/portal-hospede/${code}`,
       "{{link_cafe_manha}}": `https://corpflats.onrender.com/cafe/${code}`,
       "{{link_checkout}}": `https://corpflats.onrender.com/checkout/${code}`,
-      "{{link_avaliacao_google}}": config.googleReviewUrl || "https://g.page/r/corpflats/review"
+      "{{link_avaliacao_google}}": config.googleReviewUrl || "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac",
+      "{{resumo_alteracoes}}": "• *Acomodação / Quarto:* Flat 101 ➔ *Flat 113*\n• *Data de Entrada (Check-in):* 03/09/2026 ➔ *05/09/2026*\n• *Valor Total:* R$ 450,00 ➔ *R$ 600,00*"
     }
 
     let rendered = text

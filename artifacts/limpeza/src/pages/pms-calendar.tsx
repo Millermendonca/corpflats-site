@@ -140,11 +140,16 @@ export default function PmsCalendar() {
 
   // Modal Tabs, Audit Logs & Communications State
   const [resModalTab, setResModalTab] = useState<"details" | "audit" | "communications" | "links">("details")
+  const [commSubTab, setCommSubTab] = useState<"whatsapp" | "email">("whatsapp")
   const [auditLogs, setAuditLogs] = useState<any[]>([])
   const [loadingAudit, setLoadingAudit] = useState(false)
   const [communications, setCommunications] = useState<any[]>([])
+  const [scheduledEmails, setScheduledEmails] = useState<any[]>([])
+  const [whatsappQueue, setWhatsappQueue] = useState<any[]>([])
+  const [whatsappHistory, setWhatsappHistory] = useState<any[]>([])
   const [loadingComms, setLoadingComms] = useState(false)
   const [sendingEmail, setSendingEmail] = useState(false)
+  const [dispatchingActionId, setDispatchingActionId] = useState<string | null>(null)
   const [expandedCommId, setExpandedCommId] = useState<string | null>(null)
   const [manualRecipient, setManualRecipient] = useState("")
   const [manualSubject, setManualSubject] = useState("")
@@ -178,12 +183,95 @@ export default function PmsCalendar() {
       const res = await fetch(`/api/pms/reservations/${resIdOrCode}/communications`, { credentials: "include" })
       if (res.ok) {
         const json = await res.json()
-        setCommunications(Array.isArray(json) ? json : [])
+        if (Array.isArray(json)) {
+          setCommunications(json)
+        } else if (json) {
+          setCommunications(Array.isArray(json.emails) ? json.emails : [])
+          setScheduledEmails(Array.isArray(json.emailsScheduled) ? json.emailsScheduled : [])
+          setWhatsappQueue(Array.isArray(json.whatsappQueue) ? json.whatsappQueue : [])
+          setWhatsappHistory(Array.isArray(json.whatsappHistory) ? json.whatsappHistory : [])
+        }
       }
     } catch (e) {
       console.error("Erro ao buscar comunicações:", e)
     } finally {
       setLoadingComms(false)
+    }
+  }
+
+  const handleSendWhatsAppNow = async (queueId: string) => {
+    setDispatchingActionId(queueId)
+    try {
+      const res = await fetch(`/api/whatsapp/queue/${queueId}/send-now`, { method: "POST" })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        toast({
+          title: "⚡ WhatsApp Enviado Agora!",
+          description: "Mensagem agendada foi antecipada e entregue com sucesso via Z-API."
+        })
+        if (selectedRes) fetchCommunications(selectedRes.code || selectedRes.id)
+      } else {
+        toast({
+          title: "Falha ao disparar",
+          description: data.error || "Não foi possível antecipar o disparo no WhatsApp.",
+          variant: "destructive"
+        })
+      }
+    } catch (err: any) {
+      toast({ title: "Erro de disparo", description: err.message, variant: "destructive" })
+    } finally {
+      setDispatchingActionId(null)
+    }
+  }
+
+  const handleCancelWhatsApp = async (queueId: string) => {
+    if (!confirm("Deseja cancelar esta mensagem agendada de WhatsApp?")) return
+    try {
+      const res = await fetch(`/api/whatsapp/queue/${queueId}`, { method: "DELETE" })
+      if (res.ok) {
+        toast({ title: "Agendamento Cancelado", description: "A mensagem não será enviada." })
+        if (selectedRes) fetchCommunications(selectedRes.code || selectedRes.id)
+      }
+    } catch (err: any) {
+      toast({ title: "Erro ao cancelar", description: err.message, variant: "destructive" })
+    }
+  }
+
+  const handleSendEmailNow = async (queueId: string) => {
+    setDispatchingActionId(queueId)
+    try {
+      const res = await fetch(`/api/emails/queue/${queueId}/send-now`, { method: "POST" })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        toast({
+          title: "⚡ E-mail Enviado Agora!",
+          description: "E-mail agendado foi antecipado e entregue com sucesso via SMTP."
+        })
+        if (selectedRes) fetchCommunications(selectedRes.code || selectedRes.id)
+      } else {
+        toast({
+          title: "Falha ao disparar",
+          description: data.error || "Não foi possível antecipar o disparo de e-mail.",
+          variant: "destructive"
+        })
+      }
+    } catch (err: any) {
+      toast({ title: "Erro de disparo", description: err.message, variant: "destructive" })
+    } finally {
+      setDispatchingActionId(null)
+    }
+  }
+
+  const handleCancelEmail = async (queueId: string) => {
+    if (!confirm("Deseja cancelar este agendamento de e-mail?")) return
+    try {
+      const res = await fetch(`/api/emails/queue/${queueId}`, { method: "DELETE" })
+      if (res.ok) {
+        toast({ title: "Agendamento Cancelado", description: "O e-mail não será enviado." })
+        if (selectedRes) fetchCommunications(selectedRes.code || selectedRes.id)
+      }
+    } catch (err: any) {
+      toast({ title: "Erro ao cancelar", description: err.message, variant: "destructive" })
     }
   }
 
@@ -2995,11 +3083,11 @@ export default function PmsCalendar() {
                     value="communications"
                     className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs relative"
                   >
-                    <Mail className="w-3.5 h-3.5 shrink-0 text-amber-500" />
-                    <span>Comunicações</span>
-                    {communications.length > 0 && (
-                      <Badge variant="secondary" className="text-[10px] h-4 px-1.5 py-0 font-bold ml-0.5 bg-amber-500/15 text-amber-700 dark:text-amber-300 shrink-0">
-                        {communications.length}
+                    <MessageCircle className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
+                    <span>Mensagens</span>
+                    {(communications.length + scheduledEmails.length + whatsappQueue.length + whatsappHistory.length) > 0 && (
+                      <Badge variant="secondary" className="text-[10px] h-4 px-1.5 py-0 font-bold ml-0.5 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 shrink-0">
+                        {communications.length + scheduledEmails.length + whatsappQueue.length + whatsappHistory.length}
                       </Badge>
                     )}
                   </TabsTrigger>
@@ -4968,113 +5056,57 @@ export default function PmsCalendar() {
               </div>
             )}
 
-            {/* TAB: Comunicações & E-mails */}
-            {selectedRes && resModalTab === "communications" && (
-              <div className="space-y-4 pt-1">
-                {/* 1. Painel de Envio Manual Rápido */}
-                <div className="p-4 rounded-2xl bg-amber-500/5 border border-amber-500/20 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                      <Send className="w-4 h-4 text-amber-500" />
-                      <span>Redigir e Enviar E-mail Manual</span>
-                    </span>
-                    <span className="text-[10px] text-muted-foreground">Disparo via Zoho SMTP</span>
-                  </div>
+            {/* TAB: Comunicações & Mensagens (WhatsApp & E-mail) */}
+            {selectedRes && resModalTab === "communications" && (() => {
+              const pendingWa = (whatsappQueue || []).filter(q => q.status === "scheduled" || q.status === "pending");
+              const sentWa = [
+                ...(whatsappQueue || []).filter(q => q.status === "sent"),
+                ...(whatsappHistory || [])
+              ].sort((a, b) => new Date(b.sentAt || b.createdAt || 0).getTime() - new Date(a.sentAt || a.createdAt || 0).getTime());
 
-                  <div className="space-y-2.5">
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-[11px] font-bold text-muted-foreground">Destinatário</Label>
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => setManualRecipient(portariaEmail)}
-                            className="text-[10px] px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 hover:bg-amber-200 font-bold transition-colors"
-                          >
-                            🏢 Portaria ({portariaEmail})
-                          </button>
-                          {selectedRes?.guestEmail && (
-                            <button
-                              type="button"
-                              onClick={() => setManualRecipient(selectedRes.guestEmail)}
-                              className="text-[10px] px-2 py-0.5 rounded-md bg-sky-100 dark:bg-sky-950/60 text-sky-800 dark:text-sky-300 hover:bg-sky-200 font-bold transition-colors"
-                            >
-                              👤 Hóspede ({selectedRes.guestEmail})
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      <Input
-                        type="email"
-                        value={manualRecipient}
-                        onChange={e => setManualRecipient(e.target.value)}
-                        placeholder="ex: portaria@condominio.com ou hospede@email.com"
-                        className="text-xs h-8.5 rounded-xl font-medium"
-                      />
-                    </div>
+              const pendingEm = (scheduledEmails || []).filter(q => q.status === "pending");
 
-                    <div className="space-y-1">
-                      <Label className="text-[11px] font-bold text-muted-foreground">Assunto</Label>
-                      <Input
-                        value={manualSubject}
-                        onChange={e => setManualSubject(e.target.value)}
-                        placeholder="Assunto do e-mail"
-                        className="text-xs h-8.5 rounded-xl font-medium"
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-[11px] font-bold text-muted-foreground">Mensagem</Label>
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => setManualBody(`Prezada Portaria / Recepção,\n\nSolicitamos liberação de entrada antecipada (Early Check-in) para o Flat ${selectedRes?.flatNumber}, referente ao hóspede titular ${selectedRes?.guestName}.\n\nAtenciosamente,\nEquipe CorpFlats`)}
-                            className="text-[10px] text-amber-600 dark:text-amber-400 hover:underline font-medium"
-                          >
-                            + Modelo Early Check-in
-                          </button>
-                          <span className="text-[10px] text-muted-foreground">•</span>
-                          <button
-                            type="button"
-                            onClick={() => setManualBody(`Prezado(a) ${selectedRes?.guestName},\n\nConfirmamos o recebimento de suas informações. Seguem orientações adicionais para a sua estadia no Flat ${selectedRes?.flatNumber}.\n\nEstamos à disposição para qualquer suporte!\nEquipe CorpFlats`)}
-                            className="text-[10px] text-sky-600 dark:text-sky-400 hover:underline font-medium"
-                          >
-                            + Mensagem Hóspede
-                          </button>
-                        </div>
-                      </div>
-                      <Textarea
-                        value={manualBody}
-                        onChange={e => setManualBody(e.target.value)}
-                        placeholder="Escreva a mensagem para o destinatário..."
-                        rows={3}
-                        className="text-xs rounded-xl"
-                      />
-                    </div>
-
-                    <div className="flex justify-end pt-1">
-                      <Button
+              return (
+                <div className="space-y-4 pt-1">
+                  {/* Sub-abas: WhatsApp vs E-mail */}
+                  <div className="flex items-center justify-between border-b pb-2">
+                    <div className="flex items-center gap-1.5 bg-muted/60 p-1 rounded-xl">
+                      <button
                         type="button"
-                        size="sm"
-                        disabled={sendingEmail || !manualRecipient || !manualSubject || !manualBody}
-                        onClick={handleSendManualEmail}
-                        className="h-8 text-xs font-bold gap-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white shadow-xs"
+                        onClick={() => setCommSubTab("whatsapp")}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                          commSubTab === "whatsapp"
+                            ? "bg-white dark:bg-card text-emerald-600 dark:text-emerald-400 shadow-xs"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
                       >
-                        {sendingEmail ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-                        <span>{sendingEmail ? "Disparando..." : "Enviar E-mail Agora"}</span>
-                      </Button>
+                        <MessageCircle className="w-3.5 h-3.5 text-emerald-500" />
+                        <span>WhatsApp</span>
+                        {pendingWa.length > 0 && (
+                          <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white text-[9.5px] px-1.5 py-0 h-4 font-bold">
+                            {pendingWa.length}
+                          </Badge>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCommSubTab("email")}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                          commSubTab === "email"
+                            ? "bg-white dark:bg-card text-amber-600 dark:text-amber-400 shadow-xs"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        <Mail className="w-3.5 h-3.5 text-amber-500" />
+                        <span>E-mail</span>
+                        {pendingEm.length > 0 && (
+                          <Badge className="bg-amber-600 hover:bg-amber-600 text-white text-[9.5px] px-1.5 py-0 h-4 font-bold">
+                            {pendingEm.length}
+                          </Badge>
+                        )}
+                      </button>
                     </div>
-                  </div>
-                </div>
 
-                {/* 2. Linha do Tempo (Timeline de Mensagens) */}
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                      <Mail className="w-4 h-4 text-primary" />
-                      <span>Histórico de Comunicações ({communications.length})</span>
-                    </span>
                     <Button
                       type="button"
                       variant="ghost"
@@ -5083,160 +5115,506 @@ export default function PmsCalendar() {
                       onClick={() => fetchCommunications(selectedRes?.code || selectedRes?.id)}
                       className="h-7 text-[11px] text-muted-foreground hover:text-foreground gap-1 px-2"
                     >
-                      <RefreshCw className={`w-3 h-3 ${loadingComms ? 'animate-spin' : ''}`} />
+                      <RefreshCw className={`w-3 h-3 ${loadingComms ? "animate-spin" : ""}`} />
                       <span>Atualizar</span>
                     </Button>
                   </div>
 
-                  {loadingComms ? (
-                    <div className="p-8 text-center text-xs text-muted-foreground">
-                      Carregando histórico de comunicações...
-                    </div>
-                  ) : communications.length === 0 ? (
-                    <div className="p-6 text-center rounded-2xl bg-muted/30 border border-dashed border-border text-xs text-muted-foreground space-y-1">
-                      <Mail className="w-6 h-6 mx-auto text-muted-foreground/50 mb-2" />
-                      <p className="font-bold">Nenhum e-mail registrado nesta reserva</p>
-                      <p className="text-[11px]">Os e-mails de check-in, alteração ou manuais aparecerão aqui automaticamente.</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
-                      {communications.map((c: any) => {
-                        const isExpanded = expandedCommId === c.id
-                        const isFailed = c.status === "failed"
-                        const isSent = c.status === "sent"
-                        const isPending = c.status === "pending"
+                  {/* SUB-ABA: WHATSAPP */}
+                  {commSubTab === "whatsapp" && (
+                    <div className="space-y-4">
+                      {/* 1. Mensagens Agendadas de WhatsApp */}
+                      <div className="space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                            <Clock className="w-4 h-4 text-emerald-600" />
+                            <span>Mensagens Programadas ({pendingWa.length})</span>
+                          </span>
+                          <span className="text-[10px] text-muted-foreground">Disparo automático via Z-API</span>
+                        </div>
 
-                        return (
-                          <div
-                            key={c.id}
-                            className={`rounded-2xl border transition-all text-xs overflow-hidden ${
-                              isFailed 
-                                ? "bg-rose-50/50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/60" 
-                                : isSent
-                                ? "bg-card border-border hover:border-border/80"
-                                : "bg-amber-50/40 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900/50"
-                            }`}
-                          >
-                            {/* Header do Card de Comunicação */}
-                            <div
-                              onClick={() => setExpandedCommId(isExpanded ? null : c.id)}
-                              className="p-3 flex items-start justify-between gap-2 cursor-pointer select-none hover:bg-muted/30 transition-colors"
-                            >
-                              <div className="flex items-start gap-2.5 min-w-0">
-                                <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
-                                  isFailed 
-                                    ? "bg-rose-100 text-rose-600 dark:bg-rose-900/60 dark:text-rose-400" 
-                                    : isSent
-                                    ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/60 dark:text-emerald-400"
-                                    : "bg-amber-100 text-amber-600 dark:bg-amber-900/60 dark:text-amber-400"
-                                }`}>
-                                  {isFailed ? <AlertCircle className="w-4 h-4" /> : <Mail className="w-4 h-4" />}
-                                </div>
-
-                                <div className="min-w-0">
-                                  <div className="flex items-center gap-1.5 flex-wrap">
-                                    <span className="font-bold text-foreground text-xs truncate max-w-[280px]">
-                                      {c.subject}
-                                    </span>
-                                    {isSent && (
-                                      <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white text-[9.5px] px-1.5 py-0 h-4 font-bold gap-1">
-                                        <CheckCircle2 className="w-2.5 h-2.5" /> Enviado
-                                      </Badge>
-                                    )}
-                                    {isFailed && (
-                                      <Badge variant="destructive" className="text-[9.5px] px-1.5 py-0 h-4 font-bold gap-1">
-                                        <AlertCircle className="w-2.5 h-2.5" /> Falha
-                                      </Badge>
-                                    )}
-                                    {isPending && (
-                                      <Badge variant="outline" className="text-[9.5px] px-1.5 py-0 h-4 font-bold gap-1 text-amber-600 border-amber-300">
-                                        <Clock className="w-2.5 h-2.5" /> Pendente
-                                      </Badge>
-                                    )}
-                                  </div>
-
-                                  <div className="flex items-center gap-2 text-[10.5px] text-muted-foreground mt-0.5">
-                                    <span>Para: <strong className="text-foreground">{c.recipient}</strong></span>
-                                    <span>•</span>
-                                    <span>{c.created_at ? format(parseISO(c.created_at), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR }) : ""}</span>
-                                  </div>
-                                </div>
-                              </div>
-
-                              <div className="flex items-center gap-1 shrink-0">
-                                {isFailed && (
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="outline"
-                                    disabled={resendingCommId === c.id}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleResendEmail(c.id);
-                                    }}
-                                    className="h-6 px-2 text-[10.5px] font-bold text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-800 hover:bg-rose-100 gap-1 rounded-lg"
-                                  >
-                                    <RotateCcw className={`w-3 h-3 ${resendingCommId === c.id ? 'animate-spin' : ''}`} />
-                                    <span>{resendingCommId === c.id ? "Reenviando..." : "Reenviar"}</span>
-                                  </Button>
-                                )}
-
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-6 w-6 text-muted-foreground"
-                                >
-                                  {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                                </Button>
-                              </div>
-                            </div>
-
-                            {/* Erro de Disparo */}
-                            {isFailed && c.metadata?.error && (
-                              <div className="px-3 pb-2 text-[11px] text-rose-600 dark:text-rose-400 font-medium flex items-center gap-1.5">
-                                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                                <span>Erro: {c.metadata.error}</span>
-                              </div>
-                            )}
-
-                            {/* Conteúdo Expandido do E-mail */}
-                            {isExpanded && (
-                              <div className="p-3 border-t border-border/80 bg-muted/20 space-y-2">
-                                <div className="text-[10.5px] text-muted-foreground font-semibold flex items-center justify-between">
-                                  <span>Conteúdo da Mensagem:</span>
-                                  {c.metadata?.messageId && (
-                                    <span className="font-mono text-[9px] text-muted-foreground truncate max-w-[200px]" title={c.metadata.messageId}>
-                                      ID: {c.metadata.messageId}
-                                    </span>
-                                  )}
-                                </div>
-
-                                {c.body?.includes("<html") || c.body?.includes("<table") || c.body?.includes("<div") ? (
-                                  <div className="bg-white text-slate-900 rounded-xl p-3 border border-border/80 max-h-[340px] overflow-y-auto text-xs shadow-inner">
-                                    <div dangerouslySetInnerHTML={{ __html: c.body }} />
-                                  </div>
-                                ) : (
-                                  <div className="bg-background rounded-xl p-3 border border-border max-h-[220px] overflow-y-auto font-mono text-xs whitespace-pre-wrap text-foreground">
-                                    {c.body}
-                                  </div>
-                                )}
-                              </div>
-                            )}
+                        {pendingWa.length === 0 ? (
+                          <div className="p-4 rounded-xl bg-muted/20 border border-dashed text-center text-xs text-muted-foreground space-y-1">
+                            <CheckCircle2 className="w-5 h-5 mx-auto text-emerald-500/70 mb-1" />
+                            <p className="font-semibold text-foreground">Nenhuma mensagem pendente de WhatsApp</p>
+                            <p className="text-[11px]">Todas as mensagens programadas para esta reserva já foram enviadas ou a régua foi finalizada.</p>
                           </div>
-                        )
-                      })}
+                        ) : (
+                          <div className="space-y-2.5 max-h-[260px] overflow-y-auto pr-1">
+                            {pendingWa.map((q: any) => (
+                              <div
+                                key={q.id}
+                                className="p-3 rounded-xl border border-emerald-500/30 bg-emerald-50/30 dark:bg-emerald-950/20 space-y-2"
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className="font-bold text-foreground text-xs">
+                                        {q.title || q.triggerEvent || "Mensagem Programada"}
+                                      </span>
+                                      <Badge variant="outline" className="text-[9.5px] px-1.5 py-0 h-4 font-bold text-emerald-700 dark:text-emerald-300 border-emerald-300 gap-1 bg-emerald-100/50 dark:bg-emerald-900/30">
+                                        <Clock className="w-2.5 h-2.5" />
+                                        Agendado: {q.scheduledFor ? format(parseISO(q.scheduledFor), "dd/MM 'às' HH:mm", { locale: ptBR }) : "Em breve"}
+                                      </Badge>
+                                      {q.documentName && (
+                                        <Badge variant="secondary" className="text-[9px] px-1.5 py-0 h-4 font-medium gap-1">
+                                          📎 {q.documentName}
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    <p className="text-[10.5px] text-muted-foreground mt-0.5">
+                                      Para: <strong className="text-foreground">{q.recipientName || q.guestName || "Hóspede"}</strong> ({q.guestPhone})
+                                    </p>
+                                  </div>
+
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      disabled={dispatchingActionId === q.id}
+                                      onClick={() => handleSendWhatsAppNow(q.id)}
+                                      className="h-7 text-xs font-bold gap-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-xs"
+                                    >
+                                      {dispatchingActionId === q.id ? (
+                                        <RefreshCw className="w-3 h-3 animate-spin" />
+                                      ) : (
+                                        <Zap className="w-3 h-3" />
+                                      )}
+                                      <span>Enviar Agora</span>
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="icon"
+                                      variant="ghost"
+                                      onClick={() => handleCancelWhatsApp(q.id)}
+                                      className="h-7 w-7 text-rose-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg"
+                                      title="Cancelar agendamento"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </Button>
+                                  </div>
+                                </div>
+
+                                <div className="p-2 rounded-lg bg-background/80 border text-[11px] text-muted-foreground whitespace-pre-wrap max-h-24 overflow-y-auto leading-relaxed font-sans">
+                                  {q.renderedMessage || q.message}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 2. Histórico de Mensagens Enviadas de WhatsApp */}
+                      <div className="space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                            <span>Histórico de Mensagens Enviadas ({sentWa.length})</span>
+                          </span>
+                        </div>
+
+                        {sentWa.length === 0 ? (
+                          <div className="p-4 rounded-xl bg-muted/15 border border-dashed text-center text-xs text-muted-foreground">
+                            Nenhuma mensagem de WhatsApp enviada ainda para esta reserva.
+                          </div>
+                        ) : (
+                          <div className="space-y-2 max-h-[280px] overflow-y-auto pr-1">
+                            {sentWa.map((h: any, idx: number) => {
+                              const isFailed = h.status === "failed";
+                              return (
+                                <div
+                                  key={h.id || `hist_${idx}`}
+                                  className={`p-3 rounded-xl border text-xs space-y-1.5 ${
+                                    isFailed 
+                                      ? "bg-rose-50/40 border-rose-200 dark:bg-rose-950/20 dark:border-rose-900/40"
+                                      : "bg-card border-border hover:border-border/80"
+                                  }`}
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="font-bold text-foreground">
+                                        {h.title || h.triggerEvent || "WhatsApp Entregue"}
+                                      </span>
+                                      {isFailed ? (
+                                        <Badge variant="destructive" className="text-[9.5px] px-1.5 py-0 h-4 font-bold gap-1">
+                                          <AlertCircle className="w-2.5 h-2.5" /> Falha
+                                        </Badge>
+                                      ) : (
+                                        <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white text-[9.5px] px-1.5 py-0 h-4 font-bold gap-1">
+                                          <CheckCircle2 className="w-2.5 h-2.5" /> Enviado
+                                        </Badge>
+                                      )}
+                                      {h.documentName && (
+                                        <Badge variant="secondary" className="text-[9px] px-1.5 py-0 h-4 font-medium gap-1">
+                                          📎 {h.documentName}
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    <span className="text-[10px] text-muted-foreground">
+                                      {h.sentAt ? format(parseISO(h.sentAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR }) : ""}
+                                    </span>
+                                  </div>
+
+                                  <div className="text-[10.5px] text-muted-foreground">
+                                    Destinatário: <strong className="text-foreground">{h.guestPhone || selectedRes?.guestPhone}</strong>
+                                    {h.method && ` • Método: ${h.method}`}
+                                  </div>
+
+                                  {isFailed && h.error && (
+                                    <p className="text-[10.5px] text-rose-600 font-medium">
+                                      Erro: {h.error}
+                                    </p>
+                                  )}
+
+                                  <div className="p-2 rounded-lg bg-muted/30 border text-[11px] text-muted-foreground whitespace-pre-wrap max-h-20 overflow-y-auto font-sans">
+                                    {h.message || h.renderedMessage}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
-                </div>
 
-                <DialogFooter className="pt-2 border-t border-border flex justify-end">
-                  <Button type="button" variant="outline" size="sm" onClick={() => setResModalOpen(false)} className="rounded-xl text-xs font-bold">
-                    Fechar
-                  </Button>
-                </DialogFooter>
-              </div>
-            )}
+                  {/* SUB-ABA: E-MAIL */}
+                  {commSubTab === "email" && (
+                    <div className="space-y-4">
+                      {/* 1. E-mails Agendados (Programados) */}
+                      <div className="space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                            <Clock className="w-4 h-4 text-amber-600" />
+                            <span>E-mails Programados ({pendingEm.length})</span>
+                          </span>
+                          <span className="text-[10px] text-muted-foreground">Disparo automático via SMTP</span>
+                        </div>
+
+                        {pendingEm.length === 0 ? (
+                          <div className="p-4 rounded-xl bg-muted/20 border border-dashed text-center text-xs text-muted-foreground space-y-1">
+                            <CheckCircle2 className="w-5 h-5 mx-auto text-amber-500/70 mb-1" />
+                            <p className="font-semibold text-foreground">Nenhum e-mail agendado pendente</p>
+                            <p className="text-[11px]">As mensagens de boas-vindas e check-out já foram enviadas ou não há agendamentos futuros.</p>
+                          </div>
+                        ) : (
+                          <div className="space-y-2.5 max-h-[260px] overflow-y-auto pr-1">
+                            {pendingEm.map((q: any) => (
+                              <div
+                                key={q.id}
+                                className="p-3 rounded-xl border border-amber-500/30 bg-amber-50/30 dark:bg-amber-950/20 space-y-2"
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className="font-bold text-foreground text-xs">
+                                        {q.subject}
+                                      </span>
+                                      <Badge variant="outline" className="text-[9.5px] px-1.5 py-0 h-4 font-bold text-amber-700 dark:text-amber-300 border-amber-300 gap-1 bg-amber-100/50 dark:bg-amber-900/30">
+                                        <Clock className="w-2.5 h-2.5" />
+                                        Agendado: {q.scheduledFor ? format(parseISO(q.scheduledFor), "dd/MM 'às' HH:mm", { locale: ptBR }) : "Em breve"}
+                                      </Badge>
+                                    </div>
+                                    <p className="text-[10.5px] text-muted-foreground mt-0.5">
+                                      Para: <strong className="text-foreground">{q.recipient}</strong>
+                                    </p>
+                                  </div>
+
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      disabled={dispatchingActionId === q.id}
+                                      onClick={() => handleSendEmailNow(q.id)}
+                                      className="h-7 text-xs font-bold gap-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg shadow-xs"
+                                    >
+                                      {dispatchingActionId === q.id ? (
+                                        <RefreshCw className="w-3 h-3 animate-spin" />
+                                      ) : (
+                                        <Zap className="w-3 h-3" />
+                                      )}
+                                      <span>Enviar Agora</span>
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="icon"
+                                      variant="ghost"
+                                      onClick={() => handleCancelEmail(q.id)}
+                                      className="h-7 w-7 text-rose-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg"
+                                      title="Cancelar agendamento"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </Button>
+                                  </div>
+                                </div>
+
+                                <div className="p-2 rounded-lg bg-background/80 border text-[11px] text-muted-foreground whitespace-pre-wrap max-h-20 overflow-y-auto leading-relaxed">
+                                  {q.bodyText || q.subject}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 2. Painel de Envio Manual Rápido */}
+                      <div className="p-4 rounded-2xl bg-amber-500/5 border border-amber-500/20 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                            <Send className="w-4 h-4 text-amber-500" />
+                            <span>Redigir e Enviar E-mail Manual</span>
+                          </span>
+                          <span className="text-[10px] text-muted-foreground">Disparo via Zoho SMTP</span>
+                        </div>
+
+                        <div className="space-y-2.5">
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between">
+                              <Label className="text-[11px] font-bold text-muted-foreground">Destinatário</Label>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setManualRecipient(portariaEmail)}
+                                  className="text-[10px] px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 hover:bg-amber-200 font-bold transition-colors"
+                                >
+                                  🏢 Portaria ({portariaEmail})
+                                </button>
+                                {selectedRes?.guestEmail && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setManualRecipient(selectedRes.guestEmail)}
+                                    className="text-[10px] px-2 py-0.5 rounded-md bg-sky-100 dark:bg-sky-950/60 text-sky-800 dark:text-sky-300 hover:bg-sky-200 font-bold transition-colors"
+                                  >
+                                    👤 Hóspede ({selectedRes.guestEmail})
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                            <Input
+                              type="email"
+                              value={manualRecipient}
+                              onChange={e => setManualRecipient(e.target.value)}
+                              placeholder="ex: portaria@condominio.com ou hospede@email.com"
+                              className="text-xs h-8.5 rounded-xl font-medium"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <Label className="text-[11px] font-bold text-muted-foreground">Assunto</Label>
+                            <Input
+                              value={manualSubject}
+                              onChange={e => setManualSubject(e.target.value)}
+                              placeholder="Assunto do e-mail"
+                              className="text-xs h-8.5 rounded-xl font-medium"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between">
+                              <Label className="text-[11px] font-bold text-muted-foreground">Mensagem</Label>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setManualBody(`Prezada Portaria / Recepção,\n\nSolicitamos liberação de entrada antecipada (Early Check-in) para o Flat ${selectedRes?.flatNumber}, referente ao hóspede titular ${selectedRes?.guestName}.\n\nAtenciosamente,\nEquipe CorpFlats`)}
+                                  className="text-[10px] text-amber-600 dark:text-amber-400 hover:underline font-medium"
+                                >
+                                  + Modelo Early Check-in
+                                </button>
+                                <span className="text-[10px] text-muted-foreground">•</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setManualBody(`Prezado(a) ${selectedRes?.guestName},\n\nConfirmamos o recebimento de suas informações. Seguem orientações adicionais para a sua estadia no Flat ${selectedRes?.flatNumber}.\n\nEstamos à disposição para qualquer suporte!\nEquipe CorpFlats`)}
+                                  className="text-[10px] text-sky-600 dark:text-sky-400 hover:underline font-medium"
+                                >
+                                  + Mensagem Hóspede
+                                </button>
+                              </div>
+                            </div>
+                            <Textarea
+                              value={manualBody}
+                              onChange={e => setManualBody(e.target.value)}
+                              placeholder="Escreva a mensagem para o destinatário..."
+                              rows={3}
+                              className="text-xs rounded-xl"
+                            />
+                          </div>
+
+                          <div className="flex justify-end pt-1">
+                            <Button
+                              type="button"
+                              size="sm"
+                              disabled={sendingEmail || !manualRecipient || !manualSubject || !manualBody}
+                              onClick={handleSendManualEmail}
+                              className="h-8 text-xs font-bold gap-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white shadow-xs"
+                            >
+                              {sendingEmail ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                              <span>{sendingEmail ? "Disparando..." : "Enviar E-mail Agora"}</span>
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 3. Linha do Tempo (Histórico de E-mails Enviados) */}
+                      <div className="space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                            <Mail className="w-4 h-4 text-primary" />
+                            <span>Histórico de E-mails Enviados ({communications.length})</span>
+                          </span>
+                        </div>
+
+                        {loadingComms ? (
+                          <div className="p-8 text-center text-xs text-muted-foreground">
+                            Carregando histórico de comunicações...
+                          </div>
+                        ) : communications.length === 0 ? (
+                          <div className="p-6 text-center rounded-2xl bg-muted/30 border border-dashed border-border text-xs text-muted-foreground space-y-1">
+                            <Mail className="w-6 h-6 mx-auto text-muted-foreground/50 mb-2" />
+                            <p className="font-bold">Nenhum e-mail registrado nesta reserva</p>
+                            <p className="text-[11px]">Os e-mails de check-in, alteração ou manuais aparecerão aqui automaticamente.</p>
+                          </div>
+                        ) : (
+                          <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
+                            {communications.map((c: any) => {
+                              const isExpanded = expandedCommId === c.id
+                              const isFailed = c.status === "failed"
+                              const isSent = c.status === "sent"
+                              const isPending = c.status === "pending"
+
+                              return (
+                                <div
+                                  key={c.id}
+                                  className={`rounded-2xl border transition-all text-xs overflow-hidden ${
+                                    isFailed 
+                                      ? "bg-rose-50/50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/60" 
+                                      : isSent
+                                      ? "bg-card border-border hover:border-border/80"
+                                      : "bg-amber-50/40 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900/50"
+                                  }`}
+                                >
+                                  {/* Header do Card de Comunicação */}
+                                  <div
+                                    onClick={() => setExpandedCommId(isExpanded ? null : c.id)}
+                                    className="p-3 flex items-start justify-between gap-2 cursor-pointer select-none hover:bg-muted/30 transition-colors"
+                                  >
+                                    <div className="flex items-start gap-2.5 min-w-0">
+                                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
+                                        isFailed 
+                                          ? "bg-rose-100 text-rose-600 dark:bg-rose-900/60 dark:text-rose-400" 
+                                          : isSent
+                                          ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/60 dark:text-emerald-400"
+                                          : "bg-amber-100 text-amber-600 dark:bg-amber-900/60 dark:text-amber-400"
+                                      }`}>
+                                        {isFailed ? <AlertCircle className="w-4 h-4" /> : <Mail className="w-4 h-4" />}
+                                      </div>
+
+                                      <div className="min-w-0">
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          <span className="font-bold text-foreground text-xs truncate max-w-[280px]">
+                                            {c.subject}
+                                          </span>
+                                          {isSent && (
+                                            <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white text-[9.5px] px-1.5 py-0 h-4 font-bold gap-1">
+                                              <CheckCircle2 className="w-2.5 h-2.5" /> Enviado
+                                            </Badge>
+                                          )}
+                                          {isFailed && (
+                                            <Badge variant="destructive" className="text-[9.5px] px-1.5 py-0 h-4 font-bold gap-1">
+                                              <AlertCircle className="w-2.5 h-2.5" /> Falha
+                                            </Badge>
+                                          )}
+                                          {isPending && (
+                                            <Badge variant="outline" className="text-[9.5px] px-1.5 py-0 h-4 font-bold gap-1 text-amber-600 border-amber-300">
+                                              <Clock className="w-2.5 h-2.5" /> Pendente
+                                            </Badge>
+                                          )}
+                                        </div>
+
+                                        <div className="flex items-center gap-2 text-[10.5px] text-muted-foreground mt-0.5">
+                                          <span>Para: <strong className="text-foreground">{c.recipient}</strong></span>
+                                          <span>•</span>
+                                          <span>{c.created_at ? format(parseISO(c.created_at), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR }) : ""}</span>
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-1 shrink-0">
+                                      {isFailed && (
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="outline"
+                                          disabled={resendingCommId === c.id}
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleResendEmail(c.id);
+                                          }}
+                                          className="h-6 px-2 text-[10.5px] font-bold text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-800 hover:bg-rose-100 gap-1 rounded-lg"
+                                        >
+                                          <RotateCcw className={`w-3 h-3 ${resendingCommId === c.id ? 'animate-spin' : ''}`} />
+                                          <span>{resendingCommId === c.id ? "Reenviando..." : "Reenviar"}</span>
+                                        </Button>
+                                      )}
+
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-6 w-6 text-muted-foreground"
+                                      >
+                                        {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                      </Button>
+                                    </div>
+                                  </div>
+
+                                  {/* Erro de Disparo */}
+                                  {isFailed && c.metadata?.error && (
+                                    <div className="px-3 pb-2 text-[11px] text-rose-600 dark:text-rose-400 font-medium flex items-center gap-1.5">
+                                      <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                                      <span>Erro: {c.metadata.error}</span>
+                                    </div>
+                                  )}
+
+                                  {/* Conteúdo Expandido do E-mail */}
+                                  {isExpanded && (
+                                    <div className="p-3 border-t border-border/80 bg-muted/20 space-y-2">
+                                      <div className="text-[10.5px] text-muted-foreground font-semibold flex items-center justify-between">
+                                        <span>Conteúdo da Mensagem:</span>
+                                        {c.metadata?.messageId && (
+                                          <span className="font-mono text-[9px] text-muted-foreground truncate max-w-[200px]" title={c.metadata.messageId}>
+                                            ID: {c.metadata.messageId}
+                                          </span>
+                                        )}
+                                      </div>
+
+                                      {c.body?.includes("<html") || c.body?.includes("<table") || c.body?.includes("<div") ? (
+                                        <div className="bg-white text-slate-900 rounded-xl p-3 border border-border/80 max-h-[340px] overflow-y-auto text-xs shadow-inner">
+                                          <div dangerouslySetInnerHTML={{ __html: c.body }} />
+                                        </div>
+                                      ) : (
+                                        <div className="bg-background rounded-xl p-3 border border-border max-h-[220px] overflow-y-auto font-mono text-xs whitespace-pre-wrap text-foreground">
+                                          {c.body}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  <DialogFooter className="pt-2 border-t border-border flex justify-end">
+                    <Button type="button" variant="outline" size="sm" onClick={() => setResModalOpen(false)} className="rounded-xl text-xs font-bold">
+                      Fechar
+                    </Button>
+                  </DialogFooter>
+                </div>
+              );
+            })()}
 
             {selectedRes && resModalTab === "links" && (() => {
               const origin = typeof window !== "undefined" ? window.location.origin : "https://corpflats.onrender.com"
