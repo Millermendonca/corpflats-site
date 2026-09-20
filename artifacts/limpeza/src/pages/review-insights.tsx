@@ -136,9 +136,27 @@ export default function ReviewInsights() {
   const handleAnalyzeWpp = async () => {
     setAnalyzingWpp(true)
     try {
-      await fetch("/api/ai/sentiment/analyze-whatsapp", { method: "POST", headers: { "Content-Type": "application/json" } })
-      fetchSentimentOverview()
-    } catch { } finally { setAnalyzingWpp(false) }
+      const res = await fetch("/api/ai/sentiment/analyze-whatsapp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force: true })
+      })
+      if (res.ok) {
+        const data = await res.json()
+        await Promise.all([fetchSentimentOverview(), fetchReviews()])
+        if (data.analyzed === 0) {
+          alert("Nenhuma nova mensagem de hóspede encontrada para analisar.")
+        } else {
+          alert(`Análise concluída com sucesso! ${data.analyzed} conversa(s) de hóspedes processada(s) pela IA.`)
+        }
+      } else {
+        alert("Erro ao executar análise de conversas WhatsApp.")
+      }
+    } catch (err: any) {
+      alert("Erro de conexão ao analisar conversas: " + err.message)
+    } finally {
+      setAnalyzingWpp(false)
+    }
   }
 
   const handleAnalyzeSingleReview = async (reviewId: number) => {
@@ -432,7 +450,12 @@ export default function ReviewInsights() {
                       <div className="flex items-center gap-2.5">
                         <ToneIcon tone={s.overallTone} className="w-5 h-5" />
                         <div>
-                          <p className="text-sm font-black text-white">{s.guestName}</p>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="text-sm font-black text-white">{s.guestName}</p>
+                            {s.hasMaintenanceTicket && (
+                              <Badge className="bg-rose-950 text-rose-300 border-rose-800 text-[9px] font-bold">⚠️ Ticket IA</Badge>
+                            )}
+                          </div>
                           <p className="text-[10px] text-slate-400">{s.guestPhone} {s.flatNumber ? `—Flat ${s.flatNumber}` : ""}</p>
                         </div>
                       </div>

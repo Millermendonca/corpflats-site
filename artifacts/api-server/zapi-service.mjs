@@ -3035,7 +3035,7 @@ export function syncWhatsappConversationsStore(db) {
 }
 
 // ── Gerenciador da Fila & Background Scheduler ────────────────────────────────
-export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotification) {
+export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotification, analyzeSentimentFn = null) {
   const getDb = typeof dbOrGetter === "function" ? dbOrGetter : () => dbOrGetter;
 
   function ensureDbDefaults() {
@@ -3859,6 +3859,188 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     res.json(result);
   });
 
+  // ── Processador Automático de Sentimento e NPS de Mensagens Inbound ──────────
+  async function processInboundSentimentAndNps({ db, phone, senderName, text, messageId, timestamp, updatedConv, saveDatabase, createNotification, analyzeSentimentFn }) {
+    if (!db) return;
+    const cleanText = (text || "").trim();
+    if (!cleanText) return;
+
+    // 1. Armazena no histórico de mensagens inbound
+    if (!db.whatsappInboundMessages) db.whatsappInboundMessages = [];
+    db.whatsappInboundMessages.unshift({
+      id: messageId || `in_${Date.now()}`,
+      from: phone,
+      senderName: senderName || "Hóspede",
+      text: cleanText,
+      receivedAt: timestamp || new Date().toISOString()
+    });
+    if (db.whatsappInboundMessages.length > 300) {
+      db.whatsappInboundMessages = db.whatsappInboundMessages.slice(0, 300);
+    }
+
+    // 2. Busca reserva associada ao telefone e extrai flat/quarto se citado no texto
+    const cleanP = cleanWhatsAppPhone(phone) || phone;
+    const reservation = (db.reservations || []).find(r => {
+      const rP = cleanWhatsAppPhone(r.guestPhone || r.phone || "");
+      return rP && (cleanP.endsWith(rP.slice(-8)) || rP.endsWith(cleanP.slice(-8)));
+    });
+    const flatMatch = cleanText.match(/(?:apto|apt|flat|quarto|unidade|su[ií]te)\s*[:#º°]?\s*(\d{2,4}[a-z]?)/i);
+    const flatNumber = reservation?.flatNumber || reservation?.flat || updatedConv?.flatNumber || (flatMatch ? flatMatch[1] : null);
+
+    // 3. Detecção de Resposta NPS (1 a 5)
+    const npsMatch = cleanText.match(/^([1-5])$/) || cleanText.match(/^nota\s*([1-5])$/i);
+    if (npsMatch) {
+      const score = Number(npsMatch[1]);
+      if (!db.npsResponses) db.npsResponses = [];
+      let npsItem = db.npsResponses.find(n => n.guestPhone === phone);
+      if (!npsItem) {
+        npsItem = {
+          id: `nps_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          guestPhone: phone,
+          guestName: senderName || reservation?.guestName || "Hóspede",
+          sentAt: new Date().toISOString()
+        };
+        db.npsResponses.unshift(npsItem);
+      }
+      npsItem.score = score;
+      npsItem.respondedAt = new Date().toISOString();
+      npsItem.pendingResponse = false;
+      npsItem.flatNumber = flatNumber;
+
+      if (score === 5) {
+        npsItem.autoAction = "google_link_sent";
+        npsItem.googleLinkSent = true;
+        const googleLink = db.zapiConfig?.googleReviewUrl || "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac";
+        sendZapiMessage(db.zapiConfig, {
+          phone,
+          message: `Ficamos muito felizes que sua experiência foi nota 5! ⭐⭐⭐⭐⭐\n\nVocê nos ajudaria muito compartilhando sua opinião no Google? Leva menos de 1 minuto e faz toda a diferença para nossa equipe:\n\n${googleLink}\n\nMuito obrigado e até a próxima estadia!`
+        }).catch(err => console.warn("[NPS Google Link] Falha no disparo automático:", err.message));
+      } else if (score <= 2) {
+        npsItem.autoAction = "recovery_ticket_created";
+        if (!db.observations) db.observations = [];
+        const obsId = db.observations.length > 0 ? Math.max(...db.observations.map(o => o.id || 0)) + 1 : 1;
+        db.observations.push({
+          id: obsId,
+          flatNumber: flatNumber || "N/A",
+          guestPhone: phone,
+          type: "reclamacao",
+          description: `[NPS Auto-Ticket] Hóspede ${senderName || phone} deu nota ${score}/5 pós-checkout. Entrar em contato com urgência para recuperação.`,
+          severity: score === 1 ? "alta" : "media",
+          status: "pendente",
+          createdAt: new Date().toISOString(),
+          generatedFromNps: true
+        });
+      } else {
+        npsItem.autoAction = "feedback_collected";
+      }
+    }
+
+    // 4. Análise de Sentimento em Tempo Real e Detecção de Defeitos / Críticas
+    const isNegative = /ruim|péssimo|pessimo|terrível|terrivel|horrível|horrivel|problema|problemas|defeito|defeitos|falha|quebrado|sujo|barulho|barulhento|gotejando|pingando|vazamento|frio|calor|demora|demorado|atraso|descaso|decepção|decepcionado|chateado|vergonha|absurdo|não funciona|nao funciona|estragado|estragou|goteira|cheiro|mofo/i.test(cleanText);
+    const isPositive = /excelente|ótimo|otimo|maravilhoso|perfeito|adorei|parabéns|parabens|impecável|impecavel|muito bom|gostei muito|recomendo|nota 10/i.test(cleanText);
+    const isMaintenanceIssue = /ar[- ]condicionado|chuveiro|água|agua|aquecedor|fechadura|porta|chave|tranca|lâmpada|lampada|luz|tomada|tv|televisão|televisao|frigobar|geladeira|wi-fi|wifi|internet|vazamento|pia|vaso|dreno|colchão|colchao|travesseiro/i.test(cleanText);
+
+    if (!db.guestSentiment) db.guestSentiment = [];
+    let sentEntry = db.guestSentiment.find(s => s.guestPhone === phone);
+    if (!sentEntry) {
+      sentEntry = {
+        id: `sent_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        guestPhone: phone,
+        guestName: senderName || reservation?.guestName || "Hóspede",
+        reservationId: reservation?.id,
+        flatNumber: flatNumber,
+        messageCount: 0,
+        inboundCount: 0,
+        positiveKeywords: [],
+        negativeKeywords: [],
+        keywords: [],
+        suggestions: []
+      };
+      db.guestSentiment.unshift(sentEntry);
+    }
+
+    sentEntry.messageCount = (sentEntry.messageCount || 0) + 1;
+    sentEntry.inboundCount = (sentEntry.inboundCount || 0) + 1;
+    sentEntry.analyzedAt = new Date().toISOString();
+    if (flatNumber && !sentEntry.flatNumber) sentEntry.flatNumber = flatNumber;
+
+    if (isNegative) {
+      sentEntry.overallTone = "negative";
+      sentEntry.overallScore = Math.min(sentEntry.overallScore || 50, 25);
+      sentEntry.summary = `Crítica/problema relatado via WhatsApp: "${cleanText.substring(0, 110)}"`;
+
+      const words = cleanText.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+      const foundNeg = words.filter(w => /ruim|péssimo|pessimo|terrível|problema|problemas|defeito|defeitos|falha|quebrado|sujo|barulho|barulhento|gotejando|pingando|vazamento|frio|calor|demora|demorado/i.test(w));
+      if (foundNeg.length > 0) {
+        sentEntry.negativeKeywords = Array.from(new Set([...(sentEntry.negativeKeywords || []), ...foundNeg]));
+      }
+
+      // Auto-Ticket para manutenção se relatar defeito/crítica
+      if (!db.observations) db.observations = [];
+      const alreadyHasTicket = db.observations.some(o =>
+        (o.guestPhone === phone || o.description?.includes(phone)) &&
+        o.status === "pendente" &&
+        o.generatedFromWhatsApp
+      );
+      if (!alreadyHasTicket) {
+        const obsId = db.observations.length > 0 ? Math.max(...db.observations.map(o => o.id || 0)) + 1 : 1;
+        const ticketTitle = isMaintenanceIssue ? "[WhatsApp Defeito]" : "[WhatsApp Crítica]";
+        db.observations.push({
+          id: obsId,
+          flatNumber: flatNumber || "N/A",
+          guestPhone: phone,
+          type: "reclamacao",
+          description: `${ticketTitle} Hóspede ${senderName || phone}${flatNumber ? ` (Flat ${flatNumber})` : ""}: "${cleanText.substring(0, 140)}"`,
+          severity: "alta",
+          status: "pendente",
+          createdAt: new Date().toISOString(),
+          generatedFromWhatsApp: true
+        });
+      }
+
+      if (typeof createNotification === "function") {
+        createNotification({
+          title: `⚠️ WhatsApp Alerta: ${senderName || phone}`,
+          message: cleanText.substring(0, 120),
+          type: "guest_negative_sentiment",
+          link: `/avaliacoes-ia`
+        });
+      }
+    } else if (isPositive) {
+      sentEntry.overallTone = "positive";
+      sentEntry.overallScore = Math.max(sentEntry.overallScore || 70, 85);
+      sentEntry.summary = `Elogio recebido via WhatsApp: "${cleanText.substring(0, 110)}"`;
+      const words = cleanText.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+      const foundPos = words.filter(w => /excelente|ótimo|otimo|maravilhoso|perfeito|adorei|parabéns|parabens|impecável|impecavel|muito bom|recomendo/i.test(w));
+      if (foundPos.length > 0) {
+        sentEntry.positiveKeywords = Array.from(new Set([...(sentEntry.positiveKeywords || []), ...foundPos]));
+      }
+    } else {
+      sentEntry.overallTone = sentEntry.overallTone || "neutral";
+      sentEntry.overallScore = sentEntry.overallScore || 65;
+      sentEntry.summary = `Mensagem via WhatsApp: "${cleanText.substring(0, 110)}"`;
+    }
+
+    // Se houver analisador de IA configurado, enriquece assincronamente em segundo plano
+    if (typeof analyzeSentimentFn === "function") {
+      analyzeSentimentFn(cleanText, "WhatsApp Inbound Hóspede")
+        .then(aiRes => {
+          if (aiRes?.usingAI) {
+            sentEntry.overallScore = aiRes.score;
+            sentEntry.overallTone = aiRes.tone;
+            if (aiRes.summary) sentEntry.summary = aiRes.summary;
+            if (aiRes.positiveKeywords?.length) sentEntry.positiveKeywords = Array.from(new Set([...(sentEntry.positiveKeywords || []), ...aiRes.positiveKeywords]));
+            if (aiRes.negativeKeywords?.length) sentEntry.negativeKeywords = Array.from(new Set([...(sentEntry.negativeKeywords || []), ...aiRes.negativeKeywords]));
+            if (aiRes.suggestions?.length) sentEntry.suggestions = Array.from(new Set([...(sentEntry.suggestions || []), ...aiRes.suggestions]));
+            if (typeof saveDatabase === "function") saveDatabase();
+          }
+        })
+        .catch(err => console.warn("[Z-API Webhook AI Background]", err.message));
+    }
+
+    if (typeof saveDatabase === "function") saveDatabase();
+  }
+
   // 17. Webhook Z-API: Mensagem Recebida (/api/whatsapp/webhook/received)
   app.post("/api/whatsapp/webhook/received", async (req, res) => {
     const db = getDb();
@@ -3931,6 +4113,26 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         incomingInfo,
         isTest: false
       });
+    }
+
+    // 3. Processamento em Tempo Real de Sentimento e NPS de Hóspedes
+    if (!incomingInfo.fromMe && !incomingInfo.isGroup && incomingInfo.text && cleanTarget) {
+      try {
+        await processInboundSentimentAndNps({
+          db,
+          phone: cleanTarget,
+          senderName: incomingInfo.senderName || updatedConv?.name || "Hóspede",
+          text: incomingInfo.text,
+          messageId: incomingInfo.messageId,
+          timestamp: incomingInfo.timestamp || new Date().toISOString(),
+          updatedConv,
+          saveDatabase,
+          createNotification,
+          analyzeSentimentFn
+        });
+      } catch (err) {
+        console.warn("[Z-API Webhook AI] Erro ao processar sentimento:", err.message);
+      }
     }
 
     res.status(200).json({ success: true, result, chatUpdated: Boolean(updatedConv) });

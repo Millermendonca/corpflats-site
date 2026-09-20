@@ -2299,7 +2299,7 @@ function createNotification({ category, title, message, severity = "info", metad
 await loadDatabase();
 ensureUniqueRequestIds();
 reconcileCleaningRequests();
-initWhatsAppEngine(app, () => db, saveDatabase, createNotification);
+initWhatsAppEngine(app, () => db, saveDatabase, createNotification, (text, ctx) => analyzeTextSentimentWithAI(text, ctx));
 initMaidAutomationEngine(app, () => db, saveDatabase);
 
 let checkinsList = [];
@@ -16146,6 +16146,25 @@ initDefaultReviews();
 app.get("/api/ai/reviews", (req, res) => {
   initDefaultReviews();
   const reviews = db.reviews || [];
+  
+  const pendingActionItems = (db.observations || [])
+    .filter(o => o.status === "pendente" && (
+      o.generatedFromWhatsApp ||
+      o.generatedFromNps ||
+      o.generatedFromReviewId ||
+      o.description?.includes("[IA Auto-Ticket]") ||
+      o.description?.includes("[WhatsApp Defeito]") ||
+      o.description?.includes("[WhatsApp Crítica]") ||
+      o.description?.includes("[NPS Auto-Ticket]")
+    ))
+    .map(o => ({
+      id: o.id,
+      flat: o.flatNumber || "N/A",
+      issue: o.description,
+      priority: o.severity || "alta",
+      status: o.status
+    }));
+
   const emptyInsights = {
     overallScore: 0,
     npsScore: 0,
@@ -16156,9 +16175,14 @@ app.get("/api/ai/reviews", (req, res) => {
     highlights: [],
     actionItems: []
   };
+
+  const baseInsights = db.reviewInsights || emptyInsights;
   res.json({
     reviews,
-    insights: db.reviewInsights || emptyInsights
+    insights: {
+      ...baseInsights,
+      actionItems: pendingActionItems
+    }
   });
 });
 
@@ -16173,8 +16197,11 @@ app.post("/api/ai/clear-test-data", (req, res) => {
       db.observations = db.observations.filter(o => 
         !o.description?.includes("[IA Auto-Ticket]") && 
         !o.description?.includes("[NPS Auto-Ticket]") && 
+        !o.description?.includes("[WhatsApp Defeito]") && 
+        !o.description?.includes("[WhatsApp Crítica]") && 
         !o.generatedFromReviewId && 
-        !o.generatedFromNps
+        !o.generatedFromNps &&
+        !o.generatedFromWhatsApp
       );
     }
     saveDatabase();
@@ -16434,8 +16461,23 @@ app.get("/api/ai/sentiment/whatsapp", (req, res) => {
   if (tone && tone !== "all") list = list.filter(s => s.overallTone === tone);
   if (flatNumber) list = list.filter(s => s.flatNumber === flatNumber);
   const enriched = list.map(s => {
-    const reservation = (db.reservations || []).find(r => r.id === s.reservationId || String(r.id) === String(s.reservationId));
-    return { ...s, guestName: s.guestName || reservation?.guestName || "Hóspede", flatNumber: s.flatNumber || reservation?.flatNumber || reservation?.flat, checkoutDate: reservation?.checkoutDate, channel: reservation?.channel };
+    let reservation = (db.reservations || []).find(r => r.id === s.reservationId || String(r.id) === String(s.reservationId) || r.code === s.reservationId);
+    if (!reservation && s.guestPhone) {
+      const cleanP = s.guestPhone.replace(/\D/g, "");
+      reservation = (db.reservations || []).find(r => {
+        const rP = (r.guestPhone || r.phone || "").replace(/\D/g, "");
+        return rP && (cleanP.endsWith(rP.slice(-8)) || rP.endsWith(cleanP.slice(-8)));
+      });
+    }
+    const hasTicket = (db.observations || []).some(o => (o.guestPhone === s.guestPhone || o.description?.includes(s.guestPhone) || (s.guestName && o.description?.includes(s.guestName))) && o.status === "pendente");
+    return {
+      ...s,
+      guestName: s.guestName || reservation?.guestName || "Hóspede",
+      flatNumber: s.flatNumber || reservation?.flatNumber || reservation?.flat,
+      checkoutDate: reservation?.checkoutDate,
+      channel: reservation?.channel,
+      hasMaintenanceTicket: hasTicket
+    };
   });
   res.json({ sentiments: enriched });
 });
@@ -16444,57 +16486,191 @@ app.get("/api/ai/sentiment/whatsapp", (req, res) => {
 app.post("/api/ai/sentiment/analyze-whatsapp", async (req, res) => {
   ensureSentimentDB();
   try {
-    const dispatchHistory = db.whatsappDispatchHistory || [];
     const reservations = db.reservations || [];
     const byPhone = {};
 
-    for (const msg of dispatchHistory) {
-      const phone = msg.guestPhone || msg.recipientPhone;
+    // 1. Incorpora conversas do WhatsApp Web / Z-API
+    const conversations = (db.whatsappConversations || []).filter(c => !c.isGroup);
+    for (const conv of conversations) {
+      const phone = conv.phone || conv.id;
       if (!phone) continue;
-      if (!byPhone[phone]) byPhone[phone] = { phone, messages: [], reservationId: msg.reservationId, guestName: msg.guestName || msg.recipientName };
-      byPhone[phone].messages.push({ text: msg.messageText || msg.message || "", direction: "outbound", at: msg.sentAt || msg.scheduledAt });
+      if (!byPhone[phone]) {
+        byPhone[phone] = {
+          phone,
+          messages: [],
+          reservationId: conv.reservationId || conv.reservationCode,
+          guestName: conv.name || "Hóspede",
+          flatNumber: conv.flatNumber || null
+        };
+      } else {
+        if (conv.flatNumber && !byPhone[phone].flatNumber) byPhone[phone].flatNumber = conv.flatNumber;
+        if (conv.name && (!byPhone[phone].guestName || byPhone[phone].guestName === "Hóspede")) byPhone[phone].guestName = conv.name;
+        if ((conv.reservationId || conv.reservationCode) && !byPhone[phone].reservationId) byPhone[phone].reservationId = conv.reservationId || conv.reservationCode;
+      }
+      for (const m of (conv.messages || [])) {
+        const text = m.text || m.caption || "";
+        if (!text.trim()) continue;
+        const mTime = m.timestamp ? new Date(m.timestamp).toISOString() : new Date().toISOString();
+        const already = byPhone[phone].messages.some(ex => ex.text === text && Math.abs(new Date(ex.at || 0).getTime() - new Date(mTime).getTime()) < 4000);
+        if (!already) {
+          byPhone[phone].messages.push({
+            text,
+            direction: m.fromMe ? "outbound" : "inbound",
+            at: mTime
+          });
+        }
+      }
     }
 
+    // 2. Incorpora histórico de mensagens recebidas (Inbound)
     const inboundMsgs = db.whatsappInboundMessages || [];
     for (const msg of inboundMsgs) {
       const phone = msg.from || msg.phone;
       if (!phone) continue;
       if (!byPhone[phone]) byPhone[phone] = { phone, messages: [], guestName: msg.senderName || "Hóspede" };
-      byPhone[phone].messages.push({ text: msg.text || msg.body || "", direction: "inbound", at: msg.receivedAt || msg.at });
+      const text = msg.text || msg.body || "";
+      if (!text.trim()) continue;
+      const mTime = msg.receivedAt || msg.at || new Date().toISOString();
+      const already = byPhone[phone].messages.some(ex => ex.text === text && Math.abs(new Date(ex.at || 0).getTime() - new Date(mTime).getTime()) < 4000);
+      if (!already) {
+        byPhone[phone].messages.push({ text, direction: "inbound", at: mTime });
+      }
+    }
+
+    // 3. Incorpora histórico de mensagens enviadas (Dispatch)
+    const dispatchHistory = db.whatsappDispatchHistory || [];
+    for (const msg of dispatchHistory) {
+      const phone = msg.guestPhone || msg.recipientPhone;
+      if (!phone) continue;
+      if (!byPhone[phone]) byPhone[phone] = { phone, messages: [], reservationId: msg.reservationId, guestName: msg.guestName || msg.recipientName };
+      const text = msg.messageText || msg.message || "";
+      if (!text.trim()) continue;
+      const mTime = msg.sentAt || msg.scheduledAt || new Date().toISOString();
+      const already = byPhone[phone].messages.some(ex => ex.text === text && Math.abs(new Date(ex.at || 0).getTime() - new Date(mTime).getTime()) < 4000);
+      if (!already) {
+        byPhone[phone].messages.push({ text, direction: "outbound", at: mTime });
+      }
     }
 
     let analyzedCount = 0;
     const results = [];
+    const force = Boolean(req.body?.force);
 
     for (const [phone, data] of Object.entries(byPhone)) {
-      if (data.messages.length === 0) continue;
-      const fullText = data.messages.filter(m => m.direction === "inbound").map(m => m.text).join(" | ");
+      const inbounds = data.messages.filter(m => m.direction === "inbound");
+      if (inbounds.length === 0) continue;
+      const fullText = inbounds.map(m => m.text).join(" | ");
       if (!fullText.trim()) continue;
 
+      const latestInboundAt = Math.max(...inbounds.map(m => new Date(m.at || 0).getTime()));
       const existing = (db.guestSentiment || []).find(s => s.guestPhone === phone);
-      if (existing?.analyzedAt) {
-        const age = Date.now() - new Date(existing.analyzedAt).getTime();
-        if (age < 6 * 60 * 60 * 1000) { results.push(existing); continue; }
+      if (existing?.analyzedAt && !force) {
+        const analyzedTime = new Date(existing.analyzedAt).getTime();
+        const age = Date.now() - analyzedTime;
+        if (latestInboundAt <= analyzedTime && age < 6 * 60 * 60 * 1000) {
+          results.push(existing);
+          continue;
+        }
       }
 
-      const reservation = reservations.find(r => r.id === data.reservationId);
+      let reservation = reservations.find(r => r.id === data.reservationId || r.code === data.reservationId);
+      if (!reservation) {
+        const cleanP = phone.replace(/\D/g, "");
+        reservation = reservations.find(r => {
+          const rP = (r.guestPhone || r.phone || "").replace(/\D/g, "");
+          return rP && (cleanP.endsWith(rP.slice(-8)) || rP.endsWith(cleanP.slice(-8)));
+        });
+      }
+
+      const flatMatch = fullText.match(/(?:apto|apt|flat|quarto|unidade|su[ií]te)\s*[:#º°]?\s*(\d{2,4}[a-z]?)/i);
+      const flatNumber = data.flatNumber || reservation?.flatNumber || reservation?.flat || (flatMatch ? flatMatch[1] : null);
+
       const analysis = await analyzeTextSentimentWithAI(fullText, "mensagens recebidas do hóspede via WhatsApp");
 
       const sentimentEntry = {
         id: existing?.id || ("sent_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6)),
-        guestPhone: phone, guestName: data.guestName, reservationId: data.reservationId,
-        flatNumber: reservation?.flatNumber || reservation?.flat,
-        overallScore: analysis.score, overallTone: analysis.tone,
-        positiveKeywords: analysis.positiveKeywords || [], negativeKeywords: analysis.negativeKeywords || [],
-        keywords: analysis.keywords || [], suggestions: analysis.suggestions || [],
-        summary: analysis.summary, messageCount: data.messages.length,
-        inboundCount: data.messages.filter(m => m.direction === "inbound").length,
-        analyzedAt: new Date().toISOString(), usingAI: analysis.usingAI
+        guestPhone: phone,
+        guestName: data.guestName || reservation?.guestName || "Hóspede",
+        reservationId: data.reservationId || reservation?.id,
+        flatNumber: flatNumber || null,
+        overallScore: analysis.score,
+        overallTone: analysis.tone,
+        positiveKeywords: analysis.positiveKeywords || [],
+        negativeKeywords: analysis.negativeKeywords || [],
+        keywords: analysis.keywords || [],
+        suggestions: analysis.suggestions || [],
+        summary: analysis.summary,
+        messageCount: data.messages.length,
+        inboundCount: inbounds.length,
+        analyzedAt: new Date().toISOString(),
+        usingAI: analysis.usingAI
       };
 
       const idx = (db.guestSentiment || []).findIndex(s => s.guestPhone === phone);
       if (idx >= 0) db.guestSentiment[idx] = sentimentEntry;
-      else { if (!db.guestSentiment) db.guestSentiment = []; db.guestSentiment.unshift(sentimentEntry); }
+      else {
+        if (!db.guestSentiment) db.guestSentiment = [];
+        db.guestSentiment.unshift(sentimentEntry);
+      }
+
+      // Detecção de Defeitos e Auto-Ticket em db.observations
+      const isDefectOrCriticism = analysis.tone === "negative" ||
+        /ruim|péssimo|pessimo|terrível|terrivel|problema|problemas|defeito|defeitos|falha|quebrado|sujo|barulho|barulhento|vazamento|goteira|gotejando|pingando|frio|calor|demora|demorado|não funciona|nao funciona|estragado|estragou/i.test(fullText);
+
+      if (isDefectOrCriticism) {
+        if (!db.observations) db.observations = [];
+        const alreadyHasTicket = db.observations.some(o =>
+          (o.guestPhone === phone || o.description?.includes(phone) || (sentimentEntry.guestName && o.description?.includes(sentimentEntry.guestName))) &&
+          o.status === "pendente" &&
+          o.generatedFromWhatsApp
+        );
+        if (!alreadyHasTicket) {
+          const isMaint = /ar[- ]condicionado|chuveiro|água|agua|aquecedor|fechadura|porta|chave|tranca|lâmpada|lampada|luz|tomada|tv|televisão|televisao|frigobar|geladeira|wi-fi|wifi|internet|vazamento|pia|vaso|dreno/i.test(fullText);
+          const obsId = db.observations.length > 0 ? Math.max(...db.observations.map(o => o.id || 0)) + 1 : 1;
+          const ticketTitle = isMaint ? "[WhatsApp Defeito]" : "[WhatsApp Crítica]";
+          db.observations.push({
+            id: obsId,
+            flatNumber: flatNumber || "N/A",
+            guestPhone: phone,
+            type: "reclamacao",
+            description: `${ticketTitle} Hóspede ${sentimentEntry.guestName || phone}${flatNumber ? ` (Flat ${flatNumber})` : ""}: "${fullText.substring(0, 140)}"`,
+            severity: "alta",
+            status: "pendente",
+            createdAt: new Date().toISOString(),
+            generatedFromWhatsApp: true
+          });
+        }
+      }
+
+      // Detecção de Resposta NPS (1 a 5)
+      const lastInboundText = inbounds.slice(-1)[0]?.text?.trim() || "";
+      const npsMatch = lastInboundText.match(/^([1-5])$/) || lastInboundText.match(/^nota\s*([1-5])$/i);
+      if (npsMatch) {
+        const npsScore = Number(npsMatch[1]);
+        if (!db.npsResponses) db.npsResponses = [];
+        let npsItem = db.npsResponses.find(n => n.guestPhone === phone);
+        if (!npsItem) {
+          npsItem = {
+            id: `nps_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            guestPhone: phone,
+            guestName: sentimentEntry.guestName || "Hóspede",
+            sentAt: new Date().toISOString()
+          };
+          db.npsResponses.unshift(npsItem);
+        }
+        npsItem.score = npsScore;
+        npsItem.respondedAt = new Date().toISOString();
+        npsItem.pendingResponse = false;
+        npsItem.flatNumber = flatNumber || npsItem.flatNumber;
+        if (npsScore === 5) {
+          npsItem.autoAction = "google_link_sent";
+          npsItem.googleLinkSent = true;
+        } else if (npsScore <= 2) {
+          npsItem.autoAction = "recovery_ticket_created";
+        } else {
+          npsItem.autoAction = "feedback_collected";
+        }
+      }
 
       results.push(sentimentEntry);
       analyzedCount++;
