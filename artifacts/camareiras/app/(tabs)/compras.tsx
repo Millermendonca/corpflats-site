@@ -49,6 +49,27 @@ const CATEGORIES = [
   { label: "Geral", color: "#64748b", bg: "#64748b18" },
 ];
 
+const COMMON_SHOPPING_ITEMS = [
+  "Papel higiênico",
+  "Cif",
+  "X14",
+  "Saco Lixo",
+  "Vassoura",
+  "Pá",
+  "Esponja",
+  "Bombril",
+  "Limpa inox",
+  "Detergente",
+  "Cloro",
+  "Alcool",
+  "Cheirinho",
+  "Pano de chão",
+  "Lâmpada Banheiro Pequena",
+  "Lâmpada banheiro grande",
+  "Lâmpada teto",
+  "Lâmpada abajur",
+];
+
 function apiUrl(path: string): string {
   const domain = process.env.EXPO_PUBLIC_DOMAIN ?? "";
   return `https://${domain}${path}`;
@@ -170,38 +191,57 @@ export default function ComprasScreen() {
     );
   };
 
-  // Criar novo item
-  const handleCreate = async () => {
-    if (!newTitle.trim()) {
-      Alert.alert("Atenção", "Informe o nome do item a comprar.");
-      return;
-    }
-    setSubmitting(true);
+  // Criar novo item (Google Keep style)
+  const handleCreate = async (overrideTitle?: string) => {
+    const itemTitle = (overrideTitle || newTitle).trim();
+    if (!itemTitle) return;
+
+    // Feedback tátil imediato
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+    // Otimista
+    const tempItem: ShoppingItem = {
+      id: `temp_${Date.now()}`,
+      title: itemTitle,
+      quantity: "",
+      category: "Limpeza",
+      notes: newNotes.trim(),
+      completed: false,
+      createdBy: {
+        id: user?.id || 1,
+        name: user?.name || user?.username || "Camareira",
+        role: user?.role || "camareira",
+      },
+      createdAt: new Date().toISOString(),
+      completedBy: null,
+      completedAt: null,
+    };
+
+    setItems(prev => [tempItem, ...prev]);
+    setNewTitle("");
+    setNewNotes("");
+    setModalOpen(false);
+
     try {
       const res = await fetch(apiUrl("/api/shopping-list"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          title: newTitle.trim(),
+          title: itemTitle,
           quantity: "",
           category: "Limpeza",
-          notes: newNotes.trim(),
+          notes: tempItem.notes,
         }),
       });
       if (res.ok) {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        setModalOpen(false);
-        setNewTitle("");
-        setNewNotes("");
-        fetchItems();
+        const saved = await res.json();
+        setItems(prev => prev.map(it => (it.id === tempItem.id ? saved : it)));
       } else {
-        Alert.alert("Erro", "Não foi possível adicionar o item.");
+        fetchItems();
       }
-    } catch (err: any) {
-      Alert.alert("Erro", "Falha de conexão com o servidor.");
-    } finally {
-      setSubmitting(false);
+    } catch {
+      fetchItems();
     }
   };
 
@@ -244,11 +284,11 @@ export default function ComprasScreen() {
             placeholderTextColor={colors.mutedForeground}
             value={newTitle}
             onChangeText={setNewTitle}
-            onSubmitEditing={handleCreate}
+            onSubmitEditing={() => handleCreate()}
             returnKeyType="done"
           />
           <TouchableOpacity
-            onPress={handleCreate}
+            onPress={() => handleCreate()}
             disabled={!newTitle.trim() || submitting}
             style={[styles.quickAddButton, { backgroundColor: colors.primary, opacity: !newTitle.trim() || submitting ? 0.6 : 1 }]}
             activeOpacity={0.8}
@@ -264,6 +304,70 @@ export default function ComprasScreen() {
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* Sugestões dinâmicas ao digitar */}
+      {newTitle.trim().length > 0 && (
+        <View style={{ marginHorizontal: 20, marginBottom: 8, padding: 8, backgroundColor: colors.card, borderRadius: 14, borderWidth: 1, borderColor: colors.border }}>
+          <Text style={{ fontSize: 10, fontWeight: "800", color: colors.mutedForeground, textTransform: "uppercase", marginBottom: 4 }}>
+            Sugestões:
+          </Text>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+            {COMMON_SHOPPING_ITEMS.filter(it =>
+              it.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(
+                newTitle.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim()
+              )
+            ).slice(0, 5).map(sug => (
+              <TouchableOpacity
+                key={sug}
+                onPress={() => handleCreate(sug)}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 4,
+                  paddingHorizontal: 8,
+                  paddingVertical: 4,
+                  borderRadius: 10,
+                  backgroundColor: colors.primary + "18",
+                }}
+              >
+                <Ionicons name="sparkles" size={11} color={colors.primary} />
+                <Text style={{ fontSize: 11, fontWeight: "800", color: colors.primary }}>{sug}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+      )}
+
+      {/* Pílulas de Atalho Rápido para Itens Frequentes */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 10, gap: 6 }}
+      >
+        <Text style={{ fontSize: 11, fontWeight: "700", color: colors.mutedForeground, alignSelf: "center", marginRight: 4 }}>
+          Comuns:
+        </Text>
+        {COMMON_SHOPPING_ITEMS.map(item => (
+          <TouchableOpacity
+            key={item}
+            onPress={() => handleCreate(item)}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 4,
+              paddingHorizontal: 10,
+              paddingVertical: 5,
+              borderRadius: 14,
+              backgroundColor: colors.card,
+              borderWidth: 1,
+              borderColor: colors.border,
+            }}
+          >
+            <Ionicons name="add" size={13} color={colors.primary} />
+            <Text style={{ fontSize: 12, fontWeight: "700", color: colors.foreground }}>{item}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
 
       {/* Filter Tabs */}
       <View style={[styles.filtersRow, { borderBottomColor: colors.border }]}>

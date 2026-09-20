@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useMemo } from "react"
+import React, { useState, useEffect, useMemo, useRef } from "react"
 import { Shell } from "@/components/layout"
 import { useGetMe } from "@workspace/api-client-react"
 import { useToast } from "@/hooks/use-toast"
+import { COMMON_SHOPPING_ITEMS } from "@/components/quick-shopping-modal"
 import {
   ShoppingCart,
   Plus,
@@ -151,41 +152,59 @@ export default function ShoppingListPage() {
     }
   }
 
-  // Criar novo item
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!newTitle.trim()) return
+  const inputRef = useRef<HTMLInputElement>(null)
 
-    setSubmitting(true)
+  // Criar novo item (Google Keep style)
+  const handleCreate = async (e?: React.FormEvent, overrideTitle?: string) => {
+    if (e) e.preventDefault()
+    const itemTitle = (overrideTitle || newTitle).trim()
+    if (!itemTitle) return
+
+    const tempItem: ShoppingItem = {
+      id: `temp_${Date.now()}`,
+      title: itemTitle,
+      quantity: isAdmin ? newQuantity.trim() : "",
+      category: isAdmin ? newCategory : "Limpeza",
+      notes: newNotes.trim(),
+      completed: false,
+      createdBy: {
+        id: user?.id || 1,
+        name: user?.name || user?.username || "Admin",
+        role: user?.role || "admin",
+      },
+      createdAt: new Date().toISOString(),
+    }
+
+    // Otimista: inclui no topo imediatamente e limpa campos para o próximo item
+    setItems(prev => [tempItem, ...prev])
+    setNewTitle("")
+    setNewQuantity("")
+    setNewNotes("")
+    inputRef.current?.focus()
+
     try {
       const res = await fetch("/api/shopping-list", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title: newTitle.trim(),
-          quantity: isAdmin ? newQuantity.trim() : "",
-          category: isAdmin ? newCategory : "Limpeza",
-          notes: newNotes.trim(),
+          title: itemTitle,
+          quantity: tempItem.quantity,
+          category: tempItem.category,
+          notes: tempItem.notes,
         }),
       })
       if (res.ok) {
+        const saved = await res.json()
+        setItems(prev => prev.map(i => (i.id === tempItem.id ? saved : i)))
         toast({
           title: "✓ Item Adicionado",
-          description: `"${newTitle.trim()}" foi incluído na lista de compras.`,
+          description: `"${itemTitle}" foi incluído na lista de compras.`,
         })
-        setNewTitle("")
-        setNewQuantity("")
-        setNewNotes("")
-        setNewCategory("Limpeza")
-        fetchItems()
       } else {
-        const d = await res.json()
-        toast({ title: "Erro", description: d.error || "Não foi possível adicionar.", variant: "destructive" })
+        fetchItems()
       }
-    } catch (err: any) {
-      toast({ title: "Erro de conexão", description: err.message, variant: "destructive" })
-    } finally {
-      setSubmitting(false)
+    } catch {
+      fetchItems()
     }
   }
 
@@ -334,7 +353,9 @@ export default function ShoppingListPage() {
                   <div className="sm:col-span-5 space-y-1">
                     <Label className="text-xs font-bold">Item a Comprar *</Label>
                     <Input
-                      placeholder="Ex: Detergente Neutro 5L, Papel Toalha..."
+                      ref={isAdmin ? inputRef : undefined}
+                      list="common-items-datalist"
+                      placeholder="Ex: Detergente Neutro, Papel higiênico, Cloro..."
                       value={newTitle}
                       onChange={e => setNewTitle(e.target.value)}
                       className="rounded-xl h-10 text-xs font-semibold"
@@ -386,7 +407,9 @@ export default function ShoppingListPage() {
                   <div className="sm:col-span-7 space-y-1">
                     <Label className="text-xs font-bold">O que está faltando na limpeza? *</Label>
                     <Input
-                      placeholder="Ex: Detergente Neutro, Esponja, Água Sanitária, Sabonete líquido..."
+                      ref={!isAdmin ? inputRef : undefined}
+                      list="common-items-datalist"
+                      placeholder="Ex: Papel higiênico, Cif, Detergente, Saco Lixo..."
                       value={newTitle}
                       onChange={e => setNewTitle(e.target.value)}
                       className="rounded-xl h-10 text-xs font-semibold"
@@ -407,14 +430,36 @@ export default function ShoppingListPage() {
                 </div>
               )}
 
+              <datalist id="common-items-datalist">
+                {COMMON_SHOPPING_ITEMS.map(it => (
+                  <option key={it} value={it} />
+                ))}
+              </datalist>
+
+              {/* Atalhos rápidos para itens comuns */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pt-1 pb-1 no-scrollbar">
+                <span className="text-[11px] font-bold text-muted-foreground shrink-0">Comuns:</span>
+                {COMMON_SHOPPING_ITEMS.map(item => (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => handleCreate(undefined, item)}
+                    className="shrink-0 px-2.5 py-1 rounded-full text-[11px] font-bold bg-muted/60 hover:bg-primary/10 hover:text-primary hover:border-primary/40 border border-border/80 text-foreground transition-all flex items-center gap-1"
+                  >
+                    <Plus className="w-2.5 h-2.5 text-primary" />
+                    <span>{item}</span>
+                  </button>
+                ))}
+              </div>
+
               <div className="flex justify-end">
                 <Button
                   type="submit"
-                  disabled={submitting || !newTitle.trim()}
+                  disabled={!newTitle.trim()}
                   className="rounded-xl h-9 text-xs font-bold gap-1.5 bg-primary text-primary-foreground shadow-sm hover:brightness-110 px-5"
                 >
                   <Plus className="w-4 h-4" />
-                  <span>{submitting ? "Adicionando..." : isAdmin ? "Adicionar à Lista de Compras" : "Pedir Produto de Limpeza"}</span>
+                  <span>{isAdmin ? "Adicionar (Enter ↵)" : "Pedir Produto (Enter ↵)"}</span>
                 </Button>
               </div>
             </form>
