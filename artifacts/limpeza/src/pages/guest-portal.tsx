@@ -73,6 +73,7 @@ export default function GuestPortal() {
   const [paymentMethodTab, setPaymentMethodTab] = useState<"pix" | "card">("pix")
   const [changingMethod, setChangingMethod] = useState(false)
   const [paymentSuccessNotice, setPaymentSuccessNotice] = useState(false)
+  const [paymentPendingFeedback, setPaymentPendingFeedback] = useState(false)
   
   // Modals & Action States
   const [termsModalOpen, setTermsModalOpen] = useState(false)
@@ -542,27 +543,37 @@ export default function GuestPortal() {
 
   const handleCheckPaymentStatus = async () => {
     setCheckingPayment(true)
+    setPaymentPendingFeedback(false)
     try {
       const res = await fetch(`/api/pms/reservations/${encodeURIComponent(reservation.code)}/payment-status`)
       if (res.ok) {
         const json = await res.json()
         if (json.paid) {
           setPaymentSuccessNotice(true)
+          setPaymentPendingFeedback(false)
           setData((prev: any) => prev ? ({
             ...prev,
             reservation: {
               ...prev.reservation,
               paymentStatus: "pago_total",
-              paidAmount: json.paidAmount,
+              paidAmount: json.paidAmount || reservation.totalAmount,
               paidAt: json.paidAt || new Date().toISOString(),
               pixTxId: json.pixTxId || prev.reservation.pixTxId,
               mpPaymentId: json.mpPaymentId || prev.reservation.mpPaymentId
             }
           }) : null)
+          // Atualiza dados completos da reserva imediatamente
+          setTimeout(() => fetchPortalData(reservation.code), 400)
+        } else {
+          setPaymentPendingFeedback(true)
+          setTimeout(() => setPaymentPendingFeedback(false), 8000)
         }
+      } else {
+        setPaymentPendingFeedback(true)
       }
     } catch (e) {
       console.error("Erro ao verificar status de pagamento:", e)
+      setPaymentPendingFeedback(true)
     } finally {
       setCheckingPayment(false)
     }
@@ -1065,12 +1076,34 @@ export default function GuestPortal() {
                       variant="outline"
                       onClick={handleCheckPaymentStatus}
                       disabled={checkingPayment}
-                      className="h-9 px-4 rounded-xl text-xs font-bold border-slate-300 hover:bg-white text-slate-700 gap-1.5 shadow-2xs"
+                      className="h-10 px-5 rounded-xl text-xs font-bold border-slate-300 hover:bg-white text-slate-700 gap-2 shadow-sm active:scale-95 transition-all"
                     >
                       <RefreshCw className={`w-3.5 h-3.5 ${checkingPayment ? "animate-spin text-sky-600" : ""}`} />
-                      <span>{checkingPayment ? "Verificando..." : "Já fiz o PIX • Verificar Pagamento"}</span>
+                      <span>{checkingPayment ? "Consultando Banco Inter..." : "Já fiz o PIX • Verificar Pagamento"}</span>
                     </Button>
                   </div>
+
+                  {paymentPendingFeedback && (
+                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-start gap-2.5 text-left max-w-md mx-auto animate-in fade-in">
+                      <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div className="space-y-0.5">
+                        <span className="font-bold block">Aguardando registro no Banco Inter</span>
+                        <p className="text-[11.5px] text-amber-800 leading-relaxed">
+                          Se você acabou de pagar no app do seu banco, pode levar de 15 a 30 segundos para o sistema bancário registrar a compensação. Aguarde alguns instantes e clique novamente em <strong>Verificar Pagamento</strong>.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {paymentSuccessNotice && (
+                    <div className="p-3.5 bg-emerald-50 border border-emerald-300 rounded-xl text-xs text-emerald-900 flex items-center gap-2.5 text-left max-w-md mx-auto animate-in fade-in shadow-xs">
+                      <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                      <div>
+                        <span className="font-bold block text-sm">Pagamento Confirmado!</span>
+                        <span className="text-[11.5px] text-emerald-800">Seu PIX foi identificado com sucesso no Banco Inter. Sua reserva está confirmada!</span>
+                      </div>
+                    </div>
+                  )}
 
                   <div className="text-[11px] text-emerald-700 flex items-center justify-center gap-1.5 font-medium">
                     <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />

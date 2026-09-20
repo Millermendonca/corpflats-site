@@ -7627,6 +7627,36 @@ app.get("/api/pms/guest-portal/:code", (req, res) => {
     (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0)
   );
 
+  // Se a reserva ainda não consta como paga, verifica ativamente no Extrato do Banco Inter
+  if (!isPaid && Number(r.totalAmount) > 0) {
+    try {
+      const extratoMatch = await checkInterBankingExtratoPix(r);
+      if (extratoMatch && extratoMatch.found) {
+        const valorPago = Number(extratoMatch.amount || r.totalAmount);
+        r.paymentStatus = "pago_total";
+        r.paidAmount = valorPago;
+        r.paidAt = extratoMatch.paidAt || new Date().toISOString();
+        r.pixEndToEndId = extratoMatch.endToEndId;
+        r.pixTxId = extratoMatch.txId || r.pixTxId;
+        r.paymentMethod = "pix";
+
+        createNotification({
+          category: "checkout",
+          title: `💰 PIX Confirmado: R$ ${valorPago.toLocaleString("pt-BR")} (Apt ${r.flatNumber || ""})`,
+          message: `Reserva ${r.code} liquidada com sucesso via PIX Banco Inter por ${extratoMatch.pagador || r.guestName}!`,
+          severity: "success",
+          metadata: { reservationCode: r.code, txid: r.pixTxId, amount: valorPago, endToEndId: extratoMatch.endToEndId },
+          targetUrl: `/reservas`
+        });
+
+        saveDatabase();
+        isPaid = true;
+      }
+    } catch (errExtrato) {
+      console.warn("[Guest Portal] Erro ao checar extrato PIX:", errExtrato.message);
+    }
+  }
+
   const resolvedTotal = Number(r.totalAmount) || 0;
   const resolvedPaid = isPaid ? (resolvedTotal > 0 ? resolvedTotal : (isOta ? 0 : (Number(r.paidAmount) || 0))) : (Number(r.paidAmount) || 0);
 
@@ -7638,14 +7668,15 @@ app.get("/api/pms/guest-portal/:code", (req, res) => {
   // Se pendente com valor total cadastrado e sem chave PIX ainda, gera cobrança estática PIX com a chave oficial CorpFlats
   if (!isPaid && Number(r.totalAmount) > 0 && !r.pixCopiaECola) {
     try {
+      const cleanTxId = String(r.code || `RES${r.id}`).replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
       const staticPayload = generateStaticPixPayload({
         pixKey: DEFAULT_INTER_CONFIG.pixKey || "47964813000165",
         amount: r.totalAmount,
         merchantName: "CORPFLATS LTDA",
         merchantCity: "CAMPOS DOS GOYTACAZES",
-        txid: String(r.code || `RES${r.id}`).replace(/[^a-zA-Z0-9]/g, "").substring(0, 25)
+        txid: cleanTxId
       });
-      r.pixTxId = r.pixTxId || `STAT_${Date.now()}`;
+      r.pixTxId = r.pixTxId || cleanTxId;
       r.pixCopiaECola = staticPayload;
       saveDatabase();
     } catch {}
@@ -16234,7 +16265,7 @@ async function getInterAccessToken() {
     client_id: clientId,
     client_secret: clientSecret,
     grant_type: "client_credentials",
-    scope: "cob.read cob.write"
+    scope: "cob.read cob.write pix.read pix.write extrato.read boleto-cobranca.read pagamento-pix.read"
   }).toString();
 
   return new Promise((resolve, reject) => {
@@ -16491,6 +16522,138 @@ async function checkMercadoPagoPaymentByRef(externalRef) {
   });
 }
 
+// 6.2.3 Cache e Consulta Ativa no Extrato Bancário Completo do Banco Inter (/banking/v2/extrato/completo)
+let _interExtratoCache = {
+  timestamp: 0,
+  data: null
+};
+
+async function getCachedInterExtratoCompleto() {
+  const now = Date.now();
+  if (_interExtratoCache.data && (now - _interExtratoCache.timestamp < 10000)) {
+    return _interExtratoCache.data;
+  }
+
+  try {
+    const token = await getInterAccessToken();
+    const httpsAgent = getInterHttpsAgent();
+
+    const nowDate = new Date();
+    const dFim = nowDate.toISOString().substring(0, 10);
+    const dInicioDate = new Date(nowDate.getTime() - 2 * 24 * 60 * 60 * 1000);
+    const dInicio = dInicioDate.toISOString().substring(0, 10);
+
+    const url = `https://cdpj.partners.bancointer.com.br/banking/v2/extrato/completo?dataInicio=${dInicio}&dataFim=${dFim}`;
+
+    const data = await new Promise((resolve) => {
+      const req = https.request(url, {
+        method: "GET",
+        agent: httpsAgent,
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      }, (res) => {
+        let raw = "";
+        res.on("data", c => raw += c);
+        res.on("end", () => {
+          try {
+            resolve(JSON.parse(raw));
+          } catch {
+            resolve(null);
+          }
+        });
+      });
+      req.on("error", (err) => {
+        console.warn("[Banco Inter Extrato] Erro ao consultar:", err.message);
+        resolve(null);
+      });
+      req.end();
+    });
+
+    if (data && Array.isArray(data.transacoes)) {
+      _interExtratoCache = {
+        timestamp: now,
+        data
+      };
+    }
+    return data;
+  } catch (e) {
+    console.warn("[Banco Inter Extrato] Falha ao obter extrato:", e.message);
+    return null;
+  }
+}
+
+async function checkInterBankingExtratoPix(r) {
+  try {
+    if (!r) return null;
+    const data = await getCachedInterExtratoCompleto();
+    if (!data || !Array.isArray(data.transacoes) || data.transacoes.length === 0) {
+      return null;
+    }
+
+    const cleanResCode = String(r.code || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+    const cleanPixTxId = String(r.pixTxId || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+    const expectedAmount = Number(r.totalAmount || 0);
+    const pendingAmount = Math.max(0, expectedAmount - (Number(r.paidAmount) || 0));
+
+    for (const t of data.transacoes) {
+      if (t.tipoTransacao !== "PIX" || t.tipoOperacao !== "C") continue;
+
+      const txValor = Number(t.valor || 0);
+      const txIdFromDetails = String(t.detalhes?.txId || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+      const endToEndId = t.detalhes?.endToEndId || t.idTransacao;
+
+      // Verifica se essa transação já foi vinculada a OUTRA reserva
+      const alreadyClaimedByOther = (db.reservations || []).some(other =>
+        other.id !== r.id && other.pixEndToEndId === endToEndId && other.paymentStatus === "pago_total"
+      );
+      if (alreadyClaimedByOther) continue;
+
+      // Critério 1: txId idêntico ao código da reserva ou pixTxId
+      const txIdMatched = Boolean(
+        txIdFromDetails && (
+          txIdFromDetails === cleanResCode ||
+          txIdFromDetails === cleanPixTxId ||
+          (cleanResCode.length >= 5 && txIdFromDetails.includes(cleanResCode)) ||
+          (cleanPixTxId.length >= 5 && txIdFromDetails.includes(cleanPixTxId)) ||
+          (cleanResCode.length >= 5 && cleanResCode.includes(txIdFromDetails))
+        )
+      );
+
+      // Critério 2: Valor correspondente exato
+      const amountMatched = Math.abs(txValor - expectedAmount) < 0.05 || (pendingAmount > 0 && Math.abs(txValor - pendingAmount) < 0.05);
+
+      // Critério 3: Nome do pagador
+      const guestNameNormalized = (r.guestName || "")
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+      const firstGuestName = guestNameNormalized.split(" ")[0] || "";
+      const pagadorNormalized = (t.detalhes?.nomePagador || t.descricao || "")
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+
+      const nameMatched = Boolean(
+        firstGuestName.length >= 3 && pagadorNormalized.includes(firstGuestName)
+      );
+
+      if (txIdMatched || (amountMatched && (nameMatched || (cleanResCode && txIdFromDetails.startsWith("RES"))))) {
+        console.log(`[Banco Inter Extrato] MATCH de pagamento confirmado para reserva ${r.code}! TxID: ${t.detalhes?.txId || t.idTransacao}, Valor: ${txValor}, Pagador: ${t.detalhes?.nomePagador || t.descricao}`);
+        return {
+          found: true,
+          amount: txValor,
+          paidAt: t.dataInclusao || t.dataTransacao || new Date().toISOString(),
+          endToEndId,
+          txId: t.detalhes?.txId || r.pixTxId,
+          pagador: t.detalhes?.nomePagador || t.descricao
+        };
+      }
+    }
+
+    return null;
+  } catch (err) {
+    console.error("[Banco Inter Extrato] Falha geral:", err);
+    return null;
+  }
+}
+
 // 6.3 Checar Status de Pagamento de Reserva Específica com Consulta Ativa em Tempo Real
 app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
   try {
@@ -16545,6 +16708,39 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
           mpPaymentId: r.mpPaymentId || null
         });
       }
+    }
+
+    // Consulta ativa no Extrato Bancário Completo do Banco Inter (PIX recebido via QR Code estático / transferência direta)
+    const extratoMatch = await checkInterBankingExtratoPix(r);
+    if (extratoMatch && extratoMatch.found) {
+      const valorPago = Number(extratoMatch.amount || r.totalAmount);
+      r.paymentStatus = "pago_total";
+      r.paidAmount = valorPago;
+      r.paidAt = extratoMatch.paidAt || new Date().toISOString();
+      r.pixEndToEndId = extratoMatch.endToEndId;
+      r.pixTxId = extratoMatch.txId || r.pixTxId;
+      r.paymentMethod = "pix";
+
+      createNotification({
+        category: "checkout",
+        title: `💰 PIX Confirmado: R$ ${valorPago.toLocaleString("pt-BR")} (Apt ${r.flatNumber || ""})`,
+        message: `Reserva ${r.code} liquidada com sucesso via PIX Banco Inter por ${extratoMatch.pagador || r.guestName}!`,
+        severity: "success",
+        metadata: { reservationCode: r.code, txid: r.pixTxId, amount: valorPago, endToEndId: extratoMatch.endToEndId },
+        targetUrl: `/reservas`
+      });
+
+      saveDatabase();
+
+      return res.json({
+        code: r.code,
+        paid: true,
+        paymentStatus: "pago_total",
+        paidAmount: valorPago,
+        totalAmount: r.totalAmount || 0,
+        pixTxId: r.pixTxId,
+        mpPaymentId: r.mpPaymentId || null
+      });
     }
 
     // Se não liquidou pelo Inter, verifica no Mercado Pago (Cartão de Crédito)
@@ -16636,14 +16832,15 @@ app.post("/api/pms/reservations/:code/change-payment-method", async (req, res) =
           r.pixCopiaECola = pixResult.pixCopiaECola;
         } catch (pixErr) {
           console.warn("[Change Payment Method] Falha Inter, gerando PIX estático:", pixErr.message);
+          const cleanTxId = r.code.replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
           const staticPayload = generateStaticPixPayload({
             pixKey: DEFAULT_INTER_CONFIG.pixKey || "47964813000165",
             amount: r.totalAmount,
             merchantName: "CORPFLATS LTDA",
             merchantCity: "CAMPOS DOS GOYTACAZES",
-            txid: r.code.replace(/[^a-zA-Z0-9]/g, "").substring(0, 25)
+            txid: cleanTxId
           });
-          r.pixTxId = r.pixTxId || `STAT_${Date.now()}`;
+          r.pixTxId = cleanTxId;
           r.pixCopiaECola = staticPayload;
         }
       }
@@ -18231,6 +18428,50 @@ app.get("/api/maids/inter-status", (req, res) => {
       : "⚠️ Credenciais Inter não configuradas — pagamentos em modo simulação.",
   });
 });
+
+// 6.4 Background Auto-Sync de Pagamentos Pix Banco Inter a cada 20 segundos
+setInterval(async () => {
+  try {
+    if (!db.reservations || !Array.isArray(db.reservations)) return;
+
+    const pendingReservations = db.reservations.filter(r =>
+      r.status !== "cancelada" &&
+      r.paymentStatus !== "pago_total" &&
+      r.paymentStatus !== "pago" &&
+      Number(r.totalAmount) > 0 &&
+      (!r.paidAmount || Number(r.paidAmount) < Number(r.totalAmount))
+    );
+
+    if (pendingReservations.length === 0) return;
+
+    for (const r of pendingReservations) {
+      const extratoMatch = await checkInterBankingExtratoPix(r);
+      if (extratoMatch && extratoMatch.found) {
+        const valorPago = Number(extratoMatch.amount || r.totalAmount);
+        r.paymentStatus = "pago_total";
+        r.paidAmount = valorPago;
+        r.paidAt = extratoMatch.paidAt || new Date().toISOString();
+        r.pixEndToEndId = extratoMatch.endToEndId;
+        r.pixTxId = extratoMatch.txId || r.pixTxId;
+        r.paymentMethod = "pix";
+
+        createNotification({
+          category: "checkout",
+          title: `💰 PIX Confirmado: R$ ${valorPago.toLocaleString("pt-BR")} (Apt ${r.flatNumber || ""})`,
+          message: `Reserva ${r.code} liquidada com sucesso via PIX Banco Inter por ${extratoMatch.pagador || r.guestName}!`,
+          severity: "success",
+          metadata: { reservationCode: r.code, txid: r.pixTxId, amount: valorPago, endToEndId: extratoMatch.endToEndId },
+          targetUrl: `/reservas`
+        });
+
+        saveDatabase();
+        console.log(`[Auto-Sync Pix Inter] Reserva ${r.code} liquidada com sucesso! R$ ${valorPago}`);
+      }
+    }
+  } catch (errLoop) {
+    // Silencioso
+  }
+}, 20000);
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`[Demo Server] API rodando em http://0.0.0.0:${PORT}`);
