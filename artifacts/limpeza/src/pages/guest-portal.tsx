@@ -545,60 +545,535 @@ export default function GuestPortal() {
   }
 
   const handlePrintReceipt = () => {
-    const printContent = document.getElementById("corpflats-receipt-content")
-    if (!printContent) {
-      window.print()
-      return
+    const emissionDate = format(new Date(), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })
+    const paidAtFormatted = reservation?.paidAt 
+      ? format(parseISO(reservation.paidAt), "dd/MM/yyyy 'às' HH:mm:ss", { locale: ptBR })
+      : (isPaid ? format(new Date(), "dd/MM/yyyy", { locale: ptBR }) : "")
+
+    const paymentMethodText = isOta 
+      ? (channelLower.includes("booking") ? "Booking.com (Canal Parceiro)" : "Airbnb (Canal Parceiro)")
+      : (reservation?.pixTxId 
+          ? "PIX Instantâneo Oficial (Banco Inter)" 
+          : (reservation?.mpPaymentId 
+              ? "Cartão de Crédito (Mercado Pago)" 
+              : (channelLower.includes("whatsapp") ? "WhatsApp / CorpFlats" : "PIX Oficial Banco Inter")))
+
+    const receiptHtml = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>Comprovante de Quitação - CorpFlats - ${reservation?.code || ""}</title>
+  <style>
+    @page {
+      size: A4 portrait;
+      margin: 12mm 15mm;
     }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      color: #0f172a;
+      background-color: #f1f5f9;
+      padding: 24px;
+      line-height: 1.4;
+      font-size: 13px;
+    }
+    .print-actions {
+      max-width: 720px;
+      margin: 0 auto 16px auto;
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+    .btn-action {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 18px;
+      font-size: 13px;
+      font-weight: 700;
+      border-radius: 8px;
+      cursor: pointer;
+      border: none;
+      transition: all 0.15s ease;
+    }
+    .btn-print {
+      background: #0f172a;
+      color: #ffffff;
+    }
+    .btn-print:hover {
+      background: #1e293b;
+    }
+    .btn-close {
+      background: #e2e8f0;
+      color: #334155;
+    }
+    .btn-close:hover {
+      background: #cbd5e1;
+    }
+    .receipt-container {
+      max-width: 720px;
+      margin: 0 auto;
+      background: #ffffff;
+      border: 1px solid #cbd5e1;
+      border-radius: 12px;
+      padding: 32px 36px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+    }
+    .receipt-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      border-bottom: 2px solid #0284c7;
+      padding-bottom: 18px;
+      margin-bottom: 22px;
+    }
+    .brand-title {
+      font-size: 24px;
+      font-weight: 900;
+      letter-spacing: -0.5px;
+      color: #0369a1;
+      text-transform: uppercase;
+    }
+    .brand-subtitle {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1.2px;
+      color: #64748b;
+      text-transform: uppercase;
+      margin-top: 2px;
+    }
+    .brand-meta {
+      font-size: 11px;
+      color: #64748b;
+      margin-top: 6px;
+      line-height: 1.4;
+    }
+    .receipt-info {
+      text-align: right;
+    }
+    .status-badge {
+      display: inline-block;
+      background: #ecfdf5;
+      color: #047857;
+      border: 1.5px solid #10b981;
+      border-radius: 9999px;
+      font-size: 11px;
+      font-weight: 800;
+      padding: 5px 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+    .receipt-code-label {
+      font-size: 10.5px;
+      color: #64748b;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    .receipt-code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 15px;
+      font-weight: 900;
+      color: #0f172a;
+    }
+    .receipt-date {
+      font-size: 10.5px;
+      color: #94a3b8;
+      margin-top: 3px;
+    }
+    .section-card {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin-bottom: 14px;
+    }
+    .section-heading {
+      font-size: 10.5px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #0369a1;
+      border-bottom: 1px solid #e2e8f0;
+      padding-bottom: 5px;
+      margin-bottom: 10px;
+    }
+    .info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px 16px;
+    }
+    .info-item {
+      font-size: 12px;
+    }
+    .info-label {
+      font-size: 11px;
+      color: #64748b;
+      font-weight: 500;
+      margin-bottom: 1px;
+      display: block;
+    }
+    .info-value {
+      color: #0f172a;
+      font-weight: 700;
+    }
+    .font-mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .items-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 14px;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      overflow: hidden;
+      font-size: 12px;
+    }
+    .items-table th {
+      background: #f1f5f9;
+      color: #475569;
+      font-weight: 800;
+      font-size: 10.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 10px 14px;
+      border-bottom: 1px solid #cbd5e1;
+      text-align: left;
+    }
+    .items-table td {
+      padding: 10px 14px;
+      border-bottom: 1px solid #f1f5f9;
+      color: #1e293b;
+    }
+    .items-table tr:last-child td {
+      border-bottom: none;
+    }
+    .text-right {
+      text-align: right;
+    }
+    .total-card {
+      background: #ecfdf5;
+      border: 1.5px solid #6ee7b7;
+      border-radius: 10px;
+      padding: 14px 18px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+    .total-title {
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #065f46;
+    }
+    .total-sub {
+      font-size: 11.5px;
+      font-weight: 600;
+      color: #047857;
+      margin-top: 2px;
+    }
+    .total-amount {
+      font-size: 24px;
+      font-weight: 900;
+      color: #047857;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .audit-box {
+      background: #ffffff;
+      border: 1px dashed #cbd5e1;
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin-bottom: 14px;
+    }
+    .audit-label {
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #64748b;
+      margin-bottom: 4px;
+      display: block;
+    }
+    .audit-hash {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+      font-weight: 700;
+      color: #047857;
+      word-break: break-all;
+      margin-top: 3px;
+    }
+    .declaration {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 11px;
+      color: #64748b;
+      text-align: center;
+      line-height: 1.45;
+      margin-bottom: 18px;
+    }
+    .receipt-footer {
+      border-top: 1px solid #e2e8f0;
+      padding-top: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      font-size: 10.5px;
+      color: #94a3b8;
+    }
+    .footer-signer {
+      text-align: right;
+    }
+    .signer-name {
+      font-weight: 800;
+      color: #334155;
+      font-size: 11px;
+    }
+    .signer-role {
+      color: #64748b;
+      font-size: 10px;
+    }
+    @media print {
+      body {
+        background: #ffffff !important;
+        padding: 0 !important;
+      }
+      .no-print {
+        display: none !important;
+      }
+      .receipt-container {
+        border: none !important;
+        box-shadow: none !important;
+        padding: 0 !important;
+        max-width: 100% !important;
+        width: 100% !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="print-actions no-print">
+    <button type="button" class="btn-action btn-print" onclick="window.print()">
+      🖨️ Imprimir / Salvar em PDF
+    </button>
+    <button type="button" class="btn-action btn-close" onclick="window.close()">
+      ✕ Fechar Janela
+    </button>
+  </div>
+
+  <div class="receipt-container">
+    <div class="receipt-header">
+      <div class="brand-left">
+        <div class="brand-title">CorpFlats</div>
+        <div class="brand-subtitle">Hospedagem & Gestão Imobiliária</div>
+        <div class="brand-meta">
+          <strong>CorpFlats Hospedagens Ltda</strong><br>
+          CNPJ: 47.964.813/0001-65<br>
+          Campos dos Goytacazes - RJ
+        </div>
+      </div>
+      <div class="receipt-info">
+        <div class="status-badge">✓ PAGO & QUITADO</div>
+        <div class="receipt-code-label">Recibo Oficial</div>
+        <div class="receipt-code">REC-${reservation?.code || ""}</div>
+        <div class="receipt-date">Emissão: ${emissionDate}</div>
+      </div>
+    </div>
+
+    <div class="section-card">
+      <div class="section-heading">1. Identificação do Hóspede & Reserva</div>
+      <div class="info-grid">
+        <div class="info-item">
+          <span class="info-label">Hóspede Titular</span>
+          <span class="info-value">${guestName}</span>
+        </div>
+        <div class="info-item">
+          <span class="info-label">Localizador da Reserva</span>
+          <span class="info-value font-mono" style="color: #0369a1;">${reservation?.code || ""}</span>
+        </div>
+        ${reservation?.guestDocument ? `
+        <div class="info-item">
+          <span class="info-label">CPF / Documento</span>
+          <span class="info-value font-mono">${reservation.guestDocument}</span>
+        </div>
+        ` : ""}
+        ${reservation?.guestPhone ? `
+        <div class="info-item">
+          <span class="info-label">Telefone / WhatsApp</span>
+          <span class="info-value">${formatPhoneDisplay(reservation.guestPhone)}</span>
+        </div>
+        ` : ""}
+        <div class="info-item">
+          <span class="info-label">Canal da Reserva</span>
+          <span class="info-value">${reservation?.channel || (isOta ? (channelLower.includes("booking") ? "Booking.com" : "Airbnb") : "CorpFlats Direto")}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-card">
+      <div class="section-heading">2. Acomodação & Detalhes da Estadia</div>
+      <div class="info-grid">
+        <div class="info-item">
+          <span class="info-label">Unidade / Apartamento</span>
+          <span class="info-value">Apartamento ${reservation?.flatNumber || ""} (${reservation?.roomCategory || "Studio Executivo"})</span>
+        </div>
+        <div class="info-item">
+          <span class="info-label">Período Contratado</span>
+          <span class="info-value">${nights} diária${nights > 1 ? "s" : ""} • ${reservation?.guestCount || 1} hóspede${(reservation?.guestCount || 1) > 1 ? "s" : ""}</span>
+        </div>
+        <div class="info-item">
+          <span class="info-label">Check-in</span>
+          <span class="info-value">${checkinFormatted} (a partir das 14:00)</span>
+        </div>
+        <div class="info-item">
+          <span class="info-label">Check-out</span>
+          <span class="info-value">${checkoutFormatted} (até as 12:00)</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-card" style="padding: 0; background: transparent; border: none;">
+      <div class="section-heading" style="margin-bottom: 8px;">3. Demonstrativo dos Serviços Contratados</div>
+      <table class="items-table">
+        <thead>
+          <tr>
+            <th>Descrição do Serviço</th>
+            <th style="width: 110px; text-align: center;">Período / Qtd</th>
+            <th style="width: 130px;" class="text-right">Valor Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              <strong>Diárias de Hospedagem - Flat ${reservation?.flatNumber || ""}</strong><br>
+              <span style="font-size: 11px; color: #64748b;">${checkinFormatted} até ${checkoutFormatted}</span>
+            </td>
+            <td style="text-align: center;">${nights} diária${nights > 1 ? "s" : ""}</td>
+            <td class="text-right font-mono">
+              <strong>R$ ${paidAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong>
+            </td>
+          </tr>
+          ${hasBreakfast ? `
+          <tr>
+            <td>
+              <strong>Room Service & Café da Manhã Corporativo</strong><br>
+              <span style="font-size: 11px; color: #64748b;">Itens inclusos no plano de hospedagem</span>
+            </td>
+            <td style="text-align: center;">${nights} dia${nights > 1 ? "s" : ""}</td>
+            <td class="text-right font-mono" style="color: #047857; font-weight: 700;">Incluso</td>
+          </tr>
+          ` : ""}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="total-card">
+      <div>
+        <div class="total-title">Total Liquidado & Quitado</div>
+        <div class="total-sub">✓ Saldo Residual a Pagar: R$ 0,00 (Quitação Integral)</div>
+      </div>
+      <div class="total-amount">
+        R$ ${paidAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+      </div>
+    </div>
+
+    <div class="section-card">
+      <div class="section-heading">4. Dados da Liquidação & Conciliação Bancária</div>
+      <div class="info-grid">
+        <div class="info-item">
+          <span class="info-label">Forma de Liquidação</span>
+          <span class="info-value">${paymentMethodText}</span>
+        </div>
+        ${paidAtFormatted ? `
+        <div class="info-item">
+          <span class="info-label">Data e Hora da Liquidação</span>
+          <span class="info-value">${paidAtFormatted}</span>
+        </div>
+        ` : ""}
+      </div>
+      ${reservation?.pixEndToEndId ? `
+      <div style="margin-top: 10px;">
+        <span class="audit-label">End-to-End ID (Banco Central do Brasil - SPI):</span>
+        <div class="audit-hash">${reservation.pixEndToEndId}</div>
+      </div>
+      ` : ""}
+      ${reservation?.pixTxId && !reservation?.pixEndToEndId ? `
+      <div style="margin-top: 10px;">
+        <span class="audit-label">Identificador de Transação (TxID Banco Inter):</span>
+        <div class="audit-hash">${reservation.pixTxId}</div>
+      </div>
+      ` : ""}
+    </div>
+
+    <div class="declaration">
+      Declaramos para os devidos fins de direito que os valores referentes à estadia especificada foram devidamente quitados, inexistindo quaisquer pendências financeiras relativas à reserva descrita. Este documento possui validade para comprovação de despesa e prestação de contas.
+    </div>
+
+    <div class="receipt-footer">
+      <div>
+        <strong>CorpFlats Hospedagens Ltda</strong> • CNPJ 47.964.813/0001-65<br>
+        Sistema Guest Flow Manager • Autenticação Eletrônica
+      </div>
+      <div class="footer-signer">
+        <div class="signer-name">Departamento Financeiro</div>
+        <div class="signer-role">CorpFlats Hospedagens</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    window.addEventListener('load', function() {
+      setTimeout(function() {
+        window.focus();
+        window.print();
+      }, 350);
+    });
+  </script>
+</body>
+</html>`
+
     const printWindow = window.open("", "_blank", "width=850,height=950")
-    if (!printWindow) {
-      window.print()
-      return
+    if (printWindow) {
+      printWindow.document.open()
+      printWindow.document.write(receiptHtml)
+      printWindow.document.close()
+    } else {
+      const iframe = document.createElement("iframe")
+      iframe.style.position = "fixed"
+      iframe.style.right = "0"
+      iframe.style.bottom = "0"
+      iframe.style.width = "0"
+      iframe.style.height = "0"
+      iframe.style.border = "0"
+      document.body.appendChild(iframe)
+      const iframeDoc = iframe.contentWindow?.document
+      if (iframeDoc) {
+        iframeDoc.open()
+        iframeDoc.write(receiptHtml)
+        iframeDoc.close()
+        iframe.contentWindow?.focus()
+        setTimeout(() => {
+          iframe.contentWindow?.print()
+          setTimeout(() => {
+            try { document.body.removeChild(iframe) } catch {}
+          }, 1500)
+        }, 400)
+      }
     }
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html lang="pt-BR">
-        <head>
-          <meta charset="utf-8">
-          <title>Recibo Oficial - CorpFlats - ${reservation.code}</title>
-          <style>
-            * { box-sizing: border-box; }
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; color: #0f172a; margin: 0; padding: 32px; background: #fff; }
-            .receipt-card { max-width: 680px; margin: 0 auto; border: 1px solid #cbd5e1; border-radius: 16px; padding: 28px; background: #fff; }
-            .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #0284c7; padding-bottom: 20px; margin-bottom: 20px; }
-            .logo-title { font-size: 20px; font-weight: 900; color: #0f172a; margin: 0; }
-            .company-info { font-size: 11px; color: #64748b; margin-top: 4px; line-height: 1.5; }
-            .receipt-badge { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; padding: 6px 14px; border-radius: 9999px; font-size: 12px; font-weight: 800; text-transform: uppercase; }
-            .section { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; }
-            .section-title { font-size: 11px; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; }
-            .row { display: flex; justify-content: space-between; font-size: 12.5px; padding: 3.5px 0; }
-            .row-label { color: #64748b; font-weight: 500; }
-            .row-value { font-weight: 700; color: #0f172a; text-align: right; }
-            .total-box { background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 12px; padding: 16px; display: flex; justify-content: space-between; align-items: center; margin-top: 16px; }
-            .total-label { font-size: 13px; font-weight: 800; color: #166534; text-transform: uppercase; }
-            .total-val { font-size: 22px; font-weight: 900; color: #15803d; }
-            .auth-box { margin-top: 14px; padding: 10px 14px; background: #fafafa; border: 1px dashed #cbd5e1; border-radius: 10px; font-size: 10.5px; color: #64748b; }
-            .footer { margin-top: 24px; padding-top: 16px; border-top: 1px solid #e2e8f0; font-size: 10.5px; color: #94a3b8; text-align: center; line-height: 1.5; }
-            @media print {
-              body { padding: 0; }
-              .receipt-card { border: none; padding: 0; }
-            }
-          </style>
-        </head>
-        <body>
-          <div class="receipt-card">
-            ${printContent.innerHTML}
-          </div>
-          <script>
-            window.onload = function() {
-              window.print();
-              setTimeout(function() { window.close(); }, 800);
-            };
-          </script>
-        </body>
-      </html>
-    `)
-    printWindow.document.close()
   }
 
   const handleChangePaymentMethod = async (newMethod: "pix" | "card") => {
