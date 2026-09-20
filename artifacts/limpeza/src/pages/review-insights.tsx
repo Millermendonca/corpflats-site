@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -16,7 +16,7 @@ import {
   Shield, Target, Activity, Zap, Eye, TrendingDown, Users
 } from "lucide-react"
 
-// â”€â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// •••• helpers •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 function toneColor(tone: string) {
   if (tone === "positive") return "text-emerald-400"
   if (tone === "negative") return "text-rose-400"
@@ -38,24 +38,24 @@ function ToneIcon({ tone, className = "w-4 h-4" }: { tone: string; className?: s
   return <Meh className={`${className} text-amber-400`} />
 }
 function ScoreBadge({ score }: { score: number | null }) {
-  if (score == null) return <span className="text-slate-500 text-xs">â€”</span>
+  if (score == null) return <span className="text-slate-500 text-xs">•</span>
   const color = score >= 70 ? "text-emerald-400" : score >= 45 ? "text-amber-400" : "text-rose-400"
   return <span className={`font-black font-mono text-lg ${color}`}>{score}<span className="text-xs font-normal text-slate-500">/100</span></span>
 }
 function NpsScoreBadge({ score }: { score: number | null }) {
   if (score == null) return <Badge className="bg-slate-800 text-slate-400 text-xs">Aguardando</Badge>
-  if (score === 5) return <Badge className="bg-emerald-950 text-emerald-300 border-emerald-800 text-xs font-bold">â­â­â­â­â­ Promotor</Badge>
-  if (score === 4) return <Badge className="bg-sky-950 text-sky-300 border-sky-800 text-xs font-bold">â­â­â­â­ Satisfeito</Badge>
-  if (score === 3) return <Badge className="bg-amber-950 text-amber-300 border-amber-800 text-xs font-bold">â­â­â­ Neutro</Badge>
-  if (score === 2) return <Badge className="bg-orange-950 text-orange-300 border-orange-800 text-xs font-bold">â­â­ Insatisfeito</Badge>
-  return <Badge className="bg-rose-950 text-rose-300 border-rose-800 text-xs font-bold">â­ Detrator</Badge>
+  if (score === 5) return <Badge className="bg-emerald-950 text-emerald-300 border-emerald-800 text-xs font-bold">⭐⭐⭐⭐⭐ Promotor</Badge>
+  if (score === 4) return <Badge className="bg-sky-950 text-sky-300 border-sky-800 text-xs font-bold">⭐⭐⭐⭐ Satisfeito</Badge>
+  if (score === 3) return <Badge className="bg-amber-950 text-amber-300 border-amber-800 text-xs font-bold">⭐⭐⭐ Neutro</Badge>
+  if (score === 2) return <Badge className="bg-orange-950 text-orange-300 border-orange-800 text-xs font-bold">⭐⭐ Insatisfeito</Badge>
+  return <Badge className="bg-rose-950 text-rose-300 border-rose-800 text-xs font-bold">⭐ Detrator</Badge>
 }
 
-// â”€â”€â”€ main component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// •••• main component •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 export default function ReviewInsights() {
   const [activeTab, setActiveTab] = useState("overview")
 
-  // Dados de avaliaÃ§Ãµes existentes
+  // Dados de avaliações existentes
   const [reviewsData, setReviewsData] = useState<any | null>(null)
   const [loadingReviews, setLoadingReviews] = useState(true)
   const [analyzing, setAnalyzing] = useState(false)
@@ -92,7 +92,7 @@ export default function ReviewInsights() {
   const [npsReservationId, setNpsReservationId] = useState("")
   const [submittingNps, setSubmittingNps] = useState(false)
 
-  // â”€â”€â”€ fetchers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // •••• fetchers •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
   const fetchReviews = useCallback(async () => {
     setLoadingReviews(true)
     try {
@@ -123,7 +123,7 @@ export default function ReviewInsights() {
   useEffect(() => { fetchReviews(); fetchSentimentOverview(); fetchNps("all"); }, [])
   useEffect(() => { fetchNps(npsFilter) }, [npsFilter])
 
-  // â”€â”€â”€ actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // •••• actions ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
   const handleRunAIAnalysis = async () => {
     setAnalyzing(true)
     try {
@@ -179,7 +179,7 @@ export default function ReviewInsights() {
     } finally { setSubmittingNps(false) }
   }
 
-  // â”€â”€â”€ computed â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // •••• computed •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
   const insights = reviewsData?.insights || { overallScore: 4.8, npsScore: 88, totalAnalyzed: 0, positivePercent: 90, highlights: [], actionItems: [] }
   const reviews = reviewsData?.reviews || []
 
@@ -193,23 +193,23 @@ export default function ReviewInsights() {
   const nps = sentimentOverview?.nps || {}
   const wpp = sentimentOverview?.whatsapp || {}
 
-  // â”€â”€â”€ render â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // •••• render •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
-      {/* â”€â”€ Header â”€â”€â”€ */}
+      {/* ••• Header •••• */}
       <header className="border-b border-slate-800 bg-slate-950/95 sticky top-0 z-10 px-4 sm:px-8 py-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/30 text-xs font-bold mb-1.5">
               <Sparkles className="w-3.5 h-3.5" />
-              <span>IA de Sentimento â€¢ CorpFlats</span>
+              <span>IA de Sentimento • CorpFlats</span>
             </div>
-            <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">AnÃ¡lise de Sentimento de HÃ³spedes</h1>
-            <p className="text-xs text-slate-400 mt-0.5">Feedbacks, tom de voz WhatsApp, filtro NPS e reputaÃ§Ã£o Google</p>
+            <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">Análise de Sentimento de Hóspedes</h1>
+            <p className="text-xs text-slate-400 mt-0.5">Feedbacks, tom de voz WhatsApp, filtro NPS e reputação Google</p>
           </div>
           <div className="flex items-center gap-2">
             <Button onClick={() => setImportModalOpen(true)} variant="outline" className="bg-slate-900 border-slate-700 text-slate-200 hover:text-white text-xs font-bold gap-1.5 rounded-xl h-9">
-              <Plus className="w-3.5 h-3.5" />Colar AvaliaÃ§Ã£o
+              <Plus className="w-3.5 h-3.5" />Colar Avaliação
             </Button>
             <Button disabled={analyzing} onClick={handleRunAIAnalysis} className="bg-purple-600 hover:bg-purple-500 text-white text-xs font-black gap-1.5 rounded-xl h-9">
               <Sparkles className={`w-3.5 h-3.5 ${analyzing ? "animate-spin" : ""}`} />
@@ -220,18 +220,18 @@ export default function ReviewInsights() {
       </header>
 
       <div className="px-4 sm:px-8 py-6 space-y-6">
-        {/* â”€â”€ Top KPI Cards â”€â”€â”€ */}
+        {/* ••• Top KPI Cards •••• */}
         <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <Card className="bg-slate-900 border-slate-800 rounded-2xl p-4 shadow-xl">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Score AvaliaÃ§Ãµes</span>
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Score Avaliações</span>
               <div className="w-7 h-7 rounded-lg bg-amber-500/20 flex items-center justify-center"><Star className="w-3.5 h-3.5 text-amber-400" /></div>
             </div>
             <div className="flex items-baseline gap-1.5">
               <span className="text-2xl font-black text-white font-mono">{insights.overallScore}</span>
               <span className="text-xs text-amber-400 font-bold">/ 5</span>
             </div>
-            <span className="text-[10px] text-slate-500">{insights.totalAnalyzed || reviews.length} avaliaÃ§Ãµes analisadas</span>
+            <span className="text-[10px] text-slate-500">{insights.totalAnalyzed || reviews.length} avaliações analisadas</span>
           </Card>
 
           <Card className="bg-slate-900 border-slate-800 rounded-2xl p-4 shadow-xl">
@@ -269,15 +269,15 @@ export default function ReviewInsights() {
               <span className="text-2xl font-black text-rose-400 font-mono">{insights.actionItems?.length || 0}</span>
               <span className="text-xs text-slate-400">gerados</span>
             </div>
-            <span className="text-[10px] text-slate-500">De avaliaÃ§Ãµes e NPS detratores</span>
+            <span className="text-[10px] text-slate-500">De avaliações e NPS detratores</span>
           </Card>
         </div>
 
-        {/* â”€â”€ Tabs â”€â”€â”€ */}
+        {/* ••• Tabs •••• */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList className="bg-slate-900 border border-slate-800 rounded-xl p-1 flex flex-wrap gap-1 h-auto">
             <TabsTrigger value="overview" className="text-xs font-bold rounded-lg data-[state=active]:bg-purple-600 data-[state=active]:text-white text-slate-400 px-3 py-1.5">
-              <BarChart3 className="w-3.5 h-3.5 mr-1.5" />VisÃ£o Geral
+              <BarChart3 className="w-3.5 h-3.5 mr-1.5" />Visão Geral
             </TabsTrigger>
             <TabsTrigger value="whatsapp" className="text-xs font-bold rounded-lg data-[state=active]:bg-emerald-700 data-[state=active]:text-white text-slate-400 px-3 py-1.5">
               <MessageCircle className="w-3.5 h-3.5 mr-1.5" />Sentimento WhatsApp
@@ -289,26 +289,26 @@ export default function ReviewInsights() {
               <Shield className="w-3.5 h-3.5 mr-1.5" />Filtro Google NPS
             </TabsTrigger>
             <TabsTrigger value="maintenance" className="text-xs font-bold rounded-lg data-[state=active]:bg-rose-700 data-[state=active]:text-white text-slate-400 px-3 py-1.5">
-              <Wrench className="w-3.5 h-3.5 mr-1.5" />ManutenÃ§Ã£o IA
+              <Wrench className="w-3.5 h-3.5 mr-1.5" />Manutenção IA
             </TabsTrigger>
           </TabsList>
 
-          {/* â•â• TAB 1: VISÃƒO GERAL â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+          {/* •"•"• TAB 1: VISÒO GERAL •"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"• */}
           <TabsContent value="overview" className="space-y-5 mt-4">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <Card className="bg-slate-900 border-slate-800 rounded-2xl p-5">
                 <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-2"><Users className="w-3.5 h-3.5" />Funil de Sentimento WPP</h3>
                 <div className="space-y-2.5">
                   <div>
-                    <div className="flex justify-between text-xs mb-1"><span className="text-emerald-400 font-bold">ðŸ˜Š Positivos</span><span className="text-emerald-400 font-mono font-bold">{wpp.positive || 0}</span></div>
+                    <div className="flex justify-between text-xs mb-1"><span className="text-emerald-400 font-bold">•x•` Positivos</span><span className="text-emerald-400 font-mono font-bold">{wpp.positive || 0}</span></div>
                     <Progress value={wpp.analyzed > 0 ? (wpp.positive / wpp.analyzed) * 100 : 0} className="h-1.5 bg-slate-800 [&>div]:bg-emerald-500" />
                   </div>
                   <div>
-                    <div className="flex justify-between text-xs mb-1"><span className="text-amber-400 font-bold">ðŸ˜ Neutros</span><span className="text-amber-400 font-mono font-bold">{wpp.neutral || 0}</span></div>
+                    <div className="flex justify-between text-xs mb-1"><span className="text-amber-400 font-bold">•xܐ Neutros</span><span className="text-amber-400 font-mono font-bold">{wpp.neutral || 0}</span></div>
                     <Progress value={wpp.analyzed > 0 ? (wpp.neutral / wpp.analyzed) * 100 : 0} className="h-1.5 bg-slate-800 [&>div]:bg-amber-500" />
                   </div>
                   <div>
-                    <div className="flex justify-between text-xs mb-1"><span className="text-rose-400 font-bold">ðŸ˜¤ Negativos</span><span className="text-rose-400 font-mono font-bold">{wpp.negative || 0}</span></div>
+                    <div className="flex justify-between text-xs mb-1"><span className="text-rose-400 font-bold">•xܤ Negativos</span><span className="text-rose-400 font-mono font-bold">{wpp.negative || 0}</span></div>
                     <Progress value={wpp.analyzed > 0 ? (wpp.negative / wpp.analyzed) * 100 : 0} className="h-1.5 bg-slate-800 [&>div]:bg-rose-500" />
                   </div>
                 </div>
@@ -320,10 +320,10 @@ export default function ReviewInsights() {
                   {[
                     { label: "Pesquisas enviadas", val: nps.sent || 0, color: "text-slate-300" },
                     { label: "Responderam", val: nps.responded || 0, color: "text-sky-300" },
-                    { label: "Nota 5 â€” Promotores â­", val: nps.promoters || 0, color: "text-emerald-400" },
-                    { label: "Nota 3-4 â€” Neutros", val: nps.neutrals || 0, color: "text-amber-400" },
-                    { label: "Nota 1-2 â€” Detratores", val: nps.detractors || 0, color: "text-rose-400" },
-                    { label: "Link Google enviado âœ“", val: nps.googleLinkSent || 0, color: "text-purple-400" },
+                    { label: "Nota 5 • Promotores ⭐", val: nps.promoters || 0, color: "text-emerald-400" },
+                    { label: "Nota 3-4 • Neutros", val: nps.neutrals || 0, color: "text-amber-400" },
+                    { label: "Nota 1-2 • Detratores", val: nps.detractors || 0, color: "text-rose-400" },
+                    { label: "Link Google enviado •S", val: nps.googleLinkSent || 0, color: "text-purple-400" },
                   ].map(({ label, val, color }) => (
                     <div key={label} className="flex items-center justify-between">
                       <span className="text-slate-400">{label}</span>
@@ -345,7 +345,7 @@ export default function ReviewInsights() {
                     ))}
                   </div>
                 ) : (
-                  <p className="text-xs text-slate-500 italic">Sem palavras-chave negativas identificadas. Rode a anÃ¡lise de IA!</p>
+                  <p className="text-xs text-slate-500 italic">Sem palavras-chave negativas identificadas. Rode a análise de IA!</p>
                 )}
               </Card>
             </div>
@@ -353,7 +353,7 @@ export default function ReviewInsights() {
             <Card className="bg-slate-900 border-slate-800 rounded-2xl p-6">
               <div className="flex items-center gap-2 mb-4">
                 <Sparkles className="w-4 h-4 text-purple-400" />
-                <h2 className="text-base font-black text-white">DiagnÃ³stico Geral da IA</h2>
+                <h2 className="text-base font-black text-white">Diagnóstico Geral da IA</h2>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {insights.highlights?.length > 0 ? insights.highlights.map((h: string, i: number) => (
@@ -362,18 +362,18 @@ export default function ReviewInsights() {
                     <span className="text-xs text-slate-200">{h}</span>
                   </div>
                 )) : (
-                  <p className="text-xs text-slate-500 col-span-2 italic">Execute a anÃ¡lise de IA para gerar destaques automÃ¡ticos.</p>
+                  <p className="text-xs text-slate-500 col-span-2 italic">Execute a análise de IA para gerar destaques automáticos.</p>
                 )}
               </div>
             </Card>
           </TabsContent>
 
-          {/* â•â• TAB 2: SENTIMENTO WHATSAPP â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+          {/* •"•"• TAB 2: SENTIMENTO WHATSAPP •"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"• */}
           <TabsContent value="whatsapp" className="space-y-4 mt-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h2 className="text-base font-black text-white flex items-center gap-2"><MessageCircle className="w-4 h-4 text-emerald-400" />AnÃ¡lise de Tom de Voz â€¢ WhatsApp</h2>
-                <p className="text-xs text-slate-400 mt-0.5">A IA analisa o conteÃºdo das mensagens recebidas dos hÃ³spedes e calcula o sentimento de cada conversa.</p>
+                <h2 className="text-base font-black text-white flex items-center gap-2"><MessageCircle className="w-4 h-4 text-emerald-400" />Análise de Tom de Voz ⬢ WhatsApp</h2>
+                <p className="text-xs text-slate-400 mt-0.5">A IA analisa o conteúdo das mensagens recebidas dos hóspedes e calcula o sentimento de cada conversa.</p>
               </div>
               <Button onClick={handleAnalyzeWpp} disabled={analyzingWpp} className="bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-black gap-1.5 rounded-xl h-9">
                 <Sparkles className={`w-3.5 h-3.5 ${analyzingWpp ? "animate-spin" : ""}`} />
@@ -382,12 +382,12 @@ export default function ReviewInsights() {
             </div>
 
             {loadingSentiment ? (
-              <div className="text-center py-12 text-slate-500 text-sm">Carregando anÃ¡lises...</div>
+              <div className="text-center py-12 text-slate-500 text-sm">Carregando análises...</div>
             ) : wppSentiments.length === 0 ? (
               <Card className="bg-slate-900 border-slate-800 rounded-2xl p-10 text-center">
                 <MessageCircle className="w-10 h-10 text-slate-700 mx-auto mb-3" />
-                <p className="text-sm font-bold text-slate-400">Nenhuma anÃ¡lise de sentimento ainda</p>
-                <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">Clique em "Analisar Conversas com IA" para processar o histÃ³rico de mensagens WhatsApp dos hÃ³spedes.</p>
+                <p className="text-sm font-bold text-slate-400">Nenhuma análise de sentimento ainda</p>
+                <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">Clique em "Analisar Conversas com IA" para processar o histórico de mensagens WhatsApp dos hóspedes.</p>
               </Card>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -398,7 +398,7 @@ export default function ReviewInsights() {
                         <ToneIcon tone={s.overallTone} className="w-5 h-5" />
                         <div>
                           <p className="text-sm font-black text-white">{s.guestName}</p>
-                          <p className="text-[10px] text-slate-400">{s.guestPhone} {s.flatNumber ? `â€¢ Flat ${s.flatNumber}` : ""}</p>
+                          <p className="text-[10px] text-slate-400">{s.guestPhone} {s.flatNumber ? `⬢ Flat ${s.flatNumber}` : ""}</p>
                         </div>
                       </div>
                       <div className="text-right">
@@ -418,8 +418,8 @@ export default function ReviewInsights() {
                       ))}
                     </div>
                     <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1 border-t border-slate-800/50">
-                      <span>{s.inboundCount || 0} msgs recebidas Â· {s.messageCount || 0} no total</span>
-                      <span>{s.analyzedAt ? new Date(s.analyzedAt).toLocaleDateString("pt-BR") : "â€”"}</span>
+                      <span>{s.inboundCount || 0} msgs recebidas · {s.messageCount || 0} no total</span>
+                      <span>{s.analyzedAt ? new Date(s.analyzedAt).toLocaleDateString("pt-BR") : "•"}</span>
                     </div>
                   </Card>
                 ))}
@@ -427,16 +427,16 @@ export default function ReviewInsights() {
             )}
           </TabsContent>
 
-          {/* â•â• TAB 3: FEEDBACKS & AVALIAÃ‡Ã•ES â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+          {/* •"•"• TAB 3: FEEDBACKS & AVALIA•!•"ES •"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"• */}
           <TabsContent value="reviews" className="space-y-4 mt-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-base font-black text-white flex items-center gap-2"><Star className="w-4 h-4 text-amber-400" />Feedbacks de HÃ³spedes ({filteredReviews.length})</h2>
+              <h2 className="text-base font-black text-white flex items-center gap-2"><Star className="w-4 h-4 text-amber-400" />Feedbacks de Hóspedes ({filteredReviews.length})</h2>
               <div className="flex flex-wrap items-center gap-2">
                 <select value={reviewFilter.tone} onChange={e => setReviewFilter(f => ({ ...f, tone: e.target.value }))} className="h-8 rounded-lg border border-slate-700 bg-slate-900 px-2 text-xs text-white">
                   <option value="all">Todos os sentimentos</option>
-                  <option value="positive">ðŸ˜Š Positivo</option>
-                  <option value="neutral">ðŸ˜ Neutro</option>
-                  <option value="negative">ðŸ˜¤ Negativo</option>
+                  <option value="positive">•x•` Positivo</option>
+                  <option value="neutral">•xܐ Neutro</option>
+                  <option value="negative">•xܤ Negativo</option>
                 </select>
                 <select value={reviewFilter.channel} onChange={e => setReviewFilter(f => ({ ...f, channel: e.target.value }))} className="h-8 rounded-lg border border-slate-700 bg-slate-900 px-2 text-xs text-white">
                   <option value="all">Todos os canais</option>
@@ -448,11 +448,11 @@ export default function ReviewInsights() {
                 </select>
                 <select value={reviewFilter.rating} onChange={e => setReviewFilter(f => ({ ...f, rating: e.target.value }))} className="h-8 rounded-lg border border-slate-700 bg-slate-900 px-2 text-xs text-white">
                   <option value="all">Todas as notas</option>
-                  <option value="5">â­â­â­â­â­ (5)</option>
-                  <option value="4">â­â­â­â­ (4)</option>
-                  <option value="3">â­â­â­ (3)</option>
-                  <option value="2">â­â­ (2)</option>
-                  <option value="1">â­ (1)</option>
+                  <option value="5">⭐⭐⭐⭐⭐ (5)</option>
+                  <option value="4">⭐⭐⭐⭐ (4)</option>
+                  <option value="3">⭐⭐⭐ (3)</option>
+                  <option value="2">⭐⭐ (2)</option>
+                  <option value="1">⭐ (1)</option>
                 </select>
                 <Button onClick={() => setImportModalOpen(true)} variant="outline" size="sm" className="h-8 text-xs bg-slate-900 border-slate-700 rounded-lg">
                   <Plus className="w-3 h-3 mr-1" />Adicionar
@@ -482,7 +482,7 @@ export default function ReviewInsights() {
                   </div>
                   <p className="text-xs text-slate-300 leading-relaxed">"{rev.comment}"</p>
                   {rev.sentimentSummary && (
-                    <p className="text-[10px] text-purple-300/80 italic border-l-2 border-purple-800/50 pl-2">ðŸ¤– IA: {rev.sentimentSummary}</p>
+                    <p className="text-[10px] text-purple-300/80 italic border-l-2 border-purple-800/50 pl-2">•x• IA: {rev.sentimentSummary}</p>
                   )}
                   {(rev.positiveKeywords?.length > 0 || rev.negativeKeywords?.length > 0) && (
                     <div className="flex flex-wrap gap-1">
@@ -512,22 +512,22 @@ export default function ReviewInsights() {
             </div>
           </TabsContent>
 
-          {/* â•â• TAB 4: FILTRO GOOGLE NPS â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+          {/* •"•"• TAB 4: FILTRO GOOGLE NPS •"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"• */}
           <TabsContent value="nps" className="space-y-5 mt-4">
             <Card className="bg-sky-950/20 border-sky-800/40 rounded-2xl p-5">
               <div className="flex items-start gap-3">
                 <Shield className="w-6 h-6 text-sky-400 shrink-0 mt-0.5" />
                 <div>
-                  <h2 className="text-sm font-black text-white mb-1">Como funciona o Filtro de ReputaÃ§Ã£o Google</h2>
+                  <h2 className="text-sm font-black text-white mb-1">Como funciona o Filtro de Reputação Google</h2>
                   <p className="text-xs text-sky-300/80 leading-relaxed">
-                    ApÃ³s o check-out, o sistema envia automaticamente uma pesquisa de satisfaÃ§Ã£o de <strong>1 a 5 estrelas</strong> via WhatsApp.
-                    <strong> Somente hÃ³spedes que respondem com nota 5</strong> recebem o link para avaliaÃ§Ã£o no Google.
-                    HÃ³spedes com notas 1-4 tÃªm feedback registrado internamente e, se 1-2, um ticket de recuperaÃ§Ã£o Ã© criado automaticamente.
+                    Após o check-out, o sistema envia automaticamente uma pesquisa de satisfação de <strong>1 a 5 estrelas</strong> via WhatsApp.
+                    <strong> Somente hóspedes que respondem com nota 5</strong> recebem o link para avaliação no Google.
+                    Hóspedes com notas 1-4 têm feedback registrado internamente e, se 1-2, um ticket de recuperação é criado automaticamente.
                   </p>
                   <div className="flex flex-wrap gap-3 mt-3">
-                    <div className="flex items-center gap-1.5 text-xs text-emerald-400"><CheckCircle2 className="w-3.5 h-3.5" /><span>Nota 5 â†’ Link Google enviado</span></div>
-                    <div className="flex items-center gap-1.5 text-xs text-amber-400"><Meh className="w-3.5 h-3.5" /><span>Nota 3-4 â†’ Feedback interno</span></div>
-                    <div className="flex items-center gap-1.5 text-xs text-rose-400"><AlertTriangle className="w-3.5 h-3.5" /><span>Nota 1-2 â†’ Ticket de recuperaÃ§Ã£o</span></div>
+                    <div className="flex items-center gap-1.5 text-xs text-emerald-400"><CheckCircle2 className="w-3.5 h-3.5" /><span>Nota 5 •  Link Google enviado</span></div>
+                    <div className="flex items-center gap-1.5 text-xs text-amber-400"><Meh className="w-3.5 h-3.5" /><span>Nota 3-4 •  Feedback interno</span></div>
+                    <div className="flex items-center gap-1.5 text-xs text-rose-400"><AlertTriangle className="w-3.5 h-3.5" /><span>Nota 1-2 •  Ticket de recuperação</span></div>
                   </div>
                 </div>
               </div>
@@ -537,10 +537,10 @@ export default function ReviewInsights() {
               {[
                 { label: "Enviadas", val: nps.sent || 0, color: "text-slate-200", icon: <Activity className="w-3.5 h-3.5" /> },
                 { label: "Respondidas", val: nps.responded || 0, color: "text-sky-400", icon: <MessageSquare className="w-3.5 h-3.5" /> },
-                { label: "Promotores (5â­)", val: nps.promoters || 0, color: "text-emerald-400", icon: <ThumbsUp className="w-3.5 h-3.5" /> },
-                { label: "Neutros (3-4â­)", val: nps.neutrals || 0, color: "text-amber-400", icon: <Meh className="w-3.5 h-3.5" /> },
-                { label: "Detratores (1-2â­)", val: nps.detractors || 0, color: "text-rose-400", icon: <Frown className="w-3.5 h-3.5" /> },
-                { label: "Link Google âœ“", val: nps.googleLinkSent || 0, color: "text-purple-400", icon: <Shield className="w-3.5 h-3.5" /> },
+                { label: "Promotores (5⭐)", val: nps.promoters || 0, color: "text-emerald-400", icon: <ThumbsUp className="w-3.5 h-3.5" /> },
+                { label: "Neutros (3-4⭐)", val: nps.neutrals || 0, color: "text-amber-400", icon: <Meh className="w-3.5 h-3.5" /> },
+                { label: "Detratores (1-2⭐)", val: nps.detractors || 0, color: "text-rose-400", icon: <Frown className="w-3.5 h-3.5" /> },
+                { label: "Link Google •S", val: nps.googleLinkSent || 0, color: "text-purple-400", icon: <Shield className="w-3.5 h-3.5" /> },
               ].map(({ label, val, color, icon }) => (
                 <Card key={label} className="bg-slate-900 border-slate-800 rounded-xl p-3 text-center">
                   <div className={`flex justify-center mb-1 ${color}`}>{icon}</div>
@@ -551,15 +551,15 @@ export default function ReviewInsights() {
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <h3 className="text-sm font-black text-white">HistÃ³rico de Pesquisas NPS</h3>
+              <h3 className="text-sm font-black text-white">Histórico de Pesquisas NPS</h3>
               <div className="flex items-center gap-2">
                 <div className="flex rounded-xl overflow-hidden border border-slate-700">
                   {[
                     { val: "all", label: "Todos" },
-                    { val: "promoters", label: "â­â­â­â­â­" },
-                    { val: "neutrals", label: "ðŸ¤” Neutros" },
-                    { val: "detractors", label: "âš ï¸ Detratores" },
-                    { val: "pending", label: "â³ Aguardando" },
+                    { val: "promoters", label: "⭐⭐⭐⭐⭐" },
+                    { val: "neutrals", label: "•x• Neutros" },
+                    { val: "detractors", label: "•a•️ Detratores" },
+                    { val: "pending", label: "⏳ Aguardando" },
                   ].map(opt => (
                     <button key={opt.val} onClick={() => setNpsFilter(opt.val)} className={`text-[10px] font-bold px-2.5 py-1.5 transition-colors ${npsFilter === opt.val ? "bg-sky-700 text-white" : "bg-slate-900 text-slate-400 hover:text-slate-200"}`}>{opt.label}</button>
                   ))}
@@ -576,7 +576,7 @@ export default function ReviewInsights() {
               <Card className="bg-slate-900 border-slate-800 rounded-2xl p-10 text-center">
                 <Shield className="w-10 h-10 text-slate-700 mx-auto mb-3" />
                 <p className="text-sm font-bold text-slate-400">Nenhuma pesquisa NPS registrada ainda</p>
-                <p className="text-xs text-slate-500 mt-1">As pesquisas sÃ£o enviadas automaticamente 2h apÃ³s o check-out via WhatsApp.</p>
+                <p className="text-xs text-slate-500 mt-1">As pesquisas são enviadas automaticamente 2h após o check-out via WhatsApp.</p>
               </Card>
             ) : (
               <div className="space-y-2.5 max-h-[500px] overflow-y-auto pr-1">
@@ -590,17 +590,17 @@ export default function ReviewInsights() {
                         <NpsScoreBadge score={npsItem.score} />
                       </div>
                       {npsItem.comment && <p className="text-xs text-slate-300 leading-relaxed italic mb-1.5">"{npsItem.comment}"</p>}
-                      {npsItem.sentimentSummary && <p className="text-[10px] text-purple-300/80 italic">ðŸ¤– {npsItem.sentimentSummary}</p>}
+                      {npsItem.sentimentSummary && <p className="text-[10px] text-purple-300/80 italic">•x• {npsItem.sentimentSummary}</p>}
                       <div className="flex flex-wrap gap-3 mt-2 text-[10px] text-slate-500">
-                        <span>Enviado: {npsItem.sentAt ? new Date(npsItem.sentAt).toLocaleDateString("pt-BR") : "â€”"}</span>
+                        <span>Enviado: {npsItem.sentAt ? new Date(npsItem.sentAt).toLocaleDateString("pt-BR") : "•"}</span>
                         {npsItem.respondedAt && <span>Respondido: {new Date(npsItem.respondedAt).toLocaleDateString("pt-BR")}</span>}
                       </div>
                     </div>
                     <div className="flex flex-col items-end gap-1.5 shrink-0">
-                      {npsItem.googleLinkSent && <Badge className="bg-emerald-950 text-emerald-300 border-emerald-800 text-[10px]">âœ“ Link Google Enviado</Badge>}
-                      {npsItem.autoAction === "recovery_ticket_created" && <Badge className="bg-rose-950 text-rose-300 border-rose-800 text-[10px]">âš ï¸ Ticket Criado</Badge>}
-                      {npsItem.autoAction === "feedback_collected" && <Badge className="bg-amber-950 text-amber-300 border-amber-800 text-[10px]">ðŸ“ Feedback Interno</Badge>}
-                      {npsItem.pendingResponse && <Badge className="bg-slate-800 text-slate-400 text-[10px]">â³ Aguardando Resposta</Badge>}
+                      {npsItem.googleLinkSent && <Badge className="bg-emerald-950 text-emerald-300 border-emerald-800 text-[10px]">•S Link Google Enviado</Badge>}
+                      {npsItem.autoAction === "recovery_ticket_created" && <Badge className="bg-rose-950 text-rose-300 border-rose-800 text-[10px]">•a•️ Ticket Criado</Badge>}
+                      {npsItem.autoAction === "feedback_collected" && <Badge className="bg-amber-950 text-amber-300 border-amber-800 text-[10px]">•x• Feedback Interno</Badge>}
+                      {npsItem.pendingResponse && <Badge className="bg-slate-800 text-slate-400 text-[10px]">⏳ Aguardando Resposta</Badge>}
                     </div>
                   </div>
                 ))}
@@ -608,12 +608,12 @@ export default function ReviewInsights() {
             )}
           </TabsContent>
 
-          {/* â•â• TAB 5: MANUTENÃ‡ÃƒO IA â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+          {/* •"•"• TAB 5: MANUTEN•!ÒO IA •"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"• */}
           <TabsContent value="maintenance" className="space-y-4 mt-4">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-base font-black text-white flex items-center gap-2"><Wrench className="w-4 h-4 text-rose-400" />Ordens de ManutenÃ§Ã£o Geradas por IA</h2>
-                <p className="text-xs text-slate-400 mt-0.5">Tickets criados automaticamente por menÃ§Ãµes em avaliaÃ§Ãµes, feedbacks e NPS detratores.</p>
+                <h2 className="text-base font-black text-white flex items-center gap-2"><Wrench className="w-4 h-4 text-rose-400" />Ordens de Manutenção Geradas por IA</h2>
+                <p className="text-xs text-slate-400 mt-0.5">Tickets criados automaticamente por menções em avaliações, feedbacks e NPS detratores.</p>
               </div>
               <Button disabled={analyzing} onClick={handleRunAIAnalysis} size="sm" className="bg-rose-700 hover:bg-rose-600 text-white text-xs font-black gap-1.5 rounded-xl h-9">
                 <Sparkles className={`w-3.5 h-3.5 ${analyzing ? "animate-spin" : ""}`} />
@@ -631,7 +631,7 @@ export default function ReviewInsights() {
                     <p className="text-xs text-slate-300 leading-relaxed font-medium">{act.issue}</p>
                     <div className="flex items-center gap-2 text-[10px] text-slate-500">
                       <Wrench className="w-3 h-3 text-rose-400" />
-                      <span>Criado por IA Â· {act.priority === "alta" ? "Prioridade Alta" : "Prioridade MÃ©dia"}</span>
+                      <span>Criado por IA · {act.priority === "alta" ? "Prioridade Alta" : "Prioridade Média"}</span>
                     </div>
                   </div>
                 ))}
@@ -639,36 +639,36 @@ export default function ReviewInsights() {
             ) : (
               <Card className="bg-slate-900 border-slate-800 rounded-2xl p-10 text-center">
                 <CheckCircle2 className="w-10 h-10 text-emerald-500/50 mx-auto mb-3" />
-                <p className="text-sm font-bold text-slate-400">Nenhum ticket de manutenÃ§Ã£o pendente</p>
-                <p className="text-xs text-slate-500 mt-1">A IA nÃ£o identificou problemas tÃ©cnicos nas avaliaÃ§Ãµes recentes.</p>
+                <p className="text-sm font-bold text-slate-400">Nenhum ticket de manutenção pendente</p>
+                <p className="text-xs text-slate-500 mt-1">A IA não identificou problemas técnicos nas avaliações recentes.</p>
               </Card>
             )}
           </TabsContent>
         </Tabs>
       </div>
 
-      {/* â•â• Modal: Importar AvaliaÃ§Ã£o â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+      {/* •"•"• Modal: Importar Avaliação •"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"• */}
       <Dialog open={importModalOpen} onOpenChange={setImportModalOpen}>
         <DialogContent className="sm:max-w-lg bg-slate-900 border-slate-800 text-white">
           <form onSubmit={handleImportReview}>
             <DialogHeader>
-              <DialogTitle className="flex items-center gap-2 text-white"><Plus className="w-4 h-4 text-purple-400" />Importar AvaliaÃ§Ã£o Externa</DialogTitle>
-              <DialogDescription className="text-slate-400 text-xs">Cole a avaliaÃ§Ã£o recebida do Airbnb, Booking ou Google para que a IA processe.</DialogDescription>
+              <DialogTitle className="flex items-center gap-2 text-white"><Plus className="w-4 h-4 text-purple-400" />Importar Avaliação Externa</DialogTitle>
+              <DialogDescription className="text-slate-400 text-xs">Cole a avaliação recebida do Airbnb, Booking ou Google para que a IA processe.</DialogDescription>
             </DialogHeader>
             <div className="py-4 space-y-3 text-xs">
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <Label className="text-slate-300">Nome do HÃ³spede</Label>
+                  <Label className="text-slate-300">Nome do Hóspede</Label>
                   <Input value={author} onChange={e => setAuthor(e.target.value)} required placeholder="Ex: Carlos Santana" className="bg-slate-950 border-slate-700 text-xs" />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-slate-300">Canal</Label>
                   <select value={channel} onChange={e => setChannel(e.target.value)} className="w-full h-9 rounded-md border border-slate-700 bg-slate-950 px-3 text-xs text-white">
-                    <option value="airbnb">ðŸ”´ Airbnb</option>
-                    <option value="booking">ðŸ”µ Booking.com</option>
-                    <option value="google">ðŸŸ¢ Google Reviews</option>
-                    <option value="site">ðŸŒ Site CorpFlats</option>
-                    <option value="whatsapp">ðŸ’¬ WhatsApp</option>
+                    <option value="airbnb">•x• Airbnb</option>
+                    <option value="booking">•x• Booking.com</option>
+                    <option value="google">•xx• Google Reviews</option>
+                    <option value="site">•xR• Site CorpFlats</option>
+                    <option value="whatsapp">•x• WhatsApp</option>
                   </select>
                 </div>
               </div>
@@ -676,11 +676,11 @@ export default function ReviewInsights() {
                 <div className="space-y-1">
                   <Label className="text-slate-300">Nota (1 a 5)</Label>
                   <select value={rating} onChange={e => setRating(e.target.value)} className="w-full h-9 rounded-md border border-slate-700 bg-slate-950 px-3 text-xs text-white font-bold">
-                    <option value="5">â­â­â­â­â­ (5)</option>
-                    <option value="4">â­â­â­â­ (4)</option>
-                    <option value="3">â­â­â­ (3)</option>
-                    <option value="2">â­â­ (2)</option>
-                    <option value="1">â­ (1)</option>
+                    <option value="5">⭐⭐⭐⭐⭐ (5)</option>
+                    <option value="4">⭐⭐⭐⭐ (4)</option>
+                    <option value="3">⭐⭐⭐ (3)</option>
+                    <option value="2">⭐⭐ (2)</option>
+                    <option value="1">⭐ (1)</option>
                   </select>
                 </div>
                 <div className="space-y-1">
@@ -689,8 +689,8 @@ export default function ReviewInsights() {
                 </div>
               </div>
               <div className="space-y-1">
-                <Label className="text-slate-300">ComentÃ¡rio do HÃ³spede</Label>
-                <Textarea value={comment} onChange={e => setComment(e.target.value)} required rows={4} placeholder="Cole aqui o texto exato do hÃ³spede..." className="bg-slate-950 border-slate-700 text-xs leading-relaxed" />
+                <Label className="text-slate-300">Comentário do Hóspede</Label>
+                <Textarea value={comment} onChange={e => setComment(e.target.value)} required rows={4} placeholder="Cole aqui o texto exato do hóspede..." className="bg-slate-950 border-slate-700 text-xs leading-relaxed" />
               </div>
             </div>
             <DialogFooter className="gap-2">
@@ -701,18 +701,18 @@ export default function ReviewInsights() {
         </DialogContent>
       </Dialog>
 
-      {/* â•â• Modal: Registrar NPS Manual â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+      {/* •"•"• Modal: Registrar NPS Manual •"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"• */}
       <Dialog open={npsModalOpen} onOpenChange={setNpsModalOpen}>
         <DialogContent className="sm:max-w-md bg-slate-900 border-slate-800 text-white">
           <form onSubmit={handleSubmitNps}>
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-white"><Shield className="w-4 h-4 text-sky-400" />Registrar Resposta NPS</DialogTitle>
-              <DialogDescription className="text-slate-400 text-xs">Registre manualmente a resposta de um hÃ³spede Ã  pesquisa de satisfaÃ§Ã£o.</DialogDescription>
+              <DialogDescription className="text-slate-400 text-xs">Registre manualmente a resposta de um hóspede à pesquisa de satisfação.</DialogDescription>
             </DialogHeader>
             <div className="py-4 space-y-3 text-xs">
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <Label className="text-slate-300">Nome do HÃ³spede</Label>
+                  <Label className="text-slate-300">Nome do Hóspede</Label>
                   <Input value={npsGuestName} onChange={e => setNpsGuestName(e.target.value)} placeholder="Ex: Maria Silva" className="bg-slate-950 border-slate-700 text-xs" />
                 </div>
                 <div className="space-y-1">
@@ -724,32 +724,32 @@ export default function ReviewInsights() {
                 <div className="space-y-1">
                   <Label className="text-slate-300">Nota Dada (1 a 5)</Label>
                   <select value={npsScore} onChange={e => setNpsScore(e.target.value)} className="w-full h-9 rounded-md border border-slate-700 bg-slate-950 px-3 text-xs text-white font-bold">
-                    <option value="5">â­â­â­â­â­ â€” Promotor</option>
-                    <option value="4">â­â­â­â­ â€” Satisfeito</option>
-                    <option value="3">â­â­â­ â€” Neutro</option>
-                    <option value="2">â­â­ â€” Insatisfeito</option>
-                    <option value="1">â­ â€” Detrator</option>
+                    <option value="5">⭐⭐⭐⭐⭐ • Promotor</option>
+                    <option value="4">⭐⭐⭐⭐ • Satisfeito</option>
+                    <option value="3">⭐⭐⭐ • Neutro</option>
+                    <option value="2">⭐⭐ • Insatisfeito</option>
+                    <option value="1">⭐ • Detrator</option>
                   </select>
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-slate-300">CÃ³d. Reserva (Opcional)</Label>
+                  <Label className="text-slate-300">Cód. Reserva (Opcional)</Label>
                   <Input value={npsReservationId} onChange={e => setNpsReservationId(e.target.value)} placeholder="Ex: RES-2026-001" className="bg-slate-950 border-slate-700 text-xs" />
                 </div>
               </div>
               <div className="space-y-1">
-                <Label className="text-slate-300">ComentÃ¡rio do HÃ³spede (Opcional)</Label>
-                <Textarea value={npsComment} onChange={e => setNpsComment(e.target.value)} rows={3} placeholder="O que o hÃ³spede comentou..." className="bg-slate-950 border-slate-700 text-xs leading-relaxed" />
+                <Label className="text-slate-300">Comentário do Hóspede (Opcional)</Label>
+                <Textarea value={npsComment} onChange={e => setNpsComment(e.target.value)} rows={3} placeholder="O que o hóspede comentou..." className="bg-slate-950 border-slate-700 text-xs leading-relaxed" />
               </div>
               {Number(npsScore) === 5 && (
                 <div className="p-2.5 bg-emerald-950/30 border border-emerald-900/40 rounded-xl text-emerald-300 text-[11px] flex items-center gap-2">
                   <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-                  Nota 5 â†’ Link do Google serÃ¡ marcado como enviado automaticamente.
+                  Nota 5 •  Link do Google será marcado como enviado automaticamente.
                 </div>
               )}
               {Number(npsScore) <= 2 && (
                 <div className="p-2.5 bg-rose-950/30 border border-rose-900/40 rounded-xl text-rose-300 text-[11px] flex items-center gap-2">
                   <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                  Nota 1-2 â†’ Ticket de recuperaÃ§Ã£o de experiÃªncia serÃ¡ criado automaticamente.
+                  Nota 1-2 •  Ticket de recuperação de experiência será criado automaticamente.
                 </div>
               )}
             </div>
