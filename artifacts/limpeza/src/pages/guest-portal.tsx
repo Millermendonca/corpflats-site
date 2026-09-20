@@ -69,6 +69,7 @@ export default function GuestPortal() {
   const [copiedWifi, setCopiedWifi] = useState(false)
   const [copiedSsid, setCopiedSsid] = useState(false)
   const [copiedPix, setCopiedPix] = useState(false)
+  const [copiedCafeLink, setCopiedCafeLink] = useState(false)
   const [checkingPayment, setCheckingPayment] = useState(false)
   const [paymentMethodTab, setPaymentMethodTab] = useState<"pix" | "card">("pix")
   const [changingMethod, setChangingMethod] = useState(false)
@@ -513,6 +514,13 @@ export default function GuestPortal() {
     navigator.clipboard.writeText(reservation.pixCopiaECola)
     setCopiedPix(true)
     setTimeout(() => setCopiedPix(false), 2500)
+  }
+
+  const handleCopyCafeLink = () => {
+    const url = `${window.location.origin}/minha-reserva/${reservation.code || code}/cafe`
+    navigator.clipboard.writeText(url)
+    setCopiedCafeLink(true)
+    setTimeout(() => setCopiedCafeLink(false), 2500)
   }
 
   const handleChangePaymentMethod = async (newMethod: "pix" | "card") => {
@@ -1301,29 +1309,31 @@ export default function GuestPortal() {
 
         {/* ── 3. Card: Room Service & Café da Manhã (Exibido apenas quando contratado) ── */}
         {hasBreakfast && (
-          <Card className="bg-gradient-to-br from-amber-50/90 via-white to-amber-50/30 border border-amber-200/80 rounded-3xl p-5 sm:p-7 shadow-md space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-200/60 pb-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center font-bold text-xl border border-amber-300 shadow-2xs">
+          <Card className="bg-gradient-to-b from-amber-50/50 via-white to-amber-50/20 border border-amber-200/70 rounded-3xl p-5 sm:p-6 shadow-md space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-amber-200/50 pb-3.5">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-amber-100/70 text-amber-700 border border-amber-200/60 flex items-center justify-center shrink-0 shadow-2xs">
                   <Coffee className="w-5 h-5" />
                 </div>
                 <div>
-                  <h2 className="text-base font-black text-slate-900 flex items-center gap-2">
+                  <h2 className="text-base sm:text-lg font-black text-slate-900 leading-snug">
                     Room Service & Café da Manhã
                   </h2>
-                  <span className="text-xs text-amber-800/90 font-medium">
+                  <span className="text-xs text-amber-900/80 font-medium block mt-0.5">
                     Entregas diárias das 05h às 09h30 servidas pontualmente no flat
                   </span>
                 </div>
               </div>
 
-              <Badge variant="outline" className="text-xs font-black px-2.5 py-0.5 bg-amber-100 text-amber-900 border-amber-300">
-                ☕ Incluso na Diária
-              </Badge>
+              <div className="flex items-center self-start sm:self-auto">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100/60 border border-amber-200/50 text-amber-800 text-xs font-semibold shrink-0">
+                  ☕ Incluso na Diária
+                </span>
+              </div>
             </div>
 
-            <p className="text-xs text-slate-600 leading-relaxed">
-              Monte o seu pedido selecionando frutas frescas, pães artesanais, bebidas quentes e geladas de sua preferência, além do horário exato de sua entrega.
+            <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+              Monte o seu pedido selecionando frutas frescas, opções de pães, bebidas quentes e geladas de sua preferência, além do horário exato de entrega no flat.
             </p>
 
             {/* Se houver pedido já agendado para a data */}
@@ -1379,28 +1389,33 @@ export default function GuestPortal() {
             )}
 
             {/* Botões de Ação do Café */}
-            <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5 pt-1">
+            <div className="flex flex-col gap-2.5 pt-1 w-full">
               <Button
                 onClick={() => setLocation(`/minha-reserva/${reservation.code || code}/cafe`)}
-                className="w-full sm:w-auto bg-amber-600 hover:bg-amber-500 active:scale-[0.98] text-white font-black text-xs h-11 px-6 rounded-2xl shadow-md shadow-amber-600/20 flex items-center justify-center gap-2 flex-1 transition-all"
+                className="w-full h-12 bg-amber-700 hover:bg-amber-800 active:scale-[0.99] text-white font-semibold text-xs sm:text-sm rounded-2xl shadow-sm shadow-amber-900/10 inline-flex items-center justify-center gap-2.5 transition-all"
               >
-                <Coffee className="w-4 h-4" />
+                <Coffee className="w-5 h-5 shrink-0" />
                 <span>{breakfastOrder ? "Alterar ou Agendar Outros Dias" : "Personalizar Cardápio & Horário do Café"}</span>
-                <ArrowRight className="w-4 h-4 ml-1" />
+                <ArrowRight className="w-5 h-5 shrink-0" />
               </Button>
 
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => {
-                  const url = `${window.location.origin}/minha-reserva/${reservation.code || code}/cafe`
-                  navigator.clipboard.writeText(url)
-                  alert("Link exclusivo do café da manhã copiado para a área de transferência!")
-                }}
-                className="h-11 px-4 rounded-2xl border-amber-200 bg-white hover:bg-amber-50 text-amber-900 font-bold text-xs shrink-0"
+                onClick={handleCopyCafeLink}
+                className="w-full h-12 rounded-2xl bg-stone-50 hover:bg-stone-100 border border-stone-200/90 text-stone-700 font-semibold text-xs sm:text-sm shadow-2xs transition-all inline-flex items-center justify-center gap-2"
               >
-                <Copy className="w-3.5 h-3.5 mr-1.5 text-amber-600" />
-                <span>Copiar Link do Café</span>
+                {copiedCafeLink ? (
+                  <>
+                    <Check className="w-5 h-5 shrink-0 text-emerald-600" />
+                    <span>Link do Café Copiado para a Área de Transferência!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-5 h-5 shrink-0 text-stone-500" />
+                    <span>Copiar Link do Café</span>
+                  </>
+                )}
               </Button>
             </div>
           </Card>
