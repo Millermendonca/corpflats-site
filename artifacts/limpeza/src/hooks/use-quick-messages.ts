@@ -18,6 +18,7 @@ export interface WhatsAppQuickMessage {
   description?: string
   category?: string
   enabled: boolean
+  recipientTarget?: "guest" | "requester" | "both"
   message: string
   footer?: string
   buttons?: ButtonAction[]
@@ -25,6 +26,92 @@ export interface WhatsAppQuickMessage {
   documentUrl?: string
   documentName?: string
   documentCaption?: string
+}
+
+export interface ReservationRecipients {
+  guest: {
+    name: string
+    firstName: string
+    phone: string
+    cleanDigits: string
+  }
+  requester: {
+    name: string
+    firstName: string
+    phone: string
+    cleanDigits: string
+    type: "guest" | "other_person" | "company"
+    company: string
+    isDifferentFromGuest: boolean
+  }
+}
+
+export function getReservationRecipients(resItem: any, companies: any[] = []): ReservationRecipients {
+  const guestName = (resItem?.guestName || resItem?.guests?.[0]?.name || "Hóspede").trim()
+  const guestFirstName = guestName.split(" ")[0] || guestName
+  const rawGuestPhone = resItem?.guestPhone || resItem?.guests?.[0]?.phone || ""
+  const cleanGuestDigits = String(rawGuestPhone).replace(/\D/g, "")
+
+  let requesterName = ""
+  let requesterPhone = ""
+  let requesterType: "guest" | "other_person" | "company" = resItem?.requesterType || "guest"
+  let requesterCompany = ""
+
+  if (requesterType === "other_person" && resItem?.requesterInfo) {
+    requesterName = (resItem.requesterInfo.name || "").trim()
+    requesterPhone = (resItem.requesterInfo.phone || "").trim()
+  } else if (requesterType === "company") {
+    requesterCompany = resItem?.companyName || ""
+    let companyObj = null
+    if (resItem.companyId && companies.length > 0) {
+      companyObj = companies.find(c => String(c.id) === String(resItem.companyId))
+    }
+    if (!companyObj && resItem.companyName && companies.length > 0) {
+      companyObj = companies.find(c => 
+        c.tradeName?.toLowerCase() === resItem.companyName?.toLowerCase() ||
+        c.corporateName?.toLowerCase() === resItem.companyName?.toLowerCase()
+      )
+    }
+    if (companyObj) {
+      requesterName = (companyObj.contactPerson || companyObj.tradeName || resItem.companyName || "Solicitante Corporativo").trim()
+      requesterPhone = (companyObj.phone || "").trim()
+      requesterCompany = companyObj.tradeName || companyObj.corporateName || requesterCompany
+    } else {
+      requesterName = resItem.companyName || "Solicitante Corporativo"
+    }
+  }
+
+  if (!requesterName) {
+    requesterName = guestName
+  }
+  if (!requesterPhone) {
+    requesterPhone = rawGuestPhone
+  }
+
+  const requesterFirstName = requesterName.split(" ")[0] || requesterName
+  const cleanRequesterDigits = String(requesterPhone).replace(/\D/g, "")
+  const isDifferentFromGuest = Boolean(
+    (cleanRequesterDigits && cleanGuestDigits && cleanRequesterDigits !== cleanGuestDigits) ||
+    (requesterType !== "guest" && requesterName && requesterName.toLowerCase() !== guestName.toLowerCase())
+  )
+
+  return {
+    guest: {
+      name: guestName,
+      firstName: guestFirstName,
+      phone: rawGuestPhone,
+      cleanDigits: cleanGuestDigits
+    },
+    requester: {
+      name: requesterName,
+      firstName: requesterFirstName,
+      phone: requesterPhone,
+      cleanDigits: cleanRequesterDigits,
+      type: requesterType,
+      company: requesterCompany,
+      isDifferentFromGuest
+    }
+  }
 }
 
 export const DEFAULT_QUICK_MESSAGES: WhatsAppQuickMessage[] = [
@@ -35,6 +122,7 @@ export const DEFAULT_QUICK_MESSAGES: WhatsAppQuickMessage[] = [
     icon: "💳",
     description: "Link para pagamento via PIX ou Cartão de Crédito.",
     category: "Financeiro",
+    recipientTarget: "guest",
     enabled: true,
     message: `Olá, *{{primeiro_nome}}*! ⏳
 Sua pré-reserva no *{{nome_hotel}}* (*Flat {{quarto}}*) está aguardando pagamento para confirmação definitiva.
@@ -58,6 +146,7 @@ Para garantir sua acomodação via PIX ou Cartão em até 12x, acesse o link seg
     icon: "📝",
     description: "Resumo da estadia e link para Pré-Check-in Digital.",
     category: "Recepção",
+    recipientTarget: "guest",
     enabled: true,
     message: `Olá, *{{primeiro_nome}}*! 🌟
 Aqui está o resumo da sua estadia confirmada no *{{nome_hotel}}*:
@@ -82,6 +171,7 @@ Para agilizar sua entrada na portaria sem filas, preencha o *Pré-Check-in Digit
     icon: "🥐",
     description: "Cardápio e montagem da bandeja de café no quarto.",
     category: "Serviços",
+    recipientTarget: "guest",
     enabled: true,
     message: `Olá, *{{primeiro_nome}}*! ☕🥐
 Para agendar o café da manhã no *Flat {{quarto}}*, você pode montar a sua bandeja diretamente pelo link abaixo:
@@ -101,6 +191,7 @@ Escolha seus itens favoritos e o horário desejado!`,
     icon: "📍",
     description: "Instruções de portaria, localização e senha da rede Wi-Fi.",
     category: "Recepção",
+    recipientTarget: "guest",
     enabled: true,
     message: `Olá, *{{primeiro_nome}}*! 🔑📶
 Seguem as instruções de chegada e acesso ao *{{nome_hotel}}*:
@@ -127,6 +218,7 @@ Desejamos uma ótima estadia! Se precisar de algo, estamos à disposição.`,
     icon: "🚪",
     description: "Instruções e lembrete do horário limite de saída.",
     category: "Saída",
+    recipientTarget: "guest",
     enabled: true,
     message: `Olá, *{{primeiro_nome}}*! ☀️
 Lembramos que o check-out do *Flat {{quarto}}* é hoje até às *{{horario_checkout}}*.
@@ -145,6 +237,7 @@ Agradecemos muito por sua hospedagem no *{{nome_hotel}}*! Tenha uma excelente vi
     icon: "⭐",
     description: "Pedido de avaliação 5 estrelas no Google Maps.",
     category: "Pós-Estadia",
+    recipientTarget: "guest",
     enabled: true,
     message: `Olá, *{{primeiro_nome}}*! ⭐
 Esperamos que sua experiência no *{{nome_hotel}}* tenha sido fantástica!
@@ -165,6 +258,7 @@ Muito obrigado e até a próxima!`,
     icon: "📖",
     description: "Manual com regras do flat, Wi-Fi, lazer, dicas da cidade e anexo PDF.",
     category: "Estadia",
+    recipientTarget: "guest",
     enabled: true,
     hasAttachment: true,
     documentUrl: "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
@@ -208,15 +302,30 @@ function formatDateSafe(val: any, pattern = "dd/MM/yyyy") {
   return String(val)
 }
 
-export function renderQuickMessage(templateText: string, resItem: any, appOrigin?: string): string {
+export function renderQuickMessage(
+  templateText: string, 
+  resItem: any, 
+  appOrigin?: string,
+  targetRecipient: "guest" | "requester" = "guest",
+  companies: any[] = []
+): string {
   if (!templateText) return ""
   if (!resItem) return templateText
 
   const origin = appOrigin || (typeof window !== "undefined" ? window.location.origin : "https://corpflats.onrender.com")
 
-  const guestName = resItem.guestName || resItem.guests?.[0]?.name || "Hóspede"
-  const firstName = (guestName || "Hóspede").trim().split(" ")[0]
-  const phone = resItem.guestPhone || resItem.guests?.[0]?.phone || ""
+  const recipients = getReservationRecipients(resItem, companies)
+  const guest = recipients.guest
+  const requester = recipients.requester
+
+  const recipientIsRequester = targetRecipient === "requester"
+  const primaryRecipientName = recipientIsRequester ? requester.name : guest.name
+  const primaryRecipientFirstName = recipientIsRequester ? requester.firstName : guest.firstName
+  const primaryRecipientPhone = recipientIsRequester ? requester.phone : guest.phone
+
+  const guestName = guest.name
+  const firstName = primaryRecipientFirstName
+  const phone = guest.phone
   const flatNumber = String(resItem.flatNumber || resItem.flat?.number || "Flat")
   const resCode = String(resItem.code || resItem.reservationCode || `RES-${flatNumber}-${resItem.id || "001"}`)
 
@@ -263,6 +372,12 @@ export function renderQuickMessage(templateText: string, resItem: any, appOrigin
     "{{nome_hospede}}": guestName,
     "{{primeiro_nome}}": firstName,
     "{{telefone_hospede}}": phone,
+    "{{nome_solicitante}}": requester.name,
+    "{{primeiro_nome_solicitante}}": requester.firstName,
+    "{{telefone_solicitante}}": requester.phone,
+    "{{empresa_solicitante}}": requester.company,
+    "{{nome_destinatario}}": primaryRecipientName,
+    "{{primeiro_nome_destinatario}}": primaryRecipientFirstName,
     "{{numero_reserva}}": resCode,
     "{{quarto}}": flatNumber,
     "{{data_checkin}}": checkinBr,
@@ -470,17 +585,25 @@ export function useQuickMessages() {
   const dispatchQuickMessage = async (
     qm: WhatsAppQuickMessage, 
     resItem: any, 
-    appOrigin?: string
+    appOrigin?: string,
+    overrideTarget?: "guest" | "requester" | "both"
   ): Promise<{ success: boolean; method: "zapi" | "wa_web"; fallback?: boolean }> => {
-    const rawPhone = resItem.guestPhone || resItem.guests?.[0]?.phone || ""
-    const cleanPhone = String(rawPhone).replace(/\D/g, "")
-    const finalWaPhone = cleanPhone.length === 10 || cleanPhone.length === 11 ? `55${cleanPhone}` : cleanPhone
+    const targetMode = overrideTarget || qm.recipientTarget || "guest"
+    const recipients = getReservationRecipients(resItem)
     const resCode = resItem.code || resItem.reservationCode || String(resItem.id || "")
-    const guestName = resItem.guestName || "Hóspede"
 
-    const renderedBody = renderQuickMessage(qm.message, resItem, appOrigin)
+    // Fallback phones
+    const guestPhone = recipients.guest.cleanDigits.length === 10 || recipients.guest.cleanDigits.length === 11 
+      ? `55${recipients.guest.cleanDigits}` 
+      : recipients.guest.cleanDigits
+    const requesterPhone = recipients.requester.cleanDigits.length === 10 || recipients.requester.cleanDigits.length === 11 
+      ? `55${recipients.requester.cleanDigits}` 
+      : recipients.requester.cleanDigits
+
+    const effectiveTargetPhone = targetMode === "requester" ? (requesterPhone || guestPhone) : guestPhone
+    const renderedBody = renderQuickMessage(qm.message, resItem, appOrigin, targetMode === "requester" ? "requester" : "guest")
     const fullWaText = buildFullWhatsAppTextMessage(renderedBody, qm.footer, qm.buttons, resItem, appOrigin)
-    const waWebUrl = finalWaPhone ? `https://wa.me/${finalWaPhone}?text=${encodeURIComponent(fullWaText)}` : null
+    const waWebUrl = effectiveTargetPhone ? `https://wa.me/${effectiveTargetPhone}?text=${encodeURIComponent(fullWaText)}` : null
 
     try {
       const res = await fetch("/api/whatsapp/dispatch-reservation", {
@@ -489,15 +612,27 @@ export function useQuickMessages() {
         body: JSON.stringify({
           templateId: qm.id,
           reservationCode: resCode,
-          reservationId: resItem.id
+          reservationId: resItem.id,
+          recipientTarget: targetMode
         })
       })
 
       const data = await res.json()
       if (res.ok && data.success) {
+        let recipientSummary = recipients.guest.name
+        if (targetMode === "both") {
+          if (recipients.requester.isDifferentFromGuest && recipients.requester.phone) {
+            recipientSummary = `Hóspede (${recipients.guest.firstName}) e Solicitante (${recipients.requester.firstName})`
+          } else {
+            recipientSummary = `${recipients.guest.name} (Hóspede/Solicitante)`
+          }
+        } else if (targetMode === "requester") {
+          recipientSummary = `Solicitante ${recipients.requester.name}`
+        }
+
         toast({
           title: "✓ WhatsApp enviado com sucesso!",
-          description: `"${qm.title}" entregue para ${guestName} (${data.method === "buttons" ? "com botões" : "texto formatado"}).`
+          description: `"${qm.title}" entregue para ${recipientSummary} (${data.method === "buttons" ? "com botões" : "texto formatado"}).`
         })
         return { success: true, method: "zapi" }
       } else {
@@ -505,13 +640,13 @@ export function useQuickMessages() {
           window.open(waWebUrl, "_blank", "noopener,noreferrer")
           toast({
             title: "Abrindo WhatsApp Web 🚀",
-            description: `Z-API indisponível. A mensagem para ${guestName} foi aberta no WhatsApp com o texto preenchido!`,
+            description: `Z-API indisponível. A mensagem para ${targetMode === "requester" ? recipients.requester.name : recipients.guest.name} foi aberta no WhatsApp com o texto preenchido!`,
           })
           return { success: true, method: "wa_web", fallback: true }
         } else {
           toast({
             title: "Falha no envio",
-            description: data.error || "Hóspede sem telefone WhatsApp cadastrado.",
+            description: data.error || "Destinatário sem telefone WhatsApp cadastrado.",
             variant: "destructive"
           })
           return { success: false, method: "zapi" }
@@ -522,7 +657,7 @@ export function useQuickMessages() {
         window.open(waWebUrl, "_blank", "noopener,noreferrer")
         toast({
           title: "Abrindo WhatsApp Web 🚀",
-          description: `Erro na central Z-API. Abrindo conversa com ${guestName} com a mensagem preenchida.`,
+          description: `Erro na central Z-API. Abrindo conversa com ${targetMode === "requester" ? recipients.requester.name : recipients.guest.name} com a mensagem preenchida.`,
         })
         return { success: true, method: "wa_web", fallback: true }
       }

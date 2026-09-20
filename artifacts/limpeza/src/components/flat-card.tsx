@@ -309,9 +309,9 @@ export function FlatCard({
   const [isSavingInstructions, setIsSavingInstructions] = useState(false)
 
   useEffect(() => {
-    setTwinBedsSetting(Boolean(flat?.setupInfo?.twinBeds))
+    setTwinBedsSetting(typeof request?.twinBeds === "boolean" ? request.twinBeds : Boolean(flat?.setupInfo?.twinBeds))
     setAdminNoteText(flat?.setupInfo?.specialRequests || "")
-  }, [flat?.setupInfo?.twinBeds, flat?.setupInfo?.specialRequests])
+  }, [request?.twinBeds, flat?.setupInfo?.twinBeds, flat?.setupInfo?.specialRequests])
 
   const handleSaveInstructions = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -322,6 +322,7 @@ export function FlatCard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           flatId: flat.flatId,
+          flatNumber: flat.flatNumber,
           requestDate: date,
           twinBeds: twinBedsSetting,
           adminNote: adminNoteText.trim() || null,
@@ -370,6 +371,7 @@ export function FlatCard({
   const conf = statusStyles[currentStatus] || statusStyles.dirty
   const Icon = conf.icon
   const isPriority = typeof request?.isPriority === "boolean" ? request.isPriority : (typeof flat?.isPriority === "boolean" ? flat.isPriority : false)
+  const isTwinBeds = typeof request?.twinBeds === "boolean" ? request.twinBeds : Boolean(flat?.setupInfo?.twinBeds)
   const pendingPeriodicTasks = flat?.pendingPeriodicTasks || []
   const pendingSurveys = flat?.pendingSurveys || []
 
@@ -544,29 +546,55 @@ export function FlatCard({
     }
   }
 
-  // Toggle Priority (Admin only)
-  const togglePriority = async (e: React.MouseEvent) => {
+  // Toggle Bed Setup (Admin only: Alterna entre 1 Cama Casal e 2 Camas Solteiro no mesmo botão)
+  const [isTogglingBeds, setIsTogglingBeds] = useState(false)
+  const toggleBedSetup = async (e: React.MouseEvent) => {
     e.stopPropagation()
+    const nextTwinValue = !isTwinBeds
     let activeReqId = request?.id
     try {
-      if (!activeReqId) {
-        const createRes = await fetch("/api/cleaning/requests/manual", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ flatId: flat.flatId, requestDate: date, isPriority: !isPriority })
+      setIsTogglingBeds(true)
+      await fetch(`/api/cleaning/assignments/${activeReqId || 0}/twin-beds`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          flatId: flat.flatId,
+          flatNumber: flat.flatNumber,
+          requestDate: date,
+          twinBeds: nextTwinValue
         })
-        const created = await createRes.json()
-        activeReqId = created.id
-      } else {
-        await fetch(`/api/cleaning/assignments/${activeReqId}/priority`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ isPriority: !isPriority }),
-        })
-      }
+      })
+      refreshData()
+    } catch (err) {
+      console.error("Erro ao alternar configuração de camas:", err)
+    } finally {
+      setIsTogglingBeds(false)
+    }
+  }
+
+  // Toggle Priority (Admin only: Desativado como padrão, clique no ícone para alternar)
+  const [isTogglingPriority, setIsTogglingPriority] = useState(false)
+  const togglePriority = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    const nextPriorityValue = !isPriority
+    let activeReqId = request?.id
+    try {
+      setIsTogglingPriority(true)
+      await fetch(`/api/cleaning/assignments/${activeReqId || 0}/priority`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          flatId: flat.flatId,
+          flatNumber: flat.flatNumber,
+          requestDate: date,
+          isPriority: nextPriorityValue
+        }),
+      })
       refreshData()
     } catch (err) {
       console.error("Erro ao alterar prioridade:", err)
+    } finally {
+      setIsTogglingPriority(false)
     }
   }
 
@@ -820,7 +848,15 @@ export function FlatCard({
                     Apt {flat.flatNumber}
                   </h3>
                   {isPriority && (
-                    <Badge variant="destructive" className="animate-pulse bg-red-600 text-white text-[10px] font-black px-1.5 py-0.5 flex items-center gap-0.5 shrink-0">
+                    <Badge 
+                      variant="destructive" 
+                      onClick={isAdmin ? togglePriority : undefined}
+                      title={isAdmin ? "Prioridade Alta Ativa (Clique para desativar)" : "Prioridade Alta"}
+                      className={cn(
+                        "animate-pulse bg-red-600 text-white text-[10px] font-black px-1.5 py-0.5 flex items-center gap-0.5 shrink-0",
+                        isAdmin && "cursor-pointer hover:bg-red-700 select-none"
+                      )}
+                    >
                       <Flame className="w-3 h-3 fill-current" />
                       <span>Prioridade</span>
                     </Badge>
@@ -856,33 +892,56 @@ export function FlatCard({
 
             {/* Top Bar - Linha 2 (Exclusiva para Administrador: Ações Rápidas de Camas e Prioridade) */}
             {isAdmin && (
-              <div className="flex items-center gap-1.5 pt-0.5">
+              <div className="flex items-center gap-1.5 pt-0.5 flex-wrap">
+                {/* Botão de Alternância de Camas: 1 Cama Casal (padrão) <-> 2 Camas Solteiro */}
                 <button
-                  onClick={() => setInstructionsModalOpen(true)}
-                  title="Configurar montagem de camas e recado/nota para a camareira"
+                  type="button"
+                  onClick={toggleBedSetup}
+                  disabled={isTogglingBeds}
+                  title={isTwinBeds 
+                    ? "Configuração: 2 Camas de Solteiro (Clique para mudar para 1 Cama Casal)" 
+                    : "Configuração: 1 Cama Casal Padrão (Clique para mudar para 2 Camas Solteiro)"}
                   className={cn(
-                    "px-2 py-0.5 rounded-lg border transition-colors text-[11px] flex items-center gap-1 font-bold shadow-2xs",
-                    flat?.setupInfo?.twinBeds || flat?.setupInfo?.specialRequests
-                      ? "bg-indigo-100/90 border-indigo-300 text-indigo-900 hover:bg-indigo-200 dark:bg-indigo-950/50 dark:border-indigo-800 dark:text-indigo-200"
+                    "px-2.5 py-1 rounded-lg border transition-all text-[11px] flex items-center gap-1 font-bold shadow-2xs cursor-pointer select-none",
+                    isTwinBeds
+                      ? "bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700 shadow-xs"
                       : "bg-background border-border text-foreground hover:bg-muted"
                   )}
                 >
-                  <BedDouble className="w-3 h-3 text-indigo-600 dark:text-indigo-400 shrink-0" />
-                  <span>{flat?.setupInfo?.twinBeds ? "2 Camas" : "Camas/Nota"}</span>
+                  <BedDouble className={cn("w-3.5 h-3.5 shrink-0", isTwinBeds ? "text-white" : "text-muted-foreground")} />
+                  <span>{isTwinBeds ? "2 Camas Solteiro" : "1 Cama Casal"}</span>
                 </button>
 
+                {/* Botão / Ícone de Prioridade: Desativado por padrão, 1 clique para ativar */}
                 <button
+                  type="button"
                   onClick={togglePriority}
-                  title={isPriority ? "Remover prioridade" : "Marcar como prioridade"}
+                  disabled={isTogglingPriority}
+                  title={isPriority ? "Prioridade Alta Ativada (Clique para desativar)" : "Prioridade Desativada (Clique para ativar)"}
                   className={cn(
-                    "px-2 py-0.5 rounded-lg border transition-colors text-[11px] flex items-center gap-1 font-bold shadow-2xs",
+                    "px-2.5 py-1 rounded-lg border transition-all text-[11px] flex items-center gap-1 font-bold shadow-2xs cursor-pointer select-none",
                     isPriority 
-                      ? "bg-red-100 border-red-300 text-red-700 hover:bg-red-200 dark:bg-red-950/40 dark:border-red-800" 
+                      ? "bg-red-600 text-white border-red-600 hover:bg-red-700 shadow-xs animate-pulse" 
+                      : "bg-background border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+                  )}
+                >
+                  <Flame className={cn("w-3.5 h-3.5 shrink-0", isPriority ? "fill-current text-white" : "text-muted-foreground")} />
+                  <span>Prioridade</span>
+                </button>
+
+                {/* Recado / Nota para a Camareira (Opcional) */}
+                <button
+                  type="button"
+                  onClick={() => setInstructionsModalOpen(true)}
+                  title="Configurar recado / nota para a camareira"
+                  className={cn(
+                    "px-2 py-1 rounded-lg border transition-colors text-[11px] flex items-center gap-1 font-bold shadow-2xs cursor-pointer",
+                    flat?.setupInfo?.specialRequests
+                      ? "bg-amber-100/90 border-amber-300 text-amber-950 hover:bg-amber-200 dark:bg-amber-950/50 dark:border-amber-800 dark:text-amber-200"
                       : "bg-background border-border text-muted-foreground hover:bg-muted"
                   )}
                 >
-                  <Flame className={cn("w-3 h-3", isPriority && "fill-red-600 text-red-600")} />
-                  <span>{isPriority ? "Prioritário" : "Prioridade"}</span>
+                  <span>📝 {flat?.setupInfo?.specialRequests ? "Recado ✓" : "Recado"}</span>
                 </button>
               </div>
             )}
@@ -983,7 +1042,7 @@ export function FlatCard({
             )}
 
             {/* Instruções para a Camareira (2 Camas de Solteiro e Nota da Administração) */}
-            {flat?.setupInfo && (flat.setupInfo.twinBeds || flat.setupInfo.extraMattress || flat.setupInfo.prefersHighFloor || flat.setupInfo.specialRequests) && (
+            {(isTwinBeds || flat?.setupInfo?.extraMattress || flat?.setupInfo?.prefersHighFloor || flat?.setupInfo?.specialRequests) && (
               <div 
                 className={cn(
                   "bg-amber-500/10 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-700/60 rounded-xl p-2.5 text-xs space-y-2",
@@ -999,13 +1058,13 @@ export function FlatCard({
                   </div>
                   {isAdmin && (
                     <span className="text-[10px] text-amber-800 dark:text-amber-300 font-semibold underline flex items-center gap-0.5">
-                      ✏️ Editar
+                      ✏️ Recado / Nota
                     </span>
                   )}
                 </div>
 
                 <div className="flex flex-wrap gap-1.5">
-                  {flat.setupInfo.twinBeds && (
+                  {isTwinBeds && (
                     <Badge className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] px-2 py-0.5 shadow-2xs flex items-center gap-1 rounded-lg">
                       <span>🛏️ Montar 2 Camas de Solteiro</span>
                     </Badge>

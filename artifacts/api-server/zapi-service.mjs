@@ -68,6 +68,7 @@ export const DEFAULT_WHATSAPP_TEMPLATES = [
     description: "Enviado automaticamente quando uma pré-reserva é registrada (sem pagamento ou com pagamento parcial), com dados e chave PIX para pagamento.",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    recipientTarget: "guest",
     triggerTiming: "immediate",
     offsetValue: 0,
     offsetUnit: "minutes",
@@ -107,6 +108,7 @@ Para agilizar sua estadia ou pagar via cartão em até 12x, acesse seu portal:`,
     description: "Template genérico para nova reserva confirmada. Prefira usar os templates especializados tpl_new_reservation_direct (Site/WhatsApp) e tpl_new_reservation_ota (Booking/Airbnb) para experiência personalizada.",
     enabled: false,
     channels: ["outros"],
+    recipientTarget: "guest",
     triggerTiming: "immediate",
     offsetValue: 0,
     offsetUnit: "minutes",
@@ -145,6 +147,7 @@ Para agilizar sua entrada na portaria sem filas, realize com antecedência o seu
     description: "Enviado para reservas via Site ou WhatsApp. Inclui benefício de early check-in antecipado (conforme disponibilidade) quando a reserva for criada com pelo menos 30 min antes do horário de check-in do dia.",
     enabled: true,
     channels: ["site", "whatsapp"],
+    recipientTarget: "guest",
     triggerTiming: "immediate",
     offsetValue: 0,
     offsetUnit: "minutes",
@@ -225,6 +228,7 @@ Realize seu *Pré-Check-in Digital* com antecedência para agilizar sua chegada:
     description: "Disparado quando a limpeza do flat é concluída no dia do check-in, para reservas via Site ou WhatsApp. Avisa que o flat está pronto para entrada antecipada.",
     enabled: true,
     channels: ["site", "whatsapp"],
+    recipientTarget: "guest",
     triggerTiming: "immediate",
     offsetValue: 0,
     offsetUnit: "minutes",
@@ -288,6 +292,7 @@ Desejamos uma estadia maravilhosa! Se precisar de algo, estamos à disposição.
     description: "Enviado quando datas, quarto ou número de hóspedes forem alterados. Detalha exatamente o que mudou.",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    recipientTarget: "guest",
     triggerTiming: "immediate",
     offsetValue: 0,
     offsetUnit: "minutes",
@@ -316,6 +321,7 @@ Qualquer dúvida, estamos à inteira disposição!`,
     description: "Enviado 24 horas antes do check-in para agilizar o cadastro de portaria.",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    recipientTarget: "guest",
     triggerTiming: "before_event",
     offsetValue: 24,
     offsetUnit: "hours",
@@ -336,6 +342,7 @@ Para que a portaria do Edifício Soho libere sua entrada imediatamente na chegad
     description: "Enviado no dia do check-in às 09:00 com localização, regras e senha de Wi-Fi.",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    recipientTarget: "guest",
     triggerTiming: "fixed_time_day_of",
     offsetValue: 0,
     offsetUnit: "hours",
@@ -367,6 +374,7 @@ Desejamos uma ótima viagem até aqui! Se precisar de suporte, estamos à dispos
     description: "Enviado assim que o hóspede entra e o check-in é concluído no tablet ou sistema.",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    recipientTarget: "guest",
     triggerTiming: "immediate",
     offsetValue: 0,
     offsetUnit: "minutes",
@@ -396,6 +404,7 @@ Tenha uma estadia incrível!`,
     description: "Enviado às 18:00 da véspera para hóspedes com café agendarem a bandeja.",
     enabled: true,
     channels: ["site", "whatsapp"],
+    recipientTarget: "guest",
     triggerTiming: "fixed_time_day_before",
     offsetValue: 0,
     offsetUnit: "hours",
@@ -416,6 +425,7 @@ Preparamos tudo fresquinho com frutas, pães e café quente no horário de sua p
     description: "Enviado no dia de saída às 09:30 relembrando o horário limite das 12:00.",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    recipientTarget: "guest",
     triggerTiming: "fixed_time_day_of",
     offsetValue: 0,
     offsetUnit: "hours",
@@ -439,6 +449,7 @@ Caso necessite estender o horário (Late Check-out), solicite diretamente à adm
     description: "Enviado 2 horas após a saída convidando para avaliação 5 estrelas no Google.",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    recipientTarget: "guest",
     triggerTiming: "after_event",
     offsetValue: 2,
     offsetUnit: "hours",
@@ -461,6 +472,7 @@ Sua opinião ajuda outros hóspedes e motiva nossa equipe a evoluir sempre:`,
     description: "Enviado imediatamente quando uma reserva for cancelada no sistema.",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    recipientTarget: "guest",
     triggerTiming: "immediate",
     offsetValue: 0,
     offsetUnit: "minutes",
@@ -481,6 +493,7 @@ Lamentamos que não possa se hospedar conosco nesta ocasião e estaremos de bra�
     description: "Enviado quando uma reserva está com status Aguardando Pagamento, com links para PIX e Cartão de Crédito.",
     enabled: true,
     channels: ["site", "whatsapp"],
+    recipientTarget: "guest",
     triggerTiming: "immediate",
     offsetValue: 0,
     offsetUnit: "minutes",
@@ -512,6 +525,7 @@ export const DEFAULT_WHATSAPP_QUICK_MESSAGES = [
     icon: "💳",
     description: "Link para pagamento via PIX ou Cartão de Crédito.",
     category: "Financeiro",
+    recipientTarget: "guest",
     enabled: true,
     message: `Olá, *{{primeiro_nome}}*! ⏳
 Sua pré-reserva no *{{nome_hotel}}* (*Flat {{quarto}}*) está aguardando pagamento para confirmação definitiva.
@@ -535,6 +549,7 @@ Para garantir sua acomodação via PIX ou Cartão em até 12x, acesse o link seg
     icon: "📝",
     description: "Resumo da estadia e link para Pré-Check-in Digital.",
     category: "Recepção",
+    recipientTarget: "guest",
     enabled: true,
     message: `Olá, *{{primeiro_nome}}*! 🌟
 Aqui está o resumo da sua estadia confirmada no *{{nome_hotel}}*:
@@ -559,6 +574,7 @@ Para agilizar sua entrada na portaria sem filas, preencha o *Pré-Check-in Digit
     icon: "🥐",
     description: "Cardápio e montagem da bandeja de café no quarto.",
     category: "Serviços",
+    recipientTarget: "guest",
     enabled: true,
     message: `Olá, *{{primeiro_nome}}*! ☕🥐
 Para agendar o café da manhã no *Flat {{quarto}}*, você pode montar a sua bandeja diretamente pelo link abaixo:
@@ -578,6 +594,7 @@ Escolha seus itens favoritos e o horário desejado!`,
     icon: "📍",
     description: "Instruções de portaria, localização e senha da rede Wi-Fi.",
     category: "Recepção",
+    recipientTarget: "guest",
     enabled: true,
     message: `Olá, *{{primeiro_nome}}*! 🔑📶
 Seguem as instruções de chegada e acesso ao *{{nome_hotel}}*:
@@ -604,6 +621,7 @@ Desejamos uma ótima estadia! Se precisar de algo, estamos à disposição.`,
     icon: "🚪",
     description: "Instruções e lembrete do horário limite de saída.",
     category: "Saída",
+    recipientTarget: "guest",
     enabled: true,
     message: `Olá, *{{primeiro_nome}}*! ☀️
 Lembramos que o check-out do *Flat {{quarto}}* é hoje até às *{{horario_checkout}}*.
@@ -622,6 +640,7 @@ Agradecemos muito por sua hospedagem no *{{nome_hotel}}*! Tenha uma excelente vi
     icon: "⭐",
     description: "Pedido de avaliação 5 estrelas no Google Maps.",
     category: "Pós-Estadia",
+    recipientTarget: "guest",
     enabled: true,
     message: `Olá, *{{primeiro_nome}}*! ⭐
 Esperamos que sua experiência no *{{nome_hotel}}* tenha sido fantástica!
@@ -642,6 +661,7 @@ Muito obrigado e até a próxima!`,
     icon: "📖",
     description: "Envia o Guia e Manual do Hóspede em anexo com regras e orientações do Flat.",
     category: "Check-in",
+    recipientTarget: "guest",
     enabled: true,
     hasAttachment: true,
     documentUrl: "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
@@ -693,12 +713,90 @@ function formatCurrency(amount) {
   return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
+// ── Identificação Unificada de Destinatários (Hóspede e Solicitante) ──────────
+export function getReservationRecipients(reservation = {}, db = {}) {
+  const guestName = (reservation.guestName || reservation.guests?.[0]?.name || "Hóspede").trim();
+  const guestFirstName = guestName.split(" ")[0] || guestName;
+  const rawGuestPhone = reservation.guestPhone || reservation.guests?.[0]?.phone || "";
+  const cleanGuestDigits = String(rawGuestPhone).replace(/\D/g, "");
+
+  let requesterName = "";
+  let requesterPhone = "";
+  let requesterType = reservation.requesterType || "guest";
+  let requesterCompany = "";
+
+  if (requesterType === "other_person" && reservation.requesterInfo) {
+    requesterName = (reservation.requesterInfo.name || "").trim();
+    requesterPhone = (reservation.requesterInfo.phone || "").trim();
+  } else if (requesterType === "company") {
+    requesterCompany = reservation.companyName || "";
+    let companyObj = null;
+    if (reservation.companyId && db?.companies) {
+      companyObj = db.companies.find(c => String(c.id) === String(reservation.companyId));
+    }
+    if (!companyObj && reservation.companyName && db?.companies) {
+      companyObj = db.companies.find(c => 
+        c.tradeName?.toLowerCase() === reservation.companyName?.toLowerCase() ||
+        c.corporateName?.toLowerCase() === reservation.companyName?.toLowerCase()
+      );
+    }
+    if (companyObj) {
+      requesterName = (companyObj.contactPerson || companyObj.tradeName || reservation.companyName || "Solicitante Corporativo").trim();
+      requesterPhone = (companyObj.phone || "").trim();
+      requesterCompany = companyObj.tradeName || companyObj.corporateName || requesterCompany;
+    } else {
+      requesterName = reservation.companyName || "Solicitante Corporativo";
+    }
+  }
+
+  if (!requesterName) {
+    requesterName = guestName;
+  }
+  if (!requesterPhone) {
+    requesterPhone = rawGuestPhone;
+  }
+
+  const requesterFirstName = requesterName.split(" ")[0] || requesterName;
+  const cleanRequesterDigits = String(requesterPhone).replace(/\D/g, "");
+  const isDifferentFromGuest = Boolean(
+    (cleanRequesterDigits && cleanGuestDigits && cleanRequesterDigits !== cleanGuestDigits) ||
+    (requesterType !== "guest" && requesterName && requesterName.toLowerCase() !== guestName.toLowerCase())
+  );
+
+  return {
+    guest: {
+      name: guestName,
+      firstName: guestFirstName,
+      phone: rawGuestPhone,
+      cleanDigits: cleanGuestDigits
+    },
+    requester: {
+      name: requesterName,
+      firstName: requesterFirstName,
+      phone: requesterPhone,
+      cleanDigits: cleanRequesterDigits,
+      type: requesterType,
+      company: requesterCompany,
+      isDifferentFromGuest
+    }
+  };
+}
+
 // ── Motor de Resolução de Tags Dinâmicas ───────────────────────────────────────
-export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "") {
+export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "", targetRecipient = "guest") {
   if (!text) return "";
 
-  const guestName = reservation.guestName || "Hóspede";
-  const firstName = guestName.trim().split(" ")[0] || guestName;
+  const recipients = getReservationRecipients(reservation, db);
+  const guest = recipients.guest;
+  const requester = recipients.requester;
+
+  const recipientIsRequester = targetRecipient === "requester";
+  const primaryRecipientName = recipientIsRequester ? requester.name : guest.name;
+  const primaryRecipientFirstName = recipientIsRequester ? requester.firstName : guest.firstName;
+  const primaryRecipientPhone = recipientIsRequester ? requester.phone : guest.phone;
+
+  const guestName = guest.name;
+  const firstName = primaryRecipientFirstName;
   const flatNumber = reservation.flatNumber || reservation.flatId || "Pendente";
   const resCode = reservation.code || reservation.reservationCode || `RES-${flatNumber}-${reservation.id || "0000"}`;
   
@@ -823,9 +921,15 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   }
 
   const tagsMap = {
-    "{{nome_hospede}}": guestName,
+        "{{nome_hospede}}": guestName,
     "{{primeiro_nome}}": firstName,
-    "{{telefone_hospede}}": reservation.guestPhone || "",
+    "{{telefone_hospede}}": guest.phone || "",
+    "{{nome_solicitante}}": requester.name,
+    "{{primeiro_nome_solicitante}}": requester.firstName,
+    "{{telefone_solicitante}}": requester.phone || "",
+    "{{empresa_solicitante}}": requester.company || "",
+    "{{nome_destinatario}}": primaryRecipientName,
+    "{{primeiro_nome_destinatario}}": primaryRecipientFirstName,
     "{{numero_reserva}}": resCode,
     "{{quarto}}": flatNumber,
     "{{data_checkin}}": checkinBr,
@@ -2465,8 +2569,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           db.whatsappTemplates.push(defTpl);
         }
       }
-      // Garante que templates existentes possuam a propriedade channels e documentName inicializadas
+            // Garante que templates existentes possuam a propriedade channels, recipientTarget e documentName inicializadas
       for (const tpl of db.whatsappTemplates) {
+        if (!tpl.recipientTarget) {
+          tpl.recipientTarget = "guest";
+        }
         if (!tpl.channels || !Array.isArray(tpl.channels) || tpl.channels.length === 0) {
           if (tpl.id === "tpl_breakfast_reminder") {
             tpl.channels = ["site", "whatsapp"];
@@ -2488,6 +2595,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       for (const defQm of DEFAULT_WHATSAPP_QUICK_MESSAGES) {
         if (!db.whatsappQuickMessages.some(q => q.id === defQm.id)) {
           db.whatsappQuickMessages.push(JSON.parse(JSON.stringify(defQm)));
+        }
+      }
+      for (const qm of db.whatsappQuickMessages) {
+        if (!qm.recipientTarget) {
+          qm.recipientTarget = "guest";
         }
       }
     }
@@ -2883,7 +2995,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     res.json(result);
   });
 
-  // 12. Disparo de Template para Reserva Específica (ex: do PMS ou CRM)
+    // 12. Disparo de Template para Reserva Específica (ex: do PMS ou CRM)
   app.post("/api/whatsapp/dispatch-reservation", async (req, res) => {
     const db = getDb();
     ensureDbDefaults();
@@ -2934,44 +3046,111 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     }
 
     const baseUrl = `${req.protocol}://${req.get("host")}`;
-    const renderedMessage = resolveWhatsAppTags(template.message, reservation, db, baseUrl);
-    const renderedButtons = (template.buttons || []).map(b => ({
-      ...b,
-      url: b.url ? resolveWhatsAppTags(b.url, reservation, db, baseUrl) : undefined,
-      phone: b.phone ? resolveWhatsAppTags(b.phone, reservation, db, baseUrl) : undefined
-    }));
+    const recipients = getReservationRecipients(reservation, db);
+    const targetMode = req.body.recipientTarget || template.recipientTarget || "guest"; // "guest" | "requester" | "both"
+
+    const dispatches = [];
+
+    if (targetMode === "guest" || targetMode === "both") {
+      dispatches.push({
+        type: "guest",
+        name: recipients.guest.name,
+        phone: recipients.guest.phone
+      });
+    }
+
+    if (targetMode === "requester" || targetMode === "both") {
+      if (targetMode === "requester" || recipients.requester.isDifferentFromGuest) {
+        if (recipients.requester.phone) {
+          dispatches.push({
+            type: "requester",
+            name: recipients.requester.name,
+            phone: recipients.requester.phone
+          });
+        } else if (targetMode === "requester") {
+          dispatches.push({
+            type: "guest",
+            name: recipients.guest.name,
+            phone: recipients.guest.phone
+          });
+        }
+      }
+    }
+
+    if (dispatches.length === 0) {
+      dispatches.push({
+        type: "guest",
+        name: recipients.guest.name,
+        phone: recipients.guest.phone
+      });
+    }
 
     const hasAttachment = Boolean(template.hasAttachment || template.documentUrl);
     const docUrl = hasAttachment ? (template.documentUrl || db?.zapiConfig?.guestGuidePdfUrl) : undefined;
     const docName = hasAttachment ? (template.documentName || db?.zapiConfig?.guestGuidePdfName || "Manual_do_Hospede_CorpFlats.pdf") : undefined;
 
-    const result = await sendZapiMessage(db?.zapiConfig, {
-      phone: reservation.guestPhone,
-      message: renderedMessage,
-      title: template.title,
-      footer: template.footer,
-      buttons: renderedButtons,
-      documentUrl: docUrl,
-      documentName: docName
-    });
-
+    const results = [];
     if (!db.whatsappHistory) db.whatsappHistory = [];
-    db.whatsappHistory.push({
-      id: `manual_${Date.now()}`,
-      reservationCode: reservation.code || reservation.reservationCode || String(reservation.id),
-      guestName: reservation.guestName,
-      guestPhone: reservation.guestPhone,
-      triggerEvent: template.triggerEvent,
-      message: renderedMessage,
-      buttons: renderedButtons,
-      status: result.success ? "sent" : "failed",
-      method: result.method || "manual",
-      error: result.error || null,
-      sentAt: new Date().toISOString()
-    });
+
+    for (const d of dispatches) {
+      const renderedMessage = resolveWhatsAppTags(template.message, reservation, db, baseUrl, d.type);
+      const renderedButtons = (template.buttons || []).map(b => ({
+        ...b,
+        url: b.url ? resolveWhatsAppTags(b.url, reservation, db, baseUrl, d.type) : undefined,
+        phone: b.phone ? resolveWhatsAppTags(b.phone, reservation, db, baseUrl, d.type) : undefined
+      }));
+
+      const sendRes = await sendZapiMessage(db?.zapiConfig, {
+        phone: d.phone,
+        message: renderedMessage,
+        title: template.title,
+        footer: template.footer,
+        buttons: renderedButtons,
+        documentUrl: docUrl,
+        documentName: docName
+      });
+
+      results.push({
+        recipientType: d.type,
+        recipientName: d.name,
+        phone: d.phone,
+        ...sendRes
+      });
+
+      db.whatsappHistory.push({
+        id: `manual_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        reservationCode: reservation.code || reservation.reservationCode || String(reservation.id),
+        guestName: reservation.guestName,
+        guestPhone: d.phone,
+        recipientType: d.type,
+        recipientName: d.name,
+        triggerEvent: template.triggerEvent || template.id,
+        message: renderedMessage,
+        buttons: renderedButtons,
+        status: sendRes.success ? "sent" : "failed",
+        method: sendRes.method || "manual",
+        error: sendRes.error || null,
+        sentAt: new Date().toISOString()
+      });
+
+      if (dispatches.length > 1) {
+        await new Promise(r => setTimeout(r, 1200));
+      }
+    }
+
     saveDatabase();
 
-    res.json(result);
+    const anySuccess = results.some(r => r.success);
+    const allSuccess = results.every(r => r.success);
+
+    res.json({
+      success: anySuccess,
+      allSuccess,
+      method: results[0]?.method || "manual",
+      dispatchesCount: results.length,
+      recipients: results.map(r => ({ type: r.recipientType, name: r.recipientName, phone: r.phone, success: r.success })),
+      results
+    });
   });
 
   // 13. Enviar Localização Fixa no Mapa (/api/whatsapp/send-location)
@@ -3247,7 +3426,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           continue;
         }
 
-        console.log(`[Auto-WhatsApp] Disparando agendamento automático para ${item.guestName} (${item.triggerEvent} / Canal: ${itemChannel || 'Padrão'})...`);
+                console.log(`[Auto-WhatsApp] Disparando agendamento automático para ${item.recipientName || item.guestName} (${item.recipientType === 'requester' ? 'Solicitante' : 'Hóspede'} / ${item.triggerEvent} / Canal: ${itemChannel || 'Padrão'})...`);
         const result = await sendZapiMessage(db.zapiConfig, {
           phone: item.guestPhone,
           message: item.renderedMessage,
@@ -3267,6 +3446,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           reservationCode: item.reservationCode,
           guestName: item.guestName,
           guestPhone: item.guestPhone,
+          recipientType: item.recipientType || "guest",
+          recipientName: item.recipientName || item.guestName,
           triggerEvent: item.triggerEvent,
           message: item.renderedMessage,
           buttons: item.renderedButtons,
@@ -3309,9 +3490,10 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
 
   for (const resv of confirmedReservations) {
     const resvChannel = resv.channel || resv.source || "site";
+    const recipients = getReservationRecipients(resv, db);
 
     for (const tpl of activeTemplates) {
-      // 1. Verifica se o canal da reserva está permitido no template (ex: site/whatsapp sim, booking/airbnb não)
+      // 1. Verifica se o canal da reserva está permitido no template
       if (!isTemplateAllowedForChannel(tpl, resvChannel)) {
         continue;
       }
@@ -3321,51 +3503,97 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
         continue;
       }
 
-      // Verifica se já existe agendamento ou envio para essa combinação
-      const alreadyQueued = (db.whatsappQueue || []).some(q => 
-        (q.reservationCode === resv.code || q.reservationId === resv.id) &&
-        q.triggerEvent === tpl.triggerEvent &&
-        (q.status === "scheduled" || q.status === "sent")
-      );
+      const targetMode = tpl.recipientTarget || "guest";
+      const targetsToSchedule = [];
 
-      if (!alreadyQueued) {
-        const scheduledTime = calculateScheduledTime(tpl, resv, db);
-        const scheduledDate = new Date(scheduledTime);
-
-        // Se a data de agendamento for futura (ou de até 30 min atrás), coloca na fila
-        const thirtyMinAgo = new Date(now.getTime() - 30 * 60 * 1000);
-        if (scheduledDate >= thirtyMinAgo) {
-          const baseUrl = "https://corpflats.onrender.com";
-          const renderedMessage = resolveWhatsAppTags(tpl.message, resv, db, baseUrl);
-          const renderedButtons = (tpl.buttons || []).map(b => ({
-            ...b,
-            url: b.url ? resolveWhatsAppTags(b.url, resv, db, baseUrl) : undefined,
-            phone: b.phone ? resolveWhatsAppTags(b.phone, resv, db, baseUrl) : undefined
-          }));
-
-          db.whatsappQueue.push({
-            id: `q_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-            reservationId: resv.id,
-            reservationCode: resv.code,
-            guestName: resv.guestName,
-            guestPhone: resv.guestPhone,
-            channel: resvChannel,
-            triggerEvent: tpl.triggerEvent,
-            templateId: tpl.id,
-            title: tpl.title,
-            footer: tpl.footer,
-            documentUrl: (tpl.hasAttachment || tpl.documentUrl) ? tpl.documentUrl : undefined,
-            documentName: (tpl.hasAttachment || tpl.documentUrl) ? (tpl.documentName || db?.zapiConfig?.guestGuidePdfName || "Manual_do_Hospede_CorpFlats.pdf") : undefined,
-            scheduledFor: scheduledTime,
-            status: "scheduled",
-            sentAt: null,
-            error: null,
-            renderedMessage,
-            renderedButtons,
-            createdAt: now.toISOString()
+      if (targetMode === "guest" || targetMode === "both") {
+        if (recipients.guest.phone) {
+          targetsToSchedule.push({
+            type: "guest",
+            name: recipients.guest.name,
+            phone: recipients.guest.phone
           });
+        }
+      }
 
-          hasChanges = true;
+      if (targetMode === "requester" || targetMode === "both") {
+        if (targetMode === "requester" || recipients.requester.isDifferentFromGuest) {
+          if (recipients.requester.phone) {
+            targetsToSchedule.push({
+              type: "requester",
+              name: recipients.requester.name,
+              phone: recipients.requester.phone
+            });
+          } else if (targetMode === "requester" && recipients.guest.phone) {
+            targetsToSchedule.push({
+              type: "guest",
+              name: recipients.guest.name,
+              phone: recipients.guest.phone
+            });
+          }
+        }
+      }
+
+      if (targetsToSchedule.length === 0 && recipients.guest.phone) {
+        targetsToSchedule.push({
+          type: "guest",
+          name: recipients.guest.name,
+          phone: recipients.guest.phone
+        });
+      }
+
+      for (const targetItem of targetsToSchedule) {
+        if (!targetItem.phone) continue;
+
+        // Verifica se já existe agendamento ou envio para essa combinação (reserva + trigger + recipientType)
+        const alreadyQueued = (db.whatsappQueue || []).some(q => 
+          (q.reservationCode === resv.code || q.reservationId === resv.id) &&
+          q.triggerEvent === tpl.triggerEvent &&
+          (q.recipientType || "guest") === targetItem.type &&
+          (q.status === "scheduled" || q.status === "sent")
+        );
+
+        if (!alreadyQueued) {
+          const scheduledTime = calculateScheduledTime(tpl, resv, db);
+          const scheduledDate = new Date(scheduledTime);
+
+          const thirtyMinAgo = new Date(now.getTime() - 30 * 60 * 1000);
+          if (scheduledDate >= thirtyMinAgo) {
+            const baseUrl = "https://corpflats.onrender.com";
+            const renderedMessage = resolveWhatsAppTags(tpl.message, resv, db, baseUrl, targetItem.type);
+            const renderedButtons = (tpl.buttons || []).map(b => ({
+              ...b,
+              url: b.url ? resolveWhatsAppTags(b.url, resv, db, baseUrl, targetItem.type) : undefined,
+              phone: b.phone ? resolveWhatsAppTags(b.phone, resv, db, baseUrl, targetItem.type) : undefined
+            }));
+
+            db.whatsappQueue.push({
+              id: `q_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+              reservationId: resv.id,
+              reservationCode: resv.code,
+              guestName: resv.guestName,
+              guestPhone: targetItem.phone,
+              recipientType: targetItem.type,
+              recipientName: targetItem.name,
+              recipientTarget: targetMode,
+              channel: resvChannel,
+              triggerEvent: tpl.triggerEvent,
+              templateId: tpl.id,
+              title: tpl.title,
+              footer: tpl.footer,
+              documentUrl: (tpl.hasAttachment || tpl.documentUrl) ? tpl.documentUrl : undefined,
+              documentName: (tpl.hasAttachment || tpl.documentUrl) ? (tpl.documentName || db?.zapiConfig?.guestGuidePdfName || "Manual_do_Hospede_CorpFlats.pdf") : undefined,
+              scheduledFor: scheduledTime,
+              status: "scheduled",
+              sentAt: null,
+              error: null,
+              renderedMessage,
+              renderedButtons,
+              createdAt: now.toISOString()
+            });
+
+            hasChanges = true;
+          }
         }
       }
     }
@@ -3381,7 +3609,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
   try {
     const db = typeof dbOrGetter === "function" ? dbOrGetter() : dbOrGetter;
     if (!db || !db.zapiConfig?.enabled) return;
-    if (!reservation || !reservation.guestPhone) return;
+    if (!reservation) return;
 
     const resvChannel = reservation.channel || reservation.source || "site";
 
@@ -3397,47 +3625,96 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
       if (defPre) templates = [defPre];
     }
 
+    const recipients = getReservationRecipients(reservation, db);
+
     for (const tpl of templates) {
-      const renderedMessage = resolveWhatsAppTags(tpl.message, reservation, db, baseUrl);
-      const renderedButtons = (tpl.buttons || []).map(b => ({
-        ...b,
-        url: b.url ? resolveWhatsAppTags(b.url, reservation, db, baseUrl) : undefined,
-        phone: b.phone ? resolveWhatsAppTags(b.phone, reservation, db, baseUrl) : undefined
-      }));
+      const targetMode = tpl.recipientTarget || "guest";
+      const dispatches = [];
 
-      const hasAttachment = Boolean(tpl.hasAttachment || tpl.documentUrl);
-      const docUrl = hasAttachment ? (tpl.documentUrl || db?.zapiConfig?.guestGuidePdfUrl) : undefined;
-      const docName = hasAttachment ? (tpl.documentName || db?.zapiConfig?.guestGuidePdfName || "Manual_do_Hospede_CorpFlats.pdf") : undefined;
+      if (targetMode === "guest" || targetMode === "both") {
+        if (recipients.guest.phone) {
+          dispatches.push({
+            type: "guest",
+            name: recipients.guest.name,
+            phone: recipients.guest.phone
+          });
+        }
+      }
 
-      console.log(`[Z-API Instant Trigger] Disparando '${tpl.title}' ${hasAttachment ? '(Com PDF Anexo) ' : ''}para ${reservation.guestName} (${reservation.guestPhone})...`);
+      if (targetMode === "requester" || targetMode === "both") {
+        if (targetMode === "requester" || recipients.requester.isDifferentFromGuest) {
+          if (recipients.requester.phone) {
+            dispatches.push({
+              type: "requester",
+              name: recipients.requester.name,
+              phone: recipients.requester.phone
+            });
+          } else if (targetMode === "requester" && recipients.guest.phone) {
+            dispatches.push({
+              type: "guest",
+              name: recipients.guest.name,
+              phone: recipients.guest.phone
+            });
+          }
+        }
+      }
 
-      const result = await sendZapiMessage(db.zapiConfig, {
-        phone: reservation.guestPhone,
-        message: renderedMessage,
-        title: tpl.title,
-        footer: tpl.footer,
-        buttons: renderedButtons,
-        documentUrl: docUrl,
-        documentName: docName,
-        documentCaption: hasAttachment ? tpl.documentCaption : undefined
-      });
+      if (dispatches.length === 0 && recipients.guest.phone) {
+        dispatches.push({
+          type: "guest",
+          name: recipients.guest.name,
+          phone: recipients.guest.phone
+        });
+      }
 
-      if (!db.whatsappHistory) db.whatsappHistory = [];
-      db.whatsappHistory.push({
-        id: `auto_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        reservationCode: reservation.code,
-        guestName: reservation.guestName,
-        guestPhone: reservation.guestPhone,
-        triggerEvent: eventName,
-        message: renderedMessage,
-        buttons: renderedButtons,
-        documentUrl: docUrl || null,
-        documentName: docName || null,
-        status: result.success ? "sent" : "failed",
-        method: result.method || "instant_trigger",
-        error: result.error || null,
-        sentAt: new Date().toISOString()
-      });
+      for (const d of dispatches) {
+        const renderedMessage = resolveWhatsAppTags(tpl.message, reservation, db, baseUrl, d.type);
+        const renderedButtons = (tpl.buttons || []).map(b => ({
+          ...b,
+          url: b.url ? resolveWhatsAppTags(b.url, reservation, db, baseUrl, d.type) : undefined,
+          phone: b.phone ? resolveWhatsAppTags(b.phone, reservation, db, baseUrl, d.type) : undefined
+        }));
+
+        const hasAttachment = Boolean(tpl.hasAttachment || tpl.documentUrl);
+        const docUrl = hasAttachment ? (tpl.documentUrl || db?.zapiConfig?.guestGuidePdfUrl) : undefined;
+        const docName = hasAttachment ? (tpl.documentName || db?.zapiConfig?.guestGuidePdfName || "Manual_do_Hospede_CorpFlats.pdf") : undefined;
+
+        console.log(`[Z-API Instant Trigger] Disparando '${tpl.title}' (${d.type === 'requester' ? 'Solicitante: ' + d.name : 'Hóspede: ' + d.name}) para ${d.phone}...`);
+
+        const result = await sendZapiMessage(db.zapiConfig, {
+          phone: d.phone,
+          message: renderedMessage,
+          title: tpl.title,
+          footer: tpl.footer,
+          buttons: renderedButtons,
+          documentUrl: docUrl,
+          documentName: docName,
+          documentCaption: hasAttachment ? tpl.documentCaption : undefined
+        });
+
+        if (!db.whatsappHistory) db.whatsappHistory = [];
+        db.whatsappHistory.push({
+          id: `auto_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          reservationCode: reservation.code,
+          guestName: reservation.guestName,
+          guestPhone: d.phone,
+          recipientType: d.type,
+          recipientName: d.name,
+          triggerEvent: eventName,
+          message: renderedMessage,
+          buttons: renderedButtons,
+          documentUrl: docUrl || null,
+          documentName: docName || null,
+          status: result.success ? "sent" : "failed",
+          method: result.method || "instant_trigger",
+          error: result.error || null,
+          sentAt: new Date().toISOString()
+        });
+
+        if (dispatches.length > 1) {
+          await new Promise(r => setTimeout(r, 1200));
+        }
+      }
 
       if (typeof saveDatabase === "function") {
         saveDatabase();

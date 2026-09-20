@@ -3461,8 +3461,8 @@ export default function PmsCalendar() {
                           : "bg-background border-border text-slate-700 dark:text-slate-300 hover:border-indigo-400"
                       }`}
                     >
-                      <span>🛏️ 2 Camas Solteiro</span>
-                      {formTwinBeds && <CheckCircle2 className="w-3.5 h-3.5" />}
+                      <span>🛏️ {formTwinBeds ? "2 Camas Solteiro" : "1 Cama Casal"}</span>
+                      {formTwinBeds ? <CheckCircle2 className="w-3.5 h-3.5" /> : <span className="text-[10px] text-muted-foreground font-semibold">Padrão</span>}
                     </button>
 
                     {/* Colchão extra */}
