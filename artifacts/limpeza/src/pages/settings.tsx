@@ -149,6 +149,15 @@ export default function SystemSettings() {
   const [zapiStatus, setZapiStatus] = useState<any>(null)
   const [zapiConfig, setZapiConfig] = useState<any>(null)
 
+  // Gemini AI states
+  const [geminiModalOpen, setGeminiModalOpen] = useState(false)
+  const [geminiApiKey, setGeminiApiKey] = useState("")
+  const [geminiApiKeyMasked, setGeminiApiKeyMasked] = useState("")
+  const [geminiConfigured, setGeminiConfigured] = useState(false)
+  const [savingGemini, setSavingGemini] = useState(false)
+  const [testingGemini, setTestingGemini] = useState(false)
+  const [geminiMsg, setGeminiMsg] = useState<{ type: "success" | "error"; text: string } | null>(null)
+
   const fetchUsers = async () => {
     try {
       const res = await fetch("/api/admin/users")
@@ -242,6 +251,17 @@ export default function SystemSettings() {
     } catch {}
   }
 
+  const fetchGeminiConfig = async () => {
+    try {
+      const res = await fetch("/api/settings/gemini")
+      if (res.ok) {
+        const data = await res.json()
+        setGeminiConfigured(!!data.configured)
+        if (data.keyMasked) setGeminiApiKeyMasked(data.keyMasked)
+      }
+    } catch {}
+  }
+
   useEffect(() => {
     fetchUsers()
     fetchStorageConfig()
@@ -250,6 +270,7 @@ export default function SystemSettings() {
     fetchMpConfig()
     fetchZapiInfo()
     fetchEmailConfig()
+    fetchGeminiConfig()
   }, [])
 
   if (loadingUser) return null
@@ -736,7 +757,99 @@ export default function SystemSettings() {
           </Card>
         </div>
 
+        {/* ── SEÇÃO 1B: IA & ANÁLISE DE SENTIMENTO ── */}
+        <Card className="rounded-3xl border border-purple-500/30 bg-purple-500/5 shadow-sm">
+          <CardHeader className="p-5 border-b border-purple-500/20 pb-3">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm font-black text-foreground flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-purple-500" />
+                <span>Google Gemini AI — Análise de Sentimento</span>
+              </CardTitle>
+              <Badge
+                variant={geminiConfigured ? "default" : "outline"}
+                className={`text-[10px] ${geminiConfigured ? "bg-purple-600 text-white border-purple-600" : "border-purple-400 text-purple-400"}`}
+              >
+                {geminiConfigured ? "✓ Configurado" : "Pendente"}
+              </Badge>
+            </div>
+            <CardDescription className="text-xs mt-1">
+              Chave de API usada para análise de sentimento de hóspedes, tom de voz no WhatsApp, geração de diagnósticos automáticos e filtro NPS pré-Google Review.
+            </CardDescription>
+          </CardHeader>
+
+          <CardContent className="p-5">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 items-center">
+              <div className="md:col-span-2 space-y-2 text-xs">
+                <div className="flex justify-between py-1.5 border-b border-border/40">
+                  <span className="text-muted-foreground">Chave de API:</span>
+                  <span className="font-mono font-bold text-foreground">
+                    {geminiConfigured ? (geminiApiKeyMasked || "••••••••••••••••••••••••••••••••") : "Não configurada"}
+                  </span>
+                </div>
+                <div className="flex justify-between py-1.5 border-b border-border/40">
+                  <span className="text-muted-foreground">Modelo utilizado:</span>
+                  <span className="font-mono font-bold text-foreground">gemini-1.5-flash</span>
+                </div>
+                <div className="flex justify-between py-1.5 border-b border-border/40">
+                  <span className="text-muted-foreground">Modo atual:</span>
+                  <span className={`font-bold ${geminiConfigured ? "text-purple-500" : "text-amber-500"}`}>
+                    {geminiConfigured ? "IA Real (Gemini)" : "Heurístico Local"}
+                  </span>
+                </div>
+                <div className="flex justify-between py-1.5">
+                  <span className="text-muted-foreground">Funcionalidades:</span>
+                  <span className="font-bold text-foreground text-right max-w-[240px] leading-tight">
+                    Sentimento WPP · Feedbacks · NPS · Manutenção IA
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <Button
+                  onClick={() => { setGeminiMsg(null); setGeminiApiKey(""); setGeminiModalOpen(true) }}
+                  className="w-full text-xs font-bold rounded-xl h-9 bg-purple-600 hover:bg-purple-700 text-white gap-1.5"
+                >
+                  <Key className="w-3.5 h-3.5" />
+                  {geminiConfigured ? "Atualizar Chave" : "Configurar Chave"}
+                </Button>
+                <Button
+                  onClick={async () => {
+                    setTestingGemini(true)
+                    setGeminiMsg(null)
+                    try {
+                      const res = await fetch("/api/settings/gemini/test", { method: "POST" })
+                      const d = await res.json()
+                      setGeminiMsg(res.ok ? { type: "success", text: d.message || "Gemini respondeu com sucesso!" } : { type: "error", text: d.error || "Falha no teste" })
+                    } catch {
+                      setGeminiMsg({ type: "error", text: "Erro de conexão ao testar" })
+                    } finally {
+                      setTestingGemini(false)
+                    }
+                  }}
+                  disabled={!geminiConfigured || testingGemini}
+                  variant="outline"
+                  className="w-full text-xs font-bold rounded-xl h-9 gap-1.5 border-purple-500/40 text-purple-400 hover:text-purple-300"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${testingGemini ? "animate-spin" : ""}`} />
+                  Testar Conexão
+                </Button>
+                {geminiMsg && (
+                  <p className={`text-[11px] text-center font-bold mt-1 ${geminiMsg.type === "success" ? "text-emerald-500" : "text-rose-500"}`}>
+                    {geminiMsg.type === "success" ? "✓ " : "✗ "}{geminiMsg.text}
+                  </p>
+                )}
+                {!geminiConfigured && (
+                  <p className="text-[10px] text-center text-muted-foreground leading-tight mt-1">
+                    Sem a chave, o sistema usa análise heurística local (menos precisa)
+                  </p>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* ── SEÇÃO 2: GATEWAYS DE PAGAMENTO ── */}
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           {/* Banco Inter PIX */}
           <Card className="rounded-3xl border border-border shadow-sm flex flex-col justify-between">
@@ -1325,6 +1438,98 @@ export default function SystemSettings() {
                 </Button>
                 <Button type="submit" disabled={savingSmtp} className="rounded-xl h-9 text-xs font-bold bg-primary text-primary-foreground">
                   {savingSmtp ? "Salvando..." : "Salvar Configuração"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+
+        {/* ── Modal: Configurar Gemini API ── */}
+        <Dialog open={geminiModalOpen} onOpenChange={setGeminiModalOpen}>
+          <DialogContent className="sm:max-w-md bg-card border-border">
+            <form onSubmit={async (e) => {
+              e.preventDefault()
+              if (!geminiApiKey.trim()) return
+              setSavingGemini(true)
+              setGeminiMsg(null)
+              try {
+                const res = await fetch("/api/settings/gemini", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ apiKey: geminiApiKey.trim() })
+                })
+                const d = await res.json()
+                if (res.ok) {
+                  setGeminiMsg({ type: "success", text: "Chave Gemini salva com sucesso!" })
+                  setGeminiConfigured(true)
+                  await fetchGeminiConfig()
+                  setTimeout(() => { setGeminiModalOpen(false); setGeminiApiKey("") }, 1500)
+                } else {
+                  setGeminiMsg({ type: "error", text: d.error || "Erro ao salvar a chave" })
+                }
+              } catch {
+                setGeminiMsg({ type: "error", text: "Erro de conexão" })
+              } finally {
+                setSavingGemini(false)
+              }
+            }}>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 text-foreground">
+                  <Sparkles className="w-4 h-4 text-purple-500" />
+                  Configurar Google Gemini API
+                </DialogTitle>
+                <DialogDescription className="text-xs text-muted-foreground">
+                  A chave é armazenada de forma segura no banco de dados do servidor e nunca fica exposta no frontend.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="py-4 space-y-4 text-xs">
+                <div className="p-3 bg-purple-500/10 border border-purple-500/30 rounded-xl text-purple-300 text-[11px] leading-relaxed">
+                  <p className="font-bold mb-1">Como obter sua chave Gemini:</p>
+                  <ol className="space-y-0.5 list-decimal list-inside">
+                    <li>Acesse <strong>aistudio.google.com/app/apikey</strong></li>
+                    <li>Clique em <strong>"Create API key"</strong></li>
+                    <li>Selecione um projeto Google Cloud</li>
+                    <li>Copie e cole a chave abaixo</li>
+                  </ol>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-foreground font-bold text-xs">Chave de API Gemini</Label>
+                  <div className="relative">
+                    <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                    <Input
+                      type="password"
+                      value={geminiApiKey}
+                      onChange={e => setGeminiApiKey(e.target.value)}
+                      placeholder="AIza..."
+                      required
+                      className="pl-8 font-mono text-xs bg-background border-border"
+                    />
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">
+                    Chave atual: {geminiConfigured ? (geminiApiKeyMasked || "••••••••••••••••••••••••••••••••") : "Nenhuma configurada"}
+                  </p>
+                </div>
+
+                {geminiMsg && (
+                  <div className={`p-2.5 rounded-xl flex items-center gap-2 text-[11px] font-bold ${
+                    geminiMsg.type === "success"
+                      ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-400"
+                      : "bg-rose-500/10 border border-rose-500/30 text-rose-400"
+                  }`}>
+                    {geminiMsg.type === "success" ? <Check className="w-3.5 h-3.5 shrink-0" /> : <AlertCircle className="w-3.5 h-3.5 shrink-0" />}
+                    <span>{geminiMsg.text}</span>
+                  </div>
+                )}
+              </div>
+
+              <DialogFooter className="gap-2">
+                <Button type="button" variant="outline" onClick={() => setGeminiModalOpen(false)} className="rounded-xl h-9 text-xs font-bold">
+                  Cancelar
+                </Button>
+                <Button type="submit" disabled={savingGemini || !geminiApiKey.trim()} className="rounded-xl h-9 text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white">
+                  {savingGemini ? "Salvando..." : "Salvar Chave"}
                 </Button>
               </DialogFooter>
             </form>

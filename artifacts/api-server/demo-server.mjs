@@ -10252,6 +10252,49 @@ app.post("/api/pms/reservations/communications/:commId/resend", async (req, res)
   res.json({ success: true, message: result.message });
 });
 
+// ── Gemini AI: GET config ──────────────────────────────────────────────────
+app.get("/api/settings/gemini", (req, res) => {
+  const key = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || "";
+  const configured = !!key;
+  const keyMasked = key ? key.substring(0, 6) + "••••••••••••••••••••••••••" + key.slice(-4) : "";
+  res.json({ configured, keyMasked });
+});
+
+// ── Gemini AI: POST save key ───────────────────────────────────────────────
+app.post("/api/settings/gemini", (req, res) => {
+  const { apiKey } = req.body;
+  if (!apiKey || apiKey.trim().length < 10) return res.status(400).json({ error: "Chave inválida. Informe a chave completa do Google AI Studio." });
+  if (!db.settings) db.settings = {};
+  db.settings.geminiApiKey = apiKey.trim();
+  saveDatabase();
+  const key = apiKey.trim();
+  const keyMasked = key.substring(0, 6) + "••••••••••••••••••••••••••" + key.slice(-4);
+  res.json({ success: true, message: "Chave Gemini salva com sucesso!", configured: true, keyMasked });
+});
+
+// ── Gemini AI: POST test connection ───────────────────────────────────────
+app.post("/api/settings/gemini/test", async (req, res) => {
+  const apiKey = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || "";
+  if (!apiKey) return res.status(400).json({ error: "Nenhuma chave Gemini configurada." });
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contents: [{ parts: [{ text: "Responda apenas: OK" }] }] })
+    });
+    if (response.ok) {
+      const data = await response.json();
+      const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "OK";
+      res.json({ success: true, message: `Gemini respondeu: "${reply.trim()}"` });
+    } else {
+      const err = await response.json().catch(() => ({}));
+      res.status(400).json({ error: err.error?.message || `Gemini retornou status ${response.status}. Verifique se a chave está correta.` });
+    }
+  } catch (err) {
+    res.status(500).json({ error: `Falha de conexão com a API Gemini: ${err.message}` });
+  }
+});
+
 // 4. Obter configurações de e-mail (Zoho SMTP)
 app.get("/api/settings/email", (req, res) => {
   const config = getSmtpConfig(db);
