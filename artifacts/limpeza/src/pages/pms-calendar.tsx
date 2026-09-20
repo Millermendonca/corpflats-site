@@ -36,7 +36,7 @@ const CHANNEL_CONFIG: Record<string, { label: string; bg: string; text: string; 
 import { AccessDenied } from "@/components/access-denied"
 import { FLAT_AMENITIES_CATALOG, AMENITY_CATEGORIES, renderAmenityIcon, getFlatActiveAmenities, FlatAmenityDefinition } from "@/lib/flat-amenities"
 import { ReservationHoverCard } from "@/components/reservation-hover-card"
-import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage } from "@/hooks/use-quick-messages"
+import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage, getReservationRecipients } from "@/hooks/use-quick-messages"
 import { PaymentMethodsModal, PaymentMethod } from "@/components/payment-methods-modal"
 
 const DEFAULT_CLIENT_PAYMENT_METHODS: PaymentMethod[] = [
@@ -4566,27 +4566,69 @@ export default function PmsCalendar() {
                 {selectedRes && (
                   <div className="p-3 bg-emerald-50/80 dark:bg-emerald-950/30 rounded-2xl border border-emerald-200 dark:border-emerald-800 space-y-2 relative">
                     {/* Janelinha Flutuante de Prévia no Modal (Ao passar o cursor sobre qualquer atalho) */}
-                    {hoveredModalQuickMsg && (
-                      <div className="absolute left-2 right-2 bottom-[calc(100%+8px)] z-50 p-3 rounded-2xl bg-slate-950/98 dark:bg-black/98 text-white border border-slate-700 shadow-2xl backdrop-blur-md animate-in fade-in-0 zoom-in-95 pointer-events-none text-left">
-                        <div className="flex items-center justify-between pb-1.5 border-b border-slate-800 mb-2">
-                          <div className="flex items-center gap-1.5 font-bold text-xs text-emerald-400">
-                            <span className="text-sm">{hoveredModalQuickMsg.icon}</span>
-                            <span>{hoveredModalQuickMsg.title}</span>
+                    {hoveredModalQuickMsg && (() => {
+                      const modalRecipients = getReservationRecipients(selectedRes);
+                      const target = hoveredModalQuickMsg.recipientTarget || "guest";
+                      const isTargetRequester = target === "requester";
+                      return (
+                        <div className="absolute left-2 right-2 bottom-[calc(100%+8px)] z-50 p-3 rounded-2xl bg-slate-950/98 dark:bg-black/98 text-white border border-slate-700 shadow-2xl backdrop-blur-md animate-in fade-in-0 zoom-in-95 pointer-events-none text-left">
+                          <div className="flex items-center justify-between pb-1.5 border-b border-slate-800 mb-2">
+                            <div className="flex items-center gap-1.5 font-bold text-xs text-emerald-400">
+                              <span className="text-sm">{hoveredModalQuickMsg.icon}</span>
+                              <span className="truncate max-w-[200px]">{hoveredModalQuickMsg.title}</span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              {target === "both" ? (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30">
+                                  ✨ Ambos
+                                </span>
+                              ) : target === "requester" ? (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
+                                  👥 Solicitante
+                                </span>
+                              ) : (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-sky-500/20 text-sky-300 font-bold border border-sky-500/30">
+                                  👤 Hóspede
+                                </span>
+                              )}
+                              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
+                                Manual
+                              </span>
+                            </div>
                           </div>
-                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
-                            WhatsApp Manual
-                          </span>
+                          <div className="text-[11px] leading-relaxed text-slate-200 font-normal whitespace-pre-wrap max-h-48 overflow-y-auto pr-1">
+                            {renderQuickMessage(
+                              hoveredModalQuickMsg.message, 
+                              selectedRes, 
+                              typeof window !== "undefined" ? window.location.origin : undefined,
+                              isTargetRequester ? "requester" : "guest"
+                            )}
+                          </div>
+                          <div className="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[9.5px] text-slate-400">
+                            <span className="font-mono truncate max-w-[260px]">
+                              {target === "requester" ? (
+                                <>
+                                  <strong className="text-amber-400">Destino: 👥 Solicitante</strong>
+                                  <span className="text-slate-300 ml-1">({modalRecipients.requester.name})</span>
+                                </>
+                              ) : target === "both" ? (
+                                <>
+                                  <strong className="text-purple-400">Destino: ✨ Ambos</strong>
+                                  <span className="text-slate-300 ml-1">({modalRecipients.guest.firstName} + {modalRecipients.requester.firstName})</span>
+                                </>
+                              ) : (
+                                <>
+                                  <strong className="text-sky-400">Destino: 👤 Hóspede</strong>
+                                  <span className="text-slate-300 ml-1">({modalRecipients.guest.name})</span>
+                                </>
+                              )}
+                            </span>
+                            <span className="text-emerald-400 font-bold shrink-0">⚡ Clique para disparar</span>
+                          </div>
+                          <div className="absolute top-full left-12 w-2.5 h-2.5 -mt-1 bg-slate-950 dark:bg-black border-r border-b border-slate-700 rotate-45" />
                         </div>
-                        <div className="text-[11px] leading-relaxed text-slate-200 font-normal whitespace-pre-wrap max-h-48 overflow-y-auto pr-1">
-                          {renderQuickMessage(hoveredModalQuickMsg.message, selectedRes)}
-                        </div>
-                        <div className="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[9.5px] text-slate-400">
-                          <span className="font-mono">Destino: {selectedRes.guestPhone || "Sem telefone"}</span>
-                          <span className="text-emerald-400 font-bold">⚡ Clique no botão para disparar</span>
-                        </div>
-                        <div className="absolute top-full left-12 w-2.5 h-2.5 -mt-1 bg-slate-950 dark:bg-black border-r border-b border-slate-700 rotate-45" />
-                      </div>
-                    )}
+                      );
+                    })()}
 
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold text-emerald-900 dark:text-emerald-300 flex items-center gap-1.5">
@@ -4600,7 +4642,7 @@ export default function PmsCalendar() {
                         <a 
                           href="/whatsapp?tab=quick_messages" 
                           target="_blank" 
-                          rel="noreferrer"
+                          rel="noreferrer" 
                           className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold hover:underline flex items-center gap-0.5"
                           title="Gerenciar modelos e ativar/desativar mensagens"
                         >
@@ -4613,6 +4655,7 @@ export default function PmsCalendar() {
                     <div className="flex flex-wrap gap-1.5">
                       {activeQuickMessages.map(qm => {
                         const isSending = modalSendingMsgId === qm.id;
+                        const target = qm.recipientTarget || "guest";
                         return (
                           <Button
                             key={qm.id}
@@ -4622,6 +4665,13 @@ export default function PmsCalendar() {
                             disabled={isSending}
                             onMouseEnter={() => setHoveredModalQuickMsg(qm)}
                             onMouseLeave={() => setHoveredModalQuickMsg(null)}
+                            title={
+                              target === "both" 
+                                ? `${qm.title} (Envia para Hóspede e Solicitante)` 
+                                : target === "requester" 
+                                  ? `${qm.title} (Envia para o Solicitante)` 
+                                  : `${qm.title} (Envia para o Hóspede)`
+                            }
                             onClick={async () => {
                               setModalSendingMsgId(qm.id);
                               try {
@@ -4630,7 +4680,7 @@ export default function PmsCalendar() {
                                 setModalSendingMsgId(null);
                               }
                             }}
-                            className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-emerald-300 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 flex items-center gap-1 shadow-2xs cursor-pointer active:scale-95"
+                            className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-emerald-300 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 flex items-center gap-1.5 shadow-2xs cursor-pointer active:scale-95"
                           >
                             {isSending ? (
                               <RefreshCw className="w-3 h-3 animate-spin text-emerald-600" />
@@ -4638,6 +4688,16 @@ export default function PmsCalendar() {
                               <span>{qm.icon || "💬"}</span>
                             )}
                             <span>{qm.title}</span>
+                            {target === "both" && (
+                              <span className="text-[9px] px-1 py-0.2 rounded bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-bold border border-purple-300 dark:border-purple-800 leading-tight" title="Hóspede + Solicitante">
+                                ✨ Ambos
+                              </span>
+                            )}
+                            {target === "requester" && (
+                              <span className="text-[9px] px-1 py-0.2 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-bold border border-amber-300 dark:border-amber-800 leading-tight" title="Só Solicitante">
+                                👥 Solicitante
+                              </span>
+                            )}
                           </Button>
                         );
                       })}

@@ -8,7 +8,7 @@ import {
   Users, Calendar, Eye, Building2, X, Zap, SlidersHorizontal, RefreshCw
 } from "lucide-react"
 import { format, parseISO, differenceInDays } from "date-fns"
-import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage } from "@/hooks/use-quick-messages"
+import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage, getReservationRecipients } from "@/hooks/use-quick-messages"
 
 interface ReservationHoverCardProps {
   resItem: any
@@ -158,6 +158,7 @@ export function ReservationHoverCard({
   const rawPhone = resItem.guestPhone || resItem.guests?.[0]?.phone || ""
   const cleanPhone = rawPhone.replace(/\D/g, "")
   const finalWaPhone = cleanPhone.length === 10 || cleanPhone.length === 11 ? `55${cleanPhone}` : cleanPhone
+  const recipients = getReservationRecipients(resItem)
 
   const flatNumber = resItem.flatNumber || flat?.number || "Flat"
   const nightsCount = differenceInDays(parseISO(resItem.checkoutDate), parseISO(resItem.checkinDate)) || 1
@@ -263,15 +264,35 @@ export function ReservationHoverCard({
             <div className="flex items-center justify-between pb-1.5 border-b border-slate-800 mb-2">
               <div className="flex items-center gap-1.5 font-bold text-xs text-emerald-400">
                 <span className="text-sm">{hoveredQuickMsg.icon}</span>
-                <span className="truncate max-w-[170px]">{hoveredQuickMsg.title}</span>
+                <span className="truncate max-w-[150px]">{hoveredQuickMsg.title}</span>
               </div>
-              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
-                WhatsApp Manual
-              </span>
+              <div className="flex items-center gap-1">
+                {hoveredQuickMsg.recipientTarget === "both" ? (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30">
+                    ✨ Ambos
+                  </span>
+                ) : hoveredQuickMsg.recipientTarget === "requester" ? (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
+                    👥 Solicitante
+                  </span>
+                ) : (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-sky-500/20 text-sky-300 font-bold border border-sky-500/30">
+                    👤 Hóspede
+                  </span>
+                )}
+                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
+                  Manual
+                </span>
+              </div>
             </div>
 
             <div className="text-[11px] leading-relaxed text-slate-200 font-normal whitespace-pre-wrap max-h-52 overflow-y-auto pr-1">
-              {renderQuickMessage(hoveredQuickMsg.message, resItem, originUrl)}
+              {renderQuickMessage(
+                hoveredQuickMsg.message, 
+                resItem, 
+                originUrl, 
+                hoveredQuickMsg.recipientTarget === "requester" ? "requester" : "guest"
+              )}
             </div>
 
             {hoveredQuickMsg.buttons && hoveredQuickMsg.buttons.length > 0 && (
@@ -284,11 +305,35 @@ export function ReservationHoverCard({
               </div>
             )}
 
-            <div className="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[9.5px] text-slate-400">
-              <span className="font-mono">Destino: {finalWaPhone ? `+${finalWaPhone}` : "Sem tel"}</span>
-              <span className="text-emerald-400 font-bold flex items-center gap-1">
-                ⚡ Clique no botão para disparar
-              </span>
+            <div className="mt-2 pt-1.5 border-t border-slate-800/80 flex flex-col gap-1 text-[9.5px]">
+              <div className="flex items-center justify-between text-slate-400">
+                <span className="font-mono truncate max-w-[190px]">
+                  {hoveredQuickMsg.recipientTarget === "requester" ? (
+                    <>
+                      <strong className="text-amber-400">Destino: 👥 Solicitante</strong>
+                      <span className="text-slate-300 ml-1">({recipients.requester.name})</span>
+                    </>
+                  ) : hoveredQuickMsg.recipientTarget === "both" ? (
+                    <>
+                      <strong className="text-purple-400">Destino: ✨ Ambos</strong>
+                      <span className="text-slate-300 ml-1">({recipients.guest.firstName} + {recipients.requester.firstName})</span>
+                    </>
+                  ) : (
+                    <>
+                      <strong className="text-sky-400">Destino: 👤 Hóspede</strong>
+                      <span className="text-slate-300 ml-1">({recipients.guest.name})</span>
+                    </>
+                  )}
+                </span>
+                <span className="text-emerald-400 font-bold flex items-center gap-1 shrink-0">
+                  ⚡ Clique para disparar
+                </span>
+              </div>
+              {hoveredQuickMsg.recipientTarget === "both" && !recipients.requester.isDifferentFromGuest && (
+                <div className="text-[8.5px] text-slate-400 italic">
+                  ℹ️ Solicitante é o próprio hóspede (será 1 único envio).
+                </div>
+              )}
             </div>
 
             {/* Seta indicativa para o card */}
@@ -499,6 +544,7 @@ export function ReservationHoverCard({
             <div className="flex flex-wrap gap-1">
               {activeQuickMessages.map(qm => {
                 const isSending = sendingMsgId === qm.id;
+                const target = qm.recipientTarget || "guest";
                 return (
                   <button
                     key={qm.id}
@@ -507,6 +553,13 @@ export function ReservationHoverCard({
                     onClick={(e) => handleTriggerQuickMessage(e, qm)}
                     onMouseEnter={() => handleQuickMsgHover(qm)}
                     onMouseLeave={() => handleQuickMsgHover(null)}
+                    title={
+                      target === "both" 
+                        ? `${qm.title} (Envia para Hóspede e Solicitante)` 
+                        : target === "requester" 
+                          ? `${qm.title} (Envia para o Solicitante)` 
+                          : `${qm.title} (Envia para o Hóspede)`
+                    }
                     className="h-6 px-2 rounded-lg text-[10.5px] font-semibold flex items-center gap-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-slate-700 dark:text-slate-200 active:scale-95 transition-all shadow-2xs cursor-pointer group/btn"
                   >
                     {isSending ? (
@@ -514,7 +567,17 @@ export function ReservationHoverCard({
                     ) : (
                       <span className="text-xs">{qm.icon || "💬"}</span>
                     )}
-                    <span className="truncate max-w-[90px]">{qm.shortLabel || qm.title}</span>
+                    <span className="truncate max-w-[85px]">{qm.shortLabel || qm.title}</span>
+                    {target === "both" && (
+                      <span className="text-[8px] px-1 rounded bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-bold border border-purple-300 dark:border-purple-800 leading-tight" title="Hóspede + Solicitante">
+                        ✨
+                      </span>
+                    )}
+                    {target === "requester" && (
+                      <span className="text-[8px] px-1 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-bold border border-amber-300 dark:border-amber-800 leading-tight" title="Só Solicitante">
+                        👥
+                      </span>
+                    )}
                   </button>
                 );
               })}

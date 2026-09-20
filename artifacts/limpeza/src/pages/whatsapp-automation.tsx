@@ -107,6 +107,7 @@ interface WhatsAppTemplate {
   description?: string
   enabled: boolean
   channels?: string[]
+  recipientTarget?: "guest" | "requester" | "both"
   triggerTiming: "immediate" | "before_event" | "after_event" | "fixed_time_day_of" | "fixed_time_day_before"
   offsetValue: number
   offsetUnit: "minutes" | "hours" | "days"
@@ -126,6 +127,9 @@ interface QueueItem {
   reservationCode: string
   guestName: string
   guestPhone: string
+  recipientType?: "guest" | "requester"
+  recipientName?: string
+  recipientTarget?: "guest" | "requester" | "both"
   channel?: string
   triggerEvent: string
   templateId: string
@@ -140,6 +144,8 @@ interface QueueItem {
   renderedButtons?: ButtonAction[]
   documentUrl?: string
   documentName?: string
+  documentCaption?: string
+  hasAttachment?: boolean
   createdAt?: string
 }
 
@@ -148,11 +154,15 @@ interface HistoryItem {
   reservationCode?: string
   guestName: string
   guestPhone: string
+  recipientType?: "guest" | "requester"
+  recipientName?: string
   triggerEvent: string
   message: string
   buttons?: ButtonAction[]
   documentUrl?: string
   documentName?: string
+  documentCaption?: string
+  hasAttachment?: boolean
   status: "sent" | "failed"
   method: string
   error?: string | null
@@ -212,6 +222,16 @@ const TAG_GROUPS = [
     ]
   },
   {
+    category: "👥 Solicitante & Destinatário",
+    tags: [
+      { tag: "{{nome_solicitante}}", label: "Nome Solicitante", example: "Maria Secretária / Petrobras" },
+      { tag: "{{primeiro_nome_solicitante}}", label: "1º Nome Solicitante", example: "Maria" },
+      { tag: "{{telefone_solicitante}}", label: "WhatsApp Solicitante", example: "(22) 99112-3344" },
+      { tag: "{{empresa_solicitante}}", label: "Empresa Solicitante", example: "Petrobras S.A." },
+      { tag: "{{nome_destinatario}}", label: "Nome Destinatário", example: "Carlos Silva" },
+    ]
+  },
+  {
     category: "🏢 Propriedade & Wi-Fi",
     tags: [
       { tag: "{{nome_hotel}}", label: "Nome Hotel", example: "CorpFlats" },
@@ -258,6 +278,7 @@ export default function WhatsappAutomation() {
   const [editingFixedTime, setEditingFixedTime] = useState<string>("09:00")
   const [editingButtons, setEditingButtons] = useState<ButtonAction[]>([])
   const [editingChannels, setEditingChannels] = useState<string[]>(["site", "whatsapp", "booking", "airbnb", "outros"])
+  const [editingRecipientTarget, setEditingRecipientTarget] = useState<"guest" | "requester" | "both">("guest")
   const [editingEnabled, setEditingEnabled] = useState<boolean>(true)
   const [editingHasAttachment, setEditingHasAttachment] = useState<boolean>(false)
   const [editingDocumentUrl, setEditingDocumentUrl] = useState<string>("")
@@ -266,6 +287,7 @@ export default function WhatsappAutomation() {
   const [uploadingDoc, setUploadingDoc] = useState<boolean>(false)
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const editorRef = useRef<HTMLDivElement>(null)
 
   // State: Queue & History
   const [queue, setQueue] = useState<QueueItem[]>([])
@@ -325,6 +347,7 @@ export default function WhatsappAutomation() {
   const [qmEnabled, setQmEnabled] = useState(true)
   const [qmMessage, setQmMessage] = useState("")
   const [qmFooter, setQmFooter] = useState("")
+  const [qmRecipientTarget, setQmRecipientTarget] = useState<"guest" | "requester" | "both">("guest")
   const [hoveredPreviewQm, setHoveredPreviewQm] = useState<WhatsAppQuickMessage | null>(null)
 
   const handleOpenCreateQm = () => {
@@ -337,6 +360,7 @@ export default function WhatsappAutomation() {
     setQmEnabled(true)
     setQmMessage("Olá, *{{primeiro_nome}}*! ")
     setQmFooter("CorpFlats • Central de Atendimento")
+    setQmRecipientTarget("guest")
     setQmModalOpen(true)
   }
 
@@ -350,6 +374,7 @@ export default function WhatsappAutomation() {
     setQmEnabled(qm.enabled !== false)
     setQmMessage(qm.message)
     setQmFooter(qm.footer || "")
+    setQmRecipientTarget(qm.recipientTarget || "guest")
     setQmModalOpen(true)
   }
 
@@ -367,6 +392,7 @@ export default function WhatsappAutomation() {
       category: qmCategory || "Geral",
       description: qmDescription.trim(),
       enabled: qmEnabled,
+      recipientTarget: qmRecipientTarget,
       message: qmMessage.trim(),
       footer: qmFooter.trim(),
       buttons: editingQm?.buttons || []
@@ -504,6 +530,7 @@ export default function WhatsappAutomation() {
       ? tpl.channels
       : ["site", "whatsapp", "booking", "airbnb", "outros"]
     setEditingChannels(tplChannels)
+    setEditingRecipientTarget(tpl.recipientTarget || "guest")
     setEditingEnabled(tpl.enabled !== false)
     setEditingHasAttachment(Boolean(tpl.hasAttachment || tpl.documentUrl))
     setEditingDocumentUrl(tpl.documentUrl || "")
@@ -652,6 +679,7 @@ export default function WhatsappAutomation() {
       fixedTime: editingFixedTime,
       buttons: editingButtons,
       channels: editingChannels,
+      recipientTarget: editingRecipientTarget,
       enabled: editingEnabled,
       hasAttachment: editingHasAttachment,
       documentUrl: editingHasAttachment ? editingDocumentUrl : "",
@@ -856,7 +884,13 @@ export default function WhatsappAutomation() {
     const map: Record<string, string> = {
       "{{nome_hospede}}": targetRes.guestName || "Hóspede",
       "{{primeiro_nome}}": firstName,
-      "{{telefone_hospede}}": targetRes.guestPhone || "(22) 99887-7665",
+            "{{telefone_hospede}}": targetRes.guestPhone || "(22) 99887-7665",
+      "{{nome_solicitante}}": targetRes.requesterInfo?.name || targetRes.companyName || targetRes.guestName || "Maria (Solicitante)",
+      "{{primeiro_nome_solicitante}}": (targetRes.requesterInfo?.name || targetRes.guestName || "Maria").split(" ")[0],
+      "{{telefone_solicitante}}": targetRes.requesterInfo?.phone || targetRes.guestPhone || "(22) 99112-3344",
+      "{{empresa_solicitante}}": targetRes.companyName || "Empresa Parceira",
+      "{{nome_destinatario}}": targetRes.guestName || "Carlos Silva",
+      "{{primeiro_nome_destinatario}}": firstName,
       "{{numero_reserva}}": code,
       "{{quarto}}": String(targetRes.flatNumber || "113"),
       "{{data_checkin}}": targetRes.checkinDate ? targetRes.checkinDate.split("-").reverse().join("/") : "03/09/2026",
@@ -1103,6 +1137,18 @@ export default function WhatsappAutomation() {
                           >
                             {timingLabel}
                           </Badge>
+                          <Badge 
+                            variant="outline" 
+                            className={`text-[10px] font-bold py-0.5 px-1.5 ${
+                              tpl.recipientTarget === "both"
+                                ? "bg-purple-50 text-purple-800 border-purple-200 dark:bg-purple-950/50 dark:text-purple-300"
+                                : tpl.recipientTarget === "requester"
+                                ? "bg-sky-50 text-sky-800 border-sky-200 dark:bg-sky-950/50 dark:text-sky-300"
+                                : "bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-900/50 dark:text-slate-300"
+                            }`}
+                          >
+                            {tpl.recipientTarget === "both" ? "✨ Ambos" : tpl.recipientTarget === "requester" ? "👥 Solicitante" : "👤 Hóspede"}
+                          </Badge>
                           {(tpl.hasAttachment || tpl.documentUrl) && (
                             <Badge 
                               variant="secondary" 
@@ -1166,8 +1212,8 @@ export default function WhatsappAutomation() {
                           Canais de Reserva Alvo:
                         </span>
                         <div className="flex flex-wrap gap-1">
-                          {tpl.targetChannels && tpl.targetChannels.length > 0 ? (
-                            tpl.targetChannels.map((c) => (
+                          {tpl.channels && tpl.channels.length > 0 ? (
+                            tpl.channels.map((c) => (
                               <Badge key={c} variant="outline" className="text-[10px] py-0 px-1.5 font-normal">
                                 {c}
                               </Badge>
@@ -1359,6 +1405,83 @@ export default function WhatsappAutomation() {
                             />
                           </div>
                         )}
+                      </div>
+                    </div>
+
+                    {/* DESTINATÁRIO DA MENSAGEM: HÓSPEDE, SOLICITANTE OU AMBOS */}
+                    <div className="p-3.5 rounded-xl bg-slate-50/80 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 space-y-2.5">
+                      <div className="flex items-center gap-2">
+                        <User className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                        <div>
+                          <span className="text-xs font-bold text-foreground uppercase tracking-wider">
+                            Destinatário da Mensagem (Para quem enviar?)
+                          </span>
+                          <p className="text-[11px] text-muted-foreground">
+                            Escolha se o WhatsApp deve ser disparado para o hóspede, para o solicitante da reserva ou para ambos.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => setEditingRecipientTarget("guest")}
+                          className={`p-2.5 rounded-xl border text-left transition-all flex items-center gap-2.5 ${
+                            editingRecipientTarget === "guest"
+                              ? "border-emerald-500 bg-emerald-50/80 dark:bg-emerald-950/40 text-emerald-950 dark:text-emerald-200 shadow-xs ring-1 ring-emerald-500/20"
+                              : "border-border bg-card hover:bg-muted/40 text-muted-foreground"
+                          }`}
+                        >
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm shrink-0 ${
+                            editingRecipientTarget === "guest" ? "bg-emerald-600 text-white" : "bg-muted text-muted-foreground"
+                          }`}>
+                            👤
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-xs font-black text-foreground">Só o Hóspede</div>
+                            <div className="text-[10px] text-muted-foreground leading-tight truncate">Quem fica no flat</div>
+                          </div>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setEditingRecipientTarget("requester")}
+                          className={`p-2.5 rounded-xl border text-left transition-all flex items-center gap-2.5 ${
+                            editingRecipientTarget === "requester"
+                              ? "border-sky-500 bg-sky-50/80 dark:bg-sky-950/40 text-sky-950 dark:text-sky-200 shadow-xs ring-1 ring-sky-500/20"
+                              : "border-border bg-card hover:bg-muted/40 text-muted-foreground"
+                          }`}
+                        >
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm shrink-0 ${
+                            editingRecipientTarget === "requester" ? "bg-sky-600 text-white" : "bg-muted text-muted-foreground"
+                          }`}>
+                            👥
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-xs font-black text-foreground">Só o Solicitante</div>
+                            <div className="text-[10px] text-muted-foreground leading-tight truncate">Empresa ou secretária</div>
+                          </div>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setEditingRecipientTarget("both")}
+                          className={`p-2.5 rounded-xl border text-left transition-all flex items-center gap-2.5 ${
+                            editingRecipientTarget === "both"
+                              ? "border-purple-500 bg-purple-50/80 dark:bg-purple-950/40 text-purple-950 dark:text-purple-200 shadow-xs ring-1 ring-purple-500/20"
+                              : "border-border bg-card hover:bg-muted/40 text-muted-foreground"
+                          }`}
+                        >
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm shrink-0 ${
+                            editingRecipientTarget === "both" ? "bg-purple-600 text-white" : "bg-muted text-muted-foreground"
+                          }`}>
+                            ✨
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-xs font-black text-foreground">Ambos (Hóspede + Solicitante)</div>
+                            <div className="text-[10px] text-muted-foreground leading-tight truncate">Dispara para os 2 contatos</div>
+                          </div>
+                        </button>
                       </div>
                     </div>
 
@@ -2014,6 +2137,18 @@ export default function WhatsappAutomation() {
                                   {qm.category}
                                 </Badge>
                               )}
+                              <Badge 
+                                variant="outline" 
+                                className={`text-[9.5px] font-bold py-0 px-1.5 ${
+                                  qm.recipientTarget === "both"
+                                    ? "bg-purple-50 text-purple-800 border-purple-200 dark:bg-purple-950/50 dark:text-purple-300"
+                                    : qm.recipientTarget === "requester"
+                                    ? "bg-sky-50 text-sky-800 border-sky-200 dark:bg-sky-950/50 dark:text-sky-300"
+                                    : "bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-900/50 dark:text-slate-300"
+                                }`}
+                              >
+                                {qm.recipientTarget === "both" ? "✨ Ambos" : qm.recipientTarget === "requester" ? "👥 Solicitante" : "👤 Hóspede"}
+                              </Badge>
                             </div>
                             <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-muted-foreground">
                               <span>Botão no card:</span>
@@ -2235,6 +2370,15 @@ export default function WhatsappAutomation() {
                               <Badge variant="outline" className="text-[10px] font-mono">
                                 {item.reservationCode}
                               </Badge>
+
+                              {/* Destinatário (Hóspede ou Solicitante) */}
+                              <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md border ${
+                                item.recipientType === "requester"
+                                  ? "bg-sky-50 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300 border-sky-200"
+                                  : "bg-slate-50 text-slate-700 dark:bg-slate-900 dark:text-slate-300 border-slate-200"
+                              }`}>
+                                {item.recipientType === "requester" ? `👥 Solicitante: ${item.recipientName || item.guestName}` : `👤 Hóspede: ${item.guestName}`}
+                              </span>
 
                               {/* Canal de Origem da Reserva */}
                               {item.channel && (
@@ -2835,6 +2979,52 @@ export default function WhatsappAutomation() {
                 />
               </div>
 
+              {/* Destinatário da Mensagem Rápida */}
+              <div className="space-y-1.5 p-3 rounded-2xl border bg-slate-50/80 dark:bg-slate-900/50">
+                <Label className="text-[11px] font-bold text-foreground flex items-center gap-1.5">
+                  <User className="w-3.5 h-3.5 text-emerald-600" />
+                  Destinatário (Para quem enviar ao clicar no atalho?)
+                </Label>
+                <div className="grid grid-cols-3 gap-1.5 pt-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setQmRecipientTarget("guest")}
+                    className={`py-1.5 px-2 rounded-xl text-xs font-bold border transition-all flex flex-col items-center gap-0.5 ${
+                      qmRecipientTarget === "guest"
+                        ? "border-emerald-500 bg-emerald-50 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200 shadow-xs"
+                        : "border-border bg-card text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    <span>👤 Só o Hóspede</span>
+                    <span className="text-[9.5px] font-normal text-muted-foreground">Quem fica no flat</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setQmRecipientTarget("requester")}
+                    className={`py-1.5 px-2 rounded-xl text-xs font-bold border transition-all flex flex-col items-center gap-0.5 ${
+                      qmRecipientTarget === "requester"
+                        ? "border-sky-500 bg-sky-50 text-sky-900 dark:bg-sky-950 dark:text-sky-200 shadow-xs"
+                        : "border-border bg-card text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    <span>👥 Só o Solicitante</span>
+                    <span className="text-[9.5px] font-normal text-muted-foreground">Empresa/Secretária</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setQmRecipientTarget("both")}
+                    className={`py-1.5 px-2 rounded-xl text-xs font-bold border transition-all flex flex-col items-center gap-0.5 ${
+                      qmRecipientTarget === "both"
+                        ? "border-purple-500 bg-purple-50 text-purple-900 dark:bg-purple-950 dark:text-purple-200 shadow-xs"
+                        : "border-border bg-card text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    <span>✨ Ambos (Os 2)</span>
+                    <span className="text-[9.5px] font-normal text-muted-foreground">Hóspede + Solicitante</span>
+                  </button>
+                </div>
+              </div>
+
               {/* Inserção de Tags Dinâmicas */}
               <div className="space-y-1.5 p-3 rounded-2xl border bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800">
                 <span className="text-[11px] font-bold text-emerald-900 dark:text-emerald-300 flex items-center gap-1">
@@ -2844,7 +3034,9 @@ export default function WhatsappAutomation() {
                 <div className="flex flex-wrap gap-1 pt-1">
                   {[
                     { tag: "{{primeiro_nome}}", label: "Primeiro Nome" },
-                    { tag: "{{nome_hospede}}", label: "Nome Completo" },
+                    { tag: "{{nome_hospede}}", label: "Nome Hóspede" },
+                    { tag: "{{nome_solicitante}}", label: "Nome Solicitante" },
+                    { tag: "{{empresa_solicitante}}", label: "Empresa" },
                     { tag: "{{quarto}}", label: "Flat / Quarto" },
                     { tag: "{{numero_reserva}}", label: "Cód. Reserva" },
                     { tag: "{{data_checkin}}", label: "Entrada" },
