@@ -81,6 +81,11 @@ export function ReservationHoverCard({
       return
     }
 
+    // Desativa tooltip de prévia em dispositivos touch/mobile para não sobrepor a tela
+    if (typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches) {
+      return
+    }
+
     if (cardContentRef.current) {
       const rect = cardContentRef.current.getBoundingClientRect()
       const spaceAbove = rect.top
@@ -218,7 +223,7 @@ export function ReservationHoverCard({
         ref={cardContentRef}
         side="top"
         align="center"
-        sideOffset={8}
+        sideOffset={6}
         collisionPadding={12}
         avoidCollisions={true}
         onPointerDownOutside={(e) => {
@@ -245,7 +250,7 @@ export function ReservationHoverCard({
           }
           handleClose()
         }}
-        className="w-[330px] max-w-[calc(100vw-24px)] p-0 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-2xl z-50 text-xs relative"
+        className="w-[335px] sm:w-[355px] max-w-[calc(100vw-20px)] max-h-[min(88dvh,540px)] overflow-y-auto overflow-x-hidden p-0 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-2xl z-50 text-xs relative overscroll-contain [scrollbar-width:thin]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* ── Janelinha Flutuante de Prévia da Mensagem (Ao Repousar o Mouse) ──── */}
@@ -587,14 +592,30 @@ export function ReservationHoverCard({
 
         {/* ── 3. Barra de Ações Rápidas (Action Bar) ──────────────────────── */}
         <div className="p-3 bg-slate-50/90 dark:bg-slate-950/60 border-t border-slate-100 dark:border-slate-800/80 space-y-2">
-          {/* Linha 1: Ação Primária WhatsApp & Telefone */}
+          {/* Linha 1: Ações Principais (Ver Detalhes + Chat PMS + wa.me + Telefone) */}
           <div className="flex items-center gap-1.5">
+            {/* Botão Primário: Ver Detalhes */}
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => {
+                handleClose()
+                onOpenDetails(resItem)
+              }}
+              className="flex-1 inline-flex items-center justify-center gap-1.5 h-8 px-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 active:scale-[0.98] text-white dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-200 font-bold text-xs shadow-xs transition-all"
+              title="Abrir detalhes completos da reserva, dossiê e mensagens"
+            >
+              <Eye className="w-3.5 h-3.5" />
+              <span>Ver Detalhes</span>
+            </Button>
+
+            {/* Chat PMS WhatsApp */}
             {waLink ? (
               <>
                 <a
                   href={`/whatsapp-chat?phone=${finalWaPhone}`}
-                  className="flex-1 inline-flex items-center justify-center gap-1.5 h-8 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-bold text-xs shadow-xs transition-all group"
-                  title="Abrir WhatsApp Web integrado dentro do sistema"
+                  className="inline-flex items-center justify-center gap-1.5 h-8 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-bold text-xs shadow-xs transition-all group shrink-0"
+                  title="Abrir WhatsApp integrado dentro do sistema"
                 >
                   <MessageSquare className="w-3.5 h-3.5 group-hover:scale-110 transition-transform" />
                   <span>Chat PMS</span>
@@ -614,10 +635,10 @@ export function ReservationHoverCard({
                 disabled
                 size="sm"
                 variant="outline"
-                className="flex-1 h-8 rounded-xl text-xs font-bold text-slate-400 cursor-not-allowed"
+                className="h-8 px-2.5 rounded-xl text-xs font-bold text-slate-400 cursor-not-allowed shrink-0"
               >
                 <MessageCircle className="w-3.5 h-3.5 mr-1" />
-                Sem WhatsApp
+                Sem Whats
               </Button>
             )}
 
@@ -632,39 +653,41 @@ export function ReservationHoverCard({
             )}
           </div>
 
-          {/* Linha 2: Links Públicos & Detalhes */}
-          <div className="flex items-center gap-1.5 pt-0.5">
-            <a
-              href={portalUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="flex-1 inline-flex items-center justify-center gap-1 h-7 px-2 rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50/80 hover:bg-sky-100 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 font-bold text-[11px] transition-colors"
-            >
-              <ExternalLink className="w-3 h-3" />
-              <span>Portal</span>
-            </a>
-
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={handleCopyLink}
-              className="h-7 w-7 p-0 rounded-xl hover:bg-slate-200/80 text-slate-600 dark:text-slate-300 shrink-0"
-              title="Copiar Link da Reserva"
-            >
-              {copiedLink ? (
-                <Check className="w-3 h-3 text-emerald-600" />
-              ) : (
-                <Copy className="w-3 h-3" />
-              )}
-            </Button>
+          {/* Linha 2: Links Públicos de Autoatendimento com quebra fluida (flex-wrap) */}
+          <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+            {/* Grupo Portal + Copiar Link */}
+            <div className="inline-flex items-center rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50/80 dark:bg-sky-950/40 overflow-hidden shadow-2xs">
+              <a
+                href={portalUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 h-7 px-2 hover:bg-sky-100 dark:hover:bg-sky-900/60 text-sky-700 dark:text-sky-300 font-bold text-[11px] transition-colors"
+                title="Abrir Portal do Hóspede"
+              >
+                <ExternalLink className="w-3 h-3" />
+                <span>Portal</span>
+              </a>
+              <div className="w-[1px] h-4 bg-sky-200 dark:bg-sky-800" />
+              <button
+                type="button"
+                onClick={handleCopyLink}
+                className="h-7 px-1.5 hover:bg-sky-100 dark:hover:bg-sky-900/60 text-sky-700 dark:text-sky-300 transition-colors"
+                title="Copiar Link da Reserva"
+              >
+                {copiedLink ? (
+                  <Check className="w-3 h-3 text-emerald-600" />
+                ) : (
+                  <Copy className="w-3 h-3" />
+                )}
+              </button>
+            </div>
 
             {hasBreakfast && (
               <a
                 href={breakfastUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="h-7 px-2 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50/80 hover:bg-amber-100 text-amber-800 dark:text-amber-300 font-bold text-[11px] inline-flex items-center gap-1 transition-colors shrink-0"
+                className="h-7 px-2 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50/80 hover:bg-amber-100 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 font-bold text-[11px] inline-flex items-center gap-1 transition-colors shrink-0 shadow-2xs"
                 title="Abrir Gestão de Café da Manhã"
               >
                 <Coffee className="w-3 h-3 text-amber-600" />
@@ -676,7 +699,7 @@ export function ReservationHoverCard({
               href={preCheckinUrl}
               target="_blank"
               rel="noreferrer"
-              className="h-7 px-2 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/80 hover:bg-indigo-100 text-indigo-800 dark:text-indigo-300 font-bold text-[11px] inline-flex items-center gap-1 transition-colors shrink-0"
+              className="h-7 px-2 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/80 hover:bg-indigo-100 dark:bg-indigo-950/40 text-indigo-800 dark:text-indigo-300 font-bold text-[11px] inline-flex items-center gap-1 transition-colors shrink-0 shadow-2xs"
               title="Abrir Link de Pré-Check-in Digital"
             >
               <FileText className="w-3 h-3 text-indigo-600" />
@@ -687,25 +710,12 @@ export function ReservationHoverCard({
               href={checkoutUrl}
               target="_blank"
               rel="noreferrer"
-              className="h-7 px-2 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/80 hover:bg-emerald-100 text-emerald-800 dark:text-emerald-300 font-bold text-[11px] inline-flex items-center gap-1 transition-colors shrink-0"
+              className="h-7 px-2 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/80 hover:bg-emerald-100 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 font-bold text-[11px] inline-flex items-center gap-1 transition-colors shrink-0 shadow-2xs"
               title="Abrir Link de Check-out Expresso"
             >
               <DoorOpen className="w-3 h-3 text-emerald-600" />
               <span>Saída</span>
             </a>
-
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => {
-                handleClose()
-                onOpenDetails(resItem)
-              }}
-              className="h-7 px-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white dark:bg-slate-100 dark:text-slate-900 font-bold text-[11px] flex items-center gap-1 shadow-2xs shrink-0"
-            >
-              <Eye className="w-3 h-3" />
-              <span>Detalhes</span>
-            </Button>
           </div>
         </div>
       </HoverCardContent>
