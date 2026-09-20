@@ -172,8 +172,8 @@
       "number": "1004",
       "colIndex": 20,
       "colName": "1004 Solteiro X",
-      "isOccupied": true,
-      "updatedAt": "2026-09-01T07:26:30.433Z"
+      "isOccupied": false,
+      "updatedAt": "2026-09-20T03:12:12.880Z"
     },
     {
       "id": 21,
@@ -185,6 +185,25 @@
     }
   ],
   "cleaningRequests": [
+    {
+      "id": 292,
+      "flatId": 19,
+      "flatNumber": "1004",
+      "requestDate": "2026-09-20",
+      "source": "whatsapp_concierge",
+      "status": "dirty",
+      "assignedUserId": null,
+      "isVacant": true,
+      "isPriority": false,
+      "leavingGuest": "Miller (Admin)",
+      "arrivingGuest": null,
+      "pendingObservation": "Check-out confirmado no grupo da portaria (Miller (Admin))",
+      "willCleanAt": null,
+      "cleaningStartedAt": null,
+      "completedAt": null,
+      "createdAt": "2026-09-20T03:12:12.880Z",
+      "updatedAt": "2026-09-20T03:12:12.880Z"
+    },
     {
       "id": 29,
       "flatId": 8,
@@ -7079,12 +7098,17 @@
   "zapiConfig": {
     "instanceId": "3F8BEFCB96709186C854260BF05B3023",
     "token": "9F303A38EAEAEF8B071A32CA",
-    "clientToken": "F3b5f4fa69f004c008e3730f341fdda8eS",
+    "clientToken": "F2561e99c653a4e2cb71f6be867b210cdS",
     "enabled": true,
     "fallbackToText": true,
     "guestGuidePdfUrl": "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
     "guestGuidePdfName": "Manual_do_Hospede_CorpFlats.pdf",
-    "deliveryMode": "text_links"
+    "deliveryMode": "text_links",
+    "conciergeGroupId": "120363404293089756-group",
+    "conciergeGroupName": "Checkout Flats",
+    "conciergeMonitoringEnabled": true,
+    "conciergeRequireKeywords": false,
+    "webhooksSyncedAt": "2026-09-20T03:12:12.879Z"
   },
   "whatsappTemplates": [
     {

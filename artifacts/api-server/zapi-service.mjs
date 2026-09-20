@@ -1956,7 +1956,22 @@ export async function syncZapiWebhooks(config, appBaseUrl) {
     results.received.error = err.message;
   }
 
-  const overallSuccess = results.disconnected.ok || results.connected.ok || results.received.ok;
+  try {
+    const resSent = await fetch(`${baseUrl}/instances/${instanceId}/token/${token}/update-notify-sent-by-me`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ value: true, notifySentByMe: true })
+    });
+    results.notifySentByMe = {
+      ok: resSent.ok,
+      status: resSent.status,
+      data: await resSent.json().catch(() => ({}))
+    };
+  } catch (err) {
+    results.notifySentByMe = { ok: false, error: err.message };
+  }
+
+  const overallSuccess = results.disconnected.ok || results.connected.ok || results.received.ok || results.notifySentByMe?.ok;
   return {
     success: overallSuccess,
     results,
@@ -2154,9 +2169,14 @@ export function extractIncomingMessageInfo(body) {
     body.participantPhone || body.participant || body.senderPhone || body.sender || body.data?.participant || ""
   ).replace(/\D/g, "");
 
-  const senderName = String(
+  const fromMe = Boolean(body.fromMe || body.isMyMessage);
+
+  let senderName = String(
     body.senderName || body.pushName || body.notifyName || body.data?.senderName || ""
   ).trim();
+  if (!senderName && fromMe) {
+    senderName = "Você (CorpFlats)";
+  }
 
   let text = "";
   if (typeof body.text === "string") {
@@ -2183,6 +2203,7 @@ export function extractIncomingMessageInfo(body) {
     groupName,
     senderPhone,
     senderName,
+    fromMe,
     text: text ? text.trim() : ""
   };
 }
@@ -2261,26 +2282,26 @@ export async function handleConciergeGroupMessage({
 
     if (targetGroupId) {
       const incomingGid = String(incomingInfo.groupId || "").toLowerCase();
-      if (!incomingGid.includes(targetGroupId.toLowerCase())) {
-        return { success: false, ignored: true, reason: "Mensagem de outro grupo (ID não corresponde ao da portaria)" };
+      if (!incomingGid.includes(targetGroupId.toLowerCase()) && !targetGroupId.toLowerCase().includes(incomingGid)) {
+        return { success: false, ignored: true, reason: "Mensagem de outro grupo (ID não corresponde ao configurado)" };
       }
     } else if (targetGroupName) {
       const incomingGname = String(incomingInfo.groupName || "").toLowerCase();
-      if (!incomingGname.includes(targetGroupName.toLowerCase())) {
-        return { success: false, ignored: true, reason: "Mensagem de outro grupo (Nome não corresponde ao da portaria)" };
+      if (incomingGname && !incomingGname.includes(targetGroupName.toLowerCase()) && !targetGroupName.toLowerCase().includes(incomingGname)) {
+        return { success: false, ignored: true, reason: "Mensagem de outro grupo (Nome não corresponde ao da portaria/checkout)" };
       }
     } else {
-      // Se nenhum grupo foi configurado ainda, aceita se o nome do grupo contiver 'portaria', 'recepção' ou 'condom'
+      // Se nenhum grupo foi configurado ainda, aceita se o nome for relacionado a checkout/portaria ou se o payload não trouxe o chatName
       const gName = String(incomingInfo.groupName || "").toLowerCase();
-      const isConciergeGroup = /portaria|recep[cç][aã]o|condom/i.test(gName);
-      if (!isConciergeGroup) {
-        return { success: false, ignored: true, reason: "Grupo não configurado e nome não contém 'Portaria'" };
+      const isCheckoutRelatedGroup = !gName || /checkout|check-?out|portaria|recep[cç][aã]o|condom|sa[ií]da|limpeza|governan[cç]a|flat|quarto|apto|corpflats|hotel/i.test(gName);
+      if (!isCheckoutRelatedGroup) {
+        return { success: false, ignored: true, reason: "Grupo não configurado e nome não relacionado a check-out/portaria" };
       }
     }
 
     // Se estiver ativado exigir palavras-chave
     if (config.conciergeRequireKeywords) {
-      const hasKeywords = /check-?out|sa[ií]da|desocupad|liberad|chave|entreg|saiu|livre|vago/i.test(incomingInfo.text);
+      const hasKeywords = /check-?out|sa[ií]da|desocupad|liberad|chave|entreg|saiu|livre|vago|quarto|flat|apt|apto/i.test(incomingInfo.text);
       if (!hasKeywords) {
         return { success: false, ignored: true, reason: "Mensagem sem palavras-chave de check-out" };
       }
@@ -2293,11 +2314,21 @@ export async function handleConciergeGroupMessage({
     return { success: false, ignored: true, reason: "Nenhum número de apartamento identificado no texto", text: incomingInfo.text };
   }
 
+  // Auto-vincula o grupo se ainda não estiver configurado e a mensagem contiver flats nossos
+  if (!config.conciergeGroupId && incomingInfo.groupId && matchedFlats.length > 0) {
+    config.conciergeGroupId = incomingInfo.groupId;
+    if (incomingInfo.groupName) config.conciergeGroupName = incomingInfo.groupName;
+    if (typeof saveDatabase === "function") saveDatabase();
+    console.log(`[Z-API Portaria] Grupo de checkout vinculado automaticamente: ${config.conciergeGroupName || config.conciergeGroupId}`);
+  }
+
   const now = new Date().toISOString();
   const nowBrl = getBrasiliaNow();
   const todayStr = nowBrl.date;
   const timeStr = nowBrl.timeStr;
-  const senderLabel = incomingInfo.senderName ? `${incomingInfo.senderName}` : "Portaria";
+  const senderLabel = incomingInfo.senderName 
+    ? `${incomingInfo.senderName}` 
+    : (incomingInfo.fromMe ? "Você (CorpFlats)" : "Portaria");
 
   const updatedFlatsList = [];
 
@@ -3190,6 +3221,19 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     const db = getDb();
     ensureDbDefaults();
     console.log("[Z-API Webhook] Mensagem recebida:", JSON.stringify(req.body));
+
+    // Auditoria dos últimos 30 webhooks brutos recebidos da Z-API
+    if (!db.zapiRawWebhookLogs) db.zapiRawWebhookLogs = [];
+    db.zapiRawWebhookLogs.unshift({
+      id: `raw_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      timestamp: new Date().toISOString(),
+      endpoint: "/api/whatsapp/webhook/received",
+      body: req.body
+    });
+    if (db.zapiRawWebhookLogs.length > 30) {
+      db.zapiRawWebhookLogs = db.zapiRawWebhookLogs.slice(0, 30);
+    }
+
     const incomingInfo = extractIncomingMessageInfo(req.body);
     if (!incomingInfo || !incomingInfo.text) {
       return res.status(200).json({ success: true, message: "Mensagem vazia ou sem texto ignorada" });
@@ -3368,6 +3412,31 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     res.json({ success: true, message: "Simulação de alerta disparada com sucesso!" });
   });
 
+  // 23. Consultar Webhooks Brutos Recebidos (/api/whatsapp/raw-webhook-logs)
+  app.get("/api/whatsapp/raw-webhook-logs", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    res.json(db?.zapiRawWebhookLogs || []);
+  });
+
+  // Auto-sincronização de webhooks e notifySentByMe na inicialização
+  setTimeout(async () => {
+    try {
+      const db = getDb();
+      if (db?.zapiConfig?.instanceId && db?.zapiConfig?.token && db?.zapiConfig?.enabled !== false) {
+        console.log("[Z-API Init] Sincronizando webhooks e notifySentByMe com a Z-API...");
+        const syncRes = await syncZapiWebhooks(db.zapiConfig, process.env.APP_BASE_URL || "https://corpflats.onrender.com");
+        if (syncRes?.success) {
+          db.zapiConfig.webhooksSyncedAt = new Date().toISOString();
+          if (typeof saveDatabase === "function") saveDatabase();
+          console.log("[Z-API Init] Webhooks e notifySentByMe sincronizados com sucesso!");
+        }
+      }
+    } catch (e) {
+      console.warn("[Z-API Init] Aviso na sincronização automática de webhooks:", e.message);
+    }
+  }, 4000);
+
   // ── Background Runner Contínuo (Verifica e Dispara a Cada 60 Segundos) ──────
   let cronCounter = 0;
   setInterval(async () => {
@@ -3378,6 +3447,18 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       const now = new Date();
       const nowIso = now.toISOString();
       cronCounter++;
+
+      // A cada 6 minutos (6 ciclos de 60s): re-garante sincronização dos webhooks e notifySentByMe
+      if (cronCounter % 6 === 0 && db.zapiConfig.instanceId && db.zapiConfig.token && db.zapiConfig.enabled !== false) {
+        syncZapiWebhooks(db.zapiConfig, process.env.APP_BASE_URL || "https://corpflats.onrender.com")
+          .then(res => {
+            if (res?.success) {
+              db.zapiConfig.webhooksSyncedAt = new Date().toISOString();
+              saveDatabase();
+            }
+          })
+          .catch(() => {});
+      }
 
       // A cada 3 minutos (3 ciclos de 60s): Watchdog Heartbeat Proativo da Conexão Z-API
       if (cronCounter % 3 === 0 && db.zapiConfig.instanceId && db.zapiConfig.token) {

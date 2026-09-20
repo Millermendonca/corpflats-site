@@ -1082,7 +1082,7 @@ export default function ZapiConnection() {
                 <div className="space-y-1.5">
                   <Label className="text-xs font-semibold">Filtro por Nome do Grupo / Palavra-chave</Label>
                   <Input 
-                    placeholder="Ex: Portaria, Condomínio, Recepção..."
+                    placeholder="Ex: Checkout, Portaria, Condomínio, Recepção..."
                     value={config.conciergeGroupName || ""}
                     onChange={(e) => setConfig({ ...config, conciergeGroupName: e.target.value })}
                     className="text-xs h-9 rounded-xl"
