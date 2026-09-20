@@ -153,6 +153,7 @@ export default function SystemSettings() {
   const [geminiModalOpen, setGeminiModalOpen] = useState(false)
   const [geminiApiKey, setGeminiApiKey] = useState("")
   const [geminiApiKeyMasked, setGeminiApiKeyMasked] = useState("")
+  const [geminiModel, setGeminiModel] = useState("gemini-2.0-flash")
   const [geminiConfigured, setGeminiConfigured] = useState(false)
   const [savingGemini, setSavingGemini] = useState(false)
   const [testingGemini, setTestingGemini] = useState(false)
@@ -258,6 +259,7 @@ export default function SystemSettings() {
         const data = await res.json()
         setGeminiConfigured(!!data.configured)
         if (data.keyMasked) setGeminiApiKeyMasked(data.keyMasked)
+        if (data.model) setGeminiModel(data.model)
       }
     } catch {}
   }
@@ -788,7 +790,7 @@ export default function SystemSettings() {
                 </div>
                 <div className="flex justify-between py-1.5 border-b border-border/40">
                   <span className="text-muted-foreground">Modelo utilizado:</span>
-                  <span className="font-mono font-bold text-foreground">gemini-1.5-flash</span>
+                  <span className="font-mono font-bold text-foreground">{geminiModel || "gemini-2.0-flash (auto)"}</span>
                 </div>
                 <div className="flex justify-between py-1.5 border-b border-border/40">
                   <span className="text-muted-foreground">Modo atual:</span>
@@ -819,7 +821,12 @@ export default function SystemSettings() {
                     try {
                       const res = await fetch("/api/settings/gemini/test", { method: "POST" })
                       const d = await res.json()
-                      setGeminiMsg(res.ok ? { type: "success", text: d.message || "Gemini respondeu com sucesso!" } : { type: "error", text: d.error || "Falha no teste" })
+                      if (res.ok) {
+                        setGeminiMsg({ type: "success", text: d.message || "Gemini respondeu com sucesso!" })
+                        if (d.model) setGeminiModel(d.model)
+                      } else {
+                        setGeminiMsg({ type: "error", text: d.error || "Falha no teste" })
+                      }
                     } catch {
                       setGeminiMsg({ type: "error", text: "Erro de conexão ao testar" })
                     } finally {

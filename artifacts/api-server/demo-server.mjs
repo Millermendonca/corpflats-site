@@ -1887,6 +1887,110 @@ function checkYouthLocalRisk({ birthDate, city, address, phone }) {
   };
 }
 
+// ── Helper Universal para Chamadas Google Gemini AI com Auto-Discovery de Modelos ──
+async function getGeminiCandidateEndpoints(apiKey) {
+  const candidates = [];
+  const savedModel = db.settings?.geminiModel;
+  const savedVer = db.settings?.geminiApiVersion || "v1beta";
+  if (savedModel) {
+    candidates.push({ ver: savedVer, model: savedModel });
+  }
+
+  // 1. Tentar consultar ListModels diretamente para saber exatamente quais modelos a chave suporta
+  try {
+    for (const ver of ["v1beta", "v1"]) {
+      const res = await fetch(`https://generativelanguage.googleapis.com/${ver}/models?key=${apiKey}`);
+      if (res.ok) {
+        const data = await res.json();
+        const available = (data.models || [])
+          .filter(m => m.supportedGenerationMethods?.includes("generateContent"))
+          .map(m => m.name.replace("models/", ""));
+
+        const preferred = [
+          "gemini-2.0-flash",
+          "gemini-2.5-flash",
+          "gemini-2.0-flash-lite",
+          "gemini-1.5-flash",
+          "gemini-1.5-flash-latest",
+          "gemini-1.5-flash-8b",
+          "gemini-1.5-pro",
+          "gemini-pro"
+        ];
+        for (const p of preferred) {
+          if (available.includes(p) && !candidates.some(c => c.ver === ver && c.model === p)) {
+            candidates.push({ ver, model: p });
+          }
+        }
+        for (const a of available) {
+          if (!candidates.some(c => c.ver === ver && c.model === a)) {
+            candidates.push({ ver, model: a });
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[Gemini ListModels]", err.message);
+  }
+
+  // 2. Fallbacks padrões em ordem de preferência
+  const defaultFallbacks = [
+    { ver: "v1beta", model: "gemini-2.0-flash" },
+    { ver: "v1beta", model: "gemini-2.5-flash" },
+    { ver: "v1beta", model: "gemini-2.0-flash-lite" },
+    { ver: "v1beta", model: "gemini-1.5-flash-latest" },
+    { ver: "v1", model: "gemini-1.5-flash" },
+    { ver: "v1beta", model: "gemini-1.5-flash" },
+    { ver: "v1beta", model: "gemini-pro" }
+  ];
+
+  for (const fb of defaultFallbacks) {
+    if (!candidates.some(c => c.ver === fb.ver && c.model === fb.model)) {
+      candidates.push(fb);
+    }
+  }
+
+  return candidates;
+}
+
+async function callGeminiGenerateContent(apiKey, contents) {
+  const candidates = await getGeminiCandidateEndpoints(apiKey);
+  let lastError = null;
+
+  for (const { ver, model } of candidates) {
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/${ver}/models/${model}:generateContent?key=${apiKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        // Salva o modelo funcional no banco para acelerar chamadas futuras
+        if (!db.settings) db.settings = {};
+        if (db.settings.geminiModel !== model || db.settings.geminiApiVersion !== ver) {
+          db.settings.geminiModel = model;
+          db.settings.geminiApiVersion = ver;
+          saveDatabase();
+        }
+        return { ok: true, data, model, ver };
+      } else {
+        const errJson = await response.json().catch(() => ({}));
+        const msg = errJson.error?.message || `Status ${response.status}`;
+        lastError = msg;
+        if (response.status === 404 || msg.includes("not found") || msg.includes("not supported")) {
+          continue;
+        }
+        break;
+      }
+    } catch (e) {
+      lastError = e.message;
+    }
+  }
+
+  return { ok: false, error: lastError || "Não foi possível conectar a nenhum modelo Gemini." };
+}
+
 async function evaluateGuestIdentityWithAI({ fullName, document, birthDate, selfieBase64, docPhotoBase64, selfieUrl, docPhotoUrl }) {
   const apiKey = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY;
   if (!apiKey) {
@@ -1946,16 +2050,10 @@ Tarefas:
     addImagePart(docPhotoBase64);
     addImagePart(selfieBase64);
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts }]
-      })
-    });
+    const geminiResult = await callGeminiGenerateContent(apiKey, [{ parts }]);
 
-    if (response.ok) {
-      const data = await response.json();
+    if (geminiResult.ok) {
+      const data = geminiResult.data;
       const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
       const jsonMatch = rawText.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
@@ -10257,7 +10355,9 @@ app.get("/api/settings/gemini", (req, res) => {
   const key = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || "";
   const configured = !!key;
   const keyMasked = key ? key.substring(0, 6) + "••••••••••••••••••••••••••" + key.slice(-4) : "";
-  res.json({ configured, keyMasked });
+  const model = db.settings?.geminiModel || "gemini-2.0-flash";
+  const apiVersion = db.settings?.geminiApiVersion || "v1beta";
+  res.json({ configured, keyMasked, model, apiVersion });
 });
 
 // ── Gemini AI: POST save key ───────────────────────────────────────────────
@@ -10276,22 +10376,18 @@ app.post("/api/settings/gemini", (req, res) => {
 app.post("/api/settings/gemini/test", async (req, res) => {
   const apiKey = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || "";
   if (!apiKey) return res.status(400).json({ error: "Nenhuma chave Gemini configurada." });
-  try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents: [{ parts: [{ text: "Responda apenas: OK" }] }] })
+
+  const result = await callGeminiGenerateContent(apiKey, [{ parts: [{ text: "Responda apenas: OK" }] }]);
+  if (result.ok) {
+    const reply = result.data.candidates?.[0]?.content?.parts?.[0]?.text || "OK";
+    res.json({
+      success: true,
+      message: `Conectado com sucesso! Modelo ativo: ${result.model} (${result.ver}) • Resposta: "${reply.trim()}"`,
+      model: result.model,
+      apiVersion: result.ver
     });
-    if (response.ok) {
-      const data = await response.json();
-      const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "OK";
-      res.json({ success: true, message: `Gemini respondeu: "${reply.trim()}"` });
-    } else {
-      const err = await response.json().catch(() => ({}));
-      res.status(400).json({ error: err.error?.message || `Gemini retornou status ${response.status}. Verifique se a chave está correta.` });
-    }
-  } catch (err) {
-    res.status(500).json({ error: `Falha de conexão com a API Gemini: ${err.message}` });
+  } else {
+    res.status(400).json({ error: result.error || "Falha ao validar a conexão com a API Gemini." });
   }
 });
 
@@ -16264,14 +16360,10 @@ async function analyzeTextSentimentWithAI(text, context) {
   try {
     const prompt = `Você é um analista de experiência do cliente de um hotel boutique brasileiro chamado CorpFlats.\nAnalise o seguinte texto${ctx ? " (" + ctx + ")" : ""} e retorne um JSON estrito com os campos abaixo.\nTexto para análise: """${text}"""\n\nRetorne APENAS um JSON válido (sem markdown) no formato:\n{\n  "score": 82,\n  "tone": "positive",\n  "keywords": ["limpeza", "wi-fi", "ar condicionado"],\n  "positiveKeywords": ["impecável", "rápido", "confortável"],\n  "negativeKeywords": ["gotejando"],\n  "suggestions": ["Verificar ar condicionado do flat 304"],\n  "flatsMentioned": ["304"],\n  "summary": "Hóspede muito satisfeito, elogia limpeza e internet mas relata problema no AC"\n}\nOnde "score" é de 0 (péssimo) a 100 (excelente), "tone" é "positive", "neutral" ou "negative".`;
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-    });
+    const geminiResult = await callGeminiGenerateContent(apiKey, [{ parts: [{ text: prompt }] }]);
 
-    if (response.ok) {
-      const data = await response.json();
+    if (geminiResult.ok) {
+      const data = geminiResult.data;
       const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
       const jsonMatch = rawText.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
