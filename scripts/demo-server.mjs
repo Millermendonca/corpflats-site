@@ -7564,7 +7564,7 @@ function findReservationByLocatorOrContact(query) {
   return null;
 }
 
-app.get("/api/pms/guest-portal/:code", (req, res) => {
+app.get("/api/pms/guest-portal/:code", async (req, res) => {
   const code = (req.params.code || "").trim();
   if (!db.reservations) db.reservations = [];
   const r = findReservationByLocatorOrContact(code);
@@ -7668,7 +7668,7 @@ app.get("/api/pms/guest-portal/:code", (req, res) => {
 
   const chanLower = String(r.channel || "").toLowerCase();
   const isOta = chanLower.includes("booking") || chanLower.includes("airbnb");
-  const isPaid = isOta || Boolean(
+  let isPaid = isOta || Boolean(
     r.paymentStatus === "pago_total" ||
     r.paymentStatus === "pago" ||
     (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0)
