@@ -85,7 +85,7 @@ export function AddToCalendar({ reservation, variant = "card", className = "" }:
                 </Badge>
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Adicione as datas, horários e senha do Flat {reservation.flatNumber} à sua agenda pessoal.
+                Adicione as datas e horários da sua estada no Flat {reservation.flatNumber} à sua agenda pessoal.
               </p>
             </div>
           </div>

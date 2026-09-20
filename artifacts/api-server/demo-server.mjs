@@ -491,8 +491,8 @@ const DEFAULT_SITE_CONFIG = {
     {
       id: "garage",
       icon: "Car",
-      title: "Garagem Coberta Privativa",
-      description: "Vaga demarcada e portão eletrônico automático com segurança 24h.",
+      title: "Estacionamento Coberto Gratuito",
+      description: "Ampla garagem rotativa com segurança 24h e portão eletrônico.",
       badge: "Incluso"
     },
     {
@@ -17855,7 +17855,7 @@ function serveSpaWithMetadata(distFolder, req, res) {
     const isCheckout = rawPath.startsWith("/checkout") || rawPath.startsWith("/check-out") || rawPath.startsWith("/saida") || rawPath.endsWith("/checkout");
 
     let title = "CorpFlats • Hospedagem Executiva & Serviços Exclusivos";
-    let desc = "Flats mobiliados completos com garagem privativa, portaria 24h e café da manhã artesanal servido no flat.";
+    let desc = "Flats mobiliados completos com estacionamento rotativo gratuito, portaria 24h e café da manhã servido no flat.";
     let image = "https://corpflats.onrender.com/flat-preview.jpg";
     let imageAlt = "CorpFlats • Hospedagem Executiva";
     let imageWidth = "1200";

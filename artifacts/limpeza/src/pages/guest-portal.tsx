@@ -1474,39 +1474,48 @@ export default function GuestPortal() {
           </div>
         </Card>
 
-        {/* ── 5. Card: Estacionamento & Garagem Privativa ────────────────── */}
+        {/* ── 5. Card: Estacionamento & Garagem Rotativa Gratuita ────────────────── */}
         <Card className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-5 sm:p-6 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3.5">
             <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 border border-blue-200 flex items-center justify-center font-black text-sm">
-                <Car className="w-4 h-4" />
+              <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 border border-blue-200/70 flex items-center justify-center font-black text-sm shrink-0 shadow-2xs">
+                <Car className="w-5 h-5" />
               </div>
               <div>
-                <h2 className="text-base font-black text-slate-900">Garagem Coberta Privativa</h2>
-                <span className="text-xs text-slate-500">Vaga demarcada e portão eletrônico com segurança 24h</span>
+                <h2 className="text-base font-black text-slate-900">Estacionamento Rotativo Gratuito</h2>
+                <span className="text-xs text-slate-500">Ampla garagem sem vaga demarcada, com segurança 24h e portão eletrônico</span>
               </div>
             </div>
-            <Badge variant="outline" className={reservation.vehicle?.plate ? "bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-bold" : "bg-slate-50 text-slate-500 border-slate-200 text-[10px]"}>
-              {reservation.vehicle?.plate ? "✓ Vaga Autorizada" : "1 Vaga Inclusa"}
-            </Badge>
+            <div className="flex items-center self-start sm:self-auto">
+              <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold shrink-0 ${
+                reservation.vehicle?.plate 
+                  ? "bg-emerald-50 text-emerald-700 border border-emerald-200" 
+                  : "bg-sky-50 text-sky-700 border border-sky-200"
+              }`}>
+                {reservation.vehicle?.plate ? "✓ Veículo Liberado" : "Gratuito para Hóspedes"}
+              </span>
+            </div>
           </div>
 
           {portalCarSuccess && (
             <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 font-bold flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-              <span>✓ Veículo salvo e autorizado na portaria do condomínio com sucesso!</span>
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>✓ Veículo salvo e liberado para acesso ao estacionamento na portaria 24h!</span>
             </div>
           )}
 
           {reservation.vehicle?.plate && !portalCarEditing ? (
-            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between">
+            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
                 <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Veículo Liberado na Portaria</span>
                 <span className="text-base font-black font-mono text-slate-900 tracking-wider">
                   {reservation.vehicle.plate}
                 </span>
-                <span className="text-xs text-slate-500 block">
+                <span className="text-xs text-slate-500 block mt-0.5">
                   {reservation.vehicle.brand} {reservation.vehicle.model} {reservation.vehicle.color ? `• ${reservation.vehicle.color}` : ""}
+                </span>
+                <span className="text-[11px] text-slate-400 block mt-1">
+                  Estacionamento rotativo: você pode estacionar em qualquer vaga livre disponível.
                 </span>
               </div>
               <Button
@@ -1519,15 +1528,15 @@ export default function GuestPortal() {
                   setPortalColor(reservation.vehicle?.color || "")
                   setPortalCarEditing(true)
                 }}
-                className="text-xs font-bold border-slate-200 text-slate-700 hover:bg-white rounded-xl"
+                className="text-xs font-bold border-slate-200 text-slate-700 hover:bg-white rounded-xl self-start sm:self-auto"
               >
                 Alterar Carro
               </Button>
             </div>
           ) : (
             <form onSubmit={handleSaveVehicle} className="space-y-3 text-xs">
-              <p className="text-slate-600">
-                Informe a placa do seu veículo para que a portaria do Edifício Soho libere a sua entrada na garagem:
+              <p className="text-slate-600 leading-relaxed">
+                Cadastre a placa do seu veículo para que a portaria 24h do Edifício Soho libere a sua entrada no estacionamento rotativo gratuito (estacione em qualquer vaga livre):
               </p>
 
               <div className="grid grid-cols-2 gap-2">
@@ -1590,7 +1599,7 @@ export default function GuestPortal() {
                   disabled={savingCar}
                   className="flex-1 bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs rounded-xl h-10"
                 >
-                  {savingCar ? "Salvando..." : "Salvar e Autorizar Garagem"}
+                  {savingCar ? "Salvando..." : "Salvar e Liberar Estacionamento"}
                 </Button>
               </div>
             </form>

@@ -1051,7 +1051,7 @@ export default function GuestPreCheckin() {
                     <div>
                       <span className="font-bold text-slate-900 block">{vehicleBrand} {vehicleModel}</span>
                       <span className="text-[11px] text-slate-600">
-                        {vehicleColor ? `Cor: ${vehicleColor} • ` : ""}1 Vaga Privativa no Soho
+                        {vehicleColor ? `Cor: ${vehicleColor} • ` : ""}Estacionamento Rotativo no Soho (Gratuito)
                       </span>
                     </div>
                   </div>
@@ -2305,7 +2305,7 @@ export default function GuestPreCheckin() {
 
           <div className="py-3 text-xs leading-relaxed text-slate-700 whitespace-pre-line bg-slate-50 p-4 rounded-2xl border border-slate-200/80 font-sans max-h-96 overflow-y-auto">
             {termsModalTab === "rules" ? (
-              settings?.houseRules || "Regras de Convivência:\n• Check-in a partir das 14h / Check-out até 12h.\n• Silêncio após às 22h.\n• Proibido fumar dentro dos apartamentos e nas áreas comuns fechadas.\n• Utilização de vagas demarcadas conforme orientação."
+              settings?.houseRules || "Regras de Convivência:\n• Check-in a partir das 14h / Check-out até 12h.\n• Silêncio após às 22h.\n• Proibido fumar dentro dos apartamentos e nas áreas comuns fechadas.\n• Utilização do estacionamento rotativo em vagas disponíveis."
             ) : (
               settings?.contractTerms || "Termos e Condições de Locação por Temporada:\n• A locação tem finalidade estritamente residencial por temporada (Lei 8.245/91).\n• O hóspede se compromete a zelar pelo imóvel e seus equipamentos."
             )}
