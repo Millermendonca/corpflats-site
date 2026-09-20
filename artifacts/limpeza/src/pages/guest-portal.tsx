@@ -1753,18 +1753,56 @@ export default function GuestPortal() {
           )
         })()}
 
-        {/* ── Footer WhatsApp Support ─────────────────────────────────────── */}
-        <div className="text-center pt-4 pb-8 space-y-2">
-          <p className="text-xs text-slate-500">Dúvidas ou solicitações especiais durante sua estadia?</p>
-          <a 
-            href={whatsappUrl} 
-            target="_blank" 
-            rel="noreferrer"
-            className="inline-flex items-center gap-2 text-xs font-bold text-emerald-600 hover:text-emerald-700"
-          >
-            <MessageCircle className="w-4 h-4" />
-            <span>Falar com o Atendimento CorpFlats no WhatsApp • {formatPhoneDisplay(adminWhatsApp)}</span>
-          </a>
+        {/* ── Card: Central de Atendimento & Suporte ao Hóspede ───────────── */}
+        <Card className="bg-gradient-to-br from-slate-900 via-slate-900 to-emerald-950 text-white rounded-3xl p-6 sm:p-8 shadow-xl border border-slate-800 space-y-4 overflow-hidden relative">
+          {/* Brilhos decorativos de fundo */}
+          <div className="absolute -right-12 -top-12 w-44 h-44 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
+          <div className="absolute -left-12 -bottom-12 w-44 h-44 bg-sky-500/10 rounded-full blur-3xl pointer-events-none" />
+
+          <div className="relative z-10 flex flex-col sm:flex-row items-center justify-between gap-5 text-center sm:text-left">
+            <div className="flex flex-col sm:flex-row items-center gap-4">
+              <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center justify-center shrink-0 shadow-inner">
+                <MessageCircle className="w-6 h-6 sm:w-7 sm:h-7 fill-emerald-400/20" />
+              </div>
+              <div className="space-y-1">
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-[10.5px] font-bold uppercase tracking-wider">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  Atendimento & Concierge 24h
+                </div>
+                <h3 className="text-lg sm:text-xl font-black text-white tracking-tight">
+                  Dúvidas ou solicitações na estadia?
+                </h3>
+                <p className="text-xs sm:text-sm text-slate-300 max-w-md leading-relaxed">
+                  Fale diretamente com nossa equipe de hospitalidade pelo WhatsApp para qualquer suporte ou comodidade no Flat {reservation.flatNumber}.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col items-center sm:items-end gap-2 shrink-0 w-full sm:w-auto">
+              <a 
+                href={whatsappUrl} 
+                target="_blank" 
+                rel="noreferrer"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 py-3 px-6 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs sm:text-sm shadow-lg shadow-emerald-500/25 active:scale-[0.98] transition-all hover:shadow-emerald-500/40"
+              >
+                <MessageCircle className="w-4 h-4 fill-slate-950" />
+                <span>Conversar no WhatsApp</span>
+              </a>
+              <span className="text-[11px] text-slate-400 font-mono font-medium">
+                {formatPhoneDisplay(adminWhatsApp)}
+              </span>
+            </div>
+          </div>
+        </Card>
+
+        {/* Rodapé institucional discreto */}
+        <div className="text-center pt-2 pb-6 space-y-1">
+          <p className="text-[11px] text-slate-400 font-medium">
+            CorpFlats Hospedagem • Edifício Soho Residence Service
+          </p>
+          <p className="text-[10px] text-slate-400/80">
+            Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ • Portaria 24 horas
+          </p>
         </div>
 
       </main>
