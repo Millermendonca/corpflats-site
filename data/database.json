@@ -2645,89 +2645,8 @@
       "currentPasskeyChallenge": "Y2hhbGxlbmdlXzE3ODc2MzI3MzcwMjRfMC4zMTk1NDgxNDY3NTY2MDYxNA=="
     }
   ],
-  "reviews": [
-    {
-      "id": 1,
-      "author": "Marcelo Albuquerque",
-      "rating": 5,
-      "channel": "airbnb",
-      "date": "2026-08-15",
-      "flatMentioned": "1017",
-      "comment": "Excelente estadia! O Flat 1017 estava impecavelmente limpo, internet muito rápida para trabalhar e a localização perto da Pelinca é perfeita. Recomendo muito!",
-      "sentiment": "positive",
-      "analyzed": true,
-      "maintenanceChecked": true
-    },
-    {
-      "id": 2,
-      "author": "Fernanda Costa",
-      "rating": 4,
-      "channel": "booking",
-      "date": "2026-08-14",
-      "flatMentioned": "304",
-      "comment": "Adorei a jacuzzi e a sauna no topo do prédio Soho. Porém o ar condicionado do quarto 304 estava com um pequeno gotejamento na madrugada, precisam dar uma olhada.",
-      "sentiment": "mixed",
-      "maintenanceGenerated": true,
-      "analyzed": true,
-      "maintenanceChecked": true
-    },
-    {
-      "id": 3,
-      "author": "Rodrigo Mendes (Engenheiro)",
-      "rating": 5,
-      "channel": "site",
-      "date": "2026-08-12",
-      "flatMentioned": "211",
-      "comment": "Viajo muito a trabalho para Campos. O café da manhã entregue pontualmente no quarto fez toda a diferença. O check-in digital agilizou demais na portaria.",
-      "sentiment": "positive",
-      "analyzed": true,
-      "maintenanceGenerated": true,
-      "maintenanceChecked": true
-    },
-    {
-      "id": 4,
-      "author": "Camila Nogueira",
-      "rating": 5,
-      "channel": "google",
-      "date": "2026-08-10",
-      "flatMentioned": "113",
-      "comment": "Cama queen muito confortável, banheiro limpinho e tudo novinho. Atendimento excelente no WhatsApp da CorpFlats.",
-      "sentiment": "positive",
-      "analyzed": true,
-      "maintenanceChecked": true
-    }
-  ],
-  "reviewInsights": {
-    "overallScore": 4.8,
-    "npsScore": 90,
-    "totalAnalyzed": 4,
-    "positivePercent": 93,
-    "mixedPercent": 7,
-    "negativePercent": 0,
-    "lastAnalyzedAt": "2026-08-19T14:51:29.952Z",
-    "highlights": [
-      "Café da manhã no quarto elogiado por hóspedes corporativos e de lazer",
-      "Agilidade no Check-in Digital com liberação na portaria do Soho",
-      "Alta velocidade do Wi-Fi e qualidade do colchão Queen Size",
-      "Flats silenciosos e ar condicionado split higienizado"
-    ],
-    "actionItems": [
-      {
-        "id": 1,
-        "flat": "304",
-        "issue": "[IA Auto-Ticket] Revisão de Ar Condicionado Split detectado na avaliação de Fernanda Costa (BOOKING): \"Adorei a jacuzzi e a sauna no topo do prédio Soho. Porém o ar condicionado do quarto 304 estava com um pequeno gotejamen...\"",
-        "priority": "alta",
-        "status": "pendente"
-      },
-      {
-        "id": 2,
-        "flat": "211",
-        "issue": "[IA Auto-Ticket] Revisão de Fechadura / Porta detectado na avaliação de Rodrigo Mendes (Engenheiro) (SITE): \"Viajo muito a trabalho para Campos. O café da manhã entregue pontualmente no quarto fez toda a diferença. O check-in dig...\"",
-        "priority": "alta",
-        "status": "pendente"
-      }
-    ]
-  },
+  "reviews": [],
+  "reviewInsights": null,
   "garageAuthorizations": [
     {
       "id": 1787151089977,
@@ -7882,5 +7801,7 @@
         }
       ]
     }
-  ]
+  ],
+  "guestSentiment": [],
+  "npsResponses": []
 }

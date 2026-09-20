@@ -16123,56 +16123,18 @@ app.get("/api/live-ops/metrics", (req, res) => {
 // MÓDULO 3: LEITOR INTELIGENTE DE AVALIAÇÕES COM IA (Review Insights)
 // ══════════════════════════════════════════════════════════════════════════════
 
-// Seed de avaliações iniciais caso esteja vazio
+// Inicialização segura de avaliações (sem mockups fictícios)
 function initDefaultReviews() {
-  if (!db.reviews || db.reviews.length === 0) {
-    db.reviews = [
-      {
-        id: 1,
-        author: "Marcelo Albuquerque",
-        rating: 5,
-        channel: "airbnb",
-        date: "2026-08-15",
-        flatMentioned: "1017",
-        comment: "Excelente estadia! O Flat 1017 estava impecavelmente limpo, internet muito rápida para trabalhar e a localização perto da Pelinca é perfeita. Recomendo muito!",
-        sentiment: "positive",
-        analyzed: true
-      },
-      {
-        id: 2,
-        author: "Fernanda Costa",
-        rating: 4,
-        channel: "booking",
-        date: "2026-08-14",
-        flatMentioned: "304",
-        comment: "Adorei a jacuzzi e a sauna no topo do prédio Soho. Porém o ar condicionado do quarto 304 estava com um pequeno gotejamento na madrugada, precisam dar uma olhada.",
-        sentiment: "mixed",
-        maintenanceGenerated: true,
-        analyzed: true
-      },
-      {
-        id: 3,
-        author: "Rodrigo Mendes (Engenheiro)",
-        rating: 5,
-        channel: "site",
-        date: "2026-08-12",
-        flatMentioned: "211",
-        comment: "Viajo muito a trabalho para Campos. O café da manhã entregue pontualmente no quarto fez toda a diferença. O check-in digital agilizou demais na portaria.",
-        sentiment: "positive",
-        analyzed: true
-      },
-      {
-        id: 4,
-        author: "Camila Nogueira",
-        rating: 5,
-        channel: "google",
-        date: "2026-08-10",
-        flatMentioned: "113",
-        comment: "Cama queen muito confortável, banheiro limpinho e tudo novinho. Atendimento excelente no WhatsApp da CorpFlats.",
-        sentiment: "positive",
-        analyzed: true
-      }
-    ];
+  if (!db.reviews) db.reviews = [];
+  // Se contiver apenas os dados mockados de teste antigos, faz a limpeza automática
+  const mockAuthors = ["Marcelo Albuquerque", "Fernanda Costa", "Rodrigo Mendes (Engenheiro)", "Camila Nogueira"];
+  if (db.reviews.length > 0 && db.reviews.every(r => mockAuthors.includes(r.author))) {
+    db.reviews = [];
+    db.reviewInsights = null;
+    if (db.observations) {
+      db.observations = db.observations.filter(o => !o.description?.includes("[IA Auto-Ticket]") && !o.generatedFromReviewId);
+    }
+    saveDatabase();
   }
 }
 initDefaultReviews();
@@ -16180,26 +16142,43 @@ initDefaultReviews();
 // 3.1 Listar Avaliações e Diagnóstico da IA
 app.get("/api/ai/reviews", (req, res) => {
   initDefaultReviews();
+  const reviews = db.reviews || [];
+  const emptyInsights = {
+    overallScore: 0,
+    npsScore: 0,
+    totalAnalyzed: reviews.length,
+    positivePercent: 0,
+    mixedPercent: 0,
+    negativePercent: 0,
+    highlights: [],
+    actionItems: []
+  };
   res.json({
-    reviews: db.reviews || [],
-    insights: db.reviewInsights || {
-      overallScore: 4.8,
-      npsScore: 88,
-      totalAnalyzed: (db.reviews || []).length,
-      positivePercent: 92,
-      mixedPercent: 8,
-      negativePercent: 0,
-      highlights: [
-        "Café da manhã no quarto elogiado por 94% dos viajantes executivos",
-        "Check-in Digital destacou a velocidade de acesso na portaria do Soho",
-        "Wi-Fi de 500 Mega altamente pontuado para trabalho remoto/home office",
-        "Limpeza e higienização das roupas de cama com nota máxima"
-      ],
-      actionItems: [
-        { flat: "304", issue: "Revisão e limpeza de dreno do Ar Condicionado Split", priority: "alta", status: "Ordem de Manutenção Gerada" }
-      ]
-    }
+    reviews,
+    insights: db.reviewInsights || emptyInsights
   });
+});
+
+// 3.1B Endpoint para Limpar Dados de Teste
+app.post("/api/ai/clear-test-data", (req, res) => {
+  try {
+    db.reviews = [];
+    db.reviewInsights = null;
+    db.guestSentiment = [];
+    db.npsResponses = [];
+    if (db.observations) {
+      db.observations = db.observations.filter(o => 
+        !o.description?.includes("[IA Auto-Ticket]") && 
+        !o.description?.includes("[NPS Auto-Ticket]") && 
+        !o.generatedFromReviewId && 
+        !o.generatedFromNps
+      );
+    }
+    saveDatabase();
+    res.json({ success: true, message: "Dados de teste excluídos com sucesso!" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // 3.2 Analisar Avaliações com IA (Gera Ordens de Manutenção para Flats Citados)

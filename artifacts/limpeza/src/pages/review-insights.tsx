@@ -13,7 +13,7 @@ import {
   Wrench, ThumbsUp, TrendingUp, RefreshCw, Plus, Building2,
   Calendar, Check, ShieldCheck, MessageCircle, Filter,
   Heart, Frown, Meh, Smile, BarChart3, Phone, ChevronRight,
-  Shield, Target, Activity, Zap, Eye, TrendingDown, Users
+  Shield, Target, Activity, Zap, Eye, TrendingDown, Users, Trash2
 } from "lucide-react"
 
 // •••• helpers •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
@@ -59,6 +59,7 @@ export default function ReviewInsights() {
   const [reviewsData, setReviewsData] = useState<any | null>(null)
   const [loadingReviews, setLoadingReviews] = useState(true)
   const [analyzing, setAnalyzing] = useState(false)
+  const [clearing, setClearing] = useState(false)
 
   // Dados de sentimento WhatsApp
   const [sentimentOverview, setSentimentOverview] = useState<any | null>(null)
@@ -147,6 +148,21 @@ export default function ReviewInsights() {
     } catch { }
   }
 
+  const handleClearTestData = async () => {
+    if (!window.confirm("Deseja realmente excluir todos os dados de teste (avaliações simuladas, sentimento e tickets automáticos de teste)?")) {
+      return
+    }
+    setClearing(true)
+    try {
+      const res = await fetch("/api/ai/clear-test-data", { method: "POST" })
+      if (res.ok) {
+        await Promise.all([fetchReviews(), fetchSentimentOverview(), fetchNps("all")])
+      }
+    } catch { } finally {
+      setClearing(false)
+    }
+  }
+
   const handleImportReview = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!author.trim() || !comment.trim()) return
@@ -179,8 +195,8 @@ export default function ReviewInsights() {
     } finally { setSubmittingNps(false) }
   }
 
-  // •••• computed •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
-  const insights = reviewsData?.insights || { overallScore: 4.8, npsScore: 88, totalAnalyzed: 0, positivePercent: 90, highlights: [], actionItems: [] }
+  // • • • • computed • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • •
+  const insights = reviewsData?.insights || { overallScore: 0, npsScore: 0, totalAnalyzed: 0, positivePercent: 0, highlights: [], actionItems: [] }
   const reviews = reviewsData?.reviews || []
 
   const filteredReviews = reviews.filter((r: any) => {
@@ -193,10 +209,10 @@ export default function ReviewInsights() {
   const nps = sentimentOverview?.nps || {}
   const wpp = sentimentOverview?.whatsapp || {}
 
-  // •••• render •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+  // • • • • render • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • •
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
-      {/* ••• Header •••• */}
+      {/* • • • Header • • • • */}
       <header className="border-b border-slate-800 bg-slate-950/95 sticky top-0 z-10 px-4 sm:px-8 py-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
@@ -208,6 +224,15 @@ export default function ReviewInsights() {
             <p className="text-xs text-slate-400 mt-0.5">Feedbacks, tom de voz WhatsApp, filtro NPS e reputação Google</p>
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              disabled={clearing}
+              onClick={handleClearTestData}
+              variant="outline"
+              className="bg-rose-950/30 border-rose-800/40 text-rose-300 hover:bg-rose-900/50 hover:text-white text-xs font-bold gap-1.5 rounded-xl h-9"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              {clearing ? "Limpando..." : "Excluir Dados de Teste"}
+            </Button>
             <Button onClick={() => setImportModalOpen(true)} variant="outline" className="bg-slate-900 border-slate-700 text-slate-200 hover:text-white text-xs font-bold gap-1.5 rounded-xl h-9">
               <Plus className="w-3.5 h-3.5" />Colar Avaliação
             </Button>
@@ -220,7 +245,7 @@ export default function ReviewInsights() {
       </header>
 
       <div className="px-4 sm:px-8 py-6 space-y-6">
-        {/* ••• Top KPI Cards •••• */}
+        {/* • • • Top KPI Cards • • • • */}
         <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <Card className="bg-slate-900 border-slate-800 rounded-2xl p-4 shadow-xl">
             <div className="flex items-center justify-between mb-2">
@@ -228,10 +253,18 @@ export default function ReviewInsights() {
               <div className="w-7 h-7 rounded-lg bg-amber-500/20 flex items-center justify-center"><Star className="w-3.5 h-3.5 text-amber-400" /></div>
             </div>
             <div className="flex items-baseline gap-1.5">
-              <span className="text-2xl font-black text-white font-mono">{insights.overallScore}</span>
-              <span className="text-xs text-amber-400 font-bold">/ 5</span>
+              {(insights.totalAnalyzed || reviews.length) > 0 && insights.overallScore > 0 ? (
+                <>
+                  <span className="text-2xl font-black text-white font-mono">{insights.overallScore}</span>
+                  <span className="text-xs text-amber-400 font-bold">/ 5</span>
+                </>
+              ) : (
+                <span className="text-sm text-slate-500 font-bold">Sem dados</span>
+              )}
             </div>
-            <span className="text-[10px] text-slate-500">{insights.totalAnalyzed || reviews.length} avaliações analisadas</span>
+            <span className="text-[10px] text-slate-500">
+              {(insights.totalAnalyzed || reviews.length) > 0 ? `${insights.totalAnalyzed || reviews.length} avaliações analisadas` : "Nenhuma avaliação cadastrada"}
+            </span>
           </Card>
 
           <Card className="bg-slate-900 border-slate-800 rounded-2xl p-4 shadow-xl">
@@ -269,7 +302,9 @@ export default function ReviewInsights() {
               <span className="text-2xl font-black text-rose-400 font-mono">{insights.actionItems?.length || 0}</span>
               <span className="text-xs text-slate-400">gerados</span>
             </div>
-            <span className="text-[10px] text-slate-500">De avaliações e NPS detratores</span>
+            <span className="text-[10px] text-slate-500">
+              {(insights.actionItems?.length || 0) > 0 ? "De avaliações e NPS detratores" : "Nenhum ticket pendente"}
+            </span>
           </Card>
         </div>
 
