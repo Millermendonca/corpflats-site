@@ -76,6 +76,8 @@ export default function GuestPortal() {
   const [changingMethod, setChangingMethod] = useState(false)
   const [paymentSuccessNotice, setPaymentSuccessNotice] = useState(false)
   const [paymentPendingFeedback, setPaymentPendingFeedback] = useState(false)
+  const [sendingWaVoucher, setSendingWaVoucher] = useState(false)
+  const [waVoucherSent, setWaVoucherSent] = useState(false)
   
   // Modals & Action States
   const [receiptModalOpen, setReceiptModalOpen] = useState(false)
@@ -1140,6 +1142,33 @@ export default function GuestPortal() {
     }
   }
 
+  const handleSendWhatsAppVoucher = async () => {
+    if (!reservation?.code) return
+    setSendingWaVoucher(true)
+    try {
+      const res = await fetch("/api/whatsapp/dispatch-reservation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          templateId: "tpl_payment_confirmed",
+          reservationCode: reservation.code
+        })
+      })
+      const json = await res.json()
+      if (json.success) {
+        setWaVoucherSent(true)
+        setTimeout(() => setWaVoucherSent(false), 6000)
+      } else {
+        alert(json.error || "Não foi possível enviar a mensagem no WhatsApp. Verifique se o telefone informado possui WhatsApp cadastrado.")
+      }
+    } catch (e) {
+      console.error("Erro ao enviar confirmação por WhatsApp:", e)
+      alert("Erro ao conectar com o serviço de WhatsApp.")
+    } finally {
+      setSendingWaVoucher(false)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-slate-50/70 text-slate-900 flex flex-col font-sans selection:bg-sky-500 selection:text-white pb-20 w-full max-w-full overflow-x-hidden">
       {/* ── Top Navigation Bar (Header Clean, Sofisticado & 100% Responsivo) ──────────────── */}
@@ -1503,16 +1532,26 @@ export default function GuestPortal() {
             </>
           )}
 
-          {/* Botão de Ver e Baixar Recibo de Pagamento quando Quitado */}
+          {/* Botão de Ver e Baixar Recibo de Pagamento e Receber no WhatsApp */}
           {isPaid && (
-            <div className="pt-2 border-t border-slate-100/80">
+            <div className="pt-2 border-t border-slate-100/80 grid grid-cols-1 sm:grid-cols-2 gap-2">
               <Button
                 type="button"
                 onClick={() => setReceiptModalOpen(true)}
-                className="w-full h-12 rounded-2xl bg-white hover:bg-emerald-50/70 active:scale-[0.99] border border-emerald-300 text-emerald-950 font-bold text-xs sm:text-sm shadow-2xs inline-flex items-center justify-center gap-2.5 transition-all"
+                className="w-full h-11 rounded-2xl bg-white hover:bg-emerald-50/70 active:scale-[0.99] border border-emerald-300 text-emerald-950 font-bold text-xs sm:text-sm shadow-2xs inline-flex items-center justify-center gap-2 transition-all"
               >
                 <FileText className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span>Ver e Baixar Recibo de Pagamento</span>
+                <span>Ver / Baixar Recibo</span>
+              </Button>
+
+              <Button
+                type="button"
+                onClick={handleSendWhatsAppVoucher}
+                disabled={sendingWaVoucher}
+                className="w-full h-11 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-bold text-xs sm:text-sm shadow-sm inline-flex items-center justify-center gap-2 transition-all disabled:opacity-75"
+              >
+                <WhatsAppIcon className={`w-4 h-4 shrink-0 ${sendingWaVoucher ? "animate-spin" : ""}`} />
+                <span>{waVoucherSent ? "✓ Enviado pro seu WhatsApp!" : (sendingWaVoucher ? "Enviando..." : "Receber no WhatsApp")}</span>
               </Button>
             </div>
           )}

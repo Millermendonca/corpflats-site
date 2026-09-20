@@ -36,7 +36,7 @@ import { fileURLToPath } from "url";
 import pg from "pg";
 import { uploadImageToStorage } from "./storage-service.mjs";
 import { MicrosoftGraphService } from "./microsoft-graph-service.mjs";
-import { initWhatsAppEngine, triggerImmediateWhatsApp, triggerRoomReadyWhatsApp, cleanWhatsAppPhone, sendZapiMessage } from "./zapi-service.mjs";
+import { initWhatsAppEngine, triggerImmediateWhatsApp, triggerRoomReadyWhatsApp, cleanWhatsAppPhone, sendZapiMessage, scheduleUpcomingReservationTriggers } from "./zapi-service.mjs";
 import { initMaidAutomationEngine } from "./maid-automation-service.mjs";
 import { sendInterPix, isInterConfigured, INTER_ENV } from "./inter-pix-service.mjs";
 import { 
@@ -7679,29 +7679,21 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     try {
       const extratoMatch = await checkInterBankingExtratoPix(r);
       if (extratoMatch && extratoMatch.found) {
-        const valorPago = Number(extratoMatch.amount || r.totalAmount);
-        r.paymentStatus = "pago_total";
-        r.paidAmount = valorPago;
-        r.paidAt = extratoMatch.paidAt || new Date().toISOString();
-        r.pixEndToEndId = extratoMatch.endToEndId;
-        r.pixTxId = extratoMatch.txId || r.pixTxId;
-        r.paymentMethod = "pix";
-
-        createNotification({
-          category: "checkout",
-          title: `💰 PIX Confirmado: R$ ${valorPago.toLocaleString("pt-BR")} (Apt ${r.flatNumber || ""})`,
-          message: `Reserva ${r.code} liquidada com sucesso via PIX Banco Inter por ${extratoMatch.pagador || r.guestName}!`,
-          severity: "success",
-          metadata: { reservationCode: r.code, txid: r.pixTxId, amount: valorPago, endToEndId: extratoMatch.endToEndId },
-          targetUrl: `/reservas`
+        await confirmReservationPayment(r, {
+          amount: extratoMatch.amount,
+          paidAt: extratoMatch.paidAt,
+          endToEndId: extratoMatch.endToEndId,
+          txId: extratoMatch.txId,
+          pagador: extratoMatch.pagador,
+          source: "Banco Inter Extrato"
         });
-
-        saveDatabase();
         isPaid = true;
       }
     } catch (errExtrato) {
       console.warn("[Guest Portal] Erro ao checar extrato PIX:", errExtrato.message);
     }
+  } else if (isPaid && !isOta && r.guestPhone) {
+    ensurePaymentConfirmationDispatched(r);
   }
 
   const resolvedTotal = Number(r.totalAmount) || 0;
@@ -16708,6 +16700,76 @@ async function checkInterBankingExtratoPix(r) {
   }
 }
 
+function isConfirmationAlreadyDispatched(r) {
+  if (!r) return true;
+  const history = db.whatsappHistory || [];
+  const rCode = String(r.code || "").toUpperCase();
+  const rId = String(r.id || "");
+  return history.some(h => {
+    const hCode = String(h.reservationCode || "").toUpperCase();
+    const isSameRes = (rCode && hCode === rCode) || (rId && hCode === rId);
+    return isSameRes && (h.triggerEvent === "payment_confirmed" || h.triggerEvent === "reservation_created") && (h.status === "sent" || h.status === "delivered");
+  });
+}
+
+async function ensurePaymentConfirmationDispatched(r) {
+  if (!r || !r.guestPhone) return;
+  if (isConfirmationAlreadyDispatched(r)) return;
+
+  if (r.status === "pre_reserva" || r.status === "pendente" || !r.status) {
+    r.status = "confirmada";
+    saveDatabase();
+  }
+
+  console.log(`[WhatsApp Dispatch] Disparando confirmação de pagamento/reserva para ${r.guestName} (${r.code})...`);
+  try {
+    await triggerImmediateWhatsApp(db, saveDatabase, "payment_confirmed", r);
+    scheduleUpcomingReservationTriggers(db, saveDatabase);
+  } catch (err) {
+    console.error("[WhatsApp Dispatch] Erro ao disparar payment_confirmed:", err.message);
+  }
+}
+
+async function confirmReservationPayment(r, {
+  amount,
+  paidAt,
+  endToEndId,
+  txId,
+  paymentMethod = "pix",
+  pagador = null,
+  source = "Banco Inter Extrato"
+} = {}) {
+  if (!r) return;
+
+  const valorPago = Number(amount || r.totalAmount || 0);
+  const totalAmount = Number(r.totalAmount || 0);
+
+  r.paymentStatus = (totalAmount > 0 && valorPago < totalAmount) ? "sinal_pago" : "pago_total";
+  r.paidAmount = valorPago;
+  r.paidAt = paidAt || r.paidAt || new Date().toISOString();
+  if (endToEndId) r.pixEndToEndId = endToEndId;
+  if (txId) r.pixTxId = txId;
+  if (paymentMethod) r.paymentMethod = paymentMethod;
+
+  // Transição de status para confirmada
+  if (r.paymentStatus === "pago_total" && (r.status === "pre_reserva" || r.status === "pendente" || !r.status)) {
+    r.status = "confirmada";
+  }
+
+  createNotification({
+    category: "checkout",
+    title: `💰 PIX Confirmado: R$ ${valorPago.toLocaleString("pt-BR")} (Apt ${r.flatNumber || ""})`,
+    message: `Reserva ${r.code} liquidada com sucesso via ${source} por ${pagador || r.guestName}!`,
+    severity: "success",
+    metadata: { reservationCode: r.code, txid: r.pixTxId, amount: valorPago, endToEndId: r.pixEndToEndId },
+    targetUrl: `/reservas`
+  });
+
+  saveDatabase();
+
+  await ensurePaymentConfirmationDispatched(r);
+}
+
 // 6.3 Checar Status de Pagamento de Reserva Específica com Consulta Ativa em Tempo Real
 app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
   try {
@@ -16720,6 +16782,9 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
 
     // Se já está marcado como pago ou canal OTA (Booking/Airbnb), retorna de imediato
     if (isOta || r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0)) {
+      if (!isOta && r.guestPhone) {
+        ensurePaymentConfirmationDispatched(r);
+      }
       return res.json({
         code: r.code,
         paid: true,
@@ -16736,21 +16801,13 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
       const cobData = await checkInterPixCobStatus(r.pixTxId);
       if (cobData && (cobData.status === "CONCLUIDA" || (Array.isArray(cobData.pix) && cobData.pix.length > 0))) {
         const valorPago = Number(cobData.pix?.[0]?.valor || cobData.valor?.original || r.totalAmount);
-        r.paymentStatus = "pago_total";
-        r.paidAmount = valorPago;
-        r.paidAt = cobData.pix?.[0]?.horario || new Date().toISOString();
-        r.pixEndToEndId = cobData.pix?.[0]?.endToEndId;
-
-        createNotification({
-          category: "checkout",
-          title: `💰 PIX Confirmado: R$ ${valorPago.toLocaleString("pt-BR")} (Apt ${r.flatNumber})`,
-          message: `Reserva ${r.code} liquidada com sucesso via Banco Inter por ${r.guestName}!`,
-          severity: "success",
-          metadata: { reservationCode: r.code, txid: r.pixTxId, amount: valorPago },
-          targetUrl: `/reservas`
+        await confirmReservationPayment(r, {
+          amount: valorPago,
+          paidAt: cobData.pix?.[0]?.horario,
+          endToEndId: cobData.pix?.[0]?.endToEndId,
+          txId: r.pixTxId,
+          source: "Banco Inter Cobrança"
         });
-
-        saveDatabase();
 
         return res.json({
           code: r.code,
@@ -16767,30 +16824,20 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
     // Consulta ativa no Extrato Bancário Completo do Banco Inter (PIX recebido via QR Code estático / transferência direta)
     const extratoMatch = await checkInterBankingExtratoPix(r);
     if (extratoMatch && extratoMatch.found) {
-      const valorPago = Number(extratoMatch.amount || r.totalAmount);
-      r.paymentStatus = "pago_total";
-      r.paidAmount = valorPago;
-      r.paidAt = extratoMatch.paidAt || new Date().toISOString();
-      r.pixEndToEndId = extratoMatch.endToEndId;
-      r.pixTxId = extratoMatch.txId || r.pixTxId;
-      r.paymentMethod = "pix";
-
-      createNotification({
-        category: "checkout",
-        title: `💰 PIX Confirmado: R$ ${valorPago.toLocaleString("pt-BR")} (Apt ${r.flatNumber || ""})`,
-        message: `Reserva ${r.code} liquidada com sucesso via PIX Banco Inter por ${extratoMatch.pagador || r.guestName}!`,
-        severity: "success",
-        metadata: { reservationCode: r.code, txid: r.pixTxId, amount: valorPago, endToEndId: extratoMatch.endToEndId },
-        targetUrl: `/reservas`
+      await confirmReservationPayment(r, {
+        amount: extratoMatch.amount,
+        paidAt: extratoMatch.paidAt,
+        endToEndId: extratoMatch.endToEndId,
+        txId: extratoMatch.txId,
+        pagador: extratoMatch.pagador,
+        source: "Banco Inter Extrato"
       });
-
-      saveDatabase();
 
       return res.json({
         code: r.code,
         paid: true,
         paymentStatus: "pago_total",
-        paidAmount: valorPago,
+        paidAmount: r.paidAmount,
         totalAmount: r.totalAmount || 0,
         pixTxId: r.pixTxId,
         mpPaymentId: r.mpPaymentId || null
@@ -16801,21 +16848,14 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
     const mpPayment = await checkMercadoPagoPaymentByRef(r.code);
     if (mpPayment && mpPayment.status === "approved") {
       const valorPago = Number(mpPayment.transaction_amount || mpPayment.total_paid_amount || r.totalAmount);
-      r.paymentStatus = "pago_total";
-      r.paidAmount = valorPago;
-      r.paidAt = mpPayment.date_approved || new Date().toISOString();
-      r.paymentMethod = "cartao_credito";
-      r.mpPaymentId = String(mpPayment.id);
-
-      createNotification({
-        category: "checkout",
-        title: `💳 Cartão Confirmado: R$ ${valorPago.toLocaleString("pt-BR")} (Apt ${r.flatNumber})`,
-        message: `Reserva ${r.code} liquidada no cartão de crédito via Mercado Pago por ${r.guestName}!`,
-        severity: "success",
-        metadata: { reservationCode: r.code, paymentId: mpPayment.id, amount: valorPago },
-        targetUrl: `/reservas`
+      await confirmReservationPayment(r, {
+        amount: valorPago,
+        paidAt: mpPayment.date_approved,
+        txId: String(mpPayment.id),
+        paymentMethod: "cartao_credito",
+        source: "Mercado Pago"
       });
-
+      r.mpPaymentId = String(mpPayment.id);
       saveDatabase();
 
       return res.json({
@@ -18488,6 +18528,7 @@ setInterval(async () => {
   try {
     if (!db.reservations || !Array.isArray(db.reservations)) return;
 
+    // A) Checa pagamentos pendentes no extrato do Inter
     const pendingReservations = db.reservations.filter(r =>
       r.status !== "cancelada" &&
       r.paymentStatus !== "pago_total" &&
@@ -18496,31 +18537,31 @@ setInterval(async () => {
       (!r.paidAmount || Number(r.paidAmount) < Number(r.totalAmount))
     );
 
-    if (pendingReservations.length === 0) return;
-
     for (const r of pendingReservations) {
       const extratoMatch = await checkInterBankingExtratoPix(r);
       if (extratoMatch && extratoMatch.found) {
-        const valorPago = Number(extratoMatch.amount || r.totalAmount);
-        r.paymentStatus = "pago_total";
-        r.paidAmount = valorPago;
-        r.paidAt = extratoMatch.paidAt || new Date().toISOString();
-        r.pixEndToEndId = extratoMatch.endToEndId;
-        r.pixTxId = extratoMatch.txId || r.pixTxId;
-        r.paymentMethod = "pix";
-
-        createNotification({
-          category: "checkout",
-          title: `💰 PIX Confirmado: R$ ${valorPago.toLocaleString("pt-BR")} (Apt ${r.flatNumber || ""})`,
-          message: `Reserva ${r.code} liquidada com sucesso via PIX Banco Inter por ${extratoMatch.pagador || r.guestName}!`,
-          severity: "success",
-          metadata: { reservationCode: r.code, txid: r.pixTxId, amount: valorPago, endToEndId: extratoMatch.endToEndId },
-          targetUrl: `/reservas`
+        await confirmReservationPayment(r, {
+          amount: extratoMatch.amount,
+          paidAt: extratoMatch.paidAt,
+          endToEndId: extratoMatch.endToEndId,
+          txId: extratoMatch.txId,
+          pagador: extratoMatch.pagador,
+          source: "Banco Inter Extrato (Auto-Sync)"
         });
-
-        saveDatabase();
-        console.log(`[Auto-Sync Pix Inter] Reserva ${r.code} liquidada com sucesso! R$ ${valorPago}`);
       }
+    }
+
+    // B) Reservas já pagas que ainda NÃO receberam WhatsApp de confirmação
+    const paidWithoutConfirm = db.reservations.filter(r =>
+      r.status !== "cancelada" &&
+      (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0)) &&
+      r.guestPhone &&
+      !isConfirmationAlreadyDispatched(r)
+    );
+
+    for (const r of paidWithoutConfirm) {
+      console.log(`[Auto-Sync] Encontrada reserva paga sem envio de confirmação: ${r.code} (${r.guestName}). Disparando agora...`);
+      await ensurePaymentConfirmationDispatched(r);
     }
   } catch (errLoop) {
     // Silencioso

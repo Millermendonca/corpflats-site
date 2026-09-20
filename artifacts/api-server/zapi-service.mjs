@@ -513,6 +513,49 @@ Para garantir sua acomodação, você pode pagar via PIX ou em até 12x no cart�
       { id: "btn_pagar", type: "URL", label: "💳 Pagar e Confirmar", url: "{{link_portal_hospede}}" },
       { id: "btn_chk", type: "URL", label: "🏨 Ver Minha Reserva", url: "{{link_portal_hospede}}" }
     ]
+  },
+  {
+    id: "tpl_payment_confirmed",
+    triggerEvent: "payment_confirmed",
+    title: "Pagamento Confirmado • Confirmação & Ficha Digital",
+    description: "Enviado imediatamente quando o pagamento (PIX ou Cartão) for identificado e confirmado no sistema.",
+    enabled: true,
+    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    recipientTarget: "guest",
+    triggerTiming: "immediate",
+    offsetValue: 0,
+    offsetUnit: "minutes",
+    fixedTime: "",
+    message: `Olá, *{{primeiro_nome}}*! 💚🎉
+Confirmamos o recebimento do seu pagamento de *{{valor_pago}}* via *{{forma_pagamento}}*!
+
+Sua reserva no *{{nome_hotel}}* está *Garantida & Confirmada*!
+
+📋 *Resumo da Estadia:*
+• Código da Reserva: *{{numero_reserva}}*
+• Acomodação: *Flat {{quarto}}*
+• Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*
+• Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*
+• Total de Hóspedes: *{{num_hospedes}}*
+
+💰 *Situação Financeira:*
+• Valor Total: *{{valor_total}}*
+• Quanto foi Pago: *{{valor_pago}}*
+• Saldo a Quitar: *{{quanto_falta}}*
+
+{{instrucao_saldo}}
+
+{{early_checkin_beneficio}}
+
+📍 *Endereço:*
+{{endereco_hotel}}
+
+Para agilizar sua entrada na portaria sem filas na chegada, realize com antecedência o seu *Pré-Check-in Digital*:`,
+    footer: "CorpFlats • Pagamento Aprovado",
+    buttons: [
+      { id: "btn_chk", type: "URL", label: "📝 Fazer Check-in Online", url: "{{link_checkin_digital}}" },
+      { id: "btn_portal", type: "URL", label: "🏨 Ver Detalhes da Reserva", url: "{{link_portal_hospede}}" }
+    ]
   }
 ];
 
@@ -540,6 +583,27 @@ Para garantir sua acomodação via PIX ou Cartão em até 12x, acesse o link seg
     footer: "CorpFlats • Pagamento Seguro",
     buttons: [
       { id: "btn_pagar", type: "URL", label: "💳 Pagar e Confirmar", url: "{{link_portal_hospede}}" }
+    ]
+  },
+  {
+    id: "qm_payment_confirmed",
+    title: "Confirmar Pagamento & Reserva",
+    shortLabel: "Pago & Confirmado",
+    icon: "✅",
+    description: "Aviso de pagamento aprovado e confirmação de reserva.",
+    category: "Financeiro",
+    recipientTarget: "guest",
+    enabled: true,
+    message: `Olá, *{{primeiro_nome}}*! 💚🎉
+Confirmamos o recebimento do seu pagamento de *{{valor_pago}}* via *{{forma_pagamento}}*.
+Sua reserva no *{{nome_hotel}}* (*Flat {{quarto}}*) para *{{data_checkin}}* está confirmada!
+
+Acesse seu portal para realizar o Pré-Check-in Digital:
+{{link_checkin_digital}}`,
+    footer: "CorpFlats • Pagamento Aprovado",
+    buttons: [
+      { id: "btn_chk", type: "URL", label: "📝 Fazer Check-in Online", url: "{{link_checkin_digital}}" },
+      { id: "btn_portal", type: "URL", label: "🏨 Ver Reserva", url: "{{link_portal_hospede}}" }
     ]
   },
   {
@@ -824,6 +888,20 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     paymentStatus = `Sinal Pago (${formatCurrency(paidAmount)})`;
   }
   const channel = reservation.channel || "Site CorpFlats";
+
+  const rawMethod = String(reservation.paymentMethod || "pix").toLowerCase();
+  let formaPagamento = "PIX";
+  if (rawMethod.includes("cart") || rawMethod.includes("card") || rawMethod.includes("credit")) {
+    formaPagamento = "Cartão de Crédito";
+  } else if (rawMethod.includes("booking")) {
+    formaPagamento = "Booking.com";
+  } else if (rawMethod.includes("airbnb")) {
+    formaPagamento = "Airbnb";
+  } else if (rawMethod.includes("dinheiro") || rawMethod.includes("especie")) {
+    formaPagamento = "Dinheiro";
+  } else {
+    formaPagamento = "PIX";
+  }
   
   let instrucaoPagamento = "";
   if (paidAmount === 0) {
@@ -965,6 +1043,8 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{link_guia_hospede}}": zapiCfg.guestGuidePdfUrl || `${appOrigin}/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf`,
     "{{link_manual_hospede}}": zapiCfg.guestGuidePdfUrl || `${appOrigin}/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf`,
     "{{early_checkin_beneficio}}": earlyCheckinBeneficio,
+    "{{forma_pagamento}}": formaPagamento,
+    "{{data_pagamento}}": formatDateBr(reservation.paidAt || new Date().toISOString()),
     "{{resumo_alteracoes}}": resumoAlteracoes
   };
 
@@ -3037,7 +3117,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     }
     // Mapeamento de compatibilidade caso venha ID antigo ou novo
     if (!template) {
-      if (templateId === "tpl_payment_pending" || templateId === "qm_payment_pending") {
+      if (templateId === "tpl_payment_confirmed" || templateId === "qm_payment_confirmed") {
+        template = (db?.whatsappQuickMessages || []).find(t => t.id === "qm_payment_confirmed") || (db?.whatsappTemplates || []).find(t => t.id === "tpl_payment_confirmed");
+      } else if (templateId === "tpl_payment_pending" || templateId === "qm_payment_pending") {
         template = (db?.whatsappQuickMessages || []).find(t => t.id === "qm_payment_pending") || (db?.whatsappTemplates || []).find(t => t.id === "tpl_payment_pending");
       } else if (templateId === "tpl_new_reservation" || templateId === "qm_summary_checkin") {
         template = (db?.whatsappQuickMessages || []).find(t => t.id === "qm_summary_checkin") || (db?.whatsappTemplates || []).find(t => t.id === "tpl_new_reservation");
@@ -3708,6 +3790,9 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     if (templates.length === 0 && eventName === "pre_reservation_created") {
       const defPre = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_reserva");
       if (defPre) templates = [defPre];
+    } else if (templates.length === 0 && eventName === "payment_confirmed") {
+      const defPay = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_payment_confirmed");
+      if (defPay) templates = [defPay];
     }
 
     const recipients = getReservationRecipients(reservation, db);
