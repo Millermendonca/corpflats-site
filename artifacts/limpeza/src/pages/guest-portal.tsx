@@ -13,7 +13,8 @@ import {
   MessageCircle, FileText, Ban, AlertTriangle, ChevronRight,
   Wifi, HelpCircle, Check, Copy, Phone, UserCheck, ShieldAlert,
   MapPin, Navigation, ExternalLink, Car, ArrowLeft, Search,
-  CreditCard, QrCode, RefreshCw, AlertCircle, DoorOpen, MoreVertical
+  CreditCard, QrCode, RefreshCw, AlertCircle, DoorOpen, MoreVertical,
+  Download, Printer
 } from "lucide-react"
 import { format, parseISO, differenceInDays } from "date-fns"
 import { ptBR } from "date-fns/locale"
@@ -77,6 +78,8 @@ export default function GuestPortal() {
   const [paymentPendingFeedback, setPaymentPendingFeedback] = useState(false)
   
   // Modals & Action States
+  const [receiptModalOpen, setReceiptModalOpen] = useState(false)
+  const [copiedReceipt, setCopiedReceipt] = useState(false)
   const [termsModalOpen, setTermsModalOpen] = useState(false)
   const [termsModalTab, setTermsModalTab] = useState<"rules" | "contract">("rules")
   const [claimingEarly, setClaimingEarly] = useState(false)
@@ -523,6 +526,81 @@ export default function GuestPortal() {
     setTimeout(() => setCopiedCafeLink(false), 2500)
   }
 
+  const handleCopyReceipt = () => {
+    const text = [
+      `📄 RECIBO DE PAGAMENTO • CORPFLATS HOSPEDAGEM`,
+      `Localizador: ${reservation.code}`,
+      `Hóspede: ${guestName}`,
+      `Acomodação: Flat ${reservation.flatNumber}`,
+      `Período: ${checkinFormatted} até ${checkoutFormatted} (${nights} diária${nights > 1 ? "s" : ""})`,
+      `Valor Liquidado: R$ ${paidAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+      `Status: PAGO & QUITADO ✓`,
+      reservation.paidAt ? `Data do Pagamento: ${format(parseISO(reservation.paidAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}` : "",
+      reservation.pixEndToEndId ? `EndToEnd ID: ${reservation.pixEndToEndId}` : (reservation.pixTxId ? `TxID: ${reservation.pixTxId}` : ""),
+      `CorpFlats • CNPJ 47.964.813/0001-65 • Campos dos Goytacazes - RJ`
+    ].filter(Boolean).join("\n")
+    navigator.clipboard.writeText(text)
+    setCopiedReceipt(true)
+    setTimeout(() => setCopiedReceipt(false), 2500)
+  }
+
+  const handlePrintReceipt = () => {
+    const printContent = document.getElementById("corpflats-receipt-content")
+    if (!printContent) {
+      window.print()
+      return
+    }
+    const printWindow = window.open("", "_blank", "width=850,height=950")
+    if (!printWindow) {
+      window.print()
+      return
+    }
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html lang="pt-BR">
+        <head>
+          <meta charset="utf-8">
+          <title>Recibo Oficial - CorpFlats - ${reservation.code}</title>
+          <style>
+            * { box-sizing: border-box; }
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; color: #0f172a; margin: 0; padding: 32px; background: #fff; }
+            .receipt-card { max-width: 680px; margin: 0 auto; border: 1px solid #cbd5e1; border-radius: 16px; padding: 28px; background: #fff; }
+            .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #0284c7; padding-bottom: 20px; margin-bottom: 20px; }
+            .logo-title { font-size: 20px; font-weight: 900; color: #0f172a; margin: 0; }
+            .company-info { font-size: 11px; color: #64748b; margin-top: 4px; line-height: 1.5; }
+            .receipt-badge { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; padding: 6px 14px; border-radius: 9999px; font-size: 12px; font-weight: 800; text-transform: uppercase; }
+            .section { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; }
+            .section-title { font-size: 11px; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; }
+            .row { display: flex; justify-content: space-between; font-size: 12.5px; padding: 3.5px 0; }
+            .row-label { color: #64748b; font-weight: 500; }
+            .row-value { font-weight: 700; color: #0f172a; text-align: right; }
+            .total-box { background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 12px; padding: 16px; display: flex; justify-content: space-between; align-items: center; margin-top: 16px; }
+            .total-label { font-size: 13px; font-weight: 800; color: #166534; text-transform: uppercase; }
+            .total-val { font-size: 22px; font-weight: 900; color: #15803d; }
+            .auth-box { margin-top: 14px; padding: 10px 14px; background: #fafafa; border: 1px dashed #cbd5e1; border-radius: 10px; font-size: 10.5px; color: #64748b; }
+            .footer { margin-top: 24px; padding-top: 16px; border-top: 1px solid #e2e8f0; font-size: 10.5px; color: #94a3b8; text-align: center; line-height: 1.5; }
+            @media print {
+              body { padding: 0; }
+              .receipt-card { border: none; padding: 0; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="receipt-card">
+            ${printContent.innerHTML}
+          </div>
+          <script>
+            window.onload = function() {
+              window.print();
+              setTimeout(function() { window.close(); }, 800);
+            };
+          </script>
+        </body>
+      </html>
+    `)
+    printWindow.document.close()
+  }
+
   const handleChangePaymentMethod = async (newMethod: "pix" | "card") => {
     setPaymentMethodTab(newMethod)
     setChangingMethod(true)
@@ -948,6 +1026,20 @@ export default function GuestPortal() {
                 )}
               </div>
             </>
+          )}
+
+          {/* Botão de Ver e Baixar Recibo de Pagamento quando Quitado */}
+          {isPaid && (
+            <div className="pt-2 border-t border-slate-100/80">
+              <Button
+                type="button"
+                onClick={() => setReceiptModalOpen(true)}
+                className="w-full h-12 rounded-2xl bg-white hover:bg-emerald-50/70 active:scale-[0.99] border border-emerald-300 text-emerald-950 font-bold text-xs sm:text-sm shadow-2xs inline-flex items-center justify-center gap-2.5 transition-all"
+              >
+                <FileText className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>Ver e Baixar Recibo de Pagamento</span>
+              </Button>
+            </div>
           )}
 
           {/* Se NÃO PAGO: Permanece com Resumo Financeiro Completo para Pagamento */}
@@ -1730,42 +1822,6 @@ export default function GuestPortal() {
           </div>
         </Card>
 
-        {/* ── 9. Card: Comprovante & Detalhes do Pagamento ────────────────── */}
-        <Card className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-5 sm:p-6 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <div className="flex items-center gap-2">
-              <span className="text-emerald-600 font-bold text-lg">💰</span>
-              <h2 className="text-base font-bold text-slate-900">Comprovante de Pagamento</h2>
-            </div>
-            <Badge variant="outline" className={isPaid ? "bg-emerald-50 text-emerald-700 border-emerald-200 text-xs font-bold" : "bg-amber-50 text-amber-700 border-amber-200 text-xs font-bold"}>
-              {isPaid ? "✓ Pago" : "Aguardando Confirmação"}
-            </Badge>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 space-y-1">
-              <span className="text-slate-400 text-[11px] block font-medium">Forma de Liquidação</span>
-              <span className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
-                {isOta 
-                  ? (channelLower.includes("booking") ? "🌐 Booking.com" : "🔴 Airbnb")
-                  : (reservation.pixTxId 
-                      ? "⚡ PIX Instantâneo (Banco Inter)" 
-                      : (reservation.mpPaymentId 
-                          ? "💳 Cartão de Crédito" 
-                          : (channelLower.includes("whatsapp") ? "💬 WhatsApp / CorpFlats" : "PIX Oficial")))}
-              </span>
-            </div>
-
-            <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 space-y-1">
-              <span className="text-slate-400 text-[11px] block font-medium">{hasAmount ? "Valor Total" : "Status"}</span>
-              <span className="text-base font-black text-emerald-600">
-                {hasAmount 
-                  ? `R$ ${totalAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}` 
-                  : (isPaid ? "Pago ✓" : "Pendente")}
-              </span>
-            </div>
-          </div>
-        </Card>
 
         {/* ── 10. Card: Política de Cancelamento & Estorno ────────────────── */}
         {(() => {
@@ -2190,6 +2246,186 @@ export default function GuestPortal() {
               </div>
             )
           })()}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Modal: Recibo Oficial de Pagamento & Quitação ─────────────── */}
+      <Dialog open={receiptModalOpen} onOpenChange={setReceiptModalOpen}>
+        <DialogContent className="sm:max-w-xl max-h-[92vh] overflow-y-auto bg-white border border-slate-200 text-slate-900 rounded-3xl p-5 sm:p-7 shadow-2xl">
+          <DialogHeader className="border-b border-slate-100 pb-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 border border-emerald-200/80 flex items-center justify-center font-bold shadow-2xs">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div>
+                  <DialogTitle className="text-base sm:text-lg font-black text-slate-900 leading-snug">
+                    Recibo Oficial de Pagamento
+                  </DialogTitle>
+                  <DialogDescription className="text-xs text-slate-500">
+                    Comprovante de quitação e confirmação de reserva
+                  </DialogDescription>
+                </div>
+              </div>
+              <Badge className="bg-emerald-600 text-white font-bold text-xs py-1 px-3">
+                ✓ PAGO & QUITADO
+              </Badge>
+            </div>
+          </DialogHeader>
+
+          {/* Área Formatada para Impressão e Visualização */}
+          <div id="corpflats-receipt-content" className="space-y-3.5 pt-2">
+            {/* Cabeçalho do Recibo */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3.5 bg-slate-50 rounded-2xl border border-slate-200/70">
+              <div>
+                <span className="text-xs font-black text-slate-900 tracking-tight block">
+                  CORPFLATS HOSPEDAGENS LTDA
+                </span>
+                <span className="text-[11px] text-slate-500 block">
+                  CNPJ: 47.964.813/0001-65 • Campos dos Goytacazes - RJ
+                </span>
+              </div>
+              <div className="text-left sm:text-right">
+                <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Recibo Nº</span>
+                <span className="font-mono text-xs font-black text-slate-800">
+                  REC-{reservation.code}
+                </span>
+              </div>
+            </div>
+
+            {/* Dados do Hóspede e Reserva */}
+            <div className="p-3.5 bg-slate-50/70 rounded-2xl border border-slate-100 space-y-2 text-xs">
+              <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider block border-b border-slate-200/60 pb-1">
+                Identificação da Reserva
+              </span>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Hóspede Titular:</span>
+                <span className="font-bold text-slate-900">{guestName}</span>
+              </div>
+              {reservation.guestDocument && (
+                <div className="flex justify-between">
+                  <span className="text-slate-500">CPF / Documento:</span>
+                  <span className="font-mono font-semibold text-slate-800">{reservation.guestDocument}</span>
+                </div>
+              )}
+              {reservation.guestPhone && (
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Telefone / WhatsApp:</span>
+                  <span className="font-semibold text-slate-800">{formatPhoneDisplay(reservation.guestPhone)}</span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span className="text-slate-500">Código Localizador:</span>
+                <span className="font-mono font-bold text-sky-700">{reservation.code}</span>
+              </div>
+            </div>
+
+            {/* Detalhes da Acomodação */}
+            <div className="p-3.5 bg-slate-50/70 rounded-2xl border border-slate-100 space-y-2 text-xs">
+              <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider block border-b border-slate-200/60 pb-1">
+                Acomodação & Estadia
+              </span>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Unidade:</span>
+                <span className="font-bold text-slate-900">Apartamento {reservation.flatNumber} ({reservation.roomCategory || "Studio Executivo"})</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Check-in:</span>
+                <span className="font-semibold text-slate-800">{checkinFormatted} (a partir das 14:00)</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Check-out:</span>
+                <span className="font-semibold text-slate-800">{checkoutFormatted} (até as 12:00)</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Período Contratado:</span>
+                <span className="font-semibold text-slate-800">{nights} diária{nights > 1 ? "s" : ""} • {reservation.guestCount || 1} hóspede{(reservation.guestCount || 1) > 1 ? "s" : ""}</span>
+              </div>
+            </div>
+
+            {/* Dados da Transação e Quitação */}
+            <div className="p-3.5 bg-slate-50/70 rounded-2xl border border-slate-100 space-y-2 text-xs">
+              <span className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider block border-b border-slate-200/60 pb-1">
+                Detalhamento Financeiro & Liquidação
+              </span>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Forma de Liquidação:</span>
+                <span className="font-bold text-slate-900">
+                  {isOta 
+                    ? (channelLower.includes("booking") ? "🌐 Booking.com (Canal Parceiro)" : "🔴 Airbnb (Canal Parceiro)")
+                    : (reservation.pixTxId 
+                        ? "⚡ PIX Instantâneo (Banco Inter)" 
+                        : (reservation.mpPaymentId 
+                            ? "💳 Cartão de Crédito (Mercado Pago)" 
+                            : (channelLower.includes("whatsapp") ? "💬 WhatsApp / CorpFlats" : "PIX Oficial Banco Inter")))}
+                </span>
+              </div>
+              {reservation.paidAt && (
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Data e Hora do Pagamento:</span>
+                  <span className="font-semibold text-slate-800">
+                    {format(parseISO(reservation.paidAt), "dd/MM/yyyy 'às' HH:mm:ss", { locale: ptBR })}
+                  </span>
+                </div>
+              )}
+              {reservation.pixEndToEndId && (
+                <div className="space-y-0.5 pt-1">
+                  <span className="text-[10px] text-slate-400 font-medium block">End-to-End ID (Banco Central):</span>
+                  <span className="font-mono text-[10.5px] text-emerald-800 font-bold break-all block bg-white p-1.5 rounded-lg border border-slate-200/70 select-all">
+                    {reservation.pixEndToEndId}
+                  </span>
+                </div>
+              )}
+              {reservation.pixTxId && !reservation.pixEndToEndId && (
+                <div className="space-y-0.5 pt-1">
+                  <span className="text-[10px] text-slate-400 font-medium block">Identificador TxID:</span>
+                  <span className="font-mono text-[10.5px] text-slate-700 font-bold break-all block bg-white p-1.5 rounded-lg border border-slate-200/70 select-all">
+                    {reservation.pixTxId}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Caixa de Valor Total Quitado */}
+            <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 flex items-center justify-between">
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-wider text-emerald-800 block">
+                  Total Liquidado
+                </span>
+                <span className="text-xs text-emerald-700 font-medium">
+                  Saldo Restante: R$ 0,00
+                </span>
+              </div>
+              <span className="text-2xl font-black text-emerald-800 font-mono">
+                R$ {paidAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+              </span>
+            </div>
+
+            <div className="p-2.5 bg-slate-50 rounded-xl border border-dashed border-slate-200 text-center text-[10.5px] text-slate-500 leading-relaxed">
+              Este documento comprova a quitação integral dos valores descritos e garante o acesso à unidade nas datas e horários estipulados.
+            </div>
+          </div>
+
+          <DialogFooter className="flex flex-col sm:flex-row gap-2 pt-3 border-t border-slate-100">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleCopyReceipt}
+              className="h-11 rounded-2xl text-xs font-bold border-slate-200 hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 flex-1"
+            >
+              {copiedReceipt ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4 text-slate-500" />}
+              <span>{copiedReceipt ? "Comprovante Copiado!" : "Copiar Dados"}</span>
+            </Button>
+
+            <Button
+              type="button"
+              onClick={handlePrintReceipt}
+              className="h-11 rounded-2xl text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white flex items-center justify-center gap-1.5 shadow-sm flex-1"
+            >
+              <Download className="w-4 h-4" />
+              <span>Imprimir / Salvar em PDF</span>
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
