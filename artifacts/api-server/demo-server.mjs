@@ -16200,6 +16200,324 @@ app.post("/api/ai/import-review", (req, res) => {
 
 
 // ══════════════════════════════════════════════════════════════════════════════
+// MÓDULO 3B: ANÁLISE DE SENTIMENTO DE HÓSPEDES (WhatsApp + NPS + Filtro Google)
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Helper: chama Gemini para analisar sentimento de texto livre
+async function analyzeTextSentimentWithAI(text, context) {
+  const ctx = context || "";
+  const apiKey = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY;
+  if (!apiKey) {
+    // Análise heurística local quando não há chave de IA
+    const positiveWords = /excelente|ótimo|perfeito|adorei|maravilhoso|incrível|fantástico|recomendo|parabéns|impecável|lindo|confortável|nota 5|satisfeito/i;
+    const negativeWords = /ruim|péssimo|terrível|problema|defeito|decepcionante|sujo|barulho|demora|falhou|quebrado|vazamento|gotejando|frio|quente demais/i;
+    const pos = positiveWords.test(text);
+    const neg = negativeWords.test(text);
+    const score = pos && !neg ? 85 : neg && !pos ? 25 : pos && neg ? 55 : 65;
+    const tone = score >= 70 ? "positive" : score >= 45 ? "neutral" : "negative";
+    return { score, tone, keywords: [], positiveKeywords: [], negativeKeywords: [], suggestions: [], flatsMentioned: [], summary: "Análise heurística local (sem chave Gemini)", usingAI: false };
+  }
+
+  try {
+    const prompt = `Você é um analista de experiência do cliente de um hotel boutique brasileiro chamado CorpFlats.\nAnalise o seguinte texto${ctx ? " (" + ctx + ")" : ""} e retorne um JSON estrito com os campos abaixo.\nTexto para análise: """${text}"""\n\nRetorne APENAS um JSON válido (sem markdown) no formato:\n{\n  "score": 82,\n  "tone": "positive",\n  "keywords": ["limpeza", "wi-fi", "ar condicionado"],\n  "positiveKeywords": ["impecável", "rápido", "confortável"],\n  "negativeKeywords": ["gotejando"],\n  "suggestions": ["Verificar ar condicionado do flat 304"],\n  "flatsMentioned": ["304"],\n  "summary": "Hóspede muito satisfeito, elogia limpeza e internet mas relata problema no AC"\n}\nOnde "score" é de 0 (péssimo) a 100 (excelente), "tone" é "positive", "neutral" ou "negative".`;
+
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return {
+          score: Number(parsed.score) || 65,
+          tone: parsed.tone || "neutral",
+          keywords: Array.isArray(parsed.keywords) ? parsed.keywords : [],
+          positiveKeywords: Array.isArray(parsed.positiveKeywords) ? parsed.positiveKeywords : [],
+          negativeKeywords: Array.isArray(parsed.negativeKeywords) ? parsed.negativeKeywords : [],
+          suggestions: Array.isArray(parsed.suggestions) ? parsed.suggestions : [],
+          flatsMentioned: Array.isArray(parsed.flatsMentioned) ? parsed.flatsMentioned : [],
+          summary: parsed.summary || "",
+          usingAI: true
+        };
+      }
+    }
+  } catch (err) {
+    console.warn("[Sentiment AI]", err.message);
+  }
+
+  return { score: 65, tone: "neutral", keywords: [], positiveKeywords: [], negativeKeywords: [], suggestions: [], flatsMentioned: [], summary: "Análise indisponível", usingAI: false };
+}
+
+// Inicializar estrutura de sentimentos se não existir
+function ensureSentimentDB() {
+  if (!db.guestSentiment) db.guestSentiment = [];
+  if (!db.npsResponses) db.npsResponses = [];
+  if (!db.whatsappInboundMessages) db.whatsappInboundMessages = [];
+}
+
+// 3B.1 — Visão geral de sentimento consolidada
+app.get("/api/ai/sentiment/overview", (req, res) => {
+  ensureSentimentDB();
+  initDefaultReviews();
+
+  const sentiment = db.guestSentiment || [];
+  const npsResponses = db.npsResponses || [];
+  const reviews = db.reviews || [];
+
+  const wppAnalyzed = sentiment.filter(s => s.overallScore != null);
+  const avgWppScore = wppAnalyzed.length > 0
+    ? Math.round(wppAnalyzed.reduce((a, s) => a + (s.overallScore || 0), 0) / wppAnalyzed.length)
+    : null;
+
+  const wppPositive = wppAnalyzed.filter(s => s.overallTone === "positive").length;
+  const wppNeutral = wppAnalyzed.filter(s => s.overallTone === "neutral").length;
+  const wppNegative = wppAnalyzed.filter(s => s.overallTone === "negative").length;
+
+  const npsTotal = npsResponses.length;
+  const npsResponded = npsResponses.filter(n => n.score != null).length;
+  const npsPromoters = npsResponses.filter(n => n.score === 5).length;
+  const npsNeutrals = npsResponses.filter(n => n.score === 4 || n.score === 3).length;
+  const npsDetractors = npsResponses.filter(n => n.score != null && n.score <= 2).length;
+  const googleLinkSent = npsResponses.filter(n => n.googleLinkSent).length;
+  const filterRate = npsResponded > 0 ? Math.round((npsPromoters / npsResponded) * 100) : null;
+
+  const avgReviewScore = reviews.length > 0
+    ? (reviews.reduce((a, r) => a + (r.rating || 5), 0) / reviews.length).toFixed(1)
+    : "5.0";
+
+  const allNegKw = [];
+  wppAnalyzed.forEach(s => { if (Array.isArray(s.negativeKeywords)) allNegKw.push(...s.negativeKeywords); });
+  reviews.forEach(r => { if (Array.isArray(r.negativeKeywords)) allNegKw.push(...r.negativeKeywords); });
+  const kwFreq = {};
+  allNegKw.forEach(k => { kwFreq[k] = (kwFreq[k] || 0) + 1; });
+  const topNegativeKeywords = Object.entries(kwFreq)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([word, count]) => ({ word, count }));
+
+  res.json({
+    whatsapp: { analyzed: wppAnalyzed.length, avgScore: avgWppScore, positive: wppPositive, neutral: wppNeutral, negative: wppNegative, positivePercent: wppAnalyzed.length > 0 ? Math.round((wppPositive / wppAnalyzed.length) * 100) : null },
+    nps: { sent: npsTotal, responded: npsResponded, promoters: npsPromoters, neutrals: npsNeutrals, detractors: npsDetractors, googleLinkSent, filterRate },
+    reviews: { total: reviews.length, avgScore: Number(avgReviewScore) },
+    topNegativeKeywords,
+    lastUpdated: new Date().toISOString()
+  });
+});
+
+// 3B.2 — Listar conversas WhatsApp com sentimento analisado
+app.get("/api/ai/sentiment/whatsapp", (req, res) => {
+  ensureSentimentDB();
+  const { flatNumber, tone } = req.query;
+  let list = db.guestSentiment || [];
+  if (tone && tone !== "all") list = list.filter(s => s.overallTone === tone);
+  if (flatNumber) list = list.filter(s => s.flatNumber === flatNumber);
+  const enriched = list.map(s => {
+    const reservation = (db.reservations || []).find(r => r.id === s.reservationId || String(r.id) === String(s.reservationId));
+    return { ...s, guestName: s.guestName || reservation?.guestName || "Hóspede", flatNumber: s.flatNumber || reservation?.flatNumber || reservation?.flat, checkoutDate: reservation?.checkoutDate, channel: reservation?.channel };
+  });
+  res.json({ sentiments: enriched });
+});
+
+// 3B.3 — Analisar TODAS as conversas WhatsApp com IA
+app.post("/api/ai/sentiment/analyze-whatsapp", async (req, res) => {
+  ensureSentimentDB();
+  try {
+    const dispatchHistory = db.whatsappDispatchHistory || [];
+    const reservations = db.reservations || [];
+    const byPhone = {};
+
+    for (const msg of dispatchHistory) {
+      const phone = msg.guestPhone || msg.recipientPhone;
+      if (!phone) continue;
+      if (!byPhone[phone]) byPhone[phone] = { phone, messages: [], reservationId: msg.reservationId, guestName: msg.guestName || msg.recipientName };
+      byPhone[phone].messages.push({ text: msg.messageText || msg.message || "", direction: "outbound", at: msg.sentAt || msg.scheduledAt });
+    }
+
+    const inboundMsgs = db.whatsappInboundMessages || [];
+    for (const msg of inboundMsgs) {
+      const phone = msg.from || msg.phone;
+      if (!phone) continue;
+      if (!byPhone[phone]) byPhone[phone] = { phone, messages: [], guestName: msg.senderName || "Hóspede" };
+      byPhone[phone].messages.push({ text: msg.text || msg.body || "", direction: "inbound", at: msg.receivedAt || msg.at });
+    }
+
+    let analyzedCount = 0;
+    const results = [];
+
+    for (const [phone, data] of Object.entries(byPhone)) {
+      if (data.messages.length === 0) continue;
+      const fullText = data.messages.filter(m => m.direction === "inbound").map(m => m.text).join(" | ");
+      if (!fullText.trim()) continue;
+
+      const existing = (db.guestSentiment || []).find(s => s.guestPhone === phone);
+      if (existing?.analyzedAt) {
+        const age = Date.now() - new Date(existing.analyzedAt).getTime();
+        if (age < 6 * 60 * 60 * 1000) { results.push(existing); continue; }
+      }
+
+      const reservation = reservations.find(r => r.id === data.reservationId);
+      const analysis = await analyzeTextSentimentWithAI(fullText, "mensagens recebidas do hóspede via WhatsApp");
+
+      const sentimentEntry = {
+        id: existing?.id || ("sent_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6)),
+        guestPhone: phone, guestName: data.guestName, reservationId: data.reservationId,
+        flatNumber: reservation?.flatNumber || reservation?.flat,
+        overallScore: analysis.score, overallTone: analysis.tone,
+        positiveKeywords: analysis.positiveKeywords || [], negativeKeywords: analysis.negativeKeywords || [],
+        keywords: analysis.keywords || [], suggestions: analysis.suggestions || [],
+        summary: analysis.summary, messageCount: data.messages.length,
+        inboundCount: data.messages.filter(m => m.direction === "inbound").length,
+        analyzedAt: new Date().toISOString(), usingAI: analysis.usingAI
+      };
+
+      const idx = (db.guestSentiment || []).findIndex(s => s.guestPhone === phone);
+      if (idx >= 0) db.guestSentiment[idx] = sentimentEntry;
+      else { if (!db.guestSentiment) db.guestSentiment = []; db.guestSentiment.unshift(sentimentEntry); }
+
+      results.push(sentimentEntry);
+      analyzedCount++;
+    }
+
+    saveDatabase();
+    res.json({ success: true, analyzed: analyzedCount, results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3B.4 — Registrar resposta NPS de hóspede
+app.post("/api/ai/nps-response", async (req, res) => {
+  ensureSentimentDB();
+  try {
+    const { reservationId, guestPhone, guestName, score, comment, flatNumber, channel } = req.body;
+    if (!reservationId && !guestPhone) return res.status(400).json({ error: "reservationId ou guestPhone são obrigatórios." });
+
+    const numScore = Number(score);
+    let googleLinkSent = numScore === 5;
+    let autoAction = numScore === 5 ? "google_link_sent" : numScore >= 3 ? "feedback_collected" : "recovery_ticket_created";
+
+    if (numScore <= 2) {
+      if (!db.observations) db.observations = [];
+      const obsId = db.observations.length > 0 ? Math.max(...db.observations.map(o => o.id || 0)) + 1 : 1;
+      db.observations.push({ id: obsId, flatNumber: flatNumber || "N/A", type: "reclamacao", description: "[NPS Auto-Ticket] Hóspede " + (guestName || guestPhone) + " deu nota " + numScore + "/5 na pesquisa pós-checkout. Comentário: \"" + (comment || "Sem comentário") + "\". Entrar em contato para recuperação.", severity: numScore === 1 ? "alta" : "media", status: "pendente", createdAt: new Date().toISOString(), generatedFromNps: true });
+    }
+
+    let sentimentAnalysis = null;
+    if (comment && comment.trim().length > 5) sentimentAnalysis = await analyzeTextSentimentWithAI(comment, "feedback NPS pós-checkout");
+
+    const npsEntry = {
+      id: "nps_" + Date.now() + "_" + Math.random().toString(36).substring(2, 5),
+      reservationId: reservationId || null, guestPhone: guestPhone || null, guestName: guestName || "Hóspede",
+      flatNumber: flatNumber || null, channel: channel || null, score: numScore, comment: comment || null,
+      sentAt: new Date().toISOString(), respondedAt: new Date().toISOString(),
+      googleLinkSent, autoAction, pendingResponse: false,
+      sentimentScore: sentimentAnalysis?.score || null, sentimentTone: sentimentAnalysis?.tone || null,
+      sentimentSummary: sentimentAnalysis?.summary || null
+    };
+
+    const idx = (db.npsResponses || []).findIndex(n => String(n.reservationId) === String(reservationId) || n.guestPhone === guestPhone);
+    if (idx >= 0) { db.npsResponses[idx] = { ...db.npsResponses[idx], ...npsEntry, id: db.npsResponses[idx].id }; }
+    else { db.npsResponses.unshift(npsEntry); }
+
+    saveDatabase();
+    res.json({ success: true, npsEntry, googleLinkSent, autoAction });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3B.5 — Registrar envio de pesquisa NPS
+app.post("/api/ai/nps-sent", (req, res) => {
+  ensureSentimentDB();
+  try {
+    const { reservationId, guestPhone, guestName, flatNumber, channel } = req.body;
+    const existing = (db.npsResponses || []).find(n => String(n.reservationId) === String(reservationId) || n.guestPhone === guestPhone);
+    if (existing) return res.json({ success: true, npsEntry: existing, alreadyExists: true });
+    const npsEntry = { id: "nps_" + Date.now() + "_" + Math.random().toString(36).substring(2, 5), reservationId: reservationId || null, guestPhone: guestPhone || null, guestName: guestName || "Hóspede", flatNumber: flatNumber || null, channel: channel || null, score: null, comment: null, sentAt: new Date().toISOString(), respondedAt: null, googleLinkSent: false, autoAction: null, pendingResponse: true };
+    db.npsResponses.unshift(npsEntry);
+    saveDatabase();
+    res.json({ success: true, npsEntry });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3B.6 — Listar respostas NPS
+app.get("/api/ai/nps-responses", (req, res) => {
+  ensureSentimentDB();
+  const { result } = req.query;
+  let list = db.npsResponses || [];
+  if (result === "promoters") list = list.filter(n => n.score === 5);
+  else if (result === "neutrals") list = list.filter(n => n.score >= 3 && n.score <= 4);
+  else if (result === "detractors") list = list.filter(n => n.score != null && n.score <= 2);
+  else if (result === "pending") list = list.filter(n => n.score == null);
+  res.json({ npsResponses: list, total: list.length });
+});
+
+// 3B.7 — Analisar sentimento de uma avaliação com IA
+app.post("/api/ai/reviews/:id/analyze-sentiment", async (req, res) => {
+  initDefaultReviews();
+  try {
+    const rev = (db.reviews || []).find(r => String(r.id) === String(req.params.id));
+    if (!rev) return res.status(404).json({ error: "Avaliação não encontrada." });
+    const analysis = await analyzeTextSentimentWithAI(rev.comment, "avaliação do canal " + (rev.channel || "externo"));
+    rev.sentimentScore = analysis.score; rev.sentiment = analysis.tone;
+    rev.positiveKeywords = analysis.positiveKeywords || []; rev.negativeKeywords = analysis.negativeKeywords || [];
+    rev.sentimentSummary = analysis.summary; rev.analyzedByAI = analysis.usingAI; rev.analyzedAt = new Date().toISOString();
+    saveDatabase();
+    res.json({ success: true, analysis, review: rev });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3B.8 — Processar mensagem recebida do WhatsApp para detectar resposta NPS
+app.post("/api/ai/process-inbound-message", async (req, res) => {
+  ensureSentimentDB();
+  try {
+    const { phone, text, guestName, reservationId } = req.body;
+    if (!phone || !text) return res.status(400).json({ error: "phone e text são obrigatórios." });
+
+    if (!db.whatsappInboundMessages) db.whatsappInboundMessages = [];
+    db.whatsappInboundMessages.unshift({ from: phone, senderName: guestName, reservationId: reservationId || null, text: text.trim(), receivedAt: new Date().toISOString() });
+
+    const pendingNps = (db.npsResponses || []).find(n => n.pendingResponse && (n.guestPhone === phone || String(n.reservationId) === String(reservationId)));
+    let npsDetected = null;
+
+    if (pendingNps) {
+      const scoreMatch = text.trim().match(/^[1-5]$/);
+      if (scoreMatch) {
+        const score = Number(scoreMatch[0]);
+        const reservation = (db.reservations || []).find(r => String(r.id) === String(pendingNps.reservationId));
+        const googleLinkSent = score === 5;
+        const autoAction = score === 5 ? "google_link_sent" : score >= 3 ? "feedback_collected" : "recovery_ticket_created";
+
+        if (score <= 2) {
+          if (!db.observations) db.observations = [];
+          const obsId = db.observations.length > 0 ? Math.max(...db.observations.map(o => o.id || 0)) + 1 : 1;
+          db.observations.push({ id: obsId, flatNumber: reservation?.flatNumber || "N/A", type: "reclamacao", description: "[NPS Auto-Ticket] Hóspede " + (guestName || phone) + " deu nota " + score + "/5 na pesquisa pós-checkout. Entrar em contato para recuperação.", severity: score === 1 ? "alta" : "media", status: "pendente", createdAt: new Date().toISOString(), generatedFromNps: true });
+        }
+
+        const npsIdx = (db.npsResponses || []).findIndex(n => n.id === pendingNps.id);
+        if (npsIdx >= 0) db.npsResponses[npsIdx] = { ...db.npsResponses[npsIdx], score, respondedAt: new Date().toISOString(), googleLinkSent, autoAction, pendingResponse: false };
+        npsDetected = { score, googleLinkSent, autoAction };
+        saveDatabase();
+      }
+    }
+
+    res.json({ success: true, npsDetected, stored: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+// ══════════════════════════════════════════════════════════════════════════════
 // MÓDULO 4: ALOCAÇÃO DINÂMICA INTELIGENTE COM IA & RODÍZIO DE OCUPAÇÃO
 // ══════════════════════════════════════════════════════════════════════════════
 

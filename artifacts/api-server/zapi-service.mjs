@@ -465,10 +465,10 @@ Esperamos recebê-lo(a) novamente em breve! 💙`,
     ]
   },
   {
-    id: "tpl_post_checkout_review",
+    id: "tpl_nps_satisfaction_check",
     triggerEvent: "post_checkout_review",
-    title: "Pós Check-out • Agradecimento & Avaliação Google",
-    description: "Enviado na data do check-out (2h após o horário de saída padrão) convidando para avaliação 5 estrelas no Google (utiliza a data de check-out como referência, independente de evento manual).",
+    title: "Pós Check-out • Pesquisa de Satisfação (Filtro NPS)",
+    description: "Enviado 2h após o check-out para coletar satisfação interna antes de pedir avaliação no Google. Só hóspedes com nota 5 recebem o link do Google (filtro automático de reputação).",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
     recipientTarget: "guest",
@@ -476,13 +476,40 @@ Esperamos recebê-lo(a) novamente em breve! 💙`,
     offsetValue: 2,
     offsetUnit: "hours",
     fixedTime: "",
-    message: `Olá, *{{primeiro_nome}}*! 💙
-Foi um prazer imenso ter você conosco no *{{nome_hotel}}*!
+    message: `Olá, *{{primeiro_nome}}*! 😊
 
-Esperamos que sua hospedagem tenha sido nota 10. Você poderia nos dedicar 30 segundos deixando sua avaliação no Google?
+Sua estadia no *{{nome_hotel}}* chegou ao fim e adoraríamos saber como foi!
 
-Sua opinião ajuda outros hóspedes e motiva nossa equipe a evoluir sempre:`,
-    footer: "CorpFlats • Até a próxima!",
+⭐ *De 1 a 5, que nota você daria para a sua experiência conosco?*
+
+• *5* — Perfeito, tudo impecável! 🏆
+• *4* — Muito bom, fiquei satisfeito(a) 😊
+• *3* — Ok, mas poderia melhorar 🤔
+• *2* — Não ficou bom, tive problemas 😕
+• *1* — Péssimo, fiquei muito insatisfeito(a) 😞
+
+Responda apenas com o número da nota (1, 2, 3, 4 ou 5). Sua opinião é muito importante para nós! 💙`,
+    footer: "CorpFlats • Sua opinião importa",
+    buttons: []
+  },
+  {
+    id: "tpl_post_checkout_review",
+    triggerEvent: "nps_approved",
+    title: "Pós Check-out • Link Google Review (apenas nota 5) ⭐",
+    description: "Enviado automaticamente SOMENTE quando o hóspede responde com nota 5 na pesquisa de satisfação. Protege a reputação no Google evitando avaliações de experiências negativas.",
+    enabled: true,
+    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    recipientTarget: "guest",
+    triggerTiming: "immediate",
+    offsetValue: 0,
+    offsetUnit: "minutes",
+    fixedTime: "",
+    message: `Que alegria, *{{primeiro_nome}}*! 🌟
+
+Fico muito feliz que sua estadia no *{{nome_hotel}}* tenha sido nota máxima! 💙
+
+Você poderia nos dedicar apenas 30 segundos e deixar essa mesma avaliação no Google? Isso nos ajuda a receber mais hóspedes incríveis como você e continuar melhorando nossos serviços:`,
+    footer: "CorpFlats • Obrigado pela preferência!",
     buttons: [
       { id: "btn_rev", type: "URL", label: "⭐ Avaliar no Google (5 Estrelas)", url: "{{link_avaliacao_google}}" }
     ]
