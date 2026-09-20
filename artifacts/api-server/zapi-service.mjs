@@ -2720,17 +2720,17 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     } else {
       const now = new Date();
       const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
-      const brDate = new Date(nowUtc - (3 * 3600000));
-      const todayStr = brDate.toISOString().substring(0, 10);
+      const threeDaysAgo = new Date(nowUtc - (3 * 24 + 3) * 3600000);
+      const threeDaysAgoStr = threeDaysAgo.toISOString().substring(0, 10);
       const nowIso = now.toISOString();
 
       let cleanedOldCount = 0;
       for (const item of db.whatsappQueue) {
         if (item.status === "scheduled") {
           const resv = (db.reservations || []).find(r => r.id === item.reservationId || r.code === item.reservationCode);
-          const isPastResv = resv && resv.checkoutDate && resv.checkoutDate < todayStr;
-          const isOverdue = item.scheduledFor && item.scheduledFor < nowIso;
-          if (isPastResv || isOverdue) {
+          const isOldResv = resv && resv.checkoutDate && resv.checkoutDate < threeDaysAgoStr;
+          const isOverdue = item.scheduledFor && (now.getTime() - new Date(item.scheduledFor).getTime()) > 2 * 3600 * 1000;
+          if (isOldResv || isOverdue) {
             item.status = "cancelled";
             item.error = "Cancelado na inicialização: agendamento retroativo ou reserva antiga";
             item.updatedAt = nowIso;
@@ -3605,12 +3605,14 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       );
 
       for (const item of pendingItems) {
-        // Validação de segurança: NUNCA disparar para reservas antigas que já terminaram ou agendamentos atrasados há mais de 30min
+        // Validação de segurança: NUNCA disparar se a reserva terminou há mais de 3 dias ou se o agendamento está atrasado há mais de 2 horas
         const resv = (db.reservations || []).find(r => r.id === item.reservationId || r.code === item.reservationCode);
-        const isPastReservation = resv && resv.checkoutDate && resv.checkoutDate < todayStr;
-        const isOverdue = (now.getTime() - new Date(item.scheduledFor).getTime()) > 30 * 60 * 1000;
+        const threeDaysAgo = new Date(nowUtc - (3 * 24 + 3) * 3600000);
+        const threeDaysAgoStr = threeDaysAgo.toISOString().substring(0, 10);
+        const isOldCompleted = resv && resv.checkoutDate && resv.checkoutDate < threeDaysAgoStr;
+        const isOverdue = (now.getTime() - new Date(item.scheduledFor).getTime()) > 2 * 3600 * 1000;
 
-        if (isPastReservation || isOverdue) {
+        if (isOldCompleted || isOverdue) {
           console.log(`[Auto-WhatsApp] Descartando disparo retroativo/antigo para ${item.guestName} (${item.triggerEvent})`);
           item.status = "cancelled";
           item.error = "Cancelado: reserva antiga ou agendamento retroativo";
@@ -3836,17 +3838,19 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     const brDate = new Date(nowUtc - (3 * 3600000));
     const todayStr = brDate.toISOString().substring(0, 10);
 
-    // REGRA DE OURO: NUNCA disparar mensagens para reservas cujo checkout já passou
-    if (reservation.checkoutDate && reservation.checkoutDate < todayStr) {
+    // REGRA DE OURO: NUNCA disparar mensagens para reservas cuja estadia terminou há mais de 3 dias
+    const threeDaysAgo = new Date(nowUtc - (3 * 24 + 3) * 3600000);
+    const threeDaysAgoStr = threeDaysAgo.toISOString().substring(0, 10);
+    if (reservation.checkoutDate && reservation.checkoutDate < threeDaysAgoStr) {
       console.warn(`[WhatsApp Trigger] Evento '${eventName}' IGNORADO pois a reserva ${reservation?.code || reservation?.id} (${reservation?.guestName}) é antiga (checkout em ${reservation.checkoutDate}).`);
       return;
     }
 
-    // NUNCA disparar confirmação de criação para reservas criadas há mais de 48h (antigas/importadas)
+    // NUNCA disparar mensagem de "Nova Reserva Criada" para reservas criadas há mais de 48h (reservas feitas no passado)
     if ((eventName === "reservation_created" || eventName === "pre_reservation_created") && reservation.createdAt) {
       const createdDate = new Date(reservation.createdAt);
       if ((now.getTime() - createdDate.getTime()) > 48 * 3600 * 1000) {
-        console.warn(`[WhatsApp Trigger] Evento '${eventName}' IGNORADO pois a reserva ${reservation.code} foi criada há mais de 48h (${reservation.createdAt}).`);
+        console.warn(`[WhatsApp Trigger] Evento '${eventName}' IGNORADO pois a reserva ${reservation.code} foi criada há mais de 48h (${reservation.createdAt}). Mensagens da régua de estadia continuam ativas.`);
         return;
       }
     }
