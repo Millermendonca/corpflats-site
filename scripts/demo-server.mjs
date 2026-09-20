@@ -7578,18 +7578,65 @@ app.get("/api/pms/guest-portal/:code", (req, res) => {
   const brDate = new Date(nowUtc - (3 * 3600000)); // UTC-3 (Brasília)
   const todayStr = brDate.toISOString().substring(0, 10);
   
-  // Status da governança para o flat
-  const flatObj = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
-  const activeCleaning = (db.cleaningRequests || []).find(c => 
-    (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) && 
-    c.requestDate === todayStr &&
-    (c.status === "pending" || c.status === "in_progress")
-  );
-  // O flat só é considerado em higienização se houver uma tarefa ativa hoje
-  const isFlatClean = !activeCleaning;
+  // 1. Status da governança para o flat (Reconcilia solicitações e turnovers do dia)
+  let dailyRequests = [];
+  try {
+    dailyRequests = getRequestsForDate(todayStr);
+  } catch (errReq) {
+    dailyRequests = [];
+  }
 
-  // Antecipação de Check-in: Quarto já limpo no dia da chegada
-  const canDoEarlyCheckin = (todayStr === r.checkinDate) && isFlatClean;
+  const cleanReq = (db.cleaningRequests || []).find(c => 
+    (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) && 
+    c.requestDate === todayStr
+  ) || dailyRequests.find(c => 
+    (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber))
+  );
+
+  const hasPendingCheckoutToday = (db.reservations || []).some(res => 
+    (res.flatId === r.flatId || String(res.flatNumber) === String(r.flatNumber)) &&
+    res.checkoutDate === todayStr && res.id !== r.id && res.status !== "cancelada" && res.status !== "completed"
+  );
+
+  let isFlatClean = true;
+  if (hasPendingCheckoutToday) {
+    isFlatClean = false;
+  } else if (cleanReq) {
+    // O flat só é considerado limpo se o status for estritamente 'clean' ou 'completed'
+    isFlatClean = cleanReq.status === "clean" || cleanReq.status === "completed";
+  } else {
+    // Se não há solicitação hoje e não há checkout pendente, verifica histórico anterior
+    const lastCleaning = (db.cleaningRequests || [])
+      .filter(c => (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)))
+      .sort((a, b) => (b.requestDate || "").localeCompare(a.requestDate || ""))[0];
+    if (lastCleaning && lastCleaning.status !== "clean" && lastCleaning.status !== "completed") {
+      isFlatClean = false;
+    }
+  }
+
+  // 2. Verificação de Benefício de Early Check-in (mediante disponibilidade de flat limpo)
+  const priorReservations = (db.reservations || []).filter(prev => {
+    if (prev.id === r.id || prev.code === r.code) return false;
+    if (prev.status === "cancelada" || prev.status === "cancelado") return false;
+    const sameDoc = r.guestDocument && prev.guestDocument && r.guestDocument === prev.guestDocument;
+    const sameEmail = r.guestEmail && prev.guestEmail && r.guestEmail.toLowerCase() === prev.guestEmail.toLowerCase();
+    const samePhone = r.guestPhone && prev.guestPhone && r.guestPhone.replace(/\D/g, '') === prev.guestPhone.replace(/\D/g, '');
+    const sameGuestId = r.guestId && prev.guestId && r.guestId === prev.guestId;
+    return Boolean(sameDoc || sameEmail || samePhone || sameGuestId);
+  });
+  const isFirstTimeGuest = priorReservations.length === 0;
+
+  const isSiteBooking = r.channel === "site";
+  const isOtaBooking = r.channel === "airbnb" || r.channel === "booking" || r.channel === "decolar" || r.channel === "expedia";
+  const isEarlyAuthorizedManual = Boolean(r.earlyCheckinAuthorized);
+  const hasEarlyCheckinBenefit = isEarlyAuthorizedManual || isSiteBooking || (isOtaBooking && isFirstTimeGuest);
+
+  const currentHour = brDate.getHours();
+  const isPastOrExact14h = currentHour >= 14;
+  const isCheckinToday = (todayStr === r.checkinDate);
+
+  // Antecipação de Check-in: Quarto já limpo no dia da chegada E hóspede tem direito ao benefício
+  const canDoEarlyCheckin = isCheckinToday && isFlatClean && hasEarlyCheckinBenefit;
 
   const checkinTimeStr = db.settings.checkinTime || "14:00";
   const checkoutTimeStr = db.settings.checkoutTime || "12:00";
@@ -7710,7 +7757,8 @@ app.get("/api/pms/guest-portal/:code", (req, res) => {
       includeBreakfast: hasBreakfast,
       breakfastToken,
       breakfastLink,
-      earlyCheckinAuthorized: Boolean(r.earlyCheckinAuthorized),
+      earlyCheckinAuthorized: Boolean(r.earlyCheckinAuthorized || hasEarlyCheckinBenefit),
+      hasEarlyCheckinBenefit,
       flatNumber: r.flatNumber,
       roomCategory: "Flat Studio Executivo Completo",
       flatCleanStatus: isFlatClean ? "limpo" : "em_preparacao",
@@ -7721,18 +7769,24 @@ app.get("/api/pms/guest-portal/:code", (req, res) => {
     },
     hasBreakfast,
     breakfastLink,
-    checkinPolicy: `Check-in padrão a partir das ${checkinTimeStr} (Check-in antecipado liberado na portaria assim que o flat estiver limpo).`,
+    checkinPolicy: `Check-in padrão a partir das ${checkinTimeStr} (Check-in antecipado liberado na portaria mediante disponibilidade).`,
     checkinTime: checkinTimeStr,
     checkoutTime: checkoutTimeStr,
     hotelAddress: db.settings.hotelAddress || "CorpFlats",
     googleMapsUrl: db.settings.googleMapsUrl || "https://www.google.com/maps/search/?api=1&query=CorpFlats",
-    isCheckinToday: todayStr === r.checkinDate,
+    isCheckinToday,
     isFlatClean,
+    hasEarlyCheckinBenefit,
     canDoEarlyCheckin,
-    earlyCheckinMessage: (todayStr === r.checkinDate)
+    isPastOrExact14h,
+    earlyCheckinMessage: isCheckinToday
       ? (isFlatClean 
-          ? "🎉 Seu Apartamento já está limpo e pronto! Você pode fazer seu check-in antecipado agora mesmo na portaria." 
-          : "🧹 Apartamento em higienização pela equipe de governança. Check-in a partir das 14:00 (assim que for finalizado, a liberação é imediata).")
+          ? (canDoEarlyCheckin && !isPastOrExact14h
+              ? "🎉 Seu Apartamento já está limpo e inspecionado! Seu benefício de check-in antecipado (cortesia mediante disponibilidade) está liberado. Você já pode se dirigir à portaria 24h." 
+              : (isPastOrExact14h
+                  ? "✨ Check-in liberado! Seu apartamento está higienizado e pronto na portaria 24h."
+                  : "✨ Seu apartamento já está preparado e limpo. O horário oficial de check-in inicia às 14:00 na portaria 24h."))
+          : "🧹 Apartamento em higienização e preparação pela equipe de governança. O horário oficial de check-in é a partir das 14:00 (antecipação concedida estritamente mediante disponibilidade após a conclusão da limpeza).")
       : `Check-in a partir das 14:00 em ${r.checkinDate}.`,
     breakfastOrder: existingBreakfastOrder || null,
     preCheckinStatus: {

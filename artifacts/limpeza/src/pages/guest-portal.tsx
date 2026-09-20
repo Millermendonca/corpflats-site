@@ -390,7 +390,7 @@ export default function GuestPortal() {
                 Consultar Minha Reserva
               </h1>
               <p className="text-xs sm:text-sm text-slate-500 leading-relaxed">
-                Acesse sua fechadura digital, Wi-Fi e Room Service sem necessidade de senha ou cadastro.
+                Acesse as informações da sua hospedagem, Wi-Fi e Room Service com facilidade e rapidez.
               </p>
             </div>
 
@@ -467,7 +467,7 @@ export default function GuestPortal() {
     )
   }
 
-  const { isFlatClean, canClaimFreeEarlyCheckin, breakfastOrder, preCheckinStatus, termsAndRules, adminWhatsApp } = data
+  const { isFlatClean, canDoEarlyCheckin, hasEarlyCheckinBenefit, canClaimFreeEarlyCheckin, breakfastOrder, preCheckinStatus, termsAndRules, adminWhatsApp } = data
 
   const checkinFormatted = reservation.checkinDate ? format(parseISO(reservation.checkinDate), "dd 'de' MMMM 'de' yyyy", { locale: ptBR }) : ""
   const checkoutFormatted = reservation.checkoutDate ? format(parseISO(reservation.checkoutDate), "dd 'de' MMMM 'de' yyyy", { locale: ptBR }) : ""
@@ -864,7 +864,7 @@ export default function GuestPortal() {
                 <span className="text-xs text-slate-500">
                   {isPaid 
                     ? "Sua hospedagem está 100% garantida e o acesso ao condomínio liberado." 
-                    : "Escolha como deseja pagar para confirmar sua estadia e liberar sua fechadura."}
+                    : "Escolha como deseja pagar para confirmar e garantir a sua estadia."}
                 </span>
               </div>
             </div>
@@ -1244,35 +1244,57 @@ export default function GuestPortal() {
               )}
             </div>
 
-            {!isPaid && (
-              <div className="p-3 bg-amber-50/90 border border-amber-200 rounded-xl flex items-center gap-2.5 text-xs text-amber-800 font-medium">
-                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-                <span>A senha da fechadura eletrônica e a autorização de portaria serão liberadas de imediato assim que o pagamento pendente for liquidado.</span>
-              </div>
-            )}
-
-            {/* Aviso de Antecipação Liberada */}
-            {data.isCheckinToday && isFlatClean && (
-              <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-start gap-2.5 text-xs text-emerald-800">
-                <Sparkles className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                <div className="space-y-1">
-                  <span className="font-bold block text-emerald-950">Check-in Antecipado Liberado! 🎉</span>
-                  <p className="leading-relaxed">
-                    Seu apartamento já foi limpo e inspecionado. Você ganhou este benefício de <strong>Early Check-in de cortesia</strong>! Você já pode se dirigir à portaria e entrar agora mesmo.
-                  </p>
-                  <p className="text-[11px] text-emerald-700/90 pt-1 border-t border-emerald-200/70 font-medium leading-relaxed">
-                    ✨ Para receber novamente (mediante disponibilidade), reserve pelo site em sua próxima reserva:{" "}
-                    <a
-                      href="/reservar"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="underline font-bold text-emerald-900 hover:text-emerald-950 transition-colors"
-                    >
-                      corpflats.com.br
-                    </a>
-                  </p>
-                </div>
-              </div>
+            {/* Status de Check-in e Governança no Dia da Chegada */}
+            {data.isCheckinToday && (
+              <>
+                {!isFlatClean ? (
+                  <div className="p-3.5 bg-amber-50/90 border border-amber-200/80 rounded-xl flex items-start gap-2.5 text-xs text-amber-900">
+                    <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <span className="font-bold block text-amber-950">Apartamento em Preparação & Higienização 🧹</span>
+                      <p className="leading-relaxed">
+                        Nossa equipe de governança está higienizando e preparando o flat para a sua estada. O horário oficial de check-in é a partir das <strong>14:00</strong>.
+                      </p>
+                      <p className="text-[11px] text-amber-800/90 pt-1 border-t border-amber-200/70 font-medium leading-relaxed">
+                        ℹ️ O check-in antecipado (para reservas com benefício) é <strong>estritamente mediante disponibilidade</strong> após a conclusão da limpeza e inspeção. Assim que finalizado, a entrada é liberada na portaria 24h.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  (data.canDoEarlyCheckin || reservation.earlyCheckinAuthorized || hasEarlyCheckinBenefit) ? (
+                    <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-start gap-2.5 text-xs text-emerald-800">
+                      <Sparkles className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <span className="font-bold block text-emerald-950">Check-in Antecipado Liberado! 🎉</span>
+                        <p className="leading-relaxed">
+                          Seu apartamento já foi limpo e inspecionado com sucesso. O benefício de <strong>Early Check-in de cortesia</strong> (concedido mediante disponibilidade) está disponível! Você já pode se dirigir à portaria 24h e retirar seu acesso.
+                        </p>
+                        <p className="text-[11px] text-emerald-700/90 pt-1 border-t border-emerald-200/70 font-medium leading-relaxed">
+                          ✨ Para garantir esse benefício em suas próximas viagens (sempre mediante disponibilidade), reserve diretamente pelo site:{" "}
+                          <a
+                            href="/reservar"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="underline font-bold text-emerald-900 hover:text-emerald-950 transition-colors"
+                          >
+                            corpflats.com.br
+                          </a>
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-3.5 bg-sky-50 border border-sky-200 rounded-xl flex items-start gap-2.5 text-xs text-sky-900">
+                      <Sparkles className="w-4 h-4 text-sky-600 shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <span className="font-bold block text-sky-950">Apartamento Limpo & Pronto! ✨</span>
+                        <p className="leading-relaxed">
+                          A governança já concluiu a higienização da unidade. O horário oficial de check-in inicia às <strong>14:00</strong> na portaria 24h.
+                        </p>
+                      </div>
+                    </div>
+                  )
+                )}
+              </>
             )}
           </div>
         </Card>
