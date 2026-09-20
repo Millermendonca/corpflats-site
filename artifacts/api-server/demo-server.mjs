@@ -1890,33 +1890,47 @@ function checkYouthLocalRisk({ birthDate, city, address, phone }) {
 // ── Helper Universal para Chamadas Google Gemini AI com Auto-Discovery de Modelos ──
 async function getGeminiCandidateEndpoints(apiKey) {
   const candidates = [];
+
+  // Modelos estáveis com alta quota no Free Tier do Google
+  const preferredModels = [
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-pro",
+    "gemini-pro"
+  ];
+
   const savedModel = db.settings?.geminiModel;
   const savedVer = db.settings?.geminiApiVersion || "v1beta";
-  if (savedModel) {
+  if (savedModel && !savedModel.includes("tts") && !savedModel.includes("embed")) {
     candidates.push({ ver: savedVer, model: savedModel });
   }
 
-  // 1. Tentar consultar ListModels diretamente para saber exatamente quais modelos a chave suporta
+  // 1. Tentar consultar ListModels diretamente para saber quais modelos a chave suporta
   try {
     for (const ver of ["v1beta", "v1"]) {
       const res = await fetch(`https://generativelanguage.googleapis.com/${ver}/models?key=${apiKey}`);
       if (res.ok) {
         const data = await res.json();
+        // Filtra estritamente apenas modelos de geração de texto/chat, excluindo TTS, embeddings, aqa, etc.
         const available = (data.models || [])
-          .filter(m => m.supportedGenerationMethods?.includes("generateContent"))
+          .filter(m => {
+            const name = (m.name || "").toLowerCase();
+            const methods = m.supportedGenerationMethods || [];
+            return (
+              methods.includes("generateContent") &&
+              !name.includes("tts") &&
+              !name.includes("embed") &&
+              !name.includes("aqa") &&
+              !name.includes("imagen") &&
+              !name.includes("whisper") &&
+              !name.includes("realtime")
+            );
+          })
           .map(m => m.name.replace("models/", ""));
 
-        const preferred = [
-          "gemini-2.0-flash",
-          "gemini-2.5-flash",
-          "gemini-2.0-flash-lite",
-          "gemini-1.5-flash",
-          "gemini-1.5-flash-latest",
-          "gemini-1.5-flash-8b",
-          "gemini-1.5-pro",
-          "gemini-pro"
-        ];
-        for (const p of preferred) {
+        for (const p of preferredModels) {
           if (available.includes(p) && !candidates.some(c => c.ver === ver && c.model === p)) {
             candidates.push({ ver, model: p });
           }
@@ -1932,14 +1946,14 @@ async function getGeminiCandidateEndpoints(apiKey) {
     console.warn("[Gemini ListModels]", err.message);
   }
 
-  // 2. Fallbacks padrões em ordem de preferência
+  // 2. Fallbacks padrões estáveis em ordem de preferência
   const defaultFallbacks = [
-    { ver: "v1beta", model: "gemini-2.0-flash" },
-    { ver: "v1beta", model: "gemini-2.5-flash" },
-    { ver: "v1beta", model: "gemini-2.0-flash-lite" },
-    { ver: "v1beta", model: "gemini-1.5-flash-latest" },
-    { ver: "v1", model: "gemini-1.5-flash" },
     { ver: "v1beta", model: "gemini-1.5-flash" },
+    { ver: "v1", model: "gemini-1.5-flash" },
+    { ver: "v1beta", model: "gemini-1.5-flash-8b" },
+    { ver: "v1beta", model: "gemini-2.0-flash" },
+    { ver: "v1beta", model: "gemini-2.0-flash-lite" },
+    { ver: "v1beta", model: "gemini-1.5-pro" },
     { ver: "v1beta", model: "gemini-pro" }
   ];
 
@@ -1978,13 +1992,13 @@ async function callGeminiGenerateContent(apiKey, contents) {
         const errJson = await response.json().catch(() => ({}));
         const msg = errJson.error?.message || `Status ${response.status}`;
         lastError = msg;
-        if (response.status === 404 || msg.includes("not found") || msg.includes("not supported")) {
-          continue;
-        }
-        break;
+        console.warn(`[Gemini Candidate] ${model} (${ver}) -> Status ${response.status}: ${msg}`);
+        // Continua tentando os próximos modelos candidatos (ex: se 2.5 tem cota 0, tenta 1.5-flash)
+        continue;
       }
     } catch (e) {
       lastError = e.message;
+      continue;
     }
   }
 
@@ -10377,6 +10391,12 @@ app.post("/api/settings/gemini/test", async (req, res) => {
   const apiKey = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || "";
   if (!apiKey) return res.status(400).json({ error: "Nenhuma chave Gemini configurada." });
 
+  // Limpa modelo salvo se for TTS ou inválido
+  if (db.settings?.geminiModel && (db.settings.geminiModel.includes("tts") || db.settings.geminiModel.includes("embed"))) {
+    delete db.settings.geminiModel;
+    saveDatabase();
+  }
+
   const result = await callGeminiGenerateContent(apiKey, [{ parts: [{ text: "Responda apenas: OK" }] }]);
   if (result.ok) {
     const reply = result.data.candidates?.[0]?.content?.parts?.[0]?.text || "OK";
@@ -10387,7 +10407,14 @@ app.post("/api/settings/gemini/test", async (req, res) => {
       apiVersion: result.ver
     });
   } else {
-    res.status(400).json({ error: result.error || "Falha ao validar a conexão com a API Gemini." });
+    const rawErr = result.error || "";
+    if (rawErr.includes("Quota exceeded") || rawErr.includes("429") || rawErr.includes("rate-limit") || rawErr.includes("limit: 0")) {
+      res.status(400).json({
+        error: `A sua chave é válida, porém a cota gratuita do Google Gemini para esta chave atingiu o limite temporário (Rate Limit por minuto ou dia). O sistema está operando normalmente com o motor heurístico local de análise de sentimento e defeitos enquanto a cota é restabelecida.`
+      });
+    } else {
+      res.status(400).json({ error: rawErr || "Falha ao validar a conexão com a API Gemini." });
+    }
   }
 });
 
@@ -16351,19 +16378,65 @@ app.post("/api/ai/import-review", (req, res) => {
 // MÓDULO 3B: ANÁLISE DE SENTIMENTO DE HÓSPEDES (WhatsApp + NPS + Filtro Google)
 // ══════════════════════════════════════════════════════════════════════════════
 
-// Helper: chama Gemini para analisar sentimento de texto livre
+// Helper: chama Gemini para analisar sentimento de texto livre com fallback heurístico automático
 async function analyzeTextSentimentWithAI(text, context) {
   const ctx = context || "";
   const apiKey = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY;
-  if (!apiKey) {
-    // Análise heurística local quando não há chave de IA
-    const positiveWords = /excelente|ótimo|perfeito|adorei|maravilhoso|incrível|fantástico|recomendo|parabéns|impecável|lindo|confortável|nota 5|satisfeito/i;
-    const negativeWords = /ruim|péssimo|terrível|problema|defeito|decepcionante|sujo|barulho|demora|falhou|quebrado|vazamento|gotejando|frio|quente demais/i;
+
+  const runHeuristicAnalysis = (reason = "") => {
+    const positiveWords = /excelente|ótimo|otimo|maravilhoso|perfeito|adorei|parabéns|parabens|impecável|impecavel|muito bom|gostei muito|recomendo|nota 10|nota 5|satisfeito/i;
+    const negativeWords = /ruim|péssimo|pessimo|terrível|terrivel|horrível|horrivel|problema|problemas|defeito|defeitos|falha|quebrado|sujo|barulho|barulhento|vazamento|goteira|gotejando|pingando|frio|calor|demora|demorado|não funciona|nao funciona|estragado|estragou/i;
+    const maintWords = /ar[- ]condicionado|chuveiro|água|agua|aquecedor|fechadura|porta|chave|tranca|lâmpada|lampada|luz|tomada|tv|televisão|televisao|frigobar|geladeira|wi-fi|wifi|internet|vazamento|pia|vaso|dreno/i;
+
     const pos = positiveWords.test(text);
     const neg = negativeWords.test(text);
-    const score = pos && !neg ? 85 : neg && !pos ? 25 : pos && neg ? 55 : 65;
-    const tone = score >= 70 ? "positive" : score >= 45 ? "neutral" : "negative";
-    return { score, tone, keywords: [], positiveKeywords: [], negativeKeywords: [], suggestions: [], flatsMentioned: [], summary: "Análise heurística local (sem chave Gemini)", usingAI: false };
+    const maint = maintWords.test(text);
+
+    let score = 65;
+    let tone = "neutral";
+    if (neg) {
+      score = maint ? 20 : 30;
+      tone = "negative";
+    } else if (pos) {
+      score = 90;
+      tone = "positive";
+    }
+
+    const words = (text || "").toLowerCase().split(/\s+/).filter(w => w.length > 3);
+    const posKw = words.filter(w => positiveWords.test(w)).slice(0, 4);
+    const negKw = words.filter(w => negativeWords.test(w) || maintWords.test(w)).slice(0, 4);
+
+    const flatMatch = (text || "").match(/(?:apto|apt|flat|quarto|unidade|su[ií]te)\s*[:#º°]?\s*(\d{2,4}[a-z]?)/i);
+    const flats = flatMatch ? [flatMatch[1]] : [];
+
+    const suggestions = [];
+    if (neg) {
+      if (maint) suggestions.push(`Verificar reparo emergencial de manutenção${flats[0] ? ` no Flat ${flats[0]}` : ""}`);
+      suggestions.push("Entrar em contato com o hóspede para acolhimento e resolução");
+    }
+
+    const summary = tone === "negative"
+      ? `Reclamação identificada: "${text.substring(0, 100)}..."`
+      : tone === "positive"
+      ? `Feedback positivo recebido: "${text.substring(0, 100)}..."`
+      : `Mensagem recebida: "${text.substring(0, 100)}..."`;
+
+    return {
+      score,
+      tone,
+      keywords: Array.from(new Set([...posKw, ...negKw])),
+      positiveKeywords: Array.from(new Set(posKw)),
+      negativeKeywords: Array.from(new Set(negKw)),
+      suggestions,
+      flatsMentioned: flats,
+      summary,
+      usingAI: false,
+      fallbackReason: reason
+    };
+  };
+
+  if (!apiKey) {
+    return runHeuristicAnalysis("sem chave Gemini");
   }
 
   try {
@@ -16394,7 +16467,8 @@ async function analyzeTextSentimentWithAI(text, context) {
     console.warn("[Sentiment AI]", err.message);
   }
 
-  return { score: 65, tone: "neutral", keywords: [], positiveKeywords: [], negativeKeywords: [], suggestions: [], flatsMentioned: [], summary: "Análise indisponível", usingAI: false };
+  // Fallback para motor heurístico caso a API do Gemini esteja fora do ar ou com cota atingida
+  return runHeuristicAnalysis("fallback por cota ou indisponibilidade da API Gemini");
 }
 
 // Inicializar estrutura de sentimentos se não existir
