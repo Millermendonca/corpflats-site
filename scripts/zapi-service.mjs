@@ -2606,7 +2606,7 @@ export async function handleConciergeGroupMessage({
       r.status !== "cancelada" && r.status !== "cancelado" &&
       r.checkinDate <= todayStr && r.checkoutDate >= todayStr
     );
-    matchingResList.forEach(r => {
+    for (const r of matchingResList) {
       if (!r.actualCheckoutAt) {
         r.actualCheckoutAt = now;
         r.actualCheckoutTime = timeStr;
@@ -2617,10 +2617,10 @@ export async function handleConciergeGroupMessage({
       r.updatedAt = now;
 
       // Dispara o gatilho pós check-out garantindo não-duplicação caso o hóspede já tenha informado
-      triggerCheckoutWhatsApp(db, saveDatabase, r, `portaria_whatsapp (${senderLabel})`).catch(e => {
+      await triggerCheckoutWhatsApp(db, saveDatabase, r, `portaria_whatsapp (${senderLabel})`).catch(e => {
         console.warn("[Concierge Checkout Trigger]:", e.message);
       });
-    });
+    }
 
     // 4. Reconciliação de café da manhã para hoje (cancela se checkout ocorreu antes do horário do café)
     if (!db.breakfastOrders) db.breakfastOrders = [];

@@ -3421,7 +3421,7 @@ app.get("/api/public/checkout/context", (req, res) => {
   });
 });
 
-app.post("/api/public/checkout", (req, res) => {
+app.post("/api/public/checkout", async (req, res) => {
   let rawNum = String(req.body?.flatNumber || "").replace(/\D/g, "").trim();
   const code = String(req.body?.code || req.body?.res || req.body?.reservationCode || "").trim();
   let foundRes = null;
@@ -3497,7 +3497,7 @@ app.post("/api/public/checkout", (req, res) => {
     r.status !== "cancelada" && r.status !== "cancelado" &&
     r.checkinDate <= todayStr && r.checkoutDate >= todayStr)
   );
-  matchingResList.forEach(r => {
+  for (const r of matchingResList) {
     if (!r.actualCheckoutAt) {
       r.actualCheckoutAt = now;
       r.actualCheckoutTime = timeStr;
@@ -3508,10 +3508,10 @@ app.post("/api/public/checkout", (req, res) => {
     r.updatedAt = now;
 
     // Dispara WhatsApp de check-out com desduplicação
-    triggerCheckoutWhatsApp(db, saveDatabase, r, "link_digital").catch(e => {
+    await triggerCheckoutWhatsApp(db, saveDatabase, r, "link_digital").catch(e => {
       console.warn("[Digital Checkout WhatsApp Trigger Error]:", e.message);
     });
-  });
+  }
 
   // Reconciliar pedidos de café da manhã para hoje neste flat:
   // Apenas cancela se o check-out ocorreu ANTES do horário de entrega do café agendado!
@@ -9877,7 +9877,7 @@ app.post("/api/reception/checkin/:reservationId", (req, res) => {
   });
 });
 
-app.post("/api/reception/checkout/:reservationId", (req, res) => {
+app.post("/api/reception/checkout/:reservationId", async (req, res) => {
   const id = Number(req.params.reservationId);
   const r = (db.reservations || []).find(x => x.id === id);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
@@ -9996,7 +9996,7 @@ app.post("/api/reception/checkout/:reservationId", (req, res) => {
   saveDatabase();
 
   // Dispara WhatsApp de check-out com desduplicação e agendamento da avaliação Google
-  triggerCheckoutWhatsApp(db, saveDatabase, r, "reception_pms").catch(e => {
+  await triggerCheckoutWhatsApp(db, saveDatabase, r, "reception_pms").catch(e => {
     console.warn("[Reception Checkout WhatsApp Trigger Error]:", e.message);
   });
 
