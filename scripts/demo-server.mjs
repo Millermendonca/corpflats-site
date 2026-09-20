@@ -18581,11 +18581,19 @@ setInterval(async () => {
   try {
     if (!db.reservations || !Array.isArray(db.reservations)) return;
 
-    // A) Checa pagamentos pendentes no extrato do Inter
+    const now = new Date();
+    const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const brDate = new Date(nowUtc - (3 * 3600000));
+    const todayStr = brDate.toISOString().substring(0, 10);
+
+    // A) Checa pagamentos pendentes no extrato do Inter APENAS para reservas ativas/futuras (checkout >= hoje)
     const pendingReservations = db.reservations.filter(r =>
       r.status !== "cancelada" &&
+      r.status !== "cancelled" &&
       r.paymentStatus !== "pago_total" &&
       r.paymentStatus !== "pago" &&
+      r.checkoutDate &&
+      r.checkoutDate >= todayStr &&
       Number(r.totalAmount) > 0 &&
       (!r.paidAmount || Number(r.paidAmount) < Number(r.totalAmount))
     );
@@ -18601,39 +18609,6 @@ setInterval(async () => {
           pagador: extratoMatch.pagador,
           source: "Banco Inter Extrato (Auto-Sync)"
         });
-      }
-    }
-
-    // B) Reservas já pagas que ainda NÃO receberam WhatsApp de confirmação
-    const paidWithoutConfirm = db.reservations.filter(r =>
-      r.status !== "cancelada" &&
-      (r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0)) &&
-      r.guestPhone &&
-      !isConfirmationAlreadyDispatched(r)
-    );
-
-    for (const r of paidWithoutConfirm) {
-      console.log(`[Auto-Sync] Encontrada reserva paga sem envio de confirmação: ${r.code} (${r.guestName}). Disparando agora...`);
-      await ensurePaymentConfirmationDispatched(r);
-    }
-
-    // C) Reservas canceladas que ainda NÃO receberam WhatsApp de cancelamento
-    const cancelledWithoutConfirm = db.reservations.filter(r =>
-      (r.status === "cancelada" || r.status === "cancelled" || r.status === "CANCELLED") &&
-      r.guestPhone &&
-      !(db.whatsappHistory || []).some(h => 
-        (h.reservationCode === r.code || String(h.reservationCode) === String(r.id) || String(h.reservationId) === String(r.id)) &&
-        h.triggerEvent === "reservation_cancelled" &&
-        (h.status === "sent" || h.status === "delivered")
-      )
-    );
-
-    for (const r of cancelledWithoutConfirm) {
-      console.log(`[Auto-Sync] Encontrada reserva cancelada sem envio de WhatsApp: ${r.code} (${r.guestName}). Disparando cancelamento...`);
-      try {
-        await triggerImmediateWhatsApp(db, saveDatabase, "reservation_cancelled", r);
-      } catch (errCancelSync) {
-        console.warn("[Auto-Sync] Erro ao disparar cancelamento:", errCancelSync.message);
       }
     }
   } catch (errLoop) {

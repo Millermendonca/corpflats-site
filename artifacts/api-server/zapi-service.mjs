@@ -2717,6 +2717,30 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
     if (!db.whatsappQueue) {
       db.whatsappQueue = [];
+    } else {
+      const now = new Date();
+      const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
+      const brDate = new Date(nowUtc - (3 * 3600000));
+      const todayStr = brDate.toISOString().substring(0, 10);
+      const nowIso = now.toISOString();
+
+      let cleanedOldCount = 0;
+      for (const item of db.whatsappQueue) {
+        if (item.status === "scheduled") {
+          const resv = (db.reservations || []).find(r => r.id === item.reservationId || r.code === item.reservationCode);
+          const isPastResv = resv && resv.checkoutDate && resv.checkoutDate < todayStr;
+          const isOverdue = item.scheduledFor && item.scheduledFor < nowIso;
+          if (isPastResv || isOverdue) {
+            item.status = "cancelled";
+            item.error = "Cancelado na inicialização: agendamento retroativo ou reserva antiga";
+            item.updatedAt = nowIso;
+            cleanedOldCount++;
+          }
+        }
+      }
+      if (cleanedOldCount > 0) {
+        console.log(`[Z-API Init] Cancelados ${cleanedOldCount} agendamentos antigos para evitar disparos indevidos.`);
+      }
     }
 
     if (!db.whatsappHistory) {
@@ -3571,12 +3595,29 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         }
       }
 
+      const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
+      const brDate = new Date(nowUtc - (3 * 3600000));
+      const todayStr = brDate.toISOString().substring(0, 10);
+
       // 1. Processa itens da fila que atingiram o horário de disparo
       const pendingItems = (db.whatsappQueue || []).filter(item => 
         item.status === "scheduled" && item.scheduledFor <= nowIso
       );
 
       for (const item of pendingItems) {
+        // Validação de segurança: NUNCA disparar para reservas antigas que já terminaram ou agendamentos atrasados há mais de 30min
+        const resv = (db.reservations || []).find(r => r.id === item.reservationId || r.code === item.reservationCode);
+        const isPastReservation = resv && resv.checkoutDate && resv.checkoutDate < todayStr;
+        const isOverdue = (now.getTime() - new Date(item.scheduledFor).getTime()) > 30 * 60 * 1000;
+
+        if (isPastReservation || isOverdue) {
+          console.log(`[Auto-WhatsApp] Descartando disparo retroativo/antigo para ${item.guestName} (${item.triggerEvent})`);
+          item.status = "cancelled";
+          item.error = "Cancelado: reserva antiga ou agendamento retroativo";
+          item.updatedAt = nowIso;
+          saveDatabase();
+          continue;
+        }
         // Revalidação de segurança: se o template desautorizou este canal após o agendamento
         const tpl = (db.whatsappTemplates || []).find(t => t.id === item.templateId);
         const itemChannel = item.channel || (db.reservations || []).find(r => r.id === item.reservationId || r.code === item.reservationCode)?.channel;
@@ -3642,11 +3683,23 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
   if (!db || !db.whatsappTemplates || !db.reservations) return;
 
   const now = new Date();
+  const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
+  const brDate = new Date(nowUtc - (3 * 3600000));
+  const todayStr = brDate.toISOString().substring(0, 10);
+
   const activeTemplates = db.whatsappTemplates.filter(t => t.enabled && t.triggerTiming !== "immediate");
   if (activeTemplates.length === 0) return;
 
+  // NUNCA processar reservas antigas que já terminaram no passado (checkout < hoje)
   const confirmedReservations = (db.reservations || []).filter(r => 
-    r.status !== "cancelada" && r.status !== "checkout" && r.guestPhone
+    r.status !== "cancelada" && 
+    r.status !== "cancelled" && 
+    r.status !== "CANCELLED" && 
+    r.status !== "checkout" && 
+    r.status !== "completed" &&
+    r.guestPhone &&
+    r.checkoutDate && 
+    r.checkoutDate >= todayStr
   );
 
   let hasChanges = false;
@@ -3720,8 +3773,8 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
           const scheduledTime = calculateScheduledTime(tpl, resv, db);
           const scheduledDate = new Date(scheduledTime);
 
-          const thirtyMinAgo = new Date(now.getTime() - 30 * 60 * 1000);
-          if (scheduledDate >= thirtyMinAgo) {
+          // NUNCA agendar nada retroativo: o horário agendado deve ser estritamente no futuro (> now)
+          if (scheduledDate > now) {
             const baseUrl = "https://corpflats.onrender.com";
             const renderedMessage = resolveWhatsAppTags(tpl.message, resv, db, baseUrl, targetItem.type);
             const renderedButtons = (tpl.buttons || []).map(b => ({
@@ -3777,6 +3830,26 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
       return;
     }
     if (!reservation) return;
+
+    const now = new Date();
+    const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const brDate = new Date(nowUtc - (3 * 3600000));
+    const todayStr = brDate.toISOString().substring(0, 10);
+
+    // REGRA DE OURO: NUNCA disparar mensagens para reservas cujo checkout já passou
+    if (reservation.checkoutDate && reservation.checkoutDate < todayStr) {
+      console.warn(`[WhatsApp Trigger] Evento '${eventName}' IGNORADO pois a reserva ${reservation?.code || reservation?.id} (${reservation?.guestName}) é antiga (checkout em ${reservation.checkoutDate}).`);
+      return;
+    }
+
+    // NUNCA disparar confirmação de criação para reservas criadas há mais de 48h (antigas/importadas)
+    if ((eventName === "reservation_created" || eventName === "pre_reservation_created") && reservation.createdAt) {
+      const createdDate = new Date(reservation.createdAt);
+      if ((now.getTime() - createdDate.getTime()) > 48 * 3600 * 1000) {
+        console.warn(`[WhatsApp Trigger] Evento '${eventName}' IGNORADO pois a reserva ${reservation.code} foi criada há mais de 48h (${reservation.createdAt}).`);
+        return;
+      }
+    }
 
     const resvChannel = reservation.channel || reservation.source || "site";
 
