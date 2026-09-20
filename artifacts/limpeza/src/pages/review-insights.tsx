@@ -16,7 +16,7 @@ import {
   Shield, Target, Activity, Zap, Eye, TrendingDown, Users, Trash2
 } from "lucide-react"
 
-// •••• helpers •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+// ── helpers ──
 function toneColor(tone: string) {
   if (tone === "positive") return "text-emerald-400"
   if (tone === "negative") return "text-rose-400"
@@ -38,7 +38,7 @@ function ToneIcon({ tone, className = "w-4 h-4" }: { tone: string; className?: s
   return <Meh className={`${className} text-amber-400`} />
 }
 function ScoreBadge({ score }: { score: number | null }) {
-  if (score == null) return <span className="text-slate-500 text-xs">•</span>
+  if (score == null) return <span className="text-slate-500 text-xs">•</span>
   const color = score >= 70 ? "text-emerald-400" : score >= 45 ? "text-amber-400" : "text-rose-400"
   return <span className={`font-black font-mono text-lg ${color}`}>{score}<span className="text-xs font-normal text-slate-500">/100</span></span>
 }
@@ -51,7 +51,7 @@ function NpsScoreBadge({ score }: { score: number | null }) {
   return <Badge className="bg-rose-950 text-rose-300 border-rose-800 text-xs font-bold">⭐ Detrator</Badge>
 }
 
-// •••• main component •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+// ── main component ──
 export default function ReviewInsights() {
   const [activeTab, setActiveTab] = useState("overview")
 
@@ -93,7 +93,7 @@ export default function ReviewInsights() {
   const [npsReservationId, setNpsReservationId] = useState("")
   const [submittingNps, setSubmittingNps] = useState(false)
 
-  // •••• fetchers •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+  // ── fetchers ──
   const fetchReviews = useCallback(async () => {
     setLoadingReviews(true)
     try {
@@ -124,7 +124,7 @@ export default function ReviewInsights() {
   useEffect(() => { fetchReviews(); fetchSentimentOverview(); fetchNps("all"); }, [])
   useEffect(() => { fetchNps(npsFilter) }, [npsFilter])
 
-  // •••• actions ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
+  // ── actions ──
   const handleRunAIAnalysis = async () => {
     setAnalyzing(true)
     try {
@@ -195,7 +195,7 @@ export default function ReviewInsights() {
     } finally { setSubmittingNps(false) }
   }
 
-  // • • • • computed • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • •
+  // ── computed ──
   const insights = reviewsData?.insights || { overallScore: 0, npsScore: 0, totalAnalyzed: 0, positivePercent: 0, highlights: [], actionItems: [] }
   const reviews = reviewsData?.reviews || []
 
@@ -209,16 +209,16 @@ export default function ReviewInsights() {
   const nps = sentimentOverview?.nps || {}
   const wpp = sentimentOverview?.whatsapp || {}
 
-  // • • • • render • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • • •
+  // ── render ──
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
-      {/* • • • Header • • • • */}
+      {/* ── Header ── */}
       <header className="border-b border-slate-800 bg-slate-950/95 sticky top-0 z-10 px-4 sm:px-8 py-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/30 text-xs font-bold mb-1.5">
               <Sparkles className="w-3.5 h-3.5" />
-              <span>IA de Sentimento • CorpFlats</span>
+              <span>IA de Sentimento —CorpFlats</span>
             </div>
             <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">Análise de Sentimento de Hóspedes</h1>
             <p className="text-xs text-slate-400 mt-0.5">Feedbacks, tom de voz WhatsApp, filtro NPS e reputação Google</p>
@@ -245,7 +245,7 @@ export default function ReviewInsights() {
       </header>
 
       <div className="px-4 sm:px-8 py-6 space-y-6">
-        {/* • • • Top KPI Cards • • • • */}
+        {/* ── Top KPI Cards ── */}
         <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <Card className="bg-slate-900 border-slate-800 rounded-2xl p-4 shadow-xl">
             <div className="flex items-center justify-between mb-2">
@@ -308,7 +308,7 @@ export default function ReviewInsights() {
           </Card>
         </div>
 
-        {/* ••• Tabs •••• */}
+        {/* ── Tabs ── */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList className="bg-slate-900 border border-slate-800 rounded-xl p-1 flex flex-wrap gap-1 h-auto">
             <TabsTrigger value="overview" className="text-xs font-bold rounded-lg data-[state=active]:bg-purple-600 data-[state=active]:text-white text-slate-400 px-3 py-1.5">
@@ -328,22 +328,22 @@ export default function ReviewInsights() {
             </TabsTrigger>
           </TabsList>
 
-          {/* •"•"• TAB 1: VISÒO GERAL •"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"• */}
+          {/* ── TAB 1: VISÃO GERAL ── */}
           <TabsContent value="overview" className="space-y-5 mt-4">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <Card className="bg-slate-900 border-slate-800 rounded-2xl p-5">
                 <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-2"><Users className="w-3.5 h-3.5" />Funil de Sentimento WPP</h3>
                 <div className="space-y-2.5">
                   <div>
-                    <div className="flex justify-between text-xs mb-1"><span className="text-emerald-400 font-bold">•x•` Positivos</span><span className="text-emerald-400 font-mono font-bold">{wpp.positive || 0}</span></div>
+                    <div className="flex justify-between text-xs mb-1"><span className="text-emerald-400 font-bold">😊 Positivos</span><span className="text-emerald-400 font-mono font-bold">{wpp.positive || 0}</span></div>
                     <Progress value={wpp.analyzed > 0 ? (wpp.positive / wpp.analyzed) * 100 : 0} className="h-1.5 bg-slate-800 [&>div]:bg-emerald-500" />
                   </div>
                   <div>
-                    <div className="flex justify-between text-xs mb-1"><span className="text-amber-400 font-bold">•xܐ Neutros</span><span className="text-amber-400 font-mono font-bold">{wpp.neutral || 0}</span></div>
+                    <div className="flex justify-between text-xs mb-1"><span className="text-amber-400 font-bold">😐 Neutros</span><span className="text-amber-400 font-mono font-bold">{wpp.neutral || 0}</span></div>
                     <Progress value={wpp.analyzed > 0 ? (wpp.neutral / wpp.analyzed) * 100 : 0} className="h-1.5 bg-slate-800 [&>div]:bg-amber-500" />
                   </div>
                   <div>
-                    <div className="flex justify-between text-xs mb-1"><span className="text-rose-400 font-bold">•xܤ Negativos</span><span className="text-rose-400 font-mono font-bold">{wpp.negative || 0}</span></div>
+                    <div className="flex justify-between text-xs mb-1"><span className="text-rose-400 font-bold">😤 Negativos</span><span className="text-rose-400 font-mono font-bold">{wpp.negative || 0}</span></div>
                     <Progress value={wpp.analyzed > 0 ? (wpp.negative / wpp.analyzed) * 100 : 0} className="h-1.5 bg-slate-800 [&>div]:bg-rose-500" />
                   </div>
                 </div>
@@ -355,10 +355,10 @@ export default function ReviewInsights() {
                   {[
                     { label: "Pesquisas enviadas", val: nps.sent || 0, color: "text-slate-300" },
                     { label: "Responderam", val: nps.responded || 0, color: "text-sky-300" },
-                    { label: "Nota 5 • Promotores ⭐", val: nps.promoters || 0, color: "text-emerald-400" },
-                    { label: "Nota 3-4 • Neutros", val: nps.neutrals || 0, color: "text-amber-400" },
-                    { label: "Nota 1-2 • Detratores", val: nps.detractors || 0, color: "text-rose-400" },
-                    { label: "Link Google enviado •S", val: nps.googleLinkSent || 0, color: "text-purple-400" },
+                    { label: "Nota 5 — Promotores ⭐", val: nps.promoters || 0, color: "text-emerald-400" },
+                    { label: "Nota 3-4 — Neutros", val: nps.neutrals || 0, color: "text-amber-400" },
+                    { label: "Nota 1-2 — Detratores", val: nps.detractors || 0, color: "text-rose-400" },
+                    { label: "Link Google enviado ✓", val: nps.googleLinkSent || 0, color: "text-purple-400" },
                   ].map(({ label, val, color }) => (
                     <div key={label} className="flex items-center justify-between">
                       <span className="text-slate-400">{label}</span>
@@ -403,11 +403,11 @@ export default function ReviewInsights() {
             </Card>
           </TabsContent>
 
-          {/* •"•"• TAB 2: SENTIMENTO WHATSAPP •"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"• */}
+          {/* ── TAB 2: SENTIMENTO WHATSAPP ── */}
           <TabsContent value="whatsapp" className="space-y-4 mt-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h2 className="text-base font-black text-white flex items-center gap-2"><MessageCircle className="w-4 h-4 text-emerald-400" />Análise de Tom de Voz ⬢ WhatsApp</h2>
+                <h2 className="text-base font-black text-white flex items-center gap-2"><MessageCircle className="w-4 h-4 text-emerald-400" />Análise de Tom de Voz —WhatsApp</h2>
                 <p className="text-xs text-slate-400 mt-0.5">A IA analisa o conteúdo das mensagens recebidas dos hóspedes e calcula o sentimento de cada conversa.</p>
               </div>
               <Button onClick={handleAnalyzeWpp} disabled={analyzingWpp} className="bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-black gap-1.5 rounded-xl h-9">
@@ -433,7 +433,7 @@ export default function ReviewInsights() {
                         <ToneIcon tone={s.overallTone} className="w-5 h-5" />
                         <div>
                           <p className="text-sm font-black text-white">{s.guestName}</p>
-                          <p className="text-[10px] text-slate-400">{s.guestPhone} {s.flatNumber ? `⬢ Flat ${s.flatNumber}` : ""}</p>
+                          <p className="text-[10px] text-slate-400">{s.guestPhone} {s.flatNumber ? `—Flat ${s.flatNumber}` : ""}</p>
                         </div>
                       </div>
                       <div className="text-right">
@@ -454,7 +454,7 @@ export default function ReviewInsights() {
                     </div>
                     <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1 border-t border-slate-800/50">
                       <span>{s.inboundCount || 0} msgs recebidas · {s.messageCount || 0} no total</span>
-                      <span>{s.analyzedAt ? new Date(s.analyzedAt).toLocaleDateString("pt-BR") : "•"}</span>
+                      <span>{s.analyzedAt ? new Date(s.analyzedAt).toLocaleDateString("pt-BR") : "—"}</span>
                     </div>
                   </Card>
                 ))}
@@ -462,16 +462,16 @@ export default function ReviewInsights() {
             )}
           </TabsContent>
 
-          {/* •"•"• TAB 3: FEEDBACKS & AVALIA•!•"ES •"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"• */}
+          {/* ── TAB 3: FEEDBACKS & AVALIAÇÕES ── */}
           <TabsContent value="reviews" className="space-y-4 mt-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-base font-black text-white flex items-center gap-2"><Star className="w-4 h-4 text-amber-400" />Feedbacks de Hóspedes ({filteredReviews.length})</h2>
               <div className="flex flex-wrap items-center gap-2">
                 <select value={reviewFilter.tone} onChange={e => setReviewFilter(f => ({ ...f, tone: e.target.value }))} className="h-8 rounded-lg border border-slate-700 bg-slate-900 px-2 text-xs text-white">
                   <option value="all">Todos os sentimentos</option>
-                  <option value="positive">•x•` Positivo</option>
-                  <option value="neutral">•xܐ Neutro</option>
-                  <option value="negative">•xܤ Negativo</option>
+                  <option value="positive">😊 Positivo</option>
+                  <option value="neutral">😐 Neutro</option>
+                  <option value="negative">😤 Negativo</option>
                 </select>
                 <select value={reviewFilter.channel} onChange={e => setReviewFilter(f => ({ ...f, channel: e.target.value }))} className="h-8 rounded-lg border border-slate-700 bg-slate-900 px-2 text-xs text-white">
                   <option value="all">Todos os canais</option>
@@ -517,7 +517,7 @@ export default function ReviewInsights() {
                   </div>
                   <p className="text-xs text-slate-300 leading-relaxed">"{rev.comment}"</p>
                   {rev.sentimentSummary && (
-                    <p className="text-[10px] text-purple-300/80 italic border-l-2 border-purple-800/50 pl-2">•x• IA: {rev.sentimentSummary}</p>
+                    <p className="text-[10px] text-purple-300/80 italic border-l-2 border-purple-800/50 pl-2">🤖 IA: {rev.sentimentSummary}</p>
                   )}
                   {(rev.positiveKeywords?.length > 0 || rev.negativeKeywords?.length > 0) && (
                     <div className="flex flex-wrap gap-1">
@@ -547,7 +547,7 @@ export default function ReviewInsights() {
             </div>
           </TabsContent>
 
-          {/* •"•"• TAB 4: FILTRO GOOGLE NPS •"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"• */}
+          {/* ── TAB 4: FILTRO GOOGLE NPS ── */}
           <TabsContent value="nps" className="space-y-5 mt-4">
             <Card className="bg-sky-950/20 border-sky-800/40 rounded-2xl p-5">
               <div className="flex items-start gap-3">
@@ -560,9 +560,9 @@ export default function ReviewInsights() {
                     Hóspedes com notas 1-4 têm feedback registrado internamente e, se 1-2, um ticket de recuperação é criado automaticamente.
                   </p>
                   <div className="flex flex-wrap gap-3 mt-3">
-                    <div className="flex items-center gap-1.5 text-xs text-emerald-400"><CheckCircle2 className="w-3.5 h-3.5" /><span>Nota 5 •  Link Google enviado</span></div>
-                    <div className="flex items-center gap-1.5 text-xs text-amber-400"><Meh className="w-3.5 h-3.5" /><span>Nota 3-4 •  Feedback interno</span></div>
-                    <div className="flex items-center gap-1.5 text-xs text-rose-400"><AlertTriangle className="w-3.5 h-3.5" /><span>Nota 1-2 •  Ticket de recuperação</span></div>
+                    <div className="flex items-center gap-1.5 text-xs text-emerald-400"><CheckCircle2 className="w-3.5 h-3.5" /><span>Nota 5 — Link Google enviado</span></div>
+                    <div className="flex items-center gap-1.5 text-xs text-amber-400"><Meh className="w-3.5 h-3.5" /><span>Nota 3-4 — Feedback interno</span></div>
+                    <div className="flex items-center gap-1.5 text-xs text-rose-400"><AlertTriangle className="w-3.5 h-3.5" /><span>Nota 1-2 — Ticket de recuperação</span></div>
                   </div>
                 </div>
               </div>
@@ -575,7 +575,7 @@ export default function ReviewInsights() {
                 { label: "Promotores (5⭐)", val: nps.promoters || 0, color: "text-emerald-400", icon: <ThumbsUp className="w-3.5 h-3.5" /> },
                 { label: "Neutros (3-4⭐)", val: nps.neutrals || 0, color: "text-amber-400", icon: <Meh className="w-3.5 h-3.5" /> },
                 { label: "Detratores (1-2⭐)", val: nps.detractors || 0, color: "text-rose-400", icon: <Frown className="w-3.5 h-3.5" /> },
-                { label: "Link Google •S", val: nps.googleLinkSent || 0, color: "text-purple-400", icon: <Shield className="w-3.5 h-3.5" /> },
+                { label: "Link Google ✓", val: nps.googleLinkSent || 0, color: "text-purple-400", icon: <Shield className="w-3.5 h-3.5" /> },
               ].map(({ label, val, color, icon }) => (
                 <Card key={label} className="bg-slate-900 border-slate-800 rounded-xl p-3 text-center">
                   <div className={`flex justify-center mb-1 ${color}`}>{icon}</div>
@@ -592,8 +592,8 @@ export default function ReviewInsights() {
                   {[
                     { val: "all", label: "Todos" },
                     { val: "promoters", label: "⭐⭐⭐⭐⭐" },
-                    { val: "neutrals", label: "•x• Neutros" },
-                    { val: "detractors", label: "•a•️ Detratores" },
+                    { val: "neutrals", label: "🤔 Neutros" },
+                    { val: "detractors", label: "⚠️ Detratores" },
                     { val: "pending", label: "⏳ Aguardando" },
                   ].map(opt => (
                     <button key={opt.val} onClick={() => setNpsFilter(opt.val)} className={`text-[10px] font-bold px-2.5 py-1.5 transition-colors ${npsFilter === opt.val ? "bg-sky-700 text-white" : "bg-slate-900 text-slate-400 hover:text-slate-200"}`}>{opt.label}</button>
@@ -625,16 +625,16 @@ export default function ReviewInsights() {
                         <NpsScoreBadge score={npsItem.score} />
                       </div>
                       {npsItem.comment && <p className="text-xs text-slate-300 leading-relaxed italic mb-1.5">"{npsItem.comment}"</p>}
-                      {npsItem.sentimentSummary && <p className="text-[10px] text-purple-300/80 italic">•x• {npsItem.sentimentSummary}</p>}
+                      {npsItem.sentimentSummary && <p className="text-[10px] text-purple-300/80 italic">🤖 {npsItem.sentimentSummary}</p>}
                       <div className="flex flex-wrap gap-3 mt-2 text-[10px] text-slate-500">
-                        <span>Enviado: {npsItem.sentAt ? new Date(npsItem.sentAt).toLocaleDateString("pt-BR") : "•"}</span>
+                        <span>Enviado: {npsItem.sentAt ? new Date(npsItem.sentAt).toLocaleDateString("pt-BR") : "—"}</span>
                         {npsItem.respondedAt && <span>Respondido: {new Date(npsItem.respondedAt).toLocaleDateString("pt-BR")}</span>}
                       </div>
                     </div>
                     <div className="flex flex-col items-end gap-1.5 shrink-0">
-                      {npsItem.googleLinkSent && <Badge className="bg-emerald-950 text-emerald-300 border-emerald-800 text-[10px]">•S Link Google Enviado</Badge>}
-                      {npsItem.autoAction === "recovery_ticket_created" && <Badge className="bg-rose-950 text-rose-300 border-rose-800 text-[10px]">•a•️ Ticket Criado</Badge>}
-                      {npsItem.autoAction === "feedback_collected" && <Badge className="bg-amber-950 text-amber-300 border-amber-800 text-[10px]">•x• Feedback Interno</Badge>}
+                      {npsItem.googleLinkSent && <Badge className="bg-emerald-950 text-emerald-300 border-emerald-800 text-[10px]">✓ Link Google Enviado</Badge>}
+                      {npsItem.autoAction === "recovery_ticket_created" && <Badge className="bg-rose-950 text-rose-300 border-rose-800 text-[10px]">⚠️ Ticket Criado</Badge>}
+                      {npsItem.autoAction === "feedback_collected" && <Badge className="bg-amber-950 text-amber-300 border-amber-800 text-[10px]">📝 Feedback Interno</Badge>}
                       {npsItem.pendingResponse && <Badge className="bg-slate-800 text-slate-400 text-[10px]">⏳ Aguardando Resposta</Badge>}
                     </div>
                   </div>
@@ -643,7 +643,7 @@ export default function ReviewInsights() {
             )}
           </TabsContent>
 
-          {/* •"•"• TAB 5: MANUTEN•!ÒO IA •"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"• */}
+          {/* ── TAB 5: MANUTENÇÃO IA ── */}
           <TabsContent value="maintenance" className="space-y-4 mt-4">
             <div className="flex items-center justify-between">
               <div>
@@ -682,7 +682,7 @@ export default function ReviewInsights() {
         </Tabs>
       </div>
 
-      {/* •"•"• Modal: Importar Avaliação •"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"• */}
+      {/* •"•"—Modal: Importar Avaliação •"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"—*/}
       <Dialog open={importModalOpen} onOpenChange={setImportModalOpen}>
         <DialogContent className="sm:max-w-lg bg-slate-900 border-slate-800 text-white">
           <form onSubmit={handleImportReview}>
@@ -699,11 +699,11 @@ export default function ReviewInsights() {
                 <div className="space-y-1">
                   <Label className="text-slate-300">Canal</Label>
                   <select value={channel} onChange={e => setChannel(e.target.value)} className="w-full h-9 rounded-md border border-slate-700 bg-slate-950 px-3 text-xs text-white">
-                    <option value="airbnb">•x• Airbnb</option>
-                    <option value="booking">•x• Booking.com</option>
-                    <option value="google">•xx• Google Reviews</option>
-                    <option value="site">•xR• Site CorpFlats</option>
-                    <option value="whatsapp">•x• WhatsApp</option>
+                    <option value="airbnb">Airbnb</option>
+                    <option value="booking">Booking.com</option>
+                    <option value="google">Google Reviews</option>
+                    <option value="site">Site CorpFlats</option>
+                    <option value="whatsapp">WhatsApp</option>
                   </select>
                 </div>
               </div>
@@ -736,7 +736,7 @@ export default function ReviewInsights() {
         </DialogContent>
       </Dialog>
 
-      {/* •"•"• Modal: Registrar NPS Manual •"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"• */}
+      {/* •"•"—Modal: Registrar NPS Manual •"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"•"—*/}
       <Dialog open={npsModalOpen} onOpenChange={setNpsModalOpen}>
         <DialogContent className="sm:max-w-md bg-slate-900 border-slate-800 text-white">
           <form onSubmit={handleSubmitNps}>
@@ -759,11 +759,11 @@ export default function ReviewInsights() {
                 <div className="space-y-1">
                   <Label className="text-slate-300">Nota Dada (1 a 5)</Label>
                   <select value={npsScore} onChange={e => setNpsScore(e.target.value)} className="w-full h-9 rounded-md border border-slate-700 bg-slate-950 px-3 text-xs text-white font-bold">
-                    <option value="5">⭐⭐⭐⭐⭐ • Promotor</option>
-                    <option value="4">⭐⭐⭐⭐ • Satisfeito</option>
-                    <option value="3">⭐⭐⭐ • Neutro</option>
-                    <option value="2">⭐⭐ • Insatisfeito</option>
-                    <option value="1">⭐ • Detrator</option>
+                    <option value="5">⭐⭐⭐⭐⭐ — Promotor</option>
+                    <option value="4">⭐⭐⭐⭐ — Satisfeito</option>
+                    <option value="3">⭐⭐⭐ — Neutro</option>
+                    <option value="2">⭐⭐ — Insatisfeito</option>
+                    <option value="1">⭐ — Detrator</option>
                   </select>
                 </div>
                 <div className="space-y-1">
@@ -778,13 +778,13 @@ export default function ReviewInsights() {
               {Number(npsScore) === 5 && (
                 <div className="p-2.5 bg-emerald-950/30 border border-emerald-900/40 rounded-xl text-emerald-300 text-[11px] flex items-center gap-2">
                   <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-                  Nota 5 •  Link do Google será marcado como enviado automaticamente.
+                  Nota 5 — Link do Google será marcado como enviado automaticamente.
                 </div>
               )}
               {Number(npsScore) <= 2 && (
                 <div className="p-2.5 bg-rose-950/30 border border-rose-900/40 rounded-xl text-rose-300 text-[11px] flex items-center gap-2">
                   <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                  Nota 1-2 •  Ticket de recuperação de experiência será criado automaticamente.
+                  Nota 1-2 — Ticket de recuperação de experiência será criado automaticamente.
                 </div>
               )}
             </div>

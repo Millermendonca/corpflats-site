@@ -16126,11 +16126,14 @@ app.get("/api/live-ops/metrics", (req, res) => {
 // Inicialização segura de avaliações (sem mockups fictícios)
 function initDefaultReviews() {
   if (!db.reviews) db.reviews = [];
-  // Se contiver apenas os dados mockados de teste antigos, faz a limpeza automática
+  // Purga definitiva de quaisquer dados mockados de teste antigos
   const mockAuthors = ["Marcelo Albuquerque", "Fernanda Costa", "Rodrigo Mendes (Engenheiro)", "Camila Nogueira"];
-  if (db.reviews.length > 0 && db.reviews.every(r => mockAuthors.includes(r.author))) {
-    db.reviews = [];
-    db.reviewInsights = null;
+  const hadMock = db.reviews.some(r => mockAuthors.includes(r.author));
+  if (hadMock) {
+    db.reviews = db.reviews.filter(r => !mockAuthors.includes(r.author));
+    if (db.reviews.length === 0) {
+      db.reviewInsights = null;
+    }
     if (db.observations) {
       db.observations = db.observations.filter(o => !o.description?.includes("[IA Auto-Ticket]") && !o.generatedFromReviewId);
     }
