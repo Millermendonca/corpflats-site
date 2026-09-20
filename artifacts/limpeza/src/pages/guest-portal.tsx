@@ -6,13 +6,14 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { 
   Building2, Star, RotateCcw, Calendar, Users, Coffee, ShieldCheck, 
   Sparkles, CheckCircle2, ArrowRight, Clock, KeyRound, 
   MessageCircle, FileText, Ban, AlertTriangle, ChevronRight,
   Wifi, HelpCircle, Check, Copy, Phone, UserCheck, ShieldAlert,
   MapPin, Navigation, ExternalLink, Car, ArrowLeft, Search,
-  CreditCard, QrCode, RefreshCw, AlertCircle, DoorOpen
+  CreditCard, QrCode, RefreshCw, AlertCircle, DoorOpen, MoreVertical
 } from "lucide-react"
 import { format, parseISO, differenceInDays } from "date-fns"
 import { ptBR } from "date-fns/locale"
@@ -345,13 +346,13 @@ export default function GuestPortal() {
     return (
       <div className="min-h-screen bg-slate-50/70 text-slate-900 flex flex-col font-sans pb-16">
         {/* Header Clean */}
-        <nav className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-4 sm:px-8 py-3 shadow-2xs">
-          <div className="max-w-4xl mx-auto flex items-center justify-between gap-3">
+        <nav className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-3 sm:px-8 py-2.5 sm:py-3 shadow-2xs w-full max-w-full">
+          <div className="max-w-4xl mx-auto flex items-center justify-between gap-2 sm:gap-3">
             <div 
               onClick={() => setLocation("/reservar")}
-              className="flex items-center gap-2 cursor-pointer hover:opacity-90 transition-opacity"
+              className="flex items-center gap-2 cursor-pointer hover:opacity-90 transition-opacity shrink-0"
             >
-              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-sm sm:text-base shadow-sm">
+              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-xs sm:text-base shadow-sm">
                 CF
               </div>
               <span className="font-extrabold text-base sm:text-lg tracking-tight text-slate-900">CorpFlats</span>
@@ -361,10 +362,10 @@ export default function GuestPortal() {
               href="https://wa.me/5522997124021?text=Ol%C3%A1!%20Gostaria%20de%20ajuda%20para%20localizar%20minha%20reserva."
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-emerald-200 bg-emerald-50/90 hover:bg-emerald-100/90 text-emerald-800 text-xs font-bold transition-all shadow-2xs"
+              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl border border-emerald-200 bg-emerald-50/90 hover:bg-emerald-100/90 text-emerald-800 text-xs font-bold transition-all shadow-2xs shrink-0"
             >
               <MessageCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-              <span>WhatsApp Administração</span>
+              <span>WhatsApp<span className="hidden sm:inline"> Administração</span></span>
             </a>
           </div>
         </nav>
@@ -561,41 +562,46 @@ export default function GuestPortal() {
 
   return (
     <div className="min-h-screen bg-slate-50/70 text-slate-900 flex flex-col font-sans selection:bg-sky-500 selection:text-white pb-20 w-full max-w-full overflow-x-hidden">
-      {/* ── Top Navigation Bar (Header Clean & Sofisticado) ──────────────── */}
-      <nav className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-4 sm:px-8 py-3 shadow-2xs w-full max-w-full">
-        <div className="max-w-4xl mx-auto flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-sm sm:text-base shadow-sm">
+      {/* ── Top Navigation Bar (Header Clean, Sofisticado & 100% Responsivo) ──────────────── */}
+      <nav className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-3 sm:px-8 py-2.5 sm:py-3 shadow-2xs w-full max-w-full">
+        <div className="max-w-4xl mx-auto flex items-center justify-between gap-2 sm:gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-xs sm:text-base shadow-sm shrink-0">
               CF
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-base sm:text-lg tracking-tight text-slate-900 leading-none">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                <span className="font-bold text-sm sm:text-base md:text-lg tracking-tight text-slate-900 leading-none shrink-0">
                   CorpFlats
                 </span>
                 {isPaid ? (
-                  <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200/90 text-[10px] font-bold py-0.5 px-2">
-                    ✓ {isOta ? (channelLower.includes("booking") ? "Pago via Booking" : "Pago via Airbnb") : "Reserva Confirmada & Paga"}
+                  <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200/90 text-[9.5px] sm:text-[10px] font-bold py-0.5 px-1.5 sm:px-2 shrink-0 whitespace-nowrap">
+                    ✓ <span className="hidden sm:inline">{isOta ? (channelLower.includes("booking") ? "Pago via Booking" : "Pago via Airbnb") : "Reserva Confirmada & Paga"}</span>
+                    <span className="sm:hidden">Pago</span>
                   </Badge>
                 ) : (
-                  <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-300 text-[10px] font-bold py-0.5 px-2 animate-pulse">
-                    ⏳ Aguardando Pagamento
+                  <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-300 text-[9.5px] sm:text-[10px] font-bold py-0.5 px-1.5 sm:px-2 animate-pulse shrink-0 whitespace-nowrap">
+                    ⏳ <span className="hidden sm:inline">Aguardando Pagamento</span>
+                    <span className="sm:hidden">Pendente</span>
                   </Badge>
                 )}
               </div>
-              <span className="text-[11px] text-slate-500 font-mono font-medium block mt-0.5">
-                Localizador: <strong className="text-slate-800 font-bold">{reservation.code}</strong>
+              <span className="text-[10.5px] sm:text-[11px] text-slate-500 font-mono font-medium block mt-0.5 truncate">
+                <span className="hidden sm:inline">Localizador: </span>
+                <span className="sm:hidden">Loc: </span>
+                <strong className="text-slate-800 font-bold">{reservation.code}</strong>
               </span>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {/* Atalhos para Tablet e Desktop (>= md) */}
             <Button
               type="button"
               variant="outline"
               size="sm"
               onClick={() => setLocation(`/pre-checkin/${code || reservation.code}`)}
-              className="h-9 px-3 rounded-xl border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs flex items-center gap-1.5 shadow-2xs"
+              className="hidden md:inline-flex h-9 px-3 rounded-xl border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs items-center gap-1.5 shadow-2xs"
             >
               <FileText className="w-3.5 h-3.5 text-indigo-600" />
               <span>Pré-Check-in</span>
@@ -605,20 +611,73 @@ export default function GuestPortal() {
               variant="outline"
               size="sm"
               onClick={() => setLocation(`/checkout/${code || reservation.code}`)}
-              className="h-9 px-3 rounded-xl border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs flex items-center gap-1.5 shadow-2xs"
+              className="hidden md:inline-flex h-9 px-3 rounded-xl border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs items-center gap-1.5 shadow-2xs"
             >
               <DoorOpen className="w-3.5 h-3.5 text-slate-600" />
               <span>Check-out</span>
             </Button>
+
+            {/* Ação Direta WhatsApp (Sempre visível e acessível em qualquer tela) */}
             <a
               href={whatsappUrl}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs hover:shadow-sm active:scale-95 transition-all"
+              className="inline-flex items-center gap-1.5 py-1.5 sm:py-2 px-2.5 sm:px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs hover:shadow-sm active:scale-95 transition-all shrink-0"
             >
-              <MessageCircle className="w-3.5 h-3.5 fill-white/20" />
+              <MessageCircle className="w-3.5 h-3.5 fill-white/20 shrink-0" />
               <span>WhatsApp</span>
             </a>
+
+            {/* Menu Dropdown Mobile (< md) para Atalhos Rápidos */}
+            <div className="md:hidden">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 w-8 p-0 rounded-xl border-slate-200 hover:bg-slate-50 text-slate-700 shadow-2xs flex items-center justify-center shrink-0"
+                    aria-label="Atalhos e Opções da Reserva"
+                  >
+                    <MoreVertical className="w-4 h-4 text-slate-600" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-52 bg-white border-slate-200 rounded-2xl shadow-xl p-1.5 text-slate-800">
+                  <DropdownMenuItem
+                    onClick={() => setLocation(`/pre-checkin/${code || reservation.code}`)}
+                    className="flex items-center gap-2.5 px-3 py-2.5 text-xs font-bold rounded-xl cursor-pointer hover:bg-slate-100"
+                  >
+                    <FileText className="w-4 h-4 text-indigo-600 shrink-0" />
+                    <span>Pré-Check-in Digital</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => setLocation(`/checkout/${code || reservation.code}`)}
+                    className="flex items-center gap-2.5 px-3 py-2.5 text-xs font-bold rounded-xl cursor-pointer hover:bg-slate-100"
+                  >
+                    <DoorOpen className="w-4 h-4 text-slate-600 shrink-0" />
+                    <span>Check-out Expresso</span>
+                  </DropdownMenuItem>
+                  {hasBreakfast && (
+                    <DropdownMenuItem
+                      onClick={() => setLocation(`/minha-reserva/${reservation.code || code}/cafe`)}
+                      className="flex items-center gap-2.5 px-3 py-2.5 text-xs font-bold rounded-xl cursor-pointer hover:bg-slate-100"
+                    >
+                      <Coffee className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>Cardápio do Café</span>
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem
+                    onClick={() => {
+                      setTermsModalTab("rules")
+                      setTermsModalOpen(true)
+                    }}
+                    className="flex items-center gap-2.5 px-3 py-2.5 text-xs font-bold rounded-xl cursor-pointer hover:bg-slate-100"
+                  >
+                    <ShieldCheck className="w-4 h-4 text-sky-600 shrink-0" />
+                    <span>Regras & Contrato</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </div>
         </div>
       </nav>
