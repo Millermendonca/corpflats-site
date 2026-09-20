@@ -239,6 +239,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           { href: "/portaria", label: "Terminal da Portaria (Tablet)", icon: Tablet, description: "Check-in presencial e liberação" },
           { href: "/pedidos-cafe", label: "Café da Manhã & Produção", icon: Coffee, description: "Ficha técnica e montagem dos pedidos" },
           { href: "/relatorios-cafe", label: "Relatórios & Histórico do Café", icon: BarChart3, description: "Insights de consumo, custos e histórico geral" },
+          { href: "/whatsapp-chat", label: "WhatsApp Web (Chat)", icon: MessageSquare, description: "Conversas em tempo real, envio e histórico completo" },
           { href: "/whatsapp", label: "Automação WhatsApp", icon: MessageSquare, description: "Réguas de gatilhos, editor, fila e histórico" },
           { href: "/reservar", label: "Site de Reservas Diretas", icon: Globe, description: "Página pública de vendas" },
         ]

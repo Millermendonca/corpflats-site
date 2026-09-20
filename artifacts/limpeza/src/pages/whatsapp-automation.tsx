@@ -1073,6 +1073,15 @@ export default function WhatsappAutomation() {
             </div>
 
             <Button 
+              size="sm" 
+              className="gap-1.5 text-xs rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-xs"
+              onClick={() => setLocation("/whatsapp-chat")}
+            >
+              <MessageSquare className="w-3.5 h-3.5" />
+              WhatsApp Web (Chat Ao Vivo)
+            </Button>
+
+            <Button 
               variant="outline" 
               size="sm" 
               className="gap-1.5 text-xs rounded-xl"

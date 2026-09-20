@@ -2277,6 +2277,33 @@ export function extractIncomingMessageInfo(body) {
     text = body.content;
   }
 
+  let type = "text";
+  let mediaUrl = null;
+  let fileName = null;
+  let caption = "";
+
+  if (body.image || body.imageUrl || body.data?.message?.imageMessage) {
+    type = "image";
+    mediaUrl = body.image?.imageUrl || body.imageUrl || body.data?.message?.imageMessage?.url || body.data?.message?.imageMessage?.directPath || "";
+    caption = body.image?.caption || body.caption || body.data?.message?.imageMessage?.caption || "";
+  } else if (body.audio || body.audioUrl || body.data?.message?.audioMessage) {
+    type = "audio";
+    mediaUrl = body.audio?.audioUrl || body.audioUrl || body.data?.message?.audioMessage?.url || body.data?.message?.audioMessage?.directPath || "";
+  } else if (body.document || body.documentUrl || body.data?.message?.documentMessage) {
+    type = "document";
+    mediaUrl = body.document?.documentUrl || body.documentUrl || body.data?.message?.documentMessage?.url || "";
+    fileName = body.document?.fileName || body.fileName || body.data?.message?.documentMessage?.fileName || "Documento.pdf";
+    caption = body.document?.caption || body.caption || "";
+  } else if (body.video || body.videoUrl || body.data?.message?.videoMessage) {
+    type = "video";
+    mediaUrl = body.video?.videoUrl || body.videoUrl || body.data?.message?.videoMessage?.url || "";
+    caption = body.video?.caption || body.caption || "";
+  } else if (body.location || body.data?.message?.locationMessage) {
+    type = "location";
+  }
+
+  const messageId = String(body.messageId || body.id || body.data?.key?.id || body.key?.id || `msg_${Date.now()}`);
+
   return {
     isGroup,
     groupId,
@@ -2284,7 +2311,13 @@ export function extractIncomingMessageInfo(body) {
     senderPhone,
     senderName,
     fromMe,
-    text: text ? text.trim() : ""
+    text: text ? text.trim() : (caption ? caption.trim() : (type !== "text" ? `[${type}]` : "")),
+    type,
+    mediaUrl,
+    fileName,
+    caption,
+    messageId,
+    timestamp: body.momment || body.moment || body.timestamp || new Date().toISOString()
   };
 }
 
@@ -2575,6 +2608,282 @@ export async function getZapiGroups(config) {
   }
 }
 
+// ── Formatador de Telefone para Interface do Chat ──────────────────────────────
+export function formatPhoneDisplay(phone = "") {
+  const digits = String(phone || "").replace(/\D/g, "");
+  if (!digits) return phone;
+  if (digits.length === 13 && digits.startsWith("55")) {
+    return `+55 (${digits.slice(2, 4)}) ${digits.slice(4, 9)}-${digits.slice(9)}`;
+  }
+  if (digits.length === 12 && digits.startsWith("55")) {
+    return `+55 (${digits.slice(2, 4)}) ${digits.slice(4, 8)}-${digits.slice(8)}`;
+  }
+  if (digits.length === 11) {
+    return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
+  }
+  if (digits.length === 10) {
+    return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
+  }
+  return digits;
+}
+
+// ── Localizador de Reserva por Telefone ─────────────────────────────────────────
+export function findReservationByPhone(db, phone) {
+  if (!db?.reservations || !phone) return null;
+  const cleanP = cleanWhatsAppPhone(phone);
+  if (!cleanP) return null;
+  const last8 = cleanP.slice(-8);
+  const matched = (db.reservations || []).filter(r => {
+    if (!r.guestPhone) return false;
+    const rClean = cleanWhatsAppPhone(r.guestPhone);
+    return rClean === cleanP || (rClean && last8 && rClean.slice(-8) === last8);
+  });
+  if (matched.length === 0) return null;
+  matched.sort((a, b) => String(b.checkoutDate || "").localeCompare(String(a.checkoutDate || "")));
+  return matched[0];
+}
+
+// ── Inclusão de Mensagem na Conversa do WhatsApp ───────────────────────────────
+export function appendMessageToConversation(db, {
+  phone,
+  senderName = "",
+  senderPhone = "",
+  fromMe = false,
+  text = "",
+  type = "text",
+  mediaUrl = null,
+  fileName = null,
+  caption = null,
+  buttons = [],
+  triggerEvent = null,
+  reservationCode = null,
+  status = "delivered",
+  timestamp = null,
+  messageId = null,
+  isGroup = false,
+  groupId = null,
+  groupName = null
+}) {
+  if (!db) return null;
+  if (!db.whatsappConversations) db.whatsappConversations = [];
+
+  const rawPhone = isGroup && groupId ? groupId : phone;
+  const cleanPhone = isGroup ? rawPhone : (cleanWhatsAppPhone(rawPhone) || rawPhone);
+  if (!cleanPhone) return null;
+
+  let conv = db.whatsappConversations.find(c => c.phone === cleanPhone || c.id === cleanPhone);
+
+  const matchedResv = reservationCode
+    ? (db.reservations || []).find(r => r.code === reservationCode)
+    : findReservationByPhone(db, cleanPhone);
+
+  const nowIso = timestamp || new Date().toISOString();
+
+  if (!conv) {
+    conv = {
+      id: cleanPhone,
+      phone: cleanPhone,
+      formattedPhone: isGroup ? groupName || cleanPhone : formatPhoneDisplay(cleanPhone),
+      name: isGroup ? groupName || "Grupo WhatsApp" : (matchedResv?.guestName || senderName || formatPhoneDisplay(cleanPhone)),
+      avatarUrl: "",
+      isGroup: Boolean(isGroup),
+      groupId: groupId || null,
+      groupName: groupName || null,
+      unreadCount: fromMe ? 0 : 1,
+      pinned: false,
+      reservationCode: matchedResv?.code || null,
+      flatNumber: matchedResv?.flatNumber || "",
+      checkinDate: matchedResv?.checkinDate || "",
+      checkoutDate: matchedResv?.checkoutDate || "",
+      status: matchedResv?.status || "confirmada",
+      paymentStatus: matchedResv?.paymentStatus || "",
+      totalAmount: matchedResv?.totalAmount || 0,
+      lastMessage: null,
+      updatedAt: nowIso,
+      messages: []
+    };
+    db.whatsappConversations.unshift(conv);
+  } else {
+    if (!conv.reservationCode && matchedResv) {
+      conv.reservationCode = matchedResv.code;
+      conv.flatNumber = matchedResv.flatNumber;
+      conv.checkinDate = matchedResv.checkinDate;
+      conv.checkoutDate = matchedResv.checkoutDate;
+      conv.status = matchedResv.status;
+      conv.paymentStatus = matchedResv.paymentStatus;
+      conv.totalAmount = matchedResv.totalAmount;
+    }
+    if (senderName && !fromMe && (!conv.name || conv.name === conv.phone)) {
+      conv.name = senderName;
+    }
+  }
+
+  const finalMsgId = messageId || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+
+  const exists = conv.messages.some(m => 
+    (m.messageId && m.messageId === finalMsgId) || 
+    (m.id === finalMsgId) || 
+    (m.timestamp === nowIso && m.text === text && m.fromMe === fromMe)
+  );
+
+  if (exists) {
+    return conv;
+  }
+
+  const newMsg = {
+    id: finalMsgId,
+    messageId: finalMsgId,
+    fromMe: Boolean(fromMe),
+    senderName: fromMe ? "CorpFlats" : (senderName || conv.name),
+    senderPhone: senderPhone || "",
+    text: text || "",
+    type: type || "text",
+    mediaUrl: mediaUrl || null,
+    fileName: fileName || null,
+    caption: caption || null,
+    buttons: Array.isArray(buttons) ? buttons : [],
+    triggerEvent: triggerEvent || null,
+    timestamp: nowIso,
+    status: fromMe ? (status || "read") : "delivered"
+  };
+
+  conv.messages.push(newMsg);
+  if (conv.messages.length > 300) {
+    conv.messages = conv.messages.slice(-300);
+  }
+
+  conv.lastMessage = {
+    text: newMsg.text || (newMsg.type === "document" ? `📄 ${newMsg.fileName || "Documento"}` : (newMsg.type === "image" ? "📷 Foto" : (newMsg.type === "audio" ? "🎵 Áudio" : "Mensagem"))),
+    timestamp: nowIso,
+    fromMe: newMsg.fromMe,
+    status: newMsg.status,
+    type: newMsg.type
+  };
+  conv.updatedAt = nowIso;
+
+  if (!fromMe) {
+    conv.unreadCount = (conv.unreadCount || 0) + 1;
+  }
+
+  return conv;
+}
+
+// ── Sincronização & Migração Inicial do Repositório de Conversas ────────────────
+export function syncWhatsappConversationsStore(db) {
+  if (!db) return;
+  if (!db.whatsappConversations) db.whatsappConversations = [];
+
+  for (const r of (db.reservations || [])) {
+    if (!r.guestPhone) continue;
+    const cleanP = cleanWhatsAppPhone(r.guestPhone);
+    if (!cleanP) continue;
+
+    let conv = db.whatsappConversations.find(c => c.phone === cleanP);
+    if (!conv) {
+      conv = {
+        id: cleanP,
+        phone: cleanP,
+        formattedPhone: formatPhoneDisplay(cleanP),
+        name: r.guestName || "Hóspede",
+        avatarUrl: "",
+        isGroup: false,
+        unreadCount: 0,
+        pinned: false,
+        reservationCode: r.code,
+        flatNumber: r.flatNumber || "",
+        checkinDate: r.checkinDate || "",
+        checkoutDate: r.checkoutDate || "",
+        status: r.status || "confirmada",
+        paymentStatus: r.paymentStatus || "",
+        totalAmount: r.totalAmount || 0,
+        lastMessage: null,
+        updatedAt: r.createdAt || new Date().toISOString(),
+        messages: []
+      };
+      db.whatsappConversations.push(conv);
+    } else {
+      if (!conv.reservationCode || (r.checkoutDate && (!conv.checkoutDate || r.checkoutDate > conv.checkoutDate))) {
+        conv.reservationCode = r.code;
+        conv.flatNumber = r.flatNumber || conv.flatNumber;
+        conv.checkinDate = r.checkinDate || conv.checkinDate;
+        conv.checkoutDate = r.checkoutDate || conv.checkoutDate;
+        conv.status = r.status || conv.status;
+        conv.paymentStatus = r.paymentStatus || conv.paymentStatus;
+        conv.totalAmount = r.totalAmount || conv.totalAmount;
+      }
+    }
+  }
+
+  for (const hist of (db.whatsappHistory || [])) {
+    if (!hist.guestPhone) continue;
+    const cleanP = cleanWhatsAppPhone(hist.guestPhone);
+    if (!cleanP) continue;
+
+    let conv = db.whatsappConversations.find(c => c.phone === cleanP);
+    if (!conv) {
+      conv = {
+        id: cleanP,
+        phone: cleanP,
+        formattedPhone: formatPhoneDisplay(cleanP),
+        name: hist.guestName || formatPhoneDisplay(cleanP),
+        avatarUrl: "",
+        isGroup: false,
+        unreadCount: 0,
+        pinned: false,
+        reservationCode: hist.reservationCode || null,
+        flatNumber: "",
+        checkinDate: "",
+        checkoutDate: "",
+        status: "confirmada",
+        paymentStatus: "",
+        totalAmount: 0,
+        lastMessage: null,
+        updatedAt: hist.sentAt || new Date().toISOString(),
+        messages: []
+      };
+      db.whatsappConversations.push(conv);
+    }
+
+    const msgId = hist.id || `msg_hist_${hist.sentAt}`;
+    const alreadyExists = conv.messages.some(m => m.id === msgId || (m.timestamp === hist.sentAt && m.text === hist.message));
+    if (!alreadyExists) {
+      conv.messages.push({
+        id: msgId,
+        messageId: msgId,
+        fromMe: true,
+        senderName: "CorpFlats",
+        senderPhone: "",
+        text: hist.message || "",
+        type: hist.documentUrl ? "document" : "text",
+        mediaUrl: hist.documentUrl || null,
+        fileName: hist.documentName || null,
+        caption: null,
+        buttons: hist.buttons || [],
+        triggerEvent: hist.triggerEvent || null,
+        timestamp: hist.sentAt || new Date().toISOString(),
+        status: hist.status === "sent" ? "read" : "failed"
+      });
+    }
+  }
+
+  for (const conv of db.whatsappConversations) {
+    if (conv.messages && conv.messages.length > 0) {
+      conv.messages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      const last = conv.messages[conv.messages.length - 1];
+      conv.lastMessage = {
+        text: last.text || (last.type === "document" ? `📄 ${last.fileName || "Documento"}` : (last.type === "image" ? "📷 Foto" : (last.type === "audio" ? "🎵 Áudio" : "Mensagem"))),
+        timestamp: last.timestamp,
+        fromMe: last.fromMe,
+        status: last.status,
+        type: last.type
+      };
+      conv.updatedAt = last.timestamp;
+    }
+  }
+
+  db.whatsappConversations.sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
+}
+
 // ── Gerenciador da Fila & Background Scheduler ────────────────────────────────
 export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotification) {
   const getDb = typeof dbOrGetter === "function" ? dbOrGetter : () => dbOrGetter;
@@ -2746,6 +3055,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     if (!db.whatsappHistory) {
       db.whatsappHistory = [];
     }
+
+    if (!db.whatsappConversations) {
+      db.whatsappConversations = [];
+    }
+    syncWhatsappConversationsStore(db);
   }
 
   ensureDbDefaults();
@@ -3005,6 +3319,23 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       sentAt: item.sentAt
     });
 
+    appendMessageToConversation(db, {
+      phone: item.guestPhone,
+      senderName: "CorpFlats",
+      senderPhone: db.zapiConfig?.instanceId || "",
+      fromMe: true,
+      text: item.renderedMessage,
+      type: item.documentUrl ? "document" : "text",
+      mediaUrl: item.documentUrl || null,
+      fileName: item.documentName || null,
+      buttons: item.renderedButtons,
+      triggerEvent: item.triggerEvent,
+      reservationCode: item.reservationCode,
+      status: result.success ? "read" : "failed",
+      timestamp: item.sentAt,
+      messageId: result.messageId || `msg_manual_${Date.now()}`
+    });
+
     saveDatabase();
     res.json({ success: result.success, result, queueItem: item });
   });
@@ -3124,6 +3455,22 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       method: result.method || (sendMode === "text" ? "text_links" : "buttons"),
       error: result.error || null,
       sentAt: new Date().toISOString()
+    });
+
+    appendMessageToConversation(db, {
+      phone: phone,
+      senderName: "CorpFlats",
+      senderPhone: db?.zapiConfig?.instanceId || "",
+      fromMe: true,
+      text: finalMessage,
+      type: hasDocTest ? "document" : "text",
+      mediaUrl: finalDocUrl || null,
+      fileName: finalDocName || null,
+      buttons: finalButtons,
+      triggerEvent: "test_dispatch",
+      status: result.success ? "read" : "failed",
+      timestamp: new Date().toISOString(),
+      messageId: result.messageId || `msg_test_${Date.now()}`
     });
     saveDatabase();
 
@@ -3270,6 +3617,23 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         sentAt: new Date().toISOString()
       });
 
+      appendMessageToConversation(db, {
+        phone: d.phone,
+        senderName: "CorpFlats",
+        senderPhone: db?.zapiConfig?.instanceId || "",
+        fromMe: true,
+        text: renderedMessage,
+        type: (docUrl || hasAttachment) ? "document" : "text",
+        mediaUrl: docUrl || null,
+        fileName: docName || null,
+        buttons: renderedButtons,
+        triggerEvent: template.triggerEvent || template.id,
+        reservationCode: reservation.code || reservation.reservationCode || String(reservation.id),
+        status: sendRes.success ? "read" : "failed",
+        timestamp: new Date().toISOString(),
+        messageId: sendRes.messageId || `msg_disp_${Date.now()}`
+      });
+
       if (dispatches.length > 1) {
         await new Promise(r => setTimeout(r, 1200));
       }
@@ -3341,19 +3705,62 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     }
 
     const incomingInfo = extractIncomingMessageInfo(req.body);
-    if (!incomingInfo || !incomingInfo.text) {
-      return res.status(200).json({ success: true, message: "Mensagem vazia ou sem texto ignorada" });
+    if (!incomingInfo || (!incomingInfo.text && !incomingInfo.mediaUrl && incomingInfo.type === "text")) {
+      return res.status(200).json({ success: true, message: "Mensagem vazia ignorada" });
     }
 
-    const result = await handleConciergeGroupMessage({
-      db,
-      saveDatabase,
-      createNotification,
-      incomingInfo,
-      isTest: false
-    });
+    // 1. Grava no Chat WhatsApp Web
+    const rawTarget = incomingInfo.isGroup && incomingInfo.groupId
+      ? incomingInfo.groupId
+      : (incomingInfo.senderPhone || req.body?.phone || req.body?.participantPhone);
+    const cleanTarget = incomingInfo.isGroup ? rawTarget : cleanWhatsAppPhone(rawTarget);
 
-    res.status(200).json({ success: true, result });
+    let updatedConv = null;
+    if (cleanTarget) {
+      updatedConv = appendMessageToConversation(db, {
+        phone: cleanTarget,
+        senderName: incomingInfo.senderName,
+        senderPhone: incomingInfo.senderPhone,
+        fromMe: incomingInfo.fromMe,
+        text: incomingInfo.text,
+        type: incomingInfo.type,
+        mediaUrl: incomingInfo.mediaUrl,
+        fileName: incomingInfo.fileName,
+        caption: incomingInfo.caption,
+        status: "delivered",
+        timestamp: incomingInfo.timestamp || new Date().toISOString(),
+        messageId: incomingInfo.messageId,
+        isGroup: incomingInfo.isGroup,
+        groupId: incomingInfo.groupId,
+        groupName: incomingInfo.groupName
+      });
+
+      // Se for mensagem recebida de cliente (!fromMe), cria notificação visual e sonora
+      if (!incomingInfo.fromMe && typeof createNotification === "function") {
+        const preview = incomingInfo.text || (incomingInfo.type === "audio" ? "🎵 Áudio recebido" : (incomingInfo.type === "image" ? "📷 Foto recebida" : (incomingInfo.type === "document" ? "📄 Documento recebido" : "Nova mensagem")));
+        createNotification({
+          title: `WhatsApp: ${incomingInfo.senderName || updatedConv?.name || cleanTarget}`,
+          message: preview.substring(0, 120),
+          type: "whatsapp_message",
+          link: `/whatsapp-chat?phone=${cleanTarget}`
+        });
+      }
+      if (typeof saveDatabase === "function") saveDatabase();
+    }
+
+    // 2. Se for grupo de portaria/concierge, processa checkout automático
+    let result = null;
+    if (incomingInfo.isGroup && incomingInfo.text) {
+      result = await handleConciergeGroupMessage({
+        db,
+        saveDatabase,
+        createNotification,
+        incomingInfo,
+        isTest: false
+      });
+    }
+
+    res.status(200).json({ success: true, result, chatUpdated: Boolean(updatedConv) });
   });
 
   // 18. Webhook Z-API: WhatsApp Desconectado (/api/whatsapp/webhook/disconnected)
@@ -3412,14 +3819,50 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       });
     } else {
       const incomingInfo = extractIncomingMessageInfo(req.body);
-      if (incomingInfo && incomingInfo.text) {
-        await handleConciergeGroupMessage({
-          db,
-          saveDatabase,
-          createNotification,
-          incomingInfo,
-          isTest: false
-        });
+      if (incomingInfo && (incomingInfo.text || incomingInfo.mediaUrl || incomingInfo.type !== "text")) {
+        const rawTarget = incomingInfo.isGroup && incomingInfo.groupId
+          ? incomingInfo.groupId
+          : (incomingInfo.senderPhone || req.body?.phone || req.body?.participantPhone);
+        const cleanTarget = incomingInfo.isGroup ? rawTarget : cleanWhatsAppPhone(rawTarget);
+
+        if (cleanTarget) {
+          appendMessageToConversation(db, {
+            phone: cleanTarget,
+            senderName: incomingInfo.senderName,
+            senderPhone: incomingInfo.senderPhone,
+            fromMe: incomingInfo.fromMe,
+            text: incomingInfo.text,
+            type: incomingInfo.type,
+            mediaUrl: incomingInfo.mediaUrl,
+            fileName: incomingInfo.fileName,
+            caption: incomingInfo.caption,
+            status: "delivered",
+            timestamp: incomingInfo.timestamp || new Date().toISOString(),
+            messageId: incomingInfo.messageId,
+            isGroup: incomingInfo.isGroup,
+            groupId: incomingInfo.groupId,
+            groupName: incomingInfo.groupName
+          });
+          if (!incomingInfo.fromMe && typeof createNotification === "function") {
+            createNotification({
+              title: `WhatsApp: ${incomingInfo.senderName || cleanTarget}`,
+              message: (incomingInfo.text || "Nova mensagem recebida").substring(0, 100),
+              type: "whatsapp_message",
+              link: `/whatsapp-chat?phone=${cleanTarget}`
+            });
+          }
+          if (typeof saveDatabase === "function") saveDatabase();
+        }
+
+        if (incomingInfo.isGroup && incomingInfo.text) {
+          await handleConciergeGroupMessage({
+            db,
+            saveDatabase,
+            createNotification,
+            incomingInfo,
+            isTest: false
+          });
+        }
       }
     }
     res.status(200).json({ success: true, message: "Webhook processado" });
@@ -3523,6 +3966,353 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     const db = getDb();
     ensureDbDefaults();
     res.json(db?.zapiRawWebhookLogs || []);
+  });
+
+  // ── Rotas do WhatsApp Web / Live Chat ───────────────────────────────────────
+
+  // A. Listar Conversas (/api/whatsapp/chat/conversations)
+  app.get("/api/whatsapp/chat/conversations", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    syncWhatsappConversationsStore(db);
+
+    const { search = "", tab = "all", limit = 50, offset = 0 } = req.query;
+    let list = [...(db.whatsappConversations || [])];
+
+    const today = new Date();
+    const todayStr = new Date(today.getTime() - 3 * 3600000).toISOString().substring(0, 10);
+
+    if (tab === "unread") {
+      list = list.filter(c => (c.unreadCount || 0) > 0);
+    } else if (tab === "active") {
+      list = list.filter(c => c.checkoutDate && c.checkoutDate >= todayStr && c.status !== "cancelada");
+    } else if (tab === "today") {
+      list = list.filter(c => (c.checkinDate === todayStr || c.checkoutDate === todayStr) && c.status !== "cancelada");
+    } else if (tab === "groups") {
+      list = list.filter(c => c.isGroup);
+    }
+
+    if (search && String(search).trim()) {
+      const q = String(search).trim().toLowerCase();
+      list = list.filter(c => 
+        (c.name && c.name.toLowerCase().includes(q)) ||
+        (c.phone && c.phone.includes(q)) ||
+        (c.formattedPhone && c.formattedPhone.toLowerCase().includes(q)) ||
+        (c.flatNumber && String(c.flatNumber).toLowerCase().includes(q)) ||
+        (c.reservationCode && c.reservationCode.toLowerCase().includes(q)) ||
+        (c.lastMessage?.text && c.lastMessage.text.toLowerCase().includes(q))
+      );
+    }
+
+    list.sort((a, b) => {
+      if (a.pinned && !b.pinned) return -1;
+      if (!a.pinned && b.pinned) return 1;
+      return new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime();
+    });
+
+    const total = list.length;
+    const paginated = list.slice(Number(offset), Number(offset) + Number(limit));
+    const totalUnread = (db.whatsappConversations || []).reduce((acc, c) => acc + (c.unreadCount || 0), 0);
+    const isConnected = db.zapiConfig?.connectionState === "connected";
+
+    res.json({
+      conversations: paginated,
+      total,
+      totalUnread,
+      connected: isConnected,
+      instanceId: db.zapiConfig?.instanceId || null,
+      phone: db.zapiConfig?.phone || null
+    });
+  });
+
+  // B. Obter Conversa Específica com Mensagens (/api/whatsapp/chat/conversations/:phone)
+  app.get("/api/whatsapp/chat/conversations/:phone", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    syncWhatsappConversationsStore(db);
+
+    const rawPhone = req.params.phone;
+    const cleanPhone = cleanWhatsAppPhone(rawPhone) || rawPhone;
+    const conv = (db.whatsappConversations || []).find(c => c.phone === cleanPhone || c.id === cleanPhone || c.phone === rawPhone);
+
+    if (!conv) {
+      return res.status(404).json({ error: "Conversa não encontrada." });
+    }
+
+    let reservationDetails = null;
+    if (conv.reservationCode) {
+      reservationDetails = (db.reservations || []).find(r => r.code === conv.reservationCode);
+    }
+    if (!reservationDetails && conv.phone) {
+      reservationDetails = findReservationByPhone(db, conv.phone);
+    }
+
+    res.json({
+      conversation: conv,
+      reservation: reservationDetails || null
+    });
+  });
+
+  // C. Enviar Mensagem pelo Chat (/api/whatsapp/chat/send)
+  app.post("/api/whatsapp/chat/send", async (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    syncWhatsappConversationsStore(db);
+
+    const { 
+      phone, 
+      message = "", 
+      mediaUrl = "", 
+      fileName = "", 
+      mediaType = "text", 
+      buttons = [], 
+      reservationCode = null,
+      quickMessageId = null
+    } = req.body;
+
+    const rawPhone = String(phone || "").trim();
+    const isGroup = rawPhone.includes("@g.us");
+    const cleanPhone = isGroup ? rawPhone : cleanWhatsAppPhone(rawPhone);
+
+    if (!cleanPhone) {
+      return res.status(400).json({ error: "Número de telefone ou grupo inválido." });
+    }
+
+    let targetRes = null;
+    if (reservationCode) {
+      targetRes = (db.reservations || []).find(r => r.code === reservationCode);
+    } else if (!isGroup) {
+      targetRes = findReservationByPhone(db, cleanPhone);
+    }
+
+    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    let finalMessage = message;
+    if (targetRes && finalMessage) {
+      finalMessage = resolveWhatsAppTags(finalMessage, targetRes, db, baseUrl);
+    }
+
+    const sendOptions = {
+      phone: cleanPhone,
+      message: finalMessage,
+      buttons: Array.isArray(buttons) ? buttons : []
+    };
+
+    if (mediaType === "document" || fileName || (mediaUrl && mediaUrl.endsWith(".pdf"))) {
+      sendOptions.documentUrl = mediaUrl || db.zapiConfig?.guestGuidePdfUrl || "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf";
+      sendOptions.documentName = fileName || db.zapiConfig?.guestGuidePdfName || "Manual_do_Hospede_CorpFlats.pdf";
+      sendOptions.documentCaption = finalMessage || "";
+    } else if (mediaType === "image" && mediaUrl) {
+      sendOptions.documentUrl = mediaUrl;
+      sendOptions.documentName = fileName || "foto.jpg";
+      sendOptions.documentCaption = finalMessage || "";
+    }
+
+    console.log(`[WhatsApp Live Chat] Enviando mensagem para ${cleanPhone}...`);
+    const result = await sendZapiMessage(db.zapiConfig, sendOptions);
+
+    const nowIso = new Date().toISOString();
+    const msgType = mediaType === "document" ? "document" : (mediaType === "image" ? "image" : (mediaType === "audio" ? "audio" : "text"));
+
+    const updatedConv = appendMessageToConversation(db, {
+      phone: cleanPhone,
+      senderName: "CorpFlats",
+      senderPhone: db.zapiConfig?.instanceId || "",
+      fromMe: true,
+      text: finalMessage,
+      type: msgType,
+      mediaUrl: sendOptions.documentUrl || null,
+      fileName: sendOptions.documentName || null,
+      buttons: sendOptions.buttons,
+      triggerEvent: quickMessageId ? `qm_${quickMessageId}` : "chat_direct",
+      reservationCode: targetRes?.code || null,
+      status: result.success ? "read" : "failed",
+      timestamp: nowIso,
+      messageId: result.messageId || `msg_${Date.now()}`,
+      isGroup,
+      groupId: isGroup ? cleanPhone : null
+    });
+
+    if (!db.whatsappHistory) db.whatsappHistory = [];
+    db.whatsappHistory.push({
+      id: `chat_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      guestName: updatedConv?.name || targetRes?.guestName || "Hóspede",
+      guestPhone: cleanPhone,
+      reservationCode: targetRes?.code || null,
+      triggerEvent: quickMessageId ? `qm_${quickMessageId}` : "chat_direct",
+      message: finalMessage,
+      buttons: sendOptions.buttons || [],
+      documentUrl: sendOptions.documentUrl || null,
+      documentName: sendOptions.documentName || null,
+      status: result.success ? "sent" : "failed",
+      method: "chat_web",
+      error: result.error || null,
+      sentAt: nowIso
+    });
+
+    saveDatabase();
+
+    res.json({
+      success: result.success,
+      result,
+      conversation: updatedConv
+    });
+  });
+
+  // D. Marcar Conversa como Lida (/api/whatsapp/chat/:phone/read)
+  app.post("/api/whatsapp/chat/:phone/read", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const rawPhone = req.params.phone;
+    const cleanPhone = cleanWhatsAppPhone(rawPhone) || rawPhone;
+    const conv = (db.whatsappConversations || []).find(c => c.phone === cleanPhone || c.id === cleanPhone || c.phone === rawPhone);
+
+    if (conv) {
+      conv.unreadCount = 0;
+      if (conv.messages) {
+        for (const m of conv.messages) {
+          if (!m.fromMe) m.status = "read";
+        }
+      }
+      saveDatabase();
+    }
+    res.json({ success: true });
+  });
+
+  // E. Fixar/Desafixar Conversa (/api/whatsapp/chat/:phone/pin)
+  app.post("/api/whatsapp/chat/:phone/pin", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const rawPhone = req.params.phone;
+    const cleanPhone = cleanWhatsAppPhone(rawPhone) || rawPhone;
+    const conv = (db.whatsappConversations || []).find(c => c.phone === cleanPhone || c.id === cleanPhone || c.phone === rawPhone);
+
+    if (conv) {
+      conv.pinned = !conv.pinned;
+      saveDatabase();
+      return res.json({ success: true, pinned: conv.pinned });
+    }
+    res.status(404).json({ error: "Conversa não encontrada" });
+  });
+
+  // F. Criar / Abrir Nova Conversa (/api/whatsapp/chat/new)
+  app.post("/api/whatsapp/chat/new", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    syncWhatsappConversationsStore(db);
+
+    const { phone, name = "", reservationCode = null } = req.body;
+    const cleanPhone = cleanWhatsAppPhone(phone);
+    if (!cleanPhone) {
+      return res.status(400).json({ error: "Número de telefone inválido." });
+    }
+
+    let conv = (db.whatsappConversations || []).find(c => c.phone === cleanPhone);
+    const targetRes = reservationCode
+      ? (db.reservations || []).find(r => r.code === reservationCode)
+      : findReservationByPhone(db, cleanPhone);
+
+    if (!conv) {
+      conv = {
+        id: cleanPhone,
+        phone: cleanPhone,
+        formattedPhone: formatPhoneDisplay(cleanPhone),
+        name: name || targetRes?.guestName || formatPhoneDisplay(cleanPhone),
+        avatarUrl: "",
+        isGroup: false,
+        unreadCount: 0,
+        pinned: false,
+        reservationCode: targetRes?.code || null,
+        flatNumber: targetRes?.flatNumber || "",
+        checkinDate: targetRes?.checkinDate || "",
+        checkoutDate: targetRes?.checkoutDate || "",
+        status: targetRes?.status || "confirmada",
+        paymentStatus: targetRes?.paymentStatus || "",
+        totalAmount: targetRes?.totalAmount || 0,
+        lastMessage: null,
+        updatedAt: new Date().toISOString(),
+        messages: []
+      };
+      db.whatsappConversations.unshift(conv);
+      saveDatabase();
+    }
+    res.json({ success: true, conversation: conv });
+  });
+
+  // G. Sincronizar Chats Ativos da Z-API (/api/whatsapp/chat/sync-contacts)
+  app.post("/api/whatsapp/chat/sync-contacts", async (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    syncWhatsappConversationsStore(db);
+
+    const instanceId = db.zapiConfig?.instanceId?.trim();
+    const token = db.zapiConfig?.token?.trim();
+    const clientToken = db.zapiConfig?.clientToken?.trim();
+
+    let importedCount = 0;
+    if (instanceId && token) {
+      try {
+        const baseUrl = db.zapiConfig?.baseUrl?.replace(/\/+$/, "") || "https://api.z-api.io";
+        const headers = { "Content-Type": "application/json" };
+        if (clientToken) headers["Client-Token"] = clientToken;
+
+        const resChats = await fetch(`${baseUrl}/instances/${instanceId}/token/${token}/chats`, { headers });
+        if (resChats.ok) {
+          const chats = await resChats.json();
+          if (Array.isArray(chats)) {
+            for (const chat of chats) {
+              const rawP = chat.phone || chat.id || "";
+              const isGrp = Boolean(chat.isGroup || String(rawP).includes("@g.us"));
+              const cleanP = isGrp ? rawP : cleanWhatsAppPhone(rawP);
+              if (!cleanP) continue;
+
+              let conv = db.whatsappConversations.find(c => c.phone === cleanP);
+              if (!conv) {
+                const targetRes = findReservationByPhone(db, cleanP);
+                conv = {
+                  id: cleanP,
+                  phone: cleanP,
+                  formattedPhone: isGrp ? chat.name || cleanP : formatPhoneDisplay(cleanP),
+                  name: chat.name || targetRes?.guestName || formatPhoneDisplay(cleanP),
+                  avatarUrl: chat.profilePicUrl || chat.photo || "",
+                  isGroup: isGrp,
+                  unreadCount: chat.unread || 0,
+                  pinned: Boolean(chat.pinned),
+                  reservationCode: targetRes?.code || null,
+                  flatNumber: targetRes?.flatNumber || "",
+                  checkinDate: targetRes?.checkinDate || "",
+                  checkoutDate: targetRes?.checkoutDate || "",
+                  status: targetRes?.status || "confirmada",
+                  paymentStatus: targetRes?.paymentStatus || "",
+                  totalAmount: targetRes?.totalAmount || 0,
+                  lastMessage: chat.lastMessage ? {
+                    text: chat.lastMessage.message || chat.lastMessage.text || "Mensagem",
+                    timestamp: chat.lastMessage.time || new Date().toISOString(),
+                    fromMe: Boolean(chat.lastMessage.fromMe),
+                    status: "delivered"
+                  } : null,
+                  updatedAt: chat.lastMessage?.time || new Date().toISOString(),
+                  messages: []
+                };
+                db.whatsappConversations.push(conv);
+                importedCount++;
+              } else {
+                if (chat.photo && !conv.avatarUrl) conv.avatarUrl = chat.photo;
+                if (chat.name && (!conv.name || conv.name === conv.phone)) conv.name = chat.name;
+              }
+            }
+            saveDatabase();
+          }
+        }
+      } catch (err) {
+        console.warn("[WhatsApp Sync] Erro ao buscar chats da Z-API:", err.message);
+      }
+    }
+
+    res.json({
+      success: true,
+      importedCount,
+      totalConversations: db.whatsappConversations.length
+    });
   });
 
   // Auto-sincronização de webhooks e notifySentByMe na inicialização
@@ -3661,6 +4451,21 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           method: item.method,
           error: item.error,
           sentAt: item.sentAt
+        });
+
+        appendMessageToConversation(db, {
+          phone: item.guestPhone,
+          senderName: "CorpFlats",
+          senderPhone: db?.zapiConfig?.instanceId || "",
+          fromMe: true,
+          text: item.renderedMessage,
+          type: "text",
+          buttons: item.renderedButtons,
+          triggerEvent: item.triggerEvent,
+          reservationCode: item.reservationCode,
+          status: result.success ? "read" : "failed",
+          timestamp: item.sentAt,
+          messageId: result.messageId || `msg_cron_${Date.now()}`
         });
 
         saveDatabase();
@@ -3959,6 +4764,23 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
           method: result.method || "instant_trigger",
           error: result.error || null,
           sentAt: new Date().toISOString()
+        });
+
+        appendMessageToConversation(db, {
+          phone: d.phone,
+          senderName: "CorpFlats",
+          senderPhone: db?.zapiConfig?.instanceId || "",
+          fromMe: true,
+          text: renderedMessage,
+          type: (docUrl || hasAttachment) ? "document" : "text",
+          mediaUrl: docUrl || null,
+          fileName: docName || null,
+          buttons: renderedButtons,
+          triggerEvent: eventName,
+          reservationCode: reservation.code,
+          status: result.success ? "read" : "failed",
+          timestamp: new Date().toISOString(),
+          messageId: result.messageId || `msg_auto_${Date.now()}`
         });
 
         if (dispatches.length > 1) {

@@ -41,6 +41,7 @@ import TarifasEditor from '@/pages/tarifas';
 import SystemLogsPage from '@/pages/system-logs';
 import MyAccount from '@/pages/my-account';
 import WhatsappAutomation from '@/pages/whatsapp-automation';
+import WhatsappChat from '@/pages/whatsapp-chat';
 import MaidWhatsappAutomation from '@/pages/maid-whatsapp-automation';
 import ShoppingListPage from '@/pages/shopping-list';
 import MaidStatementPage from '@/pages/maid-statement';
@@ -142,6 +143,10 @@ function Router() {
         <Route path="/fechamento-limpeza" component={Reports} />
 
         {/* WhatsApp Automation & Z-API Connection Routes */}
+        <Route path="/whatsapp-chat" component={WhatsappChat} />
+        <Route path="/chat" component={WhatsappChat} />
+        <Route path="/whatsapp-web" component={WhatsappChat} />
+        <Route path="/chat-whatsapp" component={WhatsappChat} />
         <Route path="/automacoes-camareiras" component={MaidWhatsappAutomation} />
         <Route path="/camareiras-whatsapp" component={MaidWhatsappAutomation} />
         <Route path="/governanca-whatsapp" component={MaidWhatsappAutomation} />

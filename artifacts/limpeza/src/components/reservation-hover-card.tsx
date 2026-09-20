@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/hooks/use-toast"
 import { 
-  MessageCircle, Phone, ExternalLink, Copy, Check, Coffee, DoorOpen, FileText,
+  MessageCircle, MessageSquare, Phone, ExternalLink, Copy, Check, Coffee, DoorOpen, FileText,
   Users, Calendar, Eye, Building2, X, Zap, SlidersHorizontal, RefreshCw
 } from "lucide-react"
 import { format, parseISO, differenceInDays } from "date-fns"
@@ -590,15 +590,25 @@ export function ReservationHoverCard({
           {/* Linha 1: Ação Primária WhatsApp & Telefone */}
           <div className="flex items-center gap-1.5">
             {waLink ? (
-              <a
-                href={waLink}
-                target="_blank"
-                rel="noreferrer"
-                className="flex-1 inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-bold text-xs shadow-xs transition-all group"
-              >
-                <MessageCircle className="w-3.5 h-3.5 fill-white/20 group-hover:scale-110 transition-transform" />
-                <span>WhatsApp</span>
-              </a>
+              <>
+                <a
+                  href={`/whatsapp-chat?phone=${finalWaPhone}`}
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 h-8 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-bold text-xs shadow-xs transition-all group"
+                  title="Abrir WhatsApp Web integrado dentro do sistema"
+                >
+                  <MessageSquare className="w-3.5 h-3.5 group-hover:scale-110 transition-transform" />
+                  <span>Chat PMS</span>
+                </a>
+                <a
+                  href={waLink}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="h-8 w-8 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 text-emerald-700 dark:text-emerald-300 flex items-center justify-center transition-colors shrink-0 shadow-2xs"
+                  title="Abrir WhatsApp Web Externo (wa.me)"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              </>
             ) : (
               <Button
                 disabled
