@@ -441,10 +441,34 @@ Caso necessite estender o horário (Late Check-out), solicite diretamente à adm
     ]
   },
   {
+    id: "tpl_checkout_completed",
+    triggerEvent: "checkout_completed",
+    title: "Check-out Confirmado • Agradecimento & Encerramento",
+    description: "Enviado imediatamente quando o check-out for confirmado (pelo hóspede no link digital ou pela portaria no WhatsApp).",
+    enabled: true,
+    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    recipientTarget: "guest",
+    triggerTiming: "immediate",
+    offsetValue: 0,
+    offsetUnit: "minutes",
+    fixedTime: "",
+    message: `Olá, *{{primeiro_nome}}*! 🚪✨
+Confirmamos o seu check-out no *Flat {{quarto}}* do *{{nome_hotel}}*.
+
+Agradecemos imensamente pela sua estadia e por todo o cuidado com o nosso espaço! Desejamos um excelente retorno para casa e uma ótima viagem.
+
+Esperamos recebê-lo(a) novamente em breve! 💙`,
+    footer: "CorpFlats • Check-out Concluído",
+    buttons: [
+      { id: "btn_portal", type: "URL", label: "🏨 Ver Minha Reserva", url: "{{link_portal_hospede}}" },
+      { id: "btn_site", type: "URL", label: "🌐 Reservar Novamente", url: "https://corpflats.onrender.com/reservar" }
+    ]
+  },
+  {
     id: "tpl_post_checkout_review",
     triggerEvent: "post_checkout_review",
     title: "Pós Check-out • Agradecimento & Avaliação Google",
-    description: "Enviado 2 horas após a saída convidando para avaliação 5 estrelas no Google.",
+    description: "Enviado na data do check-out (2h após o horário de saída padrão) convidando para avaliação 5 estrelas no Google (utiliza a data de check-out como referência, independente de evento manual).",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
     recipientTarget: "guest",
@@ -2546,11 +2570,11 @@ export async function handleConciergeGroupMessage({
 
     if (cleanReq) {
       cleanReq.isVacant = true; // Quarto desocupado
-      cleanReq.leavingGuest = senderLabel;
+      cleanReq.leavingGuest = cleanReq.leavingGuest || senderLabel;
       if (!cleanReq.pendingObservation) {
         cleanReq.pendingObservation = `Check-out confirmado no grupo da portaria (${senderLabel})`;
-      } else if (!cleanReq.pendingObservation.includes("portaria") && !cleanReq.pendingObservation.includes("Check-out")) {
-        cleanReq.pendingObservation = `${cleanReq.pendingObservation} | Check-out Portaria (${senderLabel})`;
+      } else if (!cleanReq.pendingObservation.includes("portaria") && !cleanReq.pendingObservation.includes("Portaria")) {
+        cleanReq.pendingObservation = `${cleanReq.pendingObservation} • Confirmado na Portaria (${senderLabel})`;
       }
       cleanReq.updatedAt = now;
     } else {
@@ -2583,10 +2607,19 @@ export async function handleConciergeGroupMessage({
       r.checkinDate <= todayStr && r.checkoutDate >= todayStr
     );
     matchingResList.forEach(r => {
-      r.actualCheckoutAt = now;
-      r.actualCheckoutTime = timeStr;
+      if (!r.actualCheckoutAt) {
+        r.actualCheckoutAt = now;
+        r.actualCheckoutTime = timeStr;
+      }
       r.status = "completed";
+      r.checkoutDone = true;
+      r.checkoutMethod = r.checkoutMethod ? `${r.checkoutMethod} + portaria_whatsapp` : "portaria_whatsapp";
       r.updatedAt = now;
+
+      // Dispara o gatilho pós check-out garantindo não-duplicação caso o hóspede já tenha informado
+      triggerCheckoutWhatsApp(db, saveDatabase, r, `portaria_whatsapp (${senderLabel})`).catch(e => {
+        console.warn("[Concierge Checkout Trigger]:", e.message);
+      });
     });
 
     // 4. Reconciliação de café da manhã para hoje (cancela se checkout ocorreu antes do horário do café)
@@ -4615,8 +4648,6 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
     r.status !== "cancelada" && 
     r.status !== "cancelled" && 
     r.status !== "CANCELLED" && 
-    r.status !== "checkout" && 
-    r.status !== "completed" &&
     r.guestPhone &&
     r.checkoutDate && 
     r.checkoutDate >= todayStr
@@ -4625,10 +4656,16 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
   let hasChanges = false;
 
   for (const resv of confirmedReservations) {
+    const isCompletedOrCheckedOut = resv.status === "completed" || resv.status === "checkout" || Boolean(resv.checkoutDone);
     const resvChannel = resv.channel || resv.source || "site";
     const recipients = getReservationRecipients(resv, db);
 
     for (const tpl of activeTemplates) {
+      // Se a reserva já realizou check-out/concluída, NUNCA agendar mensagens pré-estadia ou lembretes de estadia
+      if (isCompletedOrCheckedOut && tpl.triggerEvent !== "post_checkout_review") {
+        continue;
+      }
+
       // 1. Verifica se o canal da reserva está permitido no template
       if (!isTemplateAllowedForChannel(tpl, resvChannel)) {
         continue;
@@ -4689,11 +4726,27 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
           (q.status === "scheduled" || q.status === "sent")
         );
 
-        if (!alreadyQueued) {
-          const scheduledTime = calculateScheduledTime(tpl, resv, db);
-          const scheduledDate = new Date(scheduledTime);
+        const alreadySentInHistory = (db.whatsappHistory || []).some(h =>
+          (h.reservationCode === resv.code || h.reservationId === resv.id) &&
+          h.triggerEvent === tpl.triggerEvent &&
+          (h.status === "sent" || h.status === "delivered")
+        );
 
-          // NUNCA agendar nada retroativo: o horário agendado deve ser estritamente no futuro (> now)
+        if (!alreadyQueued && !alreadySentInHistory) {
+          let scheduledTime = calculateScheduledTime(tpl, resv, db);
+          let scheduledDate = new Date(scheduledTime);
+
+          // Se a data de checkout é hoje e o horário padrão já passou recentemente (dentro de 6h),
+          // agenda para envio em 1 minuto para não perder a solicitação de avaliação no Google
+          if (scheduledDate <= now && resv.checkoutDate === todayStr && tpl.triggerEvent === "post_checkout_review") {
+            const diffHours = (now.getTime() - scheduledDate.getTime()) / (3600 * 1000);
+            if (diffHours >= 0 && diffHours <= 6) {
+              scheduledDate = new Date(now.getTime() + 60 * 1000);
+              scheduledTime = scheduledDate.toISOString();
+            }
+          }
+
+          // Apenas agenda se for no futuro (> now)
           if (scheduledDate > now) {
             const baseUrl = "https://corpflats.onrender.com";
             const renderedMessage = resolveWhatsAppTags(tpl.message, resv, db, baseUrl, targetItem.type);
@@ -4791,6 +4844,9 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     } else if (templates.length === 0 && eventName === "reservation_cancelled") {
       const defCancel = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_reservation_cancelled" || t.triggerEvent === "reservation_cancelled");
       if (defCancel) templates = [defCancel];
+    } else if (templates.length === 0 && (eventName === "checkout_completed" || eventName === "on_checkout")) {
+      const defCheckout = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_checkout_completed" || t.triggerEvent === "checkout_completed");
+      if (defCheckout) templates = [defCheckout];
     }
 
     const recipients = getReservationRecipients(reservation, db);
@@ -4836,6 +4892,20 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
       }
 
       for (const d of dispatches) {
+        // Validação anti-duplicação para checkout_completed
+        if (eventName === "checkout_completed" || eventName === "on_checkout") {
+          const alreadySent = (db.whatsappHistory || []).some(h =>
+            (h.reservationCode === reservation.code || h.reservationId === reservation.id) &&
+            (h.triggerEvent === "checkout_completed" || h.triggerEvent === "on_checkout") &&
+            h.guestPhone === d.phone &&
+            (h.status === "sent" || h.status === "delivered")
+          );
+          if (alreadySent) {
+            console.log(`[Z-API Instant Trigger] Mensagem de checkout já foi enviada anteriormente para ${d.phone} (Reserva ${reservation.code}). Ignorando duplicação.`);
+            continue;
+          }
+        }
+
         const renderedMessage = resolveWhatsAppTags(tpl.message, reservation, db, baseUrl, d.type);
         const renderedButtons = (tpl.buttons || []).map(b => ({
           ...b,
@@ -4907,6 +4977,48 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     }
   } catch (err) {
     console.error(`[Z-API Instant Trigger Error]:`, err.message);
+  }
+}
+
+// ── Disparo Centralizado de Check-out (com Desduplicação Estrita) ─────────────
+export async function triggerCheckoutWhatsApp(dbOrGetter, saveDatabase, reservation, source = "manual") {
+  try {
+    const db = typeof dbOrGetter === "function" ? dbOrGetter() : dbOrGetter;
+    if (!db || !reservation) return;
+
+    const resCode = reservation.code || reservation.reservationCode;
+    const resId = reservation.id;
+
+    // 1. Verifica se a confirmação de checkout já foi enviada no histórico
+    const alreadySentInHistory = (db.whatsappHistory || []).some(h => 
+      ((resCode && h.reservationCode === resCode) || (resId && h.reservationId === resId)) &&
+      (h.triggerEvent === "checkout_completed" || h.triggerEvent === "on_checkout") &&
+      (h.status === "sent" || h.status === "delivered")
+    );
+
+    // 2. Verifica se já existe agendado na fila
+    const alreadyInQueue = (db.whatsappQueue || []).some(q => 
+      ((resCode && q.reservationCode === resCode) || (resId && q.reservationId === resId)) &&
+      (q.triggerEvent === "checkout_completed" || q.triggerEvent === "on_checkout") &&
+      (q.status === "scheduled" || q.status === "sent")
+    );
+
+    if (alreadySentInHistory || alreadyInQueue) {
+      console.log(`[WhatsApp Checkout Trigger] Check-out da reserva ${resCode || resId} já foi notificado anteriormente via WhatsApp. Pulando envio duplicado (Origem atual: ${source}).`);
+      // Mesmo pulando o envio duplicado, assegura que a avaliação do Google esteja agendada na fila para hoje às 14:00
+      scheduleUpcomingReservationTriggers(db, saveDatabase);
+      return;
+    }
+
+    console.log(`[WhatsApp Checkout Trigger] Disparando confirmação de check-out para ${reservation.guestName} (Reserva ${resCode || resId} | Origem: ${source})...`);
+
+    // Dispara mensagem imediata de checkout concluído
+    await triggerImmediateWhatsApp(db, saveDatabase, "checkout_completed", reservation);
+
+    // Garante que o agendamento pós-checkout (avaliação Google às 14:00) entre na fila
+    scheduleUpcomingReservationTriggers(db, saveDatabase);
+  } catch (err) {
+    console.error("[WhatsApp Checkout Trigger Error]:", err.message);
   }
 }
 

@@ -30,8 +30,8 @@ export default function EmailHub() {
     user: "",
     fromName: "CorpFlats",
     fromEmail: "",
-    receptionEmail: "soho@promenade.com.br",
-    garageEmail: "promenadesoho@pfbestacionamentos.com.br"
+    receptionEmail: "millerpessanha@gmail.com",
+    garageEmail: "millerpessanha@gmail.com"
   })
   const [loadingConfig, setLoadingConfig] = useState(false)
   const [togglingEngine, setTogglingEngine] = useState(false)
@@ -294,11 +294,11 @@ export default function EmailHub() {
   const applyTemplate = (tplKey: string) => {
     setFormTemplate(tplKey)
     if (tplKey === "portaria") {
-      setFormRecipient(engineConfig.receptionEmail || "soho@promenade.com.br")
+      setFormRecipient(engineConfig.receptionEmail || "millerpessanha@gmail.com")
       setFormSubject("[AVISO PORTARIA] Autorização de Acesso • Flat CorpFlats")
       setFormBody("Prezada Recepção / Portaria,\n\nSolicitamos liberação de acesso para o hóspede titular referente ao Flat CorpFlats para a estadia informada.\n\nQualquer dúvida, estamos à inteira disposição!\nEquipe CorpFlats")
     } else if (tplKey === "garagem") {
-      setFormRecipient(engineConfig.garageEmail || "promenadesoho@pfbestacionamentos.com.br")
+      setFormRecipient(engineConfig.garageEmail || "millerpessanha@gmail.com")
       setFormSubject("[AUTORIZAÇÃO GARAGEM] Vaga Rotativa • Flat CorpFlats")
       setFormBody("Prezada Administração da Garagem / Estacionamento,\n\nSolicitamos cadastro e autorização de vaga de garagem para o veículo do hóspede referente ao Flat CorpFlats.\n\nAtenciosamente,\nEquipe CorpFlats")
     } else if (tplKey === "hospede_welcome") {
@@ -817,7 +817,7 @@ export default function EmailHub() {
                         required
                         value={formRecipient}
                         onChange={e => setFormRecipient(e.target.value)}
-                        placeholder="ex: hospede@gmail.com ou soho@promenade.com.br"
+                        placeholder="ex: hospede@gmail.com ou millerpessanha@gmail.com"
                         className="text-xs h-9 rounded-xl"
                       />
                     </div>

@@ -155,7 +155,7 @@ export default function PmsCalendar() {
   const [manualSubject, setManualSubject] = useState("")
   const [manualBody, setManualBody] = useState("")
   const [resendingCommId, setResendingCommId] = useState<string | null>(null)
-  const [portariaEmail, setPortariaEmail] = useState("soho@promenade.com.br")
+  const [portariaEmail, setPortariaEmail] = useState("millerpessanha@gmail.com")
   const [copiedLinkKey, setCopiedLinkKey] = useState<string | null>(null)
 
   const fetchAuditLogs = async (resIdOrCode: string | number) => {
@@ -1715,7 +1715,7 @@ export default function PmsCalendar() {
     fetchAuditLogs(resItem.code || resItem.id)
     fetchCommunications(resItem.code || resItem.id)
     const flatItem = data.flats.find(f => f.id === resItem.flatId || String(f.number) === String(resItem.flatNumber))
-    const pEmail = flatItem?.receptionEmail || "soho@promenade.com.br"
+    const pEmail = flatItem?.receptionEmail || "millerpessanha@gmail.com"
     setPortariaEmail(pEmail)
     setManualRecipient(resItem.guestEmail || pEmail)
     setManualSubject(`[CorpFlats] Flat ${resItem.flatNumber} - ${resItem.guestName}`)
@@ -3525,7 +3525,7 @@ export default function PmsCalendar() {
                     </div>
                   </div>
                   <p className="text-[11px] text-blue-700/80 dark:text-blue-300/80">
-                    Ao cadastrar ou alterar a placa, o sistema envia e-mail com flat, dados da reserva e do veículo diretamente para a garagem (<span className="font-semibold">promenadesoho@pfbestacionamentos.com.br</span>).
+                    Ao cadastrar ou alterar a placa, o sistema envia e-mail com flat, dados da reserva e do veículo diretamente para a garagem (<span className="font-semibold">millerpessanha@gmail.com</span>).
                   </p>
                 </div>
 

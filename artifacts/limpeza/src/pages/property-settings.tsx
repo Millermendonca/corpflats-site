@@ -57,8 +57,8 @@ export default function PropertySettings() {
   const [checkoutTimeInput, setCheckoutTimeInput] = useState("12:00")
   const [hotelAddressInput, setHotelAddressInput] = useState("CorpFlats")
   const [googleMapsUrlInput, setGoogleMapsUrlInput] = useState("https://www.google.com/maps/search/?api=1&query=CorpFlats")
-  const [receptionEmailInput, setReceptionEmailInput] = useState("portaria.soho@corpflats.com.br")
-  const [garageEmailInput, setGarageEmailInput] = useState("promenadesoho@pfbestacionamentos.com.br")
+  const [receptionEmailInput, setReceptionEmailInput] = useState("millerpessanha@gmail.com")
+  const [garageEmailInput, setGarageEmailInput] = useState("millerpessanha@gmail.com")
   const [buildingNameInput, setBuildingNameInput] = useState("Edifício Soho Residence Service")
 
   // Política Pet & Taxa de Higienização
@@ -371,7 +371,7 @@ export default function PropertySettings() {
                     type="email"
                     value={receptionEmailInput}
                     onChange={e => setReceptionEmailInput(e.target.value)}
-                    placeholder="portaria.soho@corpflats.com.br"
+                    placeholder="millerpessanha@gmail.com"
                     className="text-xs rounded-xl h-9.5"
                   />
                 </div>
@@ -384,7 +384,7 @@ export default function PropertySettings() {
                     type="email"
                     value={garageEmailInput}
                     onChange={e => setGarageEmailInput(e.target.value)}
-                    placeholder="promenadesoho@pfbestacionamentos.com.br"
+                    placeholder="millerpessanha@gmail.com"
                     className="text-xs rounded-xl h-9.5 font-mono"
                   />
                   <span className="text-[11px] text-muted-foreground block">
@@ -627,7 +627,7 @@ export default function PropertySettings() {
                   type="email"
                   value={flatEmailInput}
                   onChange={e => setFlatEmailInput(e.target.value)}
-                  placeholder="Ex: soho@promenade.com.br"
+                  placeholder="Ex: millerpessanha@gmail.com"
                   className="text-xs rounded-xl h-9.5"
                 />
                 <p className="text-[10px] text-muted-foreground">Se vazio, utilizará o e-mail padrão da portaria configurado abaixo.</p>

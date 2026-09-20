@@ -5920,7 +5920,8 @@
     "checkoutTime": "12:00",
     "autoEarlyCheckinForSite": true,
     "buildingName": "Edifício Soho Residence Service",
-    "receptionEmail": "soho@promenade.com.br",
+    "receptionEmail": "millerpessanha@gmail.com",
+    "garageEmail": "millerpessanha@gmail.com",
     "hotelAddress": "Edifício Soho Residence Service, Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ",
     "googleMapsUrl": "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac",
     "mercadoPagoConfig": {

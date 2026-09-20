@@ -411,7 +411,7 @@ export function renderManualEmail({ subject, message, bodyText, reservation, fla
 
 /**
  * Gatilho C: Template de Liberação / Autorização de Garagem
- * Destinado ao estacionamento (promenadesoho@pfbestacionamentos.com.br) e portaria
+ * Destinado ao estacionamento (millerpessanha@gmail.com - original: promenadesoho@pfbestacionamentos.com.br) e portaria
  */
 export function renderGarageAuthorizationEmail({ reservation, flat, vehicle, settings }) {
   const rawFlat = flat?.number || reservation?.flatNumber || "Não informado";

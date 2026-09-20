@@ -36,7 +36,7 @@ import { fileURLToPath } from "url";
 import pg from "pg";
 import { uploadImageToStorage } from "./storage-service.mjs";
 import { MicrosoftGraphService } from "./microsoft-graph-service.mjs";
-import { initWhatsAppEngine, triggerImmediateWhatsApp, triggerRoomReadyWhatsApp, cleanWhatsAppPhone, sendZapiMessage, scheduleUpcomingReservationTriggers } from "./zapi-service.mjs";
+import { initWhatsAppEngine, triggerImmediateWhatsApp, triggerRoomReadyWhatsApp, cleanWhatsAppPhone, sendZapiMessage, scheduleUpcomingReservationTriggers, triggerCheckoutWhatsApp } from "./zapi-service.mjs";
 import { initMaidAutomationEngine } from "./maid-automation-service.mjs";
 import { sendInterPix, isInterConfigured, INTER_ENV } from "./inter-pix-service.mjs";
 import { 
@@ -378,7 +378,7 @@ let db = {
     autoEarlyCheckinForSite: true,
     googleMapsUrl: "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac",
     buildingName: "Edifício Soho Residence Service",
-    receptionEmail: "soho@promenade.com.br",
+    receptionEmail: "millerpessanha@gmail.com",
     emailSettings: {
       enabled: true,
       host: "smtp.zoho.com",
@@ -2593,8 +2593,8 @@ export function triggerGarageEmailNotification(db, saveDatabase, reservation, ve
     const flatNum = cleanFlat || "113";
     const guestName = reservation.guestName || "Hóspede CorpFlats";
 
-    // Destinatário: Garagem Promenade Soho (apenas para a garagem: promenadesoho@pfbestacionamentos.com.br)
-    const garageEmail = options.recipientEmail || db.settings?.garageEmail || process.env.GARAGE_EMAIL || "promenadesoho@pfbestacionamentos.com.br";
+    // Destinatário: Garagem Promenade Soho (apenas para a garagem: millerpessanha@gmail.com)
+    const garageEmail = options.recipientEmail || db.settings?.garageEmail || process.env.GARAGE_EMAIL || "millerpessanha@gmail.com";
 
     // Renderiza template oficial CorpFlats com número do Flat no assunto do e-mail
     const { subject, bodyHtml } = renderGarageAuthorizationEmail({
@@ -3454,11 +3454,11 @@ app.post("/api/public/checkout", (req, res) => {
   const now = new Date().toISOString();
   if (existing) {
     existing.isVacant = true; // Confirma quarto desocupado
-    existing.leavingGuest = guestDisplayName;
+    existing.leavingGuest = existing.leavingGuest || guestDisplayName;
     if (!existing.pendingObservation) {
       existing.pendingObservation = `Check-out expresso confirmado (${guestDisplayName})`;
-    } else if (!existing.pendingObservation.includes("Check-out")) {
-      existing.pendingObservation = `${existing.pendingObservation} | Check-out expresso (${guestDisplayName})`;
+    } else if (!existing.pendingObservation.includes("expresso") && !existing.pendingObservation.includes("Hóspede")) {
+      existing.pendingObservation = `${existing.pendingObservation} • Check-out expresso (${guestDisplayName})`;
     }
     existing.updatedAt = now;
   } else {
@@ -3498,9 +3498,19 @@ app.post("/api/public/checkout", (req, res) => {
     r.checkinDate <= todayStr && r.checkoutDate >= todayStr)
   );
   matchingResList.forEach(r => {
-    r.actualCheckoutAt = now;
-    r.actualCheckoutTime = timeStr;
+    if (!r.actualCheckoutAt) {
+      r.actualCheckoutAt = now;
+      r.actualCheckoutTime = timeStr;
+    }
     r.status = "completed";
+    r.checkoutDone = true;
+    r.checkoutMethod = r.checkoutMethod ? `${r.checkoutMethod} + link_digital` : "link_digital";
+    r.updatedAt = now;
+
+    // Dispara WhatsApp de check-out com desduplicação
+    triggerCheckoutWhatsApp(db, saveDatabase, r, "link_digital").catch(e => {
+      console.warn("[Digital Checkout WhatsApp Trigger Error]:", e.message);
+    });
   });
 
   // Reconciliar pedidos de café da manhã para hoje neste flat:
@@ -5762,7 +5772,7 @@ app.post("/api/site-content/reset", (req, res) => {
 app.get("/api/settings", (req, res) => {
   const petPolicy = db.siteConfig?.petPolicy || db.settings?.petPolicy || DEFAULT_SITE_CONFIG.petPolicy;
   res.json({
-    garageEmail: db.settings?.garageEmail || "promenadesoho@pfbestacionamentos.com.br",
+    garageEmail: db.settings?.garageEmail || "millerpessanha@gmail.com",
     ...db.settings,
     petPolicy,
     houseRules: db.settings.houseRules || DEFAULT_HOUSE_RULES,
@@ -5787,7 +5797,7 @@ app.patch("/api/settings", (req, res) => {
   if (hotelAddress !== undefined) db.settings.hotelAddress = hotelAddress;
   if (googleMapsUrl !== undefined) db.settings.googleMapsUrl = googleMapsUrl;
   if (receptionEmail !== undefined) db.settings.receptionEmail = receptionEmail;
-  if (garageEmail !== undefined) db.settings.garageEmail = garageEmail ? String(garageEmail).trim() : "promenadesoho@pfbestacionamentos.com.br";
+  if (garageEmail !== undefined) db.settings.garageEmail = garageEmail ? String(garageEmail).trim() : "millerpessanha@gmail.com";
   if (buildingName !== undefined) db.settings.buildingName = buildingName;
   if (petPolicy !== undefined) {
     if (!db.siteConfig) db.siteConfig = {};
@@ -7316,7 +7326,7 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   if (changes.length > 0) {
     try {
       const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
-      const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br";
+      const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
       const { subject, bodyHtml } = renderReservationUpdateEmail({ reservation: r, flat, changes, settings: db.settings });
 
       sendEmailAsync({
@@ -8028,7 +8038,7 @@ app.post("/api/pms/guest-portal/:code/cancel", async (req, res) => {
   // Gatilho B: Notificação de cancelamento para a recepção/portaria
   try {
     const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
-    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br";
+    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
     const changes = [{ field: "status", label: "Status da Reserva", oldValue: "Confirmada", newValue: "CANCELADA (Portal do Hóspede)" }];
     const { subject, bodyHtml } = renderReservationUpdateEmail({ reservation: r, flat, changes, settings: db.settings });
 
@@ -8268,7 +8278,7 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
   // Gatilho B: Notificação de alteração de datas para a recepção/portaria
   try {
     const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
-    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br";
+    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
     const changes = [
       { field: "dates", label: "Novo Período", oldValue: `${formatDateBr(r.modificationHistory[r.modificationHistory.length - 1]?.oldCheckin)} a ${formatDateBr(r.modificationHistory[r.modificationHistory.length - 1]?.oldCheckout)}`, newValue: `${formatDateBr(newCheckinDate)} a ${formatDateBr(newCheckoutDate)}` }
     ];
@@ -8702,7 +8712,7 @@ app.delete("/api/pms/reservations/:id", (req, res) => {
   // Gatilho B: Notificação de cancelamento para a recepção/portaria
   try {
     const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
-    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br";
+    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
     const changes = [{ field: "status", label: "Status da Reserva", oldValue: "Confirmada", newValue: "CANCELADA" }];
     const { subject, bodyHtml } = renderReservationUpdateEmail({ reservation: r, flat, changes, settings: db.settings });
 
@@ -9877,8 +9887,12 @@ app.post("/api/reception/checkout/:reservationId", (req, res) => {
   const previousStatus = r.status;
   const nowBrl = getBrasiliaNow();
   r.status = "completed";
-  r.actualCheckoutAt = new Date().toISOString();
-  r.actualCheckoutTime = nowBrl.timeStr;
+  r.checkoutDone = true;
+  r.checkoutMethod = r.checkoutMethod ? `${r.checkoutMethod} + reception_pms` : "reception_pms";
+  if (!r.actualCheckoutAt) {
+    r.actualCheckoutAt = new Date().toISOString();
+    r.actualCheckoutTime = nowBrl.timeStr;
+  }
   r.previousStatus = previousStatus;
   r.updatedAt = new Date().toISOString();
 
@@ -9980,6 +9994,12 @@ app.post("/api/reception/checkout/:reservationId", (req, res) => {
   }
 
   saveDatabase();
+
+  // Dispara WhatsApp de check-out com desduplicação e agendamento da avaliação Google
+  triggerCheckoutWhatsApp(db, saveDatabase, r, "reception_pms").catch(e => {
+    console.warn("[Reception Checkout WhatsApp Trigger Error]:", e.message);
+  });
+
   res.json({ 
     success: true, 
     message: autoInvoiceEmitted
@@ -10250,8 +10270,8 @@ app.get("/api/settings/email", (req, res) => {
     fromEmail: config.fromEmail,
     hasPass: Boolean(config.pass),
     isConfigured: config.isConfigured,
-    receptionEmail: db.settings?.receptionEmail || "soho@promenade.com.br",
-    garageEmail: db.settings?.garageEmail || "promenadesoho@pfbestacionamentos.com.br",
+    receptionEmail: db.settings?.receptionEmail || "millerpessanha@gmail.com",
+    garageEmail: db.settings?.garageEmail || "millerpessanha@gmail.com",
     buildingName: db.settings?.buildingName || "Edifício Soho Residence Service"
   });
 });
@@ -10276,7 +10296,7 @@ app.post("/api/settings/email", (req, res) => {
   if (fromEmail !== undefined) db.settings.emailSettings.fromEmail = fromEmail.trim();
 
   if (receptionEmail !== undefined) db.settings.receptionEmail = receptionEmail.trim();
-  if (garageEmail !== undefined) db.settings.garageEmail = garageEmail ? String(garageEmail).trim() : "promenadesoho@pfbestacionamentos.com.br";
+  if (garageEmail !== undefined) db.settings.garageEmail = garageEmail ? String(garageEmail).trim() : "millerpessanha@gmail.com";
   if (buildingName !== undefined) db.settings.buildingName = buildingName.trim();
 
   saveDatabase();
@@ -10359,8 +10379,8 @@ app.get("/api/emails/config", (req, res) => {
     user: config.user,
     fromName: config.fromName,
     fromEmail: config.fromEmail,
-    receptionEmail: db.settings?.receptionEmail || "soho@promenade.com.br",
-    garageEmail: db.settings?.garageEmail || "promenadesoho@pfbestacionamentos.com.br",
+    receptionEmail: db.settings?.receptionEmail || "millerpessanha@gmail.com",
+    garageEmail: db.settings?.garageEmail || "millerpessanha@gmail.com",
     buildingName: db.settings?.buildingName || "Edifício Soho Residence Service"
   });
 });
@@ -10955,7 +10975,7 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   // Gatilho A: Envio Automático de Notificação à Recepção/Portaria do Edifício
   try {
     const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
-    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "soho@promenade.com.br";
+    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
     const { subject, bodyHtml } = renderCheckinConfirmedEmail({ reservation: r, flat, settings: db.settings });
 
     sendEmailAsync({
@@ -16397,7 +16417,7 @@ app.post("/api/pms/garage/send-authorization", (req, res) => {
     }
 
     const garageRes = triggerGarageEmailNotification(db, saveDatabase, targetReservation, vehicleData, {
-      recipientEmail: recipientEmail || db.settings?.garageEmail || "promenadesoho@pfbestacionamentos.com.br",
+      recipientEmail: recipientEmail || db.settings?.garageEmail || "millerpessanha@gmail.com",
       trigger: "manual_garage_dashboard",
       source: "Painel de Garagem Soho",
       force: true
@@ -16405,7 +16425,7 @@ app.post("/api/pms/garage/send-authorization", (req, res) => {
 
     res.json({
       success: true,
-      message: `Autorização de garagem para a placa ${cleanPlate} gerada e enviada com sucesso para ${recipientEmail || db.settings?.garageEmail || "promenadesoho@pfbestacionamentos.com.br"}!`,
+      message: `Autorização de garagem para a placa ${cleanPlate} gerada e enviada com sucesso para ${recipientEmail || db.settings?.garageEmail || "millerpessanha@gmail.com"}!`,
       authorization: garageRes?.authRecord || {
         plate: cleanPlate,
         flatNumber,
@@ -16462,7 +16482,7 @@ app.post("/api/pms/reservations/:code/vehicle", (req, res) => {
 
     res.json({
       success: true,
-      message: `Veículo ${cleanPlate} cadastrado e liberação enviada para a garagem (promenadesoho@pfbestacionamentos.com.br) com sucesso!`,
+      message: `Veículo ${cleanPlate} cadastrado e liberação enviada para a garagem (millerpessanha@gmail.com) com sucesso!`,
       vehicle: vehicleData,
       authorization: garageRes?.authRecord
     });
