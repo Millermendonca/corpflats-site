@@ -17,6 +17,15 @@
       "username": "Grazi",
       "role": "camareira",
       "passwordHash": "907d057f92c79f11f48dbd5efca14bb9:bf8afefacfe0c714e86c8a999084812b6abb325b266e7246dbb596a985aee04e"
+    },
+    {
+      "id": 4,
+      "username": "Soho@promenade.com.br",
+      "name": "Recepção Soho",
+      "role": "recepcao",
+      "passwordHash": "c6cda6e575045fd7e5bf270149067706:c855f9f69a529637958bcb5dfce30d0bca7e4cf83b80c8705cda41595b41958b",
+      "must_change_password": true,
+      "password_updated_at": "2026-09-20T20:50:44.475Z"
     }
   ],
   "flats": [
@@ -5815,6 +5824,7 @@
   ],
   "fnrhAuditDocuments": [],
   "fnrhSignatureTokens": [],
+  "fnrhInternalAuditLogs": [],
   "notificationSettings": {
     "soundEnabled": true,
     "adminWhatsApp": "5522997124021",

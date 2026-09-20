@@ -72,8 +72,21 @@ export default function GuestPreCheckin() {
   const [address, setAddress] = useState("")
   const [city, setCity] = useState("")
   const [state, setState] = useState("RJ")
-  const [transportMethod, setTransportMethod] = useState("carro")
-  const [travelReason, setTravelReason] = useState("lazer")
+  const [transportMethod, setTransportMethod] = useState("")
+  const [travelReason, setTravelReason] = useState("")
+  const [originCity, setOriginCity] = useState("")
+  const [originState, setOriginState] = useState("RJ")
+  const [originCountry, setOriginCountry] = useState("Brasil")
+  const [destinationCity, setDestinationCity] = useState("Campos dos Goytacazes")
+  const [destinationState, setDestinationState] = useState("RJ")
+  const [destinationCountry, setDestinationCountry] = useState("Brasil")
+  const [optInMarketing, setOptInMarketing] = useState(false)
+  const [geolocationData, setGeolocationData] = useState<{
+    latitude?: number
+    longitude?: number
+    accuracy?: number
+    status: "granted" | "denied" | "unavailable" | "prompt"
+  }>({ status: "prompt" })
 
   // Photos, Signature, Terms & Vehicle
   const [docPhoto, setDocPhoto] = useState<string | null>(null)
@@ -124,6 +137,28 @@ export default function GuestPreCheckin() {
   const isMinorGuest = calculatedAge !== null && calculatedAge < 18
 
   // Canvas for signature
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setGeolocationData({
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+            accuracy: pos.coords.accuracy,
+            status: "granted"
+          })
+        },
+        (err) => {
+          setGeolocationData({
+            status: err.code === 1 ? "denied" : "unavailable"
+          })
+        },
+        { timeout: 8000, maximumAge: 60000 }
+      )
+    }
+  }, [])
+
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [isDrawing, setIsDrawing] = useState(false)
 
@@ -462,18 +497,29 @@ export default function GuestPreCheckin() {
     const file = e.target.files?.[0]
     if (!file) return
 
+    // Limite estrito de 5 MB
+    if (file.size > 5 * 1024 * 1024) {
+      alert("O arquivo selecionado possui " + (file.size / (1024 * 1024)).toFixed(1) + " MB e excede o limite máximo permitido de 5 MB. Por favor, envie um arquivo de até 5 MB.")
+      return
+    }
+
     setCompressing(true)
     try {
-      const result = await compressImage(file, {
-        maxWidth: 1400,
-        maxHeight: 1400,
-        quality: 0.8,
-        preferredFormat: "image/webp"
-      })
-
-      setter(result.base64)
+      if (file.type === "application/pdf") {
+        const reader = new FileReader()
+        reader.onload = () => setter(reader.result as string)
+        reader.readAsDataURL(file)
+      } else {
+        const result = await compressImage(file, {
+          maxWidth: 1400,
+          maxHeight: 1400,
+          quality: 0.8,
+          preferredFormat: "image/webp"
+        })
+        setter(result.base64)
+      }
     } catch (err) {
-      console.warn("Erro ao comprimir imagem, usando fallback:", err)
+      console.warn("Erro ao processar imagem, usando fallback FileReader:", err)
       const reader = new FileReader()
       reader.onload = () => setter(reader.result as string)
       reader.readAsDataURL(file)
@@ -485,7 +531,7 @@ export default function GuestPreCheckin() {
   const handleSubmit = async () => {
     setLoading(true)
     try {
-      const cleanPlate = transportMethod === "carro" ? vehiclePlate.trim().toUpperCase() : ""
+      const cleanPlate = (transportMethod === "Carro próprio" || transportMethod === "Carro alugado" || transportMethod === "carro") ? vehiclePlate.trim().toUpperCase() : ""
       const cleanBrand = transportMethod === "carro" ? vehicleBrand.trim() : ""
       const cleanModel = transportMethod === "carro" ? vehicleModel.trim() : ""
       const cleanColor = transportMethod === "carro" ? vehicleColor.trim() : ""
@@ -504,11 +550,23 @@ export default function GuestPreCheckin() {
           document,
           birthDate,
           gender,
+          cep,
           address,
           city,
           state,
-          transportMethod,
-          travelReason,
+          transportMethod: transportMethod || "Carro próprio",
+          travelReason: travelReason || "Lazer / Férias",
+          originCity: originCity || "Não informada",
+          originState: originState || "RJ",
+          originCountry: originCountry || "Brasil",
+          destinationCity: destinationCity || "Campos dos Goytacazes",
+          destinationState: destinationState || "RJ",
+          destinationCountry: destinationCountry || "Brasil",
+          optInMarketing,
+          legalDeclarationAccepted,
+          geolocation: geolocationData,
+          clientTimezone: typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "America/Sao_Paulo",
+          clientLocalTime: new Date().toISOString(),
           selfieBase64: selfiePhoto,
           docPhotoBase64: docPhoto,
           signatureBase64: signatureData,
@@ -1385,19 +1443,28 @@ export default function GuestPreCheckin() {
               )}
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-semibold text-xs">
-                Flat {reservation.flatNumber}
-              </span>
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-semibold text-xs">
-                {reservation.guestCount || 1} {(reservation.guestCount || 1) === 1 ? 'Hóspede' : 'Hóspedes'}
-              </span>
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-semibold text-xs">
-                Entrada: {reservation.checkinDate}
-              </span>
-              <Badge className="bg-sky-50 hover:bg-sky-50 text-sky-700 border border-sky-200/80 font-semibold text-xs px-2.5 py-1 rounded-lg shadow-none">
-                {reservation.channel || "Site Oficial"}
-              </Badge>
+            {/* Dados da Reserva (Somente Leitura) */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+              <div className="bg-slate-50 border border-slate-200/80 p-2.5 rounded-xl">
+                <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider block">Acomodação</span>
+                <span className="text-xs sm:text-sm font-bold text-slate-900 block">Flat {reservation.flatNumber || reservation.flatId}</span>
+                <span className="text-[9px] text-slate-400">Soho Residence</span>
+              </div>
+              <div className="bg-slate-50 border border-slate-200/80 p-2.5 rounded-xl">
+                <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider block">Check-in</span>
+                <span className="text-xs sm:text-sm font-bold text-slate-900 block">{reservation.checkinDate || "-"}</span>
+                <span className="text-[9px] text-emerald-600 font-medium">a partir das {reservation.checkinTime || "14:00"}</span>
+              </div>
+              <div className="bg-slate-50 border border-slate-200/80 p-2.5 rounded-xl">
+                <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider block">Check-out</span>
+                <span className="text-xs sm:text-sm font-bold text-slate-900 block">{reservation.checkoutDate || "-"}</span>
+                <span className="text-[9px] text-amber-700 font-medium">até as {reservation.checkoutTime || "12:00"}</span>
+              </div>
+              <div className="bg-slate-50 border border-slate-200/80 p-2.5 rounded-xl">
+                <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider block">Hóspedes</span>
+                <span className="text-xs sm:text-sm font-bold text-slate-900 block">{reservation.guestCount || reservation.adults || 1} Pessoa(s)</span>
+                <span className="text-[9px] text-sky-600 font-medium">{reservation.channel || "Reserva Confirmada"}</span>
+              </div>
             </div>
 
             <p className="text-xs sm:text-sm text-slate-500 font-normal leading-relaxed">
@@ -1869,29 +1936,104 @@ export default function GuestPreCheckin() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-bold text-slate-700">Cidade / Estado</Label>
-                    <Input 
-                      value={city} 
-                      onChange={e => setCity(e.target.value)} 
-                      placeholder="Ex: Campos dos Goytacazes / RJ" 
-                      className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-medium rounded-xl h-11 focus-visible:ring-sky-500" 
-                    />
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-bold text-slate-700">Cidade / Estado Residencial</Label>
+                  <Input 
+                    value={city} 
+                    onChange={e => setCity(e.target.value)} 
+                    placeholder="Ex: Campos dos Goytacazes / RJ" 
+                    className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-medium rounded-xl h-11 focus-visible:ring-sky-500" 
+                  />
+                </div>
+
+                {/* ── Seção Obrigatória MTur: Informações da Estadia Atual (NUNCA pré-preenchidas) ── */}
+                <div className="p-4 sm:p-5 bg-gradient-to-br from-sky-50/80 via-slate-50 to-indigo-50/50 border border-sky-200/90 rounded-2xl space-y-3.5 shadow-xs">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <span className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                      <MapPin className="w-4 h-4 text-sky-600" />
+                      <span>Informações da Estadia Atual (Exigência MTur - Lei 11.771/2008) *</span>
+                    </span>
+                    <Badge className="bg-sky-100 text-sky-800 text-[10px] font-bold border-sky-200">Obrigatório</Badge>
                   </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-bold text-slate-700">Meio de Transporte</Label>
-                    <Select value={transportMethod} onValueChange={setTransportMethod}>
-                      <SelectTrigger className="bg-white border-slate-200 text-slate-900 text-xs sm:text-sm rounded-xl h-11 focus:ring-sky-500">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="bg-white border-slate-200 text-slate-900 rounded-xl">
-                        <SelectItem value="carro">🚗 Automóvel Próprio / Alugado (Garagem)</SelectItem>
-                        <SelectItem value="aviao">✈️ Avião</SelectItem>
-                        <SelectItem value="onibus">🚌 Ônibus</SelectItem>
-                        <SelectItem value="outro">Outro / Carona</SelectItem>
-                      </SelectContent>
-                    </Select>
+                  <p className="text-[11px] text-slate-600 leading-relaxed">
+                    Por exigência do Ministério do Turismo, informe os dados específicos desta viagem para emissão da FNRH:
+                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-xs font-bold text-slate-700">Motivo da Viagem *</Label>
+                      <Select value={travelReason} onValueChange={setTravelReason}>
+                        <SelectTrigger className="bg-white border-slate-200 text-slate-900 text-xs sm:text-sm rounded-xl h-11 focus:ring-sky-500">
+                          <SelectValue placeholder="Selecione o motivo da viagem *" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-white border-slate-200 text-slate-900 rounded-xl">
+                          <SelectItem value="Lazer / Férias">🏖️ Lazer / Férias</SelectItem>
+                          <SelectItem value="Negócios / Trabalho">💼 Negócios / Trabalho</SelectItem>
+                          <SelectItem value="Congresso / Feira">🏛️ Congresso / Feira</SelectItem>
+                          <SelectItem value="Saúde">🏥 Saúde</SelectItem>
+                          <SelectItem value="Estudos">📚 Estudos</SelectItem>
+                          <SelectItem value="Outro">Outro</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-xs font-bold text-slate-700">Meio de Transporte *</Label>
+                      <Select value={transportMethod} onValueChange={setTransportMethod}>
+                        <SelectTrigger className="bg-white border-slate-200 text-slate-900 text-xs sm:text-sm rounded-xl h-11 focus:ring-sky-500">
+                          <SelectValue placeholder="Selecione o meio de transporte *" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-white border-slate-200 text-slate-900 rounded-xl">
+                          <SelectItem value="Carro próprio">🚗 Carro próprio</SelectItem>
+                          <SelectItem value="Carro alugado">🚙 Carro alugado</SelectItem>
+                          <SelectItem value="Avião">✈️ Avião</SelectItem>
+                          <SelectItem value="Ônibus">🚌 Ônibus</SelectItem>
+                          <SelectItem value="Aplicativo / Táxi">🚕 Aplicativo / Táxi</SelectItem>
+                          <SelectItem value="Outro">Outro</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  {/* Procedência e Destino */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    <div className="space-y-1">
+                      <Label className="text-xs font-bold text-slate-700">Última Procedência (De onde você veio?) *</Label>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        <Input
+                          value={originCity}
+                          onChange={e => setOriginCity(e.target.value)}
+                          placeholder="Cidade (ex: Rio de Janeiro)"
+                          className="col-span-2 bg-white border-slate-200 text-xs sm:text-sm rounded-xl h-10"
+                        />
+                        <Input
+                          value={originState}
+                          onChange={e => setOriginState(e.target.value.toUpperCase())}
+                          placeholder="UF"
+                          maxLength={2}
+                          className="bg-white border-slate-200 text-xs sm:text-sm font-bold uppercase rounded-xl h-10 text-center"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-xs font-bold text-slate-700">Próximo Destino (Para onde você vai?) *</Label>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        <Input
+                          value={destinationCity}
+                          onChange={e => setDestinationCity(e.target.value)}
+                          placeholder="Cidade (ex: Campos dos Goytacazes)"
+                          className="col-span-2 bg-white border-slate-200 text-xs sm:text-sm rounded-xl h-10"
+                        />
+                        <Input
+                          value={destinationState}
+                          onChange={e => setDestinationState(e.target.value.toUpperCase())}
+                          placeholder="UF"
+                          maxLength={2}
+                          className="bg-white border-slate-200 text-xs sm:text-sm font-bold uppercase rounded-xl h-10 text-center"
+                        />
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -1958,6 +2100,22 @@ export default function GuestPreCheckin() {
                   onClick={() => {
                     if (!fullName.trim() || !document.trim() || !phone.trim() || !email.trim() || !address.trim()) {
                       alert("Por favor, preencha todos os campos obrigatórios: Nome Completo, CPF, Telefone, Endereço e E-mail.")
+                      return
+                    }
+                    if (!travelReason) {
+                      alert("Por favor, selecione o Motivo da Viagem (exigência legal do Ministério do Turismo).")
+                      return
+                    }
+                    if (!transportMethod) {
+                      alert("Por favor, selecione o Meio de Transporte utilizado (exigência legal do Ministério do Turismo).")
+                      return
+                    }
+                    if (!originCity.trim() || !originState.trim()) {
+                      alert("Por favor, informe a Última Procedência (Cidade e UF de onde veio).")
+                      return
+                    }
+                    if (!destinationCity.trim() || !destinationState.trim()) {
+                      alert("Por favor, informe o Próximo Destino (Cidade e UF para onde irá).")
                       return
                     }
                     if (isMinorGuest) {
@@ -2193,8 +2351,41 @@ export default function GuestPreCheckin() {
                 </button>
               </div>
 
-              {/* 📜 Checkbox Obrigatório de Termos e Declaração Legal */}
+              {/* 🔒 Card de Segurança da Informação & Conformidade LGPD */}
+              <div className="p-4 sm:p-5 bg-slate-900 border border-sky-500/40 rounded-2xl text-slate-200 space-y-3 shadow-lg">
+                <div className="flex items-center gap-2 text-sky-400 font-bold text-sm">
+                  <Lock className="w-5 h-5 text-sky-400 shrink-0" />
+                  <span>Seus dados e documentos estão protegidos</span>
+                </div>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Suas informações são coletadas para cumprimento de obrigação legal regulatória (FNRH - Lei Geral do Turismo nº 11.771/2008 e Decreto nº 7.381/2010) e execução do contrato de hospedagem (Art. 7º, II e V da LGPD).
+                </p>
+                <div className="space-y-1.5 text-[11px] text-slate-300 bg-slate-950/70 p-3 rounded-xl border border-slate-800">
+                  <div className="flex items-start gap-1.5">
+                    <span className="font-bold text-sky-300">• Segurança:</span>
+                    <span>O tráfego e o armazenamento são protegidos por criptografia de ponta a ponta.</span>
+                  </div>
+                  <div className="flex items-start gap-1.5">
+                    <span className="font-bold text-sky-300">• Uso restrito:</span>
+                    <span>Acesso limitado exclusivamente à gestão da hospedagem e autoridades competentes conforme exigido em lei. Seus dados nunca são comercializados.</span>
+                  </div>
+                  <div className="flex items-start gap-1.5">
+                    <span className="font-bold text-sky-300">• Seus direitos:</span>
+                    <span>Você pode revisar ou atualizar seus dados cadastrais a qualquer momento.</span>
+                  </div>
+                </div>
+                <div 
+                  className="text-[11px] text-sky-400 cursor-pointer hover:underline flex items-center gap-1 font-medium"
+                  onClick={() => { setTermsModalTab("rules"); setTermsModalOpen(true); }}
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>Acesse nossa Política de Privacidade para mais detalhes</span>
+                </div>
+              </div>
+
+              {/* 📜 Checkboxes Regulatórios e LGPD */}
               <div className="space-y-2.5 p-4 bg-slate-50/90 rounded-2xl border border-slate-200">
+                {/* Checkbox 1: Obrigatório */}
                 <label className={`flex items-start gap-3 p-3.5 rounded-xl border transition-all cursor-pointer select-none ${
                   legalDeclarationAccepted ? "bg-emerald-50/80 border-emerald-300 text-emerald-950 ring-2 ring-emerald-500/20" : "bg-white border-slate-200 hover:border-slate-300"
                 }`}>
@@ -2211,10 +2402,10 @@ export default function GuestPreCheckin() {
                   />
                   <div className="text-xs text-slate-700 leading-relaxed">
                     <span className="font-bold text-slate-900 block mb-0.5">
-                      Declaração Legal de Responsabilidade e LGPD *
+                      Declaração Obrigatória de Veracidade e LGPD *
                     </span>
                     <p className="text-slate-800 font-medium">
-                      "Declaro que as informações prestadas são verdadeiras e estou ciente dos termos de hospedagem e política de privacidade/LGPD."
+                      Declaro que as informações prestadas são verdadeiras e estou ciente do tratamento dos meus dados para fins de cumprimento legal da FNRH e execução da hospedagem.
                     </p>
                     <div className="mt-1.5 flex flex-wrap gap-2 text-[11px]">
                       <button 
@@ -2222,16 +2413,36 @@ export default function GuestPreCheckin() {
                         onClick={(e) => { e.preventDefault(); setTermsModalTab("rules"); setTermsModalOpen(true); }}
                         className="text-sky-600 hover:underline font-bold inline"
                       >
-                        [Ler Regras do Flat]
+                        [Regras do Edifício]
                       </button>
                       <button 
                         type="button" 
                         onClick={(e) => { e.preventDefault(); setTermsModalTab("contract"); setTermsModalOpen(true); }}
                         className="text-indigo-600 hover:underline font-bold inline"
                       >
-                        [Ler Contrato de Estadia]
+                        [Termos de Hospedagem]
                       </button>
                     </div>
+                  </div>
+                </label>
+
+                {/* Checkbox 2: Opcional (Opt-in Marketing) */}
+                <label className={`flex items-start gap-3 p-3.5 rounded-xl border transition-all cursor-pointer select-none ${
+                  optInMarketing ? "bg-sky-50/80 border-sky-300 text-sky-950 ring-2 ring-sky-500/20" : "bg-white border-slate-200 hover:border-slate-300"
+                }`}>
+                  <input 
+                    type="checkbox" 
+                    checked={optInMarketing} 
+                    onChange={e => setOptInMarketing(e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500 mt-0.5 shrink-0"
+                  />
+                  <div className="text-xs text-slate-700 leading-relaxed">
+                    <span className="font-bold text-slate-900 block mb-0.5">
+                      Comunicações e Benefícios Exclusivos (Opcional)
+                    </span>
+                    <p className="text-slate-600">
+                      Aceito receber novidades, benefícios e comunicações sobre futuras estadias via WhatsApp ou E-mail.
+                    </p>
                   </div>
                 </label>
               </div>

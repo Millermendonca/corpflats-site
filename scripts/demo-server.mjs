@@ -49,7 +49,7 @@ import {
   renderGarageAuthorizationEmail,
   renderManualEmail 
 } from "./mail-service.mjs";
-import { generateFnrhPdf, formatToBrasiliaDateTime } from "./fnrh-pdf-service.mjs";
+import { generateFnrhPdf, formatToBrasiliaDateTime, SECURE_FNRH_DIR, LEGACY_FNRH_DIR } from "./fnrh-pdf-service.mjs";
 
 const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
@@ -306,6 +306,26 @@ app.post("/api/admin/restore-historical-cleanings", (req, res) => {
 });
 
 // ── Password Hashing Helper ──────────────────────────────────────────────────
+
+function ensureReceptionUser(database) {
+  if (!database.users) database.users = defaultUsers;
+  const found = database.users.find(u => u.username.toLowerCase() === "soho@promenade.com.br");
+  if (!found) {
+    database.users.push({
+      id: 4,
+      username: "Soho@promenade.com.br",
+      name: "Recepção Soho",
+      role: "recepcao",
+      passwordHash: hashPassword("Soho@123"),
+      must_change_password: true,
+      password_updated_at: new Date().toISOString()
+    });
+  }
+  if (!Array.isArray(database.fnrhInternalAuditLogs)) {
+    database.fnrhInternalAuditLogs = [];
+  }
+}
+
 function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
   const hash = crypto.scryptSync(password, salt, 32).toString("hex");
   return `${salt}:${hash}`;
@@ -353,6 +373,7 @@ let db = {
   notifications: [],
   fnrhAuditDocuments: [],
   fnrhSignatureTokens: [],
+  fnrhInternalAuditLogs: [],
   notificationSettings: {
     soundEnabled: true,
     adminWhatsApp: "5522997124021",
@@ -1298,6 +1319,21 @@ async function loadDatabase() {
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
           );
           CREATE INDEX IF NOT EXISTS idx_res_comm_res_id ON reservation_communications(reservation_id);
+          CREATE TABLE IF NOT EXISTS fnrh_internal_audit_logs (
+            id BIGSERIAL PRIMARY KEY,
+            timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            action TEXT NOT NULL,
+            auth_context TEXT NOT NULL,
+            user_id INT,
+            username TEXT,
+            client_ip TEXT NOT NULL,
+            hostname TEXT,
+            user_agent TEXT NOT NULL,
+            record_id TEXT,
+            details JSONB NOT NULL DEFAULT '{}'
+          );
+          CREATE INDEX IF NOT EXISTS idx_fnrh_audit_timestamp ON fnrh_internal_audit_logs (timestamp DESC);
+          CREATE INDEX IF NOT EXISTS idx_fnrh_audit_record_id ON fnrh_internal_audit_logs (record_id);
         `);
         const res = await pgPool.query("SELECT value FROM system_store WHERE key = 'db_state'");
         if (res && res.rows && res.rows[0]) {
@@ -1328,6 +1364,7 @@ async function loadDatabase() {
     }
 
     if (!db.reservationCommunications) db.reservationCommunications = [];
+    ensureReceptionUser(db);
 
     // Restauração de Certificado Digital A1 a partir do PostgreSQL
     if (db.nfseConfig?.certificadoA1?.pfxBase64) {
@@ -1887,6 +1924,124 @@ function checkYouthLocalRisk({ birthDate, city, address, phone }) {
   };
 }
 
+// ── Helper Universal para Chamadas Google Gemini AI com Auto-Discovery de Modelos ──
+async function getGeminiCandidateEndpoints(apiKey) {
+  const candidates = [];
+
+  // Modelos estáveis com alta quota no Free Tier do Google
+  const preferredModels = [
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-pro",
+    "gemini-pro"
+  ];
+
+  const savedModel = db.settings?.geminiModel;
+  const savedVer = db.settings?.geminiApiVersion || "v1beta";
+  if (savedModel && !savedModel.includes("tts") && !savedModel.includes("embed")) {
+    candidates.push({ ver: savedVer, model: savedModel });
+  }
+
+  // 1. Tentar consultar ListModels diretamente para saber quais modelos a chave suporta
+  try {
+    for (const ver of ["v1beta", "v1"]) {
+      const res = await fetch(`https://generativelanguage.googleapis.com/${ver}/models?key=${apiKey}`);
+      if (res.ok) {
+        const data = await res.json();
+        // Filtra estritamente apenas modelos de geração de texto/chat, excluindo TTS, embeddings, aqa, etc.
+        const available = (data.models || [])
+          .filter(m => {
+            const name = (m.name || "").toLowerCase();
+            const methods = m.supportedGenerationMethods || [];
+            return (
+              methods.includes("generateContent") &&
+              !name.includes("tts") &&
+              !name.includes("embed") &&
+              !name.includes("aqa") &&
+              !name.includes("imagen") &&
+              !name.includes("whisper") &&
+              !name.includes("realtime")
+            );
+          })
+          .map(m => m.name.replace("models/", ""));
+
+        for (const p of preferredModels) {
+          if (available.includes(p) && !candidates.some(c => c.ver === ver && c.model === p)) {
+            candidates.push({ ver, model: p });
+          }
+        }
+        for (const a of available) {
+          if (!candidates.some(c => c.ver === ver && c.model === a)) {
+            candidates.push({ ver, model: a });
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[Gemini ListModels]", err.message);
+  }
+
+  // 2. Fallbacks padrões estáveis em ordem de preferência
+  const defaultFallbacks = [
+    { ver: "v1beta", model: "gemini-1.5-flash" },
+    { ver: "v1", model: "gemini-1.5-flash" },
+    { ver: "v1beta", model: "gemini-1.5-flash-8b" },
+    { ver: "v1beta", model: "gemini-2.0-flash" },
+    { ver: "v1beta", model: "gemini-2.0-flash-lite" },
+    { ver: "v1beta", model: "gemini-1.5-pro" },
+    { ver: "v1beta", model: "gemini-pro" }
+  ];
+
+  for (const fb of defaultFallbacks) {
+    if (!candidates.some(c => c.ver === fb.ver && c.model === fb.model)) {
+      candidates.push(fb);
+    }
+  }
+
+  return candidates;
+}
+
+async function callGeminiGenerateContent(apiKey, contents) {
+  const candidates = await getGeminiCandidateEndpoints(apiKey);
+  let lastError = null;
+
+  for (const { ver, model } of candidates) {
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/${ver}/models/${model}:generateContent?key=${apiKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        // Salva o modelo funcional no banco para acelerar chamadas futuras
+        if (!db.settings) db.settings = {};
+        if (db.settings.geminiModel !== model || db.settings.geminiApiVersion !== ver) {
+          db.settings.geminiModel = model;
+          db.settings.geminiApiVersion = ver;
+          saveDatabase();
+        }
+        return { ok: true, data, model, ver };
+      } else {
+        const errJson = await response.json().catch(() => ({}));
+        const msg = errJson.error?.message || `Status ${response.status}`;
+        lastError = msg;
+        console.warn(`[Gemini Candidate] ${model} (${ver}) -> Status ${response.status}: ${msg}`);
+        // Continua tentando os próximos modelos candidatos (ex: se 2.5 tem cota 0, tenta 1.5-flash)
+        continue;
+      }
+    } catch (e) {
+      lastError = e.message;
+      continue;
+    }
+  }
+
+  return { ok: false, error: lastError || "Não foi possível conectar a nenhum modelo Gemini." };
+}
+
 async function evaluateGuestIdentityWithAI({ fullName, document, birthDate, selfieBase64, docPhotoBase64, selfieUrl, docPhotoUrl }) {
   const apiKey = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY;
   if (!apiKey) {
@@ -1946,16 +2101,10 @@ Tarefas:
     addImagePart(docPhotoBase64);
     addImagePart(selfieBase64);
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts }]
-      })
-    });
+    const geminiResult = await callGeminiGenerateContent(apiKey, [{ parts }]);
 
-    if (response.ok) {
-      const data = await response.json();
+    if (geminiResult.ok) {
+      const data = geminiResult.data;
       const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
       const jsonMatch = rawText.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
@@ -2201,7 +2350,7 @@ function createNotification({ category, title, message, severity = "info", metad
 await loadDatabase();
 ensureUniqueRequestIds();
 reconcileCleaningRequests();
-initWhatsAppEngine(app, () => db, saveDatabase, createNotification);
+initWhatsAppEngine(app, () => db, saveDatabase, createNotification, (text, ctx) => analyzeTextSentimentWithAI(text, ctx));
 initMaidAutomationEngine(app, () => db, saveDatabase);
 
 let checkinsList = [];
@@ -3195,7 +3344,16 @@ app.post("/api/auth/login", (req, res) => {
     path: "/",
     maxAge: 30 * 24 * 60 * 60 * 1000 // 30 dias
   });
-  res.json({ id: found.id, username: found.username, role: found.role });
+  const mustChange = !!found.must_change_password;
+  const expired = isPasswordExpired(found);
+  res.json({
+    id: found.id,
+    username: found.username,
+    role: found.role,
+    name: found.name || found.username,
+    mustChangePassword: mustChange,
+    passwordExpired: expired
+  });
 });
 
 app.post("/api/auth/logout", (req, res) => {
@@ -10252,6 +10410,60 @@ app.post("/api/pms/reservations/communications/:commId/resend", async (req, res)
   res.json({ success: true, message: result.message });
 });
 
+// ── Gemini AI: GET config ──────────────────────────────────────────────────
+app.get("/api/settings/gemini", (req, res) => {
+  const key = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || "";
+  const configured = !!key;
+  const keyMasked = key ? key.substring(0, 6) + "••••••••••••••••••••••••••" + key.slice(-4) : "";
+  const model = db.settings?.geminiModel || "gemini-2.0-flash";
+  const apiVersion = db.settings?.geminiApiVersion || "v1beta";
+  res.json({ configured, keyMasked, model, apiVersion });
+});
+
+// ── Gemini AI: POST save key ───────────────────────────────────────────────
+app.post("/api/settings/gemini", (req, res) => {
+  const { apiKey } = req.body;
+  if (!apiKey || apiKey.trim().length < 10) return res.status(400).json({ error: "Chave inválida. Informe a chave completa do Google AI Studio." });
+  if (!db.settings) db.settings = {};
+  db.settings.geminiApiKey = apiKey.trim();
+  saveDatabase();
+  const key = apiKey.trim();
+  const keyMasked = key.substring(0, 6) + "••••••••••••••••••••••••••" + key.slice(-4);
+  res.json({ success: true, message: "Chave Gemini salva com sucesso!", configured: true, keyMasked });
+});
+
+// ── Gemini AI: POST test connection ───────────────────────────────────────
+app.post("/api/settings/gemini/test", async (req, res) => {
+  const apiKey = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || "";
+  if (!apiKey) return res.status(400).json({ error: "Nenhuma chave Gemini configurada." });
+
+  // Limpa modelo salvo se for TTS ou inválido
+  if (db.settings?.geminiModel && (db.settings.geminiModel.includes("tts") || db.settings.geminiModel.includes("embed"))) {
+    delete db.settings.geminiModel;
+    saveDatabase();
+  }
+
+  const result = await callGeminiGenerateContent(apiKey, [{ parts: [{ text: "Responda apenas: OK" }] }]);
+  if (result.ok) {
+    const reply = result.data.candidates?.[0]?.content?.parts?.[0]?.text || "OK";
+    res.json({
+      success: true,
+      message: `Conectado com sucesso! Modelo ativo: ${result.model} (${result.ver}) • Resposta: "${reply.trim()}"`,
+      model: result.model,
+      apiVersion: result.ver
+    });
+  } else {
+    const rawErr = result.error || "";
+    if (rawErr.includes("Quota exceeded") || rawErr.includes("429") || rawErr.includes("rate-limit") || rawErr.includes("limit: 0")) {
+      res.status(400).json({
+        error: `A sua chave é válida, porém a cota gratuita do Google Gemini para esta chave atingiu o limite temporário (Rate Limit por minuto ou dia). O sistema está operando normalmente com o motor heurístico local de análise de sentimento e defeitos enquanto a cota é restabelecida.`
+      });
+    } else {
+      res.status(400).json({ error: rawErr || "Falha ao validar a conexão com a API Gemini." });
+    }
+  }
+});
+
 // 4. Obter configurações de e-mail (Zoho SMTP)
 app.get("/api/settings/email", (req, res) => {
   const config = getSmtpConfig(db);
@@ -11090,6 +11302,200 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
 });
 
 // ── Rota Pública de Validação do QR Code (MP nº 2.200-2/2001 e Lei nº 14.063/2020) ─
+
+// ── FNRH Internal Audit Engine & Secure Storage Helper ───────────────────────
+export function logFnrhInternalAudit({
+  req = null,
+  action,
+  recordId = "",
+  details = {},
+  authContextOverride = null
+}) {
+  try {
+    const user = req ? getAuthUser(req) : null;
+    let authContext = authContextOverride || "ANONIMO";
+    let userId = null;
+    let username = null;
+    if (user) {
+      if (user.role === "admin") authContext = "ADM";
+      else if (user.role === "recepcao") authContext = "RECEPCAO";
+      else authContext = user.role.toUpperCase();
+      userId = user.id;
+      username = user.username;
+    }
+
+    const clientIp = req?.headers?.["x-forwarded-for"]?.split(",")?.[0]?.trim() || req?.ip || req?.socket?.remoteAddress || "127.0.0.1";
+    const hostname = req?.headers?.["host"] || req?.hostname || "localhost";
+    const userAgent = req?.headers?.["user-agent"] || "unknown";
+    const timestamp = new Date().toISOString();
+
+    if (!db.fnrhInternalAuditLogs) db.fnrhInternalAuditLogs = [];
+    const id = db.fnrhInternalAuditLogs.length > 0 ? (db.fnrhInternalAuditLogs[0].id || db.fnrhInternalAuditLogs.length) + 1 : 1;
+
+    const entry = {
+      id,
+      timestamp,
+      action,
+      auth_context: authContext,
+      user_id: userId,
+      username,
+      client_ip: clientIp,
+      hostname,
+      user_agent: userAgent,
+      record_id: String(recordId || ""),
+      details: details || {}
+    };
+
+    db.fnrhInternalAuditLogs.unshift(entry);
+    if (db.fnrhInternalAuditLogs.length > 5000) {
+      db.fnrhInternalAuditLogs = db.fnrhInternalAuditLogs.slice(0, 5000);
+    }
+
+    if (pgPool) {
+      pgPool.query(
+        "INSERT INTO fnrh_internal_audit_logs (timestamp, action, auth_context, user_id, username, client_ip, hostname, user_agent, record_id, details) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+        [entry.timestamp, entry.action, entry.auth_context, entry.user_id, entry.username, entry.client_ip, entry.hostname, entry.user_agent, entry.record_id, JSON.stringify(entry.details)]
+      ).catch(e => console.warn("[PostgreSQL fnrh_internal_audit_logs]", e.message));
+    }
+  } catch (err) {
+    console.warn("[FNRH Internal Audit] Erro ao registrar log:", err.message);
+  }
+}
+
+const FNRH_HMAC_SECRET = process.env.SESSION_SECRET || "corpflats-fnrh-hmac-secret-2026";
+
+function generateSignedFnrhToken(documentUuid, expiresInMinutes = 30) {
+  const expiresAt = Date.now() + expiresInMinutes * 60 * 1000;
+  const payload = `${documentUuid}:${expiresAt}`;
+  const hmac = crypto.createHmac("sha256", FNRH_HMAC_SECRET).update(payload).digest("hex");
+  return `${expiresAt}.${hmac}`;
+}
+
+function verifySignedFnrhToken(documentUuid, token) {
+  if (!token || typeof token !== "string" || !token.includes(".")) return false;
+  const [expiresAtStr, hmac] = token.split(".");
+  const expiresAt = Number(expiresAtStr);
+  if (isNaN(expiresAt) || Date.now() > expiresAt) return false;
+  const payload = `${documentUuid}:${expiresAt}`;
+  const expectedHmac = crypto.createHmac("sha256", FNRH_HMAC_SECRET).update(payload).digest("hex");
+  try {
+    return crypto.timingSafeEqual(Buffer.from(hmac, "hex"), Buffer.from(expectedHmac, "hex"));
+  } catch {
+    return hmac === expectedHmac;
+  }
+}
+
+function handleFnrhServe(isDownload) {
+  return (req, res) => {
+    const documentUuid = req.params.documentUuid;
+    if (!documentUuid) return res.status(400).json({ error: "UUID do documento não fornecido." });
+
+    const user = getAuthUser(req);
+    let isAuthorized = false;
+    let authContext = "ANONIMO";
+
+    if (user) {
+      if (user.role === "admin") {
+        isAuthorized = true;
+        authContext = "ADM";
+      } else if (user.role === "recepcao") {
+        if (!user.mustChangePassword && !user.passwordExpired) {
+          isAuthorized = true;
+          authContext = "RECEPCAO";
+        } else {
+          return res.status(403).json({
+            error: "Acesso bloqueado: A senha da recepção expirou ou precisa ser redefinida antes de acessar documentos de hóspedes."
+          });
+        }
+      } else {
+        isAuthorized = true;
+        authContext = user.role.toUpperCase();
+      }
+    }
+
+    if (!isAuthorized && req.query.token) {
+      if (verifySignedFnrhToken(documentUuid, req.query.token)) {
+        isAuthorized = true;
+        authContext = "GUEST_SIGNED_LINK";
+      }
+    }
+
+    if (!isAuthorized) {
+      return res.status(403).json({
+        error: "Acesso não autorizado ou link assinado expirado (validade de 30 minutos)."
+      });
+    }
+
+    // Localizar registro do documento
+    let docRecord = (db.fnrhAuditDocuments || []).find(d => d.documentUuid === documentUuid);
+    if (!docRecord) {
+      for (const r of (db.reservations || [])) {
+        if (r.fnrhDocumentUuid === documentUuid) {
+          docRecord = r.fnrhAuditTrail;
+          break;
+        }
+        if (Array.isArray(r.guests)) {
+          const g = r.guests.find(x => x.fnrhDocumentUuid === documentUuid);
+          if (g) {
+            docRecord = g.fnrhAuditTrail;
+            break;
+          }
+        }
+      }
+    }
+
+    // Localizar arquivo no disco
+    let targetFilePath = null;
+    if (docRecord?.fileName) {
+      const p1 = path.join(SECURE_FNRH_DIR, docRecord.fileName);
+      const p2 = path.join(LEGACY_FNRH_DIR, docRecord.fileName);
+      if (fs.existsSync(p1)) targetFilePath = p1;
+      else if (fs.existsSync(p2)) targetFilePath = p2;
+    }
+
+    // Fallback: varrer diretórios procurando pelo UUID
+    if (!targetFilePath) {
+      for (const d of [SECURE_FNRH_DIR, LEGACY_FNRH_DIR]) {
+        if (fs.existsSync(d)) {
+          const files = fs.readdirSync(d);
+          const foundFile = files.find(f => f.includes(documentUuid));
+          if (foundFile) {
+            targetFilePath = path.join(d, foundFile);
+            break;
+          }
+        }
+      }
+    }
+
+    if (!targetFilePath || !fs.existsSync(targetFilePath)) {
+      return res.status(404).json({ error: "Arquivo físico da FNRH não encontrado no servidor." });
+    }
+
+    // Log de auditoria interna mandatório
+    logFnrhInternalAudit({
+      req,
+      action: isDownload ? "PDF_BAIXADO" : "DOCUMENTO_VISUALIZADO",
+      recordId: documentUuid,
+      details: {
+        fileName: path.basename(targetFilePath),
+        guestName: docRecord?.guestName || "Não identificado",
+        reservationCode: docRecord?.reservationCode || null
+      },
+      authContextOverride: authContext
+    });
+
+    const sendFileName = docRecord?.fileName || path.basename(targetFilePath);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `${isDownload ? "attachment" : "inline"}; filename="${sendFileName}"`
+    );
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Cache-Control", "private, no-cache, no-store, must-revalidate");
+    res.sendFile(targetFilePath);
+  };
+}
+
 app.get("/api/public/verify-fnrh/:uuid", (req, res) => {
   const uuid = req.params.uuid;
   if (!uuid) return res.status(400).json({ error: "UUID não fornecido" });
@@ -15984,56 +16390,34 @@ app.get("/api/live-ops/metrics", (req, res) => {
 // MÓDULO 3: LEITOR INTELIGENTE DE AVALIAÇÕES COM IA (Review Insights)
 // ══════════════════════════════════════════════════════════════════════════════
 
-// Seed de avaliações iniciais caso esteja vazio
+// Inicialização segura de avaliações (sem mockups fictícios)
 function initDefaultReviews() {
-  if (!db.reviews || db.reviews.length === 0) {
-    db.reviews = [
-      {
-        id: 1,
-        author: "Marcelo Albuquerque",
-        rating: 5,
-        channel: "airbnb",
-        date: "2026-08-15",
-        flatMentioned: "1017",
-        comment: "Excelente estadia! O Flat 1017 estava impecavelmente limpo, internet muito rápida para trabalhar e a localização perto da Pelinca é perfeita. Recomendo muito!",
-        sentiment: "positive",
-        analyzed: true
-      },
-      {
-        id: 2,
-        author: "Fernanda Costa",
-        rating: 4,
-        channel: "booking",
-        date: "2026-08-14",
-        flatMentioned: "304",
-        comment: "Adorei a jacuzzi e a sauna no topo do prédio Soho. Porém o ar condicionado do quarto 304 estava com um pequeno gotejamento na madrugada, precisam dar uma olhada.",
-        sentiment: "mixed",
-        maintenanceGenerated: true,
-        analyzed: true
-      },
-      {
-        id: 3,
-        author: "Rodrigo Mendes (Engenheiro)",
-        rating: 5,
-        channel: "site",
-        date: "2026-08-12",
-        flatMentioned: "211",
-        comment: "Viajo muito a trabalho para Campos. O café da manhã entregue pontualmente no quarto fez toda a diferença. O check-in digital agilizou demais na portaria.",
-        sentiment: "positive",
-        analyzed: true
-      },
-      {
-        id: 4,
-        author: "Camila Nogueira",
-        rating: 5,
-        channel: "google",
-        date: "2026-08-10",
-        flatMentioned: "113",
-        comment: "Cama queen muito confortável, banheiro limpinho e tudo novinho. Atendimento excelente no WhatsApp da CorpFlats.",
-        sentiment: "positive",
-        analyzed: true
-      }
-    ];
+  if (!db.reviews) db.reviews = [];
+  // Purga definitiva de quaisquer dados mockados de teste antigos
+  const mockAuthors = ["Marcelo Albuquerque", "Fernanda Costa", "Rodrigo Mendes (Engenheiro)", "Camila Nogueira"];
+  const hadMock = db.reviews.some(r => mockAuthors.includes(r.author));
+
+  const mockHighlights = [
+    "Café da manhã no quarto elogiado por hóspedes corporativos e de lazer",
+    "Agilidade no Check-in Digital com liberação na portaria do Soho",
+    "Alta velocidade do Wi-Fi e qualidade do colchão Queen Size",
+    "Flats silenciosos e ar condicionado split higienizado"
+  ];
+  const hadMockHighlights = db.reviewInsights?.highlights?.some(h => mockHighlights.includes(h));
+
+  if (hadMock || hadMockHighlights || (db.reviews.length === 0 && db.reviewInsights?.highlights?.length > 0)) {
+    if (hadMock) {
+      db.reviews = db.reviews.filter(r => !mockAuthors.includes(r.author));
+    }
+    if (db.reviews.length === 0) {
+      db.reviewInsights = null;
+    } else if (db.reviewInsights?.highlights) {
+      db.reviewInsights.highlights = db.reviewInsights.highlights.filter(h => !mockHighlights.includes(h));
+    }
+    if (db.observations) {
+      db.observations = db.observations.filter(o => !o.description?.includes("[IA Auto-Ticket]") && !o.generatedFromReviewId);
+    }
+    saveDatabase();
   }
 }
 initDefaultReviews();
@@ -16041,34 +16425,120 @@ initDefaultReviews();
 // 3.1 Listar Avaliações e Diagnóstico da IA
 app.get("/api/ai/reviews", (req, res) => {
   initDefaultReviews();
+  const reviews = db.reviews || [];
+  
+  const pendingActionItems = (db.observations || [])
+    .filter(o => o.status === "pendente" && (
+      o.generatedFromWhatsApp ||
+      o.generatedFromNps ||
+      o.generatedFromReviewId ||
+      o.description?.includes("[IA Auto-Ticket]") ||
+      o.description?.includes("[WhatsApp Defeito]") ||
+      o.description?.includes("[WhatsApp Crítica]") ||
+      o.description?.includes("[NPS Auto-Ticket]")
+    ))
+    .map(o => ({
+      id: o.id,
+      flat: o.flatNumber || "N/A",
+      issue: o.description,
+      priority: o.severity || "alta",
+      status: o.status
+    }));
+
+  const emptyInsights = {
+    overallScore: 0,
+    npsScore: 0,
+    totalAnalyzed: reviews.length,
+    positivePercent: 0,
+    mixedPercent: 0,
+    negativePercent: 0,
+    highlights: [],
+    actionItems: []
+  };
+
+  const baseInsights = db.reviewInsights || emptyInsights;
   res.json({
-    reviews: db.reviews || [],
-    insights: db.reviewInsights || {
-      overallScore: 4.8,
-      npsScore: 88,
-      totalAnalyzed: (db.reviews || []).length,
-      positivePercent: 92,
-      mixedPercent: 8,
-      negativePercent: 0,
-      highlights: [
-        "Café da manhã no quarto elogiado por 94% dos viajantes executivos",
-        "Check-in Digital destacou a velocidade de acesso na portaria do Soho",
-        "Wi-Fi de 500 Mega altamente pontuado para trabalho remoto/home office",
-        "Limpeza e higienização das roupas de cama com nota máxima"
-      ],
-      actionItems: [
-        { flat: "304", issue: "Revisão e limpeza de dreno do Ar Condicionado Split", priority: "alta", status: "Ordem de Manutenção Gerada" }
-      ]
+    reviews,
+    insights: {
+      ...baseInsights,
+      actionItems: pendingActionItems
     }
   });
 });
 
+// 3.1B Endpoint para Limpar Dados de Teste
+app.post("/api/ai/clear-test-data", (req, res) => {
+  try {
+    db.reviews = [];
+    db.reviewInsights = null;
+    db.guestSentiment = [];
+    db.npsResponses = [];
+    if (db.observations) {
+      db.observations = db.observations.filter(o => 
+        !o.description?.includes("[IA Auto-Ticket]") && 
+        !o.description?.includes("[NPS Auto-Ticket]") && 
+        !o.description?.includes("[WhatsApp Defeito]") && 
+        !o.description?.includes("[WhatsApp Crítica]") && 
+        !o.generatedFromReviewId && 
+        !o.generatedFromNps &&
+        !o.generatedFromWhatsApp
+      );
+    }
+    saveDatabase();
+    res.json({ success: true, message: "Dados de teste excluídos com sucesso!" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 3.2 Analisar Avaliações com IA (Gera Ordens de Manutenção para Flats Citados)
-app.post("/api/ai/analyze-reviews", (req, res) => {
+app.post("/api/ai/analyze-reviews", async (req, res) => {
   try {
     initDefaultReviews();
     const reviews = db.reviews || [];
     const createdMaintenanceOrders = [];
+
+    const getPendingActionItems = () => {
+      return (db.observations || [])
+        .filter(o => o.status === "pendente" && (
+          o.generatedFromWhatsApp ||
+          o.generatedFromNps ||
+          o.generatedFromReviewId ||
+          o.description?.includes("[IA Auto-Ticket]") ||
+          o.description?.includes("[WhatsApp Defeito]") ||
+          o.description?.includes("[WhatsApp Crítica]") ||
+          o.description?.includes("[NPS Auto-Ticket]")
+        ))
+        .map(o => ({
+          id: o.id,
+          flat: o.flatNumber || "N/A",
+          issue: o.description,
+          priority: o.severity || "alta",
+          status: o.status
+        }));
+    };
+
+    // Se não há avaliações, zera métricas e destaques sem inventar nenhum dado mockado
+    if (reviews.length === 0) {
+      db.reviewInsights = {
+        overallScore: 0,
+        npsScore: 0,
+        totalAnalyzed: 0,
+        positivePercent: 0,
+        mixedPercent: 0,
+        negativePercent: 0,
+        lastAnalyzedAt: new Date().toISOString(),
+        highlights: [],
+        actionItems: getPendingActionItems()
+      };
+      saveDatabase();
+      return res.json({
+        success: true,
+        message: "Nenhuma avaliação cadastrada para analisar. As métricas e destaques foram calculados exclusivamente sobre dados reais (zerados).",
+        createdMaintenanceOrders: [],
+        insights: db.reviewInsights
+      });
+    }
 
     // Palavras-chave que indicam problemas de manutenção
     const maintenanceKeywords = [
@@ -16084,7 +16554,7 @@ app.post("/api/ai/analyze-reviews", (req, res) => {
       if (rev.analyzed && rev.maintenanceChecked) continue;
 
       // 1. Detecta número do flat no texto (ex: "quarto 304", "flat 1017", "apt 211")
-      const flatMatch = rev.comment.match(/(?:flat|quarto|apt|apto|apartamento|unidade)\s*([0-9]{2,4})/i) || 
+      const flatMatch = (rev.comment || "").match(/(?:flat|quarto|apt|apto|apartamento|unidade)\s*([0-9]{2,4})/i) || 
                          (rev.flatMentioned ? [null, rev.flatMentioned] : null);
 
       if (flatMatch && flatMatch[1]) {
@@ -16093,12 +16563,11 @@ app.post("/api/ai/analyze-reviews", (req, res) => {
 
         // 2. Procura se há menção a problemas técnicos
         for (const kw of maintenanceKeywords) {
-          if (kw.trigger.test(rev.comment)) {
-            // Cria ordem automática em observations
+          if (kw.trigger.test(rev.comment || "")) {
             if (!db.observations) db.observations = [];
             
             const existingObs = db.observations.find(o => 
-              o.flatNumber === flatNum && o.description.includes(rev.author)
+              o.flatNumber === flatNum && o.description.includes(rev.author || "")
             );
 
             if (!existingObs) {
@@ -16107,7 +16576,7 @@ app.post("/api/ai/analyze-reviews", (req, res) => {
                 id: newObsId,
                 flatNumber: flatNum,
                 type: "manutencao",
-                description: `[IA Auto-Ticket] ${kw.title} detectado na avaliação de ${rev.author} (${rev.channel.toUpperCase()}): "${rev.comment.substring(0, 120)}..."`,
+                description: `[IA Auto-Ticket] ${kw.title} detectado na avaliação de ${rev.author || "Hóspede"} (${(rev.channel || "canal").toUpperCase()}): "${(rev.comment || "").substring(0, 120)}..."`,
                 severity: "media",
                 status: "pendente",
                 createdAt: new Date().toISOString(),
@@ -16125,40 +16594,76 @@ app.post("/api/ai/analyze-reviews", (req, res) => {
       rev.maintenanceChecked = true;
     }
 
-    // Recalcula métricas globais
+    // Recalcula métricas globais exclusivamente com dados reais
     const total = reviews.length;
-    const avgScore = total > 0 ? (reviews.reduce((acc, r) => acc + (r.rating || 5), 0) / total).toFixed(1) : "5.0";
+    const avgScore = Number((reviews.reduce((acc, r) => acc + (Number(r.rating) || 5), 0) / total).toFixed(1));
+
+    const positiveCount = reviews.filter(r => Number(r.rating) >= 4 || r.sentiment === "positive").length;
+    const mixedCount = reviews.filter(r => Number(r.rating) === 3 || r.sentiment === "neutral" || r.sentiment === "mixed").length;
+    const negativeCount = reviews.filter(r => Number(r.rating) <= 2 || r.sentiment === "negative").length;
+
+    const positivePercent = Math.round((positiveCount / total) * 100);
+    const mixedPercent = Math.round((mixedCount / total) * 100);
+    const negativePercent = Math.round((negativeCount / total) * 100);
+
+    const promoters = reviews.filter(r => Number(r.rating) === 5).length;
+    const detractors = reviews.filter(r => Number(r.rating) <= 3).length;
+    const npsScore = Math.round(((promoters - detractors) / total) * 100);
+
+    // Destaques estritamente reais extraídos de avaliações com nota >= 4
+    let highlights = [];
+    const positiveReviews = reviews.filter(r => (Number(r.rating) >= 4 || r.sentiment === "positive") && r.comment?.trim());
+
+    if (positiveReviews.length > 0) {
+      const apiKey = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY;
+      if (apiKey) {
+        try {
+          const sampleText = positiveReviews.slice(0, 10).map(r => `- "${r.comment.trim()}" (${r.author || "Hóspede"})`).join("\n");
+          const prompt = `Você é um analista de hospitalidade do hotel CorpFlats. A seguir estão comentários REAIS de avaliações positivas de hóspedes:\n${sampleText}\n\nCom base ESTRITAMENTE nesses comentários reais, resuma de 1 a 4 principais pontos fortes ou elogios reais (máximo 12 palavras por item). NUNCA invente nada que não esteja citado nesses comentários.\nRetorne APENAS um JSON no formato: ["ponto 1", "ponto 2"]`;
+          const aiRes = await callGeminiGenerateContent(apiKey, [{ parts: [{ text: prompt }] }]);
+          if (aiRes.ok) {
+            const raw = aiRes.data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+            const jsonMatch = raw.match(/\[[\s\S]*\]/);
+            if (jsonMatch) {
+              const parsed = JSON.parse(jsonMatch[0]);
+              if (Array.isArray(parsed)) {
+                highlights = parsed.filter(p => typeof p === "string" && p.trim().length > 0).slice(0, 4);
+              }
+            }
+          }
+        } catch (err) {
+          console.warn("[Gemini Highlights Error]", err.message);
+        }
+      }
+
+      // Se a IA não gerou ou não há chave, extrair diretamente as frases reais dos comentários
+      if (highlights.length === 0) {
+        highlights = positiveReviews.slice(0, 4).map(r => {
+          const firstSentence = r.comment.split(/[.!?\n]/)[0]?.trim();
+          return firstSentence && firstSentence.length >= 10
+            ? `${firstSentence} (${r.author || "Hóspede"})`
+            : `${r.comment.substring(0, 75)}... (${r.author || "Hóspede"})`;
+        });
+      }
+    }
 
     db.reviewInsights = {
-      overallScore: Number(avgScore),
-      npsScore: 90,
+      overallScore: avgScore,
+      npsScore,
       totalAnalyzed: total,
-      positivePercent: 93,
-      mixedPercent: 7,
-      negativePercent: 0,
+      positivePercent,
+      mixedPercent,
+      negativePercent,
       lastAnalyzedAt: new Date().toISOString(),
-      highlights: [
-        "Café da manhã no quarto elogiado por hóspedes corporativos e de lazer",
-        "Agilidade no Check-in Digital com liberação na portaria do Soho",
-        "Alta velocidade do Wi-Fi e qualidade do colchão Queen Size",
-        "Flats silenciosos e ar condicionado split higienizado"
-      ],
-      actionItems: (db.observations || [])
-        .filter(o => o.status === "pendente" && o.description.includes("[IA Auto-Ticket]"))
-        .map(o => ({
-          id: o.id,
-          flat: o.flatNumber,
-          issue: o.description,
-          priority: "alta",
-          status: o.status
-        }))
+      highlights,
+      actionItems: getPendingActionItems()
     };
 
     saveDatabase();
 
     res.json({
       success: true,
-      message: `Análise de IA concluída! ${createdMaintenanceOrders.length} ordens de manutenção geradas automaticamente para quartos específicos.`,
+      message: `Análise concluída com base em ${total} avaliação(ões) real(is)! ${createdMaintenanceOrders.length} ordens de manutenção geradas.`,
       createdMaintenanceOrders,
       insights: db.reviewInsights
     });
@@ -16193,6 +16698,516 @@ app.post("/api/ai/import-review", (req, res) => {
     saveDatabase();
 
     res.json({ success: true, review: newRev });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MÓDULO 3B: ANÁLISE DE SENTIMENTO DE HÓSPEDES (WhatsApp + NPS + Filtro Google)
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Helper: chama Gemini para analisar sentimento de texto livre com fallback heurístico automático
+async function analyzeTextSentimentWithAI(text, context) {
+  const ctx = context || "";
+  const apiKey = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY;
+
+  const runHeuristicAnalysis = (reason = "") => {
+    const positiveWords = /excelente|ótimo|otimo|maravilhoso|perfeito|adorei|parabéns|parabens|impecável|impecavel|muito bom|gostei muito|recomendo|nota 10|nota 5|satisfeito/i;
+    const negativeWords = /ruim|péssimo|pessimo|terrível|terrivel|horrível|horrivel|problema|problemas|defeito|defeitos|falha|quebrado|sujo|barulho|barulhento|vazamento|goteira|gotejando|pingando|frio|calor|demora|demorado|não funciona|nao funciona|estragado|estragou/i;
+    const maintWords = /ar[- ]condicionado|chuveiro|água|agua|aquecedor|fechadura|porta|chave|tranca|lâmpada|lampada|luz|tomada|tv|televisão|televisao|frigobar|geladeira|wi-fi|wifi|internet|vazamento|pia|vaso|dreno/i;
+
+    const pos = positiveWords.test(text);
+    const neg = negativeWords.test(text);
+    const maint = maintWords.test(text);
+
+    let score = 65;
+    let tone = "neutral";
+    if (neg) {
+      score = maint ? 20 : 30;
+      tone = "negative";
+    } else if (pos) {
+      score = 90;
+      tone = "positive";
+    }
+
+    const words = (text || "").toLowerCase().split(/\s+/).filter(w => w.length > 3);
+    const posKw = words.filter(w => positiveWords.test(w)).slice(0, 4);
+    const negKw = words.filter(w => negativeWords.test(w) || maintWords.test(w)).slice(0, 4);
+
+    const flatMatch = (text || "").match(/(?:apto|apt|flat|quarto|unidade|su[ií]te)\s*[:#º°]?\s*(\d{2,4}[a-z]?)/i);
+    const flats = flatMatch ? [flatMatch[1]] : [];
+
+    const suggestions = [];
+    if (neg) {
+      if (maint) suggestions.push(`Verificar reparo emergencial de manutenção${flats[0] ? ` no Flat ${flats[0]}` : ""}`);
+      suggestions.push("Entrar em contato com o hóspede para acolhimento e resolução");
+    }
+
+    const summary = tone === "negative"
+      ? `Reclamação identificada: "${text.substring(0, 100)}..."`
+      : tone === "positive"
+      ? `Feedback positivo recebido: "${text.substring(0, 100)}..."`
+      : `Mensagem recebida: "${text.substring(0, 100)}..."`;
+
+    return {
+      score,
+      tone,
+      keywords: Array.from(new Set([...posKw, ...negKw])),
+      positiveKeywords: Array.from(new Set(posKw)),
+      negativeKeywords: Array.from(new Set(negKw)),
+      suggestions,
+      flatsMentioned: flats,
+      summary,
+      usingAI: false,
+      fallbackReason: reason
+    };
+  };
+
+  if (!apiKey) {
+    return runHeuristicAnalysis("sem chave Gemini");
+  }
+
+  try {
+    const prompt = `Você é um analista de experiência do cliente de um hotel boutique brasileiro chamado CorpFlats.\nAnalise o seguinte texto${ctx ? " (" + ctx + ")" : ""} e retorne um JSON estrito com os campos abaixo.\nTexto para análise: """${text}"""\n\nRetorne APENAS um JSON válido (sem markdown) no formato:\n{\n  "score": 82,\n  "tone": "positive",\n  "keywords": ["limpeza", "wi-fi", "ar condicionado"],\n  "positiveKeywords": ["impecável", "rápido", "confortável"],\n  "negativeKeywords": ["gotejando"],\n  "suggestions": ["Verificar ar condicionado do flat 304"],\n  "flatsMentioned": ["304"],\n  "summary": "Hóspede muito satisfeito, elogia limpeza e internet mas relata problema no AC"\n}\nOnde "score" é de 0 (péssimo) a 100 (excelente), "tone" é "positive", "neutral" ou "negative".`;
+
+    const geminiResult = await callGeminiGenerateContent(apiKey, [{ parts: [{ text: prompt }] }]);
+
+    if (geminiResult.ok) {
+      const data = geminiResult.data;
+      const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return {
+          score: Number(parsed.score) || 65,
+          tone: parsed.tone || "neutral",
+          keywords: Array.isArray(parsed.keywords) ? parsed.keywords : [],
+          positiveKeywords: Array.isArray(parsed.positiveKeywords) ? parsed.positiveKeywords : [],
+          negativeKeywords: Array.isArray(parsed.negativeKeywords) ? parsed.negativeKeywords : [],
+          suggestions: Array.isArray(parsed.suggestions) ? parsed.suggestions : [],
+          flatsMentioned: Array.isArray(parsed.flatsMentioned) ? parsed.flatsMentioned : [],
+          summary: parsed.summary || "",
+          usingAI: true
+        };
+      }
+    }
+  } catch (err) {
+    console.warn("[Sentiment AI]", err.message);
+  }
+
+  // Fallback para motor heurístico caso a API do Gemini esteja fora do ar ou com cota atingida
+  return runHeuristicAnalysis("fallback por cota ou indisponibilidade da API Gemini");
+}
+
+// Inicializar estrutura de sentimentos se não existir
+function ensureSentimentDB() {
+  if (!db.guestSentiment) db.guestSentiment = [];
+  if (!db.npsResponses) db.npsResponses = [];
+  if (!db.whatsappInboundMessages) db.whatsappInboundMessages = [];
+}
+
+// 3B.1 — Visão geral de sentimento consolidada
+app.get("/api/ai/sentiment/overview", (req, res) => {
+  ensureSentimentDB();
+  initDefaultReviews();
+
+  const sentiment = db.guestSentiment || [];
+  const npsResponses = db.npsResponses || [];
+  const reviews = db.reviews || [];
+
+  const wppAnalyzed = sentiment.filter(s => s.overallScore != null);
+  const avgWppScore = wppAnalyzed.length > 0
+    ? Math.round(wppAnalyzed.reduce((a, s) => a + (s.overallScore || 0), 0) / wppAnalyzed.length)
+    : null;
+
+  const wppPositive = wppAnalyzed.filter(s => s.overallTone === "positive").length;
+  const wppNeutral = wppAnalyzed.filter(s => s.overallTone === "neutral").length;
+  const wppNegative = wppAnalyzed.filter(s => s.overallTone === "negative").length;
+
+  const npsTotal = npsResponses.length;
+  const npsResponded = npsResponses.filter(n => n.score != null).length;
+  const npsPromoters = npsResponses.filter(n => n.score === 5).length;
+  const npsNeutrals = npsResponses.filter(n => n.score === 4 || n.score === 3).length;
+  const npsDetractors = npsResponses.filter(n => n.score != null && n.score <= 2).length;
+  const googleLinkSent = npsResponses.filter(n => n.googleLinkSent).length;
+  const filterRate = npsResponded > 0 ? Math.round((npsPromoters / npsResponded) * 100) : null;
+
+  const avgReviewScore = reviews.length > 0
+    ? (reviews.reduce((a, r) => a + (r.rating || 5), 0) / reviews.length).toFixed(1)
+    : "5.0";
+
+  const allNegKw = [];
+  wppAnalyzed.forEach(s => { if (Array.isArray(s.negativeKeywords)) allNegKw.push(...s.negativeKeywords); });
+  reviews.forEach(r => { if (Array.isArray(r.negativeKeywords)) allNegKw.push(...r.negativeKeywords); });
+  const kwFreq = {};
+  allNegKw.forEach(k => { kwFreq[k] = (kwFreq[k] || 0) + 1; });
+  const topNegativeKeywords = Object.entries(kwFreq)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([word, count]) => ({ word, count }));
+
+  res.json({
+    whatsapp: { analyzed: wppAnalyzed.length, avgScore: avgWppScore, positive: wppPositive, neutral: wppNeutral, negative: wppNegative, positivePercent: wppAnalyzed.length > 0 ? Math.round((wppPositive / wppAnalyzed.length) * 100) : null },
+    nps: { sent: npsTotal, responded: npsResponded, promoters: npsPromoters, neutrals: npsNeutrals, detractors: npsDetractors, googleLinkSent, filterRate },
+    reviews: { total: reviews.length, avgScore: Number(avgReviewScore) },
+    topNegativeKeywords,
+    lastUpdated: new Date().toISOString()
+  });
+});
+
+// 3B.2 — Listar conversas WhatsApp com sentimento analisado
+app.get("/api/ai/sentiment/whatsapp", (req, res) => {
+  ensureSentimentDB();
+  const { flatNumber, tone } = req.query;
+  let list = db.guestSentiment || [];
+  if (tone && tone !== "all") list = list.filter(s => s.overallTone === tone);
+  if (flatNumber) list = list.filter(s => s.flatNumber === flatNumber);
+  const enriched = list.map(s => {
+    let reservation = (db.reservations || []).find(r => r.id === s.reservationId || String(r.id) === String(s.reservationId) || r.code === s.reservationId);
+    if (!reservation && s.guestPhone) {
+      const cleanP = s.guestPhone.replace(/\D/g, "");
+      reservation = (db.reservations || []).find(r => {
+        const rP = (r.guestPhone || r.phone || "").replace(/\D/g, "");
+        return rP && (cleanP.endsWith(rP.slice(-8)) || rP.endsWith(cleanP.slice(-8)));
+      });
+    }
+    const hasTicket = (db.observations || []).some(o => (o.guestPhone === s.guestPhone || o.description?.includes(s.guestPhone) || (s.guestName && o.description?.includes(s.guestName))) && o.status === "pendente");
+    return {
+      ...s,
+      guestName: s.guestName || reservation?.guestName || "Hóspede",
+      flatNumber: s.flatNumber || reservation?.flatNumber || reservation?.flat,
+      checkoutDate: reservation?.checkoutDate,
+      channel: reservation?.channel,
+      hasMaintenanceTicket: hasTicket
+    };
+  });
+  res.json({ sentiments: enriched });
+});
+
+// 3B.3 — Analisar TODAS as conversas WhatsApp com IA
+app.post("/api/ai/sentiment/analyze-whatsapp", async (req, res) => {
+  ensureSentimentDB();
+  try {
+    const reservations = db.reservations || [];
+    const byPhone = {};
+
+    // 1. Incorpora conversas do WhatsApp Web / Z-API
+    const conversations = (db.whatsappConversations || []).filter(c => !c.isGroup);
+    for (const conv of conversations) {
+      const phone = conv.phone || conv.id;
+      if (!phone) continue;
+      if (!byPhone[phone]) {
+        byPhone[phone] = {
+          phone,
+          messages: [],
+          reservationId: conv.reservationId || conv.reservationCode,
+          guestName: conv.name || "Hóspede",
+          flatNumber: conv.flatNumber || null
+        };
+      } else {
+        if (conv.flatNumber && !byPhone[phone].flatNumber) byPhone[phone].flatNumber = conv.flatNumber;
+        if (conv.name && (!byPhone[phone].guestName || byPhone[phone].guestName === "Hóspede")) byPhone[phone].guestName = conv.name;
+        if ((conv.reservationId || conv.reservationCode) && !byPhone[phone].reservationId) byPhone[phone].reservationId = conv.reservationId || conv.reservationCode;
+      }
+      for (const m of (conv.messages || [])) {
+        const text = m.text || m.caption || "";
+        if (!text.trim()) continue;
+        const mTime = m.timestamp ? new Date(m.timestamp).toISOString() : new Date().toISOString();
+        const already = byPhone[phone].messages.some(ex => ex.text === text && Math.abs(new Date(ex.at || 0).getTime() - new Date(mTime).getTime()) < 4000);
+        if (!already) {
+          byPhone[phone].messages.push({
+            text,
+            direction: m.fromMe ? "outbound" : "inbound",
+            at: mTime
+          });
+        }
+      }
+    }
+
+    // 2. Incorpora histórico de mensagens recebidas (Inbound)
+    const inboundMsgs = db.whatsappInboundMessages || [];
+    for (const msg of inboundMsgs) {
+      const phone = msg.from || msg.phone;
+      if (!phone) continue;
+      if (!byPhone[phone]) byPhone[phone] = { phone, messages: [], guestName: msg.senderName || "Hóspede" };
+      const text = msg.text || msg.body || "";
+      if (!text.trim()) continue;
+      const mTime = msg.receivedAt || msg.at || new Date().toISOString();
+      const already = byPhone[phone].messages.some(ex => ex.text === text && Math.abs(new Date(ex.at || 0).getTime() - new Date(mTime).getTime()) < 4000);
+      if (!already) {
+        byPhone[phone].messages.push({ text, direction: "inbound", at: mTime });
+      }
+    }
+
+    // 3. Incorpora histórico de mensagens enviadas (Dispatch)
+    const dispatchHistory = db.whatsappDispatchHistory || [];
+    for (const msg of dispatchHistory) {
+      const phone = msg.guestPhone || msg.recipientPhone;
+      if (!phone) continue;
+      if (!byPhone[phone]) byPhone[phone] = { phone, messages: [], reservationId: msg.reservationId, guestName: msg.guestName || msg.recipientName };
+      const text = msg.messageText || msg.message || "";
+      if (!text.trim()) continue;
+      const mTime = msg.sentAt || msg.scheduledAt || new Date().toISOString();
+      const already = byPhone[phone].messages.some(ex => ex.text === text && Math.abs(new Date(ex.at || 0).getTime() - new Date(mTime).getTime()) < 4000);
+      if (!already) {
+        byPhone[phone].messages.push({ text, direction: "outbound", at: mTime });
+      }
+    }
+
+    let analyzedCount = 0;
+    const results = [];
+    const force = Boolean(req.body?.force);
+
+    for (const [phone, data] of Object.entries(byPhone)) {
+      const inbounds = data.messages.filter(m => m.direction === "inbound");
+      if (inbounds.length === 0) continue;
+      const fullText = inbounds.map(m => m.text).join(" | ");
+      if (!fullText.trim()) continue;
+
+      const latestInboundAt = Math.max(...inbounds.map(m => new Date(m.at || 0).getTime()));
+      const existing = (db.guestSentiment || []).find(s => s.guestPhone === phone);
+      if (existing?.analyzedAt && !force) {
+        const analyzedTime = new Date(existing.analyzedAt).getTime();
+        const age = Date.now() - analyzedTime;
+        if (latestInboundAt <= analyzedTime && age < 6 * 60 * 60 * 1000) {
+          results.push(existing);
+          continue;
+        }
+      }
+
+      let reservation = reservations.find(r => r.id === data.reservationId || r.code === data.reservationId);
+      if (!reservation) {
+        const cleanP = phone.replace(/\D/g, "");
+        reservation = reservations.find(r => {
+          const rP = (r.guestPhone || r.phone || "").replace(/\D/g, "");
+          return rP && (cleanP.endsWith(rP.slice(-8)) || rP.endsWith(cleanP.slice(-8)));
+        });
+      }
+
+      const flatMatch = fullText.match(/(?:apto|apt|flat|quarto|unidade|su[ií]te)\s*[:#º°]?\s*(\d{2,4}[a-z]?)/i);
+      const flatNumber = data.flatNumber || reservation?.flatNumber || reservation?.flat || (flatMatch ? flatMatch[1] : null);
+
+      const analysis = await analyzeTextSentimentWithAI(fullText, "mensagens recebidas do hóspede via WhatsApp");
+
+      const sentimentEntry = {
+        id: existing?.id || ("sent_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6)),
+        guestPhone: phone,
+        guestName: data.guestName || reservation?.guestName || "Hóspede",
+        reservationId: data.reservationId || reservation?.id,
+        flatNumber: flatNumber || null,
+        overallScore: analysis.score,
+        overallTone: analysis.tone,
+        positiveKeywords: analysis.positiveKeywords || [],
+        negativeKeywords: analysis.negativeKeywords || [],
+        keywords: analysis.keywords || [],
+        suggestions: analysis.suggestions || [],
+        summary: analysis.summary,
+        messageCount: data.messages.length,
+        inboundCount: inbounds.length,
+        analyzedAt: new Date().toISOString(),
+        usingAI: analysis.usingAI
+      };
+
+      const idx = (db.guestSentiment || []).findIndex(s => s.guestPhone === phone);
+      if (idx >= 0) db.guestSentiment[idx] = sentimentEntry;
+      else {
+        if (!db.guestSentiment) db.guestSentiment = [];
+        db.guestSentiment.unshift(sentimentEntry);
+      }
+
+      // Detecção de Defeitos e Auto-Ticket em db.observations
+      const isDefectOrCriticism = analysis.tone === "negative" ||
+        /ruim|péssimo|pessimo|terrível|terrivel|problema|problemas|defeito|defeitos|falha|quebrado|sujo|barulho|barulhento|vazamento|goteira|gotejando|pingando|frio|calor|demora|demorado|não funciona|nao funciona|estragado|estragou/i.test(fullText);
+
+      if (isDefectOrCriticism) {
+        if (!db.observations) db.observations = [];
+        const alreadyHasTicket = db.observations.some(o =>
+          (o.guestPhone === phone || o.description?.includes(phone) || (sentimentEntry.guestName && o.description?.includes(sentimentEntry.guestName))) &&
+          o.status === "pendente" &&
+          o.generatedFromWhatsApp
+        );
+        if (!alreadyHasTicket) {
+          const isMaint = /ar[- ]condicionado|chuveiro|água|agua|aquecedor|fechadura|porta|chave|tranca|lâmpada|lampada|luz|tomada|tv|televisão|televisao|frigobar|geladeira|wi-fi|wifi|internet|vazamento|pia|vaso|dreno/i.test(fullText);
+          const obsId = db.observations.length > 0 ? Math.max(...db.observations.map(o => o.id || 0)) + 1 : 1;
+          const ticketTitle = isMaint ? "[WhatsApp Defeito]" : "[WhatsApp Crítica]";
+          db.observations.push({
+            id: obsId,
+            flatNumber: flatNumber || "N/A",
+            guestPhone: phone,
+            type: "reclamacao",
+            description: `${ticketTitle} Hóspede ${sentimentEntry.guestName || phone}${flatNumber ? ` (Flat ${flatNumber})` : ""}: "${fullText.substring(0, 140)}"`,
+            severity: "alta",
+            status: "pendente",
+            createdAt: new Date().toISOString(),
+            generatedFromWhatsApp: true
+          });
+        }
+      }
+
+      // Detecção de Resposta NPS (1 a 5)
+      const lastInboundText = inbounds.slice(-1)[0]?.text?.trim() || "";
+      const npsMatch = lastInboundText.match(/^([1-5])$/) || lastInboundText.match(/^nota\s*([1-5])$/i);
+      if (npsMatch) {
+        const npsScore = Number(npsMatch[1]);
+        if (!db.npsResponses) db.npsResponses = [];
+        let npsItem = db.npsResponses.find(n => n.guestPhone === phone);
+        if (!npsItem) {
+          npsItem = {
+            id: `nps_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            guestPhone: phone,
+            guestName: sentimentEntry.guestName || "Hóspede",
+            sentAt: new Date().toISOString()
+          };
+          db.npsResponses.unshift(npsItem);
+        }
+        npsItem.score = npsScore;
+        npsItem.respondedAt = new Date().toISOString();
+        npsItem.pendingResponse = false;
+        npsItem.flatNumber = flatNumber || npsItem.flatNumber;
+        if (npsScore === 5) {
+          npsItem.autoAction = "google_link_sent";
+          npsItem.googleLinkSent = true;
+        } else if (npsScore <= 2) {
+          npsItem.autoAction = "recovery_ticket_created";
+        } else {
+          npsItem.autoAction = "feedback_collected";
+        }
+      }
+
+      results.push(sentimentEntry);
+      analyzedCount++;
+    }
+
+    saveDatabase();
+    res.json({ success: true, analyzed: analyzedCount, results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3B.4 — Registrar resposta NPS de hóspede
+app.post("/api/ai/nps-response", async (req, res) => {
+  ensureSentimentDB();
+  try {
+    const { reservationId, guestPhone, guestName, score, comment, flatNumber, channel } = req.body;
+    if (!reservationId && !guestPhone) return res.status(400).json({ error: "reservationId ou guestPhone são obrigatórios." });
+
+    const numScore = Number(score);
+    let googleLinkSent = numScore === 5;
+    let autoAction = numScore === 5 ? "google_link_sent" : numScore >= 3 ? "feedback_collected" : "recovery_ticket_created";
+
+    if (numScore <= 2) {
+      if (!db.observations) db.observations = [];
+      const obsId = db.observations.length > 0 ? Math.max(...db.observations.map(o => o.id || 0)) + 1 : 1;
+      db.observations.push({ id: obsId, flatNumber: flatNumber || "N/A", type: "reclamacao", description: "[NPS Auto-Ticket] Hóspede " + (guestName || guestPhone) + " deu nota " + numScore + "/5 na pesquisa pós-checkout. Comentário: \"" + (comment || "Sem comentário") + "\". Entrar em contato para recuperação.", severity: numScore === 1 ? "alta" : "media", status: "pendente", createdAt: new Date().toISOString(), generatedFromNps: true });
+    }
+
+    let sentimentAnalysis = null;
+    if (comment && comment.trim().length > 5) sentimentAnalysis = await analyzeTextSentimentWithAI(comment, "feedback NPS pós-checkout");
+
+    const npsEntry = {
+      id: "nps_" + Date.now() + "_" + Math.random().toString(36).substring(2, 5),
+      reservationId: reservationId || null, guestPhone: guestPhone || null, guestName: guestName || "Hóspede",
+      flatNumber: flatNumber || null, channel: channel || null, score: numScore, comment: comment || null,
+      sentAt: new Date().toISOString(), respondedAt: new Date().toISOString(),
+      googleLinkSent, autoAction, pendingResponse: false,
+      sentimentScore: sentimentAnalysis?.score || null, sentimentTone: sentimentAnalysis?.tone || null,
+      sentimentSummary: sentimentAnalysis?.summary || null
+    };
+
+    const idx = (db.npsResponses || []).findIndex(n => String(n.reservationId) === String(reservationId) || n.guestPhone === guestPhone);
+    if (idx >= 0) { db.npsResponses[idx] = { ...db.npsResponses[idx], ...npsEntry, id: db.npsResponses[idx].id }; }
+    else { db.npsResponses.unshift(npsEntry); }
+
+    saveDatabase();
+    res.json({ success: true, npsEntry, googleLinkSent, autoAction });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3B.5 — Registrar envio de pesquisa NPS
+app.post("/api/ai/nps-sent", (req, res) => {
+  ensureSentimentDB();
+  try {
+    const { reservationId, guestPhone, guestName, flatNumber, channel } = req.body;
+    const existing = (db.npsResponses || []).find(n => String(n.reservationId) === String(reservationId) || n.guestPhone === guestPhone);
+    if (existing) return res.json({ success: true, npsEntry: existing, alreadyExists: true });
+    const npsEntry = { id: "nps_" + Date.now() + "_" + Math.random().toString(36).substring(2, 5), reservationId: reservationId || null, guestPhone: guestPhone || null, guestName: guestName || "Hóspede", flatNumber: flatNumber || null, channel: channel || null, score: null, comment: null, sentAt: new Date().toISOString(), respondedAt: null, googleLinkSent: false, autoAction: null, pendingResponse: true };
+    db.npsResponses.unshift(npsEntry);
+    saveDatabase();
+    res.json({ success: true, npsEntry });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3B.6 — Listar respostas NPS
+app.get("/api/ai/nps-responses", (req, res) => {
+  ensureSentimentDB();
+  const { result } = req.query;
+  let list = db.npsResponses || [];
+  if (result === "promoters") list = list.filter(n => n.score === 5);
+  else if (result === "neutrals") list = list.filter(n => n.score >= 3 && n.score <= 4);
+  else if (result === "detractors") list = list.filter(n => n.score != null && n.score <= 2);
+  else if (result === "pending") list = list.filter(n => n.score == null);
+  res.json({ npsResponses: list, total: list.length });
+});
+
+// 3B.7 — Analisar sentimento de uma avaliação com IA
+app.post("/api/ai/reviews/:id/analyze-sentiment", async (req, res) => {
+  initDefaultReviews();
+  try {
+    const rev = (db.reviews || []).find(r => String(r.id) === String(req.params.id));
+    if (!rev) return res.status(404).json({ error: "Avaliação não encontrada." });
+    const analysis = await analyzeTextSentimentWithAI(rev.comment, "avaliação do canal " + (rev.channel || "externo"));
+    rev.sentimentScore = analysis.score; rev.sentiment = analysis.tone;
+    rev.positiveKeywords = analysis.positiveKeywords || []; rev.negativeKeywords = analysis.negativeKeywords || [];
+    rev.sentimentSummary = analysis.summary; rev.analyzedByAI = analysis.usingAI; rev.analyzedAt = new Date().toISOString();
+    saveDatabase();
+    res.json({ success: true, analysis, review: rev });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3B.8 — Processar mensagem recebida do WhatsApp para detectar resposta NPS
+app.post("/api/ai/process-inbound-message", async (req, res) => {
+  ensureSentimentDB();
+  try {
+    const { phone, text, guestName, reservationId } = req.body;
+    if (!phone || !text) return res.status(400).json({ error: "phone e text são obrigatórios." });
+
+    if (!db.whatsappInboundMessages) db.whatsappInboundMessages = [];
+    db.whatsappInboundMessages.unshift({ from: phone, senderName: guestName, reservationId: reservationId || null, text: text.trim(), receivedAt: new Date().toISOString() });
+
+    const pendingNps = (db.npsResponses || []).find(n => n.pendingResponse && (n.guestPhone === phone || String(n.reservationId) === String(reservationId)));
+    let npsDetected = null;
+
+    if (pendingNps) {
+      const scoreMatch = text.trim().match(/^[1-5]$/);
+      if (scoreMatch) {
+        const score = Number(scoreMatch[0]);
+        const reservation = (db.reservations || []).find(r => String(r.id) === String(pendingNps.reservationId));
+        const googleLinkSent = score === 5;
+        const autoAction = score === 5 ? "google_link_sent" : score >= 3 ? "feedback_collected" : "recovery_ticket_created";
+
+        if (score <= 2) {
+          if (!db.observations) db.observations = [];
+          const obsId = db.observations.length > 0 ? Math.max(...db.observations.map(o => o.id || 0)) + 1 : 1;
+          db.observations.push({ id: obsId, flatNumber: reservation?.flatNumber || "N/A", type: "reclamacao", description: "[NPS Auto-Ticket] Hóspede " + (guestName || phone) + " deu nota " + score + "/5 na pesquisa pós-checkout. Entrar em contato para recuperação.", severity: score === 1 ? "alta" : "media", status: "pendente", createdAt: new Date().toISOString(), generatedFromNps: true });
+        }
+
+        const npsIdx = (db.npsResponses || []).findIndex(n => n.id === pendingNps.id);
+        if (npsIdx >= 0) db.npsResponses[npsIdx] = { ...db.npsResponses[npsIdx], score, respondedAt: new Date().toISOString(), googleLinkSent, autoAction, pendingResponse: false };
+        npsDetected = { score, googleLinkSent, autoAction };
+        saveDatabase();
+      }
+    }
+
+    res.json({ success: true, npsDetected, stored: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

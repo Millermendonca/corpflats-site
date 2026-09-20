@@ -8,12 +8,17 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const FNRH_UPLOADS_DIR = path.join(__dirname, "uploads", "fnrh_documents");
-if (!fs.existsSync(FNRH_UPLOADS_DIR)) {
-  try {
-    fs.mkdirSync(FNRH_UPLOADS_DIR, { recursive: true });
-  } catch (err) {
-    console.error("[FNRH PDF] Erro ao criar diretório de uploads FNRH:", err);
+// Diretório Seguro para armazenamento das FNRHs
+export const SECURE_FNRH_DIR = path.join(__dirname, "secure_uploads", "fnrh_documents");
+export const LEGACY_FNRH_DIR = path.join(__dirname, "uploads", "fnrh_documents");
+
+for (const dir of [SECURE_FNRH_DIR, LEGACY_FNRH_DIR]) {
+  if (!fs.existsSync(dir)) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch (err) {
+      console.error("[FNRH PDF] Erro ao criar diretório de FNRH:", err);
+    }
   }
 }
 
@@ -38,9 +43,7 @@ export function formatToBrasiliaDateTime(isoDateString) {
 }
 
 /**
- * Compila a Ficha de Registro de Hóspede com Auditoria Forense
- * @param {Object} params
- * @returns {Promise<{ filePath: string, fileName: string, fileUrl: string, documentUuid: string, sha256Hash: string, signedAt: string, auditTrail: Object }>}
+ * Compila a Ficha Nacional de Registro de Hóspedes (FNRH) com Trilha Forense
  */
 export async function generateFnrhPdf({
   reservation = {},
@@ -53,6 +56,9 @@ export async function generateFnrhPdf({
   signerUserAgent,
   userAgent,
   appOrigin,
+  geolocation,
+  clientTimezone,
+  optInMarketing,
   baseUrl = "https://corpflats.onrender.com"
 }) {
   const g = guestData || guest || {};
@@ -68,14 +74,14 @@ export async function generateFnrhPdf({
   const cleanCpf = (g.document || g.cpf || reservation.guestDocument || "00000000000").replace(/\D/g, "");
   const reservationId = reservation.id || reservation.code || "res";
   const timestamp = Date.now();
-  const fileName = `fnrh_${reservationId}_${cleanCpf}_${timestamp}.pdf`;
-  const filePath = path.join(FNRH_UPLOADS_DIR, fileName);
+  const fileName = "fnrh_" + reservationId + "_" + cleanCpf + "_" + timestamp + ".pdf";
+  const filePath = path.join(SECURE_FNRH_DIR, fileName);
 
-  const verifyUrl = `${origin.replace(/\/$/, "")}/verificar-ficha/${documentUuid}`;
+  const verifyUrl = origin.replace(/\/$/, "") + "/verificar-ficha/" + documentUuid;
 
   // Gera o QR Code em buffer de alta resolução
   const qrCodeBuffer = await QRCode.toBuffer(verifyUrl, {
-    width: 130,
+    width: 140,
     margin: 1,
     color: {
       dark: "#0f172a",
@@ -83,7 +89,7 @@ export async function generateFnrhPdf({
     }
   });
 
-  // Converte assinatura Base64 para Buffer caso exista
+  // Converte assinatura Base64 para Buffer
   let signatureBuffer = null;
   if (sig && typeof sig === "string" && sig.includes("base64,")) {
     try {
@@ -97,12 +103,12 @@ export async function generateFnrhPdf({
   // Criação do Documento PDFKit
   const doc = new PDFDocument({
     size: "A4",
-    margins: { top: 32, bottom: 32, left: 36, right: 36 },
+    margins: { top: 26, bottom: 26, left: 32, right: 32 },
     info: {
-      Title: `Ficha de Registro de Hóspede - ${g.fullName || g.name || "Hóspede"}`,
-      Author: "CorpFlats Hospedagem",
-      Subject: "FNRH - Ficha de Registro de Hóspede e Trilha de Auditoria Forense",
-      Keywords: "FNRH, Check-in, Assinatura Eletrônica, CorpFlats",
+      Title: "FNRH Oficial - " + (g.fullName || g.name || "Hóspede"),
+      Author: "CORP FLATS HOSPEDAGEM LTDA",
+      Subject: "Ficha Nacional de Registro de Hóspedes e Trilha de Auditoria Forense",
+      Keywords: "FNRH, Check-in, Assinatura Eletrônica, CorpFlats, Cadastur, MTur",
       CreationDate: new Date()
     }
   });
@@ -110,250 +116,296 @@ export async function generateFnrhPdf({
   const writeStream = fs.createWriteStream(filePath);
   doc.pipe(writeStream);
 
-  // ════════════════════════════════════════════════════════════════════════════
-  // 1. CABEÇALHO OFICIAL CORPFLATS
-  // ════════════════════════════════════════════════════════════════════════════
-  const topY = 32;
+  const boxWidth = 531;
+  const leftX = 32;
+
+  // 1. CABEÇALHO OFICIAL CORPFLATS & MINISTÉRIO DO TURISMO (CADASTUR)
+  const topY = 26;
 
   // Barra decorativa superior
-  doc.rect(36, topY, 523, 4).fill("#0284c7"); // Sky-600
+  doc.rect(leftX, topY, boxWidth, 3).fill("#0284c7");
 
-  // Ícone e Logo Box
-  doc.roundedRect(36, topY + 10, 48, 48, 8).fill("#0f172a");
-  doc.fillColor("#ffffff").fontSize(20).font("Helvetica-Bold").text("CF", 48, topY + 24);
+  // Logo Badge Box
+  doc.roundedRect(leftX, topY + 8, 44, 44, 6).fill("#0f172a");
+  doc.fillColor("#ffffff").fontSize(18).font("Helvetica-Bold").text("CF", leftX + 9, topY + 20);
 
-  // Identificação da Empresa
-  doc.fillColor("#0f172a").fontSize(15).font("Helvetica-Bold").text("CORPFLATS HOSPEDAGEM", 94, topY + 12);
-  doc.fontSize(8.5).font("Helvetica").fillColor("#475569");
-  doc.text("Razão Social: CORP FLATS HOSPEDAGEM LTDA  |  CNPJ: 47.964.813/0001-65", 94, topY + 30);
-  doc.text("Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ, CEP 28010-140", 94, topY + 41);
-  doc.text("WhatsApp/Tel: (22) 99712-4021  |  E-mail: reservas@corpflats.com.br", 94, topY + 52);
+  // Identificação Empresarial e Cadastur
+  doc.fillColor("#0f172a").fontSize(13).font("Helvetica-Bold").text("CORP FLATS HOSPEDAGEM LTDA", leftX + 52, topY + 8);
+  doc.fontSize(7.5).font("Helvetica").fillColor("#334155");
+  doc.text("CNPJ: 47.964.813/0001-65  |  Cadastur: 19.034.812/0001-90  |  Edifício Soho Residence Service", leftX + 52, topY + 23);
+  doc.text("Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ, CEP 28010-140", leftX + 52, topY + 33);
+  doc.text("Tel/WhatsApp: (22) 99712-4021  |  E-mail: reservas@corpflats.com.br", leftX + 52, topY + 43);
 
-  // Título do Documento à Direita
-  doc.roundedRect(385, topY + 12, 174, 46, 6).fill("#f1f5f9");
-  doc.fillColor("#0284c7").fontSize(8).font("Helvetica-Bold").text("DOCUMENTO OFICIAL", 395, topY + 18);
-  doc.fillColor("#0f172a").fontSize(11).font("Helvetica-Bold").text("Ficha de Registro de Hóspede", 395, topY + 29);
-  doc.fillColor("#64748b").fontSize(7.5).font("Helvetica").text(`Código: ${reservation.code || reservationId}`, 395, topY + 44);
+  // Título do Documento Oficial à Direita
+  const badgeRightX = leftX + 355;
+  doc.roundedRect(badgeRightX, topY + 7, 176, 46, 5).fill("#f1f5f9").stroke("#cbd5e1");
+  doc.fillColor("#0284c7").fontSize(7).font("Helvetica-Bold").text("DOCUMENTO REGULATÓRIO OFICIAL", badgeRightX + 8, topY + 12);
+  doc.fillColor("#0f172a").fontSize(9.5).font("Helvetica-Bold").text("Ficha Nacional de Registro (FNRH)", badgeRightX + 8, topY + 22);
+  doc.fillColor("#64748b").fontSize(6.5).font("Helvetica").text("Lei 11.771/2008 & Decreto 7.381/2010 (MTur)", badgeRightX + 8, topY + 34);
+  doc.fillColor("#0369a1").fontSize(7).font("Helvetica-Bold").text("Reserva: " + (reservation.code || reservationId), badgeRightX + 8, topY + 43);
 
-  let currentY = topY + 70;
+  let currentY = topY + 58;
 
-  // ════════════════════════════════════════════════════════════════════════════
-  // 2. BLOCO 1: DADOS DA HOSPEDAGEM
-  // ════════════════════════════════════════════════════════════════════════════
-  doc.rect(36, currentY, 523, 18).fill("#0f172a");
-  doc.fillColor("#ffffff").fontSize(9).font("Helvetica-Bold").text("1. DADOS DA HOSPEDAGEM", 42, currentY + 5);
+  // 2. SEÇÃO 1: DADOS DA HOSPEDAGEM
+  doc.rect(leftX, currentY, boxWidth, 14).fill("#0f172a");
+  doc.fillColor("#ffffff").fontSize(8).font("Helvetica-Bold").text("1. DADOS DA HOSPEDAGEM", leftX + 6, currentY + 3.5);
 
-  currentY += 18;
-  doc.rect(36, currentY, 523, 44).fill("#f8fafc").stroke("#e2e8f0");
+  currentY += 14;
+  doc.rect(leftX, currentY, boxWidth, 38).fill("#f8fafc").stroke("#e2e8f0");
 
-  const col1 = 44;
-  const col2 = 180;
-  const col3 = 310;
-  const col4 = 440;
+  const c1 = leftX + 8;
+  const c2 = leftX + 135;
+  const c3 = leftX + 265;
+  const c4 = leftX + 395;
 
-  // Linha 1 do Bloco
-  doc.fillColor("#64748b").fontSize(7.5).font("Helvetica").text("Acomodação (Flat):", col1, currentY + 6);
-  doc.fillColor("#0f172a").fontSize(10).font("Helvetica-Bold").text(`Flat ${reservation.flatNumber || reservation.flatId || "Standard"}`, col1, currentY + 16);
+  // Linha 1
+  doc.fillColor("#64748b").fontSize(7).font("Helvetica").text("Acomodação (Flat):", c1, currentY + 5);
+  doc.fillColor("#0f172a").fontSize(9).font("Helvetica-Bold").text("Flat " + (reservation.flatNumber || reservation.flatId || "Standard"), c1, currentY + 14);
 
-  doc.fillColor("#64748b").fontSize(7.5).font("Helvetica").text("Data de Entrada (Check-in):", col2, currentY + 6);
-  doc.fillColor("#0f172a").fontSize(9).font("Helvetica-Bold").text(`${reservation.checkinDate || "-"} às ${reservation.checkinTime || "14:00"}`, col2, currentY + 16);
+  doc.fillColor("#64748b").fontSize(7).font("Helvetica").text("Entrada (Check-in):", c2, currentY + 5);
+  doc.fillColor("#0f172a").fontSize(8).font("Helvetica-Bold").text((reservation.checkinDate || "-") + " às " + (reservation.checkinTime || "14:00"), c2, currentY + 14);
 
-  doc.fillColor("#64748b").fontSize(7.5).font("Helvetica").text("Data de Saída (Check-out):", col3, currentY + 6);
-  doc.fillColor("#0f172a").fontSize(9).font("Helvetica-Bold").text(`${reservation.checkoutDate || "-"} às ${reservation.checkoutTime || "12:00"}`, col3, currentY + 16);
+  doc.fillColor("#64748b").fontSize(7).font("Helvetica").text("Saída Prevista (Check-out):", c3, currentY + 5);
+  doc.fillColor("#0f172a").fontSize(8).font("Helvetica-Bold").text((reservation.checkoutDate || "-") + " às " + (reservation.checkoutTime || "12:00"), c3, currentY + 14);
 
-  doc.fillColor("#64748b").fontSize(7.5).font("Helvetica").text("Localização:", col4, currentY + 6);
-  doc.fillColor("#0f172a").fontSize(8.5).font("Helvetica-Bold").text("Soho Residence Service", col4, currentY + 16);
+  doc.fillColor("#64748b").fontSize(7).font("Helvetica").text("Hóspedes na Unidade:", c4, currentY + 5);
+  doc.fillColor("#0f172a").fontSize(8).font("Helvetica-Bold").text((reservation.guestCount || reservation.adults || 1) + " pessoa(s)", c4, currentY + 14);
 
-  // Linha 2 do Bloco
-  const vehicleInfo = reservation.vehicle?.plate 
-    ? `${reservation.vehicle.plate} (${[reservation.vehicle.brand, reservation.vehicle.model].filter(Boolean).join(" ")})`
+  // Linha 2
+  const vehicleObj = g.vehicle || reservation.vehicle;
+  const vehicleText = vehicleObj && vehicleObj.plate 
+    ? vehicleObj.plate + "  -  " + [vehicleObj.brand, vehicleObj.model, vehicleObj.color].filter(Boolean).join(" / ")
     : "Não informado / Sem veículo";
 
-  doc.fillColor("#64748b").fontSize(7.5).font("Helvetica").text("Veículo / Garagem:", col1, currentY + 30);
-  doc.fillColor("#334155").fontSize(8.5).font("Helvetica").text(vehicleInfo, col1 + 80, currentY + 30);
+  doc.fillColor("#64748b").fontSize(7).font("Helvetica").text("Veículo Registrado / Vaga de Garagem:", c1, currentY + 25);
+  doc.fillColor("#334155").fontSize(7.5).font("Helvetica").text(vehicleText, c1 + 145, currentY + 25);
 
-  currentY += 52;
+  currentY += 44;
 
-  // ════════════════════════════════════════════════════════════════════════════
-  // 3. BLOCO 2: DADOS PESSOAIS DO HÓSPEDE (SIMPLIFICADO)
-  // ════════════════════════════════════════════════════════════════════════════
-  doc.rect(36, currentY, 523, 18).fill("#0f172a");
-  doc.fillColor("#ffffff").fontSize(9).font("Helvetica-Bold").text("2. DADOS PESSOAIS DO HÓSPEDE", 42, currentY + 5);
+  // 3. SEÇÃO 2: DADOS CADASTRAIS DO HÓSPEDE
+  doc.rect(leftX, currentY, boxWidth, 14).fill("#0f172a");
+  doc.fillColor("#ffffff").fontSize(8).font("Helvetica-Bold").text("2. DADOS CADASTRAIS DO HÓSPEDE", leftX + 6, currentY + 3.5);
 
-  currentY += 18;
-  doc.rect(36, currentY, 523, 62).fill("#f8fafc").stroke("#e2e8f0");
+  currentY += 14;
+  doc.rect(leftX, currentY, boxWidth, 54).fill("#f8fafc").stroke("#e2e8f0");
 
   const guestFullName = (g.fullName || g.name || reservation.guestName || "Hóspede").trim();
   const guestDoc = g.document || g.cpf || reservation.guestDocument || "-";
   const guestPhone = g.phone || reservation.guestPhone || "-";
   const guestEmail = g.email || reservation.guestEmail || "-";
+  const guestBirth = g.birthDate || "-";
+  const guestGender = g.gender ? (g.gender === "feminino" ? "Feminino" : (g.gender === "masculino" ? "Masculino" : "Outro")) : "Não informado";
+  const guestCep = g.cep || reservation.guestCep || "";
   const guestAddress = [
     g.address || reservation.guestAddress || "",
-    g.city || "",
-    g.state || ""
+    guestCep ? ("CEP: " + guestCep) : "",
+    g.city || reservation.guestCity || "",
+    g.state || reservation.guestState || "",
+    g.country || "Brasil"
   ].filter(Boolean).join(" - ") || "Endereço não informado";
 
-  // Linha 1: Nome e Documento
-  doc.fillColor("#64748b").fontSize(7.5).font("Helvetica").text("Nome Completo:", col1, currentY + 6);
-  doc.fillColor("#0f172a").fontSize(10).font("Helvetica-Bold").text(guestFullName, col1, currentY + 16);
+  // Linha 1
+  doc.fillColor("#64748b").fontSize(7).font("Helvetica").text("Nome Completo:", c1, currentY + 5);
+  doc.fillColor("#0f172a").fontSize(9).font("Helvetica-Bold").text(guestFullName, c1, currentY + 14);
 
-  doc.fillColor("#64748b").fontSize(7.5).font("Helvetica").text("CPF / Documento Oficial:", col3, currentY + 6);
-  doc.fillColor("#0f172a").fontSize(10).font("Helvetica-Bold").text(guestDoc, col3, currentY + 16);
+  doc.fillColor("#64748b").fontSize(7).font("Helvetica").text("CPF / Passaporte / Doc:", c3, currentY + 5);
+  doc.fillColor("#0f172a").fontSize(8.5).font("Helvetica-Bold").text(guestDoc, c3, currentY + 14);
 
-  // Linha 2: Telefone e Email
-  doc.fillColor("#64748b").fontSize(7.5).font("Helvetica").text("Telefone / WhatsApp:", col1, currentY + 30);
-  doc.fillColor("#0f172a").fontSize(8.5).font("Helvetica").text(guestPhone, col1, currentY + 40);
+  doc.fillColor("#64748b").fontSize(7).font("Helvetica").text("Nascimento / Gênero:", c4, currentY + 5);
+  doc.fillColor("#0f172a").fontSize(8).font("Helvetica-Bold").text(guestBirth + " (" + guestGender + ")", c4, currentY + 14);
 
-  doc.fillColor("#64748b").fontSize(7.5).font("Helvetica").text("E-mail:", col3, currentY + 30);
-  doc.fillColor("#0f172a").fontSize(8.5).font("Helvetica").text(guestEmail, col3, currentY + 40);
+  // Linha 2
+  doc.fillColor("#64748b").fontSize(7).font("Helvetica").text("Telefone / WhatsApp:", c1, currentY + 25);
+  doc.fillColor("#0f172a").fontSize(8).font("Helvetica").text(guestPhone, c1, currentY + 34);
 
-  // Linha 3: Endereço Residencial
-  doc.fillColor("#64748b").fontSize(7.5).font("Helvetica").text("Endereço Residencial:", col1, currentY + 51);
-  doc.fillColor("#334155").fontSize(8).font("Helvetica").text(guestAddress, col1 + 86, currentY + 51);
+  doc.fillColor("#64748b").fontSize(7).font("Helvetica").text("E-mail:", c3, currentY + 25);
+  doc.fillColor("#0f172a").fontSize(8).font("Helvetica").text(guestEmail, c3, currentY + 34);
 
-  currentY += 70;
+  // Linha 3
+  doc.fillColor("#64748b").fontSize(7).font("Helvetica").text("Endereço Residencial:", c1, currentY + 44);
+  doc.fillColor("#334155").fontSize(7.5).font("Helvetica").text(guestAddress, c1 + 92, currentY + 44);
 
-  // ════════════════════════════════════════════════════════════════════════════
-  // 4. TERMOS E DECLARAÇÃO LEGAL DE HOSPEDAGEM
-  // ════════════════════════════════════════════════════════════════════════════
-  doc.roundedRect(36, currentY, 523, 42, 4).fill("#f8fafc").stroke("#cbd5e1");
-  
-  // Caixa de seleção marcada [✓]
-  doc.rect(44, currentY + 8, 12, 12).fill("#0284c7");
-  doc.fillColor("#ffffff").fontSize(9).font("Helvetica-Bold").text("✓", 46, currentY + 9);
+  currentY += 60;
 
-  doc.fillColor("#0f172a").fontSize(8).font("Helvetica-Bold").text(
-    "Declaração Legal de Responsabilidade e Termos de Hospedagem / LGPD",
-    62,
-    currentY + 8
+  // 4. SEÇÃO 3: INFORMAÇÕES DA ESTADIA ATUAL (OBRIGATÓRIO MINISTÉRIO DO TURISMO)
+  doc.rect(leftX, currentY, boxWidth, 14).fill("#0f172a");
+  doc.fillColor("#ffffff").fontSize(8).font("Helvetica-Bold").text("3. INFORMAÇÕES DA ESTADIA ATUAL (EXIGÊNCIA LEGAL MTUR - LEI 11.771/2008)", leftX + 6, currentY + 3.5);
+
+  currentY += 14;
+  doc.rect(leftX, currentY, boxWidth, 42).fill("#f8fafc").stroke("#e2e8f0");
+
+  const travelReasonStr = g.travelReason || "Lazer / Férias";
+  const transportMethodStr = g.transportMethod || "Carro próprio";
+  const originStr = [g.originCity || "Não informada", g.originState || "", g.originCountry || "Brasil"].filter(Boolean).join(" / ");
+  const destinationStr = [g.destinationCity || "Não informado", g.destinationState || "", g.destinationCountry || "Brasil"].filter(Boolean).join(" / ");
+
+  // Linha 1
+  doc.fillColor("#64748b").fontSize(7).font("Helvetica").text("Motivo Principal da Viagem:", c1, currentY + 5);
+  doc.fillColor("#0284c7").fontSize(8).font("Helvetica-Bold").text(travelReasonStr, c1, currentY + 14);
+
+  doc.fillColor("#64748b").fontSize(7).font("Helvetica").text("Meio de Transporte Utilizado:", c3, currentY + 5);
+  doc.fillColor("#0284c7").fontSize(8).font("Helvetica-Bold").text(transportMethodStr, c3, currentY + 14);
+
+  // Linha 2
+  doc.fillColor("#64748b").fontSize(7).font("Helvetica").text("Última Procedência (Origem):", c1, currentY + 24);
+  doc.fillColor("#0f172a").fontSize(8).font("Helvetica").text(originStr, c1, currentY + 32);
+
+  doc.fillColor("#64748b").fontSize(7).font("Helvetica").text("Próximo Destino:", c3, currentY + 24);
+  doc.fillColor("#0f172a").fontSize(8).font("Helvetica").text(destinationStr, c3, currentY + 32);
+
+  currentY += 48;
+
+  // 5. TERMOS LEGAIS E LGPD (LEI 13.709/2018)
+  doc.roundedRect(leftX, currentY, boxWidth, 36, 4).fill("#f8fafc").stroke("#cbd5e1");
+
+  // Checkbox 1 (Obrigatório)
+  doc.rect(leftX + 8, currentY + 6, 10, 10).fill("#0284c7");
+  doc.fillColor("#ffffff").fontSize(8).font("Helvetica-Bold").text("✓", leftX + 9.5, currentY + 7);
+  doc.fillColor("#0f172a").fontSize(7.5).font("Helvetica-Bold").text(
+    "Declaro que as informações prestadas são verdadeiras e estou ciente do tratamento dos meus dados para fins de",
+    leftX + 24,
+    currentY + 6
+  );
+  doc.text(
+    "cumprimento legal da FNRH e execução da hospedagem (Art. 7º, II e V da LGPD).",
+    leftX + 24,
+    currentY + 15
   );
 
-  doc.fillColor("#475569").fontSize(7.5).font("Helvetica").text(
-    "\"Declaro que as informações prestadas são verdadeiras e estou ciente dos termos de hospedagem e política de privacidade/LGPD.\"",
-    62,
-    currentY + 20
+  // Checkbox 2 (Opt-in Marketing)
+  const isMarketingAccepted = Boolean(optInMarketing || g.optInMarketing);
+  doc.rect(leftX + 8, currentY + 24, 10, 10).stroke("#94a3b8");
+  if (isMarketingAccepted) {
+    doc.fillColor("#0284c7").rect(leftX + 8, currentY + 24, 10, 10).fill();
+    doc.fillColor("#ffffff").fontSize(8).font("Helvetica-Bold").text("✓", leftX + 9.5, currentY + 25);
+  }
+  doc.fillColor("#475569").fontSize(7).font("Helvetica").text(
+    isMarketingAccepted 
+      ? "Opt-in Autorizado: Aceito receber novidades, benefícios e comunicações sobre futuras estadias via WhatsApp ou E-mail."
+      : "Comunicações de Marketing: Não optou por receber novidades ou benefícios promocionais adicionais.",
+    leftX + 24,
+    currentY + 25
   );
-  doc.fillColor("#64748b").fontSize(7).text(
-    "O titular declara ciência das normas internas do Edifício Soho Residence Service, horários de check-in (14h) e check-out (12h) e integridade do mobiliário.",
-    62,
-    currentY + 30
-  );
 
-  currentY += 50;
+  currentY += 42;
 
-  // ════════════════════════════════════════════════════════════════════════════
-  // 5. BLOCO 4: ÁREA DE ASSINATURA ELETRÔNICA DO HÓSPEDE
-  // ════════════════════════════════════════════════════════════════════════════
-  doc.rect(36, currentY, 523, 18).fill("#0f172a");
-  doc.fillColor("#ffffff").fontSize(9).font("Helvetica-Bold").text("3. ASSINATURA ELETRÔNICA DO HÓSPEDE", 42, currentY + 5);
+  // 6. SEÇÃO 4: ASSINATURA ELETRÔNICA DO HÓSPEDE
+  doc.rect(leftX, currentY, boxWidth, 14).fill("#0f172a");
+  doc.fillColor("#ffffff").fontSize(8).font("Helvetica-Bold").text("4. ASSINATURA ELETRÔNICA AVANÇADA DO HÓSPEDE", leftX + 6, currentY + 3.5);
 
-  currentY += 18;
-  doc.rect(36, currentY, 523, 100).fill("#ffffff").stroke("#cbd5e1");
+  currentY += 14;
+  doc.rect(leftX, currentY, boxWidth, 70).fill("#ffffff").stroke("#cbd5e1");
 
   if (signatureBuffer) {
     try {
-      doc.image(signatureBuffer, 175, currentY + 6, {
-        fit: [210, 60],
+      doc.image(signatureBuffer, leftX + 175, currentY + 4, {
+        fit: [180, 42],
         align: "center",
         valign: "center"
       });
     } catch (imgErr) {
       console.warn("[FNRH PDF] Não foi possível desenhar a assinatura:", imgErr);
-      doc.fillColor("#94a3b8").fontSize(10).font("Helvetica-Oblique").text("[Assinatura Eletrônica Registrada]", 210, currentY + 30);
+      doc.fillColor("#94a3b8").fontSize(9).font("Helvetica-Oblique").text("[Assinatura Eletrônica Registrada]", leftX + 185, currentY + 20);
     }
   } else {
-    doc.fillColor("#94a3b8").fontSize(10).font("Helvetica-Oblique").text("[Assinatura Eletrônica Registrada]", 210, currentY + 30);
+    doc.fillColor("#94a3b8").fontSize(9).font("Helvetica-Oblique").text("[Assinatura Eletrônica Registrada]", leftX + 185, currentY + 20);
   }
 
   // Linha da assinatura
-  doc.moveTo(140, currentY + 74).lineTo(420, currentY + 74).stroke("#94a3b8");
-  doc.fillColor("#0f172a").fontSize(9).font("Helvetica-Bold").text(guestFullName, 36, currentY + 78, { width: 523, align: "center" });
-  doc.fillColor("#64748b").fontSize(7.5).font("Helvetica").text(`Assinado eletronicamente em ${signedAtBrasilia}`, 36, currentY + 89, { width: 523, align: "center" });
+  doc.moveTo(leftX + 130, currentY + 50).lineTo(leftX + 400, currentY + 50).stroke("#94a3b8");
+  doc.fillColor("#0f172a").fontSize(8.5).font("Helvetica-Bold").text(guestFullName, leftX, currentY + 52, { width: boxWidth, align: "center" });
+  doc.fillColor("#0284c7").fontSize(7).font("Helvetica").text("Assinado eletronicamente em " + signedAtBrasilia, leftX, currentY + 61, { width: boxWidth, align: "center" });
 
-  currentY += 108;
+  currentY += 76;
 
-  // ════════════════════════════════════════════════════════════════════════════
-  // 6. CERTIFICADO DE CONFORMIDADE E TRILHA DE AUDITORIA FORENSE (OBRIGATÓRIO)
-  // ════════════════════════════════════════════════════════════════════════════
-  doc.rect(36, currentY, 523, 18).fill("#0284c7");
-  doc.fillColor("#ffffff").fontSize(9).font("Helvetica-Bold").text("4. CERTIFICADO DE CONFORMIDADE E TRILHA DE AUDITORIA FORENSE", 42, currentY + 5);
+  // 7. CERTIFICADO DE CONFORMIDADE E TRILHA FORENSE (AUDIT TRAIL)
+  doc.rect(leftX, currentY, boxWidth, 14).fill("#0284c7");
+  doc.fillColor("#ffffff").fontSize(8).font("Helvetica-Bold").text("5. CERTIFICADO DE CONFORMIDADE JURÍDICA E TRILHA FORENSE DE AUDITORIA", leftX + 6, currentY + 3.5);
 
-  currentY += 18;
-  const auditBoxHeight = 175;
-  doc.roundedRect(36, currentY, 523, auditBoxHeight, 4).fill("#f8fafc").stroke("#0284c7");
+  currentY += 14;
+  const auditBoxHeight = 158;
+  doc.roundedRect(leftX, currentY, boxWidth, auditBoxHeight, 4).fill("#f8fafc").stroke("#0284c7");
 
-  // Desenha QR Code no canto direito
-  doc.image(qrCodeBuffer, 442, currentY + 12, { width: 104, height: 104 });
-  doc.fillColor("#64748b").fontSize(6.5).font("Helvetica").text("Validação Pública", 442, currentY + 118, { width: 104, align: "center" });
-  doc.text("Aponte a câmera", 442, currentY + 126, { width: 104, align: "center" });
+  // QR Code no canto direito
+  doc.image(qrCodeBuffer, leftX + 420, currentY + 10, { width: 100, height: 100 });
+  doc.fillColor("#0284c7").fontSize(6.5).font("Helvetica-Bold").text("Autenticidade Oficial", leftX + 420, currentY + 112, { width: 100, align: "center" });
+  doc.fillColor("#64748b").fontSize(6).font("Helvetica").text("Aponte a câmera para verificar", leftX + 420, currentY + 120, { width: 100, align: "center" });
 
-  // Informações de Auditoria à Esquerda
-  const auditX = 46;
-  let auditY = currentY + 10;
+  // Metadados Forenses à Esquerda
+  const aX = leftX + 8;
+  let aY = currentY + 8;
 
-  doc.fillColor("#0f172a").fontSize(8).font("Helvetica-Bold").text("Identificador Único do Documento (UUID v4):", auditX, auditY);
-  doc.fillColor("#0369a1").fontSize(8.5).font("Courier-Bold").text(documentUuid, auditX + 188, auditY);
+  doc.fillColor("#0f172a").fontSize(7.5).font("Helvetica-Bold").text("Identificador Único do Documento (UUID v4):", aX, aY);
+  doc.fillColor("#0369a1").fontSize(7.5).font("Courier-Bold").text(documentUuid, aX + 185, aY);
 
-  auditY += 15;
-  doc.fillColor("#0f172a").fontSize(8).font("Helvetica-Bold").text("Data e Hora da Assinatura (ISO 8601):", auditX, auditY);
-  doc.fillColor("#334155").fontSize(8).font("Courier").text(signedAtIso, auditX + 175, auditY);
+  aY += 13;
+  doc.fillColor("#0f172a").fontSize(7.5).font("Helvetica-Bold").text("Data / Hora UTC (ISO 8601):", aX, aY);
+  doc.fillColor("#334155").fontSize(7.5).font("Courier").text(signedAtIso, aX + 130, aY);
 
-  auditY += 15;
-  doc.fillColor("#0f172a").fontSize(8).font("Helvetica-Bold").text("Horário Oficial de Brasília:", auditX, auditY);
-  doc.fillColor("#334155").fontSize(8).font("Helvetica").text(signedAtBrasilia, auditX + 125, auditY);
+  aY += 13;
+  doc.fillColor("#0f172a").fontSize(7.5).font("Helvetica-Bold").text("Horário Oficial de Brasília:", aX, aY);
+  doc.fillColor("#334155").fontSize(7.5).font("Helvetica").text(signedAtBrasilia, aX + 115, aY);
 
-  auditY += 15;
-  doc.fillColor("#0f172a").fontSize(8).font("Helvetica-Bold").text("Endereço IP do Signatário:", auditX, auditY);
-  doc.fillColor("#334155").fontSize(8).font("Courier").text(ip, auditX + 130, auditY);
+  aY += 13;
+  doc.fillColor("#0f172a").fontSize(7.5).font("Helvetica-Bold").text("Endereço IP do Signatário:", aX, aY);
+  doc.fillColor("#334155").fontSize(7.5).font("Courier").text(ip, aX + 120, aY);
 
-  auditY += 15;
-  doc.fillColor("#0f172a").fontSize(8).font("Helvetica-Bold").text("Dispositivo / Navegador (User-Agent):", auditX, auditY);
-  const cleanUa = ua.substring(0, 75);
-  doc.fillColor("#475569").fontSize(7.5).font("Courier").text(cleanUa, auditX + 165, auditY, { width: 225 });
+  aY += 13;
+  // Geolocalização
+  let geoText = "Não compartilhada pelo titular";
+  if (geolocation && (geolocation.latitude || geolocation.status === "granted")) {
+    geoText = "Lat: " + (geolocation.latitude?.toFixed(6) || "-") + ", Long: " + (geolocation.longitude?.toFixed(6) || "-") + " (Precisão: ~" + Math.round(geolocation.accuracy || 0) + "m)";
+  } else if (geolocation && geolocation.status === "denied") {
+    geoText = "Acesso recusado pelo usuário no navegador";
+  }
+  doc.fillColor("#0f172a").fontSize(7.5).font("Helvetica-Bold").text("Geolocalização Aproximada:", aX, aY);
+  doc.fillColor("#334155").fontSize(7).font("Courier").text(geoText, aX + 125, aY);
 
-  auditY += 22;
-  // Mensagem Jurídica Formal
-  doc.roundedRect(auditX, auditY, 385, 26, 3).fill("#e0f2fe");
-  doc.fillColor("#0369a1").fontSize(7.5).font("Helvetica-Bold").text(
-    "Disposição Jurídica de Validade:",
-    auditX + 6,
-    auditY + 4
+  aY += 13;
+  doc.fillColor("#0f172a").fontSize(7.5).font("Helvetica-Bold").text("User-Agent / Navegador:", aX, aY);
+  const cleanUa = ua.substring(0, 85);
+  doc.fillColor("#475569").fontSize(6.5).font("Courier").text(cleanUa, aX + 115, aY, { width: 295 });
+
+  aY += 16;
+  // Disposição Jurídica Legal
+  doc.roundedRect(aX, aY, 405, 24, 3).fill("#e0f2fe");
+  doc.fillColor("#0369a1").fontSize(7).font("Helvetica-Bold").text("Disposição Legal de Validade Jurídica:", aX + 6, aY + 4);
+  doc.fillColor("#0c4a6e").fontSize(6.5).font("Helvetica").text(
+    '"Documento assinado eletronicamente nos termos do art. 10, § 2º da Medida Provisória nº 2.200-2/2001 e da Lei Federal nº 14.063/2020."',
+    aX + 6,
+    aY + 13,
+    { width: 395 }
   );
-  doc.fillColor("#0c4a6e").fontSize(7.5).font("Helvetica").text(
-    "\"Documento assinado eletronicamente nos termos do art. 10, § 2º da Medida Provisória nº 2.200-2/2001 e da Lei Federal nº 14.063/2020.\"",
-    auditX + 6,
-    auditY + 14,
-    { width: 373 }
-  );
 
-  auditY += 34;
-  // Hash Criptográfico SHA-256 preliminar de integridade do documento
+  aY += 29;
+  // Hash Criptográfico Canônico
   const canonicalSignaturePayload = JSON.stringify({
     documentUuid,
     reservationCode: reservation.code || reservationId,
     guestCpf: cleanCpf,
     guestName: guestFullName,
+    travelReason: travelReasonStr,
+    transportMethod: transportMethodStr,
     signedAt: signedAtIso,
     signerIp: ip,
     signerUserAgent: ua
   });
   const canonicalHash = crypto.createHash("sha256").update(canonicalSignaturePayload).digest("hex");
 
-  doc.fillColor("#0f172a").fontSize(7.5).font("Helvetica-Bold").text("Cálculo do Hash Criptográfico (SHA-256):", auditX, auditY);
-  doc.fillColor("#047857").fontSize(7.5).font("Courier-Bold").text(canonicalHash, auditX, auditY + 10, { width: 385 });
-
-  doc.fillColor("#64748b").fontSize(6.5).font("Helvetica").text(
-    "A chave SHA-256 garante matematicamente a integridade e o não-repúdio deste registro desde o momento da assinatura.",
-    auditX,
-    auditY + 22
+  doc.fillColor("#0f172a").fontSize(7).font("Helvetica-Bold").text("Hash Criptográfico de Integridade (SHA-256):", aX, aY);
+  doc.fillColor("#047857").fontSize(7).font("Courier-Bold").text(canonicalHash, aX, aY + 9, { width: 405 });
+  doc.fillColor("#64748b").fontSize(6).font("Helvetica").text(
+    "O Hash SHA-256 garante matematicamente a integridade e o não-repúdio deste documento desde o instante da assinatura.",
+    aX,
+    aY + 19
   );
 
   // Rodapé da Página
-  doc.fillColor("#94a3b8").fontSize(7).font("Helvetica").text(
-    `CorpFlats Hospedagem  •  Ficha ID: ${documentUuid}  •  Página 1 de 1  •  Emitido automaticamente pelo sistema`,
-    36,
-    810,
-    { width: 523, align: "center" }
+  doc.fillColor("#94a3b8").fontSize(6.5).font("Helvetica").text(
+    "CORP FLATS HOSPEDAGEM LTDA  •  CNPJ 47.964.813/0001-65  •  Cadastur 19.034.812/0001-90  •  Ficha ID: " + documentUuid + "  •  Página 1/1",
+    leftX,
+    814,
+    { width: boxWidth, align: "center" }
   );
 
   doc.end();
@@ -368,12 +420,15 @@ export async function generateFnrhPdf({
   const fileBuffer = fs.readFileSync(filePath);
   const finalFileSha256 = crypto.createHash("sha256").update(fileBuffer).digest("hex");
 
-  const fileUrl = `/api/storage/files/fnrh_documents/${fileName}`;
+  // URLs seguras de visualização e download
+  const viewUrl = "/api/pms/fnrh/" + documentUuid + "/view";
+  const downloadUrl = "/api/pms/fnrh/" + documentUuid + "/download";
 
   return {
     filePath,
     fileName,
-    fileUrl,
+    fileUrl: viewUrl,
+    downloadUrl,
     documentUuid,
     sha256Hash: finalFileSha256,
     canonicalHash,
@@ -389,15 +444,26 @@ export async function generateFnrhPdf({
       guestPhone,
       guestEmail,
       guestAddress,
-      signerIp: signerIp || "",
-      signerUserAgent: signerUserAgent || "",
+      travelReason: travelReasonStr,
+      transportMethod: transportMethodStr,
+      originCity: g.originCity || "",
+      originState: g.originState || "",
+      originCountry: g.originCountry || "Brasil",
+      destinationCity: g.destinationCity || "",
+      destinationState: g.destinationState || "",
+      destinationCountry: g.destinationCountry || "Brasil",
+      optInMarketing: isMarketingAccepted,
+      signerIp: ip,
+      signerUserAgent: ua,
+      geolocation: geolocation || null,
       signedAt: signedAtIso,
       signedAtBrasilia,
       sha256Hash: finalFileSha256,
       canonicalHash,
       verifyUrl,
       fileName,
-      fileUrl
+      fileUrl: viewUrl,
+      downloadUrl
     }
   };
 }

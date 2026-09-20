@@ -59,6 +59,71 @@ export default function ReceptionTablet() {
     return () => clearInterval(timer)
   }, [])
 
+
+  useEffect(() => {
+    fetch("/api/auth/me", { credentials: "include" })
+      .then(res => {
+        if (res.ok) return res.json()
+        return null
+      })
+      .then(u => {
+        if (u) {
+          setCurrentUser(u)
+          if (u.mustChangePassword || u.passwordExpired) {
+            setShowPasswordChangeModal(true)
+          }
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!currentPassword || !newPassword) {
+      setPasswordChangeError("Informe a senha atual e a nova senha.")
+      return
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordChangeError("A confirmação da nova senha não confere com a nova senha digitada.")
+      return
+    }
+    if (newPassword.length < 6) {
+      setPasswordChangeError("A nova senha deve ter no mínimo 6 caracteres.")
+      return
+    }
+
+    setPasswordChangeLoading(true)
+    setPasswordChangeError("")
+    try {
+      const res = await fetch("/api/auth/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ currentPassword, newPassword, confirmPassword })
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setPasswordChangeSuccess(true)
+        setTimeout(() => {
+          setShowPasswordChangeModal(false)
+          setCurrentPassword("")
+          setNewPassword("")
+          setConfirmPassword("")
+          setPasswordChangeSuccess(false)
+          if (currentUser) {
+            setCurrentUser({ ...currentUser, mustChangePassword: false, passwordExpired: false })
+          }
+        }, 1200)
+      } else {
+        setPasswordChangeError(data.error || "Erro ao alterar a senha.")
+      }
+    } catch {
+      setPasswordChangeError("Erro de comunicação com o servidor.")
+    } finally {
+      setPasswordChangeLoading(false)
+    }
+  }
+
   const fetchToday = async () => {
     setLoading(true)
     try {
