@@ -649,7 +649,26 @@ export default function ZapiConnection() {
               </div>
               <Switch 
                 checked={config.enabled}
-                onCheckedChange={(checked) => setConfig({ ...config, enabled: checked })}
+                onCheckedChange={async (checked) => {
+                  setConfig(prev => ({ ...prev, enabled: checked }))
+                  try {
+                    const res = await fetch("/api/whatsapp/config", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ enabled: checked })
+                    })
+                    if (res.ok) {
+                      toast({
+                        title: checked ? "⚡ Motor de WhatsApp Ativado!" : "⏸️ Motor de WhatsApp Pausado",
+                        description: checked 
+                          ? "O sistema agora disparará mensagens da régua automaticamente para os hóspedes." 
+                          : "Os envios automáticos estão pausados."
+                      })
+                    }
+                  } catch (e: any) {
+                    toast({ title: "Erro ao atualizar motor", description: e.message, variant: "destructive" })
+                  }
+                }}
               />
             </div>
           </CardContent>

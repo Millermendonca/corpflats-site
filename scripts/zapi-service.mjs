@@ -3689,7 +3689,11 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
 export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventName, reservation, baseUrl = "") {
   try {
     const db = typeof dbOrGetter === "function" ? dbOrGetter() : dbOrGetter;
-    if (!db || !db.zapiConfig?.enabled) return;
+    if (!db) return;
+    if (!db.zapiConfig?.enabled) {
+      console.warn(`[WhatsApp Trigger] Evento '${eventName}' para reserva ${reservation?.code || reservation?.id} (${reservation?.guestName}) IGNORADO pois o motor de envio está desativado (zapiConfig.enabled = false).`);
+      return;
+    }
     if (!reservation) return;
 
     const resvChannel = reservation.channel || reservation.source || "site";

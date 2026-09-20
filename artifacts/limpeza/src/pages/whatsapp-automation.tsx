@@ -709,6 +709,28 @@ export default function WhatsappAutomation() {
     }
   }
 
+  // Toggle Master Engine (Motor Geral de Envio)
+  const handleToggleMasterEngine = async (newEnabled: boolean) => {
+    setConfig(prev => ({ ...prev, enabled: newEnabled }))
+    try {
+      const res = await fetch("/api/whatsapp/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: newEnabled })
+      })
+      if (res.ok) {
+        toast({
+          title: newEnabled ? "⚡ Motor de WhatsApp Ativado!" : "⏸️ Motor de WhatsApp Pausado",
+          description: newEnabled 
+            ? "O sistema agora disparará mensagens da régua automaticamente para os hóspedes."
+            : "Os envios automáticos da régua estão pausados. Disparos manuais continuam disponíveis."
+        })
+      }
+    } catch (e: any) {
+      toast({ title: "Erro ao atualizar motor", description: e.message, variant: "destructive" })
+    }
+  }
+
   // Toggle template enabled state directly from cards
   const handleToggleTemplate = async (tpl: WhatsAppTemplate, newEnabled: boolean) => {
     const updated = { ...tpl, enabled: newEnabled }
@@ -727,6 +749,11 @@ export default function WhatsappAutomation() {
           title: newEnabled ? "Gatilho ativado!" : "Gatilho pausado",
           description: `Régua '${tpl.title}' ${newEnabled ? "agora está em operação" : "foi desativada temporariamente"}.`
         })
+
+        // Se o usuário ativou o gatilho mas o motor geral estiver desligado, ativa o motor geral automaticamente!
+        if (newEnabled && !config.enabled) {
+          handleToggleMasterEngine(true)
+        }
       }
     } catch (e) {
       toast({ title: "Falha ao alternar status", variant: "destructive" })
@@ -996,6 +1023,25 @@ export default function WhatsappAutomation() {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
+            {/* Master Engine Switch */}
+            <div 
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-semibold shadow-xs transition-colors ${
+                config.enabled 
+                  ? "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-300"
+                  : "bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-300"
+              }`}
+            >
+              <span className={`w-2 h-2 rounded-full ${config.enabled ? "bg-emerald-500 animate-pulse" : "bg-amber-500"}`} />
+              <span className="text-xs font-bold">
+                Motor: {config.enabled ? "ATIVADO" : "PAUSADO"}
+              </span>
+              <Switch 
+                checked={config.enabled}
+                onCheckedChange={handleToggleMasterEngine}
+                className="scale-75 data-[state=checked]:bg-emerald-600"
+              />
+            </div>
+
             {/* Status Z-API Badge */}
             <div 
               onClick={() => setLocation("/zapi-conexao")}
@@ -1052,6 +1098,33 @@ export default function WhatsappAutomation() {
             </Button>
           </div>
         </div>
+
+        {/* Banner de Alerta quando Motor Geral estiver Desativado */}
+        {!config.enabled && (
+          <div className="p-4 rounded-2xl border border-amber-300 dark:border-amber-700 bg-amber-50/90 dark:bg-amber-950/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-xs">
+                <AlertCircle className="w-5 h-5" />
+              </div>
+              <div className="space-y-0.5">
+                <h4 className="text-sm font-bold text-amber-900 dark:text-amber-200">
+                  O Motor de Envio Automático de WhatsApp está PAUSADO
+                </h4>
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  Mesmo que os gatilhos abaixo estejam ativados, as mensagens automáticas não serão enviadas até que o motor geral seja ligado.
+                </p>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              onClick={() => handleToggleMasterEngine(true)}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold gap-1.5 shrink-0 shadow-xs"
+            >
+              <Zap className="w-3.5 h-3.5 fill-white" />
+              Ativar Motor de Envio Agora
+            </Button>
+          </div>
+        )}
 
         {/* Tabs Principais */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
