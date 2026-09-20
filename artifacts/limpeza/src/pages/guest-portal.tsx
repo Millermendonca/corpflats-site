@@ -304,7 +304,13 @@ export default function GuestPortal() {
   const reservation = data?.reservation
   const channelLower = String(reservation?.channel || "").toLowerCase()
   const isOta = channelLower.includes("booking") || channelLower.includes("airbnb")
-  const isPaid = Boolean(
+  const isCancelled = Boolean(
+    reservation?.status === "cancelada" || 
+    reservation?.status === "cancelled" || 
+    reservation?.status === "CANCELLED" || 
+    reservation?.isCancelled
+  )
+  const isPaid = !isCancelled && Boolean(
     isOta || 
     reservation?.isPaid ||
     reservation?.paymentStatus === "pago_total" || 
@@ -314,7 +320,7 @@ export default function GuestPortal() {
 
   // Polling automático de status de pagamento a cada 6 segundos quando pendente
   useEffect(() => {
-    if (!reservation?.code || isPaid) return
+    if (!reservation?.code || isPaid || isCancelled) return
     const interval = setInterval(async () => {
       try {
         const res = await fetch(`/api/pms/reservations/${encodeURIComponent(reservation.code)}/payment-status`)
@@ -483,7 +489,7 @@ export default function GuestPortal() {
   const rawAdminPhone = (adminWhatsApp || "5522997124021").replace(/\D/g, "")
   const finalWaNumber = rawAdminPhone.length === 10 || rawAdminPhone.length === 11 ? `55${rawAdminPhone}` : rawAdminPhone
   const whatsappUrl = `https://wa.me/${finalWaNumber}?text=${encodeURIComponent(`Olá! Tenho uma reserva (${reservation.code}) no Flat ${reservation.flatNumber} e gostaria de tirar uma dúvida.`)}`
-  const accessCode = reservation.doorPassword || reservation.accessCode || ""
+  const accessCode = isCancelled ? "" : (reservation.doorPassword || reservation.accessCode || "")
   const hasBreakfast = Boolean(data.hasBreakfast || reservation.includeBreakfast || reservation.hasBreakfast)
 
   const handleCopyKey = () => {
@@ -1183,7 +1189,12 @@ export default function GuestPortal() {
                 <span className="font-bold text-sm sm:text-base md:text-lg tracking-tight text-slate-900 leading-none shrink-0">
                   CorpFlats
                 </span>
-                {isPaid ? (
+                {isCancelled ? (
+                  <Badge variant="outline" className="bg-rose-50 text-rose-700 border-rose-200 text-[9.5px] sm:text-[10px] font-bold py-0.5 px-1.5 sm:px-2 shrink-0 whitespace-nowrap">
+                    ✕ <span className="hidden sm:inline">Reserva Cancelada</span>
+                    <span className="sm:hidden">Cancelada</span>
+                  </Badge>
+                ) : isPaid ? (
                   <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200/90 text-[9.5px] sm:text-[10px] font-bold py-0.5 px-1.5 sm:px-2 shrink-0 whitespace-nowrap">
                     ✓ <span className="hidden sm:inline">{isOta ? (channelLower.includes("booking") ? "Pago via Booking" : "Pago via Airbnb") : "Reserva Confirmada & Paga"}</span>
                     <span className="sm:hidden">Pago</span>
@@ -1294,6 +1305,80 @@ export default function GuestPortal() {
       {/* ── Main Container ──────────────────────────────────────────────── */}
       <main className="max-w-4xl w-full mx-auto px-4 py-6 sm:py-8 space-y-6">
         
+        {/* ── Banner de Alerta: Reserva Cancelada ───────────────────────── */}
+        {isCancelled && (
+          <div className="rounded-3xl border-2 border-rose-300 bg-gradient-to-br from-rose-50 via-rose-50/90 to-red-50 p-5 sm:p-7 shadow-sm space-y-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-start sm:items-center gap-3.5">
+                <div className="w-12 h-12 rounded-2xl bg-rose-500 text-white flex items-center justify-center font-bold shadow-sm shrink-0">
+                  <Ban className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Badge className="bg-rose-600 text-white text-[10.5px] font-bold px-2 py-0.5">
+                      ✕ Reserva Cancelada
+                    </Badge>
+                    {reservation.cancelledAt && (
+                      <span className="text-[11px] text-rose-700 font-medium">
+                        Cancelada em {format(parseISO(reservation.cancelledAt), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })}
+                      </span>
+                    )}
+                  </div>
+                  <h2 className="text-xl sm:text-2xl font-black text-rose-950 mt-1">
+                    Esta reserva foi cancelada
+                  </h2>
+                  <p className="text-xs sm:text-sm text-rose-800/90 mt-0.5">
+                    Localizador: <strong className="font-mono font-bold text-rose-950">{reservation.code}</strong> • Flat {reservation.flatNumber}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 shrink-0 w-full sm:w-auto">
+                <a
+                  href={whatsappUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition-colors w-full sm:w-auto"
+                >
+                  <WhatsAppIcon className="w-4 h-4" />
+                  <span>Falar no WhatsApp</span>
+                </a>
+                <a
+                  href="https://corpflats.onrender.com/reservar"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-rose-300 hover:bg-rose-50 text-rose-900 text-xs font-bold shadow-2xs transition-colors w-full sm:w-auto"
+                >
+                  <span>Reservar Novas Datas</span>
+                </a>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 text-xs">
+              <div className="p-3.5 rounded-2xl bg-white/90 border border-rose-100 shadow-2xs space-y-1">
+                <span className="text-[10px] font-bold text-rose-500 uppercase tracking-wider block">
+                  Motivo do Cancelamento
+                </span>
+                <p className="font-semibold text-slate-800">
+                  {reservation.cancellationReason || "Cancelamento solicitado pelo hóspede via autoatendimento"}
+                </p>
+              </div>
+              <div className="p-3.5 rounded-2xl bg-white/90 border border-rose-100 shadow-2xs space-y-1">
+                <span className="text-[10px] font-bold text-rose-500 uppercase tracking-wider block">
+                  Reembolso & Estorno
+                </span>
+                <p className="font-semibold text-slate-800">
+                  {Number(reservation.refundAmount) > 0 
+                    ? `Estorno integral de R$ ${Number(reservation.refundAmount).toFixed(2)} processado`
+                    : (reservation.refundStatus === "estorno_100%_solicitado"
+                        ? "Solicitação de estorno em processamento financeiro"
+                        : "Cancelamento efetuado sem estorno conforme as políticas contratadas")}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ── 1. Hero / Saudação e Resumo da Estadia ─────────────────────── */}
         <Card className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-6 sm:p-8 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
@@ -1310,6 +1395,11 @@ export default function GuestPortal() {
             </div>
 
             <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+              {isCancelled && (
+                <Badge variant="outline" className="bg-rose-50 text-rose-700 border-rose-200 text-xs font-bold py-1 px-2.5">
+                  ✕ Cancelada
+                </Badge>
+              )}
               <Badge variant="outline" className="bg-slate-50 text-slate-700 border-slate-200 text-xs font-bold py-1 px-2.5">
                 Flat {reservation.flatNumber}
               </Badge>
@@ -1319,7 +1409,7 @@ export default function GuestPortal() {
               <Badge variant="outline" className="bg-slate-50 text-slate-700 border-slate-200 text-xs font-bold py-1 px-2.5">
                 {reservation.guestCount || 1} {reservation.guestCount === 1 ? "hóspede" : "hóspedes"}
               </Badge>
-              {hasBreakfast && (
+              {!isCancelled && hasBreakfast && (
                 <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs font-bold py-1 px-2.5">
                   ☕ Café Incluso
                 </Badge>
@@ -1435,6 +1525,42 @@ export default function GuestPortal() {
         </Card>
 
         {/* ── 1.5 Card de Pagamento & Confirmação Financeira ───────────────── */}
+        {isCancelled ? (
+          <Card className="bg-white rounded-3xl border border-rose-200/90 shadow-md p-5 sm:p-7 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-rose-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-rose-50 text-rose-600 border border-rose-200 flex items-center justify-center font-black text-sm shadow-2xs">
+                  <Ban className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-base sm:text-lg font-black text-slate-900">
+                    Encerramento Financeiro
+                  </h2>
+                  <span className="text-xs text-slate-500">
+                    Reserva cancelada • Cobranças e serviços suspensos
+                  </span>
+                </div>
+              </div>
+              <Badge className="bg-rose-600 text-white font-bold text-xs py-1 px-3">
+                ✕ Cancelada
+              </Badge>
+            </div>
+            <div className="p-4 bg-rose-50/70 rounded-2xl border border-rose-200 text-xs text-rose-900 space-y-1">
+              <p className="font-bold">
+                {Number(reservation.refundAmount) > 0
+                  ? `Estorno integral de R$ ${Number(reservation.refundAmount).toFixed(2)} processado com sucesso.`
+                  : (reservation.refundStatus === "estorno_100%_solicitado"
+                      ? "Solicitação de estorno em processamento financeiro."
+                      : "Cancelamento efetuado sem estorno conforme as políticas da tarifa contratada.")}
+              </p>
+              {reservation.cancellationReason && (
+                <p className="text-rose-700 text-[11px]">
+                  Motivo registrado: {reservation.cancellationReason}
+                </p>
+              )}
+            </div>
+          </Card>
+        ) : (
         <Card className={`rounded-3xl border shadow-md p-5 sm:p-7 space-y-4 transition-all ${
           isPaid 
             ? "bg-gradient-to-br from-emerald-50/90 via-white to-emerald-50/40 border-emerald-200/90" 
@@ -1788,6 +1914,7 @@ export default function GuestPortal() {
             </div>
           )}
         </Card>
+        )}
 
         {/* ── 2. Card: Acomodação & Chave de Acesso / Portaria ───────────── */}
         <Card className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-5 sm:p-7 space-y-4">
@@ -1807,13 +1934,17 @@ export default function GuestPortal() {
             </div>
 
             <Badge className={
-              data.isCheckinToday 
-                ? (isFlatClean ? "bg-emerald-50 text-emerald-700 border-emerald-200 font-bold text-xs" : "bg-amber-50 text-amber-700 border-amber-200 font-bold text-xs")
-                : "bg-emerald-50 text-emerald-700 border-emerald-200 font-bold text-xs"
+              isCancelled
+                ? "bg-rose-50 text-rose-700 border-rose-200 font-bold text-xs"
+                : data.isCheckinToday 
+                  ? (isFlatClean ? "bg-emerald-50 text-emerald-700 border-emerald-200 font-bold text-xs" : "bg-amber-50 text-amber-700 border-amber-200 font-bold text-xs")
+                  : "bg-emerald-50 text-emerald-700 border-emerald-200 font-bold text-xs"
             }>
-              {data.isCheckinToday 
-                ? (isFlatClean ? "✨ Flat Pronto e Limpo" : "🧹 Em Higienização")
-                : "✨ Flat Confirmado & Preparado"
+              {isCancelled
+                ? "✕ Reserva Cancelada"
+                : data.isCheckinToday 
+                  ? (isFlatClean ? "✨ Flat Pronto e Limpo" : "🧹 Em Higienização")
+                  : "✨ Flat Confirmado & Preparado"
               }
             </Badge>
           </div>
@@ -1859,7 +1990,7 @@ export default function GuestPortal() {
             </div>
 
             {/* Status de Check-in e Governança no Dia da Chegada */}
-            {data.isCheckinToday && (
+            {data.isCheckinToday && !isCancelled && (
               <>
                 {!isFlatClean ? (
                   <div className="p-3.5 bg-amber-50/90 border border-amber-200/80 rounded-xl flex items-start gap-2.5 text-xs text-amber-900">
@@ -2344,7 +2475,7 @@ export default function GuestPortal() {
             reservation.checkinDate,
             Number(reservation.paidAmount || reservation.totalAmount || 0)
           )
-          const isCancelled = reservation.status === "cancelada" || reservation.status === "CANCELLED"
+          const isCancelledRes = isCancelled || reservation.status === "cancelada" || reservation.status === "CANCELLED" || reservation.isCancelled
 
           return (
             <Card className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-5 sm:p-6 space-y-4">
@@ -2353,19 +2484,21 @@ export default function GuestPortal() {
                   <ShieldAlert className="w-5 h-5 text-sky-600" />
                   <h2 className="text-base font-bold text-slate-900">Política de Cancelamento & Estorno</h2>
                 </div>
-                <Badge variant="outline" className={isCancelled ? "bg-rose-50 text-rose-700 border-rose-200 text-[10px] font-bold" : cancelPol.policyType === "flexivel" ? "bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-bold" : "bg-amber-50 text-amber-700 border-amber-200 text-[10px] font-bold"}>
-                  {isCancelled ? "✕ Reserva Cancelada" : cancelPol.badgeText}
+                <Badge variant="outline" className={isCancelledRes ? "bg-rose-50 text-rose-700 border-rose-200 text-[10px] font-bold" : cancelPol.policyType === "flexivel" ? "bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-bold" : "bg-amber-50 text-amber-700 border-amber-200 text-[10px] font-bold"}>
+                  {isCancelledRes ? "✕ Reserva Cancelada" : cancelPol.badgeText}
                 </Badge>
               </div>
 
               <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 space-y-3 text-xs">
-                {isCancelled ? (
+                {isCancelledRes ? (
                   <div className="space-y-2">
                     <p className="text-rose-600 font-bold">Esta reserva foi cancelada.</p>
                     <p className="text-slate-500 text-[11px]">
-                      {reservation.refundAmount > 0 
+                      {Number(reservation.refundAmount) > 0 
                         ? `Estorno de R$ ${Number(reservation.refundAmount).toFixed(2)} processado com sucesso.`
-                        : "Cancelamento efetuado sem estorno conforme as políticas contratadas."}
+                        : (reservation.refundStatus === "estorno_100%_solicitado"
+                            ? "Solicitação de estorno em processamento financeiro."
+                            : "Cancelamento efetuado sem estorno conforme as políticas contratadas.")}
                     </p>
                   </div>
                 ) : (
@@ -2742,7 +2875,21 @@ export default function GuestPortal() {
                         const json = await res.json()
                         if (res.ok) {
                           setCancelModalOpen(false)
-                          fetchPortalData()
+                          setData((prev: any) => prev ? ({
+                            ...prev,
+                            reservation: {
+                              ...prev.reservation,
+                              status: "cancelada",
+                              isCancelled: true,
+                              cancelledAt: json.reservation?.cancelledAt || new Date().toISOString(),
+                              cancellationReason: cancelReason || "Cancelamento pelo hóspede via autoatendimento",
+                              refundStatus: json.refundStatus || "sem_reembolso",
+                              refundAmount: json.refundAmount || 0,
+                              doorPassword: null,
+                              accessCode: null
+                            }
+                          }) : null)
+                          await fetchPortalData(reservation?.code || code)
                         } else {
                           alert(json.error || "Erro ao cancelar")
                         }

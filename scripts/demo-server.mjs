@@ -7666,16 +7666,17 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   const breakfastToken = r.breakfastToken || `bfk_${r.id}_${crypto.randomBytes(4).toString("hex")}`;
   const breakfastLink = `/cafe?res=${r.code || breakfastToken}`;
 
+  const isCancelledRes = r.status === "cancelada" || r.status === "cancelled";
   const chanLower = String(r.channel || "").toLowerCase();
   const isOta = chanLower.includes("booking") || chanLower.includes("airbnb");
-  let isPaid = isOta || Boolean(
+  let isPaid = !isCancelledRes && (isOta || Boolean(
     r.paymentStatus === "pago_total" ||
     r.paymentStatus === "pago" ||
     (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0)
-  );
+  ));
 
-  // Se a reserva ainda não consta como paga, verifica ativamente no Extrato do Banco Inter
-  if (!isPaid && Number(r.totalAmount) > 0) {
+  // Se a reserva ainda não consta como paga e NÃO está cancelada, verifica ativamente no Extrato do Banco Inter
+  if (!isCancelledRes && !isPaid && Number(r.totalAmount) > 0) {
     try {
       const extratoMatch = await checkInterBankingExtratoPix(r);
       if (extratoMatch && extratoMatch.found) {
@@ -7692,7 +7693,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     } catch (errExtrato) {
       console.warn("[Guest Portal] Erro ao checar extrato PIX:", errExtrato.message);
     }
-  } else if (isPaid && !isOta && r.guestPhone) {
+  } else if (!isCancelledRes && isPaid && !isOta && r.guestPhone) {
     ensurePaymentConfirmationDispatched(r);
   }
 
@@ -7705,7 +7706,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   }
 
   // Se pendente com valor total cadastrado e sem chave PIX ainda, gera cobrança estática PIX com a chave oficial CorpFlats
-  if (!isPaid && Number(r.totalAmount) > 0 && !r.pixCopiaECola) {
+  if (!isCancelledRes && !isPaid && Number(r.totalAmount) > 0 && !r.pixCopiaECola) {
     try {
       const cleanTxId = String(r.code || `RES${r.id}`).replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
       const staticPayload = generateStaticPixPayload({
@@ -7725,6 +7726,14 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     reservation: {
       id: r.id,
       code: r.code,
+      status: r.status || "confirmada",
+      isCancelled: isCancelledRes,
+      cancelledAt: r.cancelledAt || null,
+      cancellationReason: r.cancellationReason || null,
+      refundStatus: r.refundStatus || null,
+      refundAmount: Number(r.refundAmount) || 0,
+      doorPassword: isCancelledRes ? null : (r.doorPassword || null),
+      accessCode: isCancelledRes ? null : (r.accessCode || null),
       guestName: r.guestName,
       guestPhone: r.guestPhone,
       guestEmail: r.guestEmail,
@@ -7885,7 +7894,7 @@ app.get("/api/pms/guest-portal/:code/cancellation-quote", (req, res) => {
   });
 });
 
-app.post("/api/pms/guest-portal/:code/cancel", (req, res) => {
+app.post("/api/pms/guest-portal/:code/cancel", async (req, res) => {
   const code = (req.params.code || "").trim();
   if (!db.reservations) db.reservations = [];
   const r = findReservationByLocatorOrContact(code);
@@ -7893,7 +7902,7 @@ app.post("/api/pms/guest-portal/:code/cancel", (req, res) => {
     return res.status(404).json({ error: "Reserva não encontrada." });
   }
 
-  if (r.status === "cancelada") {
+  if (r.status === "cancelada" || r.status === "cancelled" || r.status === "CANCELLED") {
     return res.status(400).json({ error: "Esta reserva já foi cancelada anteriormente." });
   }
 
@@ -7913,6 +7922,8 @@ app.post("/api/pms/guest-portal/:code/cancel", (req, res) => {
   r.cancelledAt = new Date().toISOString();
   r.cancellationReason = req.body?.reason || "Cancelamento solicitado pelo hóspede via autoatendimento";
   r.refundStatus = isEligibleForRefund ? "estorno_100%_solicitado" : "sem_reembolso";
+  r.refundAmount = refundAmount;
+  r.calendarSequence = (r.calendarSequence || 0) + 1;
   r.updatedAt = new Date().toISOString();
 
   // Cancelar pedidos de café da manhã vinculados à reserva
@@ -7926,6 +7937,31 @@ app.post("/api/pms/guest-portal/:code/cancel", (req, res) => {
       o.status = "cancelled";
       o.cancelReason = cancelMotive;
     }
+  });
+
+  // Cancelar agendamentos pendentes do WhatsApp para esta reserva
+  if (!db.whatsappQueue) db.whatsappQueue = [];
+  db.whatsappQueue.forEach(item => {
+    if ((item.reservationCode === r.code || item.reservationId === r.id) && item.status === "scheduled") {
+      item.status = "cancelled";
+      item.error = "Reserva cancelada pelo hóspede via autoatendimento";
+      item.updatedAt = new Date().toISOString();
+    }
+  });
+
+  // Registro de Auditoria
+  ensureReservationAuditLogs(r);
+  addReservationAuditLog(r, {
+    action: "cancelled",
+    actor: {
+      id: null,
+      name: r.guestName || "Hóspede",
+      role: "guest",
+      type: "guest"
+    },
+    source: "Portal do Hóspede (Autoatendimento)",
+    description: `Reserva cancelada pelo próprio hóspede via portal (${r.cancellationReason})`,
+    changes: [{ field: "status", label: "Status da Reserva", oldValue: "Confirmada", newValue: "Cancelada" }]
   });
 
   // Gatilho B: Notificação de cancelamento para a recepção/portaria
@@ -7957,6 +7993,13 @@ app.post("/api/pms/guest-portal/:code/cancel", (req, res) => {
 
   saveDatabase();
 
+  // Gatilho C: Disparo IMEDIATO da confirmação de cancelamento via WhatsApp para o hóspede
+  try {
+    await triggerImmediateWhatsApp(db, saveDatabase, "reservation_cancelled", r);
+  } catch (wErr) {
+    console.warn("[WhatsApp Trigger] Erro ao disparar cancelamento para hóspede:", wErr?.message);
+  }
+
   res.json({
     success: true,
     message: isEligibleForRefund 
@@ -7966,6 +8009,16 @@ app.post("/api/pms/guest-portal/:code/cancel", (req, res) => {
     refundStatus: r.refundStatus,
     policyType: isStrict ? "rigorosa" : "flexivel",
     calendarSequence: r.calendarSequence,
+    reservation: {
+      id: r.id,
+      code: r.code,
+      status: r.status,
+      isCancelled: true,
+      cancelledAt: r.cancelledAt,
+      cancellationReason: r.cancellationReason,
+      refundStatus: r.refundStatus,
+      refundAmount: r.refundAmount
+    },
     icsUrl: `/api/reservations/${r.code || r.id}/calendar.ics?action=cancel`
   });
 });
@@ -18562,6 +18615,26 @@ setInterval(async () => {
     for (const r of paidWithoutConfirm) {
       console.log(`[Auto-Sync] Encontrada reserva paga sem envio de confirmação: ${r.code} (${r.guestName}). Disparando agora...`);
       await ensurePaymentConfirmationDispatched(r);
+    }
+
+    // C) Reservas canceladas que ainda NÃO receberam WhatsApp de cancelamento
+    const cancelledWithoutConfirm = db.reservations.filter(r =>
+      (r.status === "cancelada" || r.status === "cancelled" || r.status === "CANCELLED") &&
+      r.guestPhone &&
+      !(db.whatsappHistory || []).some(h => 
+        (h.reservationCode === r.code || String(h.reservationCode) === String(r.id) || String(h.reservationId) === String(r.id)) &&
+        h.triggerEvent === "reservation_cancelled" &&
+        (h.status === "sent" || h.status === "delivered")
+      )
+    );
+
+    for (const r of cancelledWithoutConfirm) {
+      console.log(`[Auto-Sync] Encontrada reserva cancelada sem envio de WhatsApp: ${r.code} (${r.guestName}). Disparando cancelamento...`);
+      try {
+        await triggerImmediateWhatsApp(db, saveDatabase, "reservation_cancelled", r);
+      } catch (errCancelSync) {
+        console.warn("[Auto-Sync] Erro ao disparar cancelamento:", errCancelSync.message);
+      }
     }
   } catch (errLoop) {
     // Silencioso

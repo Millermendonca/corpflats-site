@@ -3793,6 +3793,9 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     } else if (templates.length === 0 && eventName === "payment_confirmed") {
       const defPay = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_payment_confirmed");
       if (defPay) templates = [defPay];
+    } else if (templates.length === 0 && eventName === "reservation_cancelled") {
+      const defCancel = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_reservation_cancelled" || t.triggerEvent === "reservation_cancelled");
+      if (defCancel) templates = [defCancel];
     }
 
     const recipients = getReservationRecipients(reservation, db);
