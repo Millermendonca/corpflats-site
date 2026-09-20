@@ -636,6 +636,141 @@
       "completedAt": "2026-09-15T18:00:00.000Z",
       "createdAt": "2026-09-18T03:08:03.503Z",
       "updatedAt": "2026-09-18T03:08:03.503Z"
+    },
+    {
+      "id": 231,
+      "flatId": 6,
+      "flatNumber": "215",
+      "requestDate": "2026-09-03",
+      "effectiveDate": "2026-09-03",
+      "source": "checkout",
+      "status": "clean",
+      "assignedUserId": 2,
+      "assignedUsername": "Cris",
+      "assignedUserName": "Cris",
+      "isVacant": true,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": null,
+      "leavingGuest": "Hóspede",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-09-03T17:51:15.681Z",
+      "cleaningStartedAt": "2026-09-03T17:51:16.789Z",
+      "completedAt": "2026-09-03T18:10:23.771Z",
+      "durationMinutes": 19,
+      "createdAt": "2026-09-03T08:00:00.000Z",
+      "updatedAt": "2026-09-03T18:10:23.771Z"
+    },
+    {
+      "id": 236,
+      "flatId": 7,
+      "flatNumber": "313",
+      "requestDate": "2026-09-04",
+      "effectiveDate": "2026-09-04",
+      "source": "checkout",
+      "status": "clean",
+      "assignedUserId": 3,
+      "assignedUsername": "Grazi",
+      "assignedUserName": "Grazi",
+      "isVacant": true,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": null,
+      "leavingGuest": "Hóspede",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-09-04T18:02:16.037Z",
+      "cleaningStartedAt": "2026-09-04T18:02:17.192Z",
+      "completedAt": "2026-09-04T18:14:11.581Z",
+      "durationMinutes": 12,
+      "createdAt": "2026-09-04T08:00:00.000Z",
+      "updatedAt": "2026-09-04T18:14:11.581Z"
+    },
+    {
+      "id": 245,
+      "flatId": 7,
+      "flatNumber": "313",
+      "requestDate": "2026-09-07",
+      "effectiveDate": "2026-09-07",
+      "source": "checkout",
+      "status": "clean",
+      "assignedUserId": 3,
+      "assignedUsername": "Grazi",
+      "assignedUserName": "Grazi",
+      "isVacant": true,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": null,
+      "leavingGuest": "Hóspede",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-09-07T18:27:49.404Z",
+      "cleaningStartedAt": "2026-09-07T18:27:50.584Z",
+      "completedAt": "2026-09-07T18:48:59.587Z",
+      "durationMinutes": 21,
+      "createdAt": "2026-09-06T08:00:00.000Z",
+      "updatedAt": "2026-09-07T18:48:59.587Z"
+    },
+    {
+      "id": 266,
+      "flatId": 5,
+      "flatNumber": "212",
+      "requestDate": "2026-09-08",
+      "effectiveDate": "2026-09-08",
+      "source": "checkout",
+      "status": "clean",
+      "assignedUserId": 3,
+      "assignedUsername": "Grazi",
+      "assignedUserName": "Grazi",
+      "isVacant": true,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": null,
+      "leavingGuest": "Hóspede",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-09-08T10:46:29.925Z",
+      "cleaningStartedAt": "2026-09-08T13:14:27.967Z",
+      "completedAt": "2026-09-08T13:27:52.497Z",
+      "durationMinutes": 13,
+      "createdAt": "2026-09-07T15:25:12.378Z",
+      "updatedAt": "2026-09-08T13:27:52.497Z"
+    },
+    {
+      "id": 270,
+      "flatId": 6,
+      "flatNumber": "215",
+      "requestDate": "2026-09-08",
+      "effectiveDate": "2026-09-08",
+      "source": "checkout",
+      "status": "clean",
+      "assignedUserId": 3,
+      "assignedUsername": "Grazi",
+      "assignedUserName": "Grazi",
+      "isVacant": true,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": null,
+      "leavingGuest": "Hóspede",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-09-08T10:46:29.925Z",
+      "cleaningStartedAt": "2026-09-08T12:56:32.161Z",
+      "completedAt": "2026-09-08T13:14:25.262Z",
+      "durationMinutes": 18,
+      "createdAt": "2026-09-08T08:00:00.000Z",
+      "updatedAt": "2026-09-08T13:14:25.262Z"
     }
   ],
   "periodicTasks": [
@@ -7038,8 +7173,17 @@
     "conciergeGroupName": "Checkout Flats",
     "conciergeMonitoringEnabled": true,
     "conciergeRequireKeywords": false,
-    "webhooksSyncedAt": "2026-09-20T03:12:12.879Z",
-    "googleReviewUrl": "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac"
+    "webhooksSyncedAt": "2026-09-20T20:59:28.837Z",
+    "googleReviewUrl": "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac",
+    "alertEmail": "millerpessanha@gmail.com",
+    "alertEmailEnabled": true,
+    "alertOnReconnect": true,
+    "externalWebhookUrl": "",
+    "externalWebhookEnabled": false,
+    "connectionState": "unknown",
+    "webhookDisconnectedUrl": "https://corpflats.onrender.com/api/whatsapp/webhook/disconnected",
+    "webhookConnectedUrl": "https://corpflats.onrender.com/api/whatsapp/webhook/connected",
+    "webhookReceivedUrl": "https://corpflats.onrender.com/api/whatsapp/webhook/received"
   },
   "whatsappTemplates": [
     {
@@ -7074,7 +7218,8 @@
         "booking",
         "airbnb",
         "outros"
-      ]
+      ],
+      "recipientTarget": "guest"
     },
     {
       "id": "tpl_new_reservation",
@@ -7108,7 +7253,8 @@
         "booking",
         "airbnb",
         "outros"
-      ]
+      ],
+      "recipientTarget": "guest"
     },
     {
       "id": "tpl_reservation_updated",
@@ -7142,7 +7288,8 @@
         "booking",
         "airbnb",
         "outros"
-      ]
+      ],
+      "recipientTarget": "guest"
     },
     {
       "id": "tpl_pre_checkin_reminder",
@@ -7170,7 +7317,8 @@
         "booking",
         "airbnb",
         "outros"
-      ]
+      ],
+      "recipientTarget": "guest"
     },
     {
       "id": "tpl_checkin_day_instructions",
@@ -7204,7 +7352,8 @@
         "booking",
         "airbnb",
         "outros"
-      ]
+      ],
+      "recipientTarget": "guest"
     },
     {
       "id": "tpl_checkin_completed",
@@ -7242,7 +7391,8 @@
       "hasAttachment": true,
       "documentUrl": "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
       "documentName": "Manual_do_Hospede_CorpFlats.pdf",
-      "documentCaption": "Segue em anexo o Manual do Hóspede em PDF com todas as orientações! 📖"
+      "documentCaption": "Segue em anexo o Manual do Hóspede em PDF com todas as orientações! 📖",
+      "recipientTarget": "guest"
     },
     {
       "id": "tpl_breakfast_reminder",
@@ -7267,7 +7417,8 @@
       "channels": [
         "site",
         "whatsapp"
-      ]
+      ],
+      "recipientTarget": "guest"
     },
     {
       "id": "tpl_checkout_reminder",
@@ -7295,7 +7446,8 @@
         "booking",
         "airbnb",
         "outros"
-      ]
+      ],
+      "recipientTarget": "guest"
     },
     {
       "id": "tpl_post_checkout_review",
@@ -7323,7 +7475,8 @@
         "booking",
         "airbnb",
         "outros"
-      ]
+      ],
+      "recipientTarget": "guest"
     },
     {
       "id": "tpl_reservation_cancelled",
@@ -7351,7 +7504,8 @@
         "booking",
         "airbnb",
         "outros"
-      ]
+      ],
+      "recipientTarget": "guest"
     },
     {
       "id": "tpl_new_reservation_direct",
@@ -7382,7 +7536,8 @@
           "label": "🏨 Ver Detalhes da Reserva",
           "url": "{{link_portal_hospede}}"
         }
-      ]
+      ],
+      "recipientTarget": "guest"
     },
     {
       "id": "tpl_new_reservation_ota",
@@ -7413,7 +7568,8 @@
           "label": "🏨 Ver Minha Reserva",
           "url": "{{link_portal_hospede}}"
         }
-      ]
+      ],
+      "recipientTarget": "guest"
     },
     {
       "id": "tpl_room_ready_direct",
@@ -7444,7 +7600,8 @@
           "label": "🏨 Portal do Hóspede",
           "url": "{{link_portal_hospede}}"
         }
-      ]
+      ],
+      "recipientTarget": "guest"
     },
     {
       "id": "tpl_room_ready_ota",
@@ -7475,7 +7632,8 @@
           "label": "🏨 Portal do Hóspede",
           "url": "{{link_portal_hospede}}"
         }
-      ]
+      ],
+      "recipientTarget": "guest"
     },
     {
       "id": "tpl_payment_pending",
@@ -7504,6 +7662,99 @@
           "id": "btn_chk",
           "type": "URL",
           "label": "🏨 Ver Minha Reserva",
+          "url": "{{link_portal_hospede}}"
+        }
+      ],
+      "recipientTarget": "guest"
+    },
+    {
+      "id": "tpl_checkout_completed",
+      "triggerEvent": "checkout_completed",
+      "title": "Check-out Confirmado • Agradecimento & Encerramento",
+      "description": "Enviado imediatamente quando o check-out for confirmado (pelo hóspede no link digital ou pela portaria no WhatsApp).",
+      "enabled": true,
+      "channels": [
+        "site",
+        "whatsapp",
+        "booking",
+        "airbnb",
+        "outros"
+      ],
+      "recipientTarget": "guest",
+      "triggerTiming": "immediate",
+      "offsetValue": 0,
+      "offsetUnit": "minutes",
+      "fixedTime": "",
+      "message": "Olá, *{{primeiro_nome}}*! 🚪✨\nConfirmamos o seu check-out no *Flat {{quarto}}* do *{{nome_hotel}}*.\n\nAgradecemos imensamente pela sua estadia e por todo o cuidado com o nosso espaço! Desejamos um excelente retorno para casa e uma ótima viagem.\n\nEsperamos recebê-lo(a) novamente em breve! 💙",
+      "footer": "CorpFlats • Check-out Concluído",
+      "buttons": [
+        {
+          "id": "btn_portal",
+          "type": "URL",
+          "label": "🏨 Ver Minha Reserva",
+          "url": "{{link_portal_hospede}}"
+        },
+        {
+          "id": "btn_site",
+          "type": "URL",
+          "label": "🌐 Reservar Novamente",
+          "url": "https://corpflats.onrender.com/reservar"
+        }
+      ]
+    },
+    {
+      "id": "tpl_nps_satisfaction_check",
+      "triggerEvent": "post_checkout_review",
+      "title": "Pós Check-out • Pesquisa de Satisfação (Filtro NPS)",
+      "description": "Enviado 2h após o check-out para coletar satisfação interna antes de pedir avaliação no Google. Só hóspedes com nota 5 recebem o link do Google (filtro automático de reputação).",
+      "enabled": true,
+      "channels": [
+        "site",
+        "whatsapp",
+        "booking",
+        "airbnb",
+        "outros"
+      ],
+      "recipientTarget": "guest",
+      "triggerTiming": "after_event",
+      "offsetValue": 2,
+      "offsetUnit": "hours",
+      "fixedTime": "",
+      "message": "Olá, *{{primeiro_nome}}*! 😊\n\nSua estadia no *{{nome_hotel}}* chegou ao fim e adoraríamos saber como foi!\n\n⭐ *De 1 a 5, que nota você daria para a sua experiência conosco?*\n\n• *5* — Perfeito, tudo impecável! 🏆\n• *4* — Muito bom, fiquei satisfeito(a) 😊\n• *3* — Ok, mas poderia melhorar 🤔\n• *2* — Não ficou bom, tive problemas 😕\n• *1* — Péssimo, fiquei muito insatisfeito(a) 😞\n\nResponda apenas com o número da nota (1, 2, 3, 4 ou 5). Sua opinião é muito importante para nós! 💙",
+      "footer": "CorpFlats • Sua opinião importa",
+      "buttons": []
+    },
+    {
+      "id": "tpl_payment_confirmed",
+      "triggerEvent": "payment_confirmed",
+      "title": "Pagamento Confirmado • Confirmação & Ficha Digital",
+      "description": "Enviado imediatamente quando o pagamento (PIX ou Cartão) for identificado e confirmado no sistema.",
+      "enabled": true,
+      "channels": [
+        "site",
+        "whatsapp",
+        "booking",
+        "airbnb",
+        "outros"
+      ],
+      "recipientTarget": "guest",
+      "triggerTiming": "immediate",
+      "offsetValue": 0,
+      "offsetUnit": "minutes",
+      "fixedTime": "",
+      "message": "Olá, *{{primeiro_nome}}*! 💚🎉\nConfirmamos o recebimento do seu pagamento de *{{valor_pago}}* via *{{forma_pagamento}}*!\n\nSua reserva no *{{nome_hotel}}* está *Garantida & Confirmada*!\n\n📋 *Resumo da Estadia:*\n• Código da Reserva: *{{numero_reserva}}*\n• Acomodação: *Flat {{quarto}}*\n• Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*\n• Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*\n• Total de Hóspedes: *{{num_hospedes}}*\n\n💰 *Situação Financeira:*\n• Valor Total: *{{valor_total}}*\n• Quanto foi Pago: *{{valor_pago}}*\n• Saldo a Quitar: *{{quanto_falta}}*\n\n{{instrucao_saldo}}\n\n{{early_checkin_beneficio}}\n\n📍 *Endereço:*\n{{endereco_hotel}}\n\nPara agilizar sua entrada na portaria sem filas na chegada, realize com antecedência o seu *Pré-Check-in Digital*:",
+      "footer": "CorpFlats • Pagamento Aprovado",
+      "buttons": [
+        {
+          "id": "btn_chk",
+          "type": "URL",
+          "label": "📝 Fazer Check-in Online",
+          "url": "{{link_checkin_digital}}"
+        },
+        {
+          "id": "btn_portal",
+          "type": "URL",
+          "label": "🏨 Ver Detalhes da Reserva",
           "url": "{{link_portal_hospede}}"
         }
       ]
@@ -7573,9 +7824,9 @@
       "title": "Dia do Check-out • Orientações de Saída",
       "footer": "CorpFlats • Agradecemos a visita",
       "scheduledFor": "2026-09-20T12:30:00.000Z",
-      "status": "scheduled",
+      "status": "cancelled",
       "sentAt": null,
-      "error": null,
+      "error": "Cancelado na inicialização: agendamento retroativo ou reserva antiga",
       "renderedMessage": "Bom dia, *Hiago*! ☀️\nLembramos que hoje é a data de encerramento da sua estadia no *Flat 114*.\n\n⏰ *Horário limite de saída:* Até às *12:00*.\n\nAo sair, por favor certifique-se de desligar luzes e ar-condicionado e entregue as chaves/cartão na portaria.\nCaso necessite estender o horário (Late Check-out), solicite diretamente à administração.",
       "renderedButtons": [
         {
@@ -7585,7 +7836,8 @@
           "url": "https://corpflats.onrender.com/checkout?code=RES-114-0006"
         }
       ],
-      "createdAt": "2026-09-06T07:46:21.896Z"
+      "createdAt": "2026-09-06T07:46:21.896Z",
+      "updatedAt": "2026-09-20T20:59:21.547Z"
     },
     {
       "id": "q_1788680781906_nilu4",
@@ -7598,9 +7850,9 @@
       "title": "Pós Check-out • Agradecimento & Avaliação Google",
       "footer": "CorpFlats • Até a próxima!",
       "scheduledFor": "2026-09-20T17:00:00.000Z",
-      "status": "scheduled",
+      "status": "cancelled",
       "sentAt": null,
-      "error": null,
+      "error": "Cancelado na inicialização: agendamento retroativo ou reserva antiga",
       "renderedMessage": "Olá, *Hiago*! 💙\nFoi um prazer imenso ter você conosco no *CorpFlats*!\n\nEsperamos que sua hospedagem tenha sido nota 10. Você poderia nos dedicar 30 segundos deixando sua avaliação no Google?\n\nSua opinião ajuda outros hóspedes e motiva nossa equipe a evoluir sempre:",
       "renderedButtons": [
         {
@@ -7610,7 +7862,8 @@
           "url": "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ"
         }
       ],
-      "createdAt": "2026-09-06T07:46:21.896Z"
+      "createdAt": "2026-09-06T07:46:21.896Z",
+      "updatedAt": "2026-09-20T20:59:21.547Z"
     }
   ],
   "whatsappHistory": [
@@ -7673,7 +7926,8 @@
           "label": "💳 Pagar e Confirmar",
           "url": "{{link_portal_hospede}}"
         }
-      ]
+      ],
+      "recipientTarget": "guest"
     },
     {
       "id": "qm_summary_checkin",
@@ -7698,7 +7952,8 @@
           "label": "🏨 Ver Reserva",
           "url": "{{link_portal_hospede}}"
         }
-      ]
+      ],
+      "recipientTarget": "guest"
     },
     {
       "id": "qm_breakfast",
@@ -7717,7 +7972,8 @@
           "label": "🥐 Montar Café da Manhã",
           "url": "{{link_cafe_manha}}"
         }
-      ]
+      ],
+      "recipientTarget": "guest"
     },
     {
       "id": "qm_access_wifi",
@@ -7742,7 +7998,8 @@
           "label": "🏨 Central do Hóspede",
           "url": "{{link_portal_hospede}}"
         }
-      ]
+      ],
+      "recipientTarget": "guest"
     },
     {
       "id": "qm_checkout_reminder",
@@ -7761,7 +8018,8 @@
           "label": "🚪 Check-out Expresso",
           "url": "{{link_checkout}}"
         }
-      ]
+      ],
+      "recipientTarget": "guest"
     },
     {
       "id": "qm_review_request",
@@ -7780,7 +8038,8 @@
           "label": "⭐ Avaliar no Google",
           "url": "{{link_avaliacao_google}}"
         }
-      ]
+      ],
+      "recipientTarget": "guest"
     },
     {
       "id": "qm_guest_manual",
@@ -7809,9 +8068,453 @@
           "label": "📞 Falar com Atendimento",
           "phone": "{{telefone_hotel}}"
         }
+      ],
+      "recipientTarget": "guest"
+    },
+    {
+      "id": "qm_payment_confirmed",
+      "title": "Confirmar Pagamento & Reserva",
+      "shortLabel": "Pago & Confirmado",
+      "icon": "✅",
+      "description": "Aviso de pagamento aprovado e confirmação de reserva.",
+      "category": "Financeiro",
+      "recipientTarget": "guest",
+      "enabled": true,
+      "message": "Olá, *{{primeiro_nome}}*! 💚🎉\nConfirmamos o recebimento do seu pagamento de *{{valor_pago}}* via *{{forma_pagamento}}*.\nSua reserva no *{{nome_hotel}}* (*Flat {{quarto}}*) para *{{data_checkin}}* está confirmada!\n\nAcesse seu portal para realizar o Pré-Check-in Digital:\n{{link_checkin_digital}}",
+      "footer": "CorpFlats • Pagamento Aprovado",
+      "buttons": [
+        {
+          "id": "btn_chk",
+          "type": "URL",
+          "label": "📝 Fazer Check-in Online",
+          "url": "{{link_checkin_digital}}"
+        },
+        {
+          "id": "btn_portal",
+          "type": "URL",
+          "label": "🏨 Ver Reserva",
+          "url": "{{link_portal_hospede}}"
+        }
       ]
     }
   ],
   "guestSentiment": [],
-  "npsResponses": []
+  "npsResponses": [],
+  "zapiConnectionLogs": [],
+  "conciergeWhatsappLogs": [],
+  "whatsappConversations": [
+    {
+      "id": "5522998877665",
+      "phone": "5522998877665",
+      "formattedPhone": "+55 (22) 99887-7665",
+      "name": "Carlos Silva",
+      "avatarUrl": "",
+      "isGroup": false,
+      "unreadCount": 0,
+      "pinned": false,
+      "reservationCode": "RES-113-0034",
+      "flatNumber": "113",
+      "checkinDate": "2026-09-04",
+      "checkoutDate": "2026-09-07",
+      "status": "confirmada",
+      "paymentStatus": "pendente",
+      "totalAmount": 0,
+      "lastMessage": {
+        "text": "Olá, *Carlos*! 💙\nFoi um prazer imenso ter você conosco no *CorpFlats*!\n\nEsperamos que sua hospedagem tenha sido nota 10. Você poderia nos dedicar 30 segundos deixando sua avaliação no Google?\n\nSua opinião ajuda outros hóspedes e motiva nossa equipe a evoluir sempre:",
+        "timestamp": "2026-09-11T19:06:34.784Z",
+        "fromMe": true,
+        "status": "failed",
+        "type": "text"
+      },
+      "updatedAt": "2026-09-11T19:06:34.784Z",
+      "messages": [
+        {
+          "id": "cron_1789153593247_953b",
+          "messageId": "cron_1789153593247_953b",
+          "fromMe": true,
+          "senderName": "CorpFlats",
+          "senderPhone": "",
+          "text": "Bom dia, *Carlos*! ☀️\nLembramos que hoje é a data de encerramento da sua estadia no *Flat 113*.\n\n⏰ *Horário limite de saída:* Até às *12:00*.\n\nAo sair, por favor certifique-se de desligar luzes e ar-condicionado e entregue as chaves/cartão na portaria.\nCaso necessite estender o horário (Late Check-out), solicite diretamente à administração.",
+          "type": "text",
+          "mediaUrl": null,
+          "fileName": null,
+          "caption": null,
+          "buttons": [
+            {
+              "id": "btn_out",
+              "type": "URL",
+              "label": "🚪 Check-out Expresso",
+              "url": "https://corpflats.onrender.com/checkout?code=RES-113-0033"
+            }
+          ],
+          "triggerEvent": "checkout_reminder",
+          "timestamp": "2026-09-11T19:06:33.247Z",
+          "status": "failed"
+        },
+        {
+          "id": "cron_1789153594784_2n0j",
+          "messageId": "cron_1789153594784_2n0j",
+          "fromMe": true,
+          "senderName": "CorpFlats",
+          "senderPhone": "",
+          "text": "Olá, *Carlos*! 💙\nFoi um prazer imenso ter você conosco no *CorpFlats*!\n\nEsperamos que sua hospedagem tenha sido nota 10. Você poderia nos dedicar 30 segundos deixando sua avaliação no Google?\n\nSua opinião ajuda outros hóspedes e motiva nossa equipe a evoluir sempre:",
+          "type": "text",
+          "mediaUrl": null,
+          "fileName": null,
+          "caption": null,
+          "buttons": [
+            {
+              "id": "btn_rev",
+              "type": "URL",
+              "label": "⭐ Avaliar no Google (5 Estrelas)",
+              "url": "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ"
+            }
+          ],
+          "triggerEvent": "post_checkout_review",
+          "timestamp": "2026-09-11T19:06:34.784Z",
+          "status": "failed"
+        }
+      ]
+    },
+    {
+      "id": "5522998622492",
+      "phone": "5522998622492",
+      "formattedPhone": "+55 (22) 99862-2492",
+      "name": "Aline",
+      "avatarUrl": "",
+      "isGroup": false,
+      "unreadCount": 0,
+      "pinned": false,
+      "reservationCode": "RES-116-0032",
+      "flatNumber": "116",
+      "checkinDate": "2026-09-02",
+      "checkoutDate": "2026-09-03",
+      "status": "confirmada",
+      "paymentStatus": "pendente",
+      "totalAmount": 0,
+      "lastMessage": null,
+      "updatedAt": "2026-09-03T02:10:08.808Z",
+      "messages": []
+    },
+    {
+      "id": "5521968998861",
+      "phone": "5521968998861",
+      "formattedPhone": "+55 (21) 96899-8861",
+      "name": "William",
+      "avatarUrl": "",
+      "isGroup": false,
+      "unreadCount": 0,
+      "pinned": false,
+      "reservationCode": "RES-605-0031",
+      "flatNumber": "605",
+      "checkinDate": "2026-09-02",
+      "checkoutDate": "2026-09-03",
+      "status": "confirmada",
+      "paymentStatus": "pendente",
+      "totalAmount": 0,
+      "lastMessage": null,
+      "updatedAt": "2026-09-02T19:25:33.376Z",
+      "messages": []
+    },
+    {
+      "id": "5528981141553",
+      "phone": "5528981141553",
+      "formattedPhone": "+55 (28) 98114-1553",
+      "name": "Leonardo",
+      "avatarUrl": "",
+      "isGroup": false,
+      "unreadCount": 0,
+      "pinned": false,
+      "reservationCode": "RES-904-0030",
+      "flatNumber": "904",
+      "checkinDate": "2026-09-02",
+      "checkoutDate": "2026-09-04",
+      "status": "confirmada",
+      "paymentStatus": "pendente",
+      "totalAmount": 0,
+      "lastMessage": null,
+      "updatedAt": "2026-09-02T16:00:59.967Z",
+      "messages": []
+    },
+    {
+      "id": "5521996701988",
+      "phone": "5521996701988",
+      "formattedPhone": "+55 (21) 99670-1988",
+      "name": "Dany",
+      "avatarUrl": "",
+      "isGroup": false,
+      "unreadCount": 0,
+      "pinned": false,
+      "reservationCode": "RES-408-0029",
+      "flatNumber": "408",
+      "checkinDate": "2026-09-02",
+      "checkoutDate": "2026-09-03",
+      "status": "confirmada",
+      "paymentStatus": "pago_total",
+      "totalAmount": 200,
+      "lastMessage": null,
+      "updatedAt": "2026-09-02T15:44:19.337Z",
+      "messages": []
+    },
+    {
+      "id": "5521997598289",
+      "phone": "5521997598289",
+      "formattedPhone": "+55 (21) 99759-8289",
+      "name": "Sintia",
+      "avatarUrl": "",
+      "isGroup": false,
+      "unreadCount": 0,
+      "pinned": false,
+      "reservationCode": "RES-313-0025",
+      "flatNumber": "313",
+      "checkinDate": "2026-09-02",
+      "checkoutDate": "2026-09-04",
+      "status": "confirmada",
+      "paymentStatus": "pendente",
+      "totalAmount": 0,
+      "lastMessage": null,
+      "updatedAt": "2026-09-02T15:38:22.081Z",
+      "messages": []
+    },
+    {
+      "id": "5527999682556",
+      "phone": "5527999682556",
+      "formattedPhone": "+55 (27) 99968-2556",
+      "name": "Guido",
+      "avatarUrl": "",
+      "isGroup": false,
+      "unreadCount": 0,
+      "pinned": false,
+      "reservationCode": "RES-212-0024",
+      "flatNumber": "509",
+      "checkinDate": "2026-09-02",
+      "checkoutDate": "2026-09-03",
+      "status": "confirmada",
+      "paymentStatus": "pendente",
+      "totalAmount": 0,
+      "lastMessage": null,
+      "updatedAt": "2026-09-02T15:36:25.002Z",
+      "messages": []
+    },
+    {
+      "id": "5521972373799",
+      "phone": "5521972373799",
+      "formattedPhone": "+55 (21) 97237-3799",
+      "name": "Marcelo",
+      "avatarUrl": "",
+      "isGroup": false,
+      "unreadCount": 0,
+      "pinned": false,
+      "reservationCode": "RES-905-0015",
+      "flatNumber": "905",
+      "checkinDate": "2026-09-01",
+      "checkoutDate": "2026-09-02",
+      "status": "confirmada",
+      "paymentStatus": "pago_total",
+      "totalAmount": 185,
+      "lastMessage": null,
+      "updatedAt": "2026-09-01T20:29:46.992Z",
+      "messages": []
+    },
+    {
+      "id": "5521967558194",
+      "phone": "5521967558194",
+      "formattedPhone": "+55 (21) 96755-8194",
+      "name": "Sergio",
+      "avatarUrl": "",
+      "isGroup": false,
+      "unreadCount": 0,
+      "pinned": false,
+      "reservationCode": "RES-904-0014",
+      "flatNumber": "904",
+      "checkinDate": "2026-09-01",
+      "checkoutDate": "2026-09-02",
+      "status": "confirmada",
+      "paymentStatus": "pendente",
+      "totalAmount": 0,
+      "lastMessage": null,
+      "updatedAt": "2026-09-01T16:51:03.818Z",
+      "messages": []
+    },
+    {
+      "id": "5522981149914",
+      "phone": "5522981149914",
+      "formattedPhone": "+55 (22) 98114-9914",
+      "name": "Gustavo",
+      "avatarUrl": "",
+      "isGroup": false,
+      "unreadCount": 0,
+      "pinned": false,
+      "reservationCode": "RES-715-0013",
+      "flatNumber": "715",
+      "checkinDate": "2026-09-01",
+      "checkoutDate": "2026-09-03",
+      "status": "confirmada",
+      "paymentStatus": "pendente",
+      "totalAmount": 0,
+      "lastMessage": null,
+      "updatedAt": "2026-09-01T16:36:25.304Z",
+      "messages": []
+    },
+    {
+      "id": "5521976403551",
+      "phone": "5521976403551",
+      "formattedPhone": "+55 (21) 97640-3551",
+      "name": "Roselene",
+      "avatarUrl": "",
+      "isGroup": false,
+      "unreadCount": 0,
+      "pinned": false,
+      "reservationCode": "RES-712-0012",
+      "flatNumber": "712",
+      "checkinDate": "2026-09-01",
+      "checkoutDate": "2026-09-02",
+      "status": "confirmada",
+      "paymentStatus": "pendente",
+      "totalAmount": 0,
+      "lastMessage": null,
+      "updatedAt": "2026-09-01T16:35:29.978Z",
+      "messages": []
+    },
+    {
+      "id": "552299881122",
+      "phone": "552299881122",
+      "formattedPhone": "+55 (22) 9988-1122",
+      "name": "Fabiano",
+      "avatarUrl": "",
+      "isGroup": false,
+      "unreadCount": 0,
+      "pinned": false,
+      "reservationCode": "RES-509-0011",
+      "flatNumber": "509",
+      "checkinDate": "2026-08-31",
+      "checkoutDate": "2026-09-01",
+      "status": "confirmada",
+      "paymentStatus": "pago",
+      "totalAmount": 240,
+      "lastMessage": null,
+      "updatedAt": "2026-09-01T06:05:07.542Z",
+      "messages": []
+    },
+    {
+      "id": "5527996018588",
+      "phone": "5527996018588",
+      "formattedPhone": "+55 (27) 99601-8588",
+      "name": "Luiz",
+      "avatarUrl": "",
+      "isGroup": false,
+      "unreadCount": 0,
+      "pinned": false,
+      "reservationCode": "RES-605-0009",
+      "flatNumber": "605",
+      "checkinDate": "2026-09-01",
+      "checkoutDate": "2026-09-02",
+      "status": "confirmada",
+      "paymentStatus": "pago_total",
+      "totalAmount": 230,
+      "lastMessage": null,
+      "updatedAt": "2026-08-31T19:03:02.705Z",
+      "messages": []
+    },
+    {
+      "id": "5522981015177",
+      "phone": "5522981015177",
+      "formattedPhone": "+55 (22) 98101-5177",
+      "name": "Anyelle",
+      "avatarUrl": "",
+      "isGroup": false,
+      "unreadCount": 0,
+      "pinned": false,
+      "reservationCode": "RES-113-0007",
+      "flatNumber": "113",
+      "checkinDate": "2026-09-01",
+      "checkoutDate": "2026-09-03",
+      "status": "confirmada",
+      "paymentStatus": "pendente",
+      "totalAmount": 0,
+      "lastMessage": null,
+      "updatedAt": "2026-08-31T18:59:34.189Z",
+      "messages": []
+    },
+    {
+      "id": "5538991146406",
+      "phone": "5538991146406",
+      "formattedPhone": "+55 (38) 99114-6406",
+      "name": "Hiago Santana",
+      "avatarUrl": "",
+      "isGroup": false,
+      "unreadCount": 0,
+      "pinned": false,
+      "reservationCode": "RES-114-0006",
+      "flatNumber": "114",
+      "checkinDate": "2026-09-01",
+      "checkoutDate": "2026-09-20",
+      "status": "confirmada",
+      "paymentStatus": "pendente",
+      "totalAmount": 0,
+      "lastMessage": null,
+      "updatedAt": "2026-08-31T18:58:48.156Z",
+      "messages": []
+    },
+    {
+      "id": "5521999854881",
+      "phone": "5521999854881",
+      "formattedPhone": "+55 (21) 99985-4881",
+      "name": "Marco",
+      "avatarUrl": "",
+      "isGroup": false,
+      "unreadCount": 0,
+      "pinned": false,
+      "reservationCode": "RES-512-0005",
+      "flatNumber": "512",
+      "checkinDate": "2026-09-01",
+      "checkoutDate": "2026-09-04",
+      "status": "confirmada",
+      "paymentStatus": "pendente",
+      "totalAmount": 0,
+      "lastMessage": null,
+      "updatedAt": "2026-08-31T18:09:30.728Z",
+      "messages": []
+    },
+    {
+      "id": "5521965567043",
+      "phone": "5521965567043",
+      "formattedPhone": "+55 (21) 96556-7043",
+      "name": "Dayana",
+      "avatarUrl": "",
+      "isGroup": false,
+      "unreadCount": 0,
+      "pinned": false,
+      "reservationCode": "RES-313-0002",
+      "flatNumber": "313",
+      "checkinDate": "2026-08-31",
+      "checkoutDate": "2026-09-01",
+      "status": "confirmada",
+      "paymentStatus": "pendente",
+      "totalAmount": 0,
+      "lastMessage": null,
+      "updatedAt": "2026-08-31T17:44:57.164Z",
+      "messages": []
+    },
+    {
+      "id": "5522998505276",
+      "phone": "5522998505276",
+      "formattedPhone": "+55 (22) 99850-5276",
+      "name": "Miller Mendonça Pessanha",
+      "avatarUrl": "",
+      "isGroup": false,
+      "unreadCount": 0,
+      "pinned": false,
+      "reservationCode": "RES-408-0035",
+      "flatNumber": "408",
+      "checkinDate": "2026-08-25",
+      "checkoutDate": "2026-08-28",
+      "status": "concluida",
+      "paymentStatus": "",
+      "totalAmount": 711,
+      "lastMessage": null,
+      "updatedAt": "2026-08-24T18:00:00.000Z",
+      "messages": []
+    }
+  ]
 }

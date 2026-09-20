@@ -16836,7 +16836,7 @@ app.get("/api/ai/sentiment/overview", (req, res) => {
 
   const avgReviewScore = reviews.length > 0
     ? (reviews.reduce((a, r) => a + (r.rating || 5), 0) / reviews.length).toFixed(1)
-    : "5.0";
+    : 0;
 
   const allNegKw = [];
   wppAnalyzed.forEach(s => { if (Array.isArray(s.negativeKeywords)) allNegKw.push(...s.negativeKeywords); });

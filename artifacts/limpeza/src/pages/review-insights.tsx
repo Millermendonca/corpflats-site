@@ -129,8 +129,18 @@ export default function ReviewInsights() {
     setAnalyzing(true)
     try {
       const res = await fetch("/api/ai/analyze-reviews", { method: "POST", headers: { "Content-Type": "application/json" } })
-      if (res.ok) { fetchReviews(); fetchSentimentOverview() }
-    } catch { } finally { setAnalyzing(false) }
+      if (res.ok) {
+        const data = await res.json()
+        await Promise.all([fetchReviews(), fetchSentimentOverview()])
+        if (data.message) {
+          alert(data.message)
+        }
+      } else {
+        alert("Erro ao executar análise de avaliações.")
+      }
+    } catch (err: any) {
+      alert("Erro de conexão ao analisar avaliações: " + err.message)
+    } finally { setAnalyzing(false) }
   }
 
   const handleAnalyzeWpp = async () => {
@@ -415,7 +425,11 @@ export default function ReviewInsights() {
                     <span className="text-xs text-slate-200">{h}</span>
                   </div>
                 )) : (
-                  <p className="text-xs text-slate-500 col-span-2 italic">Execute a análise de IA para gerar destaques automáticos.</p>
+                  <p className="text-xs text-slate-500 col-span-2 italic">
+                    {reviews.length === 0
+                      ? "Nenhuma avaliação cadastrada no sistema. Importe avaliações reais de hóspedes para que a IA gere destaques com base em dados verídicos."
+                      : "Nenhum ponto de destaque positivo identificado nas avaliações atuais."}
+                  </p>
                 )}
               </div>
             </Card>
