@@ -9,24 +9,21 @@ import {
   Trash2,
   RefreshCw,
   ExternalLink,
-  Clock,
-  CheckCircle2,
-  Sparkles,
+  ArrowLeft,
   ChevronDown,
-  ChevronUp,
+  ChevronRight,
   X,
   SlidersHorizontal,
+  Sparkles,
 } from "lucide-react"
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Badge } from "@/components/ui/badge"
 
 export interface ShoppingItem {
   id: string
@@ -78,21 +75,6 @@ export function normalizeText(text: string): string {
     .trim()
 }
 
-function formatDateBr(isoStr?: string | null): string {
-  if (!isoStr) return ""
-  try {
-    const d = new Date(isoStr)
-    return d.toLocaleDateString("pt-BR", {
-      day: "2-digit",
-      month: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    })
-  } catch {
-    return isoStr.substring(0, 10)
-  }
-}
-
 interface QuickShoppingModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -106,18 +88,16 @@ export function QuickShoppingModal({
 }: QuickShoppingModalProps) {
   const { data: user } = useGetMe()
   const { toast } = useToast()
-  const isAdmin = user?.role === "admin"
 
   const inputRef = useRef<HTMLInputElement>(null)
 
   const [items, setItems] = useState<ShoppingItem[]>([])
   const [loading, setLoading] = useState(false)
 
-  // Google Keep Fast Entry state
+  // Input states
   const [title, setTitle] = useState("")
   const [quantity, setQuantity] = useState("")
   const [notes, setNotes] = useState("")
-  const [category, setCategory] = useState("Limpeza")
   const [showDetails, setShowDetails] = useState(false)
   const [showCompleted, setShowCompleted] = useState(false)
 
@@ -143,24 +123,24 @@ export function QuickShoppingModal({
         onPendingCountChange?.(pendingCount)
       }
     } catch {
-      // Background retry
+      // background retry
     } finally {
       setLoading(false)
     }
   }
 
-  // Busca sempre que abrir o modal e foca o cursor
+  // Foco no input ao abrir
   useEffect(() => {
     if (open) {
       fetchItems()
       const t = setTimeout(() => {
         inputRef.current?.focus()
-      }, 80)
+      }, 100)
       return () => clearTimeout(t)
     }
   }, [open])
 
-  // Busca inicial apenas para contagem de pendências no ícone inferior
+  // Busca inicial para o contador no atalho inferior
   useEffect(() => {
     fetch("/api/shopping-list")
       .then(r => r.json())
@@ -178,7 +158,7 @@ export function QuickShoppingModal({
     const trimmed = itemTitle.trim()
     if (!trimmed) return
 
-    // 1. Limpa o input imediatamente e mantém foco (Google Keep style)
+    // 1. Limpa o input e mantém foco imediato
     setTitle("")
     setSelectedSuggestionIndex(-1)
     setShowSuggestions(false)
@@ -190,7 +170,7 @@ export function QuickShoppingModal({
       id: tempId,
       title: trimmed,
       quantity: quantity.trim(),
-      category: category.trim() || "Limpeza",
+      category: "Limpeza",
       notes: notes.trim(),
       completed: false,
       createdBy: {
@@ -209,7 +189,7 @@ export function QuickShoppingModal({
     setNotes("")
     setShowDetails(false)
 
-    // 3. Persiste no servidor em background sem travar o próximo item
+    // 3. Salva no backend em background
     try {
       const res = await fetch("/api/shopping-list", {
         method: "POST",
@@ -227,7 +207,7 @@ export function QuickShoppingModal({
         setItems(prev => prev.map(it => (it.id === tempId ? saved : it)))
       }
     } catch {
-      // Mantém item otimista
+      // mantém otimista
     }
   }
 
@@ -324,26 +304,31 @@ export function QuickShoppingModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg p-0 gap-0 overflow-hidden rounded-2xl sm:rounded-3xl border-border bg-card shadow-2xl">
-        {/* Header estilo Google Keep */}
-        <div className="p-4 border-b border-border bg-card flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center font-black">
-              <ShoppingCart className="w-5 h-5" />
-            </div>
-            <div>
-              <DialogTitle className="text-base font-black tracking-tight text-foreground flex items-center gap-2">
+      <DialogContent className="fixed inset-0 z-50 h-[100dvh] max-h-[100dvh] w-full rounded-none border-0 p-0 gap-0 bg-background flex flex-col overflow-hidden sm:inset-auto sm:top-[50%] sm:left-[50%] sm:translate-x-[-50%] sm:translate-y-[-50%] sm:h-[88dvh] sm:max-h-[820px] sm:max-w-lg sm:rounded-3xl sm:border sm:border-border sm:shadow-2xl [&>button.absolute]:hidden">
+        {/* 1. Header Fixo Superior com Safe-Area */}
+        <div className="shrink-0 pt-[max(env(safe-area-inset-top,0px),12px)] px-4 pb-3 border-b border-border/60 bg-background flex items-center justify-between z-10">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => onOpenChange(false)}
+              className="w-9 h-9 -ml-1.5 rounded-full flex items-center justify-center text-foreground hover:bg-muted active:scale-95 transition-all"
+              aria-label="Voltar"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+            <div className="flex items-center gap-2">
+              <DialogTitle className="text-base sm:text-lg font-bold tracking-tight text-foreground">
                 Lista de Compras
-                {pendingItems.length > 0 && (
-                  <span className="bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30 text-[10px] font-extrabold px-2 py-0.5 rounded-full">
-                    {pendingItems.length} {pendingItems.length === 1 ? "item" : "itens"}
-                  </span>
-                )}
               </DialogTitle>
-              <DialogDescription className="text-xs text-muted-foreground">
-                Digite o item e tecle Enter para o próximo
-              </DialogDescription>
+              {pendingItems.length > 0 && (
+                <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                  {pendingItems.length}
+                </span>
+              )}
             </div>
+            <DialogDescription className="sr-only">
+              Gerencie a lista de compras da governança
+            </DialogDescription>
           </div>
 
           <div className="flex items-center gap-1">
@@ -352,27 +337,27 @@ export function QuickShoppingModal({
               size="icon"
               onClick={fetchItems}
               disabled={loading}
-              className="h-8 w-8 text-muted-foreground hover:text-foreground rounded-lg"
+              className="w-8 h-8 rounded-full text-muted-foreground hover:text-foreground"
               title="Atualizar lista"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+              <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
             </Button>
             <Link
               href="/lista-compras"
               onClick={() => onOpenChange(false)}
-              className="p-1.5 text-muted-foreground hover:text-primary rounded-lg transition-colors"
-              title="Abrir tela cheia"
+              className="w-8 h-8 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+              title="Abrir página completa"
             >
               <ExternalLink className="w-4 h-4" />
             </Link>
           </div>
         </div>
 
-        {/* Input Google Keep: Digite e dê Enter */}
-        <div className="p-3.5 border-b border-border bg-muted/20 relative">
+        {/* 2. Campo de Entrada & Atalhos Rápidos (shrink-0) */}
+        <div className="shrink-0 px-4 pt-3 pb-2 border-b border-border/50 bg-background">
+          {/* Input Moderno com Fundo Neutro Suave */}
           <div className="relative">
-            <div className="flex items-center gap-2 bg-background border border-border rounded-2xl p-1.5 pl-3 shadow-xs focus-within:ring-2 focus-within:ring-primary focus-within:border-primary transition-all">
-              <Plus className="w-4 h-4 text-muted-foreground shrink-0" />
+            <div className="relative flex items-center bg-slate-100 dark:bg-slate-800/70 rounded-2xl px-3.5 py-1.5 border border-transparent focus-within:border-primary/40 focus-within:bg-background focus-within:ring-2 focus-within:ring-primary/20 transition-all shadow-2xs">
               <input
                 ref={inputRef}
                 value={title}
@@ -383,8 +368,8 @@ export function QuickShoppingModal({
                 }}
                 onFocus={() => setShowSuggestions(true)}
                 onKeyDown={handleKeyDown}
-                placeholder="Item da lista (ex: Papel higiênico, Cif, Detergente...)"
-                className="w-full bg-transparent text-sm font-semibold text-foreground placeholder:text-muted-foreground/70 focus:outline-none"
+                placeholder="Adicionar item..."
+                className="w-full bg-transparent py-1.5 text-sm font-medium text-foreground placeholder:text-muted-foreground/60 focus:outline-none"
               />
 
               {title.trim() && (
@@ -395,42 +380,42 @@ export function QuickShoppingModal({
                     setShowSuggestions(false)
                     inputRef.current?.focus()
                   }}
-                  className="p-1 text-muted-foreground hover:text-foreground rounded-full"
+                  className="p-1 text-muted-foreground hover:text-foreground rounded-full transition-colors mr-1"
                 >
-                  <X className="w-3.5 h-3.5" />
+                  <X className="w-4 h-4" />
                 </button>
               )}
 
               <button
                 type="button"
                 onClick={() => setShowDetails(!showDetails)}
-                className={`p-1.5 rounded-xl transition-colors ${
+                className={`p-1.5 rounded-xl transition-colors mr-1 ${
                   showDetails || quantity || notes
-                    ? "bg-primary/10 text-primary"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                    ? "text-primary bg-primary/10"
+                    : "text-muted-foreground hover:text-foreground"
                 }`}
-                title="Qtd e Observações adicionais"
+                title="Qtd / Observações"
               >
                 <SlidersHorizontal className="w-4 h-4" />
               </button>
 
-              <Button
+              <button
                 type="button"
-                size="sm"
                 disabled={!title.trim()}
                 onClick={() => handleAddItem(title)}
-                className="h-8 px-3 rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-primary-foreground shrink-0 gap-1 shadow-xs"
+                className="w-8 h-8 rounded-xl bg-primary text-primary-foreground flex items-center justify-center shrink-0 transition-all hover:bg-primary/90 disabled:opacity-30 disabled:pointer-events-none active:scale-90 shadow-2xs"
+                title="Adicionar item"
               >
-                <span>Enter ↵</span>
-              </Button>
+                <Plus className="w-4 h-4 stroke-[2.5]" />
+              </button>
             </div>
 
             {/* Dropdown de Autocomplete Flutuante */}
             {showSuggestions && filteredSuggestions.length > 0 && (
-              <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-popover border border-border rounded-2xl shadow-xl overflow-hidden py-1 divide-y divide-border/40 animate-in fade-in zoom-in-95 duration-100 max-h-56 overflow-y-auto">
-                <div className="px-3 py-1 bg-muted/40 text-[10px] font-black uppercase tracking-wider text-muted-foreground flex items-center justify-between">
+              <div className="absolute left-0 right-0 top-full mt-1.5 z-50 bg-popover/95 backdrop-blur-md border border-border rounded-2xl shadow-xl overflow-hidden py-1 divide-y divide-border/40 max-h-56 overflow-y-auto animate-in fade-in zoom-in-95 duration-100">
+                <div className="px-3.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center justify-between">
                   <span>Itens Frequentes</span>
-                  <span className="text-[9px] font-normal lowercase">toque ou use setas + enter</span>
+                  <span className="text-[9px] font-normal lowercase">toque para adicionar</span>
                 </div>
                 {filteredSuggestions.map((sug, idx) => {
                   const isSelected = idx === selectedSuggestionIndex
@@ -442,7 +427,7 @@ export function QuickShoppingModal({
                         e.preventDefault()
                         handleAddItem(sug)
                       }}
-                      className={`w-full px-3.5 py-2 text-left text-xs font-bold flex items-center justify-between transition-colors ${
+                      className={`w-full px-3.5 py-2.5 text-left text-xs font-semibold flex items-center justify-between transition-colors ${
                         isSelected
                           ? "bg-primary text-primary-foreground"
                           : "hover:bg-muted text-foreground"
@@ -457,7 +442,7 @@ export function QuickShoppingModal({
                         <span>{sug}</span>
                       </div>
                       <span
-                        className={`text-[10px] font-semibold ${
+                        className={`text-[10px] ${
                           isSelected ? "text-primary-foreground/80" : "text-muted-foreground"
                         }`}
                       >
@@ -470,68 +455,69 @@ export function QuickShoppingModal({
             )}
           </div>
 
-          {/* Campos Opcionais Expansíveis (Qtd / Obs) */}
+          {/* Detalhes Expansíveis Opcionais (Qtd / Obs) */}
           {showDetails && (
             <div className="grid grid-cols-12 gap-2 mt-2 pt-2 border-t border-border/40 animate-in slide-in-from-top-1 duration-150">
               <div className="col-span-5">
                 <Input
                   value={quantity}
                   onChange={e => setQuantity(e.target.value)}
-                  placeholder="Qtd (ex: 4 galões, 10 un)"
-                  className="rounded-xl h-8 text-xs bg-background border-border"
+                  placeholder="Qtd (ex: 2 galões)"
+                  className="rounded-xl h-8 text-xs bg-slate-100 dark:bg-slate-800/70 border-transparent focus:border-primary/40"
                 />
               </div>
               <div className="col-span-7">
                 <Input
                   value={notes}
                   onChange={e => setNotes(e.target.value)}
-                  placeholder="Obs / Quarto (ex: Urgente flat 201)"
-                  className="rounded-xl h-8 text-xs bg-background border-border"
+                  placeholder="Obs / Quarto (ex: Flat 201)"
+                  className="rounded-xl h-8 text-xs bg-slate-100 dark:bg-slate-800/70 border-transparent focus:border-primary/40"
                 />
               </div>
             </div>
           )}
 
-          {/* Pílulas de Atalho Rápido para Itens Frequentes */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pt-2 pb-0.5 no-scrollbar">
-            <span className="text-[10px] font-bold text-muted-foreground shrink-0">Comuns:</span>
+          {/* Atalhos Rápidos com Rolagem Horizontal Suave */}
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-2.5 pb-1">
+            <span className="text-[11px] font-semibold text-muted-foreground shrink-0 pr-0.5">
+              Comuns:
+            </span>
             {COMMON_SHOPPING_ITEMS.map(item => (
               <button
                 key={item}
                 type="button"
                 onClick={() => handleAddItem(item)}
-                className="shrink-0 px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-background border border-border/80 hover:border-primary/60 hover:bg-primary/5 text-foreground transition-all flex items-center gap-1 shadow-2xs active:scale-95"
+                className="shrink-0 px-3 py-1 rounded-full text-xs font-medium bg-slate-100 dark:bg-slate-800/70 text-slate-700 dark:text-slate-300 hover:bg-primary/10 hover:text-primary active:scale-95 transition-all border border-slate-200/50 dark:border-slate-700/50"
               >
-                <Plus className="w-2.5 h-2.5 text-primary" />
-                <span>{item}</span>
+                + {item}
               </button>
             ))}
           </div>
         </div>
 
-        {/* Lista Checklist Google Keep */}
-        <div className="p-3 sm:p-4 overflow-y-auto max-h-[50dvh] space-y-1">
+        {/* 3. Conteúdo Central: Lista com Rolagem Vertical Independente */}
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-2 space-y-1">
           {loading && items.length === 0 ? (
-            <div className="py-8 text-center text-xs text-muted-foreground animate-pulse">
-              Carregando lista...
+            <div className="py-12 text-center text-xs text-muted-foreground animate-pulse">
+              Carregando itens da lista...
             </div>
           ) : items.length === 0 ? (
-            <div className="py-8 text-center space-y-2">
-              <div className="w-12 h-12 mx-auto rounded-2xl bg-muted flex items-center justify-center text-muted-foreground">
-                <ShoppingCart className="w-6 h-6 text-muted-foreground/60" />
+            <div className="flex flex-col items-center justify-center py-16 text-center px-4">
+              <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 mb-3">
+                <ShoppingCart className="w-6 h-6 stroke-[1.5]" />
               </div>
-              <p className="text-xs font-bold text-foreground">Sua lista está vazia</p>
-              <p className="text-[11px] text-muted-foreground max-w-xs mx-auto">
-                Digite um produto acima e tecle Enter para montar a lista rapidamente.
+              <p className="text-sm font-semibold text-foreground">Sua lista está vazia</p>
+              <p className="text-xs text-muted-foreground mt-1 max-w-xs">
+                Digite um item acima ou toque em qualquer atalho comum para começar.
               </p>
             </div>
           ) : (
             <>
-              {/* 1. Itens Ativos (Pendentes de Compra) */}
+              {/* Itens Ativos (Pendentes) */}
               <div className="space-y-1">
                 {pendingItems.length === 0 && completedItems.length > 0 && (
-                  <div className="py-4 text-center text-xs text-emerald-600 font-bold flex items-center justify-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4" />
+                  <div className="py-6 text-center text-xs font-semibold text-emerald-600 flex items-center justify-center gap-1.5">
+                    <Check className="w-4 h-4 stroke-[2.5]" />
                     <span>Todos os itens da lista já foram comprados!</span>
                   </div>
                 )}
@@ -539,73 +525,68 @@ export function QuickShoppingModal({
                 {pendingItems.map(item => (
                   <div
                     key={item.id}
-                    className="group flex items-center gap-2.5 p-2 rounded-xl hover:bg-muted/40 transition-colors border border-transparent hover:border-border/60"
+                    className="group flex items-center gap-3 py-2 px-2.5 rounded-xl hover:bg-slate-100/70 dark:hover:bg-slate-800/50 transition-colors"
                   >
-                    {/* Checkbox Google Keep */}
+                    {/* Checkbox Estilizado com Animação */}
                     <button
                       type="button"
                       onClick={() => handleToggle(item)}
-                      className="w-5 h-5 rounded-md border-2 border-muted-foreground/40 hover:border-primary flex items-center justify-center shrink-0 transition-all text-transparent hover:text-primary active:scale-90"
+                      className="w-5 h-5 rounded-md border-2 border-slate-300 dark:border-slate-600 hover:border-primary flex items-center justify-center shrink-0 transition-all bg-background active:scale-90"
                       title="Marcar como comprado"
                     >
-                      <Check className="w-3 h-3 stroke-[3]" />
+                      <Check className="w-3.5 h-3.5 text-transparent" />
                     </button>
 
-                    {/* Texto do Item */}
+                    {/* Conteúdo do Item */}
                     <div className="flex-1 min-w-0 flex items-center gap-2">
-                      <span className="text-xs font-bold text-foreground truncate">
+                      <span className="text-sm font-medium text-foreground truncate">
                         {item.title}
                       </span>
                       {item.quantity && (
-                        <span className="text-[10px] font-black bg-primary/10 text-primary px-1.5 py-0.2 rounded-md shrink-0">
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 shrink-0">
                           {item.quantity}
                         </span>
                       )}
                       {item.notes && (
-                        <span className="text-[10px] text-muted-foreground truncate hidden sm:inline">
-                          ({item.notes})
+                        <span className="text-xs text-muted-foreground truncate hidden sm:inline">
+                          • {item.notes}
                         </span>
                       )}
                     </div>
 
-                    {/* Autor / Horário discreto */}
-                    <span className="text-[10px] text-muted-foreground shrink-0 hidden sm:inline">
-                      {item.createdBy?.name || "Colaborador"}
-                    </span>
-
-                    {/* Botão de Excluir discreto */}
+                    {/* Botão de Exclusão Rápido */}
                     <button
                       type="button"
                       onClick={() => handleDelete(item)}
-                      className="opacity-60 group-hover:opacity-100 hover:text-destructive p-1 rounded-md transition-all text-muted-foreground shrink-0"
-                      title="Remover item"
+                      className="p-1.5 text-slate-400 hover:text-red-500 rounded-lg transition-colors opacity-70 group-hover:opacity-100 shrink-0 active:scale-90"
+                      title="Excluir item"
                     >
-                      <X className="w-3.5 h-3.5" />
+                      <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
                 ))}
               </div>
 
-              {/* 2. Seção Itens Marcados (Google Keep style collapsible) */}
+              {/* Itens Marcados (Comprados) - Recolhível */}
               {completedItems.length > 0 && (
-                <div className="pt-3 border-t border-border/50 mt-3">
+                <div className="pt-3 border-t border-border/50 mt-4 mb-2">
                   <button
                     type="button"
                     onClick={() => setShowCompleted(!showCompleted)}
-                    className="w-full flex items-center justify-between py-1.5 px-2 rounded-lg text-xs font-bold text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
+                    className="w-full flex items-center justify-between py-1.5 px-2 rounded-lg text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors"
                   >
                     <div className="flex items-center gap-2">
                       {showCompleted ? (
                         <ChevronDown className="w-4 h-4" />
                       ) : (
-                        <ChevronUp className="w-4 h-4" />
+                        <ChevronRight className="w-4 h-4" />
                       )}
                       <span>
                         {completedItems.length}{" "}
                         {completedItems.length === 1 ? "item comprado" : "itens comprados"}
                       </span>
                     </div>
-                    <span className="text-[10px] font-medium text-muted-foreground">
+                    <span className="text-[11px] font-normal text-muted-foreground">
                       {showCompleted ? "Ocultar" : "Mostrar"}
                     </span>
                   </button>
@@ -615,25 +596,25 @@ export function QuickShoppingModal({
                       {completedItems.map(item => (
                         <div
                           key={item.id}
-                          className="group flex items-center gap-2.5 p-2 rounded-xl opacity-60 hover:opacity-100 transition-opacity"
+                          className="group flex items-center gap-3 py-2 px-2.5 rounded-xl opacity-60 hover:opacity-100 transition-opacity"
                         >
                           {/* Checkbox Marcado */}
                           <button
                             type="button"
                             onClick={() => handleToggle(item)}
-                            className="w-5 h-5 rounded-md bg-emerald-600 border-2 border-emerald-600 flex items-center justify-center shrink-0 text-white active:scale-90"
+                            className="w-5 h-5 rounded-md bg-emerald-600 border-2 border-emerald-600 flex items-center justify-center shrink-0 text-white active:scale-90 animate-in zoom-in-75 duration-150"
                             title="Reabrir item"
                           >
-                            <Check className="w-3.5 h-3.5 stroke-[3]" />
+                            <Check className="w-3.5 h-3.5 stroke-[2.5]" />
                           </button>
 
                           {/* Texto Riscado */}
                           <div className="flex-1 min-w-0 flex items-center gap-2">
-                            <span className="text-xs font-semibold text-muted-foreground line-through truncate">
+                            <span className="text-sm font-normal text-muted-foreground line-through truncate">
                               {item.title}
                             </span>
                             {item.quantity && (
-                              <span className="text-[10px] line-through text-muted-foreground/70">
+                              <span className="text-[10px] line-through text-muted-foreground/70 shrink-0">
                                 {item.quantity}
                               </span>
                             )}
@@ -642,10 +623,10 @@ export function QuickShoppingModal({
                           <button
                             type="button"
                             onClick={() => handleDelete(item)}
-                            className="text-muted-foreground hover:text-destructive p-1 rounded-md opacity-50 group-hover:opacity-100 transition-opacity shrink-0"
-                            title="Remover definitivamente"
+                            className="p-1.5 text-slate-400 hover:text-red-500 rounded-lg transition-colors opacity-70 group-hover:opacity-100 shrink-0 active:scale-90"
+                            title="Excluir item"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
                       ))}
@@ -657,11 +638,16 @@ export function QuickShoppingModal({
           )}
         </div>
 
-        {/* Rodapé Google Keep */}
-        <div className="p-2.5 px-4 border-t border-border bg-muted/20 flex items-center justify-between text-xs text-muted-foreground">
-          <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
-            <span className="font-semibold text-[11px]">Sincronização em tempo real</span>
+        {/* 4. Rodapé Fixo com Safe Area Inset */}
+        <div className="shrink-0 border-t border-border/60 bg-background/95 backdrop-blur-xs px-4 pt-2.5 pb-[max(env(safe-area-inset-bottom,0px),12px)] flex items-center justify-between text-xs text-muted-foreground z-10">
+          <div className="flex items-center gap-2">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+            <span className="text-[11px] font-medium text-muted-foreground">
+              Sincronização em tempo real
+            </span>
           </div>
 
           <Button
@@ -669,7 +655,7 @@ export function QuickShoppingModal({
             variant="ghost"
             size="sm"
             onClick={() => onOpenChange(false)}
-            className="h-7 text-xs font-bold rounded-lg"
+            className="h-8 text-xs font-semibold px-3 rounded-xl hover:bg-muted active:scale-95"
           >
             Concluir
           </Button>
