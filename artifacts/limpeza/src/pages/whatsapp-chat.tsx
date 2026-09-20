@@ -46,7 +46,10 @@ import {
   X,
   Download,
   Smartphone,
-  FileCheck
+  FileCheck,
+  Maximize2,
+  Minimize2,
+  GripVertical
 } from 'lucide-react'
 
 export interface ChatMessage {
@@ -110,9 +113,36 @@ export default function WhatsappChat() {
   const [showDossier, setShowDossier] = useState(true)
   const [isMobileListOpen, setIsMobileListOpen] = useState(true)
 
-  // Message Input State
+  // Resizable 3-Column Widths (persisted in localStorage)
+  const [contactsWidth, setContactsWidth] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('corpflats_chat_contacts_width')
+      if (saved) {
+        const parsed = parseInt(saved, 10)
+        if (!isNaN(parsed) && parsed >= 260 && parsed <= 600) return parsed
+      }
+    }
+    return 360
+  })
+
+  const [dossierWidth, setDossierWidth] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('corpflats_chat_dossier_width')
+      if (saved) {
+        const parsed = parseInt(saved, 10)
+        if (!isNaN(parsed) && parsed >= 260 && parsed <= 600) return parsed
+      }
+    }
+    return 340
+  })
+
+  const [isDraggingContacts, setIsDraggingContacts] = useState(false)
+  const [isDraggingDossier, setIsDraggingDossier] = useState(false)
+
+  // Message Input State & Expanded Editor Mode
   const [inputMessage, setInputMessage] = useState('')
   const [sending, setSending] = useState(false)
+  const [isExpandedEditor, setIsExpandedEditor] = useState(false)
 
   // Z-API Status
   const [zapiStatus, setZapiStatus] = useState<any>(null)
@@ -136,6 +166,79 @@ export default function WhatsappChat() {
   // Scroll to bottom reference
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Auto-resize dinâmico do Textarea de mensagens conforme conteúdo digitado
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto'
+      const minH = isExpandedEditor ? 140 : 44
+      const maxH = isExpandedEditor ? 380 : 220
+      const scrollH = textareaRef.current.scrollHeight
+      const targetH = Math.min(Math.max(scrollH, minH), maxH)
+      textareaRef.current.style.height = `${targetH}px`
+    }
+  }, [inputMessage, isExpandedEditor])
+
+  // Handlers para redimensionar colunas (arrastar divisores)
+  const startResizingContacts = (e: React.MouseEvent) => {
+    e.preventDefault()
+    setIsDraggingContacts(true)
+    const startX = e.clientX
+    const startWidth = contactsWidth
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const deltaX = moveEvent.clientX - startX
+      const newWidth = Math.max(260, Math.min(560, startWidth + deltaX))
+      setContactsWidth(newWidth)
+    }
+
+    const onMouseUp = () => {
+      setIsDraggingContacts(false)
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      setContactsWidth(current => {
+        try { localStorage.setItem('corpflats_chat_contacts_width', String(current)) } catch {}
+        return current
+      })
+    }
+
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+  }
+
+  const startResizingDossier = (e: React.MouseEvent) => {
+    e.preventDefault()
+    setIsDraggingDossier(true)
+    const startX = e.clientX
+    const startWidth = dossierWidth
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const deltaX = startX - moveEvent.clientX
+      const newWidth = Math.max(260, Math.min(580, startWidth + deltaX))
+      setDossierWidth(newWidth)
+    }
+
+    const onMouseUp = () => {
+      setIsDraggingDossier(false)
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      setDossierWidth(current => {
+        try { localStorage.setItem('corpflats_chat_dossier_width', String(current)) } catch {}
+        return current
+      })
+    }
+
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+  }
 
   // Check URL query parameters on mount (e.g. ?phone=5522997124021)
   useEffect(() => {
@@ -556,8 +659,11 @@ Muito obrigado!`
     <Shell>
       <div className="flex h-[calc(100dvh-64px)] md:h-[100dvh] w-full overflow-hidden bg-slate-100 dark:bg-slate-950 font-sans">
         
-        {/* COLUNA 1: LISTA DE CONVERSAS */}
-        <div className={`${isMobileListOpen ? 'flex' : 'hidden md:flex'} flex-col w-full md:w-[380px] lg:w-[420px] bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shrink-0 h-full overflow-hidden`}>
+        {/* COLUNA 1: LISTA DE CONVERSAS (Redimensionável) */}
+        <div 
+          style={{ width: isMobileListOpen ? undefined : `${contactsWidth}px` }}
+          className={`${isMobileListOpen ? 'flex w-full' : 'hidden md:flex'} flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shrink-0 h-full overflow-hidden transition-[width] duration-75`}
+        >
           
           {/* Header Superior da Barra Lateral */}
           <div className="p-3.5 bg-slate-50/90 dark:bg-slate-900/90 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
@@ -820,6 +926,23 @@ Muito obrigado!`
           </div>
         </div>
 
+        {/* DIVISOR REDIMENSIONÁVEL: LISTA DE CONTATOS / CHAT */}
+        <div
+          onMouseDown={startResizingContacts}
+          onDoubleClick={() => {
+            setContactsWidth(360)
+            try { localStorage.setItem('corpflats_chat_contacts_width', '360') } catch {}
+          }}
+          className={`hidden md:flex w-2 hover:w-2.5 -mr-1 items-center justify-center cursor-col-resize z-20 group relative transition-all select-none ${
+            isDraggingContacts ? 'bg-emerald-500 w-2.5' : 'bg-transparent hover:bg-emerald-400/30'
+          }`}
+          title="Arraste para redimensionar a lista de contatos • Duplo clique para restaurar (360px)"
+        >
+          <div className={`w-1 h-8 rounded-full transition-colors ${
+            isDraggingContacts ? 'bg-white shadow-xs' : 'bg-slate-300 dark:bg-slate-700 group-hover:bg-emerald-500'
+          }`} />
+        </div>
+
         {/* COLUNA 2: ÁREA DE MENSAGENS E CHAT */}
         <div className={`${!isMobileListOpen ? 'flex' : 'hidden md:flex'} flex-col flex-1 h-full min-w-0 bg-slate-50 dark:bg-slate-950 relative overflow-hidden`}>
           
@@ -1072,7 +1195,7 @@ Muito obrigado!`
               </div>
 
               {/* Barra de Atalhos Rápidos (Quick Messages) */}
-              <div className="px-3 py-1.5 bg-slate-100/90 dark:bg-slate-900 border-t border-slate-200/80 dark:border-slate-800/80 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+              <div className="px-3 py-1.5 bg-slate-100/90 dark:bg-slate-900 border-t border-slate-200/80 dark:border-slate-800/80 flex items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 <span className="text-[10px] font-black uppercase text-emerald-800 dark:text-emerald-300 shrink-0 flex items-center gap-1">
                   ⚡ Atalhos:
                 </span>
@@ -1141,110 +1264,167 @@ Muito obrigado!`
                 </button>
               </div>
 
-              {/* Rodapé de Envio (Input Area) */}
-              <div className="p-3 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex items-end gap-2 shrink-0">
+              {/* Rodapé de Envio (Input Area Melhorada e Expansível) */}
+              <div className="p-2.5 sm:p-3 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 shrink-0 transition-all">
                 
-                {/* Popover de Emojis */}
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-10 w-10 rounded-xl text-slate-500 hover:text-emerald-600 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
-                    >
-                      <Smile className="w-5 h-5" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent side="top" align="start" className="w-64 p-2 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-lg">
-                    <div className="grid grid-cols-5 gap-1.5 text-center">
-                      {EMOJI_LIST.map((emoji, eIdx) => (
-                        <button
-                          key={eIdx}
-                          type="button"
-                          onClick={() => {
-                            setInputMessage(prev => prev + emoji)
-                            if (textareaRef.current) textareaRef.current.focus()
-                          }}
-                          className="w-9 h-9 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-lg flex items-center justify-center transition-colors"
-                        >
-                          {emoji}
-                        </button>
-                      ))}
+                {/* Barra superior de status/redação quando texto longo ou modo expandido */}
+                {(isExpandedEditor || inputMessage.length > 50 || inputMessage.includes('\n')) && (
+                  <div className="flex items-center justify-between pb-2 text-[11px] text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800/80 mb-2 px-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-slate-700 dark:text-slate-300">
+                        {inputMessage.length} caracteres
+                      </span>
+                      <span>•</span>
+                      <span>
+                        {inputMessage.split('\n').length} {inputMessage.split('\n').length === 1 ? 'linha' : 'linhas'}
+                      </span>
+                      <span className="hidden sm:inline text-slate-400">
+                        (Shift+Enter para pular linha • Enter para enviar)
+                      </span>
                     </div>
-                  </PopoverContent>
-                </Popover>
 
-                {/* Dropdown de Anexo (Imagem ou Documento) */}
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
+                    <div className="flex items-center gap-1.5">
+                      {inputMessage.trim() && (
+                        <button
+                          type="button"
+                          onClick={() => setInputMessage('')}
+                          className="text-[10.5px] text-rose-500 hover:text-rose-600 hover:underline px-1.5 py-0.5 rounded"
+                        >
+                          Limpar
+                        </button>
+                      )}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setIsExpandedEditor(!isExpandedEditor)}
+                        className="h-6 px-2 text-[10.5px] font-bold gap-1 text-slate-600 dark:text-slate-300 hover:text-emerald-600 rounded-md"
+                        title={isExpandedEditor ? "Recolher visualização da mensagem" : "Expandir caixa de mensagem para ver o texto completo"}
+                      >
+                        {isExpandedEditor ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
+                        <span>{isExpandedEditor ? 'Recolher' : 'Expandir Janela'}</span>
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-end gap-2">
+                  {/* Popover de Emojis */}
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-10 w-10 rounded-xl text-slate-500 hover:text-emerald-600 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
+                      >
+                        <Smile className="w-5 h-5" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent side="top" align="start" className="w-64 p-2 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-lg">
+                      <div className="grid grid-cols-5 gap-1.5 text-center">
+                        {EMOJI_LIST.map((emoji, eIdx) => (
+                          <button
+                            key={eIdx}
+                            type="button"
+                            onClick={() => {
+                              setInputMessage(prev => prev + emoji)
+                              if (textareaRef.current) textareaRef.current.focus()
+                            }}
+                            className="w-9 h-9 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-lg flex items-center justify-center transition-colors"
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+
+                  {/* Dropdown de Anexo (Imagem ou Documento) */}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-10 w-10 rounded-xl text-slate-500 hover:text-emerald-600 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
+                      >
+                        <Paperclip className="w-5 h-5" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent side="top" align="start" className="w-48 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800">
+                      <DropdownMenuItem
+                        className="cursor-pointer flex items-center gap-2 text-xs font-semibold py-2"
+                        onClick={() => {
+                          setAttachType('image')
+                          setAttachName('imagem.jpg')
+                          setAttachModalOpen(true)
+                        }}
+                      >
+                        <ImageIcon className="w-4 h-4 text-emerald-600" />
+                        <span>Enviar Imagem / Foto</span>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        className="cursor-pointer flex items-center gap-2 text-xs font-semibold py-2"
+                        onClick={() => {
+                          setAttachType('document')
+                          setAttachName('Manual_do_Hospede_CorpFlats.pdf')
+                          setAttachUrl('https://corpflats.onrender.com/Manual_do_Hospede_CorpFlats.pdf')
+                          setAttachModalOpen(true)
+                        }}
+                      >
+                        <FileText className="w-4 h-4 text-rose-600" />
+                        <span>Enviar Documento PDF</span>
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+
+                  {/* Campo de Digitação com auto-grow e suporte a mensagens grandes */}
+                  <div className="flex-1 min-w-0 relative">
+                    <Textarea
+                      ref={textareaRef}
+                      rows={isExpandedEditor ? 6 : 1}
+                      value={inputMessage}
+                      onChange={e => setInputMessage(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          handleSendMessage()
+                        }
+                      }}
+                      placeholder="Digite uma mensagem (Enter para enviar, Shift+Enter para nova linha)..."
+                      className={`w-full text-xs sm:text-sm py-2.5 pl-3 pr-8 rounded-xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/60 focus:border-emerald-500 focus:bg-white dark:focus:bg-slate-900 transition-all font-sans leading-relaxed ${
+                        isExpandedEditor 
+                          ? 'min-h-[140px] max-h-[380px] resize-y shadow-inner' 
+                          : 'min-h-[44px] max-h-[240px] resize-y'
+                      }`}
+                    />
+
+                    {/* Botão de Expandir/Recolher flutuante no canto superior direito do textarea */}
+                    <button
                       type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-10 w-10 rounded-xl text-slate-500 hover:text-emerald-600 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
+                      onClick={() => setIsExpandedEditor(!isExpandedEditor)}
+                      className="absolute right-2 top-2 p-1 rounded-md text-slate-400 hover:text-emerald-600 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                      title={isExpandedEditor ? "Recolher caixa de digitação" : "Expandir caixa de digitação (visualizar mensagem inteira)"}
                     >
-                      <Paperclip className="w-5 h-5" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent side="top" align="start" className="w-48 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800">
-                    <DropdownMenuItem
-                      className="cursor-pointer flex items-center gap-2 text-xs font-semibold py-2"
-                      onClick={() => {
-                        setAttachType('image')
-                        setAttachName('imagem.jpg')
-                        setAttachModalOpen(true)
-                      }}
-                    >
-                      <ImageIcon className="w-4 h-4 text-emerald-600" />
-                      <span>Enviar Imagem / Foto</span>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      className="cursor-pointer flex items-center gap-2 text-xs font-semibold py-2"
-                      onClick={() => {
-                        setAttachType('document')
-                        setAttachName('Manual_do_Hospede_CorpFlats.pdf')
-                        setAttachUrl('https://corpflats.onrender.com/Manual_do_Hospede_CorpFlats.pdf')
-                        setAttachModalOpen(true)
-                      }}
-                    >
-                      <FileText className="w-4 h-4 text-rose-600" />
-                      <span>Enviar Documento PDF</span>
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                      {isExpandedEditor ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
 
-                {/* Campo de Digitação */}
-                <div className="flex-1 min-w-0">
-                  <Textarea
-                    ref={textareaRef}
-                    rows={1}
-                    value={inputMessage}
-                    onChange={e => setInputMessage(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault()
-                        handleSendMessage()
-                      }
-                    }}
-                    placeholder="Digite uma mensagem (Enter para enviar, Shift+Enter para nova linha)..."
-                    className="min-h-[40px] max-h-32 text-xs md:text-sm py-2.5 px-3 rounded-xl resize-none bg-slate-100 dark:bg-slate-800/80 border-transparent focus:border-emerald-500 focus:bg-white dark:focus:bg-slate-900 transition-colors"
-                  />
+                  {/* Botão de Envio */}
+                  <Button
+                    type="button"
+                    disabled={sending || !inputMessage.trim()}
+                    onClick={() => handleSendMessage()}
+                    className="h-10 w-10 sm:h-11 sm:w-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white p-0 shrink-0 shadow-xs flex items-center justify-center disabled:opacity-50"
+                  >
+                    {sending ? (
+                      <RefreshCw className="w-4 h-4 animate-spin text-white" />
+                    ) : (
+                      <Send className="w-4 h-4 sm:w-5 sm:h-5" />
+                    )}
+                  </Button>
                 </div>
-
-                {/* Botão de Envio */}
-                <Button
-                  type="button"
-                  disabled={sending || !inputMessage.trim()}
-                  onClick={() => handleSendMessage()}
-                  className="h-10 w-10 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white p-0 shrink-0 shadow-xs flex items-center justify-center disabled:opacity-50"
-                >
-                  {sending ? (
-                    <RefreshCw className="w-4 h-4 animate-spin text-white" />
-                  ) : (
-                    <Send className="w-4 h-4" />
-                  )}
-                </Button>
               </div>
             </>
           ) : (
@@ -1273,15 +1453,37 @@ Muito obrigado!`
           )}
         </div>
 
-        {/* COLUNA 3: DOSSIÊ LATERAL DA RESERVA / HÓSPEDE (Collapsible) */}
+        {/* DIVISOR REDIMENSIONÁVEL: CHAT / DOSSIÊ */}
         {activeConversation && showDossier && (
-          <div className="hidden xl:flex flex-col w-80 bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shrink-0 h-full overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/80">
+          <div
+            onMouseDown={startResizingDossier}
+            onDoubleClick={() => {
+              setDossierWidth(340)
+              try { localStorage.setItem('corpflats_chat_dossier_width', '340') } catch {}
+            }}
+            className={`hidden lg:flex w-2 hover:w-2.5 -ml-1 items-center justify-center cursor-col-resize z-20 group relative transition-all select-none ${
+              isDraggingDossier ? 'bg-emerald-500 w-2.5' : 'bg-transparent hover:bg-emerald-400/30'
+            }`}
+            title="Arraste para redimensionar o Dossiê • Duplo clique para restaurar (340px)"
+          >
+            <div className={`w-1 h-8 rounded-full transition-colors ${
+              isDraggingDossier ? 'bg-white shadow-xs' : 'bg-slate-300 dark:bg-slate-700 group-hover:bg-emerald-500'
+            }`} />
+          </div>
+        )}
+
+        {/* COLUNA 3: DOSSIÊ LATERAL DA RESERVA / HÓSPEDE (Redimensionável) */}
+        {activeConversation && showDossier && (
+          <div 
+            style={{ width: `${dossierWidth}px` }}
+            className="hidden lg:flex flex-col bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shrink-0 h-full overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/80 transition-[width] duration-75"
+          >
             
             {/* Header do Dossiê */}
-            <div className="p-4 bg-slate-50/90 dark:bg-slate-900/90 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <User className="w-4 h-4 text-emerald-600" />
-                <h4 className="text-xs font-black uppercase text-slate-900 dark:text-slate-100 tracking-wider">
+            <div className="p-3.5 bg-slate-50/90 dark:bg-slate-900/90 flex items-center justify-between border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2 min-w-0">
+                <User className="w-4 h-4 text-emerald-600 shrink-0" />
+                <h4 className="text-xs font-black uppercase text-slate-900 dark:text-slate-100 tracking-wider truncate">
                   Dossiê da Reserva & Hóspede
                 </h4>
               </div>
