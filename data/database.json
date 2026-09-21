@@ -6077,7 +6077,7 @@
     "receptionEmail": "millerpessanha@gmail.com",
     "garageEmail": "millerpessanha@gmail.com",
     "hotelAddress": "Edifício Soho Residence Service, Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ",
-    "googleMapsUrl": "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac",
+    "googleMapsUrl": "https://share.google/LHu3541d5lhkdvbL2",
     "mercadoPagoConfig": {
       "accessToken": "APP_USR-2731253548432791-081914-0cf47f75d865fb5ce9f5a1b95c744ca1-3628826676",
       "publicKey": "APP_USR-3c0fcec7-8a2f-436f-b471-dac950fd9933",
@@ -6105,7 +6105,7 @@
       "whatsapp": "5522997124021",
       "email": "reservas@corpflats.com.br",
       "address": "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ, CEP 28010-140 (Edifício Soho Residence Service)",
-      "googleMapsUrl": "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ"
+      "googleMapsUrl": "https://share.google/LHu3541d5lhkdvbL2"
     },
     "hero": {
       "title": "Sua Estadia com Conforto & Estilo em Campos dos Goytacazes",
@@ -7264,7 +7264,7 @@
     "conciergeMonitoringEnabled": true,
     "conciergeRequireKeywords": false,
     "webhooksSyncedAt": "2026-09-21T02:17:15.005Z",
-    "googleReviewUrl": "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac",
+    "googleReviewUrl": "https://share.google/LHu3541d5lhkdvbL2",
     "alertEmail": "millerpessanha@gmail.com",
     "alertEmailEnabled": true,
     "alertOnReconnect": true,
@@ -7888,7 +7888,7 @@
           "id": "btn_rev",
           "type": "URL",
           "label": "⭐ Avaliar no Google (5 Estrelas)",
-          "url": "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ"
+          "url": "https://share.google/LHu3541d5lhkdvbL2"
         }
       ],
       "createdAt": "2026-09-06T07:46:21.896Z",
@@ -7940,7 +7940,7 @@
           "id": "btn_rev",
           "type": "URL",
           "label": "⭐ Avaliar no Google (5 Estrelas)",
-          "url": "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ"
+          "url": "https://share.google/LHu3541d5lhkdvbL2"
         }
       ],
       "createdAt": "2026-09-06T07:46:21.896Z",
@@ -7980,7 +7980,7 @@
           "id": "btn_rev",
           "type": "URL",
           "label": "⭐ Avaliar no Google (5 Estrelas)",
-          "url": "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ"
+          "url": "https://share.google/LHu3541d5lhkdvbL2"
         }
       ],
       "status": "failed",
@@ -8248,7 +8248,7 @@
               "id": "btn_rev",
               "type": "URL",
               "label": "⭐ Avaliar no Google (5 Estrelas)",
-              "url": "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ"
+              "url": "https://share.google/LHu3541d5lhkdvbL2"
             }
           ],
           "triggerEvent": "post_checkout_review",

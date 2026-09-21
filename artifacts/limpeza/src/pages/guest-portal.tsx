@@ -2531,7 +2531,7 @@ export default function GuestPortal() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
             <a
-              href={data?.googleMapsUrl || "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ"}
+              href={data?.googleMapsUrl || "https://share.google/LHu3541d5lhkdvbL2"}
               target="_blank"
               rel="noreferrer"
               className="py-2.5 px-3 rounded-2xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition-colors"

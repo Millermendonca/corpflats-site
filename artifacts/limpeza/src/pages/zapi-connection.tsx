@@ -94,7 +94,7 @@ export default function ZapiConnection() {
     testAllowedPhones: "22998505276",
     wifiNetwork: "CorpFlats-Hospedes",
     wifiPassword: "corpflats2026",
-    googleReviewUrl: "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac",
+    googleReviewUrl: "https://share.google/LHu3541d5lhkdvbL2",
     alertEmail: "millerpessanha@gmail.com",
     alertEmailEnabled: true,
     alertOnReconnect: true,

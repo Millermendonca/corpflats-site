@@ -245,7 +245,7 @@ const TAG_GROUPS = [
     tags: [
       { tag: "{{nome_hotel}}", label: "Nome Hotel", example: "CorpFlats" },
       { tag: "{{endereco_hotel}}", label: "Endereço", example: "Rua Conselheiro Otaviano, 209" },
-      { tag: "{{link_maps}}", label: "Link GPS Google", example: "https://maps.google.com/..." },
+      { tag: "{{link_maps}}", label: "Link GPS Google", example: "https://share.google/LHu3541d5lhkdvbL2" },
       { tag: "{{wifi_rede}}", label: "Nome Wi-Fi", example: "CorpFlats-Hospedes" },
       { tag: "{{wifi_senha}}", label: "Senha Wi-Fi", example: "corpflats2026" },
       { tag: "{{telefone_hotel}}", label: "WhatsApp Administração", example: "5522997124021" },
@@ -316,7 +316,7 @@ export default function WhatsappAutomation() {
     testAllowedPhones: "22998505276",
     wifiNetwork: "CorpFlats-Hospedes",
     wifiPassword: "corpflats2026",
-    googleReviewUrl: "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac"
+    googleReviewUrl: "https://share.google/LHu3541d5lhkdvbL2"
   })
   const [statusInfo, setStatusInfo] = useState<any>(null)
   const [loadingStatus, setLoadingStatus] = useState<boolean>(false)
@@ -964,7 +964,7 @@ export default function WhatsappAutomation() {
 
     const firstName = (targetRes.guestName || "Hóspede").split(" ")[0]
     const code = targetRes.code || `RES-${targetRes.flatNumber || "113"}-0001`
-    const mapsUrl = config.googleReviewUrl || "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac"
+    const mapsUrl = config.googleReviewUrl || "https://share.google/LHu3541d5lhkdvbL2"
 
     const totalAmount = Number(targetRes.totalAmount) || 450
     const paidAmount = Number(targetRes.paidAmount ?? (targetRes.paymentStatus === "pago" ? totalAmount : 0))
@@ -1012,7 +1012,7 @@ export default function WhatsappAutomation() {
       "{{link_portal_hospede}}": `https://corpflats.onrender.com/portal-hospede/${code}`,
       "{{link_cafe_manha}}": `https://corpflats.onrender.com/cafe/${code}`,
       "{{link_checkout}}": `https://corpflats.onrender.com/checkout/${code}`,
-      "{{link_avaliacao_google}}": config.googleReviewUrl || "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac",
+      "{{link_avaliacao_google}}": config.googleReviewUrl || "https://share.google/LHu3541d5lhkdvbL2",
       "{{resumo_alteracoes}}": "• *Acomodação / Quarto:* Flat 101 ➔ *Flat 113*\n• *Data de Entrada (Check-in):* 03/09/2026 ➔ *05/09/2026*\n• *Valor Total:* R$ 450,00 ➔ *R$ 600,00*"
     }
 

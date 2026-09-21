@@ -493,7 +493,7 @@ export default function SiteEditor() {
                     <Input
                       value={config.branding?.googleMapsUrl || ""}
                       onChange={e => setConfig({ ...config, branding: { ...config.branding, googleMapsUrl: e.target.value } })}
-                      placeholder="https://maps.google.com/..."
+                      placeholder="https://share.google/LHu3541d5lhkdvbL2"
                       className="text-xs font-mono"
                     />
                   </div>

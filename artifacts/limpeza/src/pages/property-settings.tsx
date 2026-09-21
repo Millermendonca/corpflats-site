@@ -56,7 +56,7 @@ export default function PropertySettings() {
   const [checkinTimeInput, setCheckinTimeInput] = useState("14:00")
   const [checkoutTimeInput, setCheckoutTimeInput] = useState("12:00")
   const [hotelAddressInput, setHotelAddressInput] = useState("CorpFlats")
-  const [googleMapsUrlInput, setGoogleMapsUrlInput] = useState("https://www.google.com/maps/search/?api=1&query=CorpFlats")
+  const [googleMapsUrlInput, setGoogleMapsUrlInput] = useState("https://share.google/LHu3541d5lhkdvbL2")
   const [receptionEmailInput, setReceptionEmailInput] = useState("millerpessanha@gmail.com")
   const [garageEmailInput, setGarageEmailInput] = useState("millerpessanha@gmail.com")
   const [buildingNameInput, setBuildingNameInput] = useState("Edifício Soho Residence Service")
@@ -423,7 +423,7 @@ export default function PropertySettings() {
                   <Input 
                     value={googleMapsUrlInput}
                     onChange={e => setGoogleMapsUrlInput(e.target.value)}
-                    placeholder="https://maps.google.com/?q=..."
+                    placeholder="https://share.google/LHu3541d5lhkdvbL2"
                     className="text-xs rounded-xl h-9.5 font-mono"
                   />
                 </div>

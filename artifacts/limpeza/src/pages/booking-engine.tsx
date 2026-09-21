@@ -1366,7 +1366,7 @@ export default function BookingEngine() {
           </div>
 
           <a
-            href={siteConfig?.branding?.googleMapsUrl || "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ"}
+            href={siteConfig?.branding?.googleMapsUrl || "https://share.google/LHu3541d5lhkdvbL2"}
             target="_blank"
             rel="noreferrer"
             className="inline-flex items-center gap-1.5 text-xs font-semibold text-sky-600 hover:text-sky-700 bg-sky-50 hover:bg-sky-100 px-3.5 py-2 rounded-xl transition-colors shrink-0"

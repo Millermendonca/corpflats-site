@@ -6019,7 +6019,7 @@ app.get("/api/site-content", (req, res) => {
         logoSubtext: "Campos dos Goytacazes",
         badgeTop: "⭐ Melhor Tarifa Garantida Sempre pelo Nosso Site Oficial",
         address: "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ, CEP 28010-140 (Edifício Soho Residence Service)",
-        googleMapsUrl: "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ"
+        googleMapsUrl: "https://share.google/LHu3541d5lhkdvbL2"
       },
       hero: {
         ...DEFAULT_SITE_CONFIG.hero,
@@ -8372,7 +8372,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     checkinTime: checkinTimeStr,
     checkoutTime: checkoutTimeStr,
     hotelAddress: db.settings.hotelAddress || "CorpFlats",
-    googleMapsUrl: db.settings.googleMapsUrl || "https://www.google.com/maps/search/?api=1&query=CorpFlats",
+    googleMapsUrl: db.settings.googleMapsUrl || "https://share.google/LHu3541d5lhkdvbL2",
     isCheckinToday,
     isFlatClean,
     hasEarlyCheckinBenefit,

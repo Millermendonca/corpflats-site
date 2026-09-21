@@ -6377,8 +6377,8 @@ export default function PmsCalendar() {
                 {
                   id: "maps",
                   title: "Localização no Google Maps",
-                  url: `https://www.google.com/maps/search/?api=1&query=SOHO+Promenade+Brasilia`,
-                  desc: "Ponto exato e rotas de GPS até a portaria do condomínio Soho Promenade.",
+                  url: `https://share.google/LHu3541d5lhkdvbL2`,
+                  desc: "Ponto exato e rotas de GPS até a portaria do condomínio.",
                   icon: Tag,
                   badge: "Como Chegar",
                   badgeColor: "bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-300",
@@ -6402,7 +6402,7 @@ export default function PmsCalendar() {
                   `📝 *Pré Check-in Digital:*\n${origin}/pre-checkin/${resCode}\n\n` +
                   `☕ *Cardápio de Café da Manhã:*\n${origin}/cafe/${resCode}\n\n` +
                   `🚪 *Check-out Expresso:*\n${origin}/checkout/${resCode}\n\n` +
-                  `📍 *Localização no Google Maps:*\nhttps://www.google.com/maps/search/?api=1&query=SOHO+Promenade+Brasilia`
+                  `📍 *Localização no Google Maps:*\nhttps://share.google/LHu3541d5lhkdvbL2`
 
                 navigator.clipboard.writeText(text)
                 setCopiedLinkKey("all")

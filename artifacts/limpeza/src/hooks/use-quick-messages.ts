@@ -367,8 +367,8 @@ export function renderQuickMessage(
   const linkCheckin = `${origin}/pre-checkin/${resCode}`
   const linkCafe = `${origin}/minha-reserva/${resCode}/cafe`
   const linkCheckout = `${origin}/checkout/${resCode}`
-  const linkMaps = "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac"
-  const linkAvaliacao = "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac"
+  const linkMaps = "https://share.google/LHu3541d5lhkdvbL2"
+  const linkAvaliacao = "https://share.google/LHu3541d5lhkdvbL2"
 
   const tagMap: Record<string, string> = {
     "{{nome_hospede}}": guestName,
