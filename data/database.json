@@ -797,6 +797,32 @@
       "durationMinutes": null,
       "createdAt": "2026-09-20T08:00:00.000Z",
       "updatedAt": "2026-09-20T08:00:00.000Z"
+    },
+    {
+      "id": 294,
+      "flatId": 4,
+      "flatNumber": "211",
+      "requestDate": "2026-09-20",
+      "source": "admin_manual",
+      "status": "dirty",
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "assignedUserName": null,
+      "isVacant": true,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": null,
+      "leavingGuest": "Hóspede",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": null,
+      "cleaningStartedAt": null,
+      "completedAt": null,
+      "durationMinutes": null,
+      "createdAt": "2026-09-20T22:00:00.000Z",
+      "updatedAt": "2026-09-20T22:00:00.000Z"
     }
   ],
   "periodicTasks": [
