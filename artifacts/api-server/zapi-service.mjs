@@ -100,6 +100,31 @@ export function generateStaticPixPayload({ pixKey = "47964813000165", amount = 0
   return `${toCrc}${crc16(toCrc)}`;
 }
 
+// ── Utilitário Canônico de Fuso Horário de Brasília (America/Sao_Paulo) ────────
+export function getBrasiliaDateParts(d = new Date()) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  });
+  const parts = formatter.formatToParts(d);
+  const map = {};
+  for (const p of parts) {
+    map[p.type] = p.value;
+  }
+  return {
+    todayStr: `${map.year}-${map.month}-${map.day}`,
+    hour: parseInt(map.hour, 10),
+    minute: parseInt(map.minute, 10),
+    timeStr: `${map.hour}:${map.minute}`
+  };
+}
+
 // ── Templates Padrão de Alta Conversão & Boas Práticas Hoteleiras ──────────────
 export const DEFAULT_WHATSAPP_TEMPLATES = [
   {
@@ -321,6 +346,61 @@ Desejamos uma estadia maravilhosa! Se precisar de algo, estamos à disposição.
     buttons: [
       { id: "btn_maps", type: "URL", label: "📍 Abrir no Google Maps", url: "{{link_maps}}" },
       { id: "btn_portal", type: "URL", label: "🏨 Portal do Hóspede", url: "{{link_portal_hospede}}" }
+    ]
+  },
+  {
+    id: "tpl_room_ready_regular",
+    triggerEvent: "room_ready_regular",
+    title: "Quarto Liberado • Entrada Regular (A partir das 14:00)",
+    description: "Disparado quando a limpeza do flat é concluída no dia do check-in a partir das 14:00 (horário padrão). Informa que o flat está limpo e liberado, sem menção a early check-in antecipado.",
+    enabled: true,
+    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    recipientTarget: "guest",
+    triggerTiming: "immediate",
+    offsetValue: 0,
+    offsetUnit: "minutes",
+    fixedTime: "",
+    message: `*{{primeiro_nome}}*, seu flat está pronto! 🔑✨
+Seu *Flat {{quarto}}* no *{{nome_hotel}}* já está *Limpo e Liberado* para receber você!
+
+📍 Ao chegar, basta se identificar na portaria 24h com seu nome e o número *{{quarto}}*.
+
+📶 *Wi-Fi do Flat:*
+• Rede: *{{wifi_rede}}*
+• Senha: *{{wifi_senha}}*
+
+Desejamos uma chegada tranquila e uma estadia incrível! Qualquer dúvida, estamos à disposição.`,
+    footer: "CorpFlats • Boas-vindas!",
+    buttons: [
+      { id: "btn_maps", type: "URL", label: "📍 Abrir no Google Maps", url: "{{link_maps}}" },
+      { id: "btn_portal", type: "URL", label: "🏨 Portal do Hóspede", url: "{{link_portal_hospede}}" }
+    ]
+  },
+  {
+    id: "tpl_checkin_cleaning_delay",
+    triggerEvent: "checkin_cleaning_delay",
+    title: "Check-in 14:00 • Limpeza em Andamento & Previsão de Chegada",
+    description: "Disparado no dia do check-in às 14:00 (ou logo após) caso o flat ainda esteja em higienização. Pergunta a previsão de chegada do hóspede para priorizar a limpeza ou remanejar acomodação.",
+    enabled: true,
+    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    recipientTarget: "guest",
+    triggerTiming: "fixed_time_day_of",
+    offsetValue: 0,
+    offsetUnit: "hours",
+    fixedTime: "14:00",
+    message: `Olá, *{{primeiro_nome}}*! Tudo bem? 🌟
+Hoje é o dia da sua chegada ao *{{nome_hotel}}*!
+
+Nossa equipe de governança está finalizando os últimos preparativos e a higienização do seu *Flat {{quarto}}* para que você encontre tudo impecável.
+
+⏰ *Você já tem uma previsão de que horas pretende chegar hoje?*
+Se puder nos informar respondendo a esta mensagem ou pelo link do portal abaixo, podemos priorizar a finalização do seu flat na limpeza ou até mesmo verificar a liberação imediata de uma acomodação pronta para sua entrada sem espera!
+
+Qualquer dúvida ou necessidade, estamos à sua total disposição por aqui.`,
+    footer: "CorpFlats • Governança & Recepção",
+    buttons: [
+      { id: "btn_portal", type: "URL", label: "🏨 Informar no Portal", url: "{{link_portal_hospede}}" },
+      { id: "btn_admin", type: "CALL", label: "📞 Falar no WhatsApp", phone: "{{telefone_hotel}}" }
     ]
   },
   {
@@ -3531,6 +3611,17 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           tpl.channels = ["site", "whatsapp"];
           tpl.recipientTarget = "both";
         }
+        if (tpl.id === "tpl_room_ready_regular") {
+          tpl.channels = ["site", "whatsapp", "booking", "airbnb", "outros"];
+          tpl.triggerEvent = "room_ready_regular";
+          tpl.recipientTarget = "guest";
+        }
+        if (tpl.id === "tpl_checkin_cleaning_delay") {
+          tpl.channels = ["site", "whatsapp", "booking", "airbnb", "outros"];
+          tpl.triggerEvent = "checkin_cleaning_delay";
+          tpl.recipientTarget = "guest";
+          tpl.fixedTime = "14:00";
+        }
       }
     }
 
@@ -4528,6 +4619,53 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       }
     }
 
+    // 4. Detecção de Previsão de Chegada para Check-in de Hoje (Priorização Automática de Limpeza)
+    if (!incomingInfo.fromMe && !incomingInfo.isGroup && incomingInfo.text && cleanTarget) {
+      try {
+        const { todayStr, timeStr } = getBrasiliaDateParts();
+        const todayRes = (db.reservations || []).find(r => {
+          if (r.status === "cancelada" || r.status === "cancelled" || r.status === "checkout" || r.checkedInAt) return false;
+          if (r.checkinDate !== todayStr) return false;
+          const rP = cleanWhatsAppPhone(r.guestPhone || r.phone || "");
+          return rP && (cleanTarget.endsWith(rP.slice(-8)) || rP.endsWith(cleanTarget.slice(-8)));
+        });
+
+        if (todayRes) {
+          const flatNum = String(todayRes.flatNumber || "");
+          const flatId = todayRes.flatId;
+          const cleanReq = (db.cleaningRequests || []).find(c =>
+            (c.flatId === flatId || String(c.flatNumber) === flatNum) &&
+            (c.requestDate === todayStr || c.effectiveDate === todayStr)
+          );
+
+          // Se o flat ainda não estiver concluído/limpo, marca como prioridade máxima no quadro de governança
+          if (cleanReq && cleanReq.status !== "clean") {
+            cleanReq.isPriority = true;
+            cleanReq.priorityReason = `Hóspede respondeu WhatsApp às ${brDate.toLocaleTimeString("pt-BR")}: "${incomingInfo.text.trim().substring(0, 80)}"`;
+            cleanReq.updatedAt = new Date().toISOString();
+          }
+
+          todayRes.guestArrivalResponse = incomingInfo.text.trim();
+          todayRes.guestArrivalResponseAt = new Date().toISOString();
+          todayRes.estimatedArrivalTime = incomingInfo.text.trim();
+          todayRes.updatedAt = new Date().toISOString();
+
+          if (typeof saveDatabase === "function") saveDatabase();
+
+          if (typeof createNotification === "function") {
+            createNotification({
+              title: `🚨 PRIORIDADE: Flat ${flatNum} - Resposta de Chegada`,
+              message: `${todayRes.guestName} informou via WhatsApp: "${incomingInfo.text.trim().substring(0, 100)}". Limpeza do Flat ${flatNum} marcada como PRIORIDADE!`,
+              type: "cleaning_priority",
+              link: "/limpeza"
+            });
+          }
+        }
+      } catch (arrivalErr) {
+        console.warn("[Arrival Estimate Inbound Error]:", arrivalErr.message);
+      }
+    }
+
     res.status(200).json({ success: true, result, chatUpdated: Boolean(updatedConv) });
   });
 
@@ -5297,6 +5435,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       // 2. Garante que reservas confirmadas tenham suas réguas agendadas
       scheduleUpcomingReservationTriggers(db, saveDatabase);
 
+      // 3. Verifica flats de check-in hoje ainda não limpos após as 14h e dispara solicitação de previsão
+      await checkAndTriggerCleaningDelayAlerts(db, saveDatabase, createNotification, process.env.APP_BASE_URL || "https://corpflats.onrender.com");
+
     } catch (err) {
       console.error("[Auto-WhatsApp Cron Error]:", err.message);
     }
@@ -5764,19 +5905,27 @@ export async function triggerCheckoutWhatsApp(dbOrGetter, saveDatabase, reservat
  * Chamado quando status de limpeza vai para "clean".
  * Verifica se há reservas com check-in hoje naquele flat e dispara:
  *  - `room_ready`      → para canais diretos (site / whatsapp)
- *  - `room_ready_ota`  → para OTAs (booking / airbnb) — mas apenas SE for antes das 14:00;
- *                        se já for 14:00 ou mais, o disparo OTA será feito pelo cron do check-in.
+ * Verifica se há reservas com check-in hoje naquele flat e dispara:
+ *  - Antes das 14:00:
+ *      - `room_ready`      → para canais diretos (site / whatsapp) com benefício de Early Check-in a partir das 10:00
+ *      - `room_ready_ota`  → para OTAs (booking / airbnb) com liberação a partir das 12:00
+ *  - A partir das 14:00 (Check-in regular):
+ *      - `room_ready_regular` → para canais diretos (sem texto de early check-in ou de 14:00)
+ *      - `room_ready_ota`     → para OTAs (revelação do flat e instruções de chegada)
  */
 export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId, flatNumber, baseUrl = "") {
   try {
     const db = typeof dbOrGetter === "function" ? dbOrGetter() : dbOrGetter;
     if (!db || !db.zapiConfig?.enabled) return;
 
-    const todayStr = new Date().toISOString().substring(0, 10);
+    const now = new Date();
+    const { todayStr, hour: brHour, minute: brMinute } = getBrasiliaDateParts(now);
 
     // Busca reservas com check-in hoje neste flat
     const arrivingToday = (db.reservations || []).filter(r =>
       r.status !== "cancelada" &&
+      r.status !== "cancelled" &&
+      r.status !== "no_show" &&
       r.status !== "checkout" &&
       r.checkinDate === todayStr &&
       (r.flatId === flatId || String(r.flatNumber) === String(flatNumber)) &&
@@ -5786,7 +5935,8 @@ export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId,
     if (arrivingToday.length === 0) return;
 
     const checkinTime = db.settings?.checkinTime || "14:00";
-    const now = new Date();
+    const [checkHour, checkMin] = checkinTime.split(":").map(Number);
+    const isAtOrAfterCheckin = brHour > checkHour || (brHour === checkHour && brMinute >= checkMin);
 
     for (const resv of arrivingToday) {
       // Trava de Segurança: Modo de Teste / Sandbox
@@ -5800,101 +5950,198 @@ export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId,
 
       // 1. Regra para OTAs (Booking / Airbnb): Liberação a partir das 12:00
       if (isOtaChannel) {
-        const otaEarliest = new Date();
-        otaEarliest.setHours(12, 0, 0, 0);
+        if (!isAtOrAfterCheckin) {
+          const otaEarliest = new Date();
+          otaEarliest.setHours(12, 0, 0, 0);
 
-        if (now < otaEarliest) {
-          console.log(`[Room Ready OTA] Flat ${flatNumber} limpo antes das 12:00 (${now.toLocaleTimeString("pt-BR")}). Agendando disparo para as 12:00 pontualmente.`);
-          if (!db.whatsappQueue) db.whatsappQueue = [];
-          const defTpl = (db.whatsappTemplates || []).find(t => t.id === "tpl_room_ready_ota") ||
-                         DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_room_ready_ota");
-          const alreadyQueued = db.whatsappQueue.some(q =>
-            (q.reservationCode === resv.code || q.reservationId === resv.id) &&
-            q.triggerEvent === "room_ready_ota" &&
-            (q.status === "scheduled" || q.status === "sent")
-          );
-          if (!alreadyQueued && defTpl) {
-            const renderedMessage = resolveWhatsAppTags(defTpl.message, resv, db, baseUrl, "guest");
-            const renderedButtons = (defTpl.buttons || []).map(b => ({
-              ...b,
-              url: b.url ? resolveWhatsAppTags(b.url, resv, db, baseUrl, "guest") : undefined
-            }));
-            db.whatsappQueue.push({
-              id: `q_ota_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-              reservationId: resv.id,
-              reservationCode: resv.code,
-              guestName: resv.guestName,
-              guestPhone: resv.guestPhone,
-              recipientType: "guest",
-              recipientName: resv.guestName,
-              channel: resvChannel,
-              triggerEvent: "room_ready_ota",
-              templateId: defTpl.id,
-              title: defTpl.title,
-              footer: defTpl.footer,
-              scheduledFor: otaEarliest.toISOString(),
-              status: "scheduled",
-              sentAt: null,
-              renderedMessage,
-              renderedButtons,
-              createdAt: now.toISOString()
-            });
-            if (typeof saveDatabase === "function") saveDatabase();
+          if (now < otaEarliest) {
+            console.log(`[Room Ready OTA] Flat ${flatNumber} limpo antes das 12:00 (${now.toLocaleTimeString("pt-BR")}). Agendando disparo para as 12:00 pontualmente.`);
+            if (!db.whatsappQueue) db.whatsappQueue = [];
+            const defTpl = (db.whatsappTemplates || []).find(t => t.id === "tpl_room_ready_ota") ||
+                           DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_room_ready_ota");
+            const alreadyQueued = db.whatsappQueue.some(q =>
+              (q.reservationCode === resv.code || q.reservationId === resv.id) &&
+              q.triggerEvent === "room_ready_ota" &&
+              (q.status === "scheduled" || q.status === "sent")
+            );
+            if (!alreadyQueued && defTpl) {
+              const renderedMessage = resolveWhatsAppTags(defTpl.message, resv, db, baseUrl, "guest");
+              const renderedButtons = (defTpl.buttons || []).map(b => ({
+                ...b,
+                url: b.url ? resolveWhatsAppTags(b.url, resv, db, baseUrl, "guest") : undefined
+              }));
+              db.whatsappQueue.push({
+                id: `q_ota_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+                reservationId: resv.id,
+                reservationCode: resv.code,
+                guestName: resv.guestName,
+                guestPhone: resv.guestPhone,
+                recipientType: "guest",
+                recipientName: resv.guestName,
+                channel: resvChannel,
+                triggerEvent: "room_ready_ota",
+                templateId: defTpl.id,
+                title: defTpl.title,
+                footer: defTpl.footer,
+                scheduledFor: otaEarliest.toISOString(),
+                status: "scheduled",
+                sentAt: null,
+                renderedMessage,
+                renderedButtons,
+                createdAt: now.toISOString()
+              });
+              if (typeof saveDatabase === "function") saveDatabase();
+            }
+            continue;
           }
-          continue;
         }
       } else {
-        // 2. Regra para Diretas (Site / WhatsApp): Early Check-in a partir das 10:00
-        const directEarliest = new Date();
-        directEarliest.setHours(10, 0, 0, 0);
+        // 2. Regra para Diretas (Site / WhatsApp): Early Check-in a partir das 10:00 (apenas se for antes das 14:00)
+        if (!isAtOrAfterCheckin) {
+          const directEarliest = new Date();
+          directEarliest.setHours(10, 0, 0, 0);
 
-        if (now < directEarliest) {
-          console.log(`[Room Ready Direct] Flat ${flatNumber} limpo antes das 10:00 (${now.toLocaleTimeString("pt-BR")}). Agendando disparo de early check-in para as 10:00 pontualmente.`);
-          if (!db.whatsappQueue) db.whatsappQueue = [];
-          const defTpl = (db.whatsappTemplates || []).find(t => t.id === "tpl_room_ready_direct") ||
-                         DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_room_ready_direct");
-          const alreadyQueued = db.whatsappQueue.some(q =>
-            (q.reservationCode === resv.code || q.reservationId === resv.id) &&
-            q.triggerEvent === "room_ready" &&
-            (q.status === "scheduled" || q.status === "sent")
-          );
-          if (!alreadyQueued && defTpl) {
-            const renderedMessage = resolveWhatsAppTags(defTpl.message, resv, db, baseUrl, "guest");
-            const renderedButtons = (defTpl.buttons || []).map(b => ({
-              ...b,
-              url: b.url ? resolveWhatsAppTags(b.url, resv, db, baseUrl, "guest") : undefined
-            }));
-            db.whatsappQueue.push({
-              id: `q_direct_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-              reservationId: resv.id,
-              reservationCode: resv.code,
-              guestName: resv.guestName,
-              guestPhone: resv.guestPhone,
-              recipientType: "guest",
-              recipientName: resv.guestName,
-              channel: resvChannel,
-              triggerEvent: "room_ready",
-              templateId: defTpl.id,
-              title: defTpl.title,
-              footer: defTpl.footer,
-              scheduledFor: directEarliest.toISOString(),
-              status: "scheduled",
-              sentAt: null,
-              renderedMessage,
-              renderedButtons,
-              createdAt: now.toISOString()
-            });
-            if (typeof saveDatabase === "function") saveDatabase();
+          if (now < directEarliest) {
+            console.log(`[Room Ready Direct] Flat ${flatNumber} limpo antes das 10:00 (${now.toLocaleTimeString("pt-BR")}). Agendando disparo de early check-in para as 10:00 pontualmente.`);
+            if (!db.whatsappQueue) db.whatsappQueue = [];
+            const defTpl = (db.whatsappTemplates || []).find(t => t.id === "tpl_room_ready_direct") ||
+                           DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_room_ready_direct");
+            const alreadyQueued = db.whatsappQueue.some(q =>
+              (q.reservationCode === resv.code || q.reservationId === resv.id) &&
+              q.triggerEvent === "room_ready" &&
+              (q.status === "scheduled" || q.status === "sent")
+            );
+            if (!alreadyQueued && defTpl) {
+              const renderedMessage = resolveWhatsAppTags(defTpl.message, resv, db, baseUrl, "guest");
+              const renderedButtons = (defTpl.buttons || []).map(b => ({
+                ...b,
+                url: b.url ? resolveWhatsAppTags(b.url, resv, db, baseUrl, "guest") : undefined
+              }));
+              db.whatsappQueue.push({
+                id: `q_direct_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+                reservationId: resv.id,
+                reservationCode: resv.code,
+                guestName: resv.guestName,
+                guestPhone: resv.guestPhone,
+                recipientType: "guest",
+                recipientName: resv.guestName,
+                channel: resvChannel,
+                triggerEvent: "room_ready",
+                templateId: defTpl.id,
+                title: defTpl.title,
+                footer: defTpl.footer,
+                scheduledFor: directEarliest.toISOString(),
+                status: "scheduled",
+                sentAt: null,
+                renderedMessage,
+                renderedButtons,
+                createdAt: now.toISOString()
+              });
+              if (typeof saveDatabase === "function") saveDatabase();
+            }
+            continue;
           }
-          continue;
         }
       }
 
-      const eventName = isOtaChannel ? "room_ready_ota" : "room_ready";
-      console.log(`[Room Ready] Disparando '${eventName}' para ${resv.guestName} (Flat ${flatNumber} / Canal: ${resvChannel})...`);
+      // Se for a partir das 14:00, canais diretos recebem 'room_ready_regular' (sem texto de early check-in)
+      let eventName = isOtaChannel ? "room_ready_ota" : "room_ready";
+      if (isAtOrAfterCheckin && !isOtaChannel) {
+        const hasRegular = (db.whatsappTemplates || []).some(t => t.id === "tpl_room_ready_regular" && t.enabled !== false) ||
+                           DEFAULT_WHATSAPP_TEMPLATES.some(t => t.id === "tpl_room_ready_regular");
+        if (hasRegular) {
+          eventName = "room_ready_regular";
+        }
+      }
+
+      console.log(`[Room Ready] Disparando '${eventName}' para ${resv.guestName} (Flat ${flatNumber} / Canal: ${resvChannel} / Horário: ${brHour}:${String(brMinute).padStart(2, '0')})...`);
+      resv.roomReadySentDate = todayStr;
+      resv.roomReadySentAt = now.toISOString();
+      if (typeof saveDatabase === "function") saveDatabase();
+
       await triggerImmediateWhatsApp(db, saveDatabase, eventName, resv, baseUrl);
     }
   } catch (err) {
     console.error("[Room Ready WhatsApp Error]:", err.message);
+  }
+}
+
+// ── Alerta Proativo das 14:00: Flat Pendente de Limpeza & Previsão de Chegada ──
+export async function checkAndTriggerCleaningDelayAlerts(dbOrGetter, saveDatabase, createNotification, baseUrl = "") {
+  try {
+    const db = typeof dbOrGetter === "function" ? dbOrGetter() : dbOrGetter;
+    if (!db || !db.zapiConfig?.enabled) return;
+
+    const now = new Date();
+    const { todayStr, hour: brHour, minute: brMinute } = getBrasiliaDateParts(now);
+
+    const checkinTime = db.settings?.checkinTime || "14:00";
+    const [checkHour, checkMin] = checkinTime.split(":").map(Number);
+    const isAtOrAfterCheckin = brHour > checkHour || (brHour === checkHour && brMinute >= checkMin);
+
+    // Só dispara se o horário de check-in (14:00) tiver sido atingido hoje (e antes das 22:00)
+    if (!isAtOrAfterCheckin || brHour >= 22) return;
+
+    // Busca reservas ativas com check-in previsto para hoje
+    const arrivingToday = (db.reservations || []).filter(r =>
+      r.status !== "cancelada" &&
+      r.status !== "cancelled" &&
+      r.status !== "no_show" &&
+      r.status !== "checkout" &&
+      !r.checkedInAt &&
+      r.status !== "checked_in" &&
+      r.checkinDate === todayStr &&
+      r.guestPhone &&
+      r.cleaningDelayAlertSentDate !== todayStr &&
+      r.roomReadySentDate !== todayStr
+    );
+
+    for (const resv of arrivingToday) {
+      const flatNum = String(resv.flatNumber || "");
+      const flatId = resv.flatId;
+
+      // Localiza a solicitação de limpeza de hoje
+      const cleanReq = (db.cleaningRequests || []).find(c =>
+        (c.flatId === flatId || String(c.flatNumber) === flatNum) &&
+        (c.requestDate === todayStr || c.effectiveDate === todayStr)
+      );
+
+      // Se o flat já está limpo, não envia o alerta de limpeza em andamento
+      if (cleanReq && cleanReq.status === "clean") {
+        continue;
+      }
+
+      // Se o hóspede já informou previsão de chegada hoje ou já foi priorizado, não dispara novamente
+      if (resv.estimatedArrivalTime && resv.guestArrivalResponseAt?.startsWith(todayStr)) {
+        resv.cleaningDelayAlertSentDate = todayStr;
+        continue;
+      }
+
+      // Trava de Segurança: Modo de Teste / Sandbox
+      if (db?.zapiConfig?.testModeOnly !== false && !isPhoneAllowedInTestMode(resv.guestPhone, db?.zapiConfig)) {
+        console.log(`[Cleaning Delay Sandbox] Ignorando disparo para ${resv.guestPhone} (${resv.guestName}): Modo de Teste ativo.`);
+        resv.cleaningDelayAlertSentDate = todayStr;
+        continue;
+      }
+
+      console.log(`[Checkin Cleaning Delay] Flat ${flatNum} ainda em limpeza às ${brHour}:${String(brMinute).padStart(2, "0")}. Disparando aviso de previsão para ${resv.guestName}...`);
+
+      resv.cleaningDelayAlertSentDate = todayStr;
+      resv.cleaningDelayAlertSentAt = now.toISOString();
+      if (typeof saveDatabase === "function") saveDatabase();
+
+      await triggerImmediateWhatsApp(db, saveDatabase, "checkin_cleaning_delay", resv, baseUrl);
+
+      if (typeof createNotification === "function") {
+        createNotification({
+          title: `⚠️ 14h: Flat ${flatNum} ainda em limpeza`,
+          message: `Hóspede ${resv.guestName} (Reserva ${resv.code}) notificado(a) no WhatsApp para envio de previsão de chegada. Flat ${flatNum} ainda pendente de limpeza.`,
+          type: "cleaning_governance",
+          link: "/limpeza"
+        });
+      }
+    }
+  } catch (err) {
+    console.error("[Checkin Cleaning Delay Error]:", err.message);
   }
 }

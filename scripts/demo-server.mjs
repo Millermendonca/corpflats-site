@@ -8319,7 +8319,10 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       specialRequests: r.specialRequests || "",
       notes: r.notes || "",
       receptionNotes: r.receptionNotes || "",
-      vehicle: r.vehicle || null
+      vehicle: r.vehicle || null,
+      estimatedArrivalTime: r.estimatedArrivalTime || null,
+      guestArrivalResponse: r.guestArrivalResponse || null,
+      isCleaningPriority: Boolean(cleanReq?.isPriority)
     },
     hasBreakfast,
     breakfastLink,
@@ -8372,6 +8375,66 @@ app.post("/api/pms/guest-portal/:code/claim-early-checkin", (req, res) => {
     success: true,
     message: "🎉 Early Check-in antecipado ativado com sucesso! Seu apartamento foi liberado na portaria.",
     flatNumber: r.flatNumber
+  });
+});
+
+// Endpoint: Hóspede informa Previsão de Chegada Hoje (Prioriza Limpeza no Quadro)
+app.post(["/api/pms/guest-portal/:code/estimated-arrival", "/api/pms/reservations/by-code/:code/estimated-arrival"], (req, res) => {
+  const code = (req.params.code || "").trim();
+  const { estimatedArrivalTime, arrivalTime } = req.body || {};
+  const timeVal = (estimatedArrivalTime || arrivalTime || "").trim();
+
+  if (!timeVal) {
+    return res.status(400).json({ error: "Horário previsto de chegada é obrigatório." });
+  }
+
+  if (!db.reservations) db.reservations = [];
+  const r = findReservationByLocatorOrContact(code);
+  if (!r) {
+    return res.status(404).json({ error: "Reserva não encontrada." });
+  }
+
+  const nowIso = new Date().toISOString();
+  const todayStr = getTodayStr();
+  r.estimatedArrivalTime = timeVal;
+  r.guestArrivalResponse = `Previsão informada pelo portal: ${timeVal}`;
+  r.guestArrivalResponseAt = nowIso;
+  r.updatedAt = nowIso;
+
+  const flatNum = String(r.flatNumber || "");
+  const flatId = r.flatId;
+
+  // Localiza o card de limpeza de hoje daquele flat e prioriza
+  const cleanReq = (db.cleaningRequests || []).find(c =>
+    (c.flatId === flatId || String(c.flatNumber) === flatNum) &&
+    (c.requestDate === todayStr || c.effectiveDate === todayStr)
+  );
+
+  let wasPrioritized = false;
+  if (cleanReq && cleanReq.status !== "clean") {
+    cleanReq.isPriority = true;
+    cleanReq.priorityReason = `Hóspede informou previsão de chegada para às ${timeVal} via Portal.`;
+    cleanReq.updatedAt = nowIso;
+    wasPrioritized = true;
+  }
+
+  saveDatabase();
+
+  createNotification({
+    title: `🕒 Previsão Chegada: Flat ${flatNum} (${timeVal})`,
+    message: `${r.guestName} informou previsão de chegada para às ${timeVal} hoje. Limpeza do Flat ${flatNum} marcada como PRIORIDADE no quadro!`,
+    severity: "info",
+    category: "cleaning_priority",
+    metadata: { flatId, flatNumber: flatNum, code: r.code, estimatedArrivalTime: timeVal },
+    targetUrl: "/limpeza"
+  });
+
+  res.json({
+    success: true,
+    message: `Previsão de chegada (${timeVal}) registrada com sucesso! Priorizamos a preparação do seu flat na governança.`,
+    estimatedArrivalTime: timeVal,
+    flatNumber: flatNum,
+    isPriority: wasPrioritized
   });
 });
 

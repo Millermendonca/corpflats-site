@@ -488,6 +488,58 @@ Seu apartamento no *{{nome_hotel}}* já foi definido:
     editUrl: "/whatsapp?tab=rules&tpl=tpl_room_ready_ota",
     category: "checkin"
   },
+  {
+    id: "node_room_ready_regular",
+    stageNumber: 4,
+    stageName: "4. Dia do Check-in (Tarde - Regular)",
+    title: "Quarto Liberado • Entrada Regular (A partir das 14:00)",
+    subtitle: "Se limpo após as 14:00, envia confirmação de liberação sem falar de early check-in",
+    triggerEvent: "room_ready_regular",
+    channelType: "whatsapp",
+    recipients: ["hospede"],
+    timingLabel: "A partir das 14:00 assim que higienizado",
+    condition: "Reserva Direta ou OTA quando o flat é liberado a partir das 14:00",
+    channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    description: "Enviado quando o flat fica pronto a partir das 14:00 (horário padrão de check-in). Notifica que a acomodação está limpa e liberada com dados de acesso e Wi-Fi, sem falar em 'early check-in' nem 'sem precisar esperar as 14:00'.",
+    messagePreview: `*{{primeiro_nome}}*, seu flat está pronto! 🔑✨
+Seu *Flat {{quarto}}* no *{{nome_hotel}}* já está *Limpo e Liberado* para receber você!
+
+📍 Ao chegar, basta se identificar na portaria 24h com seu nome e o número *{{quarto}}*.
+📶 Wi-Fi: *{{wifi_rede}}* | Senha: *{{wifi_senha}}*`,
+    buttons: [
+      { label: "📍 Abrir no Google Maps", type: "URL", url: "{{link_maps}}" },
+      { label: "🏨 Portal do Hóspede", type: "URL", url: "{{link_portal_hospede}}" }
+    ],
+    editUrl: "/whatsapp?tab=rules&tpl=tpl_room_ready_regular",
+    category: "checkin"
+  },
+  {
+    id: "node_checkin_cleaning_delay",
+    stageNumber: 4,
+    stageName: "4. Dia do Check-in (Tarde - Regular)",
+    title: "Check-in 14:00 • Limpeza em Andamento & Previsão de Chegada",
+    subtitle: "Se der 14:00 e o flat não estiver limpo, consulta horário para priorizar na governança",
+    triggerEvent: "checkin_cleaning_delay",
+    channelType: "whatsapp",
+    recipients: ["hospede"],
+    timingLabel: "Pontualmente às 14:00 (se flat ainda não limpo)",
+    condition: "Check-in previsto para hoje com flat ainda pendente de limpeza às 14:00",
+    channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    description: "Disparado proativamente às 14:00 caso o flat ainda esteja em higienização. Avisa que a equipe está finalizando os preparativos e solicita a previsão de chegada para priorizar o card de limpeza ou remanejar acomodação.",
+    messagePreview: `Olá, *{{primeiro_nome}}*! Tudo bem? 🌟
+Hoje é o dia da sua chegada ao *{{nome_hotel}}*!
+
+Nossa equipe está finalizando os últimos preparativos do seu *Flat {{quarto}}* para que você encontre tudo impecável.
+
+⏰ *Você já tem uma previsão de que horas pretende chegar hoje?*
+Se puder nos informar por aqui ou pelo portal, podemos priorizar a finalização do seu flat na limpeza ou até mesmo verificar a liberação imediata de uma acomodação pronta para sua entrada sem espera!`,
+    buttons: [
+      { label: "🏨 Informar no Portal", type: "URL", url: "{{link_portal_hospede}}" },
+      { label: "📞 Falar no WhatsApp", type: "CALL", phone: "{{telefone_hotel}}" }
+    ],
+    editUrl: "/whatsapp?tab=rules&tpl=tpl_checkin_cleaning_delay",
+    category: "checkin"
+  },
 
   // ── ETAPA 5: ENTRADA REALIZADA ─────────────────────────────────────────────
   {
@@ -1032,6 +1084,8 @@ export default function ReservationJourney() {
         "node_garagem_autorizacao",
         "node_checkin_day_instructions",
         "node_room_ready_direct",
+        "node_room_ready_regular",
+        "node_checkin_cleaning_delay",
         "node_checkin_completed",
         "node_breakfast_reminder",
         "node_checkout_reminder",
@@ -1062,6 +1116,8 @@ export default function ReservationJourney() {
         "node_garagem_autorizacao",
         "node_checkin_day_instructions",
         "node_room_ready_direct",
+        "node_room_ready_regular",
+        "node_checkin_cleaning_delay",
         "node_checkin_completed",
         "node_breakfast_reminder",
         "node_checkout_reminder",
@@ -1089,6 +1145,8 @@ export default function ReservationJourney() {
         "node_garagem_autorizacao",
         "node_checkin_day_instructions",
         "node_room_ready_ota",
+        "node_room_ready_regular",
+        "node_checkin_cleaning_delay",
         "node_checkin_completed",
         "node_checkout_reminder",
         "node_checkout_completed",

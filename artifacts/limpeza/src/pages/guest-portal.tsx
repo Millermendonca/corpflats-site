@@ -110,6 +110,35 @@ export default function GuestPortal() {
   const [isRepeatingOrder, setIsRepeatingOrder] = useState(false)
   const [favoriteTogglingId, setFavoriteTogglingId] = useState<number | null>(null)
 
+  // Previsão de Chegada no Dia do Check-in
+  const [selectedArrivalTime, setSelectedArrivalTime] = useState("")
+  const [customArrivalTime, setCustomArrivalTime] = useState("")
+  const [savingArrival, setSavingArrival] = useState(false)
+  const [editingArrival, setEditingArrival] = useState(false)
+  const [arrivalSuccessNotice, setArrivalSuccessNotice] = useState(false)
+
+  const handleSaveEstimatedArrival = async () => {
+    const timeVal = selectedArrivalTime || customArrivalTime.trim()
+    if (!timeVal || !code) return
+    setSavingArrival(true)
+    try {
+      const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(code)}/estimated-arrival`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ estimatedArrivalTime: timeVal })
+      })
+      if (res.ok) {
+        setArrivalSuccessNotice(true)
+        setEditingArrival(false)
+        fetchPortalData()
+        setTimeout(() => setArrivalSuccessNotice(false), 5000)
+      }
+    } catch {}
+    finally {
+      setSavingArrival(false)
+    }
+  }
+
   const handleToggleFavorite = async (orderId: number) => {
     try {
       setFavoriteTogglingId(orderId)
@@ -1993,20 +2022,123 @@ export default function GuestPortal() {
             {data.isCheckinToday && !isCancelled && (
               <>
                 {!isFlatClean ? (
-                  <div className="p-3.5 bg-amber-50/90 border border-amber-200/80 rounded-xl flex items-start gap-2.5 text-xs text-amber-900">
-                    <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                    <div className="space-y-1">
-                      <span className="font-bold block text-amber-950">Apartamento em Preparação & Higienização 🧹</span>
-                      <p className="leading-relaxed">
-                        Nossa equipe de governança está higienizando e preparando o flat para a sua estada. O horário oficial de check-in é a partir das <strong>14:00</strong>.
-                      </p>
-                      <p className="text-[11px] text-amber-800/90 pt-1 border-t border-amber-200/70 font-medium leading-relaxed">
-                        ℹ️ O check-in antecipado (para reservas com benefício) é <strong>estritamente mediante disponibilidade</strong> após a conclusão da limpeza e inspeção. Assim que finalizado, a entrada é liberada na portaria 24h.
-                      </p>
+                  <div className="space-y-3">
+                    <div className="p-3.5 bg-amber-50/90 border border-amber-200/80 rounded-xl flex items-start gap-2.5 text-xs text-amber-900">
+                      <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <span className="font-bold block text-amber-950">Apartamento em Preparação & Higienização 🧹</span>
+                        <p className="leading-relaxed">
+                          Nossa equipe de governança está higienizando e preparando o flat para a sua estada. O horário oficial de check-in é a partir das <strong>14:00</strong>.
+                        </p>
+                        <p className="text-[11px] text-amber-800/90 pt-1 border-t border-amber-200/70 font-medium leading-relaxed">
+                          ℹ️ O check-in antecipado (para reservas com benefício) é <strong>estritamente mediante disponibilidade</strong> após a conclusão da limpeza e inspeção. Assim que finalizado, a entrada é liberada na portaria 24h.
+                        </p>
+                      </div>
                     </div>
+
+                    {/* Bloco de Previsão de Chegada: Prioriza a Limpeza */}
+                    {reservation.estimatedArrivalTime && !editingArrival ? (
+                      <div className="p-3.5 bg-emerald-50/90 border border-emerald-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-emerald-900">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                          <div>
+                            <span className="font-bold block text-emerald-950">
+                              Previsão de Chegada: {reservation.estimatedArrivalTime}
+                            </span>
+                            <span className="text-[11px] text-emerald-700">
+                              ✓ Sua acomodação foi sinalizada como prioridade para a equipe de governança!
+                            </span>
+                          </div>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setCustomArrivalTime(reservation.estimatedArrivalTime || "")
+                            setEditingArrival(true)
+                          }}
+                          className="h-7 px-3 text-xs font-bold border-emerald-300 text-emerald-800 hover:bg-emerald-100 rounded-lg shrink-0 self-start sm:self-auto"
+                        >
+                          Alterar Horário
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="p-3.5 bg-amber-50/90 border border-amber-300/80 rounded-xl space-y-2.5 text-xs text-amber-950">
+                        <div className="flex items-start gap-2">
+                          <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                          <div>
+                            <strong className="block font-bold">Que horas você pretende chegar hoje? ⏰</strong>
+                            <p className="text-[11px] text-amber-850 leading-relaxed mt-0.5">
+                              Se você já souber o seu horário, nos avise para priorizarmos a finalização do seu flat ou verificarmos a liberação de uma acomodação pronta para entrada imediata!
+                            </p>
+                          </div>
+                        </div>
+
+                        {arrivalSuccessNotice && (
+                          <div className="p-2 bg-emerald-100 border border-emerald-300 text-emerald-900 rounded-lg text-xs font-bold flex items-center gap-2">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                            <span>Previsão salva com sucesso! Priorizamos seu apartamento na governança.</span>
+                          </div>
+                        )}
+
+                        <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                          {["14:30", "15:00", "16:00", "17:00", "18:00", "19:00+"].map(t => (
+                            <button
+                              key={t}
+                              type="button"
+                              onClick={() => {
+                                setSelectedArrivalTime(t)
+                                setCustomArrivalTime("")
+                              }}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                                selectedArrivalTime === t 
+                                  ? "bg-amber-700 text-white shadow-xs scale-105" 
+                                  : "bg-white border border-amber-200 text-amber-900 hover:bg-amber-100"
+                              }`}
+                            >
+                              {t}
+                            </button>
+                          ))}
+                        </div>
+
+                        <div className="flex items-center gap-2 pt-1">
+                          <Input
+                            value={customArrivalTime}
+                            onChange={e => {
+                              setCustomArrivalTime(e.target.value)
+                              setSelectedArrivalTime("")
+                            }}
+                            placeholder="Ou digite o horário (ex: 16:30)"
+                            className="h-8 text-xs bg-white border-amber-200"
+                          />
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={savingArrival || (!selectedArrivalTime && !customArrivalTime.trim())}
+                            onClick={handleSaveEstimatedArrival}
+                            className="h-8 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-bold rounded-lg shrink-0 gap-1.5"
+                          >
+                            {savingArrival ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                            <span>Salvar Previsão</span>
+                          </Button>
+                          {editingArrival && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setEditingArrival(false)}
+                              className="h-8 px-2 text-xs text-slate-500 hover:text-slate-700"
+                            >
+                              Cancelar
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : (
-                  (data.canDoEarlyCheckin || reservation.earlyCheckinAuthorized || hasEarlyCheckinBenefit) ? (
+                  (data.canDoEarlyCheckin && !data.isPastOrExact14h) ? (
                     <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-start gap-2.5 text-xs text-emerald-800">
                       <Sparkles className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
                       <div className="space-y-1">
@@ -2028,12 +2160,12 @@ export default function GuestPortal() {
                       </div>
                     </div>
                   ) : (
-                    <div className="p-3.5 bg-sky-50 border border-sky-200 rounded-xl flex items-start gap-2.5 text-xs text-sky-900">
-                      <Sparkles className="w-4 h-4 text-sky-600 shrink-0 mt-0.5" />
+                    <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-start gap-2.5 text-xs text-emerald-900">
+                      <Sparkles className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
                       <div className="space-y-1">
-                        <span className="font-bold block text-sky-950">Apartamento Limpo & Pronto! ✨</span>
+                        <span className="font-bold block text-emerald-950">Apartamento Limpo & Liberado! 🔑✨</span>
                         <p className="leading-relaxed">
-                          A governança já concluiu a higienização da unidade. O horário oficial de check-in inicia às <strong>14:00</strong> na portaria 24h.
+                          A governança já concluiu a higienização da unidade. Seu apartamento já está <strong>100% preparado e liberado</strong> na portaria 24h.
                         </p>
                       </div>
                     </div>
