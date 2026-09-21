@@ -64,17 +64,19 @@ export const DEFAULT_WHATSAPP_TEMPLATES = [
   {
     id: "tpl_pre_reserva",
     triggerEvent: "pre_reservation_created",
-    title: "Pré-Reserva • Confirmação & Dados para Pagamento",
-    description: "Enviado automaticamente quando uma pré-reserva é registrada (sem pagamento ou com pagamento parcial), com dados e chave PIX para pagamento.",
+    title: "Pré-Reserva • Confirmação & Aguardando Pagamento",
+    description: "Enviado automaticamente apenas para o solicitante quando uma pré-reserva é registrada, informando expressamente que está aguardando pagamento para confirmação definitiva e chave PIX.",
     enabled: true,
-    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
-    recipientTarget: "guest",
+    channels: ["site", "whatsapp", "outros"],
+    recipientTarget: "requester",
     triggerTiming: "immediate",
     offsetValue: 0,
     offsetUnit: "minutes",
     fixedTime: "",
-    message: `Olá, *{{nome_hospede}}*! ⏳
+    message: `Olá, *{{nome_destinatario}}*! ⏳
 Recebemos o pedido de *Pré-Reserva* no *{{nome_hotel}}*!
+
+⚠️ *Importante:* Esta reserva está *Aguardando Pagamento* para confirmação definitiva da sua acomodação.
 
 📋 *Resumo da Estadia:*
 • Código da Reserva: *{{numero_reserva}}*
@@ -144,7 +146,7 @@ Para agilizar sua entrada na portaria sem filas, realize com antecedência o seu
     id: "tpl_new_reservation_direct",
     triggerEvent: "reservation_created",
     title: "Nova Reserva (Site/WhatsApp) • Confirmação + Early Check-in",
-    description: "Enviado para reservas via Site ou WhatsApp. Inclui benefício de early check-in antecipado (conforme disponibilidade) quando a reserva for criada com pelo menos 30 min antes do horário de check-in do dia.",
+    description: "Enviado para reservas via Site ou WhatsApp confirmadas antes das 00:00 do dia do check-in. Garante benefício de Early Check-in a partir das 10:00 mediante disponibilidade de limpeza.",
     enabled: true,
     channels: ["site", "whatsapp"],
     recipientTarget: "guest",
@@ -169,7 +171,8 @@ Sua reserva no *{{nome_hotel}}* está *Confirmada*!
 
 {{instrucao_saldo}}
 
-{{early_checkin_beneficio}}
+🎁 *Benefício Exclusivo — Early Check-in a partir das 10:00:*
+Como você reservou diretamente pelo nosso site ou WhatsApp, a sua entrada está liberada a partir das *10:00 da manhã* mediante disponibilidade de limpeza! Assim que o flat estiver higienizado e inspecionado, você receberá a notificação de quarto liberado.
 
 📍 *Endereço:*
 {{endereco_hotel}}
@@ -184,8 +187,8 @@ Para agilizar sua entrada na portaria sem filas, realize com antecedência o seu
   {
     id: "tpl_new_reservation_ota",
     triggerEvent: "reservation_created",
-    title: "Nova Reserva (Booking/Airbnb) • Confirmação sem revelar flat",
-    description: "Enviado para reservas via Booking.com ou Airbnb. Não revela o número do flat — informa que o apartamento será atribuído no dia do check-in. Promove reservas diretas.",
+    title: "Nova Reserva (Booking/Airbnb) • Confirmação sem valores",
+    description: "Enviado para reservas via Booking.com ou Airbnb. Não menciona valores nem pagamento. Informa check-in 14:00, checkout 12:00, liberação com número do flat a partir das 12:00 se limpo, e benefício de 10:00 para reservas diretas.",
     enabled: true,
     channels: ["booking", "airbnb"],
     triggerTiming: "immediate",
@@ -197,24 +200,20 @@ Sua reserva no *{{nome_hotel}}* está *Confirmada*!
 
 📋 *Resumo da sua Estadia:*
 • Código da Reserva: *{{numero_reserva}}*
-• Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*
-• Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*
+• Entrada (Check-in): *{{data_checkin}} a partir das 14:00*
+• Saída (Check-out): *{{data_checkout}} até às 12:00*
 • Total de Hóspedes: *{{num_hospedes}}*
 
-🔑 *Sobre o seu apartamento:*
-O número do seu flat será atribuído e informado no dia do check-in, até as *{{horario_checkin}}*. Caso o apartamento esteja liberado antes, você será avisado(a) a partir das *12:00* para entrada antecipada.
+🔑 *Sobre o seu apartamento e liberação de entrada:*
+O número do seu flat e as instruções de chegada serão informados no dia da sua chegada *a partir das 12:00*, assim que o apartamento estiver 100% higienizado e preparado pela nossa governança.
 
-Se desejar garantir *Early Check-in antes das 12:00*, entre em contato conosco com antecedência — sujeito à disponibilidade.
-
-💡 *Sabia que reservando direto pelo nosso site ou WhatsApp você tem:*
-• Early check-in *sem custo adicional* (conforme disponibilidade) 🎁
-• Atendimento personalizado desde a reserva
-• Melhores tarifas sem taxas de intermediário
+💡 *Dica CorpFlats:*
+Em suas próximas viagens, ao reservar diretamente pelo nosso site ou WhatsApp, você conta com o benefício exclusivo de *Early Check-in gratuito a partir das 10:00 da manhã* (conforme disponibilidade)!
 
 📍 *Endereço:*
 {{endereco_hotel}}
 
-Realize seu *Pré-Check-in Digital* com antecedência para agilizar sua chegada:`,
+Para agilizar a liberação da portaria sem burocracia, realize seu *Pré-Check-in Digital* com antecedência:`,
     footer: "CorpFlats • Hospedagem Contemporânea",
     buttons: [
       { id: "btn_chk", type: "URL", label: "📝 Fazer Check-in Online", url: "{{link_checkin_digital}}" },
@@ -314,7 +313,7 @@ Os demais dados da sua reserva permanecem inalterados. Você pode consultar todo
     id: "tpl_pre_checkin_reminder",
     triggerEvent: "pre_checkin_reminder",
     title: "Lembrete de Pré-Check-in Digital",
-    description: "Enviado 24 horas antes do check-in para agilizar o cadastro de portaria.",
+    description: "Enviado antes do check-in para quem ainda não concluiu o check-in digital. Trata reservas de 1 ou 2 hóspedes com opção de confirmar viagem individual.",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
     recipientTarget: "guest",
@@ -325,24 +324,27 @@ Os demais dados da sua reserva permanecem inalterados. Você pode consultar todo
     message: `Olá, *{{primeiro_nome}}*! Tudo bem? ⏳
 Sua chegada ao *{{nome_hotel}}* está próxima (*{{data_checkin}}*)!
 
-Para que a portaria do Edifício Soho libere sua entrada imediatamente na chegada, pedimos que adiante o cadastro dos hóspedes pelo link abaixo:`,
+{{mensagem_pendencia_hospedes}}
+
+Para que a portaria libere sua entrada imediatamente na chegada sem filas, acesse o link seguro:`,
     footer: "CorpFlats • Entrada Rápida & Segura",
     buttons: [
-      { id: "btn_pre", type: "URL", label: "📝 Preencher Ficha Digital", url: "{{link_checkin_digital}}" }
+      { id: "btn_pre", type: "URL", label: "📝 Ficha Digital de Check-in", url: "{{link_checkin_digital}}" },
+      { id: "btn_portal", type: "URL", label: "🏨 Ver Minha Reserva", url: "{{link_portal_hospede}}" }
     ]
   },
   {
     id: "tpl_checkin_day_instructions",
     triggerEvent: "checkin_day_instructions",
-    title: "Dia do Check-in • Instruções de Chegada",
-    description: "Enviado no dia do check-in às 09:00 com localização, regras e senha de Wi-Fi.",
+    title: "Dia do Check-in (07:00) • Instruções de Chegada & Acesso",
+    description: "Enviado no dia do check-in pontualmente às 07:00 (para reservas feitas antes das 07:00). Inclui endereço, portaria, Wi-Fi, café (se incluso) e botão 'Já cheguei / Estou no Flat'.",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
     recipientTarget: "guest",
     triggerTiming: "fixed_time_day_of",
     offsetValue: 0,
     offsetUnit: "hours",
-    fixedTime: "09:00",
+    fixedTime: "07:00",
     message: `Bom dia, *{{primeiro_nome}}*! ☀️
 Hoje é o dia da sua chegada ao *{{nome_hotel}}*!
 
@@ -350,15 +352,23 @@ Hoje é o dia da sua chegada ao *{{nome_hotel}}*!
 ⏰ *Horário de Check-in:* A partir das {{horario_checkin}}
 📍 *Endereço:* {{endereco_hotel}}
 
-Ao chegar, dirija-se à portaria 24h e informe seu nome e o número do seu flat.
+Ao chegar, dirija-se à portaria 24h e informe seu nome e o número do seu flat (*{{quarto}}*).
 
 📶 *Wi-Fi do Flat:*
 • Rede: *{{wifi_rede}}*
 • Senha: *{{wifi_senha}}*
 
+{{mensagem_cafe_incluso}}
+
+{{aviso_checkin_pendente}}
+
+👉 *Já chegou ao hotel?* Clique no link para confirmar sua chegada:
+{{link_autocheckin}}
+
 Desejamos uma ótima viagem até aqui! Se precisar de suporte, estamos à disposição.`,
     footer: "CorpFlats • Boas-vindas!",
     buttons: [
+      { id: "btn_cheguei", type: "URL", label: "📍 Já Cheguei no Flat", url: "{{link_autocheckin}}" },
       { id: "btn_maps", type: "URL", label: "📍 Abrir no Google Maps", url: "{{link_maps}}" },
       { id: "btn_portal", type: "URL", label: "🏨 Portal do Hóspede", url: "{{link_portal_hospede}}" }
     ]
@@ -396,10 +406,10 @@ Tenha uma estadia incrível!`,
   {
     id: "tpl_breakfast_reminder",
     triggerEvent: "breakfast_reminder",
-    title: "Café da Manhã • Montagem da Bandeja",
-    description: "Enviado às 18:00 da véspera para hóspedes com café agendarem a bandeja.",
+    title: "Café da Manhã • Montagem da Bandeja (18:00)",
+    description: "Enviado às 18:00 da véspera para hóspedes com café que ainda não efetuaram a montagem do pedido.",
     enabled: true,
-    channels: ["site", "whatsapp"],
+    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
     recipientTarget: "guest",
     triggerTiming: "fixed_time_day_before",
     offsetValue: 0,
@@ -467,13 +477,13 @@ Esperamos recebê-lo(a) novamente em breve! 💙`,
   {
     id: "tpl_nps_satisfaction_check",
     triggerEvent: "post_checkout_review",
-    title: "Pós Check-out • Pesquisa de Satisfação (Filtro NPS)",
-    description: "Enviado 2h após o check-out para coletar satisfação interna antes de pedir avaliação no Google. Só hóspedes com nota 5 recebem o link do Google (filtro automático de reputação).",
+    title: "Pós Check-out (24h) • Pesquisa de Satisfação (Filtro NPS)",
+    description: "Enviado 24h após o check-out para coletar satisfação interna antes de pedir avaliação no Google. Só hóspedes com nota 5 recebem o link do Google (filtro automático de reputação).",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
     recipientTarget: "guest",
     triggerTiming: "after_event",
-    offsetValue: 2,
+    offsetValue: 24,
     offsetUnit: "hours",
     fixedTime: "",
     message: `Olá, *{{primeiro_nome}}*! 😊
@@ -538,25 +548,27 @@ Lamentamos que não possa se hospedar conosco nesta ocasião e estaremos de bra�
   {
     id: "tpl_payment_pending",
     triggerEvent: "payment_pending",
-    title: "Cobrança • Pagamento Pendente / Concluir Reserva",
-    description: "Enviado quando uma reserva está com status Aguardando Pagamento, com links para PIX e Cartão de Crédito.",
+    title: "Cobrança • Pagamento Pendente (+1h pós Pré-Reserva)",
+    description: "Enviado 1 hora após a criação da pré-reserva apenas para o solicitante, se ainda não tiver sido paga ou se o status continuar como pré-reserva.",
     enabled: true,
-    channels: ["site", "whatsapp"],
-    recipientTarget: "guest",
-    triggerTiming: "immediate",
-    offsetValue: 0,
-    offsetUnit: "minutes",
+    channels: ["site", "whatsapp", "outros"],
+    recipientTarget: "requester",
+    triggerTiming: "after_creation",
+    offsetValue: 1,
+    offsetUnit: "hours",
     fixedTime: "",
-    message: `Olá, *{{nome_hospede}}*! ⏳
-Sua pré-reserva no *{{nome_hotel}}* foi recebida e está *Aguardando Pagamento* para confirmação definitiva:
+    message: `Olá, *{{nome_destinatario}}*! ⏳
+Sua pré-reserva no *{{nome_hotel}}* (*Flat {{quarto}}*) foi gerada há 1 hora e permanece *Aguardando Pagamento* para confirmação definitiva.
 
 📋 *Detalhes da Estadia:*
 • Código: *{{numero_reserva}}*
-• Acomodação: *Flat {{quarto}}*
 • Período: *{{data_checkin}} a {{data_checkout}}*
-• Valor Pendente: *{{valor_total}}*
+• Valor Pendente: *{{quanto_falta}}*
 
-Para garantir sua acomodação, você pode pagar via PIX ou em até 12x no cartão de crédito acessando o portal seguro abaixo:`,
+🔑 *Chave PIX (CNPJ):* *{{chave_pix}}*
+• Favorecido: *{{titular_pix}}*
+
+Para garantir sua acomodação antes que as datas sejam liberadas, pague via PIX acima ou parcele em até 12x no cartão pelo portal seguro:`,
     footer: "CorpFlats • Pagamento Seguro",
     buttons: [
       { id: "btn_pagar", type: "URL", label: "💳 Pagar e Confirmar", url: "{{link_portal_hospede}}" },
@@ -564,18 +576,51 @@ Para garantir sua acomodação, você pode pagar via PIX ou em até 12x no cart�
     ]
   },
   {
-    id: "tpl_payment_confirmed",
-    triggerEvent: "payment_confirmed",
-    title: "Pagamento Confirmado • Confirmação & Ficha Digital",
-    description: "Enviado imediatamente quando o pagamento (PIX ou Cartão) for identificado e confirmado no sistema.",
+    id: "tpl_additional_daily_pending",
+    triggerEvent: "additional_daily_pending",
+    title: "Diária Extra / Alteração • Cobrança Pendente",
+    description: "Disparado quando uma reserva de qualquer canal (inclusive Booking/Airbnb) solicita acréscimo de diária ou serviço adicional e fica com saldo pendente a quitar.",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
-    recipientTarget: "guest",
+    recipientTarget: "both",
     triggerTiming: "immediate",
     offsetValue: 0,
     offsetUnit: "minutes",
     fixedTime: "",
-    message: `Olá, *{{primeiro_nome}}*! 💚🎉
+    message: `Olá, *{{nome_destinatario}}*! 🔄✨
+Confirmamos a solicitação de alteração/extensão da sua estadia no *{{nome_hotel}}* (*Flat {{quarto}}*)!
+
+📋 *Resumo Atualizado da Hospedagem:*
+• Código da Reserva: *{{numero_reserva}}*
+• Período: *{{data_checkin}} até {{data_checkout}}*
+• Total de Noites: *{{num_diarias}}*
+
+💰 *Saldo Pendente da Alteração:*
+• Valor a Quitar: *{{quanto_falta}}*
+
+🔑 *Chave PIX (CNPJ):* *{{chave_pix}}*
+• Favorecido: *{{titular_pix}}*
+
+Você também pode consultar o extrato detalhado e quitar via cartão em seu portal seguro:`,
+    footer: "CorpFlats • Alteração Confirmada",
+    buttons: [
+      { id: "btn_pagar", type: "URL", label: "💳 Ver Detalhes & Pagar", url: "{{link_portal_hospede}}" },
+      { id: "btn_admin", type: "CALL", label: "📞 Falar com Atendimento", phone: "{{telefone_hotel}}" }
+    ]
+  },
+  {
+    id: "tpl_payment_confirmed",
+    triggerEvent: "payment_confirmed",
+    title: "Pagamento Confirmado (Site/WhatsApp) • Reserva Garantida",
+    description: "Enviado exclusivamente para reservas de Site ou WhatsApp quando uma pré-reserva é quitada e convertida em confirmada. Disparado para o Solicitante e o Hóspede.",
+    enabled: true,
+    channels: ["site", "whatsapp"],
+    recipientTarget: "both",
+    triggerTiming: "immediate",
+    offsetValue: 0,
+    offsetUnit: "minutes",
+    fixedTime: "",
+    message: `Olá, *{{nome_destinatario}}*! 💚🎉
 Confirmamos o recebimento do seu pagamento de *{{valor_pago}}* via *{{forma_pagamento}}*!
 
 Sua reserva no *{{nome_hotel}}* está *Garantida & Confirmada*!
@@ -590,7 +635,7 @@ Sua reserva no *{{nome_hotel}}* está *Garantida & Confirmada*!
 💰 *Situação Financeira:*
 • Valor Total: *{{valor_total}}*
 • Quanto foi Pago: *{{valor_pago}}*
-• Saldo a Quitar: *{{quanto_falta}}*
+• Saldo Restante: *{{quanto_falta}}*
 
 {{instrucao_saldo}}
 
@@ -604,6 +649,51 @@ Para agilizar sua entrada na portaria sem filas na chegada, realize com anteced�
     buttons: [
       { id: "btn_chk", type: "URL", label: "📝 Fazer Check-in Online", url: "{{link_checkin_digital}}" },
       { id: "btn_portal", type: "URL", label: "🏨 Ver Detalhes da Reserva", url: "{{link_portal_hospede}}" }
+    ]
+  },
+  {
+    id: "tpl_sameday_reservation_instructions",
+    triggerEvent: "sameday_reservation",
+    title: "Reserva de Hoje (07:01+) • Confirmação & Instruções Imediatas",
+    description: "Disparado imediatamente para reservas confirmadas no próprio dia do check-in a partir das 07:01, consolidando confirmação e orientações de entrada sem envios duplicados.",
+    enabled: true,
+    channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    recipientTarget: "guest",
+    triggerTiming: "immediate",
+    offsetValue: 0,
+    offsetUnit: "minutes",
+    fixedTime: "",
+    message: `Olá, *{{primeiro_nome}}*! 🌟🔑
+Sua reserva no *{{nome_hotel}}* para *HOJE* está *Confirmada*!
+
+Como sua reserva foi confirmada no próprio dia da chegada, já adiantamos todas as suas instruções para uma entrada rápida e sem filas:
+
+📋 *Sua Hospedagem:*
+• Código da Reserva: *{{numero_reserva}}*
+• Acomodação: *Flat {{quarto}}*
+• Entrada (Check-in): *Hoje a partir das {{horario_checkin}}*
+• Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*
+
+📍 *Endereço:* {{endereco_hotel}}
+🗺️ *Localização no Maps:* {{link_maps}}
+🚪 *Portaria:* 24 horas (basta se identificar com seu nome e o número do Flat *{{quarto}}*)
+
+📶 *Wi-Fi do Flat:*
+• Rede: *{{wifi_rede}}*
+• Senha: *{{wifi_senha}}*
+
+{{mensagem_cafe_incluso}}
+
+👉 *Pré-Check-in Digital Obrigatório:*
+Para liberação imediata na portaria do condomínio, preencha sua ficha rápida agora mesmo:
+{{link_checkin_digital}}
+
+Ao chegar no condomínio, clique no botão abaixo para autodeclarar sua entrada:`,
+    footer: "CorpFlats • Entrada Imediata",
+    buttons: [
+      { id: "btn_chk", type: "URL", label: "📝 Fazer Check-in Online", url: "{{link_checkin_digital}}" },
+      { id: "btn_cheguei", type: "URL", label: "📍 Já Cheguei no Flat", url: "{{link_autocheckin}}" },
+      { id: "btn_portal", type: "URL", label: "🏨 Portal da Reserva", url: "{{link_portal_hospede}}" }
     ]
   }
 ];
@@ -1139,8 +1229,31 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     resumoAlteracoes = "• *Status da Reserva:* Dados atualizados no sistema.";
   }
 
+  // Tag de link de autodeclaração de checkin ("Já cheguei / Estou no Flat")
+  const linkAutocheckin = `${appOrigin}/minha-reserva/${resCode}?action=self_checkin`;
+
+  // Tag: {{mensagem_cafe_incluso}}
+  const hasBreakfast = Boolean(reservation.includeBreakfast || reservation.ratePlan === "with_breakfast");
+  const mensagemCafeIncluso = hasBreakfast
+    ? `🥐 *Café da Manhã Incluso:*\nSua diária inclui nosso café da manhã artesanal servido exclusivamente no seu flat! Monte a sua bandeja até às 22h pelo link:\n👉 ${linkCafeManha}`
+    : "";
+
+  // Tag: {{mensagem_pendencia_hospedes}} (Lógica de 1 vs 2 hóspedes)
+  const isMultiGuest = (reservation.guestCount > 1 || reservation.adults > 1);
+  const firstGuestDone = Boolean(reservation.guests?.[0]?.hasCompletedCheckin || reservation.guests?.[0]?.status === "CHECKED_IN");
+  let mensagemPendenciaHospedes = "Para que a portaria do condomínio libere sua entrada imediatamente na chegada, pedimos que adiante o cadastro dos hóspedes pelo link abaixo:";
+  if (isMultiGuest && firstGuestDone) {
+    mensagemPendenciaHospedes = `Recebemos com sucesso a ficha de Check-in Digital do(a) *${guest.firstName || guest.name}*, porém ainda está pendente o cadastro do *2º hóspede* para autorização na portaria.\n\nPor favor, repasse este link ao segundo acompanhante para preenchimento:\n👉 ${linkCheckinDigital}\n\n💡 _Caso vá viajar sozinho(a), basta confirmar em seu portal ou responder por aqui para atualizarmos sua reserva para 1 hóspede sem pendências._`;
+  }
+
+  // Tag: {{aviso_checkin_pendente}}
+  const allCheckedIn = Boolean(reservation.checkedInAt || (reservation.guests && reservation.guests.length > 0 && reservation.guests.every(g => g.hasCompletedCheckin)));
+  const avisoCheckinPendente = !allCheckedIn
+    ? `⚠️ *Atenção:* Sua ficha de Pré-Check-in Digital ainda está pendente. Para evitar filas e atrasos na portaria 24h, preencha antecipadamente:\n👉 ${linkCheckinDigital}`
+    : "";
+
   const tagsMap = {
-        "{{nome_hospede}}": guestName,
+    "{{nome_hospede}}": guestName,
     "{{primeiro_nome}}": firstName,
     "{{telefone_hospede}}": guest.phone || "",
     "{{nome_solicitante}}": requester.name,
@@ -1181,6 +1294,10 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{link_cafe_manha}}": linkCafeManha,
     "{{link_checkout}}": linkCheckout,
     "{{link_avaliacao_google}}": googleReviewUrl,
+    "{{link_autocheckin}}": linkAutocheckin,
+    "{{mensagem_cafe_incluso}}": mensagemCafeIncluso,
+    "{{mensagem_pendencia_hospedes}}": mensagemPendenciaHospedes,
+    "{{aviso_checkin_pendente}}": avisoCheckinPendente,
     "{{link_guia_hospede}}": zapiCfg.guestGuidePdfUrl || `${appOrigin}/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf`,
     "{{link_manual_hospede}}": zapiCfg.guestGuidePdfUrl || `${appOrigin}/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf`,
     "{{early_checkin_beneficio}}": earlyCheckinBeneficio,
@@ -1841,6 +1958,15 @@ export function calculateScheduledTime(template, reservation, db) {
 
   if (timing === "after_event") {
     return new Date(baseTarget + offsetMs).toISOString();
+  }
+
+  if (timing === "after_creation") {
+    const createdDate = reservation.createdAt ? new Date(reservation.createdAt) : now;
+    const offsetMultiplier = template.offsetUnit === "days" 
+      ? 24 * 60 * 60 * 1000 
+      : (template.offsetUnit === "minutes" ? 60 * 1000 : 60 * 60 * 1000);
+    const offsetMs = (template.offsetValue || 1) * offsetMultiplier;
+    return new Date(createdDate.getTime() + offsetMs).toISOString();
   }
 
   return now.toISOString();
@@ -3154,28 +3280,71 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
             tpl.channels = ["site", "whatsapp", "booking", "airbnb", "outros"];
           }
         }
-        if (tpl.id === "tpl_checkin_completed") {
-          if (!tpl.documentName) tpl.documentName = "Manual_do_Hospede_CorpFlats.pdf";
-          if (tpl.documentUrl === undefined) tpl.documentUrl = "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf";
-          if (tpl.documentCaption === undefined) tpl.documentCaption = "Segue em anexo o Manual do Hóspede em PDF com todas as orientações! 📖";
-        }
-        if (tpl.id === "tpl_reservation_updated") {
-          // Atualiza automaticamente caso o template ainda contenha a lista estática que repetia todos os dados da reserva
-          if (!tpl.message.includes("{{resumo_alteracoes}}") || tpl.message.includes("• Quarto: *Flat {{quarto}}*")) {
-            const defUpd = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_reservation_updated");
-            if (defUpd) {
-              tpl.title = defUpd.title;
-              tpl.description = defUpd.description;
-              tpl.message = defUpd.message;
-              tpl.buttons = defUpd.buttons;
+        if (tpl.id === "tpl_pre_reserva") {
+          tpl.recipientTarget = "requester";
+          tpl.channels = ["site", "whatsapp", "outros"];
+          if (!tpl.message.includes("Aguardando Pagamento")) {
+            const defPre = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_reserva");
+            if (defPre) {
+              tpl.title = defPre.title;
+              tpl.description = defPre.description;
+              tpl.message = defPre.message;
             }
           }
         }
-        if (tpl.id === "tpl_breakfast_reminder") {
-          if (!tpl.message.includes("restaurante")) {
-            const defB = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_breakfast_reminder");
-            if (defB) {
-              tpl.message = defB.message;
+        if (tpl.id === "tpl_payment_pending") {
+          tpl.recipientTarget = "requester";
+          tpl.triggerTiming = "after_creation";
+          tpl.offsetValue = 1;
+          tpl.offsetUnit = "hours";
+          tpl.channels = ["site", "whatsapp", "outros"];
+        }
+        if (tpl.id === "tpl_payment_confirmed") {
+          tpl.channels = ["site", "whatsapp"];
+          tpl.recipientTarget = "both";
+        }
+        if (tpl.id === "tpl_checkin_day_instructions") {
+          tpl.fixedTime = "07:00";
+          if (!tpl.message.includes("link_autocheckin")) {
+            const defChk = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_checkin_day_instructions");
+            if (defChk) {
+              tpl.title = defChk.title;
+              tpl.description = defChk.description;
+              tpl.message = defChk.message;
+              tpl.buttons = defChk.buttons;
+            }
+          }
+        }
+        if (tpl.id === "tpl_pre_checkin_reminder") {
+          if (!tpl.message.includes("mensagem_pendencia_hospedes")) {
+            const defRem = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_checkin_reminder");
+            if (defRem) {
+              tpl.message = defRem.message;
+              tpl.description = defRem.description;
+            }
+          }
+        }
+        if (tpl.id === "tpl_nps_satisfaction_check") {
+          tpl.offsetValue = 24;
+          tpl.offsetUnit = "hours";
+          tpl.title = "Pós Check-out (24h) • Pesquisa de Satisfação (Filtro NPS)";
+        }
+        if (tpl.id === "tpl_new_reservation_direct") {
+          if (!tpl.message.includes("10:00 da manhã")) {
+            const defDir = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_new_reservation_direct");
+            if (defDir) {
+              tpl.message = defDir.message;
+              tpl.description = defDir.description;
+            }
+          }
+        }
+        if (tpl.id === "tpl_new_reservation_ota") {
+          if (tpl.message.includes("{{valor_total}}") || !tpl.message.includes("12:00")) {
+            const defOta = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_new_reservation_ota");
+            if (defOta) {
+              tpl.message = defOta.message;
+              tpl.title = defOta.title;
+              tpl.description = defOta.description;
             }
           }
         }
@@ -4785,16 +4954,59 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           saveDatabase();
           continue;
         }
-        // Revalidação de segurança: se o template desautorizou este canal após o agendamento
-        const tpl = (db.whatsappTemplates || []).find(t => t.id === item.templateId);
-        const itemChannel = item.channel || (db.reservations || []).find(r => r.id === item.reservationId || r.code === item.reservationCode)?.channel;
-        if (tpl && itemChannel && !isTemplateAllowedForChannel(tpl, itemChannel)) {
-          console.log(`[Auto-WhatsApp] Cancelando disparo agendado de ${item.guestName}: canal '${itemChannel}' desativado no template '${tpl.title}'`);
-          item.status = "cancelled";
-          item.error = `Canal '${itemChannel}' desativado nas regras do template`;
-          item.updatedAt = nowIso;
-          saveDatabase();
-          continue;
+        // Checagem dinâmica: se for lembrete de pagamento pendente (+1h) e a reserva já foi paga ou confirmada
+        if (item.triggerEvent === "payment_pending") {
+          const isPaidOrConfirmed = resv && (
+            resv.paymentStatus === "pago" || 
+            resv.paymentStatus === "pago_total" || 
+            resv.status === "confirmada" ||
+            resv.status === "checkin" ||
+            resv.status === "cancelada"
+          );
+          if (isPaidOrConfirmed) {
+            console.log(`[Auto-WhatsApp] Descartando cobrança para ${item.guestName}: reserva já foi quitada ou confirmada.`);
+            item.status = "cancelled";
+            item.error = "Cancelado: reserva já paga ou confirmada";
+            item.updatedAt = nowIso;
+            saveDatabase();
+            continue;
+          }
+        }
+
+        // Checagem dinâmica: se for lembrete de pré-checkin e todos os hóspedes já preencheram
+        if (item.triggerEvent === "pre_checkin_reminder") {
+          const isCheckinDone = resv && (
+            resv.checkedInAt || 
+            (Array.isArray(resv.guests) && resv.guests.length > 0 && resv.guests.every(g => g.hasCompletedCheckin))
+          );
+          if (isCheckinDone) {
+            console.log(`[Auto-WhatsApp] Descartando lembrete de pré-checkin para ${item.guestName}: ficha já preenchida.`);
+            item.status = "cancelled";
+            item.error = "Cancelado: check-in digital já preenchido";
+            item.updatedAt = nowIso;
+            saveDatabase();
+            continue;
+          }
+        }
+
+        // Checagem dinâmica: se for lembrete de café da manhã e o hóspede já fez o pedido de amanhã
+        if (item.triggerEvent === "breakfast_reminder") {
+          const tomorrowDate = new Date(brDate);
+          tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+          const tomorrowStr = tomorrowDate.toISOString().substring(0, 10);
+          const alreadyOrdered = (db.breakfastOrders || []).some(o =>
+            (o.reservationId === resv?.id || o.reservationCode === resv?.code) &&
+            o.date === tomorrowStr &&
+            o.status !== "cancelled"
+          );
+          if (alreadyOrdered) {
+            console.log(`[Auto-WhatsApp] Descartando lembrete de café da manhã para ${item.guestName}: pedido de amanhã já realizado.`);
+            item.status = "cancelled";
+            item.error = "Cancelado: pedido de café de amanhã já realizado";
+            item.updatedAt = nowIso;
+            saveDatabase();
+            continue;
+          }
         }
 
                 console.log(`[Auto-WhatsApp] Disparando agendamento automático para ${item.recipientName || item.guestName} (${item.recipientType === 'requester' ? 'Solicitante' : 'Hóspede'} / ${item.triggerEvent} / Canal: ${itemChannel || 'Padrão'})...`);
@@ -4872,8 +5084,8 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
   const activeTemplates = db.whatsappTemplates.filter(t => t.enabled && t.triggerTiming !== "immediate");
   if (activeTemplates.length === 0) return;
 
-  // NUNCA processar reservas antigas que já terminaram no passado (checkout < hoje)
-  const confirmedReservations = (db.reservations || []).filter(r => 
+  // Processar reservas ativas/futuras (confirmadas e pré-reservas pendentes)
+  const reservationsToProcess = (db.reservations || []).filter(r => 
     r.status !== "cancelada" && 
     r.status !== "cancelled" && 
     r.status !== "CANCELLED" && 
@@ -4884,7 +5096,7 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
 
   let hasChanges = false;
 
-  for (const resv of confirmedReservations) {
+  for (const resv of reservationsToProcess) {
     const isCompletedOrCheckedOut = resv.status === "completed" || resv.status === "checkout" || Boolean(resv.checkoutDone);
     const resvChannel = resv.channel || resv.source || "site";
     const recipients = getReservationRecipients(resv, db);
@@ -4895,13 +5107,49 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
         continue;
       }
 
-      // 1. Verifica se o canal da reserva está permitido no template
-      if (!isTemplateAllowedForChannel(tpl, resvChannel)) {
-        continue;
+      // 1. Filtro de Pré-Reserva: tpl_payment_pending só agenda se ainda estiver pendente/pré-reserva
+      if (resv.status === "pre_reserva" || resv.paymentStatus === "pendente") {
+        if (tpl.triggerEvent !== "payment_pending") {
+          continue;
+        }
+      } else {
+        // Se a reserva já está confirmada/paga, nunca agendar payment_pending
+        if (tpl.triggerEvent === "payment_pending") {
+          continue;
+        }
       }
 
-      // 2. Ignora café da manhã se reserva não inclui café
-      if (tpl.triggerEvent === "breakfast_reminder" && !resv.includeBreakfast) {
+      // 2. Filtro de Pré-Check-in: só agenda para quem ainda não concluiu o check-in digital
+      if (tpl.triggerEvent === "pre_checkin_reminder") {
+        const isCheckinDone = Boolean(
+          resv.checkedInAt || 
+          (Array.isArray(resv.guests) && resv.guests.length > 0 && resv.guests.every(g => g.hasCompletedCheckin))
+        );
+        if (isCheckinDone) {
+          continue;
+        }
+      }
+
+      // 3. Filtro de Café da Manhã: só agenda se tiver café contratado e ainda não tiver pedido para amanhã
+      if (tpl.triggerEvent === "breakfast_reminder") {
+        if (!resv.includeBreakfast && resv.ratePlan !== "with_breakfast") {
+          continue;
+        }
+        const tomorrowDate = new Date(brDate);
+        tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+        const tomorrowStr = tomorrowDate.toISOString().substring(0, 10);
+        const alreadyOrderedTomorrow = (db.breakfastOrders || []).some(o =>
+          (o.reservationId === resv.id || o.reservationCode === resv.code) &&
+          o.date === tomorrowStr &&
+          o.status !== "cancelled"
+        );
+        if (alreadyOrderedTomorrow) {
+          continue;
+        }
+      }
+
+      // 4. Verifica se o canal da reserva está permitido no template
+      if (!isTemplateAllowedForChannel(tpl, resvChannel)) {
         continue;
       }
 
@@ -5284,15 +5532,94 @@ export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId,
       const resvChannel = normalizeReservationChannel(resv.channel || resv.source || "site");
       const isOtaChannel = resvChannel === "booking" || resvChannel === "airbnb";
 
-      // OTA: só dispara "room_ready_ota" se ainda não chegou o horário padrão de check-in
-      // (evita enviar duplicado — o cron do dia já dispara às 14:00 se não houve limpeza antes)
+      // 1. Regra para OTAs (Booking / Airbnb): Liberação a partir das 12:00
       if (isOtaChannel) {
-        const [ciHour, ciMin] = checkinTime.split(":").map(Number);
-        const checkinDateTime = new Date();
-        checkinDateTime.setHours(ciHour, ciMin, 0, 0);
-        // Só notifica via room_ready_ota se ainda não chegou a hora do check-in normal
-        if (now >= checkinDateTime) {
-          console.log(`[Room Ready OTA] Flat ${flatNumber} limpo mas já são ${now.toLocaleTimeString("pt-BR")} — disparo OTA pelo cron do check-in.`);
+        const otaEarliest = new Date();
+        otaEarliest.setHours(12, 0, 0, 0);
+
+        if (now < otaEarliest) {
+          console.log(`[Room Ready OTA] Flat ${flatNumber} limpo antes das 12:00 (${now.toLocaleTimeString("pt-BR")}). Agendando disparo para as 12:00 pontualmente.`);
+          if (!db.whatsappQueue) db.whatsappQueue = [];
+          const defTpl = (db.whatsappTemplates || []).find(t => t.id === "tpl_room_ready_ota") ||
+                         DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_room_ready_ota");
+          const alreadyQueued = db.whatsappQueue.some(q =>
+            (q.reservationCode === resv.code || q.reservationId === resv.id) &&
+            q.triggerEvent === "room_ready_ota" &&
+            (q.status === "scheduled" || q.status === "sent")
+          );
+          if (!alreadyQueued && defTpl) {
+            const renderedMessage = resolveWhatsAppTags(defTpl.message, resv, db, baseUrl, "guest");
+            const renderedButtons = (defTpl.buttons || []).map(b => ({
+              ...b,
+              url: b.url ? resolveWhatsAppTags(b.url, resv, db, baseUrl, "guest") : undefined
+            }));
+            db.whatsappQueue.push({
+              id: `q_ota_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+              reservationId: resv.id,
+              reservationCode: resv.code,
+              guestName: resv.guestName,
+              guestPhone: resv.guestPhone,
+              recipientType: "guest",
+              recipientName: resv.guestName,
+              channel: resvChannel,
+              triggerEvent: "room_ready_ota",
+              templateId: defTpl.id,
+              title: defTpl.title,
+              footer: defTpl.footer,
+              scheduledFor: otaEarliest.toISOString(),
+              status: "scheduled",
+              sentAt: null,
+              renderedMessage,
+              renderedButtons,
+              createdAt: now.toISOString()
+            });
+            if (typeof saveDatabase === "function") saveDatabase();
+          }
+          continue;
+        }
+      } else {
+        // 2. Regra para Diretas (Site / WhatsApp): Early Check-in a partir das 10:00
+        const directEarliest = new Date();
+        directEarliest.setHours(10, 0, 0, 0);
+
+        if (now < directEarliest) {
+          console.log(`[Room Ready Direct] Flat ${flatNumber} limpo antes das 10:00 (${now.toLocaleTimeString("pt-BR")}). Agendando disparo de early check-in para as 10:00 pontualmente.`);
+          if (!db.whatsappQueue) db.whatsappQueue = [];
+          const defTpl = (db.whatsappTemplates || []).find(t => t.id === "tpl_room_ready_direct") ||
+                         DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_room_ready_direct");
+          const alreadyQueued = db.whatsappQueue.some(q =>
+            (q.reservationCode === resv.code || q.reservationId === resv.id) &&
+            q.triggerEvent === "room_ready" &&
+            (q.status === "scheduled" || q.status === "sent")
+          );
+          if (!alreadyQueued && defTpl) {
+            const renderedMessage = resolveWhatsAppTags(defTpl.message, resv, db, baseUrl, "guest");
+            const renderedButtons = (defTpl.buttons || []).map(b => ({
+              ...b,
+              url: b.url ? resolveWhatsAppTags(b.url, resv, db, baseUrl, "guest") : undefined
+            }));
+            db.whatsappQueue.push({
+              id: `q_direct_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+              reservationId: resv.id,
+              reservationCode: resv.code,
+              guestName: resv.guestName,
+              guestPhone: resv.guestPhone,
+              recipientType: "guest",
+              recipientName: resv.guestName,
+              channel: resvChannel,
+              triggerEvent: "room_ready",
+              templateId: defTpl.id,
+              title: defTpl.title,
+              footer: defTpl.footer,
+              scheduledFor: directEarliest.toISOString(),
+              status: "scheduled",
+              sentAt: null,
+              renderedMessage,
+              renderedButtons,
+              createdAt: now.toISOString()
+            });
+            if (typeof saveDatabase === "function") saveDatabase();
+          }
           continue;
         }
       }

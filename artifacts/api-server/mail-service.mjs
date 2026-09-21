@@ -256,11 +256,37 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings }) {
     reservation?.notes ? `Obs: ${reservation.notes}` : null
   ].filter(Boolean).join(" • ");
 
+  const expectedGuests = Number(reservation?.guestCount || reservation?.adults || guests.length || 1);
+  const completedGuests = guests.filter(g => g.hasCompletedCheckin || g.cpf || g.document).length;
+  const isPendingSecondGuest = expectedGuests > 1 && completedGuests < expectedGuests;
+
   const contentHtml = `
+    <!-- Divulgação da Tela da Recepção / Portaria (Tablet / Web) -->
+    <div style="background: linear-gradient(135deg, #1e1b4b 0%, #312e81 100%); border-radius: 12px; padding: 18px 20px; margin-bottom: 20px; color: #ffffff; text-align: center; border: 1px solid #4338ca;">
+      <div style="font-size: 11px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: #a5b4fc; margin-bottom: 4px;">Painel da Recepção & Portaria 24h</div>
+      <div style="font-size: 15px; font-weight: 800; color: #ffffff; margin-bottom: 6px;">Consulte Detalhes no Terminal da Portaria</div>
+      <p style="font-size: 12px; color: #c7d2fe; margin: 0 0 12px 0; line-height: 1.4;">
+        Acesse pelo tablet ou computador da portaria para conferência de documentos, fotos dos hóspedes e baixa rápida de entrada.
+      </p>
+      <a href="https://corpflats.onrender.com/portaria" style="display: inline-block; background: #f59e0b; color: #0f172a !important; font-weight: 800; font-size: 13px; padding: 9px 20px; border-radius: 8px; text-decoration: none; box-shadow: 0 2px 8px rgba(0,0,0,0.2);">
+        🖥️ Abrir Terminal da Portaria (/portaria)
+      </a>
+    </div>
+
+    ${isPendingSecondGuest ? `
+      <!-- Alerta de 2 Hóspedes com apenas 1 Ficha Preenchida -->
+      <div style="background: #fffbeb; border: 1px solid #fde68a; border-left: 4px solid #f59e0b; border-radius: 8px; padding: 12px 14px; margin-bottom: 16px;">
+        <strong style="color: #92400e; font-size: 13px;">⚠️ ATENÇÃO PORTARIA: RESERVA PARA ${expectedGuests} HÓSPEDES</strong>
+        <p style="color: #78350f; font-size: 12px; margin: 4px 0 0 0; line-height: 1.4;">
+          Dados do 1º hóspede recebidos. Os dados do segundo hóspede ainda estão pendentes e serão enviados assim que o formulário digital for submetido.
+        </p>
+      </div>
+    ` : ""}
+
     <div style="margin-bottom: 20px;">
-      <h2 style="font-size: 17px; font-weight: 800; color: #0f172a; margin: 0 0 6px 0;">Olá, Equipe de Recepção / Portaria!</h2>
+      <h2 style="font-size: 17px; font-weight: 800; color: #0f172a; margin: 0 0 6px 0;">Olá, Equipe de Recepção & Portaria!</h2>
       <p style="font-size: 13px; color: #475569; margin: 0; line-height: 1.5;">
-        O hóspede concluiu o formulário de <strong>Check-in Digital (FNHR)</strong>. Seguem todos os dados cadastrais e de acesso para a devida liberação na portaria:
+        Segue o informativo cadastral da reserva referente ao <strong>Flat ${flatNumber}</strong> no condomínio <strong>${buildingName}</strong>:
       </p>
     </div>
 
@@ -522,6 +548,7 @@ export function sendEmailAsync({
   type = "email",
   direction = "outbound",
   metadata = {},
+  attachments = [],
   overrides = {}
 }) {
   if (!recipient || !subject) {
@@ -554,6 +581,8 @@ export function sendEmailAsync({
       ...metadata,
       cc: cc ? String(cc).trim() : undefined,
       bcc: bcc ? String(bcc).trim() : undefined,
+      hasAttachments: Array.isArray(attachments) && attachments.length > 0,
+      attachmentsCount: Array.isArray(attachments) ? attachments.length : 0,
       attempts: 1,
       queuedAt: now
     },
@@ -588,7 +617,8 @@ export function sendEmailAsync({
         ...(bcc ? { bcc: String(bcc).trim() } : {}),
         subject: subject.trim(),
         html: finalHtml || `<p>${bodyText}</p>`,
-        text: bodyText || subject
+        text: bodyText || subject,
+        ...(Array.isArray(attachments) && attachments.length > 0 ? { attachments } : {})
       };
 
       const info = await transporter.sendMail(mailOptions);

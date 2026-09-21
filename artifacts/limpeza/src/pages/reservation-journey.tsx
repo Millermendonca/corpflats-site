@@ -75,22 +75,24 @@ export interface JourneyNode {
 // ── Base de Conhecimento: Todos os Nós da Jornada Cadastrados no Sistema ───────
 
 export const JOURNEY_NODES: JourneyNode[] = [
-  // ── ETAPA 1 & 2: CRIAÇÃO & PRÉ-RESERVA ─────────────────────────────────────
+  // ── ETAPA 1: CRIAÇÃO & PRÉ-RESERVA ─────────────────────────────────────────
   {
     id: "node_pre_reserva",
     stageNumber: 1,
     stageName: "1. Criação de Reserva",
-    title: "Pré-Reserva • PIX & Dados de Pagamento",
-    subtitle: "Aguardando pagamento / Reserva criada sem quitação",
+    title: "Pré-Reserva • Aguardando Pagamento para Confirmação",
+    subtitle: "Enviado exclusivamente ao Solicitante (ou Hóspede 1 se sem solicitante)",
     triggerEvent: "pre_reservation_created",
     channelType: "whatsapp",
-    recipients: ["hospede", "solicitante"],
+    recipients: ["solicitante"],
     timingLabel: "Imediato ao registrar",
     condition: "Reserva sem pagamento ou com sinal pendente",
-    channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
-    description: "Disparado para reservas que entram como pré-reserva (não pagas). Envia dados completos da estadia, chave PIX oficial e link do portal para pagamento via cartão em até 12x.",
-    messagePreview: `Olá, *{{nome_hospede}}*! ⏳
+    channelsAllowed: ["site", "whatsapp", "outros"],
+    description: "Disparado para reservas que entram como pré-reserva (não pagas). Acrescenta a informação explícita de que a reserva está aguardando pagamento para confirmação definitiva. Enviada apenas para o Solicitante (se não houver solicitante cadastrado, é enviada para o Hóspede 1).",
+    messagePreview: `Olá, *{{nome_destinatario}}*! ⏳
 Recebemos o pedido de *Pré-Reserva* no *{{nome_hotel}}*!
+
+⚠️ *Importante:* Esta reserva está *Aguardando Pagamento para Confirmação Definitiva*.
 
 📋 *Resumo da Estadia:*
 • Código da Reserva: *{{numero_reserva}}*
@@ -102,11 +104,13 @@ Recebemos o pedido de *Pré-Reserva* no *{{nome_hotel}}*!
 • Valor Total: *{{valor_total}}*
 • Quanto Falta Pagar: *{{quanto_falta}}*
 
-🔑 *Chave PIX (CNPJ):* 47.964.813/0001-65
-• Favorecido: CorpFlats Hospedagem`,
+🔑 *Chave PIX (CNPJ):* {{chave_pix}}
+• Favorecido: {{titular_pix}}
+
+Para garantir sua acomodação antes da liberação das datas, pague via PIX acima ou parcele no cartão em até 12x:`,
     buttons: [
-      { label: "💳 Ver Reserva & Pagar", type: "URL", url: "https://.../portal-hospede/RES-..." },
-      { label: "📞 Falar com Atendimento", type: "CALL" }
+      { label: "💳 Ver Reserva & Pagar", type: "URL", url: "{{link_portal_hospede}}" },
+      { label: "📞 Falar com Atendimento", type: "CALL", url: "{{telefone_hotel}}" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_pre_reserva",
     category: "pagamento"
@@ -115,58 +119,98 @@ Recebemos o pedido de *Pré-Reserva* no *{{nome_hotel}}*!
     id: "node_payment_pending",
     stageNumber: 1,
     stageName: "1. Criação de Reserva",
-    title: "Cobrança • Lembrete de Pagamento Pendente",
-    subtitle: "Garante a vaga antes da expiração",
+    title: "Cobrança • Lembrete 1h Pós Pré-Reserva",
+    subtitle: "Disparado 1 hora após a criação se ainda não paga",
     triggerEvent: "payment_pending",
     channelType: "whatsapp",
-    recipients: ["hospede"],
-    timingLabel: "Imediato ou conforme expiração",
-    condition: "Status 'Aguardando Pagamento'",
+    recipients: ["solicitante"],
+    timingLabel: "1 hora após criação da pré-reserva",
+    condition: "Status 'pre_reserva' ou saldo pendente após 60 minutos",
     channelsAllowed: ["site", "whatsapp"],
-    description: "Envia reforço do link de pagamento seguro para o hóspede não perder as datas reservadas no motor direto.",
-    messagePreview: `Olá, *{{nome_hospede}}*! ⏳
-Sua pré-reserva no *{{nome_hotel}}* foi recebida e está *Aguardando Pagamento* para confirmação definitiva:
+    description: "Enviado pontualmente 1 hora após a criação da pré-reserva, apenas se em 1 hora ela ainda não tiver sido paga ou o status ainda estiver como pré-reserva. Enviada exclusivamente para o Solicitante (ou Hóspede 1 se não houver solicitante).",
+    messagePreview: `Olá, *{{nome_destinatario}}*! ⏳
+Sua pré-reserva no *{{nome_hotel}}* (*Flat {{quarto}}*) foi gerada há 1 hora e permanece *Aguardando Pagamento* para confirmação definitiva.
 
 📋 *Detalhes da Estadia:*
-• Código: *{{numero_reserva}}* • Flat: *{{quarto}}*
+• Código: *{{numero_reserva}}*
 • Período: *{{data_checkin}} a {{data_checkout}}*
-• Valor Pendente: *{{valor_total}}*
+• Valor Pendente: *{{quanto_falta}}*
 
-Para garantir sua acomodação, realize o pagamento via PIX ou em até 12x no cartão pelo portal:`,
+🔑 *Chave PIX (CNPJ):* {{chave_pix}}
+• Favorecido: {{titular_pix}}
+
+Para garantir sua acomodação antes que as datas sejam liberadas, pague via PIX ou parcele em até 12x no cartão:`,
     buttons: [
-      { label: "💳 Pagar e Confirmar", type: "URL", url: "https://.../portal-hospede/RES-..." },
-      { label: "🏨 Ver Minha Reserva", type: "URL", url: "https://.../portal-hospede/RES-..." }
+      { label: "💳 Pagar e Confirmar", type: "URL", url: "{{link_portal_hospede}}" },
+      { label: "🏨 Ver Minha Reserva", type: "URL", url: "{{link_portal_hospede}}" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_payment_pending",
+    category: "pagamento"
+  },
+
+  // ── ETAPA 2: CONFIRMAÇÃO & PAGAMENTO ───────────────────────────────────────
+  {
+    id: "node_additional_daily_pending",
+    stageNumber: 2,
+    stageName: "2. Confirmação & Pagamento",
+    title: "Diária Extra / Alteração • Cobrança Pendente",
+    subtitle: "Disparado para qualquer canal (inclusive Booking e Airbnb)",
+    triggerEvent: "additional_daily_pending",
+    channelType: "whatsapp",
+    recipients: ["hospede", "solicitante"],
+    timingLabel: "Imediato à inclusão da diária extra/saldo",
+    condition: "Acréscimo de diária ou saldo pendente em reserva existente",
+    channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    description: "Se uma reserva de qualquer origem (inclusive Booking ou Airbnb) solicita mais 1 diária pelo WhatsApp ou altera a estadia com saldo a pagar, dispara mensagem informando a alteração, período atualizado, valor pendente e chave PIX/link para quitação.",
+    messagePreview: `Olá, *{{nome_destinatario}}*! 🔄✨
+Confirmamos a solicitação de alteração/extensão da sua estadia no *{{nome_hotel}}* (*Flat {{quarto}}*)!
+
+📋 *Resumo Atualizado da Hospedagem:*
+• Código da Reserva: *{{numero_reserva}}*
+• Período: *{{data_checkin}} até {{data_checkout}}*
+• Total de Noites: *{{num_diarias}}*
+
+💰 *Saldo Pendente da Alteração:*
+• Valor a Quitar: *{{quanto_falta}}*
+
+🔑 *Chave PIX (CNPJ):* {{chave_pix}}
+• Favorecido: {{titular_pix}}
+
+Efetue o pagamento pelo PIX acima ou parcele no cartão pelo seu portal:`,
+    buttons: [
+      { label: "💳 Pagar Saldo Pendente", type: "URL", url: "{{link_portal_hospede}}" },
+      { label: "🏨 Ver Reserva Atualizada", type: "URL", url: "{{link_portal_hospede}}" }
+    ],
+    editUrl: "/whatsapp?tab=rules&tpl=tpl_additional_daily_pending",
     category: "pagamento"
   },
   {
     id: "node_payment_confirmed",
     stageNumber: 2,
     stageName: "2. Confirmação & Pagamento",
-    title: "Pagamento Confirmado • Reserva Garantida",
-    subtitle: "Disparo ao identificar PIX ou Cartão",
+    title: "Pagamento Confirmado • Pré-Reserva Convertida (Site / WhatsApp)",
+    subtitle: "Apenas canais diretos e somente na transição de pré para confirmada",
     triggerEvent: "payment_confirmed",
     channelType: "whatsapp",
-    recipients: ["hospede"],
-    timingLabel: "Imediato após conciliação",
-    condition: "PIX aprovado no Inter ou Cartão aprovado",
-    channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
-    description: "Confirma o recebimento financeiro, formaliza a reserva e convida o hóspede a realizar a ficha de pré-check-in digital.",
+    recipients: ["hospede", "solicitante"],
+    timingLabel: "Imediato à compensação do pagamento",
+    condition: "Reserva direta que muda de status 'pre_reserva' para 'confirmada'",
+    channelsAllowed: ["site", "whatsapp"],
+    description: "Enviada para o solicitante e o hóspede exclusivamente em reservas do Site ou WhatsApp quando o status for convertido de pré-reserva para confirmada. Reservas do Booking/Airbnb NUNCA recebem esta mensagem nem menções a valores ou contas bancárias.",
     messagePreview: `Olá, *{{primeiro_nome}}*! 💚🎉
 Confirmamos o recebimento do seu pagamento de *{{valor_pago}}* via *{{forma_pagamento}}*!
 
-Sua reserva no *{{nome_hotel}}* está *Garantida & Confirmada*!
+Sua pré-reserva no *{{nome_hotel}}* agora está *Confirmada & Garantida*!
 
 📋 *Resumo da Estadia:*
 • Código da Reserva: *{{numero_reserva}}*
 • Acomodação: *Flat {{quarto}}*
 • Entrada: *{{data_checkin}}* • Saída: *{{data_checkout}}*
 
-Realize agora seu pré-checkin digital para liberação rápida na portaria!`,
+Realize agora seu pré-checkin digital para liberação rápida na portaria:`,
     buttons: [
-      { label: "📝 Fazer Check-in Online", type: "URL", url: "https://.../pre-checkin/RES-..." },
-      { label: "🏨 Portal do Hóspede", type: "URL", url: "https://.../portal-hospede/RES-..." }
+      { label: "📝 Fazer Check-in Online", type: "URL", url: "{{link_checkin_digital}}" },
+      { label: "🏨 Portal do Hóspede", type: "URL", url: "{{link_portal_hospede}}" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_payment_confirmed",
     category: "pagamento"
@@ -175,28 +219,29 @@ Realize agora seu pré-checkin digital para liberação rápida na portaria!`,
     id: "node_res_created_direct",
     stageNumber: 2,
     stageName: "2. Confirmação & Pagamento",
-    title: "Nova Reserva (Site / WhatsApp) • Early Check-in Cortesia",
-    subtitle: "Boas-vindas para canais diretos de venda",
+    title: "Nova Reserva Direta (Site / WhatsApp) • Early Check-in às 10:00",
+    subtitle: "Criada antes do dia da chegada com flat já definido",
     triggerEvent: "reservation_created",
     channelType: "whatsapp",
     recipients: ["hospede", "solicitante"],
-    timingLabel: "Imediato à confirmação",
-    condition: "Origem: Site Oficial ou WhatsApp",
+    timingLabel: "Imediato (feita até 23:59 da véspera)",
+    condition: "Origem Site ou WhatsApp confirmada",
     channelsAllowed: ["site", "whatsapp"],
-    description: "Gera fidelização imediata informando o número do flat e concedendo o benefício de Early Check-in sem custo conforme disponibilidade de limpeza.",
+    description: "Confirma a reserva com número do flat e benefício exclusivo de Early Check-in a partir das 10:00 da manhã mediante liberação de limpeza (se o flat for higienizado antes das 10h, o disparo é segurado e enviado pontualmente às 10:00).",
     messagePreview: `Olá, *{{nome_hospede}}*! 🌟✨
 Sua reserva no *{{nome_hotel}}* está *Confirmada*!
 
 📋 *Resumo da sua Estadia:*
 • Código da Reserva: *{{numero_reserva}}*
 • Acomodação: *Flat {{quarto}}*
-• Entrada: *{{data_checkin}} a partir das 14:00*
-• Saída: *{{data_checkout}} até às 12:00*
+• Entrada (Check-in): *{{data_checkin}} a partir das 14:00*
+• Saída (Check-out): *{{data_checkout}} até às 12:00*
 
-🎁 *Benefício Reserva Direta:* Como você reservou pelo nosso canal direto, tem direito a *Early Check-in gratuito* se o apartamento for liberado antes pelas camareiras!`,
+🎁 *Benefício Exclusivo — Early Check-in a partir das 10:00:*
+Como você reservou diretamente pelo nosso canal, sua entrada está autorizada a partir das *10:00 da manhã* mediante liberação da limpeza! Assim que inspecionado, você receberá o aviso de quarto pronto.`,
     buttons: [
-      { label: "📝 Fazer Check-in Online", type: "URL", url: "https://.../pre-checkin/RES-..." },
-      { label: "🏨 Portal do Hóspede", type: "URL", url: "https://.../portal-hospede/RES-..." }
+      { label: "📝 Fazer Check-in Online", type: "URL", url: "{{link_checkin_digital}}" },
+      { label: "🏨 Portal do Hóspede", type: "URL", url: "{{link_portal_hospede}}" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_new_reservation_direct",
     category: "reserva"
@@ -205,31 +250,65 @@ Sua reserva no *{{nome_hotel}}* está *Confirmada*!
     id: "node_res_created_ota",
     stageNumber: 2,
     stageName: "2. Confirmação & Pagamento",
-    title: "Nova Reserva OTA (Booking / Airbnb) • Sem Revelar Flat",
-    subtitle: "Atribuição no dia + Conversão para venda direta futura",
+    title: "Nova Reserva OTA (Booking / Airbnb) • Sem Valores & Flat Oculto",
+    subtitle: "Check-in 14:00, checkout 12:00, flat liberado a partir das 12:00 se limpo",
     triggerEvent: "reservation_created",
     channelType: "whatsapp",
     recipients: ["hospede"],
-    timingLabel: "Imediato à confirmação",
-    condition: "Origem: Booking.com ou Airbnb",
+    timingLabel: "Imediato à confirmação da OTA",
+    condition: "Origem Booking.com ou Airbnb",
     channelsAllowed: ["booking", "airbnb"],
-    description: "Enviado a hóspedes de OTAs. Não revela o número do flat antecipadamente (informa que será definido no dia às 12h ou 14h) e promove descontos de reserva direta futura.",
+    description: "Reserva confirmada via OTA sem menção a pagamentos nem valores. Comunica check-in às 14:00 e check-out às 12:00, avisa que o flat será liberado a partir das 12:00 se limpo e promove o benefício de Early Check-in às 10:00 em reservas diretas futuras.",
     messagePreview: `Olá, *{{nome_hospede}}*! 🌟
 Sua reserva no *{{nome_hotel}}* está *Confirmada*!
 
-📋 *Resumo da Estadia:*
+📋 *Resumo da sua Estadia:*
 • Código da Reserva: *{{numero_reserva}}*
-• Entrada: *{{data_checkin}}* • Saída: *{{data_checkout}}*
+• Entrada (Check-in): *{{data_checkin}} a partir das 14:00*
+• Saída (Check-out): *{{data_checkout}} até às 12:00*
 
-🔑 *Sobre o seu apartamento:*
-O número do seu flat será informado no dia do check-in, até as 14:00 (ou a partir das 12:00 se já estiver higienizado).
+🔑 *Sobre o seu apartamento e liberação de entrada:*
+O número do seu flat e instruções de acesso serão enviados no dia da sua chegada *a partir das 12:00*, assim que preparado pela nossa governança.
 
-💡 *Dica:* Na próxima vez, reservando pelo nosso site ou WhatsApp você ganha Early Check-in cortesia e melhores tarifas sem taxas intermediárias!`,
+💡 *Dica CorpFlats:* Em suas próximas viagens, ao reservar diretamente pelo nosso site ou WhatsApp você ganha *Early Check-in gratuito a partir das 10:00*!`,
     buttons: [
-      { label: "📝 Fazer Check-in Online", type: "URL", url: "https://.../pre-checkin/RES-..." },
-      { label: "🏨 Portal do Hóspede", type: "URL", url: "https://.../portal-hospede/RES-..." }
+      { label: "📝 Fazer Check-in Online", type: "URL", url: "{{link_checkin_digital}}" },
+      { label: "🏨 Ver Minha Reserva", type: "URL", url: "{{link_portal_hospede}}" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_new_reservation_ota",
+    category: "reserva"
+  },
+  {
+    id: "node_sameday_reservation",
+    stageNumber: 2,
+    stageName: "2. Confirmação & Pagamento",
+    title: "Reserva no Mesmo Dia (após 07:01) • Disparo Único Consolidado",
+    subtitle: "Unifica confirmação + instruções de chegada em 1 mensagem",
+    triggerEvent: "sameday_reservation",
+    channelType: "whatsapp",
+    recipients: ["hospede"],
+    timingLabel: "Imediato para reservas criadas hoje após as 07:01",
+    condition: "Reserva criada na própria data de check-in a partir das 07:01",
+    channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    description: "Para reservas criadas no próprio dia do check-in após as 07:01, o sistema unifica a confirmação e as instruções de chegada numa única mensagem consolidada para evitar spam no WhatsApp do hóspede.",
+    messagePreview: `Olá, *{{primeiro_nome}}*! 🌟✨
+Confirmamos a sua chegada para *HOJE* no *{{nome_hotel}}*!
+
+📋 *Resumo da sua Hospedagem:*
+• Código da Reserva: *{{numero_reserva}}*
+• Acomodação: *Flat {{quarto}}*
+• Endereço: {{endereco_hotel}}
+• Wi-Fi: {{wifi_rede}} | Senha: {{wifi_senha}}
+
+{{mensagem_cafe_incluso}}
+
+👉 *Já está no hotel?* Confirme sua entrada pelo botão de auto check-in abaixo:`,
+    buttons: [
+      { label: "📍 Já Cheguei no Flat", type: "URL", url: "{{link_autocheckin}}" },
+      { label: "📝 Ficha de Check-in", type: "URL", url: "{{link_checkin_digital}}" },
+      { label: "📍 Abrir no Google Maps", type: "URL", url: "{{link_maps}}" }
+    ],
+    editUrl: "/whatsapp?tab=rules&tpl=tpl_sameday_reservation_instructions",
     category: "reserva"
   },
 
@@ -238,63 +317,73 @@ O número do seu flat será informado no dia do check-in, até as 14:00 (ou a pa
     id: "node_pre_checkin_reminder",
     stageNumber: 3,
     stageName: "3. Pré-Estadia (Véspera)",
-    title: "Lembrete 24h • Preenchimento da Ficha FNRH Digital",
-    subtitle: "Disparado 24 horas antes do horário de check-in",
+    title: "Lembrete 24h • Ficha FNRH (Tratativa Hóspede 1 vs 2 & Hóspede Único)",
+    subtitle: "Disparado 24h antes apenas para quem ainda não concluiu a ficha digital",
     triggerEvent: "pre_checkin_reminder",
     channelType: "whatsapp",
     recipients: ["hospede"],
     timingLabel: "24 horas antes do check-in",
-    condition: "Hóspede ainda não preencheu todos os dados",
+    condition: "Ficha incompleta. Trata 1 ou 2 hóspedes com opção de confirmar viagem individual",
     channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
-    description: "Relembra o hóspede de adiantar o cadastro dos hóspedes titulares, acompanhantes e veículo. Isso garante entrada sem filas nem burocracia na portaria do condomínio Soho.",
+    description: "Disparado apenas se a ficha digital estiver pendente. Se a reserva for para 2 hóspedes e o 1º já preencheu, o texto explica que o titular já completou e envia link para o 2º hóspede, além de oferecer botão/link para auto-declarar que viaja sozinho (ajustando a reserva para 1 hóspede).",
     messagePreview: `Olá, *{{primeiro_nome}}*! Tudo bem? ⏳
 Sua chegada ao *{{nome_hotel}}* está próxima (*{{data_checkin}}*)!
 
-Para que a portaria do Edifício Soho libere sua entrada imediatamente na chegada, pedimos que adiante o cadastro dos hóspedes pelo link seguro abaixo:`,
+{{mensagem_pendencia_hospedes}}
+
+Para que a portaria libere sua entrada imediatamente na chegada sem filas, acesse o link seguro:`,
     buttons: [
-      { label: "📝 Preencher Ficha Digital", type: "URL", url: "https://.../pre-checkin/RES-..." }
+      { label: "📝 Ficha Digital de Check-in", type: "URL", url: "{{link_checkin_digital}}" },
+      { label: "🏨 Ver Minha Reserva", type: "URL", url: "{{link_portal_hospede}}" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_pre_checkin_reminder",
     category: "pre_estadia"
   },
+
+  // ── ETAPA 4: DIA DO CHECK-IN & ENTRADA ─────────────────────────────────────
   {
-    id: "node_portaria_checkin_email",
-    stageNumber: 3,
-    stageName: "3. Pré-Estadia (Véspera)",
-    title: "E-mail de Ficha Cadastral à Recepção / Portaria",
-    subtitle: "Envio automático com dados completos, documentos e carro",
-    triggerEvent: "checkin_digital_completed",
+    id: "node_morning_checkin_email",
+    stageNumber: 4,
+    stageName: "4. Dia do Check-in (Manhã)",
+    title: "Rotina Matinal 07:00 • E-mail Recepção + Garagem com PDF da FNRH",
+    subtitle: "Envio individual com FNRH assinada, fotos, veículo e banner /portaria",
+    triggerEvent: "morning_checkin_07h",
     channelType: "email",
-    recipients: ["recepcao"],
-    timingLabel: "Assim que o hóspede preenche a FNRH",
-    condition: "Formulário de Pré-checkin submetido pelo hóspede",
+    recipients: ["recepcao", "garagem"],
+    timingLabel: "Pontualmente às 07:00 (ou imediato se preenchido após 07:00)",
+    condition: "Check-ins ativos do dia",
     channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
-    description: "E-mail HTML corporativo enviado à portaria do edifício (millerpessanha@gmail.com / recepção) com número do Flat, nomes dos hóspedes, fotos/documentos, placa do veículo e horário de check-in.",
-    messagePreview: `Assunto: [CHECK-IN CONFIRMADO] Flat {{quarto}} - {{nome_hospede}} ({{data_checkin}} a {{data_checkout}})
+    hasAttachment: true,
+    attachmentName: "FNRH_Assinada_Com_Auditoria.pdf",
+    description: "Disparado às 07:00 da manhã para cada check-in do dia, enviado conjuntamente para a Recepção e Garagem. Anexa o PDF da FNRH assinada digitalmente com auditoria e QR Code, foto, veículo, alerta destacado se apenas 1 de 2 hóspedes preencheu, e link chamativo para o Terminal da Portaria (/portaria). Se o pré-checkin for preenchido após as 07:00, é enviado imediatamente.",
+    messagePreview: `Assunto: [CHECK-IN DO DIA - 07:00] [CHECK-IN CONFIRMADO] Flat {{quarto}} - {{nome_hospede}} ({{data_checkin}} a {{data_checkout}})
 
-Olá, Equipe de Recepção / Portaria!
-O hóspede concluiu o formulário de Check-in Digital (FNRH). Seguem todos os dados cadastrais e de acesso para a devida liberação na portaria:
+🖥️ Painel da Recepção & Portaria 24h:
+Consulte detalhes no Terminal da Portaria: https://corpflats.onrender.com/portaria
 
-🏢 Unidade: Flat {{quarto}} (Edifício Soho Residence Service)
-📅 Entrada: {{data_checkin}} • Saída: {{data_checkout}}
-👥 Hóspedes Autorizados: Titular + Acompanhantes
-🚗 Veículo: Placa {{placa}} • {{modelo}}`,
+{{aviso_pendencia_segundo_hospede}}
+
+Olá, Equipe de Recepção & Portaria e Garagem!
+Segue o informativo cadastral da reserva referente ao Flat {{quarto}}:
+• Hóspedes Autorizados: Titular + Acompanhantes
+• Veículo Cadastrado: Placa {{placa}} • {{modelo}}
+• Documento Anexo: FNRH_{{codigo}}_Assinada.pdf com assinatura digital e auditoria forense.`,
     editUrl: "/emails",
-    category: "pre_estadia"
+    category: "checkin"
   },
   {
     id: "node_garagem_autorizacao",
-    stageNumber: 3,
-    stageName: "3. Pré-Estadia (Véspera)",
-    title: "Liberação de Vaga de Garagem • E-mail & WhatsApp",
-    subtitle: "Envio automático para o estacionamento PFB e portaria",
+    stageNumber: 4,
+    stageName: "4. Dia do Check-in (Manhã)",
+    title: "Liberação de Garagem • Atualização Pós-07:00",
+    subtitle: "Disparado se dados de veículo forem preenchidos/alterados após as 07:00",
     triggerEvent: "garage_authorized",
-    channelType: "both",
-    recipients: ["garagem", "recepcao"],
-    timingLabel: "Imediato se o hóspede cadastrou veículo",
-    condition: "Veículo informado com placa válida",
+    channelType: "email",
+    recipients: ["garagem"],
+    timingLabel: "Imediato se placa adicionada após a rotina das 07:00",
+    condition: "Veículo cadastrado ou placa alterada após as 07:00",
     channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
-    description: "Dispara autorização formal de vaga rotativa gratuita para a administração do estacionamento (PFB) e portaria contendo placa, modelo, cor, apartamento e período da estadia.",
+    description: "E-mail com autorização de vaga rotativa para o estacionamento Soho/PFB, acionado exclusivamente se o veículo for preenchido ou alterado após a rotina matinal das 07:00.",
     messagePreview: `Assunto: [LIBERAÇÃO DE GARAGEM] Flat {{quarto}} - {{nome_hospede}} - Veículo: {{placa}}
 
 Solicitamos a liberação de entrada e acesso à vaga rotativa para o veículo cadastrado:
@@ -304,37 +393,41 @@ Solicitamos a liberação de entrada e acesso à vaga rotativa para o veículo c
       { label: "🚗 Ver Controle de Garagem", type: "URL", url: "https://.../garagem" }
     ],
     editUrl: "/garagem",
-    category: "pre_estadia"
+    category: "checkin"
   },
-
-  // ── ETAPA 4: DIA DO CHECK-IN & ENTRADA ─────────────────────────────────────
   {
     id: "node_checkin_day_instructions",
     stageNumber: 4,
     stageName: "4. Dia do Check-in (Manhã)",
-    title: "Instruções de Chegada • Senha Wi-Fi & Portaria (09:00)",
-    subtitle: "Disparado pontualmente às 09:00 do dia da entrada",
+    title: "Dia do Check-in (07:00) • Instruções de Chegada & Auto Check-in",
+    subtitle: "Enviado às 07:00 com botão 'Já cheguei' e link de café (se incluso)",
     triggerEvent: "checkin_day_instructions",
     channelType: "whatsapp",
     recipients: ["hospede"],
-    timingLabel: "Dia do Check-in às 09:00",
-    condition: "Reserva confirmada com check-in hoje",
+    timingLabel: "Dia do Check-in às 07:00",
+    condition: "Reserva confirmada antes das 07:00 com check-in hoje",
     channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
-    description: "Orienta o hóspede no dia da viagem com endereço completo, link do Google Maps, instruções da portaria 24h e senhas de Wi-Fi para que a chegada seja perfeita.",
+    description: "Enviado pontualmente às 07:00 para reservas feitas antes desse horário. Fornece endereço, portaria, Wi-Fi, botão 'Já cheguei / Estou no Flat' para auto check-in e link de café da manhã SOMENTE se o café estiver incluso no plano contratado.",
     messagePreview: `Bom dia, *{{primeiro_nome}}*! ☀️
 Hoje é o dia da sua chegada ao *{{nome_hotel}}*!
 
 🔑 *Seu Flat:* {{quarto}}
-⏰ *Horário de Check-in:* A partir das 14:00
-📍 *Endereço:* Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes
+⏰ *Horário de Check-in:* A partir das {{horario_checkin}}
+📍 *Endereço:* {{endereco_hotel}}
 
-Ao chegar, dirija-se à portaria 24h e informe seu nome e o número do flat.
+Ao chegar, dirija-se à portaria 24h e informe seu nome e o número do seu flat (*{{quarto}}*).
 
 📶 *Wi-Fi do Flat:*
-• Rede: *{{wifi_rede}}* • Senha: *{{wifi_senha}}*`,
+• Rede: *{{wifi_rede}}* • Senha: *{{wifi_senha}}*
+
+{{mensagem_cafe_incluso}}
+
+👉 *Já chegou ao hotel?* Clique no link para confirmar sua chegada:
+{{link_autocheckin}}`,
     buttons: [
-      { label: "📍 Abrir no Google Maps", type: "URL", url: "https://maps.google.com/..." },
-      { label: "🏨 Portal do Hóspede", type: "URL", url: "https://.../portal-hospede/RES-..." }
+      { label: "📍 Já Cheguei no Flat", type: "URL", url: "{{link_autocheckin}}" },
+      { label: "📍 Abrir no Google Maps", type: "URL", url: "{{link_maps}}" },
+      { label: "🏨 Portal do Hóspede", type: "URL", url: "{{link_portal_hospede}}" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_checkin_day_instructions",
     category: "checkin"
@@ -343,25 +436,25 @@ Ao chegar, dirija-se à portaria 24h e informe seu nome e o número do flat.
     id: "node_room_ready_direct",
     stageNumber: 4,
     stageName: "4. Dia do Check-in (Manhã)",
-    title: "Quarto Liberado • Early Check-in Disponível (Site / WhatsApp)",
-    subtitle: "Disparo automático quando a camareira finaliza a limpeza",
+    title: "Quarto Liberado • Early Check-in a partir das 10:00 (Direto)",
+    subtitle: "Se limpo antes das 10:00, aguarda as 10:00 para envio",
     triggerEvent: "room_ready",
     channelType: "whatsapp",
     recipients: ["hospede"],
-    timingLabel: "Imediato à conclusão da higienização",
-    condition: "Reserva Direta (Site / WhatsApp) e quarto pronto antes das 14:00",
+    timingLabel: "A partir das 10:00 assim que higienizado",
+    condition: "Reserva Direta (Site/WhatsApp) com quarto limpo pelas camareiras",
     channelsAllowed: ["site", "whatsapp"],
-    description: "Avisa o hóspede direto que o flat já está pronto e liberado para entrada antecipada imediata, sem necessidade de aguardar o horário das 14:00.",
+    description: "Disparado quando a camareira conclui a limpeza do flat. Para reservas diretas, a liberação ocorre a partir das 10:00 (se o flat for finalizado mais cedo, o sistema segura o disparo e envia às 10:00).",
     messagePreview: `*{{primeiro_nome}}*, uma ótima notícia! 🎉🔑
 Seu *Flat {{quarto}}* no *{{nome_hotel}}* já está *Limpo e Pronto* para receber você!
 
-Como você reservou diretamente conosco, pode fazer o *Early Check-in agora mesmo*, sem precisar esperar as 14:00! 🚀
+Como você reservou diretamente conosco, pode fazer o *Early Check-in agora mesmo*, sem precisar esperar as {{horario_checkin}}! 🚀
 
 📍 Ao chegar, basta se identificar na portaria 24h com seu nome e o número *{{quarto}}*.
 📶 Wi-Fi: *{{wifi_rede}}* | Senha: *{{wifi_senha}}*`,
     buttons: [
-      { label: "📍 Abrir no Google Maps", type: "URL", url: "https://maps.google.com/..." },
-      { label: "🏨 Portal do Hóspede", type: "URL", url: "https://.../portal-hospede/RES-..." }
+      { label: "📍 Abrir no Google Maps", type: "URL", url: "{{link_maps}}" },
+      { label: "🏨 Portal do Hóspede", type: "URL", url: "{{link_portal_hospede}}" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_room_ready_direct",
     category: "checkin"
@@ -370,15 +463,15 @@ Como você reservou diretamente conosco, pode fazer o *Early Check-in agora mesm
     id: "node_room_ready_ota",
     stageNumber: 4,
     stageName: "4. Dia do Check-in (Manhã)",
-    title: "Quarto Liberado • Atribuição de Flat (Booking / Airbnb)",
-    subtitle: "Revela o número do apartamento e instruções",
+    title: "Quarto Liberado • Liberação de Flat às 12:00 / 14:00 (OTA)",
+    subtitle: "Disparado às 12:00 se já limpo (ou 14:00 padrão) promovendo reserva direta",
     triggerEvent: "room_ready_ota",
     channelType: "whatsapp",
     recipients: ["hospede"],
     timingLabel: "Às 12:00 (se limpo) ou 14:00 (padrão)",
     condition: "Reserva OTA (Booking / Airbnb)",
     channelsAllowed: ["booking", "airbnb"],
-    description: "Disparado para reservas do Booking e Airbnb revelando o número do flat e liberando a entrada.",
+    description: "Disparado às 12:00 se o flat estiver limpo (ou às 14:00 padrão), revelando o número do flat e instruções de acesso, divulgando o benefício de 10:00 para quem reserva direto.",
     messagePreview: `*{{primeiro_nome}}*, tudo pronto para sua chegada! 🔑🏡
 Seu apartamento no *{{nome_hotel}}* já foi definido:
 
@@ -386,70 +479,75 @@ Seu apartamento no *{{nome_hotel}}* já foi definido:
 ⏰ Liberado para entrada a partir de *agora*!
 
 📍 Ao chegar, vá à portaria 24h e informe seu nome e o número *{{quarto}}*.
-📶 Wi-Fi: *{{wifi_rede}}* | Senha: *{{wifi_senha}}*`,
+📶 Wi-Fi: *{{wifi_rede}}* | Senha: *{{wifi_senha}}*
+
+💡 _Na próxima vez, reserve pelo nosso site ou WhatsApp e ganhe early check-in às 10:00 sem custo adicional!_`,
     buttons: [
-      { label: "📍 Abrir no Google Maps", type: "URL", url: "https://maps.google.com/..." },
-      { label: "🏨 Portal do Hóspede", type: "URL", url: "https://.../portal-hospede/RES-..." }
+      { label: "📍 Abrir no Google Maps", type: "URL", url: "{{link_maps}}" },
+      { label: "🏨 Portal do Hóspede", type: "URL", url: "{{link_portal_hospede}}" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_room_ready_ota",
     category: "checkin"
   },
+
+  // ── ETAPA 5: ENTRADA REALIZADA ─────────────────────────────────────────────
   {
     id: "node_checkin_completed",
     stageNumber: 5,
     stageName: "5. Entrada Realizada (Check-in)",
-    title: "Check-in Realizado • Boas-vindas + Manual em PDF",
-    subtitle: "Disparado no momento em que a portaria/tablet libera a entrada",
+    title: "Check-in Realizado • Boas-vindas ao Quarto",
+    subtitle: "Disparado via auto check-in ('Já cheguei') ou baixa da portaria",
     triggerEvent: "checkin_completed",
     channelType: "whatsapp",
     recipients: ["hospede"],
-    timingLabel: "Imediato à entrada do hóspede",
-    condition: "Check-in confirmado no tablet da portaria ou PMS",
+    timingLabel: "Imediato à confirmação de entrada",
+    condition: "Hóspede clica em 'Já cheguei' ou portaria confirma entrada no tablet",
     channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
-    hasAttachment: true,
-    attachmentName: "Manual_do_Hospede_CorpFlats.pdf",
-    description: "Mensagem calorosa de acolhimento ao quarto com link da central digital do hóspede e anexo automático do PDF completo do Manual do Hóspede.",
+    description: "Mensagem calorosa de acolhimento ao quarto com link da central digital do hóspede e orientações de comodidade.",
     messagePreview: `Olá, *{{primeiro_nome}}*! Seja muito bem-vindo(a) ao *Flat {{quarto}}*! 🏡✨
+
 Esperamos que encontre tudo limpo, fresco e perfeito para o seu conforto.
 
 📱 *Central do Hóspede:*
 No portal abaixo você confere senhas, instruções dos aparelhos e regras de convivência do condomínio.
 
-📎 *Manual do Hóspede em PDF anexado!* Tenha uma estadia incrível!`,
+Tenha uma estadia incrível!`,
     buttons: [
-      { label: "🌐 Abrir Portal do Flat", type: "URL", url: "https://.../portal-hospede/RES-..." },
-      { label: "📞 Ligar Administração", type: "CALL" }
+      { label: "🌐 Abrir Portal do Flat", type: "URL", url: "{{link_portal_hospede}}" },
+      { label: "📞 Ligar Administração", type: "CALL", url: "{{telefone_hotel}}" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_checkin_completed",
     category: "estadia"
   },
 
-  // ── ETAPA 6: DURANTE A ESTADIA & CAFÉ DA MANHÃ ──────────────────────────────
+  // ── ETAPA 6: CAFÉ DA MANHÃ ─────────────────────────────────────────────────
   {
     id: "node_breakfast_reminder",
     stageNumber: 6,
     stageName: "6. Durante a Estadia (Noite)",
-    title: "Café da Manhã • Montagem da Bandeja Artesanal no Quarto (18:00)",
-    subtitle: "Disparado às 18:00 da véspera para agendamento dos itens",
+    title: "Café da Manhã • Montagem da Bandeja (18:00)",
+    subtitle: "Enviado às 18:00 APENAS se ainda não enviou o pedido de amanhã",
     triggerEvent: "breakfast_reminder",
     channelType: "whatsapp",
     recipients: ["hospede"],
     timingLabel: "Véspera às 18:00",
-    condition: "Reserva possui Café da Manhã contratado",
-    channelsAllowed: ["site", "whatsapp"],
-    description: "Lembra o hóspede de escolher os pães, frutas, bebidas e horário de entrega da bandeja no flat para a manhã seguinte.",
+    condition: "Reserva com café incluso E sem pedido registrado para a manhã seguinte",
+    channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    description: "Disparado às 18:00 da véspera exclusivamente para hóspedes que possuem café incluso e que ainda não preencheram a bandeja para amanhã.",
     messagePreview: `Olá, *{{primeiro_nome}}*! ☕🥐
 Está na hora de agendar a sua bandeja de café da manhã para amanhã no *Flat {{quarto}}*!
 
-Preparamos tudo fresquinho e entregamos diretamente no seu flat (o serviço é exclusivo no quarto). Escolha seus itens favoritos clicando no botão abaixo:`,
+Preparamos tudo fresquinho e entregamos diretamente no seu flat (o serviço é exclusivo no quarto, não servido no restaurante do condomínio).
+
+Escolha seus itens favoritos clicando no botão abaixo:`,
     buttons: [
-      { label: "🥐 Montar Café da Manhã", type: "URL", url: "https://.../cafe/RES-..." }
+      { label: "🥐 Montar Café da Manhã", type: "URL", url: "{{link_cafe_manha}}" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_breakfast_reminder",
     category: "estadia"
   },
 
-  // ── ETAPA 7 & 8: CHECK-OUT & LIBERAÇÃO DA GOVERNANÇA ────────────────────────
+  // ── ETAPA 7 & 8: CHECK-OUT & GOVERNANÇA ─────────────────────────────────────
   {
     id: "node_checkout_reminder",
     stageNumber: 7,
@@ -462,14 +560,16 @@ Preparamos tudo fresquinho e entregamos diretamente no seu flat (o serviço é e
     timingLabel: "Dia do Check-out às 09:30",
     condition: "Reserva com saída hoje",
     channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
-    description: "Relembra o encerramento da diária às 12:00, orienta a desligar o ar-condicionado e fornece o link de Check-out Expresso pelo celular.",
+    description: "Relembra o encerramento da diária às 12:00, orienta a desligar ar-condicionado e luzes e fornece o link de Check-out Expresso pelo celular.",
     messagePreview: `Bom dia, *{{primeiro_nome}}*! ☀️
 Lembramos que hoje é a data de encerramento da sua estadia no *Flat {{quarto}}*.
 
-⏰ *Horário limite de saída:* Até às 12:00.
-Ao sair, por favor certifique-se de desligar luzes e ar-condicionado e entregue o cartão na portaria. Para agilizar, use o check-out digital:`,
+⏰ *Horário limite de saída:* Até às *{{horario_checkout}}*.
+
+Ao sair, por favor certifique-se de desligar luzes e ar-condicionado e entregue as chaves/cartão na portaria.
+Caso necessite estender o horário (Late Check-out), solicite diretamente à administração.`,
     buttons: [
-      { label: "🚪 Check-out Expresso", type: "URL", url: "https://.../checkout/RES-..." }
+      { label: "🚪 Check-out Expresso", type: "URL", url: "{{link_checkout}}" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_checkout_reminder",
     category: "checkout"
@@ -478,7 +578,7 @@ Ao sair, por favor certifique-se de desligar luzes e ar-condicionado e entregue 
     id: "node_checkout_completed",
     stageNumber: 8,
     stageName: "8. Saída Confirmada (Check-out)",
-    title: "Check-out Confirmado • Agradecimento & Retorno",
+    title: "Check-out Confirmado • Agradecimento & Encerramento",
     subtitle: "Disparo no momento em que a saída é confirmada",
     triggerEvent: "checkout_completed",
     channelType: "whatsapp",
@@ -490,10 +590,12 @@ Ao sair, por favor certifique-se de desligar luzes e ar-condicionado e entregue 
     messagePreview: `Olá, *{{primeiro_nome}}*! 🚪✨
 Confirmamos o seu check-out no *Flat {{quarto}}* do *{{nome_hotel}}*.
 
-Agradecemos imensamente pela sua estadia e por todo o cuidado com o nosso espaço! Desejamos um excelente retorno para casa e uma ótima viagem. Esperamos recebê-lo(a) novamente em breve! 💙`,
+Agradecemos imensamente pela sua estadia e por todo o cuidado com o nosso espaço! Desejamos um excelente retorno para casa e uma ótima viagem.
+
+Esperamos recebê-lo(a) novamente em breve! 💙`,
     buttons: [
-      { label: "🏨 Ver Minha Reserva", type: "URL", url: "https://.../portal-hospede/RES-..." },
-      { label: "🌐 Reservar Novamente", type: "URL", url: "https://.../reservar" }
+      { label: "🏨 Ver Minha Reserva", type: "URL", url: "{{link_portal_hospede}}" },
+      { label: "🌐 Reservar Novamente", type: "URL", url: "https://corpflats.onrender.com/reservar" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_checkout_completed",
     category: "checkout"
@@ -518,27 +620,57 @@ Notamos que o *Flat {{quarto}}* já está em limpeza há *{{tempo_limpeza}} minu
     category: "checkout"
   },
 
-  // ── ETAPA 9: PÓS-CHECK-OUT & REPUTAÇÃO ──────────────────────────────────────
+  // ── ETAPA 9: PÓS-CHECK-OUT & REPUTAÇÃO (+24H) ──────────────────────────────
   {
     id: "node_post_checkout_review",
     stageNumber: 9,
     stageName: "9. Pós Check-out (Reputação)",
-    title: "Avaliação Google Maps • Solicitação 5 Estrelas (+2 Horas)",
-    subtitle: "A última mensagem disparada da jornada do hóspede",
+    title: "Pós Check-out (+24h) • Pesquisa de Satisfação WhatsApp (1 a 5)",
+    subtitle: "Disparado 24 horas após o check-out (filtro prévio de satisfação)",
     triggerEvent: "post_checkout_review",
     channelType: "whatsapp",
     recipients: ["hospede"],
-    timingLabel: "2 horas após o check-out (14:00)",
-    condition: "Hóspede realizou check-out com sucesso",
+    timingLabel: "24 horas após o check-out",
+    condition: "Check-out concluído há 24 horas",
     channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
-    description: "Convida o hóspede a deixar um review nota máxima no perfil oficial do Google Maps, impulsionando a pontuação e captação orgânica da CorpFlats.",
-    messagePreview: `Olá, *{{primeiro_nome}}*! 💙
-Foi um prazer imenso ter você conosco no *{{nome_hotel}}*!
+    description: "Enviado 24 horas após a saída (em vez de 2h). Solicita uma nota de 1 a 5 no WhatsApp. Apenas notas 5 recebem o link de avaliação 5 estrelas do Google Maps!",
+    messagePreview: `Olá, *{{primeiro_nome}}*! 😊
 
-Esperamos que sua hospedagem tenha sido nota 10. Você poderia nos dedicar 30 segundos deixando sua avaliação no Google?
-Sua opinião ajuda outros hóspedes e motiva nossa equipe a evoluir sempre:`,
+Sua estadia no *{{nome_hotel}}* chegou ao fim e adoraríamos saber como foi!
+
+⭐ *De 1 a 5, que nota você daria para a sua experiência conosco?*
+
+• *5* — Perfeito, tudo impecável! 🏆
+• *4* — Muito bom, fiquei satisfeito(a) 😊
+• *3* — Ok, mas poderia melhorar 🤔
+• *2* — Não ficou bom, tive problemas 😕
+• *1* — Péssimo, fiquei muito insatisfeito(a) 😞
+
+Responda apenas com o número da nota (1, 2, 3, 4 ou 5). Sua opinião é muito importante para nós! 💙`,
+    buttons: [],
+    editUrl: "/whatsapp?tab=rules&tpl=tpl_nps_satisfaction_check",
+    category: "pos_estadia"
+  },
+  {
+    id: "node_nps_approved",
+    stageNumber: 9,
+    stageName: "9. Pós Check-out (Reputação)",
+    title: "Avaliação Google Maps 5 Estrelas • Filtro NPS Aprovado ⭐",
+    subtitle: "Disparado automaticamente SOMENTE para notas 5",
+    triggerEvent: "nps_approved",
+    channelType: "whatsapp",
+    recipients: ["hospede"],
+    timingLabel: "Imediato após resposta com nota 5",
+    condition: "Hóspede respondeu nota 5 na pesquisa de satisfação",
+    channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
+    description: "Filtro de proteção de reputação: direciona com exclusividade hóspedes 100% satisfeitos (nota 5) para o Google Maps, blindando contra notas baixas.",
+    messagePreview: `Que alegria, *{{primeiro_nome}}*! 🌟
+
+Fico muito feliz que sua estadia no *{{nome_hotel}}* tenha sido nota máxima! 💙
+
+Você poderia nos dedicar apenas 30 segundos e deixar essa mesma avaliação no Google? Isso nos ajuda muito a continuar melhorando:`,
     buttons: [
-      { label: "⭐ Avaliar no Google (5 Estrelas)", type: "URL", url: "https://maps.app.goo.gl/..." }
+      { label: "⭐ Avaliar no Google (5 Estrelas)", type: "URL", url: "{{link_avaliacao_google}}" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_post_checkout_review",
     category: "pos_estadia"
@@ -566,8 +698,8 @@ Confira o que foi atualizado:
 
 Os demais dados permanecem inalterados. Você pode consultar todos os detalhes no seu portal!`,
     buttons: [
-      { label: "🏨 Ver Detalhes da Reserva", type: "URL", url: "https://.../portal-hospede/RES-..." },
-      { label: "📞 Falar com Atendimento", type: "CALL" }
+      { label: "🏨 Ver Detalhes da Reserva", type: "URL", url: "{{link_portal_hospede}}" },
+      { label: "📞 Falar com Atendimento", type: "CALL", url: "{{telefone_hotel}}" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_reservation_updated",
     category: "excecao"
@@ -590,7 +722,7 @@ Confirmamos o cancelamento da sua reserva *{{numero_reserva}}* no *{{nome_hotel}
 
 Lamentamos que não possa se hospedar conosco nesta ocasião e estaremos de braços abertos para recebê-lo em suas próximas viagens a Campos!`,
     buttons: [
-      { label: "🌐 Reservar Novas Datas", type: "URL", url: "https://.../reservar" }
+      { label: "🌐 Reservar Novas Datas", type: "URL", url: "https://corpflats.onrender.com/reservar" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_reservation_cancelled",
     category: "excecao"
@@ -615,20 +747,20 @@ interface Scenario {
 const SIMULATION_SCENARIOS: Scenario[] = [
   {
     id: "site_unpaid",
-    title: "1. Reserva no Site • Aguardando PIX / Não Paga",
-    subtitle: "Hóspede solicitou reserva direta no site, mas ainda não pagou",
+    title: "1. Reserva no Site • Pré-Reserva Aguardando Pagamento",
+    subtitle: "Criada no site, mensagem imediata + lembrete de cobrança 1h após",
     channel: "site",
     isPaid: false,
     hasCar: false,
     hasBreakfast: false,
     currentStage: "Pré-Reserva",
     activeNodeIds: ["node_pre_reserva", "node_payment_pending"],
-    description: "O sistema coloca a reserva como 'Pré-Reserva' e dispara imediatamente mensagem no WhatsApp com chave PIX e link seguro de pagamento para conversão imediata."
+    description: "Reserva entra como 'Pré-Reserva'. Envia imediatamente mensagem informando que aguarda pagamento para confirmação definitiva (apenas para o solicitante). Se em 1h não for paga, dispara cobrança pendente."
   },
   {
     id: "site_paid",
-    title: "2. Reserva no Site • Paga via PIX (Fluxo Padrão Completo)",
-    subtitle: "Hóspede reservou no site oficial e pagou imediatamente via PIX",
+    title: "2. Reserva no Site • Paga via PIX (Fluxo Direto Completo)",
+    subtitle: "Conversão pré-reserva ➔ confirmada + Early Check-in às 10:00",
     channel: "site",
     isPaid: true,
     hasCar: true,
@@ -638,8 +770,7 @@ const SIMULATION_SCENARIOS: Scenario[] = [
       "node_payment_confirmed",
       "node_res_created_direct",
       "node_pre_checkin_reminder",
-      "node_portaria_checkin_email",
-      "node_garagem_autorizacao",
+      "node_morning_checkin_email",
       "node_checkin_day_instructions",
       "node_room_ready_direct",
       "node_checkin_completed",
@@ -647,14 +778,15 @@ const SIMULATION_SCENARIOS: Scenario[] = [
       "node_checkout_reminder",
       "node_checkout_completed",
       "node_maid_cleaning_trigger",
-      "node_post_checkout_review"
+      "node_post_checkout_review",
+      "node_nps_approved"
     ],
-    description: "Jornada direta perfeita: Confirmação + Benefício de Early Check-in cortesia + Pré-checkin digital + Garagem autorizada + Boas-vindas + Café no quarto + Avaliação no Google."
+    description: "Jornada direta perfeita: Confirmação de pagamento exclusiva para canais diretos + Early Check-in a partir das 10h + FNRH digital + Rotina 07h para Recepção e Garagem com PDF + Auto check-in + Café 18h + Pesquisa NPS +24h + Google Review 5 estrelas."
   },
   {
     id: "booking_standard",
     title: "3. Reserva Booking.com / Airbnb (OTA)",
-    subtitle: "Reserva externa vinda de OTA sem revelar número do flat",
+    subtitle: "Sem valores/pagamento, flat oculto até 12h, rotina 07h e promo 10h",
     channel: "booking",
     isPaid: true,
     hasCar: true,
@@ -663,64 +795,84 @@ const SIMULATION_SCENARIOS: Scenario[] = [
     activeNodeIds: [
       "node_res_created_ota",
       "node_pre_checkin_reminder",
-      "node_portaria_checkin_email",
-      "node_garagem_autorizacao",
+      "node_morning_checkin_email",
       "node_checkin_day_instructions",
       "node_room_ready_ota",
       "node_checkin_completed",
       "node_checkout_reminder",
       "node_checkout_completed",
       "node_maid_cleaning_trigger",
-      "node_post_checkout_review"
+      "node_post_checkout_review",
+      "node_nps_approved"
     ],
-    description: "Não revela o número do flat até a liberação no dia (às 12h se limpo ou 14h padrão) e promove benefícios exclusivos para o hóspede reservar direto na próxima viagem."
+    description: "Nunca menciona valores ou pagamento. Oculta o número do flat até a liberação no dia (às 12:00 se limpo ou 14:00 padrão), envia FNRH às 07:00 para portaria/garagem e promove Early Check-in às 10h para reserva direta futura."
   },
   {
-    id: "day_of_checkin",
-    title: "4. Dia do Check-in • Quarto Liberado & Entrada",
-    subtitle: "Momento exato da higienização concluída e chegada na portaria",
+    id: "sameday_reservation",
+    title: "4. Reserva Criada no Mesmo Dia (após 07:01)",
+    subtitle: "Disparo único consolidado com confirmação e instruções de acesso",
     channel: "site",
     isPaid: true,
     hasCar: true,
     hasBreakfast: false,
-    currentStage: "Entrada Hoje",
+    currentStage: "Chegada Hoje",
     activeNodeIds: [
-      "node_checkin_day_instructions",
-      "node_room_ready_direct",
+      "node_sameday_reservation",
+      "node_morning_checkin_email",
       "node_checkin_completed",
-      "node_portaria_checkin_email",
-      "node_garagem_autorizacao"
-    ],
-    description: "Camareira finaliza o quarto -> Sistema dispara WhatsApp de Quarto Liberado (Early Check-in) -> Portaria recebe FNRH digital -> Hóspede entra e recebe o Manual em PDF."
-  },
-  {
-    id: "checkout_review",
-    title: "5. Dia do Check-out • Saída & Avaliação Google",
-    subtitle: "Etapa final de saída até a coleta de depoimento 5 estrelas",
-    channel: "site",
-    isPaid: true,
-    hasCar: false,
-    hasBreakfast: false,
-    currentStage: "Finalizada",
-    activeNodeIds: [
       "node_checkout_reminder",
       "node_checkout_completed",
-      "node_maid_cleaning_trigger",
       "node_post_checkout_review"
     ],
-    description: "Lembrete 09:30 -> Check-out confirmado -> Governança notificada para limpeza -> +2h pós-checkout: Solicitação automática de avaliação 5 estrelas no Google Maps."
+    description: "Para reservas criadas no dia do check-in após 07:01, o sistema unifica confirmação e instruções em uma mensagem única e elegante (sameday_reservation), enviando de imediato a FNRH com PDF para a portaria e garagem."
   },
   {
-    id: "exception_change",
-    title: "6. Alteração de Datas ou Quarto (Exceção)",
-    subtitle: "Reserva modificada manualmente no painel PMS",
+    id: "extra_daily_charge",
+    title: "5. Diária Extra / Alteração com Saldo Pendente",
+    subtitle: "Aplicável a qualquer canal (Booking, Airbnb, Site ou WhatsApp)",
+    channel: "booking",
+    isPaid: false,
+    hasCar: false,
+    hasBreakfast: false,
+    currentStage: "Alteração Pendente",
+    activeNodeIds: [
+      "node_additional_daily_pending",
+      "node_reservation_updated"
+    ],
+    description: "Hóspede de qualquer canal (inclusive Booking/Airbnb) solicita mais 1 diária pelo WhatsApp. Ao lançar a alteração com saldo a pagar, dispara mensagem com resumo, noites atualizadas, valor pendente e chave PIX para quitação."
+  },
+  {
+    id: "precheckin_two_guests",
+    title: "6. Lembrete Pré-Checkin (1 de 2 Hóspedes Preenchido)",
+    subtitle: "Diferencia quem já preencheu e oferece opção de 'Viajo Sozinho'",
     channel: "whatsapp",
     isPaid: true,
     hasCar: false,
     hasBreakfast: false,
-    currentStage: "Modificada",
-    activeNodeIds: ["node_reservation_updated", "node_portaria_checkin_email"],
-    description: "Dispara aviso dinâmico informando estritamente os campos alterados (De -> Para) ao hóspede e atualiza a portaria."
+    currentStage: "Pré-Checkin Pendente",
+    activeNodeIds: [
+      "node_pre_checkin_reminder",
+      "node_morning_checkin_email"
+    ],
+    description: "Se a reserva for para 2 hóspedes e apenas o 1º preencheu, o lembrete de 24h esclarece que o 1º já concluiu e envia link para o 2º, com botão de auto-declaração caso o hóspede viaje sozinho (ajustando a reserva para 1 pessoa). O e-mail das 07:00 também alerta a portaria com faixa destacada."
+  },
+  {
+    id: "checkout_nps_flow",
+    title: "7. Pós Check-out (+24h) • Pesquisa NPS e Avaliação Google",
+    subtitle: "Filtro de satisfação de 1 a 5: apenas nota 5 recebe link do Google",
+    channel: "site",
+    isPaid: true,
+    hasCar: false,
+    hasBreakfast: false,
+    currentStage: "Pós-Estadia",
+    activeNodeIds: [
+      "node_checkout_reminder",
+      "node_checkout_completed",
+      "node_maid_cleaning_trigger",
+      "node_post_checkout_review",
+      "node_nps_approved"
+    ],
+    description: "24h após o check-out, envia pesquisa rápida de 1 a 5. Se o hóspede responder com nota 5, o sistema dispara imediatamente o convite com link oficial do Google Maps para avaliação 5 estrelas. Se a nota for inferior a 5, preserva a reputação pública."
   }
 ]
 
@@ -865,17 +1017,19 @@ export default function ReservationJourney() {
       name: "🌐 Site Oficial (Direto)",
       icon: Globe,
       color: "border-indigo-500 bg-indigo-50/40 dark:bg-indigo-950/20",
-      summary: "Canal mais rentável. Permite pré-reserva com PIX automático ou confirmação com cartão em até 12x. Concede Early Check-in cortesia e acesso imediato ao portal.",
-      earlyCheckinRule: "✅ Incluso gratuitamente se o flat for liberado antes pelas camareiras.",
+      summary: "Canal mais rentável. Permite pré-reserva com PIX automático ou confirmação com cartão em até 12x. Concede Early Check-in cortesia às 10:00 e acesso imediato ao portal.",
+      earlyCheckinRule: "✅ Incluso gratuitamente a partir das 10:00 se liberado pelas camareiras.",
       flatNumberRule: "✅ Revelado imediatamente na confirmação.",
-      breakfastRule: "🥐 Notificação de montagem às 18:00 se contratado.",
+      breakfastRule: "🥐 Notificação de montagem às 18:00 se contratado e ainda não solicitado.",
       allowedNodeIds: [
         "node_pre_reserva",
         "node_payment_pending",
+        "node_additional_daily_pending",
         "node_payment_confirmed",
         "node_res_created_direct",
+        "node_sameday_reservation",
         "node_pre_checkin_reminder",
-        "node_portaria_checkin_email",
+        "node_morning_checkin_email",
         "node_garagem_autorizacao",
         "node_checkin_day_instructions",
         "node_room_ready_direct",
@@ -884,7 +1038,8 @@ export default function ReservationJourney() {
         "node_checkout_reminder",
         "node_checkout_completed",
         "node_maid_cleaning_trigger",
-        "node_post_checkout_review"
+        "node_post_checkout_review",
+        "node_nps_approved"
       ]
     },
     {
@@ -893,16 +1048,18 @@ export default function ReservationJourney() {
       icon: MessageSquare,
       color: "border-emerald-500 bg-emerald-50/40 dark:bg-emerald-950/20",
       summary: "Fechado diretamente pelo atendente no WhatsApp ou presencialmente. Suporte a faturamento PJ para empresas e solicitantes com envio de PIX personalizado.",
-      earlyCheckinRule: "✅ Incluso gratuitamente conforme disponibilidade.",
+      earlyCheckinRule: "✅ Incluso gratuitamente a partir das 10:00 conforme disponibilidade.",
       flatNumberRule: "✅ Revelado imediatamente na confirmação.",
-      breakfastRule: "🥐 Notificação de montagem às 18:00 se contratado.",
+      breakfastRule: "🥐 Notificação de montagem às 18:00 se contratado e ainda não solicitado.",
       allowedNodeIds: [
         "node_pre_reserva",
         "node_payment_pending",
+        "node_additional_daily_pending",
         "node_payment_confirmed",
         "node_res_created_direct",
+        "node_sameday_reservation",
         "node_pre_checkin_reminder",
-        "node_portaria_checkin_email",
+        "node_morning_checkin_email",
         "node_garagem_autorizacao",
         "node_checkin_day_instructions",
         "node_room_ready_direct",
@@ -911,7 +1068,8 @@ export default function ReservationJourney() {
         "node_checkout_reminder",
         "node_checkout_completed",
         "node_maid_cleaning_trigger",
-        "node_post_checkout_review"
+        "node_post_checkout_review",
+        "node_nps_approved"
       ]
     },
     {
@@ -919,14 +1077,16 @@ export default function ReservationJourney() {
       name: "🏨 Booking.com & Airbnb (OTAs)",
       icon: Building2,
       color: "border-sky-500 bg-sky-50/40 dark:bg-sky-950/20",
-      summary: "Reservas importadas das OTAs. Estratégia inteligente de ocultar o número do apartamento até o dia da entrada e incentivar o hóspede a reservar direto da próxima vez.",
-      earlyCheckinRule: "⏰ Entrada padrão às 14:00 (ou às 12:00 se liberado). Early check-in antes das 12h apenas sob consulta.",
+      summary: "Reservas importadas das OTAs. Estratégia inteligente de ocultar o número do apartamento até o dia da entrada e incentivar o hóspede a reservar direto da próxima vez. Sem menção a pagamentos.",
+      earlyCheckinRule: "⏰ Entrada padrão às 14:00 (ou às 12:00 se liberado). Promove Early check-in às 10:00 para canais diretos.",
       flatNumberRule: "🔒 Ocultado na confirmação; atribuído e revelado no dia do check-in às 12h ou 14h.",
       breakfastRule: "☕ Geralmente sem café incluso (ou adquirido à parte).",
       allowedNodeIds: [
+        "node_additional_daily_pending",
         "node_res_created_ota",
+        "node_sameday_reservation",
         "node_pre_checkin_reminder",
-        "node_portaria_checkin_email",
+        "node_morning_checkin_email",
         "node_garagem_autorizacao",
         "node_checkin_day_instructions",
         "node_room_ready_ota",
@@ -934,7 +1094,8 @@ export default function ReservationJourney() {
         "node_checkout_reminder",
         "node_checkout_completed",
         "node_maid_cleaning_trigger",
-        "node_post_checkout_review"
+        "node_post_checkout_review",
+        "node_nps_approved"
       ]
     }
   ]

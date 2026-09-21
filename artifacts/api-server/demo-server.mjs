@@ -2700,6 +2700,22 @@ function diffReservationFields(oldRes, newBody, flatsList = []) {
     }
   }
 
+  // Detalhamento de pagamentos efetuados (payments)
+  if (Array.isArray(newBody.payments)) {
+    const oldPayments = Array.isArray(oldRes.payments) ? oldRes.payments : [];
+    const summarizePayments = (pays) => pays.map(p => `R$ ${Number(p.amount || 0).toFixed(2)} via ${p.method || 'pix'}`).join(", ");
+    const oldSumm = summarizePayments(oldPayments);
+    const newSumm = summarizePayments(newBody.payments);
+    if (oldSumm !== newSumm && (oldPayments.length > 0 || newBody.payments.length > 0)) {
+      changes.push({
+        field: "payments",
+        label: "Lançamentos de Pagamento",
+        oldValue: oldSumm || "(nenhum)",
+        newValue: newSumm
+      });
+    }
+  }
+
   return changes;
 }
 
@@ -7080,6 +7096,7 @@ app.post("/api/pms/reservations", (req, res) => {
     paymentMethod = null,
     dailyRate = 0,
     dailyRates = [],
+    payments = [],
     totalAmount = 0,
     paidAmount = 0,
     paymentStatus = "pendente",
@@ -7150,13 +7167,47 @@ app.post("/api/pms/reservations", (req, res) => {
     else resolvedPaymentMethod = "pix";
   }
   ensurePaymentMethodExists(resolvedPaymentMethod);
-  if (resolvedPaymentStatus === "pago_total" && finalTotalAmount > 0 && resolvedPaidAmount === 0) {
-    resolvedPaidAmount = finalTotalAmount;
+
+  // Normalização de múltiplos pagamentos (payments)
+  let normalizedPayments = [];
+  if (Array.isArray(payments) && payments.length > 0) {
+    normalizedPayments = payments.map(p => ({
+      id: String(p.id || `pay_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`),
+      amount: Number(p.amount) || 0,
+      method: String(p.method || resolvedPaymentMethod || "pix"),
+      date: String(p.date || new Date().toISOString()),
+      notes: p.notes ? String(p.notes) : undefined
+    })).filter(p => p.amount > 0 || p.method);
   }
-  if (resolvedPaidAmount > 0 && resolvedPaidAmount < finalTotalAmount && resolvedPaymentStatus === "pendente") {
-    resolvedPaymentStatus = "sinal_pago";
-  } else if (resolvedPaidAmount >= finalTotalAmount && finalTotalAmount > 0) {
-    resolvedPaymentStatus = "pago_total";
+
+  if (normalizedPayments.length > 0) {
+    resolvedPaidAmount = normalizedPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+    if (resolvedPaidAmount >= finalTotalAmount && finalTotalAmount > 0) {
+      resolvedPaymentStatus = "pago_total";
+    } else if (resolvedPaidAmount > 0) {
+      resolvedPaymentStatus = "sinal_pago";
+    } else {
+      resolvedPaymentStatus = "pendente";
+    }
+  } else {
+    if (resolvedPaymentStatus === "pago_total" && finalTotalAmount > 0 && resolvedPaidAmount === 0) {
+      resolvedPaidAmount = finalTotalAmount;
+    }
+    if (resolvedPaidAmount > 0 && resolvedPaidAmount < finalTotalAmount && resolvedPaymentStatus === "pendente") {
+      resolvedPaymentStatus = "sinal_pago";
+    } else if (resolvedPaidAmount >= finalTotalAmount && finalTotalAmount > 0) {
+      resolvedPaymentStatus = "pago_total";
+    }
+
+    if (resolvedPaidAmount > 0) {
+      normalizedPayments = [{
+        id: `pay_${Date.now()}_init`,
+        amount: resolvedPaidAmount,
+        method: resolvedPaymentMethod || "pix",
+        date: new Date().toISOString(),
+        notes: resolvedPaymentStatus === "pago_total" ? "Pagamento integral" : "Pagamento inicial"
+      }];
+    }
   }
 
   // A reserva só é confirmada de fato se explicitamente informada como confirmada no campo (ou canal OTA)
@@ -7314,6 +7365,7 @@ app.post("/api/pms/reservations", (req, res) => {
     totalAmount: finalTotalAmount,
     paidAmount: resolvedPaidAmount,
     paymentStatus: resolvedPaymentStatus,
+    payments: normalizedPayments,
     adults: numGuests,
     children: Number(children),
     notes,
@@ -7391,7 +7443,20 @@ app.post("/api/pms/reservations", (req, res) => {
   if (resolvedStatus === "pre_reserva") {
     triggerImmediateWhatsApp(db, saveDatabase, "pre_reservation_created", newReservation);
   } else {
-    triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", newReservation);
+    // Verifica se é no próprio dia do check-in após as 07:01
+    const now = new Date();
+    const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const brDate = new Date(nowUtc - (3 * 3600000));
+    const todayStr = brDate.toISOString().substring(0, 10);
+    const isSameDay = newReservation.checkinDate === todayStr;
+    const isAfter0701 = isSameDay && (brDate.getHours() > 7 || (brDate.getHours() === 7 && brDate.getMinutes() >= 1));
+
+    if (isAfter0701) {
+      console.log(`[Reservation] Reserva no dia do check-in criada após as 07:01: disparando sameday_reservation.`);
+      triggerImmediateWhatsApp(db, saveDatabase, "sameday_reservation", newReservation);
+    } else {
+      triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", newReservation);
+    }
   }
 
   // Gatilho Automático: Liberação de Garagem se informado veículo na reserva do PMS
@@ -7734,20 +7799,49 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   }
 
   if (oldStatus === "pre_reserva" && r.status === "confirmada") {
-    triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", r).catch(err => {
-      console.warn("[WhatsApp Trigger] Erro ao disparar reservation_created:", err.message);
-    });
+    const now = new Date();
+    const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const brDate = new Date(nowUtc - (3 * 3600000));
+    const todayStr = brDate.toISOString().substring(0, 10);
+    const isSameDay = r.checkinDate === todayStr;
+    const isAfter0701 = isSameDay && (brDate.getHours() > 7 || (brDate.getHours() === 7 && brDate.getMinutes() >= 1));
+
+    if (isAfter0701) {
+      triggerImmediateWhatsApp(db, saveDatabase, "sameday_reservation", r).catch(() => {});
+    } else {
+      const chan = String(r.channel || "").toLowerCase();
+      const isDirect = chan.includes("site") || chan.includes("whats") || chan.includes("direta");
+      if (isDirect) {
+        triggerImmediateWhatsApp(db, saveDatabase, "payment_confirmed", r).catch(() => {});
+      } else {
+        triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", r).catch(() => {});
+      }
+    }
   } else {
-    // Filtra apenas as alterações voltadas ao hóspede (ex: quarto, datas, valor, hóspedes, café, cama)
-    const guestFacingDiffs = filterGuestFacingDiffs(diffs);
-    if (guestFacingDiffs.length > 0) {
-      console.log(`[WhatsApp Trigger] Disparando aviso de alteração de reserva (${r.code} - ${r.guestName}) com ${guestFacingDiffs.length} itens modificados.`);
-      const resvForTrigger = { ...r, _changesContext: guestFacingDiffs };
-      triggerImmediateWhatsApp(db, saveDatabase, "reservation_updated", resvForTrigger).catch(err => {
-        console.warn("[WhatsApp Trigger] Erro ao disparar reservation_updated:", err.message);
+    // Verifica se houve extensão de estadia ou acréscimo de saldo pendente (additional_daily_pending)
+    const totalAmt = Number(r.totalAmount) || 0;
+    const paidAmt = Number(r.paidAmount) || 0;
+    const pendingAmt = Math.max(0, totalAmt - paidAmt);
+    const hadCheckoutExtension = (req.body.checkoutDate && oldCheckout && req.body.checkoutDate > oldCheckout);
+    const hadPendingIncrease = pendingAmt > 0 && (r.paymentStatus === "pendente" || r.paymentStatus === "parcial" || (req.body.totalAmount && Number(req.body.totalAmount) > totalAmt));
+
+    if ((hadCheckoutExtension || hadPendingIncrease) && pendingAmt > 0) {
+      console.log(`[WhatsApp Trigger] Extensão de diárias ou saldo pendente identificado na reserva ${r.code}. Disparando additional_daily_pending.`);
+      triggerImmediateWhatsApp(db, saveDatabase, "additional_daily_pending", r).catch(err => {
+        console.warn("[WhatsApp Trigger] Erro ao disparar additional_daily_pending:", err.message);
       });
     } else {
-      console.log(`[WhatsApp Trigger] Edição da reserva ${r.code} (${r.guestName}) não teve alterações de itens voltados ao hóspede. Disparo ao WhatsApp suprimido.`);
+      // Filtra apenas as alterações voltadas ao hóspede (ex: quarto, datas, valor, hóspedes, café, cama)
+      const guestFacingDiffs = filterGuestFacingDiffs(diffs);
+      if (guestFacingDiffs.length > 0) {
+        console.log(`[WhatsApp Trigger] Disparando aviso de alteração de reserva (${r.code} - ${r.guestName}) com ${guestFacingDiffs.length} itens modificados.`);
+        const resvForTrigger = { ...r, _changesContext: guestFacingDiffs };
+        triggerImmediateWhatsApp(db, saveDatabase, "reservation_updated", resvForTrigger).catch(err => {
+          console.warn("[WhatsApp Trigger] Erro ao disparar reservation_updated:", err.message);
+        });
+      } else {
+        console.log(`[WhatsApp Trigger] Edição da reserva ${r.code} (${r.guestName}) não teve alterações de itens voltados ao hóspede. Disparo ao WhatsApp suprimido.`);
+      }
     }
   }
   res.json(r);
@@ -8243,6 +8337,85 @@ app.post("/api/pms/guest-portal/:code/request-breakfast-later", (req, res) => {
   res.json({
     success: true,
     message: "Perfeito! Enviaremos um lembrete no seu WhatsApp e navegador às 18:00 para você escolher os itens do seu café da manhã."
+  });
+});
+
+// ── Autodeclaração de Entrada pelo Hóspede ("Já cheguei / Estou no Flat") ────
+app.all(["/api/pms/guest-portal/:code/self-checkin", "/api/pms/reservations/by-code/:code/self-checkin"], (req, res) => {
+  const code = (req.params.code || "").trim();
+  if (!db.reservations) db.reservations = [];
+  const r = findReservationByLocatorOrContact(code);
+  if (!r) {
+    return res.status(404).json({ error: "Reserva não encontrada." });
+  }
+
+  const now = new Date();
+  r.guestSelfCheckin = true;
+  r.guestSelfCheckinAt = now.toISOString();
+  if (r.status !== "checkin" && r.status !== "checkout") {
+    r.status = "checkin";
+  }
+  r.notes = `${r.notes || ''} • [Entrada Autodeclarada pelo Hóspede via Link/Portal às ${now.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })}]`.trim();
+  r.updatedAt = now.toISOString();
+
+  createNotification({
+    category: "checkin",
+    title: `🚪 Entrada Confirmada - Flat ${r.flatNumber}`,
+    message: `O hóspede ${r.guestName} autodeclarou sua chegada no Flat ${r.flatNumber}.`,
+    severity: "info",
+    metadata: { reservationId: r.id, flatNumber: r.flatNumber, guestName: r.guestName },
+    targetUrl: "/portaria"
+  });
+
+  saveDatabase();
+
+  // Dispara boas-vindas do quarto (checkin_completed) se ainda não tiver sido disparado
+  triggerImmediateWhatsApp(db, saveDatabase, "checkin_completed", r).catch(() => {});
+
+  if (req.method === "GET") {
+    return res.redirect(`/minha-reserva/${r.code}?self_checkin=success`);
+  }
+
+  res.json({
+    success: true,
+    message: "🎉 Entrada confirmada com sucesso! Desejamos uma excelente estadia no seu flat.",
+    flatNumber: r.flatNumber,
+    status: r.status
+  });
+});
+
+// ── Confirmação de Hóspede Único (Atualiza reserva de 2 para 1 pessoa) ─────────
+app.post(["/api/pms/guest-portal/:code/confirm-single-guest", "/api/pms/reservations/by-code/:code/confirm-single-guest"], (req, res) => {
+  const code = (req.params.code || "").trim();
+  if (!db.reservations) db.reservations = [];
+  const r = findReservationByLocatorOrContact(code);
+  if (!r) {
+    return res.status(404).json({ error: "Reserva não encontrada." });
+  }
+
+  const oldGuestCount = r.guestCount || 2;
+  r.guestCount = 1;
+  r.adults = 1;
+  r.singleGuestConfirmed = true;
+  r.singleGuestConfirmedAt = new Date().toISOString();
+  r.notes = `${r.notes || ''} • [Hóspede confirmou que viaja sozinho(a). Reserva ajustada de ${oldGuestCount} para 1 hóspede]`.trim();
+  r.updatedAt = new Date().toISOString();
+
+  createNotification({
+    category: "pre_checkin",
+    title: `👤 Hóspede Único Confirmado - Flat ${r.flatNumber}`,
+    message: `${r.guestName} confirmou que viaja sozinho(a). Reserva #${r.code} atualizada para 1 pessoa.`,
+    severity: "info",
+    metadata: { reservationId: r.id, flatNumber: r.flatNumber, guestName: r.guestName },
+    targetUrl: "/portaria"
+  });
+
+  saveDatabase();
+
+  res.json({
+    success: true,
+    message: "Reserva atualizada para 1 hóspede com sucesso! Pendência cadastral quitada.",
+    guestCount: 1
   });
 });
 
@@ -11378,32 +11551,6 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     targetUrl: "/portaria"
   });
 
-  // Gatilho A: Envio Automático de Notificação à Recepção/Portaria do Edifício
-  try {
-    const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
-    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
-    const { subject, bodyHtml } = renderCheckinConfirmedEmail({ reservation: r, flat, settings: db.settings });
-
-    sendEmailAsync({
-      db,
-      saveDatabase,
-      reservationId: r.code || r.id,
-      recipient: receptionEmail,
-      subject,
-      bodyHtml,
-      type: "email",
-      direction: "outbound",
-      metadata: {
-        trigger: "pre_checkin",
-        flatNumber: r.flatNumber,
-        guestName: validName,
-        buildingName: flat?.buildingName || db.settings?.buildingName || "Edifício Soho Residence Service"
-      }
-    });
-  } catch (mailErr) {
-    console.warn("[MailService] Erro ao disparar aviso de check-in à portaria:", mailErr.message);
-  }
-
   // Gatilho C: Envio Automático de Liberação à Garagem Soho se houver veículo cadastrado
   if (r.vehicle && r.vehicle.plate) {
     try {
@@ -11475,6 +11622,50 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     } catch (pdfErr) {
       console.error("[FNRH PDF] Erro ao compilar ficha e auditoria forense:", pdfErr);
     }
+  }
+
+  // Gatilho A & D: Envio Automático de Notificação à Recepção/Portaria e Garagem com FNRH PDF Anexo
+  try {
+    const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
+    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
+    const garageEmail = db.settings?.garageEmail || process.env.GARAGE_EMAIL || "millerpessanha@gmail.com";
+    const { subject, bodyHtml } = renderCheckinConfirmedEmail({ reservation: r, flat, settings: db.settings });
+
+    const emailAttachments = [];
+    if (fnrhDocument?.filePath && fs.existsSync(fnrhDocument.filePath)) {
+      emailAttachments.push({
+        filename: `FNRH_${r.code || r.id}_${validName.replace(/\s+/g, '_')}.pdf`,
+        path: fnrhDocument.filePath
+      });
+    }
+
+    sendEmailAsync({
+      db,
+      saveDatabase,
+      reservationId: r.code || r.id,
+      recipient: receptionEmail,
+      cc: garageEmail !== receptionEmail ? garageEmail : undefined,
+      subject,
+      bodyHtml,
+      type: "email",
+      direction: "outbound",
+      attachments: emailAttachments,
+      metadata: {
+        trigger: "pre_checkin",
+        flatNumber: r.flatNumber,
+        guestName: validName,
+        buildingName: flat?.buildingName || db.settings?.buildingName || "Edifício Soho Residence Service",
+        hasPdfAttached: emailAttachments.length > 0,
+        receptionEmail,
+        garageEmail
+      }
+    });
+    const nowUtc = Date.now() + (new Date().getTimezoneOffset() * 60000);
+    const brToday = new Date(nowUtc - (3 * 3600000)).toISOString().substring(0, 10);
+    r.morningEmailSentDate = brToday;
+    r.morningEmailSentAt = new Date().toISOString();
+  } catch (mailErr) {
+    console.warn("[MailService] Erro ao disparar aviso de check-in à portaria:", mailErr.message);
   }
 
   reconcileAndMergeGuests(db);
@@ -18391,17 +18582,52 @@ async function ensurePaymentConfirmationDispatched(r) {
   if (!r || !r.guestPhone) return;
   if (isConfirmationAlreadyDispatched(r)) return;
 
-  if (r.status === "pre_reserva" || r.status === "pendente" || !r.status) {
+  const wasPreReserva = r.status === "pre_reserva" || r.status === "pendente" || !r.status;
+
+  if (wasPreReserva) {
     r.status = "confirmada";
     saveDatabase();
   }
 
-  console.log(`[WhatsApp Dispatch] Disparando confirmação de pagamento/reserva para ${r.guestName} (${r.code})...`);
-  try {
-    await triggerImmediateWhatsApp(db, saveDatabase, "payment_confirmed", r);
-    scheduleUpcomingReservationTriggers(db, saveDatabase);
-  } catch (err) {
-    console.error("[WhatsApp Dispatch] Erro ao disparar payment_confirmed:", err.message);
+  // Verifica se é no mesmo dia após as 07:01
+  const now = new Date();
+  const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
+  const brDate = new Date(nowUtc - (3 * 3600000));
+  const todayStr = brDate.toISOString().substring(0, 10);
+  const isSameDay = r.checkinDate === todayStr;
+  const isAfter0701 = isSameDay && (brDate.getHours() > 7 || (brDate.getHours() === 7 && brDate.getMinutes() >= 1));
+
+  if (isAfter0701) {
+    console.log(`[WhatsApp Dispatch] Reserva no dia do check-in após as 07:01 confirmada: disparando sameday_reservation para ${r.guestName}...`);
+    try {
+      await triggerImmediateWhatsApp(db, saveDatabase, "sameday_reservation", r);
+      scheduleUpcomingReservationTriggers(db, saveDatabase);
+    } catch (err) {
+      console.error("[WhatsApp Dispatch] Erro ao disparar sameday_reservation:", err.message);
+    }
+    return;
+  }
+
+  const chan = String(r.channel || "").toLowerCase();
+  const isDirect = chan.includes("site") || chan.includes("whats") || chan.includes("direta");
+
+  if (wasPreReserva && isDirect) {
+    console.log(`[WhatsApp Dispatch] Disparando confirmação de pagamento (payment_confirmed) para ${r.guestName} (${r.code})...`);
+    try {
+      await triggerImmediateWhatsApp(db, saveDatabase, "payment_confirmed", r);
+      scheduleUpcomingReservationTriggers(db, saveDatabase);
+    } catch (err) {
+      console.error("[WhatsApp Dispatch] Erro ao disparar payment_confirmed:", err.message);
+    }
+  } else {
+    // Para OTAs (booking/airbnb) ou reservas já criadas confirmadas, envia confirmação sem menção a pagamento
+    console.log(`[WhatsApp Dispatch] Disparando confirmação padrão (reservation_created) para ${r.guestName} (${r.code})...`);
+    try {
+      await triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", r);
+      scheduleUpcomingReservationTriggers(db, saveDatabase);
+    } catch (err) {
+      console.error("[WhatsApp Dispatch] Erro ao disparar reservation_created:", err.message);
+    }
   }
 }
 
@@ -20237,6 +20463,86 @@ setInterval(async () => {
     // Silencioso
   }
 }, 20000);
+
+// 6.5 Rotina Matinal das 07:00 - Disparo Individual de E-mails de Check-in para Recepção e Garagem
+setInterval(async () => {
+  try {
+    if (!db.reservations || !Array.isArray(db.reservations)) return;
+
+    const now = new Date();
+    const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const brDate = new Date(nowUtc - (3 * 3600000));
+    const todayStr = brDate.toISOString().substring(0, 10);
+    const hour = brDate.getHours();
+
+    // Executa a partir das 07:00 da manhã
+    if (hour >= 7) {
+      const todayCheckins = db.reservations.filter(r =>
+        r.checkinDate === todayStr &&
+        r.status !== "cancelada" &&
+        r.status !== "cancelled" &&
+        r.morningEmailSentDate !== todayStr
+      );
+
+      for (const r of todayCheckins) {
+        try {
+          const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
+          const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
+          const garageEmail = db.settings?.garageEmail || process.env.GARAGE_EMAIL || "millerpessanha@gmail.com";
+          const { subject, bodyHtml } = renderCheckinConfirmedEmail({ reservation: r, flat, settings: db.settings });
+
+          // Anexa a FNRH em PDF se já estiver gerada
+          const emailAttachments = [];
+          let pdfPath = null;
+          if (r.fnrhDocumentUuid) {
+            const p1 = path.join(SECURE_FNRH_DIR, `FNRH_${r.fnrhDocumentUuid}.pdf`);
+            const p2 = path.join(LEGACY_FNRH_DIR, `FNRH_${r.fnrhDocumentUuid}.pdf`);
+            if (fs.existsSync(p1)) pdfPath = p1;
+            else if (fs.existsSync(p2)) pdfPath = p2;
+          }
+          if (pdfPath) {
+            emailAttachments.push({
+              filename: `FNRH_${r.code || r.id}_${(r.guestName || "Hospede").replace(/\s+/g, '_')}.pdf`,
+              path: pdfPath
+            });
+          }
+
+          console.log(`[Rotina 07:00] Disparando e-mail matinal de check-in para Recepção e Garagem: Flat ${r.flatNumber} - ${r.guestName} (${r.code})...`);
+
+          sendEmailAsync({
+            db,
+            saveDatabase,
+            reservationId: r.code || r.id,
+            recipient: receptionEmail,
+            cc: garageEmail !== receptionEmail ? garageEmail : undefined,
+            subject: `[CHECK-IN DO DIA - 07:00] ${subject}`,
+            bodyHtml,
+            type: "email",
+            direction: "outbound",
+            attachments: emailAttachments,
+            metadata: {
+              trigger: "morning_checkin_07h",
+              flatNumber: r.flatNumber,
+              guestName: r.guestName,
+              buildingName: flat?.buildingName || db.settings?.buildingName || "Edifício Soho Residence Service",
+              hasPdfAttached: emailAttachments.length > 0,
+              receptionEmail,
+              garageEmail
+            }
+          });
+
+          r.morningEmailSentDate = todayStr;
+          r.morningEmailSentAt = new Date().toISOString();
+          saveDatabase();
+        } catch (rErr) {
+          console.error(`[Rotina 07:00] Erro ao enviar e-mail para reserva ${r.code || r.id}:`, rErr.message);
+        }
+      }
+    }
+  } catch (errLoop) {
+    // Silencioso
+  }
+}, 30000);
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`[Demo Server] API rodando em http://0.0.0.0:${PORT}`);
