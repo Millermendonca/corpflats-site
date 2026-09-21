@@ -69,7 +69,7 @@
       "number": "211",
       "colIndex": 5,
       "colName": "211 de casal",
-      "isOccupied": true,
+      "isOccupied": false,
       "updatedAt": "2026-09-01T07:26:30.433Z"
     },
     {
@@ -803,7 +803,7 @@
       "flatId": 4,
       "flatNumber": "211",
       "requestDate": "2026-09-20",
-      "source": "admin_manual",
+      "source": "checkout",
       "status": "dirty",
       "assignedUserId": null,
       "assignedUsername": null,
@@ -814,7 +814,7 @@
       "twinBeds": false,
       "extraMattress": false,
       "adminNote": null,
-      "leavingGuest": "Hóspede",
+      "leavingGuest": "Hóspede (Reserva #RES-211-0147)",
       "arrivingGuest": null,
       "pendingObservation": null,
       "willCleanAt": null,
@@ -2779,6 +2779,15 @@
       "name": "Alessandra Dias",
       "fullName": "Alessandra Dias",
       "createdAt": "2026-09-10T18:11:41.197Z",
+      "documentNumber": "",
+      "document": ""
+    },
+    {
+      "id": 30,
+      "guestCode": "HOSP-00030",
+      "name": "Hóspede (Reserva #RES-211-0147)",
+      "fullName": "Hóspede (Reserva #RES-211-0147)",
+      "createdAt": "2026-09-18T10:00:00.000Z",
       "documentNumber": "",
       "document": ""
     }
@@ -5842,6 +5851,49 @@
       "updatedAt": "2026-09-10T21:38:33.150Z",
       "guestId": 29,
       "guestCode": "HOSP-00029"
+    },
+    {
+      "id": 147,
+      "code": "RES-211-0147",
+      "flatNumber": "211",
+      "flatId": 4,
+      "guestId": 30,
+      "guestCode": "HOSP-00030",
+      "guestName": "Hóspede (Reserva #RES-211-0147)",
+      "checkinDate": "2026-09-18",
+      "checkoutDate": "2026-09-20",
+      "nightsCount": 2,
+      "dailyRate": 220,
+      "totalAmount": 440,
+      "totalPrice": 440,
+      "price": 440,
+      "paidAmount": 440,
+      "paymentStatus": "pago",
+      "status": "confirmada",
+      "channel": "direto",
+      "adults": 1,
+      "children": 0,
+      "twinBeds": false,
+      "extraMattress": false,
+      "notes": "",
+      "specialRequests": "",
+      "receptionNotes": "",
+      "includeBreakfast": false,
+      "prefersHighFloor": false,
+      "earlyCheckinAuthorized": false,
+      "isMonthlyGuest": false,
+      "clientType": "avulso",
+      "guests": [
+        {
+          "index": 1,
+          "guestId": 30,
+          "guestCode": "HOSP-00030",
+          "name": "Hóspede (Reserva #RES-211-0147)"
+        }
+      ],
+      "auditLogs": [],
+      "createdAt": "2026-09-18T10:00:00.000Z",
+      "updatedAt": "2026-09-20T10:00:00.000Z"
     }
   ],
   "reservationCommunications": [
@@ -7225,7 +7277,7 @@
     "conciergeGroupName": "Checkout Flats",
     "conciergeMonitoringEnabled": true,
     "conciergeRequireKeywords": false,
-    "webhooksSyncedAt": "2026-09-20T20:59:28.837Z",
+    "webhooksSyncedAt": "2026-09-21T02:03:31.298Z",
     "googleReviewUrl": "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac",
     "alertEmail": "millerpessanha@gmail.com",
     "alertEmailEnabled": true,

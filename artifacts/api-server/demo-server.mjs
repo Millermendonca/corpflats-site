@@ -4530,7 +4530,7 @@ app.get("/api/reservations/checkouts", (req, res) => {
     const checkoutRes = (db.reservations || []).find(r => 
       (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
       r.status !== "cancelada" && r.status !== "cancelado" &&
-      r.checkoutDate === dateStr
+      r.checkoutDate === (req_.originalRequestDate || req_.requestDate || dateStr)
     ) || (req_.leavingGuest ? (db.reservations || []).find(r => 
       (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
       r.status !== "cancelada" && r.status !== "cancelado" &&
