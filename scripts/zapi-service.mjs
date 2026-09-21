@@ -3614,6 +3614,14 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           tpl.triggerEvent = "room_ready_regular";
           tpl.recipientTarget = "guest";
         }
+        if (tpl.id === "tpl_sameday_reservation_instructions") {
+          if (tpl.message.includes("Como sua reserva foi confirmada no próprio dia da chegada")) {
+            const defSame = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_sameday_reservation_instructions");
+            if (defSame) {
+              tpl.message = defSame.message;
+            }
+          }
+        }
         if (tpl.id === "tpl_checkin_cleaning_delay") {
           tpl.channels = ["site", "whatsapp", "booking", "airbnb", "outros"];
           tpl.triggerEvent = "checkin_cleaning_delay";
@@ -4392,7 +4400,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       if (score === 5) {
         npsItem.autoAction = "google_link_sent";
         npsItem.googleLinkSent = true;
-        const googleLink = db.zapiConfig?.googleReviewUrl || "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac";
+        const googleLink = db.zapiConfig?.googleReviewUrl || "https://share.google/LHu3541d5lhkdvbL2";
         sendZapiMessage(db.zapiConfig, {
           phone,
           message: `Ficamos muito felizes que sua experiência foi nota 5! ⭐⭐⭐⭐⭐\n\nVocê nos ajudaria muito compartilhando sua opinião no Google? Leva menos de 1 minuto e faz toda a diferença para nossa equipe:\n\n${googleLink}\n\nMuito obrigado e até a próxima estadia!`

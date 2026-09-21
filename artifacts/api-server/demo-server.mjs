@@ -406,7 +406,7 @@ let db = {
     checkinTime: "14:00",
     checkoutTime: "12:00",
     autoEarlyCheckinForSite: true,
-    googleMapsUrl: "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac",
+    googleMapsUrl: "https://share.google/LHu3541d5lhkdvbL2",
     buildingName: "Edifício Soho Residence Service",
     receptionEmail: "millerpessanha@gmail.com",
     emailSettings: {
@@ -446,7 +446,7 @@ const DEFAULT_SITE_CONFIG = {
     whatsapp: "5522997124021",
     email: "reservas@corpflats.com.br",
     address: "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ, CEP 28010-140 (Edifício Soho Residence Service)",
-    googleMapsUrl: "https://maps.google.com/?q=Rua+Conselheiro+Otaviano,+209+-+Centro,+Campos+dos+Goytacazes+-+RJ",
+    googleMapsUrl: "https://share.google/LHu3541d5lhkdvbL2",
   },
   hero: {
     title: "Sua Estadia com Conforto & Estilo em Campos dos Goytacazes",
