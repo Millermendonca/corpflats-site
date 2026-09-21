@@ -1507,6 +1507,34 @@ async function loadDatabase() {
     if (!db.users || db.users.length === 0) {
       db.users = defaultUsers;
     }
+
+    // Purga definitiva de registros legados de teste/mock de Miller como hóspede
+    if (Array.isArray(db.guests)) {
+      db.guests = db.guests.filter(g => {
+        const doc = (g.document || g.documentNumber || "").replace(/\D/g, "");
+        const name = (g.fullName || g.name || "").trim().toLowerCase();
+        return doc !== "12585736792" && !name.includes("miller mendonca");
+      });
+    }
+    if (Array.isArray(db.reservations)) {
+      db.reservations = db.reservations.filter(r => {
+        const doc = (r.guestDocument || r.document || "").replace(/\D/g, "");
+        const code = r.code || r.reservationCode || "";
+        const name = (r.guestName || "").trim().toLowerCase();
+        return doc !== "12585736792" && !code.startsWith("RES-408-") && !name.includes("miller mendonca");
+      });
+    }
+    if (Array.isArray(db.invoices)) {
+      db.invoices = db.invoices.filter(i => (i.tomadorCpfCnpj || "").replace(/\D/g, "") !== "12585736792" && !(i.tomadorNome || "").toLowerCase().includes("miller mendonca"));
+    }
+    if (Array.isArray(db.whatsappConversations)) {
+      db.whatsappConversations = db.whatsappConversations.filter(c => !(c.name || "").toLowerCase().includes("miller mendonca") && (c.phone || "") !== "5522998505276");
+    }
+    if (!db.deletedGuestDocs) db.deletedGuestDocs = [];
+    if (!db.deletedGuestDocs.includes("12585736792")) {
+      db.deletedGuestDocs.push("12585736792");
+    }
+
     reconcileAndMergeGuests(db);
     saveDatabase();
     sanitizeAndRecoverCleanings();
@@ -1537,12 +1565,6 @@ function normalizePhone(phone) {
   }
   return digits;
 }
-
-const SAMPLE_MILLER_SELFIE = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='400' height='400' viewBox='0 0 400 400'><rect width='400' height='400' fill='%230f172a'/><circle cx='200' cy='150' r='70' fill='%2338bdf8'/><path d='M100 350 C100 250 300 250 300 350 Z' fill='%2338bdf8'/><rect x='130' y='320' width='140' height='30' rx='15' fill='%2322c55e'/><text x='200' y='340' fill='white' font-family='sans-serif' font-size='12' font-weight='bold' text-anchor='middle'>BIOMETRIA FACIAL OK</text></svg>";
-
-const SAMPLE_MILLER_DOC = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='600' height='400' viewBox='0 0 600 400'><rect width='600' height='400' rx='20' fill='%231e293b' stroke='%233b82f6' stroke-width='4'/><rect x='40' y='40' width='520' height='60' rx='10' fill='%231e3a8a'/><text x='60' y='75' fill='%2393c5fd' font-family='sans-serif' font-size='18' font-weight='bold'>REPUBLICA FEDERATIVA DO BRASIL</text><text x='60' y='92' fill='%23cbd5e1' font-family='sans-serif' font-size='12'>CARTEIRA NACIONAL DE HABILITACAO / RG</text><rect x='50' y='130' width='130' height='170' rx='10' fill='%23334155'/><circle cx='115' cy='190' r='35' fill='%2364748b'/><path d='M70 290 C70 240 160 240 160 290 Z' fill='%2364748b'/><text x='210' y='160' fill='%2394a3b8' font-family='sans-serif' font-size='11'>NOME COMPLETO</text><text x='210' y='180' fill='white' font-family='sans-serif' font-size='16' font-weight='bold'>MILLER MENDONCA PESSANHA</text><text x='210' y='220' fill='%2394a3b8' font-family='sans-serif' font-size='11'>CPF</text><text x='210' y='240' fill='white' font-family='sans-serif' font-size='15' font-weight='bold'>125.857.367-92</text><text x='380' y='220' fill='%2394a3b8' font-family='sans-serif' font-size='11'>NASCIMENTO</text><text x='380' y='240' fill='white' font-family='sans-serif' font-size='15' font-weight='bold'>15/05/1990</text><rect x='40' y='330' width='520' height='40' rx='8' fill='%230f172a'/><text x='300' y='355' fill='%2322c55e' font-family='sans-serif' font-size='13' font-weight='bold' text-anchor='middle'>DOCUMENTO VALIDADO PELA IA (AUTENTICO)</text></svg>";
-
-const SAMPLE_MILLER_SIG = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='500' height='200' viewBox='0 0 500 200'><rect width='500' height='200' fill='%23ffffff' rx='15' stroke='%23cbd5e1' stroke-width='2'/><path d='M 50 130 Q 120 40 160 110 T 220 80 T 280 130 T 360 90 T 450 120' fill='none' stroke='%231e293b' stroke-width='4' stroke-linecap='round'/><path d='M 120 140 Q 250 170 420 130' fill='none' stroke='%230284c7' stroke-width='3' stroke-linecap='round'/><text x='250' y='180' fill='%2364748b' font-family='sans-serif' font-size='12' text-anchor='middle'>Assinatura Digital Certificada - Miller Mendonca Pessanha</text></svg>";
 
 function mergeGuestRecords(target, source) {
   if (!target || !source) return;
@@ -1818,106 +1840,6 @@ function reconcileAndMergeGuests(database) {
     if (!g.name) g.name = g.fullName || "Hóspede";
     if (!g.documentNumber) g.documentNumber = g.document || "";
     if (!g.document) g.document = g.documentNumber || "";
-  }
-
-  // 5. Garante ficha 360º completa e verificada para Miller Mendonça Pessanha
-  const miller = deduplicated.find(g => 
-    normalizeName(g.fullName || g.name).includes("miller") || 
-    normalizeDoc(g.document).includes("12585736792")
-  );
-  if (miller) {
-    miller.fullName = "Miller Mendonça Pessanha";
-    miller.name = "Miller Mendonça Pessanha";
-    miller.document = "12585736792";
-    miller.documentNumber = "12585736792";
-    miller.email = miller.email || "millerpessanha@gmail.com";
-    miller.phone = miller.phone || "22998505276";
-    miller.city = miller.city || "Campos dos Goytacazes";
-    miller.state = miller.state || "RJ";
-    miller.address = miller.address || "Av. Pelinca, 200, Apto 408";
-    miller.birthDate = miller.birthDate || "1990-05-15";
-    miller.gender = miller.gender || "masculino";
-    miller.vehiclePlate = miller.vehiclePlate || "KVW8840";
-    miller.vehicleModel = miller.vehicleModel || "Corolla";
-    miller.vehicleBrand = miller.vehicleBrand || "Toyota";
-    miller.vehicleColor = miller.vehicleColor || "Cinza";
-    miller.fnhrCompleted = true;
-    if (!miller.fnhrCompletedAt) miller.fnhrCompletedAt = "2026-08-25T14:20:00.000Z";
-    if (!miller.photoUrl) miller.photoUrl = SAMPLE_MILLER_SELFIE;
-    if (!miller.docPhotoUrl) miller.docPhotoUrl = SAMPLE_MILLER_DOC;
-    if (!miller.signatureUrl) miller.signatureUrl = SAMPLE_MILLER_SIG;
-    if (!miller.aiVerification) {
-      miller.aiVerification = {
-        verified: true,
-        confidence: 99,
-        status: "approved",
-        facialMatch: "100% compativel com documento",
-        documentValidity: "Documento oficial autentico (RG/CNH)",
-        auditTimestamp: "2026-08-25T14:20:00.000Z"
-      };
-    }
-    if (!Array.isArray(miller.tags)) miller.tags = [];
-    if (!miller.tags.includes("VIP")) miller.tags.push("VIP");
-    if (!miller.tags.includes("Recorrente")) miller.tags.push("Recorrente");
-
-    let millerRes = currentDb.reservations.find(r => r.guestId === miller.id || (r.guestDocument && normalizeDoc(r.guestDocument) === "12585736792"));
-    if (!millerRes) {
-      const nextResId = currentDb.reservations.length > 0 ? Math.max(...currentDb.reservations.map(r => r.id || 0)) + 1 : 1;
-      millerRes = {
-        id: nextResId,
-        code: `RES-408-${String(nextResId).padStart(4, "0")}`,
-        flatNumber: "408",
-        flatId: 8,
-        guestId: miller.id,
-        guestCode: miller.guestCode,
-        guestName: miller.fullName,
-        guestDocument: miller.document,
-        guestPhone: miller.phone,
-        guestEmail: miller.email,
-        checkinDate: "2026-08-25",
-        checkoutDate: "2026-08-28",
-        nightsCount: 3,
-        totalAmount: 711,
-        totalPrice: 711,
-        price: 711,
-        status: "concluida",
-        fnhrCompleted: true,
-        fnhrCompletedAt: "2026-08-25T14:20:00.000Z",
-        selfieUrl: miller.photoUrl,
-        docPhotoUrl: miller.docPhotoUrl,
-        signatureUrl: miller.signatureUrl,
-        vehicle: {
-          plate: miller.vehiclePlate,
-          brand: miller.vehicleBrand,
-          model: miller.vehicleModel,
-          color: miller.vehicleColor
-        },
-        guests: [
-          {
-            index: 1,
-            guestId: miller.id,
-            guestCode: miller.guestCode,
-            name: miller.fullName,
-            cpf: miller.document,
-            phone: miller.phone,
-            email: miller.email,
-            birthDate: miller.birthDate,
-            gender: miller.gender,
-            address: miller.address,
-            city: miller.city,
-            state: miller.state,
-            docPhotoUrl: miller.docPhotoUrl,
-            selfieUrl: miller.photoUrl,
-            signatureUrl: miller.signatureUrl,
-            hasCompletedCheckin: true,
-            checkinCompletedAt: "2026-08-25T14:20:00.000Z",
-            aiVerification: miller.aiVerification
-          }
-        ],
-        createdAt: "2026-08-24T18:00:00.000Z"
-      };
-      currentDb.reservations.unshift(millerRes);
-    }
   }
 
   currentDb.guests = deduplicated;

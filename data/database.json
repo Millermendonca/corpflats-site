@@ -204,7 +204,7 @@
       "assignedUserId": null,
       "isVacant": true,
       "isPriority": false,
-      "leavingGuest": "Miller (Admin)",
+      "leavingGuest": "Hóspede",
       "arrivingGuest": null,
       "pendingObservation": "Check-out confirmado no grupo da portaria (Miller (Admin))",
       "willCleanAt": null,
@@ -2737,35 +2737,6 @@
       "document": ""
     },
     {
-      "id": 28,
-      "guestCode": "HOSP-00028",
-      "name": "Miller Mendonça Pessanha",
-      "fullName": "Miller Mendonça Pessanha",
-      "createdAt": "2026-08-28T01:23:41.256-03:00",
-      "document": "12585736792",
-      "documentNumber": "12585736792",
-      "phone": "22998505276",
-      "email": "millerpessanha@gmail.com",
-      "city": "",
-      "state": "RJ",
-      "address": "",
-      "birthDate": "",
-      "gender": "masculino",
-      "vehiclePlate": "",
-      "vehicleModel": "",
-      "vehicleBrand": "",
-      "vehicleColor": "",
-      "fnhrCompleted": false,
-      "fnhrCompletedAt": null,
-      "photoUrl": null,
-      "docPhotoUrl": null,
-      "signatureUrl": null,
-      "aiVerification": null,
-      "tags": [],
-      "selfieUrl": null,
-      "isReturningGuest": false
-    },
-    {
       "id": 29,
       "guestCode": "HOSP-00029",
       "name": "Alessandra Dias",
@@ -2875,60 +2846,6 @@
     }
   ],
   "reservations": [
-    {
-      "id": 35,
-      "code": "RES-408-0035",
-      "flatNumber": "408",
-      "flatId": 8,
-      "guestId": 28,
-      "guestCode": "HOSP-00028",
-      "guestName": "Miller Mendonça Pessanha",
-      "guestDocument": "12585736792",
-      "guestPhone": "22998505276",
-      "guestEmail": "millerpessanha@gmail.com",
-      "checkinDate": "2026-09-21",
-      "checkoutDate": "2026-09-24",
-      "nightsCount": 3,
-      "totalAmount": 711,
-      "totalPrice": 711,
-      "price": 711,
-      "status": "confirmada",
-      "fnhrCompleted": false,
-      "fnhrCompletedAt": null,
-      "selfieUrl": null,
-      "docPhotoUrl": null,
-      "signatureUrl": null,
-      "vehicle": null,
-      "guests": [
-        {
-          "index": 1,
-          "guestId": 28,
-          "guestCode": "HOSP-00028",
-          "name": "Miller Mendonça Pessanha",
-          "cpf": "12585736792",
-          "phone": "22998505276",
-          "email": "millerpessanha@gmail.com",
-          "birthDate": "",
-          "gender": "masculino",
-          "address": "",
-          "city": "",
-          "state": "RJ",
-          "docPhotoUrl": null,
-          "selfieUrl": null,
-          "signatureUrl": null,
-          "hasCompletedCheckin": false,
-          "checkinCompletedAt": null,
-          "aiVerification": null
-        }
-      ],
-      "createdAt": "2026-08-24T18:00:00.000Z",
-      "fnrhPdfUrl": null,
-      "fnrhDocumentUuid": null,
-      "fnrhSha256Hash": null,
-      "fnrhVerifyUrl": null,
-      "fnrhSignedAt": null,
-      "fnrhAuditTrail": null
-    },
     {
       "id": 34,
       "code": "RES-113-0034",
@@ -3453,114 +3370,6 @@
         }
       ],
       "guestCode": "HOSP-00010"
-    },
-    {
-      "id": 29,
-      "code": "RES-408-0029",
-      "notes": "",
-      "adults": 2,
-      "flatId": 8,
-      "guests": [
-        {
-          "cpf": "",
-          "name": "Dany",
-          "email": "",
-          "index": 1,
-          "phone": "21 99670-1988",
-          "checkinCompletedAt": null,
-          "hasCompletedCheckin": false,
-          "guestId": 11,
-          "guestCode": "HOSP-00011"
-        },
-        {
-          "cpf": "",
-          "name": "Hóspede 2",
-          "email": "",
-          "index": 2,
-          "phone": "",
-          "checkinCompletedAt": null,
-          "hasCompletedCheckin": false
-        }
-      ],
-      "status": "confirmada",
-      "channel": "whatsapp",
-      "guestId": 11,
-      "children": 0,
-      "twinBeds": false,
-      "companyId": null,
-      "createdAt": "2026-09-02T15:44:19.337Z",
-      "dailyRate": 200,
-      "guestName": "Dany",
-      "updatedAt": "2026-09-02T15:44:19.337Z",
-      "flatNumber": "408",
-      "guestCount": 2,
-      "guestEmail": "",
-      "guestPhone": "21 99670-1988",
-      "paidAmount": 200,
-      "checkinDate": "2026-09-02",
-      "companyName": "",
-      "totalAmount": 200,
-      "checkoutDate": "2026-09-03",
-      "extraMattress": false,
-      "paymentStatus": "pago_total",
-      "requesterInfo": null,
-      "requesterType": "guest",
-      "invoiceDetails": null,
-      "receptionNotes": "",
-      "specialRequests": "",
-      "includeBreakfast": false,
-      "prefersHighFloor": false,
-      "earlyCheckinAuthorized": false,
-      "isMonthlyGuest": false,
-      "clientType": "avulso",
-      "auditLogs": [
-        {
-          "id": "audit_init_29",
-          "timestamp": "2026-09-02T15:44:19.337Z",
-          "action": "created",
-          "actor": {
-            "id": null,
-            "name": "Atendimento WhatsApp",
-            "role": "admin",
-            "type": "user"
-          },
-          "source": "WhatsApp / Direta",
-          "description": "Reserva criada no sistema",
-          "changes": [
-            {
-              "field": "flatNumber",
-              "label": "Apartamento",
-              "oldValue": null,
-              "newValue": "Flat 408"
-            },
-            {
-              "field": "dates",
-              "label": "Período da Estadia",
-              "oldValue": null,
-              "newValue": "2026-09-02 a 2026-09-03"
-            },
-            {
-              "field": "guestName",
-              "label": "Hóspede Titular",
-              "oldValue": null,
-              "newValue": "Dany"
-            },
-            {
-              "field": "channel",
-              "label": "Canal",
-              "oldValue": null,
-              "newValue": "whatsapp"
-            },
-            {
-              "field": "totalAmount",
-              "label": "Valor Total",
-              "oldValue": null,
-              "newValue": "R$ 200.00"
-            }
-          ]
-        }
-      ],
-      "guestCode": "HOSP-00011"
     },
     {
       "id": 28,
@@ -5619,100 +5428,6 @@
       "guestCode": "HOSP-00011"
     },
     {
-      "id": 3,
-      "code": "RES-408-0003",
-      "notes": "",
-      "adults": 1,
-      "flatId": 8,
-      "guests": [
-        {
-          "cpf": "",
-          "name": "Angelo",
-          "email": "",
-          "index": 1,
-          "phone": "",
-          "checkinCompletedAt": null,
-          "hasCompletedCheckin": false,
-          "guestId": 27,
-          "guestCode": "HOSP-00027"
-        }
-      ],
-      "status": "confirmada",
-      "channel": "whatsapp",
-      "guestId": 9,
-      "children": 0,
-      "twinBeds": false,
-      "companyId": null,
-      "createdAt": "2026-08-31T17:45:40.375Z",
-      "dailyRate": 0,
-      "guestName": "Angelo",
-      "updatedAt": "2026-09-02T14:32:30.660Z",
-      "clientType": "mensalista",
-      "flatNumber": "408",
-      "guestCount": 1,
-      "guestEmail": "",
-      "guestPhone": "",
-      "paidAmount": 0,
-      "checkinDate": "2026-08-31",
-      "companyName": "",
-      "totalAmount": 0,
-      "checkoutDate": "2026-09-02",
-      "extraMattress": false,
-      "paymentStatus": "pendente",
-      "requesterInfo": null,
-      "requesterType": "guest",
-      "invoiceDetails": null,
-      "isMonthlyGuest": true,
-      "receptionNotes": "",
-      "specialRequests": "",
-      "calendarSequence": 1,
-      "includeBreakfast": false,
-      "prefersHighFloor": false,
-      "earlyCheckinAuthorized": false,
-      "auditLogs": [
-        {
-          "id": "audit_init_3",
-          "timestamp": "2026-08-31T17:45:40.375Z",
-          "action": "created",
-          "actor": {
-            "id": null,
-            "name": "Atendimento WhatsApp",
-            "role": "admin",
-            "type": "user"
-          },
-          "source": "WhatsApp / Direta",
-          "description": "Reserva criada no sistema",
-          "changes": [
-            {
-              "field": "flatNumber",
-              "label": "Apartamento",
-              "oldValue": null,
-              "newValue": "Flat 408"
-            },
-            {
-              "field": "dates",
-              "label": "Período da Estadia",
-              "oldValue": null,
-              "newValue": "2026-08-31 a 2026-09-02"
-            },
-            {
-              "field": "guestName",
-              "label": "Hóspede Titular",
-              "oldValue": null,
-              "newValue": "Angelo"
-            },
-            {
-              "field": "channel",
-              "label": "Canal",
-              "oldValue": null,
-              "newValue": "whatsapp"
-            }
-          ]
-        }
-      ],
-      "guestCode": "HOSP-00009"
-    },
-    {
       "id": 2,
       "code": "RES-313-0002",
       "notes": "",
@@ -6339,70 +6054,7 @@
       "updatedAt": "2026-08-18T10:39:00.000Z"
     }
   },
-  "invoices": [
-    {
-      "id": 875,
-      "numeroRps": 874,
-      "numeroNfse": "875",
-      "codigoVerificacao": "PPZIWJOFI",
-      "chaveAcesso": "GISS_CAMPOS_875",
-      "protocoloAutorizacao": "7838063",
-      "dataEmissao": "2026-08-28T01:23:41.256-03:00",
-      "sistemaEmissor": "giss_prefeitura",
-      "municipioEmissor": "Campos dos Goytacazes - RJ (3301009)",
-      "regraFiscalId": "hospedagem_corpflats",
-      "prestadorRazaoSocial": "RENTAL MILLER'S LTDA (CorpFlats)",
-      "prestadorCnpj": "47.964.813/0001-65",
-      "prestadorIm": "142591",
-      "tomadorNome": "Miller Mendonca Pessanha",
-      "tomadorCpfCnpj": "12585736792",
-      "tomadorEmail": "millerpessanha@gmail.com",
-      "tomadorTelefone": "22998505276",
-      "flatNumber": "408",
-      "reservationId": null,
-      "reservationCode": null,
-      "valorServico": 2,
-      "aliquota": 2,
-      "cnae": "5510801",
-      "codigoServico": "09.02",
-      "codigoTributacaoMunicipio": "799020000",
-      "discriminacao": "HOSPEDAGEM FLAT CORPFLATS APTO 408",
-      "status": "autorizada",
-      "linkPrefeitura": "https://goytacazes.giss.com.br/portal/#/nfse/consulta",
-      "createdAt": "2026-08-28T01:23:41.256-03:00"
-    },
-    {
-      "id": 873,
-      "numeroRps": 872,
-      "numeroNfse": "873",
-      "codigoVerificacao": "H6MKLZBBN",
-      "chaveAcesso": "GISS_CAMPOS_873",
-      "protocoloAutorizacao": "7838061",
-      "dataEmissao": "2026-08-27T20:18:30.806-03:00",
-      "sistemaEmissor": "giss_prefeitura",
-      "municipioEmissor": "Campos dos Goytacazes - RJ (3301009)",
-      "regraFiscalId": "hospedagem_corpflats",
-      "prestadorRazaoSocial": "RENTAL MILLER'S LTDA (CorpFlats)",
-      "prestadorCnpj": "47.964.813/0001-65",
-      "prestadorIm": "142591",
-      "tomadorNome": "Miller Mendonca Pessanha",
-      "tomadorCpfCnpj": "12585736792",
-      "tomadorEmail": "millerpessanha@gmail.com",
-      "tomadorTelefone": "22998505276",
-      "flatNumber": "408",
-      "reservationId": null,
-      "reservationCode": null,
-      "valorServico": 2,
-      "aliquota": 2,
-      "cnae": "5510801",
-      "codigoServico": "09.02",
-      "codigoTributacaoMunicipio": "799020000",
-      "discriminacao": "HOSPEDAGEM FLAT CORPFLATS APTO 408",
-      "status": "autorizada",
-      "linkPrefeitura": "https://goytacazes.giss.com.br/portal/#/nfse/consulta",
-      "createdAt": "2026-08-27T20:18:30.806-03:00"
-    }
-  ],
+  "invoices": [],
   "lostAndFound": [
     {
       "id": 1,
@@ -8576,26 +8228,10 @@
       "lastMessage": null,
       "updatedAt": "2026-08-31T17:44:57.164Z",
       "messages": []
-    },
-    {
-      "id": "5522998505276",
-      "phone": "5522998505276",
-      "formattedPhone": "+55 (22) 99850-5276",
-      "name": "Miller Mendonça Pessanha",
-      "avatarUrl": "",
-      "isGroup": false,
-      "unreadCount": 0,
-      "pinned": false,
-      "reservationCode": "RES-408-0035",
-      "flatNumber": "408",
-      "checkinDate": "2026-08-25",
-      "checkoutDate": "2026-08-28",
-      "status": "concluida",
-      "paymentStatus": "",
-      "totalAmount": 711,
-      "lastMessage": null,
-      "updatedAt": "2026-08-24T18:00:00.000Z",
-      "messages": []
     }
-  ]
+  ],
+  "deletedGuestDocs": [
+    "12585736792"
+  ],
+  "deletedGuestIds": []
 }
