@@ -18705,6 +18705,29 @@ async function confirmReservationPayment(r, {
   if (txId) r.pixTxId = txId;
   if (paymentMethod) r.paymentMethod = paymentMethod;
 
+  // Sincroniza r.payments para garantir consistência em relatórios e no PMS
+  const payRecord = {
+    id: `pay_pix_${Date.now()}`,
+    amount: valorPago,
+    method: paymentMethod || "pix",
+    date: r.paidAt,
+    notes: `PIX confirmado via ${source}${endToEndId ? ` (E2E: ${endToEndId})` : ""}`
+  };
+  if (!Array.isArray(r.payments) || r.payments.length === 0) {
+    r.payments = [payRecord];
+  } else {
+    const existingSum = r.payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    if (existingSum === 0) {
+      r.payments = [payRecord];
+    } else if (existingSum < valorPago) {
+      r.payments.push({
+        ...payRecord,
+        amount: valorPago - existingSum,
+        notes: `Complemento PIX via ${source}`
+      });
+    }
+  }
+
   // Identifica se era uma pré-reserva antes da alteração de status
   const wasPreReserva = r.status === "pre_reserva" || r.status === "pendente" || !r.status || r.isPreReservation || (db.whatsappHistory || []).some(h => {
     const hCode = String(h.reservationCode || "").toUpperCase();

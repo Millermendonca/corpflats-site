@@ -1755,7 +1755,8 @@ export default function PmsCalendar() {
 
     const chan = resItem.channel || "whatsapp"
     const isOtaRes = (chan === "booking" || chan === "airbnb")
-    const isResCurrentlyPaid = isOtaRes || resItem.paymentStatus === "pago_total" || resItem.paymentStatus === "pago" || (Number(resItem.paidAmount) >= Number(resItem.totalAmount) && Number(resItem.totalAmount) > 0)
+    const isGatewayPaid = Boolean(resItem.pixEndToEndId || resItem.mpPaymentId || resItem.paidAt)
+    const isResCurrentlyPaid = isOtaRes || isGatewayPaid || resItem.paymentStatus === "pago_total" || resItem.paymentStatus === "pago" || (Number(resItem.paidAmount) >= Number(resItem.totalAmount) && Number(resItem.totalAmount) > 0)
     const nights = differenceInDays(parseISO(resItem.checkoutDate), parseISO(resItem.checkinDate)) || 1
 
     setFormChannel(chan)
@@ -1763,7 +1764,7 @@ export default function PmsCalendar() {
     if (!resolvedMethod) {
       if (chan === "booking") resolvedMethod = "booking"
       else if (chan === "airbnb") resolvedMethod = "airbnb"
-      else if (resItem.pixTxId || chan === "site") resolvedMethod = "pix"
+      else if (resItem.pixTxId || resItem.pixEndToEndId || chan === "site") resolvedMethod = "pix"
       else if (resItem.mpPaymentId) resolvedMethod = "cartao_credito"
       else resolvedMethod = "pix"
     }
@@ -1781,8 +1782,12 @@ export default function PmsCalendar() {
     const calcFromRates = loadedDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0)
     const totCalculated = Number(resItem.totalAmount) > 0 ? Number(resItem.totalAmount) : (calcFromRates > 0 ? calcFromRates : (baseDailyRate * nights))
     setFormTotalAmount(totCalculated > 0 ? String(totCalculated) : "")
-    const resolvedPaidVal = Number(resItem.paidAmount !== undefined ? resItem.paidAmount : (isResCurrentlyPaid ? totCalculated : 0))
-    setFormPaidAmount(String(resolvedPaidVal))
+
+    // Resolvendo valor pago com consistência absoluta
+    const effectivePaid = isResCurrentlyPaid
+      ? Math.max(Number(resItem.paidAmount) || 0, totCalculated)
+      : (Number(resItem.paidAmount) || 0)
+    setFormPaidAmount(String(effectivePaid))
 
     let loadedPayments: ReservationPaymentItem[] = []
     if (Array.isArray(resItem.payments) && resItem.payments.length > 0) {
@@ -1793,14 +1798,26 @@ export default function PmsCalendar() {
         date: p.date ? (p.date.includes("T") ? p.date.substring(0, 16) : p.date) : format(new Date(), "yyyy-MM-dd'T'HH:mm"),
         notes: p.notes || ""
       }))
-    } else if (resolvedPaidVal > 0) {
-      loadedPayments = [{
-        id: `pay_legacy_${resItem.id}`,
-        amount: resolvedPaidVal,
-        method: resolvedMethod,
-        date: resItem.paidAt ? (resItem.paidAt.includes("T") ? resItem.paidAt.substring(0, 16) : resItem.paidAt) : (resItem.createdAt ? resItem.createdAt.substring(0, 16) : format(new Date(), "yyyy-MM-dd'T'HH:mm")),
-        notes: isResCurrentlyPaid ? "Pagamento integral" : "Pagamento registrado"
-      }]
+    }
+
+    const sumLoadedPayments = loadedPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
+    if (effectivePaid > 0 && sumLoadedPayments === 0) {
+      if (loadedPayments.length > 0) {
+        loadedPayments[0].amount = effectivePaid
+        loadedPayments[0].method = resItem.pixEndToEndId ? "pix" : (resItem.mpPaymentId ? "cartao_credito" : resolvedMethod)
+        if (resItem.paidAt) {
+          loadedPayments[0].date = resItem.paidAt.includes("T") ? resItem.paidAt.substring(0, 16) : resItem.paidAt
+        }
+        loadedPayments[0].notes = isGatewayPaid ? "Pagamento liquidado via Gateway" : "Pagamento integral"
+      } else {
+        loadedPayments = [{
+          id: `pay_${resItem.id}_reconciled`,
+          amount: effectivePaid,
+          method: resItem.pixEndToEndId ? "pix" : (resItem.mpPaymentId ? "cartao_credito" : resolvedMethod),
+          date: resItem.paidAt ? (resItem.paidAt.includes("T") ? resItem.paidAt.substring(0, 16) : resItem.paidAt) : format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+          notes: isGatewayPaid ? "Pagamento liquidado via Gateway" : "Pagamento integral"
+        }]
+      }
     }
     setFormPayments(loadedPayments)
 
@@ -3325,86 +3342,58 @@ export default function PmsCalendar() {
             <Tabs 
               value={resModalTab === "details" ? "reservation" : resModalTab} 
               onValueChange={(v: any) => setResModalTab(v)} 
-              className="w-full mt-1 mb-2 min-w-0"
+              className="w-full mt-1 mb-2"
             >
-              <div className="w-full overflow-x-auto -mx-0.5 px-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                <TabsList className={`flex w-max sm:w-full min-w-full items-center p-1 bg-muted/60 rounded-xl sm:grid ${selectedRes ? "sm:grid-cols-5" : "sm:grid-cols-2"} gap-1 h-auto`}>
-                  <TabsTrigger
-                    value="reservation"
-                    className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs"
-                  >
-                    <CalendarDays className="w-3.5 h-3.5 shrink-0 text-primary" />
-                    <span><span className="hidden sm:inline">Dados da </span>Reserva</span>
-                  </TabsTrigger>
-                  
-                  <TabsTrigger
-                    value="payments"
-                    className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs relative"
-                  >
-                    <CreditCard className="w-3.5 h-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                    <span>Pagamentos<span className="hidden sm:inline"> & Diárias</span></span>
-                    {(() => {
-                      const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
-                      const curPaid = formPayments.length > 0 
-                        ? formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0) 
-                        : (Number(formPaidAmount) || 0);
-                      const rem = Math.max(0, curTot - curPaid);
-                      if (rem > 0) {
-                        return (
-                          <Badge variant="secondary" className="text-[9.5px] h-4 px-1.5 py-0 font-bold ml-0.5 bg-amber-500/15 text-amber-700 dark:text-amber-300 shrink-0">
-                            Pendente
-                          </Badge>
-                        );
-                      } else if (curTot > 0 && rem === 0) {
-                        return (
-                          <Badge variant="secondary" className="text-[9.5px] h-4 px-1.5 py-0 font-bold ml-0.5 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 shrink-0">
-                            ✓ Quitado
-                          </Badge>
-                        );
-                      }
-                      return null;
-                    })()}
-                  </TabsTrigger>
+              <TabsList className={`w-full p-1 bg-muted/60 rounded-xl grid ${selectedRes ? "grid-cols-5" : "grid-cols-2"} gap-1 h-auto`}>
+                <TabsTrigger
+                  value="reservation"
+                  className="text-xs font-semibold py-2 px-1 gap-1 rounded-lg flex items-center justify-center truncate data-[state=active]:shadow-xs"
+                >
+                  <CalendarDays className="w-3.5 h-3.5 shrink-0 text-primary" />
+                  <span className="truncate">Reserva</span>
+                </TabsTrigger>
+                
+                <TabsTrigger
+                  value="payments"
+                  className="text-xs font-semibold py-2 px-1 gap-1 rounded-lg flex items-center justify-center truncate data-[state=active]:shadow-xs"
+                >
+                  <CreditCard className="w-3.5 h-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                  <span className="truncate">Pagamento</span>
+                </TabsTrigger>
 
-                  {selectedRes && (
-                    <>
-                      <TabsTrigger
-                        value="audit"
-                        className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs relative"
-                      >
-                        <Clock className="w-3.5 h-3.5 shrink-0 text-blue-500" />
-                        <span>Histórico<span className="hidden sm:inline"> & Logs</span></span>
-                        {auditLogs.length > 0 && (
-                          <Badge variant="secondary" className="text-[10px] h-4 px-1.5 py-0 font-bold ml-0.5 bg-blue-500/15 text-blue-700 dark:text-blue-300 shrink-0">
-                            {auditLogs.length}
-                          </Badge>
-                        )}
-                      </TabsTrigger>
+                {selectedRes && (
+                  <>
+                    <TabsTrigger
+                      value="communications"
+                      className="text-xs font-semibold py-2 px-1 gap-1 rounded-lg flex items-center justify-center truncate data-[state=active]:shadow-xs"
+                    >
+                      <MessageCircle className="w-3.5 h-3.5 shrink-0 text-sky-500" />
+                      <span className="truncate">Mensagens</span>
+                      {(communications.length + scheduledEmails.length + whatsappQueue.length + whatsappHistory.length) > 0 && (
+                        <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 font-bold shrink-0 ml-0.5">
+                          {communications.length + scheduledEmails.length + whatsappQueue.length + whatsappHistory.length}
+                        </span>
+                      )}
+                    </TabsTrigger>
 
-                      <TabsTrigger
-                        value="communications"
-                        className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs relative"
-                      >
-                        <MessageCircle className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
-                        <span>Mensagens</span>
-                        {(communications.length + scheduledEmails.length + whatsappQueue.length + whatsappHistory.length) > 0 && (
-                          <Badge variant="secondary" className="text-[10px] h-4 px-1.5 py-0 font-bold ml-0.5 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 shrink-0">
-                            {communications.length + scheduledEmails.length + whatsappQueue.length + whatsappHistory.length}
-                          </Badge>
-                        )}
-                      </TabsTrigger>
+                    <TabsTrigger
+                      value="audit"
+                      className="text-xs font-semibold py-2 px-1 gap-1 rounded-lg flex items-center justify-center truncate data-[state=active]:shadow-xs"
+                    >
+                      <Clock className="w-3.5 h-3.5 shrink-0 text-blue-500" />
+                      <span className="truncate">Histórico</span>
+                    </TabsTrigger>
 
-                      <TabsTrigger
-                        value="links"
-                        className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs relative"
-                      >
-                        <Link2 className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
-                        <span>Links Úteis</span>
-                      </TabsTrigger>
-                    </>
-                  )}
-                </TabsList>
-              </div>
+                    <TabsTrigger
+                      value="links"
+                      className="text-xs font-semibold py-2 px-1 gap-1 rounded-lg flex items-center justify-center truncate data-[state=active]:shadow-xs"
+                    >
+                      <Link2 className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
+                      <span className="truncate">Links</span>
+                    </TabsTrigger>
+                  </>
+                )}
+              </TabsList>
             </Tabs>
 
             {(resModalTab === "reservation" || resModalTab === "details" || resModalTab === "payments") && (
@@ -4671,179 +4660,238 @@ export default function PmsCalendar() {
               </div>
               )}
 
-              {/* ABA 2: Pagamentos & Diárias */}
+              {/* ABA: Pagamento & Diárias */}
               {resModalTab === "payments" && (
-                <div className="py-2.5 space-y-4">
-                  {/* 1. Indicadores Financeiros no Topo */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                    {/* Card Total */}
-                    <div className="p-3 bg-muted/40 border rounded-2xl space-y-1">
-                      <span className="text-[11px] font-semibold text-muted-foreground flex items-center gap-1">
-                        <CreditCard className="w-3.5 h-3.5 text-primary" />
-                        <span>Total da Reserva</span>
-                      </span>
-                      <div className="text-base sm:text-lg font-black text-foreground">
-                        R$ {((Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal())).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                      </div>
-                      <span className="text-[10px] text-muted-foreground block">
-                        {formDailyRates.length} {formDailyRates.length === 1 ? "noite" : "noites"} registradas
-                      </span>
-                    </div>
+                <div className="py-2 space-y-3.5">
+                  {/* 1. Barra de Indicadores Financeiros Unificada */}
+                  {(() => {
+                    const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
+                    const curPaid = formPayments.length > 0 
+                      ? formPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0) 
+                      : (Number(formPaidAmount) || 0);
+                    const remaining = Math.max(0, curTot - curPaid);
+                    const isPaid = curTot > 0 && remaining === 0;
 
-                    {/* Card Total Pago */}
-                    <div className="p-3 bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/80 dark:border-emerald-800/60 rounded-2xl space-y-1">
-                      <span className="text-[11px] font-semibold text-emerald-800 dark:text-emerald-300 flex items-center gap-1">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>Total Recebido</span>
-                      </span>
-                      <div className="text-base sm:text-lg font-black text-emerald-700 dark:text-emerald-400">
-                        R$ {(formPayments.length > 0 ? formPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0) : (Number(formPaidAmount) || 0)).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                      </div>
-                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium block">
-                        {formPayments.length} lançamento(s)
-                      </span>
-                    </div>
-
-                    {/* Card Saldo Restante / Devedor */}
-                    {(() => {
-                      const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
-                      const curPaid = formPayments.length > 0 
-                        ? formPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0) 
-                        : (Number(formPaidAmount) || 0);
-                      const remaining = Math.max(0, curTot - curPaid);
-                      const isOverpaid = curPaid > curTot && curTot > 0;
-                      return (
-                        <div className={`p-3 border rounded-2xl space-y-1 ${
-                          remaining > 0 
-                            ? "bg-amber-50/70 dark:bg-amber-950/30 border-amber-300/80 dark:border-amber-800/60" 
-                            : "bg-muted/40"
-                        }`}>
-                          <span className="text-[11px] font-semibold text-muted-foreground flex items-center gap-1">
-                            <Clock className="w-3.5 h-3.5 text-amber-600" />
-                            <span>Saldo Restante</span>
-                          </span>
-                          <div className={`text-base sm:text-lg font-black ${remaining > 0 ? "text-amber-700 dark:text-amber-400" : "text-foreground"}`}>
-                            {remaining > 0 ? `R$ ${remaining.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}` : "R$ 0,00"}
+                    return (
+                      <div className="p-3 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl flex flex-wrap items-center justify-between gap-3 text-xs">
+                        <div className="flex items-center gap-4 sm:gap-6 flex-wrap">
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-muted-foreground block">Total</span>
+                            <span className="text-base sm:text-lg font-black text-foreground">
+                              R$ {curTot.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground block">
+                              {formDailyRates.length} {formDailyRates.length === 1 ? "diária" : "diárias"}
+                            </span>
                           </div>
-                          <span className="text-[10px] text-muted-foreground block font-medium">
-                            {remaining > 0 ? "A receber do hóspede" : (isOverpaid ? "Valor recebido excede total" : "Totalmente quitado")}
-                          </span>
-                        </div>
-                      );
-                    })()}
 
-                    {/* Card Situação & Ações Rápidas */}
-                    <div className="p-3 bg-muted/40 border rounded-2xl space-y-1.5 flex flex-col justify-between">
-                      <span className="text-[11px] font-semibold text-muted-foreground block">
-                        Situação Atual
-                      </span>
-                      <div>
-                        {(() => {
-                          const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
-                          const curPaid = formPayments.length > 0 
-                            ? formPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0) 
-                            : (Number(formPaidAmount) || 0);
-                          const remaining = Math.max(0, curTot - curPaid);
-                          if (remaining === 0 && curTot > 0) {
-                            return <Badge className="bg-emerald-600 text-white font-bold text-xs">✓ Quitado (100%)</Badge>;
-                          } else if (curPaid > 0) {
-                            return <Badge className="bg-amber-600 text-white font-bold text-xs">⚡ Parcial (Sinal)</Badge>;
-                          }
-                          return <Badge className="bg-rose-500 text-white font-bold text-xs">⏳ Pendente</Badge>;
-                        })()}
+                          <div className="h-7 w-[1px] bg-border hidden sm:block" />
+
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-muted-foreground block">Recebido</span>
+                            <span className="text-base sm:text-lg font-black text-emerald-600 dark:text-emerald-400">
+                              R$ {curPaid.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                            </span>
+                            <span className="text-[10px] text-emerald-600/80 block font-medium">
+                              {formPayments.length} lançamento(s)
+                            </span>
+                          </div>
+
+                          <div className="h-7 w-[1px] bg-border hidden sm:block" />
+
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-muted-foreground block">Saldo a Pagar</span>
+                            <span className={`text-base sm:text-lg font-black ${remaining > 0 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                              {remaining > 0 ? `R$ ${remaining.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}` : "R$ 0,00"}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground block font-medium">
+                              {remaining > 0 ? "Pendente" : "Quitado"}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {isPaid ? (
+                            <Badge className="bg-emerald-600 text-white px-2.5 py-1 text-xs font-bold flex items-center gap-1 shadow-xs">
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Pago Integralmente</span>
+                            </Badge>
+                          ) : curPaid > 0 ? (
+                            <Badge className="bg-amber-600 text-white px-2.5 py-1 text-xs font-bold flex items-center gap-1 shadow-xs">
+                              <span>⚡ Sinal Pago</span>
+                            </Badge>
+                          ) : (
+                            <Badge className="bg-rose-500 text-white px-2.5 py-1 text-xs font-bold flex items-center gap-1 shadow-xs">
+                              <span>⏳ Pagamento Pendente</span>
+                            </Badge>
+                          )}
+
+                          {remaining > 0 && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => {
+                                const newPay: ReservationPaymentItem = {
+                                  id: `pay_${Date.now()}`,
+                                  amount: remaining,
+                                  method: formPaymentMethod || "pix",
+                                  date: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+                                  notes: "Quitação de saldo"
+                                };
+                                const updated = [...formPayments, newPay];
+                                setFormPayments(updated);
+                                setFormPaidAmount(String(curTot));
+                                setFormPaymentStatus("pago_total");
+                                toast({ title: "Quitação Lançada", description: `Lançamento de R$ ${remaining.toFixed(2)} registrado.` });
+                              }}
+                              className="h-7 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 shadow-xs cursor-pointer"
+                            >
+                              Quitar Saldo
+                            </Button>
+                          )}
+
+                          {remaining > 0 && curPaid === 0 && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                const half = Math.round(curTot / 2);
+                                const newPay: ReservationPaymentItem = {
+                                  id: `pay_${Date.now()}`,
+                                  amount: half,
+                                  method: formPaymentMethod || "pix",
+                                  date: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+                                  notes: "Sinal 50%"
+                                };
+                                setFormPayments([newPay]);
+                                setFormPaidAmount(String(half));
+                                setFormPaymentStatus("sinal_pago");
+                              }}
+                              className="h-7 text-xs font-semibold text-amber-700 dark:text-amber-300 border-amber-300 px-2 cursor-pointer"
+                            >
+                              Sinal 50%
+                            </Button>
+                          )}
+                        </div>
                       </div>
-                      <div className="flex gap-1 items-center flex-wrap pt-0.5">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
-                            setFormPayments([
-                              {
-                                id: `pay_${Date.now()}`,
-                                amount: curTot,
-                                method: formPaymentMethod || "pix",
-                                date: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
-                                notes: "Quitação 100%"
+                    );
+                  })()}
+
+                  {/* 2. Banner de Conciliação Bancária Oficial (se houver dados de PIX Inter ou Mercado Pago) */}
+                  {selectedRes && (selectedRes.pixTxId || selectedRes.pixEndToEndId || selectedRes.mpPaymentId || selectedRes.paidAt) && (
+                    <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 rounded-xl space-y-2 text-xs">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm">⚡</span>
+                          <div>
+                            <span className="font-bold text-emerald-800 dark:text-emerald-300">
+                              {selectedRes.pixEndToEndId ? "PIX Confirmado pelo Banco Central (Inter)" : (selectedRes.mpPaymentId ? "Cartão Liquidado Mercado Pago" : "Pagamento Liquidado via Gateway")}
+                            </span>
+                            {selectedRes.paidAt && (
+                              <span className="text-muted-foreground block text-[11px]">
+                                Confirmado em {format(parseISO(selectedRes.paidAt), "dd/MM/yyyy 'às' HH:mm:ss", { locale: ptBR })}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              const link = `https://corpflats.onrender.com/minha-reserva/${selectedRes.code || selectedRes.id}`;
+                              navigator.clipboard.writeText(link);
+                              toast({ title: "Link Copiado!", description: "Link do hóspede copiado para a área de transferência." });
+                            }}
+                            className="h-7 px-2 text-[11px] bg-white dark:bg-slate-900 border-slate-300 cursor-pointer"
+                          >
+                            <Copy className="w-3 h-3 mr-1" /> Copiar Link
+                          </Button>
+
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={async () => {
+                              try {
+                                const res = await fetch(`/api/pms/reservations/${selectedRes.id}`, {
+                                  method: "PUT",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ paymentStatus: "pendente", paidAmount: 0, payments: [] })
+                                });
+                                if (res.ok) {
+                                  setFormPaymentStatus("pendente");
+                                  setFormPaidAmount("0");
+                                  setFormPayments([]);
+                                  fetchData();
+                                  toast({ title: "Status Alterado", description: "Reserva marcada como pendente." });
+                                }
+                              } catch (e: any) {
+                                toast({ title: "Erro", description: e.message, variant: "destructive" });
                               }
-                            ]);
-                            setFormPaidAmount(String(curTot));
-                            setFormPaymentStatus("pago_total");
-                          }}
-                          className="h-5 px-1.5 text-[9.5px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-950"
-                        >
-                          Quitar 100%
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
-                            const half = Math.round(curTot / 2);
-                            setFormPayments([
-                              {
-                                id: `pay_${Date.now()}`,
-                                amount: half,
-                                method: formPaymentMethod || "pix",
-                                date: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
-                                notes: "Sinal de 50%"
-                              }
-                            ]);
-                            setFormPaidAmount(String(half));
-                            setFormPaymentStatus("sinal_pago");
-                          }}
-                          className="h-5 px-1.5 text-[9.5px] font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-950"
-                        >
-                          Sinal 50%
-                        </Button>
+                            }}
+                            className="h-7 px-2 text-[11px] text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-950 cursor-pointer"
+                          >
+                            Desmarcar Pago
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="pt-1.5 border-t border-emerald-200 dark:border-emerald-800/80 flex flex-wrap gap-x-4 gap-y-1 text-[10.5px] font-mono text-slate-600 dark:text-slate-300">
+                        {selectedRes.pixTxId && <span>TxId: <strong className="text-foreground">{selectedRes.pixTxId}</strong></span>}
+                        {selectedRes.pixEndToEndId && <span>E2E: <strong className="text-emerald-700 dark:text-emerald-300">{selectedRes.pixEndToEndId}</strong></span>}
+                        {selectedRes.mpPaymentId && <span>MP ID: <strong className="text-foreground">{selectedRes.mpPaymentId}</strong></span>}
                       </div>
                     </div>
-                  </div>
+                  )}
 
-                  {/* 2. Diárias Individuais & Canais de Venda Multiplataforma */}
-                  <div className="p-3.5 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-3">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-2.5">
-                      <div>
-                        <div className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                          <CalendarDays className="w-4 h-4 text-primary" />
-                          <span>Diárias da Reserva ({formDailyRates.length} {formDailyRates.length === 1 ? "noite" : "noites"})</span>
-                        </div>
-                        <p className="text-[11px] text-muted-foreground mt-0.5">
-                          Edite o valor e o canal de cada diária individualmente (ex: 1ª diária pelo Booking e extensão direta via WhatsApp).
-                        </p>
+                  {/* 3. Diárias da Estadia (Detalhamento por Noite & Canais) */}
+                  <div className="p-3 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <CalendarDays className="w-4 h-4 text-primary" />
+                        <span className="text-xs font-bold text-foreground">Diárias da Hospedagem ({formDailyRates.length})</span>
                       </div>
 
-                      <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+                      <div className="flex items-center gap-1.5">
                         <Button
                           type="button"
                           variant="outline"
                           size="sm"
                           onClick={handleAddExtraNight}
-                          className="h-7 px-2.5 text-xs font-bold bg-white dark:bg-slate-800 border-primary/40 text-primary hover:bg-primary/10 flex items-center gap-1 shadow-2xs cursor-pointer"
+                          className="h-7 px-2 text-xs font-bold text-primary border-primary/30 hover:bg-primary/10 cursor-pointer"
                         >
-                          <Plus className="w-3.5 h-3.5" />
-                          <span>+ Diária Extra</span>
+                          <Plus className="w-3.5 h-3.5 mr-1" /> Diária Extra
                         </Button>
 
                         {formDailyRates.length > 1 && (
                           <Button
                             type="button"
-                            variant="outline"
+                            variant="ghost"
                             size="sm"
-                            onClick={handleRemoveLastNight}
-                            className="h-7 px-2 text-xs font-medium text-rose-600 dark:text-rose-400 border-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
-                            title="Remover última diária e antecipar check-out"
+                            onClick={() => {
+                              if (formDailyRates.length > 0) {
+                                const firstRate = Number(formDailyRates[0].rate) || 250;
+                                const firstChan = formDailyRates[0].channel || formChannel;
+                                setFormDailyRates(prev => prev.map(d => ({ ...d, rate: firstRate, channel: firstChan })));
+                                const newTot = formDailyRates.length * firstRate;
+                                setFormTotalAmount(String(newTot));
+                                toast({ title: "Diárias Equalizadas", description: `Todas as diárias ajustadas para R$ ${firstRate}.` });
+                              }
+                            }}
+                            className="h-7 px-2 text-[10.5px] text-muted-foreground hover:text-foreground cursor-pointer"
+                            title="Igualar o valor de todas as diárias com a 1ª"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            Igualar Valores
                           </Button>
                         )}
                       </div>
                     </div>
 
-                    {/* Lista de Diárias */}
-                    <div className="space-y-2">
+                    <div className="space-y-1.5">
                       {formDailyRates.map((d, idx) => {
                         let formattedDate = d.date;
                         try {
@@ -4853,552 +4901,196 @@ export default function PmsCalendar() {
                         return (
                           <div 
                             key={d.date || idx}
-                            className="p-2.5 bg-background border border-border rounded-xl flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 text-xs hover:border-primary/40 transition-colors"
+                            className="p-2 bg-background border border-border rounded-xl flex items-center justify-between gap-2 text-xs"
                           >
-                            {/* Identificação da Noite e Data */}
-                            <div className="flex items-center gap-2 min-w-[150px]">
+                            <div className="flex items-center gap-1.5 min-w-[140px]">
                               <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
                                 #{idx + 1}
                               </span>
-                              <div className="font-semibold text-foreground">
+                              <span className="font-medium text-foreground text-xs truncate">
                                 {formattedDate}
-                              </div>
+                              </span>
                             </div>
 
-                            <div className="flex flex-1 items-center gap-2 flex-wrap sm:flex-nowrap">
-                              {/* Canal de Venda Desta Diária */}
-                              <div className="flex-1 min-w-[140px]">
-                                <Select
-                                  value={d.channel || formChannel || "whatsapp"}
-                                  onValueChange={(val) => {
-                                    setFormDailyRates(prev => prev.map((item, i) => i === idx ? { ...item, channel: val } : item));
-                                  }}
-                                >
-                                  <SelectTrigger className="h-8 text-xs font-medium">
-                                    <SelectValue placeholder="Canal" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="whatsapp">💬 WhatsApp / Direta</SelectItem>
-                                    <SelectItem value="booking">🔵 Booking.com</SelectItem>
-                                    <SelectItem value="airbnb">🔴 Airbnb</SelectItem>
-                                    <SelectItem value="site">🌐 Site Próprio</SelectItem>
-                                    <SelectItem value="balcao">🏨 Balcão / Recepção</SelectItem>
-                                    <SelectItem value="empresa">🏢 Empresa (PJ)</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </div>
+                            <div className="w-36">
+                              <Select
+                                value={d.channel || formChannel || "whatsapp"}
+                                onValueChange={(val) => {
+                                  setFormDailyRates(prev => prev.map((item, i) => i === idx ? { ...item, channel: val } : item));
+                                }}
+                              >
+                                <SelectTrigger className="h-7 text-xs font-medium">
+                                  <SelectValue placeholder="Canal" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="whatsapp">💬 WhatsApp / Direta</SelectItem>
+                                  <SelectItem value="booking">🔵 Booking.com</SelectItem>
+                                  <SelectItem value="airbnb">🔴 Airbnb</SelectItem>
+                                  <SelectItem value="site">🌐 Site Próprio</SelectItem>
+                                  <SelectItem value="balcao">🏨 Balcão</SelectItem>
+                                  <SelectItem value="empresa">🏢 Empresa (PJ)</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
 
-                              {/* Valor da Diária */}
-                              <div className="w-32 relative">
-                                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[11px] font-bold text-muted-foreground pointer-events-none">
-                                  R$
-                                </span>
-                                <Input
-                                  type="number"
-                                  value={d.rate}
-                                  onChange={(e) => {
-                                    const val = Number(e.target.value) || 0;
-                                    setFormDailyRates(prev => {
-                                      const nextRates = prev.map((item, i) => i === idx ? { ...item, rate: val } : item);
-                                      const newTot = nextRates.reduce((s, it) => s + (Number(it.rate) || 0), 0);
-                                      setFormTotalAmount(String(newTot));
-                                      if (formPaymentStatus === "pago_total") {
-                                        setFormPaidAmount(String(newTot));
-                                      }
-                                      return nextRates;
-                                    });
-                                  }}
-                                  className="h-8 pl-8 pr-2 text-xs font-bold text-right"
-                                />
-                              </div>
-
-                              {/* Observações da diária */}
-                              <div className="w-full sm:w-40">
-                                <Input
-                                  type="text"
-                                  placeholder="Obs (ex: extra)..."
-                                  value={d.notes || ""}
-                                  onChange={(e) => {
-                                    const val = e.target.value;
-                                    setFormDailyRates(prev => prev.map((item, i) => i === idx ? { ...item, notes: val } : item));
-                                  }}
-                                  className="h-8 text-[11px]"
-                                />
-                              </div>
-
-                              {/* Ação de Excluir esta noite individual se houver mais de 1 */}
-                              {formDailyRates.length > 1 && (
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => {
-                                    const updatedRates = formDailyRates.filter((_, i) => i !== idx);
-                                    if (updatedRates.length > 0) {
-                                      const firstDate = updatedRates[0].date;
-                                      const lastDate = updatedRates[updatedRates.length - 1].date;
-                                      const newCheckout = format(addDays(parseISO(lastDate), 1), "yyyy-MM-dd");
-                                      setFormDailyRates(updatedRates);
-                                      setFormCheckin(firstDate);
-                                      setFormCheckout(newCheckout);
-                                      const newTot = updatedRates.reduce((s, it) => s + (Number(it.rate) || 0), 0);
-                                      setFormTotalAmount(String(newTot));
-                                      if (formPaymentStatus === "pago_total") {
-                                        setFormPaidAmount(String(newTot));
-                                      }
+                            <div className="w-28 relative">
+                              <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground">
+                                R$
+                              </span>
+                              <Input
+                                type="number"
+                                value={d.rate}
+                                onChange={(e) => {
+                                  const val = Number(e.target.value) || 0;
+                                  setFormDailyRates(prev => {
+                                    const nextRates = prev.map((item, i) => i === idx ? { ...item, rate: val } : item);
+                                    const newTot = nextRates.reduce((s, it) => s + (Number(it.rate) || 0), 0);
+                                    setFormTotalAmount(String(newTot));
+                                    if (formPaymentStatus === "pago_total") {
+                                      setFormPaidAmount(String(newTot));
                                     }
-                                  }}
-                                  className="h-8 w-8 p-0 text-muted-foreground hover:text-rose-600 shrink-0 cursor-pointer"
-                                  title="Excluir esta diária"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </Button>
-                              )}
+                                    return nextRates;
+                                  });
+                                }}
+                                className="h-7 pl-7 pr-2 text-xs font-bold text-right"
+                              />
                             </div>
-                          </div>
-                        );
-                      })}
-                    </div>
 
-                    {/* Barra de Ações Rápidas de Diárias */}
-                    <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                      <div className="flex items-center gap-2">
-                        <span>Subtotal das diárias: <strong className="text-foreground font-bold">R$ {formDailyRates.reduce((s, it) => s + (Number(it.rate) || 0), 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            if (formDailyRates.length > 0) {
-                              const firstRate = Number(formDailyRates[0].rate) || 250;
-                              const firstChan = formDailyRates[0].channel || formChannel;
-                              setFormDailyRates(prev => prev.map(d => ({ ...d, rate: firstRate, channel: firstChan })));
-                              const newTot = formDailyRates.length * firstRate;
-                              setFormTotalAmount(String(newTot));
-                              toast({ title: "Diárias Equalizadas", description: `Todas as diárias ajustadas para R$ ${firstRate} (${firstChan}).` });
-                            }
-                          }}
-                          className="h-6 px-2 text-[10px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800 cursor-pointer"
-                        >
-                          Equalizar todas com a 1ª diária
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* 3. Lançamentos & Formas de Pagamento Individuais */}
-                  <div className="p-3.5 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-3">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-2.5">
-                      <div>
-                        <div className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                          <CreditCard className="w-4 h-4 text-emerald-600" />
-                          <span>Pagamentos Realizados ({formPayments.length})</span>
-                        </div>
-                        <p className="text-[11px] text-muted-foreground mt-0.5">
-                          Controle de cada pagamento recebido com sua forma de pagamento específica (PIX, Cartão, Dinheiro, etc.).
-                        </p>
-                      </div>
-
-                      <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleAddPayment()}
-                          className="h-7 px-2.5 text-xs font-bold bg-white dark:bg-slate-800 border-emerald-400 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 flex items-center gap-1 shadow-2xs cursor-pointer"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                          <span>+ Novo Pagamento</span>
-                        </Button>
-                      </div>
-                    </div>
-
-                    {/* Se não há pagamentos registrados */}
-                    {formPayments.length === 0 ? (
-                      <div className="p-4 rounded-xl border border-dashed text-center space-y-2 bg-background/50">
-                        <div className="text-xs text-muted-foreground">
-                          Nenhum pagamento registrado nesta reserva ainda.
-                        </div>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
-                            handleAddPayment(curTot, formPaymentMethod || "pix", "Pagamento integral");
-                          }}
-                          className="h-7 text-xs font-bold text-emerald-600 border-emerald-300 hover:bg-emerald-50 cursor-pointer"
-                        >
-                          Registrar Pagamento Integral Agora
-                        </Button>
-                      </div>
-                    ) : (
-                      <div className="space-y-2">
-                        {formPayments.map((pay, pIdx) => {
-                          return (
-                            <div
-                              key={pay.id || pIdx}
-                              className="p-2.5 bg-background border border-border rounded-xl flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 text-xs hover:border-emerald-400/50 transition-colors"
-                            >
-                              {/* Tag e Forma de Pagamento */}
-                              <div className="flex items-center gap-1.5 sm:w-52 shrink-0">
-                                <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 shrink-0">
-                                  #{pIdx + 1}
-                                </span>
-                                <Select
-                                  value={pay.method || "pix"}
-                                  onValueChange={(val) => handleUpdatePayment(pay.id, "method", val)}
-                                >
-                                  <SelectTrigger className="h-8 text-xs font-medium w-full">
-                                    <SelectValue placeholder="Forma" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="pix">⚡ PIX (Instantâneo)</SelectItem>
-                                    <SelectItem value="credit_card">💳 Cartão de Crédito</SelectItem>
-                                    <SelectItem value="debit_card">💳 Cartão de Débito</SelectItem>
-                                    <SelectItem value="dinheiro">💵 Dinheiro em Espécie</SelectItem>
-                                    <SelectItem value="booking">🌐 Booking.com (OTA)</SelectItem>
-                                    <SelectItem value="airbnb">🔴 Airbnb (OTA)</SelectItem>
-                                    <SelectItem value="ted">🏦 TED / Transferência</SelectItem>
-                                    <SelectItem value="faturado_pj">🏢 Faturado Empresa (PJ)</SelectItem>
-                                    <SelectItem value="outro">💰 Outro</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </div>
-
-                              {/* Valor do Pagamento */}
-                              <div className="w-full sm:w-32 relative shrink-0">
-                                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[11px] font-bold text-emerald-600 pointer-events-none">
-                                  R$
-                                </span>
-                                <Input
-                                  type="number"
-                                  value={pay.amount}
-                                  onChange={(e) => handleUpdatePayment(pay.id, "amount", Number(e.target.value) || 0)}
-                                  className="h-8 pl-8 pr-2 text-xs font-bold text-right text-emerald-700 dark:text-emerald-400"
-                                />
-                              </div>
-
-                              {/* Data e Hora */}
-                              <div className="w-full sm:w-44 shrink-0">
-                                <Input
-                                  type="datetime-local"
-                                  value={pay.date ? (pay.date.includes("T") ? pay.date.substring(0, 16) : pay.date) : ""}
-                                  onChange={(e) => handleUpdatePayment(pay.id, "date", e.target.value)}
-                                  className="h-8 text-[11px]"
-                                />
-                              </div>
-
-                              {/* Observações / Descrição do lançamento */}
-                              <div className="flex-1 min-w-[120px]">
-                                <Input
-                                  type="text"
-                                  placeholder="Obs: ex: Sinal, comprovante no WhatsApp..."
-                                  value={pay.notes || ""}
-                                  onChange={(e) => handleUpdatePayment(pay.id, "notes", e.target.value)}
-                                  className="h-8 text-[11px]"
-                                />
-                              </div>
-
-                              {/* Botão de Excluir Pagamento */}
+                            {formDailyRates.length > 1 && (
                               <Button
                                 type="button"
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => handleRemovePayment(pay.id)}
-                                className="h-8 w-8 p-0 text-muted-foreground hover:text-rose-600 shrink-0 cursor-pointer"
-                                title="Excluir este lançamento"
+                                onClick={() => {
+                                  const updatedRates = formDailyRates.filter((_, i) => i !== idx);
+                                  if (updatedRates.length > 0) {
+                                    const firstDate = updatedRates[0].date;
+                                    const lastDate = updatedRates[updatedRates.length - 1].date;
+                                    const newCheckout = format(addDays(parseISO(lastDate), 1), "yyyy-MM-dd");
+                                    setFormDailyRates(updatedRates);
+                                    setFormCheckin(firstDate);
+                                    setFormCheckout(newCheckout);
+                                    const newTot = updatedRates.reduce((s, it) => s + (Number(it.rate) || 0), 0);
+                                    setFormTotalAmount(String(newTot));
+                                    if (formPaymentStatus === "pago_total") {
+                                      setFormPaidAmount(String(newTot));
+                                    }
+                                  }
+                                }}
+                                className="h-7 w-7 p-0 text-muted-foreground hover:text-rose-600 shrink-0 cursor-pointer"
+                                title="Excluir diária"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </Button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    {/* Resumo abaixo dos lançamentos */}
-                    {(() => {
-                      const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
-                      const curPaid = formPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
-                      const remaining = Math.max(0, curTot - curPaid);
-
-                      return (
-                        <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px]">
-                          <div className="text-muted-foreground">
-                            Total Pago: <strong className="text-emerald-600 dark:text-emerald-400 font-bold">R$ {curPaid.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong> de <strong className="text-foreground font-bold">R$ {curTot.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong>
+                            )}
                           </div>
-
-                          {remaining > 0 && (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleAddPayment(remaining, formPaymentMethod || "pix", "Quitação do saldo")}
-                              className="h-6 px-2 text-[10px] font-bold text-amber-700 dark:text-amber-300 border-amber-300 hover:bg-amber-50 cursor-pointer"
-                            >
-                              + Lançar Quitação do Saldo (R$ {remaining.toLocaleString("pt-BR", { minimumFractionDigits: 2 })})
-                            </Button>
-                          )}
-                        </div>
-                      );
-                    })()}
+                        );
+                      })}
+                    </div>
                   </div>
 
-                  {/* 4. Conciliação & Dados Oficiais de Gateway */}
-                  {/* 💳 Detalhes Oficiais de Pagamento & Rastreamento Bancário */}
-                {selectedRes && (() => {
-                  const chanLower = String(formChannel || selectedRes.channel || "").toLowerCase();
-                  const isOta = chanLower.includes("booking") || chanLower.includes("airbnb");
-                  const currentTotal = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
-                  const isResPaid = isOta || formPaymentStatus === "pago_total" || formPaymentStatus === "pago" || (Number(formPaidAmount) >= currentTotal && currentTotal > 0);
-                  const realPaid = isResPaid ? currentTotal : (Number(formPaidAmount) || 0);
-                  const realPending = Math.max(0, currentTotal - realPaid);
-
-                  return (
-                    <div className="p-3.5 bg-slate-50 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-xl space-y-2.5 text-xs">
-                      <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
-                        <span className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                          💳 <span>Comprovante & Rastreamento Bancário</span>
-                        </span>
-                        <Badge className={isResPaid ? "bg-emerald-600 text-white font-bold text-[10px]" : "bg-amber-600 text-white font-bold text-[10px]"}>
-                          {isResPaid 
-                            ? (isOta ? (chanLower.includes("booking") ? "✓ Pago (Booking)" : "✓ Pago (Airbnb)") : "✓ Pago Integralmente") 
-                            : (formPaymentStatus === "sinal_pago" ? "⚡ Sinal Pago (50%)" : (selectedRes.paymentStatus === "aguardando_pix" ? "⚡ Aguardando PIX" : "⏳ Aguardando Pagamento"))}
-                        </Badge>
+                  {/* 4. Registros de Pagamento (Ledger) */}
+                  <div className="p-3 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <CreditCard className="w-4 h-4 text-emerald-600" />
+                        <span className="text-xs font-bold text-foreground">Pagamentos Registrados ({formPayments.length})</span>
                       </div>
 
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
-                        <div>
-                          <span className="text-muted-foreground block font-medium">Forma de Pagamento:</span>
-                          <span className="font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-1">
-                            {(() => {
-                              const activePm = formPaymentMethod || selectedRes.paymentMethod;
-                              const pmObj = paymentMethods.find(m => m.id === activePm);
-                              if (pmObj) {
-                                const isB = pmObj.id === "booking";
-                                const isA = pmObj.id === "airbnb";
-                                const isP = pmObj.id.includes("pix");
-                                const isC = pmObj.id.includes("cartao") || pmObj.id.includes("card") || pmObj.id.includes("mercadopago");
-                                const isCash = pmObj.id.includes("dinheiro");
-                                const icon = isB ? "🔵" : (isA ? "🔴" : (isP ? "⚡" : (isC ? "💳" : (isCash ? "💵" : "💰"))));
-                                return `${icon} ${pmObj.name}`;
-                              }
-                              return isOta 
-                                ? (chanLower.includes("booking") ? "🌐 Booking.com" : "🔴 Airbnb")
-                                : (selectedRes.pixTxId ? "⚡ PIX Instantâneo" : (selectedRes.mpPaymentId ? "💳 Cartão de Crédito" : "PIX"));
-                            })()}
-                          </span>
-                        </div>
-
-                        <div>
-                          <span className="text-muted-foreground block font-medium">Valor Recebido:</span>
-                          <span className={`font-bold ${isResPaid ? "text-emerald-600 dark:text-emerald-400" : "text-slate-600 dark:text-slate-300"}`}>
-                            R$ {realPaid.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                          </span>
-                        </div>
-
-                        {!isResPaid && (
-                          <div>
-                            <span className="text-muted-foreground block font-medium">Saldo a Pagar:</span>
-                            <span className="font-bold text-amber-600 dark:text-amber-400">
-                              R$ {realPending.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Botões de Ação Rápida Financeira */}
-                      <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex flex-wrap gap-1.5 items-center">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-slate-300 text-slate-700 dark:text-slate-200 hover:bg-slate-100 flex items-center gap-1"
-                          onClick={() => {
-                            const link = `https://corpflats.onrender.com/minha-reserva/${selectedRes.code || selectedRes.id}`;
-                            navigator.clipboard.writeText(link);
-                            toast({ title: "Link Copiado!", description: "Link da reserva e pagamento copiado para a área de transferência." });
-                          }}
-                        >
-                          <Copy className="w-3 h-3" />
-                          <span>Copiar Link do Hóspede</span>
-                        </Button>
-
-                        {!isResPaid && (
-                          <>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="h-7 text-[11px] bg-emerald-50 dark:bg-emerald-950/40 border-emerald-400 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-100 flex items-center gap-1 font-bold"
-                              onClick={async () => {
-                                try {
-                                  const currentTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
-                                  const tot = currentTot > 0 ? currentTot : (Number(selectedRes.totalAmount) > 0 ? Number(selectedRes.totalAmount) : 0);
-                                  const res = await fetch(`/api/pms/reservations/${selectedRes.id}`, {
-                                    method: "PUT",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({
-                                      paymentStatus: "pago_total",
-                                      paidAmount: tot,
-                                      totalAmount: tot,
-                                      dailyRate: Number(formDailyRate) || undefined
-                                    })
-                                  });
-                                  const d = await res.json();
-                                  if (res.ok) {
-                                    toast({ title: "✅ Marcado como Pago!", description: `Reserva ${selectedRes.code} marcada como paga!` });
-                                    setSelectedRes((prev: any) => prev ? { ...prev, paymentStatus: "pago_total", paidAmount: tot, totalAmount: tot } : null);
-                                    setFormPaymentStatus("pago_total");
-                                    setFormPaidAmount(String(tot));
-                                    fetchData();
-                                  } else {
-                                    toast({ title: "Atenção", description: d.error || "Erro ao atualizar pagamento", variant: "destructive" });
-                                  }
-                                } catch (e: any) {
-                                  toast({ title: "Erro", description: e.message, variant: "destructive" });
-                                }
-                              }}
-                            >
-                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                              <span>Marcar como Pago</span>
-                            </Button>
-
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-sky-300 text-sky-700 dark:text-sky-300 hover:bg-sky-50 flex items-center gap-1"
-                              onClick={async () => {
-                                try {
-                                  const newMethod = (selectedRes.paymentMethod === "pix" || selectedRes.pixTxId) ? "card" : "pix";
-                                  const res = await fetch(`/api/pms/reservations/${selectedRes.code || selectedRes.id}/change-payment-method`, {
-                                    method: "POST",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({ method: newMethod })
-                                  });
-                                  const d = await res.json();
-                                  if (d.success) {
-                                    setSelectedRes(d.reservation);
-                                    fetchData();
-                                    toast({ title: "Forma alterada!", description: `Forma alterada para ${d.paymentMethod === "pix" ? "PIX Banco Inter" : "Cartão de Crédito Mercado Pago"}.` });
-                                  } else {
-                                    toast({ title: "Atenção", description: d.message || d.error, variant: "destructive" });
-                                  }
-                                } catch (e: any) {
-                                  toast({ title: "Erro", description: e.message, variant: "destructive" });
-                                }
-                              }}
-                            >
-                              <RefreshCw className="w-3 h-3" />
-                              <span>Mudar para {(selectedRes.paymentMethod === "pix" || selectedRes.pixTxId) ? "Cartão (MP)" : "PIX (Inter)"}</span>
-                            </Button>
-
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-emerald-300 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 flex items-center gap-1"
-                              onClick={async () => {
-                                try {
-                                  const res = await fetch(`/api/pms/reservations/${selectedRes.code || selectedRes.id}/payment-status`);
-                                  const d = await res.json();
-                                  if (d.paid) {
-                                    toast({ title: "🎉 Pagamento Confirmado!", description: `Reserva liquidada com sucesso! R$ ${Number(d.paidAmount).toFixed(2)}` });
-                                    fetchData();
-                                    setSelectedRes((prev: any) => prev ? { ...prev, paymentStatus: "pago_total", paidAmount: d.paidAmount } : null);
-                                  } else {
-                                    toast({ title: "Aguardando Pagamento", description: `Nenhum pagamento liquidado até o momento para ${selectedRes.code}.` });
-                                  }
-                                } catch (e: any) {
-                                  toast({ title: "Erro ao consultar", description: e.message, variant: "destructive" });
-                                }
-                              }}
-                            >
-                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                              <span>Verificar Status Agora</span>
-                            </Button>
-                          </>
-                        )}
-
-                        {isResPaid && !isOta && (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-amber-300 text-amber-700 dark:text-amber-300 hover:bg-amber-50 flex items-center gap-1"
-                            onClick={async () => {
-                              try {
-                                const res = await fetch(`/api/pms/reservations/${selectedRes.id}`, {
-                                  method: "PUT",
-                                  headers: { "Content-Type": "application/json" },
-                                  body: JSON.stringify({
-                                    paymentStatus: "pendente",
-                                    paidAmount: 0
-                                  })
-                                });
-                                const d = await res.json();
-                                if (res.ok) {
-                                  toast({ title: "Status Atualizado", description: `Reserva ${selectedRes.code} definida como pendente.` });
-                                  setSelectedRes((prev: any) => prev ? { ...prev, paymentStatus: "pendente", paidAmount: 0 } : null);
-                                  setFormPaymentStatus("pendente");
-                                  setFormPaidAmount("0");
-                                  fetchData();
-                                } else {
-                                  toast({ title: "Atenção", description: d.error || "Erro ao atualizar status", variant: "destructive" });
-                                }
-                              } catch (e: any) {
-                                toast({ title: "Erro", description: e.message, variant: "destructive" });
-                              }
-                            }}
-                          >
-                            <RefreshCw className="w-3 h-3" />
-                            <span>Desmarcar Pago (Tornar Pendente)</span>
-                          </Button>
-                        )}
-                      </div>
-
-                      {selectedRes.paidAt && (
-                        <div className="text-[11px] pt-1.5 border-t border-slate-200 dark:border-slate-800 flex justify-between">
-                          <span className="text-muted-foreground font-medium">Data e Hora da Liquidação:</span>
-                          <span className="font-medium text-slate-900 dark:text-slate-100">
-                            {format(parseISO(selectedRes.paidAt), "dd/MM/yyyy 'às' HH:mm:ss", { locale: ptBR })}
-                          </span>
-                        </div>
-                      )}
-
-                      {selectedRes.pixEndToEndId && (
-                        <div className="text-[11px] pt-1.5 border-t border-slate-200 dark:border-slate-800 flex flex-col gap-0.5">
-                          <span className="text-muted-foreground font-medium">End-to-End ID (Banco Central):</span>
-                          <span className="font-mono text-[10px] text-emerald-700 dark:text-emerald-400 font-bold break-all select-all">
-                            {selectedRes.pixEndToEndId}
-                          </span>
-                        </div>
-                      )}
-
-                      {selectedRes.pixTxId && (
-                        <div className="text-[11px] pt-1.5 border-t border-slate-200 dark:border-slate-800 flex flex-col gap-0.5">
-                          <span className="text-muted-foreground font-medium">TxId da Cobrança (Banco Inter):</span>
-                          <span className="font-mono text-[10px] text-slate-700 dark:text-slate-300 break-all select-all">
-                            {selectedRes.pixTxId}
-                          </span>
-                        </div>
-                      )}
-
-                      {selectedRes.mpPaymentId && (
-                        <div className="text-[11px] pt-1.5 border-t border-slate-200 dark:border-slate-800 flex justify-between">
-                          <span className="text-muted-foreground font-medium">ID Pagamento Mercado Pago:</span>
-                          <span className="font-mono text-[10px] text-sky-700 dark:text-sky-300 font-bold">
-                            {selectedRes.mpPaymentId}
-                          </span>
-                        </div>
-                      )}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleAddPayment()}
+                        className="h-7 px-2 text-xs font-bold text-emerald-700 dark:text-emerald-300 border-emerald-400/60 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5 mr-1" /> Novo Pagamento
+                      </Button>
                     </div>
-                  );
-                })()}
+
+                    {formPayments.length === 0 ? (
+                      <div className="p-3 rounded-xl border border-dashed text-center text-xs text-muted-foreground bg-background/50">
+                        Nenhum pagamento registrado nesta reserva.
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {formPayments.map((pay, pIdx) => (
+                          <div
+                            key={pay.id || pIdx}
+                            className="p-2 bg-background border border-border rounded-xl flex items-center justify-between gap-2 text-xs"
+                          >
+                            <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 shrink-0">
+                              #{pIdx + 1}
+                            </span>
+
+                            <div className="w-40 shrink-0">
+                              <Select
+                                value={pay.method || "pix"}
+                                onValueChange={(val) => handleUpdatePayment(pay.id, "method", val)}
+                              >
+                                <SelectTrigger className="h-7 text-xs font-medium">
+                                  <SelectValue placeholder="Forma" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="pix">⚡ PIX</SelectItem>
+                                  <SelectItem value="credit_card">💳 Cartão de Crédito</SelectItem>
+                                  <SelectItem value="debit_card">💳 Cartão de Débito</SelectItem>
+                                  <SelectItem value="dinheiro">💵 Dinheiro</SelectItem>
+                                  <SelectItem value="booking">🌐 Booking.com (OTA)</SelectItem>
+                                  <SelectItem value="airbnb">🔴 Airbnb (OTA)</SelectItem>
+                                  <SelectItem value="ted">🏦 TED / Transferência</SelectItem>
+                                  <SelectItem value="faturado_pj">🏢 Empresa (PJ)</SelectItem>
+                                  <SelectItem value="outro">💰 Outro</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+
+                            <div className="w-28 relative shrink-0">
+                              <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-600">
+                                R$
+                              </span>
+                              <Input
+                                type="number"
+                                value={pay.amount}
+                                onChange={(e) => handleUpdatePayment(pay.id, "amount", Number(e.target.value) || 0)}
+                                className="h-7 pl-7 pr-2 text-xs font-bold text-right text-emerald-700 dark:text-emerald-400"
+                              />
+                            </div>
+
+                            <div className="w-36 shrink-0">
+                              <Input
+                                type="datetime-local"
+                                value={pay.date ? (pay.date.includes("T") ? pay.date.substring(0, 16) : pay.date) : ""}
+                                onChange={(e) => handleUpdatePayment(pay.id, "date", e.target.value)}
+                                className="h-7 text-[11px]"
+                              />
+                            </div>
+
+                            <div className="flex-1 min-w-[100px]">
+                              <Input
+                                type="text"
+                                placeholder="Obs (ex: sinal)..."
+                                value={pay.notes || ""}
+                                onChange={(e) => handleUpdatePayment(pay.id, "notes", e.target.value)}
+                                className="h-7 text-[11px]"
+                              />
+                            </div>
+
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleRemovePayment(pay.id)}
+                              className="h-7 w-7 p-0 text-muted-foreground hover:text-rose-600 shrink-0 cursor-pointer"
+                              title="Excluir pagamento"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
