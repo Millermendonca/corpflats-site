@@ -7326,9 +7326,9 @@
     {
       "id": "tpl_new_reservation",
       "triggerEvent": "reservation_created",
-      "title": "Nova Reserva • Confirmação & Resumo",
+      "title": "Nova Reserva • Confirmação & Resumo (Legado / Desativado)",
       "description": "Enviado imediatamente quando uma reserva é confirmada no sistema/site.",
-      "enabled": true,
+      "enabled": false,
       "triggerTiming": "immediate",
       "offsetValue": 0,
       "offsetUnit": "minutes",
@@ -7350,10 +7350,6 @@
         }
       ],
       "channels": [
-        "site",
-        "whatsapp",
-        "booking",
-        "airbnb",
         "outros"
       ],
       "recipientTarget": "guest"
@@ -7553,13 +7549,13 @@
     },
     {
       "id": "tpl_post_checkout_review",
-      "triggerEvent": "post_checkout_review",
-      "title": "Pós Check-out • Agradecimento & Avaliação Google",
+      "triggerEvent": "nps_approved",
+      "title": "Pós Check-out • Link Google Review (apenas nota 5) ⭐",
       "description": "Enviado 2 horas após a saída convidando para avaliação 5 estrelas no Google.",
       "enabled": true,
-      "triggerTiming": "after_event",
-      "offsetValue": 2,
-      "offsetUnit": "hours",
+      "triggerTiming": "immediate",
+      "offsetValue": 0,
+      "offsetUnit": "minutes",
       "fixedTime": "",
       "message": "Olá, *{{primeiro_nome}}*! 💙\nFoi um prazer imenso ter você conosco no *{{nome_hotel}}*!\n\nEsperamos que sua hospedagem tenha sido nota 10. Você poderia nos dedicar 30 segundos deixando sua avaliação no Google?\n\nSua opinião ajuda outros hóspedes e motiva nossa equipe a evoluir sempre:",
       "footer": "CorpFlats • Até a próxima!",
@@ -7834,12 +7830,9 @@
       "enabled": true,
       "channels": [
         "site",
-        "whatsapp",
-        "booking",
-        "airbnb",
-        "outros"
+        "whatsapp"
       ],
-      "recipientTarget": "guest",
+      "recipientTarget": "both",
       "triggerTiming": "immediate",
       "offsetValue": 0,
       "offsetUnit": "minutes",

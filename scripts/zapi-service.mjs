@@ -3363,6 +3363,21 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
             }
           }
         }
+        if (tpl.id === "tpl_new_reservation") {
+          // Desativa o template genérico legado para evitar envio duplicado com tpl_new_reservation_direct e tpl_new_reservation_ota
+          tpl.enabled = false;
+          tpl.channels = ["outros"];
+          tpl.title = "Nova Reserva • Confirmação & Resumo (Legado / Desativado)";
+        }
+        if (tpl.id === "tpl_post_checkout_review") {
+          tpl.triggerEvent = "nps_approved";
+          tpl.triggerTiming = "immediate";
+          tpl.title = "Pós Check-out • Link Google Review (apenas nota 5) ⭐";
+        }
+        if (tpl.id === "tpl_payment_confirmed") {
+          tpl.channels = ["site", "whatsapp"];
+          tpl.recipientTarget = "both";
+        }
       }
     }
 
@@ -3849,8 +3864,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         template = (db?.whatsappQuickMessages || []).find(t => t.id === "qm_payment_confirmed") || (db?.whatsappTemplates || []).find(t => t.id === "tpl_payment_confirmed");
       } else if (templateId === "tpl_payment_pending" || templateId === "qm_payment_pending") {
         template = (db?.whatsappQuickMessages || []).find(t => t.id === "qm_payment_pending") || (db?.whatsappTemplates || []).find(t => t.id === "tpl_payment_pending");
-      } else if (templateId === "tpl_new_reservation" || templateId === "qm_summary_checkin") {
-        template = (db?.whatsappQuickMessages || []).find(t => t.id === "qm_summary_checkin") || (db?.whatsappTemplates || []).find(t => t.id === "tpl_new_reservation");
+      } else if (templateId === "tpl_new_reservation" || templateId === "qm_summary_checkin" || templateId === "tpl_new_reservation_direct") {
+        template = (db?.whatsappQuickMessages || []).find(t => t.id === "qm_summary_checkin") || (db?.whatsappTemplates || []).find(t => t.id === "tpl_new_reservation_direct") || (db?.whatsappTemplates || []).find(t => t.id === "tpl_new_reservation");
       } else if (templateId === "tpl_breakfast_reminder" || templateId === "qm_breakfast") {
         template = (db?.whatsappQuickMessages || []).find(t => t.id === "qm_breakfast") || (db?.whatsappTemplates || []).find(t => t.id === "tpl_breakfast_reminder");
       } else if (templateId === "tpl_checkin_day_instructions" || templateId === "qm_access_wifi") {
@@ -5326,6 +5341,17 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
       t.triggerTiming === "immediate" &&
       isTemplateAllowedForChannel(t, resvChannel)
     );
+
+    // REGRA ANTI-DUPLICAÇÃO: Se houver template especializado (direct ou ota) para reservation_created,
+    // nunca disparar o template genérico legatário tpl_new_reservation
+    if (eventName === "reservation_created" && templates.some(t => t.id === "tpl_new_reservation_direct" || t.id === "tpl_new_reservation_ota")) {
+      templates = templates.filter(t => t.id !== "tpl_new_reservation");
+    }
+
+    // REGRA ANTI-DUPLICAÇÃO: No pós checkout automático, tpl_post_checkout_review só deve rodar no evento nps_approved
+    if (eventName === "post_checkout_review") {
+      templates = templates.filter(t => t.id !== "tpl_post_checkout_review");
+    }
 
     if (templates.length === 0 && eventName === "pre_reservation_created") {
       const defPre = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_reserva");

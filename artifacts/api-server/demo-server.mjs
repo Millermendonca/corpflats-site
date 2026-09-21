@@ -18596,17 +18596,22 @@ function isConfirmationAlreadyDispatched(r) {
   return history.some(h => {
     const hCode = String(h.reservationCode || "").toUpperCase();
     const isSameRes = (rCode && hCode === rCode) || (rId && hCode === rId);
-    return isSameRes && (h.triggerEvent === "payment_confirmed" || h.triggerEvent === "reservation_created") && (h.status === "sent" || h.status === "delivered");
+    return isSameRes && (h.triggerEvent === "payment_confirmed" || h.triggerEvent === "reservation_created" || h.triggerEvent === "sameday_reservation") && (h.status === "sent" || h.status === "delivered");
   });
 }
 
-async function ensurePaymentConfirmationDispatched(r) {
+async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } = {}) {
   if (!r || !r.guestPhone) return;
   if (isConfirmationAlreadyDispatched(r)) return;
 
-  const wasPreReserva = r.status === "pre_reserva" || r.status === "pendente" || !r.status;
+  const isPreOrWasPre = wasPreReserva || r.status === "pre_reserva" || r.status === "pendente" || !r.status || r.isPreReservation || (db.whatsappHistory || []).some(h => {
+    const hCode = String(h.reservationCode || "").toUpperCase();
+    const rCode = String(r.code || "").toUpperCase();
+    const rId = String(r.id || "");
+    return ((rCode && hCode === rCode) || (rId && hCode === rId)) && h.triggerEvent === "pre_reservation_created";
+  });
 
-  if (wasPreReserva) {
+  if (r.status === "pre_reserva" || r.status === "pendente" || !r.status) {
     r.status = "confirmada";
     saveDatabase();
   }
@@ -18633,7 +18638,7 @@ async function ensurePaymentConfirmationDispatched(r) {
   const chan = String(r.channel || "").toLowerCase();
   const isDirect = chan.includes("site") || chan.includes("whats") || chan.includes("direta");
 
-  if (wasPreReserva && isDirect) {
+  if (isPreOrWasPre && isDirect) {
     console.log(`[WhatsApp Dispatch] Disparando confirmação de pagamento (payment_confirmed) para ${r.guestName} (${r.code})...`);
     try {
       await triggerImmediateWhatsApp(db, saveDatabase, "payment_confirmed", r);
@@ -18642,7 +18647,7 @@ async function ensurePaymentConfirmationDispatched(r) {
       console.error("[WhatsApp Dispatch] Erro ao disparar payment_confirmed:", err.message);
     }
   } else {
-    // Para OTAs (booking/airbnb) ou reservas já criadas confirmadas, envia confirmação sem menção a pagamento
+    // Para OTAs (booking/airbnb) ou reservas diretas já criadas confirmadas sem passar por pré-reserva
     console.log(`[WhatsApp Dispatch] Disparando confirmação padrão (reservation_created) para ${r.guestName} (${r.code})...`);
     try {
       await triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", r);
@@ -18674,8 +18679,16 @@ async function confirmReservationPayment(r, {
   if (txId) r.pixTxId = txId;
   if (paymentMethod) r.paymentMethod = paymentMethod;
 
+  // Identifica se era uma pré-reserva antes da alteração de status
+  const wasPreReserva = r.status === "pre_reserva" || r.status === "pendente" || !r.status || r.isPreReservation || (db.whatsappHistory || []).some(h => {
+    const hCode = String(h.reservationCode || "").toUpperCase();
+    const rCode = String(r.code || "").toUpperCase();
+    const rId = String(r.id || "");
+    return ((rCode && hCode === rCode) || (rId && hCode === rId)) && h.triggerEvent === "pre_reservation_created";
+  });
+
   // Transição de status para confirmada
-  if (r.paymentStatus === "pago_total" && (r.status === "pre_reserva" || r.status === "pendente" || !r.status)) {
+  if (r.paymentStatus === "pago_total" && wasPreReserva) {
     r.status = "confirmada";
   }
 
@@ -18690,7 +18703,7 @@ async function confirmReservationPayment(r, {
 
   saveDatabase();
 
-  await ensurePaymentConfirmationDispatched(r);
+  await ensurePaymentConfirmationDispatched(r, { wasPreReserva });
 }
 
 // 6.3 Checar Status de Pagamento de Reserva Específica com Consulta Ativa em Tempo Real
