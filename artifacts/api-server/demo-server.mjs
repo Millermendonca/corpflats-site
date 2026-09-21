@@ -7523,7 +7523,7 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   const fields = [
     "flatId", "checkinDate", "checkoutDate", "checkinTime", "checkoutTime", "status", "channel", 
     "paymentMethod",
-    "dailyRate", "dailyRates", "totalAmount", "paidAmount", "paymentStatus", 
+    "dailyRate", "dailyRates", "payments", "totalAmount", "paidAmount", "paymentStatus", 
     "adults", "children", "notes", "prefersHighFloor", "twinBeds", 
     "extraMattress", "specialRequests", "isMonthlyGuest", "clientType", "includeBreakfast",
     "autoEmitInvoice", "earlyCheckinAuthorized", "receptionNotes",
@@ -7545,6 +7545,28 @@ app.put("/api/pms/reservations/:id", (req, res) => {
 
     if (req.body.totalAmount === undefined && r.dailyRates.length > 0) {
       r.totalAmount = r.dailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0);
+    }
+  }
+
+  // Normalização de payments na edição
+  if (Array.isArray(req.body.payments)) {
+    r.payments = req.body.payments.map(p => ({
+      id: String(p.id || `pay_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`),
+      amount: Number(p.amount) || 0,
+      method: String(p.method || r.paymentMethod || "pix"),
+      date: String(p.date || new Date().toISOString()),
+      notes: p.notes ? String(p.notes) : undefined
+    })).filter(p => p.amount > 0 || p.method);
+
+    const sumPaid = r.payments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+    r.paidAmount = sumPaid;
+    const currentTot = Number(r.totalAmount) || 0;
+    if (sumPaid >= currentTot && currentTot > 0) {
+      r.paymentStatus = "pago_total";
+    } else if (sumPaid > 0) {
+      r.paymentStatus = "sinal_pago";
+    } else {
+      r.paymentStatus = "pendente";
     }
   }
 

@@ -58,6 +58,14 @@ export interface DailyRateItem {
   notes?: string;
 }
 
+export interface ReservationPaymentItem {
+  id: string;
+  amount: number;
+  method: string;
+  date: string;
+  notes?: string;
+}
+
 export function buildReservationDailyRates(
   checkinStr: string,
   checkoutStr: string,
@@ -89,10 +97,11 @@ export function buildReservationDailyRates(
           notes: exist.notes
         });
       } else {
+        const prev = result.length > 0 ? result[result.length - 1] : null;
         result.push({
           date: dateStr,
-          rate: defaultRate,
-          channel: defaultChannel
+          rate: prev && Number(prev.rate) >= 0 ? Number(prev.rate) : defaultRate,
+          channel: prev && prev.channel ? prev.channel : defaultChannel
         });
       }
     }
@@ -172,6 +181,7 @@ export default function PmsCalendar() {
 
   const [formDailyRate, setFormDailyRate] = useState("250")
   const [formDailyRates, setFormDailyRates] = useState<DailyRateItem[]>([])
+  const [formPayments, setFormPayments] = useState<ReservationPaymentItem[]>([])
   const [formTotalAmount, setFormTotalAmount] = useState("")
   const [formPaidAmount, setFormPaidAmount] = useState("0")
   const [formPaymentStatus, setFormPaymentStatus] = useState("pendente")
@@ -191,7 +201,7 @@ export default function PmsCalendar() {
   const [formSpecialRequests, setFormSpecialRequests] = useState("")
 
   // Modal Tabs, Audit Logs & Communications State
-  const [resModalTab, setResModalTab] = useState<"details" | "audit" | "communications" | "links">("details")
+  const [resModalTab, setResModalTab] = useState<"reservation" | "payments" | "audit" | "communications" | "links" | "details">("reservation")
   const [commSubTab, setCommSubTab] = useState<"whatsapp" | "email">("whatsapp")
   const [auditLogs, setAuditLogs] = useState<any[]>([])
   const [loadingAudit, setLoadingAudit] = useState(false)
@@ -1520,6 +1530,15 @@ export default function PmsCalendar() {
     setFormDailyRates(initialRates)
     setFormTotalAmount(String(initialTotal))
     setFormPaidAmount(String(initialTotal)) // 100% pago como padrão!
+    setFormPayments([
+      {
+        id: `pay_${Date.now()}`,
+        amount: initialTotal,
+        method: "pix",
+        date: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+        notes: "Pagamento integral"
+      }
+    ])
     setFormPaymentStatus("pago_total")
     setFormStatus("confirmada")
     setShowGuestSuggestions(false)
@@ -1538,6 +1557,7 @@ export default function PmsCalendar() {
     setFormSpecialRequests("")
     setFormIsMonthlyGuest(false)
     setMobileRangeStart(null)
+    setResModalTab("reservation")
     setResModalOpen(true)
   }
 
@@ -1664,6 +1684,15 @@ export default function PmsCalendar() {
     setFormDailyRates(initialRates)
     setFormTotalAmount(String(initialTotal))
     setFormPaidAmount(String(initialTotal)) // 100% pago como padrão!
+    setFormPayments([
+      {
+        id: `pay_${Date.now()}`,
+        amount: initialTotal,
+        method: "pix",
+        date: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+        notes: "Pagamento integral"
+      }
+    ])
     setFormPaymentStatus("pago_total")
     setFormStatus("confirmada")
     setShowGuestSuggestions(false)
@@ -1683,6 +1712,7 @@ export default function PmsCalendar() {
     setFormIsMonthlyGuest(false)
     setAuditLogs([])
     setCommunications([])
+    setResModalTab("reservation")
     setResModalOpen(true)
   }
 
@@ -1751,7 +1781,29 @@ export default function PmsCalendar() {
     const calcFromRates = loadedDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0)
     const totCalculated = Number(resItem.totalAmount) > 0 ? Number(resItem.totalAmount) : (calcFromRates > 0 ? calcFromRates : (baseDailyRate * nights))
     setFormTotalAmount(totCalculated > 0 ? String(totCalculated) : "")
-    setFormPaidAmount(String(resItem.paidAmount !== undefined ? resItem.paidAmount : (isResCurrentlyPaid ? totCalculated : 0)))
+    const resolvedPaidVal = Number(resItem.paidAmount !== undefined ? resItem.paidAmount : (isResCurrentlyPaid ? totCalculated : 0))
+    setFormPaidAmount(String(resolvedPaidVal))
+
+    let loadedPayments: ReservationPaymentItem[] = []
+    if (Array.isArray(resItem.payments) && resItem.payments.length > 0) {
+      loadedPayments = resItem.payments.map((p: any, idx: number) => ({
+        id: p.id || `pay_${resItem.id}_${idx}`,
+        amount: Number(p.amount) || 0,
+        method: p.method || resolvedMethod,
+        date: p.date ? (p.date.includes("T") ? p.date.substring(0, 16) : p.date) : format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+        notes: p.notes || ""
+      }))
+    } else if (resolvedPaidVal > 0) {
+      loadedPayments = [{
+        id: `pay_legacy_${resItem.id}`,
+        amount: resolvedPaidVal,
+        method: resolvedMethod,
+        date: resItem.paidAt ? (resItem.paidAt.includes("T") ? resItem.paidAt.substring(0, 16) : resItem.paidAt) : (resItem.createdAt ? resItem.createdAt.substring(0, 16) : format(new Date(), "yyyy-MM-dd'T'HH:mm")),
+        notes: isResCurrentlyPaid ? "Pagamento integral" : "Pagamento registrado"
+      }]
+    }
+    setFormPayments(loadedPayments)
+
     setFormPaymentStatus(isResCurrentlyPaid ? "pago_total" : (resItem.paymentStatus || "pendente"))
     setFormStatus((resItem.status === "confirmada" || isResCurrentlyPaid) ? "confirmada" : (resItem.status || "pre_reserva"))
     setFormNotes(resItem.notes || "")
@@ -1776,7 +1828,7 @@ export default function PmsCalendar() {
     setFormIncludeBreakfast(Boolean(resItem.includeBreakfast || resItem.hasBreakfast))
     setFormSpecialRequests(resItem.specialRequests || "")
     setFormIsMonthlyGuest(Boolean(resItem.isMonthlyGuest || resItem.clientType === "mensalista" || matchedGuest?.isMonthlyGuest || matchedGuest?.clientType === "mensalista"))
-    setResModalTab("details")
+    setResModalTab("reservation")
     setAuditLogs(Array.isArray(resItem.auditLogs) ? resItem.auditLogs : [])
     fetchAuditLogs(resItem.code || resItem.id)
     fetchCommunications(resItem.code || resItem.id)
@@ -1958,6 +2010,113 @@ export default function PmsCalendar() {
     }
   }
 
+  // ── Helpers de Gerenciamento de Diárias & Pagamentos ──────────────
+  const handleAddPayment = (customAmount?: number, customMethod?: string, customNotes?: string) => {
+    const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal()
+    const curPaid = formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
+    const remaining = Math.max(0, curTot - curPaid)
+    const amt = customAmount !== undefined ? customAmount : (remaining > 0 ? remaining : (Number(formDailyRate) || 250))
+    const newPay: ReservationPaymentItem = {
+      id: `pay_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      amount: amt,
+      method: customMethod || formPaymentMethod || "pix",
+      date: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+      notes: customNotes || (remaining > 0 && amt === remaining ? "Quitação de saldo" : "")
+    }
+    const updated = [...formPayments, newPay]
+    setFormPayments(updated)
+    const newPaidSum = updated.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
+    setFormPaidAmount(String(newPaidSum))
+    if (newPaidSum >= curTot && curTot > 0) {
+      setFormPaymentStatus("pago_total")
+    } else if (newPaidSum > 0) {
+      setFormPaymentStatus("sinal_pago")
+    } else {
+      setFormPaymentStatus("pendente")
+    }
+  }
+
+  const handleRemovePayment = (payId: string) => {
+    const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal()
+    const updated = formPayments.filter(p => p.id !== payId)
+    setFormPayments(updated)
+    const newPaidSum = updated.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
+    setFormPaidAmount(String(newPaidSum))
+    if (newPaidSum >= curTot && curTot > 0) {
+      setFormPaymentStatus("pago_total")
+    } else if (newPaidSum > 0) {
+      setFormPaymentStatus("sinal_pago")
+    } else {
+      setFormPaymentStatus("pendente")
+    }
+  }
+
+  const handleUpdatePayment = (payId: string, field: keyof ReservationPaymentItem, value: any) => {
+    const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal()
+    const updated = formPayments.map(p => {
+      if (p.id === payId) {
+        return { ...p, [field]: value }
+      }
+      return p
+    })
+    setFormPayments(updated)
+    const newPaidSum = updated.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
+    setFormPaidAmount(String(newPaidSum))
+    if (newPaidSum >= curTot && curTot > 0) {
+      setFormPaymentStatus("pago_total")
+    } else if (newPaidSum > 0) {
+      setFormPaymentStatus("sinal_pago")
+    } else {
+      setFormPaymentStatus("pendente")
+    }
+  }
+
+  const handleAddExtraNight = () => {
+    try {
+      const currentRates = formDailyRates.length > 0 
+        ? formDailyRates 
+        : buildReservationDailyRates(formCheckin, formCheckout, Number(formDailyRate) || 250, formChannel)
+      const lastNight = currentRates[currentRates.length - 1]
+      const nextDateStr = lastNight 
+        ? format(addDays(parseISO(lastNight.date), 1), "yyyy-MM-dd")
+        : (formCheckout || format(new Date(), "yyyy-MM-dd"))
+      const newCheckoutStr = format(addDays(parseISO(nextDateStr), 1), "yyyy-MM-dd")
+      
+      const newNightItem: DailyRateItem = {
+        date: nextDateStr,
+        rate: lastNight ? Number(lastNight.rate) : (Number(formDailyRate) || 250),
+        channel: lastNight ? lastNight.channel : formChannel,
+        notes: "Diária extra"
+      }
+      const updatedRates = [...currentRates, newNightItem]
+      setFormDailyRates(updatedRates)
+      setFormCheckout(newCheckoutStr)
+      const newTotal = updatedRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0)
+      setFormTotalAmount(String(newTotal))
+      if (formPaymentStatus === "pago_total") {
+        setFormPaidAmount(String(newTotal))
+      }
+      toast({ title: "Diária Adicionada", description: `Nova diária em ${format(parseISO(nextDateStr), "dd/MM")}. Check-out ajustado para ${format(parseISO(newCheckoutStr), "dd/MM")}.` })
+    } catch (e: any) {
+      console.error(e)
+    }
+  }
+
+  const handleRemoveLastNight = () => {
+    if (formDailyRates.length <= 1) {
+      toast({ title: "Atenção", description: "A reserva precisa ter no mínimo 1 diária.", variant: "destructive" })
+      return
+    }
+    const updatedRates = formDailyRates.slice(0, -1)
+    const lastRemaining = updatedRates[updatedRates.length - 1]
+    const newCheckoutStr = format(addDays(parseISO(lastRemaining.date), 1), "yyyy-MM-dd")
+    setFormDailyRates(updatedRates)
+    setFormCheckout(newCheckoutStr)
+    const newTotal = updatedRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0)
+    setFormTotalAmount(String(newTotal))
+    toast({ title: "Diária Removida", description: `Check-out ajustado para ${format(parseISO(newCheckoutStr), "dd/MM")}.` })
+  }
+
   const handleSaveRes = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!formFlatId || !formGuestName.trim() || !formCheckin || !formCheckout) return
@@ -1967,17 +2126,20 @@ export default function PmsCalendar() {
       const calcTot = calculateTotal()
       const totalAmount = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calcTot
       const isOta = formChannel === "booking" || formChannel === "airbnb"
-      let resolvedPaidAmount = Number(formPaidAmount) || 0
+      const sumPaidFromList = formPayments.length > 0
+        ? formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
+        : (Number(formPaidAmount) || 0)
+      let resolvedPaidAmount = sumPaidFromList
       let resolvedPaymentStatus = formPaymentStatus
       if (isOta) {
         resolvedPaymentStatus = "pago_total"
         resolvedPaidAmount = totalAmount
-      } else if (resolvedPaymentStatus === "pago_total" && resolvedPaidAmount === 0 && totalAmount > 0) {
-        resolvedPaidAmount = totalAmount
       } else if (resolvedPaidAmount >= totalAmount && totalAmount > 0) {
         resolvedPaymentStatus = "pago_total"
-      } else if (resolvedPaidAmount > 0 && resolvedPaidAmount < totalAmount && resolvedPaymentStatus === "pendente") {
+      } else if (resolvedPaidAmount > 0) {
         resolvedPaymentStatus = "sinal_pago"
+      } else {
+        resolvedPaymentStatus = "pendente"
       }
 
       const numG = Number(formGuestCount) || 1
@@ -2034,6 +2196,7 @@ export default function PmsCalendar() {
           ? Math.round(totalAmount / formDailyRates.length) 
           : (Number(formDailyRate) || 0),
         dailyRates: formDailyRates,
+        payments: formPayments,
         totalAmount,
         paidAmount: resolvedPaidAmount,
         paymentStatus: resolvedPaymentStatus,
@@ -3159,55 +3322,94 @@ export default function PmsCalendar() {
               </DialogDescription>
             </DialogHeader>
 
-            {selectedRes && (
-              <Tabs value={resModalTab} onValueChange={(v: any) => setResModalTab(v)} className="w-full mt-1 mb-2 min-w-0">
-                <div className="w-full overflow-x-auto -mx-0.5 px-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                  <TabsList className="flex w-max sm:w-full min-w-full items-center p-1 bg-muted/60 rounded-xl sm:grid sm:grid-cols-4 gap-1 h-auto">
-                    <TabsTrigger
-                      value="details"
-                      className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs"
-                    >
-                      <CalendarDays className="w-3.5 h-3.5 shrink-0 text-primary" />
-                      <span><span className="hidden sm:inline">Dados da </span>Reserva</span>
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="audit"
-                      className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs relative"
-                    >
-                      <Clock className="w-3.5 h-3.5 shrink-0 text-blue-500" />
-                      <span>Histórico<span className="hidden sm:inline"> & Logs</span></span>
-                      {auditLogs.length > 0 && (
-                        <Badge variant="secondary" className="text-[10px] h-4 px-1.5 py-0 font-bold ml-0.5 bg-blue-500/15 text-blue-700 dark:text-blue-300 shrink-0">
-                          {auditLogs.length}
-                        </Badge>
-                      )}
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="communications"
-                      className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs relative"
-                    >
-                      <MessageCircle className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
-                      <span>Mensagens</span>
-                      {(communications.length + scheduledEmails.length + whatsappQueue.length + whatsappHistory.length) > 0 && (
-                        <Badge variant="secondary" className="text-[10px] h-4 px-1.5 py-0 font-bold ml-0.5 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 shrink-0">
-                          {communications.length + scheduledEmails.length + whatsappQueue.length + whatsappHistory.length}
-                        </Badge>
-                      )}
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="links"
-                      className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs relative"
-                    >
-                      <Link2 className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
-                      <span>Links Úteis</span>
-                    </TabsTrigger>
-                  </TabsList>
-                </div>
-              </Tabs>
-            )}
+            <Tabs 
+              value={resModalTab === "details" ? "reservation" : resModalTab} 
+              onValueChange={(v: any) => setResModalTab(v)} 
+              className="w-full mt-1 mb-2 min-w-0"
+            >
+              <div className="w-full overflow-x-auto -mx-0.5 px-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                <TabsList className={`flex w-max sm:w-full min-w-full items-center p-1 bg-muted/60 rounded-xl sm:grid ${selectedRes ? "sm:grid-cols-5" : "sm:grid-cols-2"} gap-1 h-auto`}>
+                  <TabsTrigger
+                    value="reservation"
+                    className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs"
+                  >
+                    <CalendarDays className="w-3.5 h-3.5 shrink-0 text-primary" />
+                    <span><span className="hidden sm:inline">Dados da </span>Reserva</span>
+                  </TabsTrigger>
+                  
+                  <TabsTrigger
+                    value="payments"
+                    className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs relative"
+                  >
+                    <CreditCard className="w-3.5 h-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                    <span>Pagamentos<span className="hidden sm:inline"> & Diárias</span></span>
+                    {(() => {
+                      const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
+                      const curPaid = formPayments.length > 0 
+                        ? formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0) 
+                        : (Number(formPaidAmount) || 0);
+                      const rem = Math.max(0, curTot - curPaid);
+                      if (rem > 0) {
+                        return (
+                          <Badge variant="secondary" className="text-[9.5px] h-4 px-1.5 py-0 font-bold ml-0.5 bg-amber-500/15 text-amber-700 dark:text-amber-300 shrink-0">
+                            Pendente
+                          </Badge>
+                        );
+                      } else if (curTot > 0 && rem === 0) {
+                        return (
+                          <Badge variant="secondary" className="text-[9.5px] h-4 px-1.5 py-0 font-bold ml-0.5 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 shrink-0">
+                            ✓ Quitado
+                          </Badge>
+                        );
+                      }
+                      return null;
+                    })()}
+                  </TabsTrigger>
 
-            {(!selectedRes || resModalTab === "details") && (
+                  {selectedRes && (
+                    <>
+                      <TabsTrigger
+                        value="audit"
+                        className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs relative"
+                      >
+                        <Clock className="w-3.5 h-3.5 shrink-0 text-blue-500" />
+                        <span>Histórico<span className="hidden sm:inline"> & Logs</span></span>
+                        {auditLogs.length > 0 && (
+                          <Badge variant="secondary" className="text-[10px] h-4 px-1.5 py-0 font-bold ml-0.5 bg-blue-500/15 text-blue-700 dark:text-blue-300 shrink-0">
+                            {auditLogs.length}
+                          </Badge>
+                        )}
+                      </TabsTrigger>
+
+                      <TabsTrigger
+                        value="communications"
+                        className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs relative"
+                      >
+                        <MessageCircle className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
+                        <span>Mensagens</span>
+                        {(communications.length + scheduledEmails.length + whatsappQueue.length + whatsappHistory.length) > 0 && (
+                          <Badge variant="secondary" className="text-[10px] h-4 px-1.5 py-0 font-bold ml-0.5 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 shrink-0">
+                            {communications.length + scheduledEmails.length + whatsappQueue.length + whatsappHistory.length}
+                          </Badge>
+                        )}
+                      </TabsTrigger>
+
+                      <TabsTrigger
+                        value="links"
+                        className="flex-1 shrink-0 text-xs font-bold gap-1.5 rounded-lg py-2 px-2.5 sm:px-3 whitespace-nowrap data-[state=active]:shadow-xs relative"
+                      >
+                        <Link2 className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
+                        <span>Links Úteis</span>
+                      </TabsTrigger>
+                    </>
+                  )}
+                </TabsList>
+              </div>
+            </Tabs>
+
+            {(resModalTab === "reservation" || resModalTab === "details" || resModalTab === "payments") && (
               <form onSubmit={handleSaveRes}>
+                {(resModalTab === "reservation" || resModalTab === "details") && (
 
               <div className="py-2.5 space-y-3">
                 {/* Banner de Acesso Rápido aos Links da Reserva */}
@@ -4273,460 +4475,9 @@ export default function PmsCalendar() {
                   </div>
                 </div>
 
-                {/* Financial values & Payment Status */}
-                <div className="p-3.5 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
-                      <CreditCard className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>Valores & Pagamento da Reserva</span>
-                    </span>
-                    {(formChannel === "booking" || formChannel === "airbnb") && (
-                      <Badge variant="outline" className="text-[10px] bg-sky-50 text-sky-800 border-sky-300">
-                        Canal OTA • Pago Automaticamente
-                      </Badge>
-                    )}
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-2.5">
-                    {/* Valor da Diária */}
-                    <div className="space-y-1">
-                      <Label className="text-xs font-semibold">Valor da Diária (R$)</Label>
-                      <Input 
-                        type="number" 
-                        value={formDailyRate} 
-                        onChange={e => {
-                          const val = e.target.value;
-                          setFormDailyRate(val);
-                          const numVal = Number(val) || 0;
-                          try {
-                            const d1 = parseISO(formCheckin);
-                            const d2 = parseISO(formCheckout);
-                            const nights = Math.max(1, differenceInDays(d2, d1));
-                            if (val !== "") {
-                              setFormDailyRates(prev => {
-                                const allSame = prev.length <= 1 || prev.every(d => Number(d.rate) === Number(formDailyRate));
-                                if (allSame) {
-                                  return prev.map(d => ({ ...d, rate: numVal }));
-                                }
-                                return prev;
-                              });
-                              const newTot = nights * numVal;
-                              setFormTotalAmount(String(newTot));
-                              setFormPaidAmount(String(newTot)); // 100% pago como padrão!
-                              setFormPaymentStatus(newTot > 0 ? "pago_total" : "pendente");
-                            }
-                          } catch {}
-                        }} 
-                        placeholder="Ex: 250"
-                        className="text-xs font-semibold"
-                      />
-                    </div>
-
-                    {/* Valor Total da Reserva */}
-                    <div className="space-y-1">
-                      <Label className="text-xs font-semibold">Valor Total (R$)</Label>
-                      <Input 
-                        type="number" 
-                        value={formTotalAmount !== "" ? formTotalAmount : (calculateTotal() > 0 ? String(calculateTotal()) : "")}
-                        onChange={e => {
-                          const val = e.target.value;
-                          setFormTotalAmount(val);
-                          setFormPaidAmount(val); // 100% pago como padrão!
-                          const numVal = Number(val) || 0;
-                          setFormPaymentStatus(numVal > 0 ? "pago_total" : "pendente");
-                          try {
-                            const d1 = parseISO(formCheckin);
-                            const d2 = parseISO(formCheckout);
-                            const nights = Math.max(1, differenceInDays(d2, d1));
-                            if (val !== "" && nights > 0) {
-                              setFormDailyRate(String(Math.round((Number(val) || 0) / nights)));
-                            }
-                          } catch {}
-                        }}
-                        placeholder="Ex: 500"
-                        className="text-xs font-bold text-emerald-700 dark:text-emerald-300"
-                      />
-                    </div>
-
-                    {/* Quanto foi pago (R$) */}
-                    <div className="space-y-1">
-                      <Label className="text-xs font-semibold flex items-center justify-between">
-                        <span>Quanto foi pago (R$)</span>
-                        {Number(formPaidAmount) > 0 && (
-                          <span className="text-[10px] text-emerald-600 font-bold">
-                            {Math.round((Number(formPaidAmount) / (Number(formTotalAmount) || calculateTotal() || 1)) * 100)}%
-                          </span>
-                        )}
-                      </Label>
-                      <Input 
-                        type="number" 
-                        value={formPaidAmount} 
-                        onChange={e => {
-                          const val = e.target.value;
-                          setFormPaidAmount(val);
-                          const numVal = Number(val) || 0;
-                          const currentTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
-                          if (numVal <= 0) {
-                            setFormPaymentStatus("pendente");
-                          } else if (numVal >= currentTot && currentTot > 0) {
-                            setFormPaymentStatus("pago_total");
-                          } else {
-                            setFormPaymentStatus("sinal_pago");
-                          }
-                        }} 
-                        placeholder="Ex: 0 ou 250"
-                        className="text-xs font-bold text-indigo-700 dark:text-indigo-300 bg-indigo-50/40 dark:bg-indigo-950/20"
-                      />
-                    </div>
-
-                    {/* Status de Pagamento */}
-                    <div className="space-y-1">
-                      <Label className="text-xs font-semibold">Status Pagamento</Label>
-                      <Select 
-                        value={formPaymentStatus} 
-                        onValueChange={val => {
-                          setFormPaymentStatus(val);
-                          const currentTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
-                          if (val === "pago_total") {
-                            setFormPaidAmount(String(currentTot));
-                          } else if (val === "pendente") {
-                            setFormPaidAmount("0");
-                          } else if (val === "sinal_pago") {
-                            setFormPaidAmount(String(Math.round(currentTot / 2)));
-                          }
-                        }}
-                      >
-                        <SelectTrigger className={`text-xs font-bold ${
-                          formPaymentStatus === "pago_total" 
-                            ? "bg-emerald-50 text-emerald-800 border-emerald-300 dark:bg-emerald-950/50 dark:text-emerald-300" 
-                            : formPaymentStatus === "sinal_pago"
-                            ? "bg-indigo-50 text-indigo-800 border-indigo-300 dark:bg-indigo-950/50 dark:text-indigo-300"
-                            : "bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950/50 dark:text-amber-300"
-                        }`}>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="pago_total">✅ Pago (100% Quitado)</SelectItem>
-                          <SelectItem value="sinal_pago">⚡ Sinal Pago (Parcial)</SelectItem>
-                          <SelectItem value="pendente">⏳ Aguardando Pagamento (R$ 0)</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    {/* Forma de Pagamento */}
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-xs font-semibold">Forma de Pagamento</Label>
-                        <button
-                          type="button"
-                          onClick={() => setPaymentConfigModalOpen(true)}
-                          className="text-[10px] text-primary hover:underline flex items-center gap-0.5 cursor-pointer font-medium"
-                          title="Configurar Taxas e Comissões"
-                        >
-                          <SlidersHorizontal className="w-2.5 h-2.5" />
-                          <span>Taxas</span>
-                        </button>
-                      </div>
-                      <Select 
-                        value={formPaymentMethod} 
-                        onValueChange={val => {
-                          if (val === "__add_new__") {
-                            setInitialNewPaymentMethodName("");
-                            setPaymentConfigModalOpen(true);
-                          } else {
-                            setFormPaymentMethod(val);
-                          }
-                        }}
-                      >
-                        <SelectTrigger className="text-xs font-bold bg-white dark:bg-slate-900">
-                          <SelectValue placeholder="Forma de Pagamento" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {paymentMethods.filter(m => m.active !== false).map(m => {
-                            const isBooking = m.id === "booking";
-                            const isAirbnb = m.id === "airbnb";
-                            const isPix = m.id.includes("pix");
-                            const isCard = m.id.includes("cartao") || m.id.includes("card") || m.id.includes("mercadopago");
-                            const isCash = m.id.includes("dinheiro");
-                            const icon = isBooking ? "🔵" : (isAirbnb ? "🔴" : (isPix ? "⚡" : (isCard ? "💳" : (isCash ? "💵" : "💰"))));
-                            const rateInfo = m.commissionRate > 0 
-                              ? `(${m.commissionRate}% comissão)` 
-                              : (m.gatewayFeeRate > 0 ? `(${m.gatewayFeeRate}% taxa)` : '');
-                            return (
-                              <SelectItem key={m.id} value={m.id} className="text-xs font-semibold">
-                                <span>{icon} {m.name}</span>
-                                {rateInfo && <span className="ml-1 text-[10px] text-muted-foreground font-normal">{rateInfo}</span>}
-                              </SelectItem>
-                            );
-                          })}
-                          <div className="p-1 border-t border-border/50 my-1">
-                            <SelectItem value="__add_new__" className="text-xs font-bold text-primary focus:bg-primary/10 cursor-pointer">
-                              ➕ Adicionar nova forma...
-                            </SelectItem>
-                          </div>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-
-                  {/* ── CARD DE DETALHAMENTO INDIVIDUAL DE DIÁRIAS ────────────────────────────── */}
-                  <div className="p-3 rounded-xl bg-slate-100/70 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 space-y-2.5">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <div className="w-6 h-6 rounded-lg bg-indigo-100 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold text-xs shrink-0">
-                          🌙
-                        </div>
-                        <div>
-                          <span className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5 flex-wrap">
-                            <span>Detalhamento por Diária (Valores & Canais Individuais)</span>
-                            <Badge variant="outline" className="text-[10px] font-bold bg-white dark:bg-slate-800 px-1.5 py-0">
-                              {formDailyRates.length} {formDailyRates.length === 1 ? "diária" : "diárias"}
-                            </Badge>
-                          </span>
-                          <span className="text-[10.5px] text-muted-foreground block">
-                            Edite o canal ou valor de cada noite individualmente (ex: 1ª diária Booking, 2ª WhatsApp com valor diferente).
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Ações em Lote */}
-                      {formDailyRates.length > 1 && (
-                        <div className="flex items-center gap-1.5 text-[10px] flex-wrap">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              if (formDailyRates.length === 0) return;
-                              const targetRate = formDailyRates[0].rate;
-                              setFormDailyRates(prev => prev.map(d => ({ ...d, rate: targetRate })));
-                              const newTot = formDailyRates.length * targetRate;
-                              setFormTotalAmount(String(newTot));
-                              setFormDailyRate(String(targetRate));
-                              if (formPaymentStatus === "pago_total") setFormPaidAmount(String(newTot));
-                              toast({ title: "Valores igualados", description: `Todas as diárias ajustadas para R$ ${targetRate}` });
-                            }}
-                            className="h-6 px-2 text-[10px] font-semibold cursor-pointer"
-                            title="Aplica o valor da 1ª diária a todas as outras"
-                          >
-                            Copiar 1º valor p/ todas
-                          </Button>
-
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              if (formDailyRates.length === 0) return;
-                              const targetChan = formDailyRates[0].channel;
-                              setFormDailyRates(prev => prev.map(d => ({ ...d, channel: targetChan })));
-                              setFormChannel(targetChan);
-                              toast({ title: "Canais igualados", description: `Todas as diárias ajustadas para o canal da 1ª diária` });
-                            }}
-                            className="h-6 px-2 text-[10px] font-semibold cursor-pointer"
-                            title="Aplica o canal da 1ª diária a todas as outras"
-                          >
-                            Copiar 1º canal p/ todas
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Lista de Diárias Individuais */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                      {formDailyRates.map((item, idx) => {
-                        let formattedDate = item.date;
-                        try {
-                          formattedDate = format(parseISO(item.date), "dd/MM (EEE)", { locale: ptBR });
-                        } catch {}
-
-                        return (
-                          <div 
-                            key={item.date || idx}
-                            className="p-2.5 rounded-lg bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 shadow-2xs space-y-1.5"
-                          >
-                            <div className="flex items-center justify-between text-[11px] font-bold">
-                              <span className="flex items-center gap-1.5 text-slate-800 dark:text-slate-200">
-                                <span className="w-4 h-4 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center justify-center text-[9px] font-black">
-                                  {idx + 1}
-                                </span>
-                                <span>{formattedDate}</span>
-                              </span>
-                              {idx > 0 && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const prev = formDailyRates[idx - 1];
-                                    if (!prev) return;
-                                    setFormDailyRates(prevRates => {
-                                      const next = [...prevRates];
-                                      next[idx] = { ...next[idx], rate: prev.rate, channel: prev.channel };
-                                      const newTot = next.reduce((sum, d) => sum + (Number(d.rate) || 0), 0);
-                                      setFormTotalAmount(String(newTot));
-                                      setFormDailyRate(String(Math.round(newTot / next.length)));
-                                      if (formPaymentStatus === "pago_total") setFormPaidAmount(String(newTot));
-                                      return next;
-                                    });
-                                  }}
-                                  className="text-[9.5px] text-primary hover:underline font-medium cursor-pointer"
-                                  title="Copiar valor e canal da diária anterior"
-                                >
-                                  Igual anterior
-                                </button>
-                              )}
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-1.5">
-                              {/* Canal da Diária */}
-                              <div className="space-y-0.5">
-                                <Label className="text-[9.5px] text-muted-foreground block font-medium">Canal</Label>
-                                <Select
-                                  value={item.channel || "whatsapp"}
-                                  onValueChange={(val) => {
-                                    setFormDailyRates(prevRates => {
-                                      const next = [...prevRates];
-                                      next[idx] = { ...next[idx], channel: val };
-                                      return next;
-                                    });
-                                  }}
-                                >
-                                  <SelectTrigger className="h-7 text-[10.5px] font-semibold px-1.5">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="whatsapp" className="text-xs">💬 WhatsApp</SelectItem>
-                                    <SelectItem value="booking" className="text-xs">🔵 Booking</SelectItem>
-                                    <SelectItem value="airbnb" className="text-xs">🔴 Airbnb</SelectItem>
-                                    <SelectItem value="site" className="text-xs">🌐 Site</SelectItem>
-                                    <SelectItem value="direta" className="text-xs">🏨 Balcão</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </div>
-
-                              {/* Valor da Diária */}
-                              <div className="space-y-0.5">
-                                <Label className="text-[9.5px] text-muted-foreground block font-medium">Valor (R$)</Label>
-                                <Input
-                                  type="number"
-                                  value={item.rate}
-                                  onChange={(e) => {
-                                    const val = Number(e.target.value) || 0;
-                                    setFormDailyRates(prevRates => {
-                                      const next = [...prevRates];
-                                      next[idx] = { ...next[idx], rate: val };
-                                      const newTot = next.reduce((sum, d) => sum + (Number(d.rate) || 0), 0);
-                                      setFormTotalAmount(String(newTot));
-                                      setFormDailyRate(String(Math.round(newTot / next.length)));
-                                      if (formPaymentStatus === "pago_total") setFormPaidAmount(String(newTot));
-                                      return next;
-                                    });
-                                  }}
-                                  className="h-7 text-[11px] font-bold text-emerald-700 dark:text-emerald-300 px-1.5"
-                                  placeholder="250"
-                                />
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {/* Resumo e alerta multi-canal */}
-                    {(() => {
-                      const channels = Array.from(new Set(formDailyRates.map(d => d.channel || "whatsapp")));
-                      const sumTotal = formDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0);
-                      const isMulti = channels.length > 1;
-
-                      return (
-                        <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 text-[11px]">
-                          <div className="flex items-center gap-1.5">
-                            {isMulti ? (
-                              <Badge className="text-[9.5px] font-bold bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-500/30">
-                                ⚡ Multi-Canal: {channels.map(ch => {
-                                  const count = formDailyRates.filter(d => (d.channel || "whatsapp") === ch).length;
-                                  const name = ch === "booking" ? "Booking" : ch === "airbnb" ? "Airbnb" : ch === "site" ? "Site" : "WhatsApp";
-                                  return `${count}x ${name}`;
-                                }).join(" + ")}
-                              </Badge>
-                            ) : (
-                              <span className="text-[10px] text-muted-foreground">
-                                Canal uniforme em todas as diárias.
-                              </span>
-                            )}
-                          </div>
-                          <div className="font-bold text-slate-800 dark:text-slate-200">
-                            <span>Soma das Diárias: </span>
-                            <span className="text-emerald-600 dark:text-emerald-400 font-black">
-                              R$ {sumTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </div>
-
-                  {/* Atalhos Rápidos de Valor Pago & Saldo Restante */}
-                  {(() => {
-                    const currentTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
-                    const currentPaid = Number(formPaidAmount) || 0;
-                    const remaining = Math.max(0, currentTot - currentPaid);
-
-                    return (
-                      <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[11px] text-muted-foreground font-medium">Preencher rápido:</span>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              setFormPaidAmount("0");
-                              setFormPaymentStatus("pendente");
-                            }}
-                            className="h-6 px-2 text-[10px] font-bold cursor-pointer"
-                          >
-                            R$ 0 (Nada)
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              const half = Math.round(currentTot / 2);
-                              setFormPaidAmount(String(half));
-                              setFormPaymentStatus("sinal_pago");
-                            }}
-                            className="h-6 px-2 text-[10px] font-bold cursor-pointer"
-                          >
-                            50% (Sinal)
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              setFormPaidAmount(String(currentTot));
-                              setFormPaymentStatus("pago_total");
-                            }}
-                            className="h-6 px-2 text-[10px] font-bold cursor-pointer"
-                          >
-                            100% (Total)
-                          </Button>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Quanto falta pagar:</span>
-                          <Badge className={remaining > 0 ? "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950 dark:text-amber-200 font-bold" : "bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-200 font-bold"}>
-                            {remaining > 0 ? `R$ ${remaining.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}` : "Quitado (R$ 0,00)"}
-                          </Badge>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </div>
-
+                {/* Observações Gerais da Reserva */}
                 <div className="space-y-1">
-                  <Label className="text-xs">Observações Gerais da Reserva</Label>
+                  <Label className="text-xs font-semibold">Observações Gerais da Reserva</Label>
                   <Textarea 
                     value={formNotes} 
                     onChange={e => setFormNotes(e.target.value)} 
@@ -4735,7 +4486,669 @@ export default function PmsCalendar() {
                   />
                 </div>
 
-                {/* 💳 Detalhes Oficiais de Pagamento & Rastreamento Bancário */}
+                {/* Resumo Financeiro & Atalho para a Aba de Pagamentos */}
+                <div className="p-3.5 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent border border-emerald-500/20 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <CreditCard className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                      <span className="text-xs font-bold text-foreground">Resumo Financeiro da Hospedagem</span>
+                      {(() => {
+                        const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
+                        const curPaid = formPayments.length > 0 
+                          ? formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0) 
+                          : (Number(formPaidAmount) || 0);
+                        const remaining = Math.max(0, curTot - curPaid);
+                        if (remaining === 0 && curTot > 0) {
+                          return <Badge className="bg-emerald-600 text-white font-bold text-[10px]">✓ Quitado</Badge>;
+                        } else if (curPaid > 0) {
+                          return <Badge className="bg-amber-600 text-white font-bold text-[10px]">⚡ Sinal Pago</Badge>;
+                        }
+                        return <Badge className="bg-rose-500 text-white font-bold text-[10px]">⏳ Pagamento Pendente</Badge>;
+                      })()}
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
+                      <span>Total: <strong className="text-foreground font-bold">R$ {((Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal())).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
+                      <span>•</span>
+                      <span>Pago: <strong className="text-emerald-600 dark:text-emerald-400 font-bold">R$ {(formPayments.length > 0 ? formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0) : (Number(formPaidAmount) || 0)).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
+                      <span>•</span>
+                      <span>{formDailyRates.length} {formDailyRates.length === 1 ? "diária" : "diárias"} configuradas</span>
+                    </div>
+                  </div>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setResModalTab("payments")}
+                    className="h-8 px-3 text-xs font-bold border-emerald-400/60 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-100 flex items-center gap-1.5 shrink-0 cursor-pointer"
+                  >
+                    <span>Gerenciar Pagamentos & Diárias</span>
+                    <span className="font-bold">➔</span>
+                  </Button>
+                </div>
+
+                {selectedRes && (
+                  <div className="p-3 bg-emerald-50/80 dark:bg-emerald-950/30 rounded-2xl border border-emerald-200 dark:border-emerald-800 space-y-2 relative">
+                    {/* Janelinha Flutuante de Prévia no Modal (Ao passar o cursor sobre qualquer atalho) */}
+                    {hoveredModalQuickMsg && (() => {
+                      const modalRecipients = getReservationRecipients(selectedRes);
+                      const target = hoveredModalQuickMsg.recipientTarget || "guest";
+                      const isTargetRequester = target === "requester";
+                      return (
+                        <div className="absolute left-2 right-2 bottom-[calc(100%+8px)] z-50 p-3 rounded-2xl bg-slate-950/98 dark:bg-black/98 text-white border border-slate-700 shadow-2xl backdrop-blur-md animate-in fade-in-0 zoom-in-95 pointer-events-none text-left">
+                          <div className="flex items-center justify-between pb-1.5 border-b border-slate-800 mb-2">
+                            <div className="flex items-center gap-1.5 font-bold text-xs text-emerald-400">
+                              <span className="text-sm">{hoveredModalQuickMsg.icon}</span>
+                              <span className="truncate max-w-[200px]">{hoveredModalQuickMsg.title}</span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              {target === "both" ? (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30">
+                                  ✨ Ambos
+                                </span>
+                              ) : target === "requester" ? (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
+                                  👥 Solicitante
+                                </span>
+                              ) : (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-sky-500/20 text-sky-300 font-bold border border-sky-500/30">
+                                  👤 Hóspede
+                                </span>
+                              )}
+                              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
+                                Manual
+                              </span>
+                            </div>
+                          </div>
+                          <div className="text-[11px] leading-relaxed text-slate-200 font-normal whitespace-pre-wrap max-h-48 overflow-y-auto pr-1">
+                            {renderQuickMessage(
+                              hoveredModalQuickMsg.message, 
+                              selectedRes, 
+                              typeof window !== "undefined" ? window.location.origin : undefined,
+                              isTargetRequester ? "requester" : "guest"
+                            )}
+                          </div>
+                          <div className="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[9.5px] text-slate-400">
+                            <span className="font-mono truncate max-w-[260px]">
+                              {target === "requester" ? (
+                                <>
+                                  <strong className="text-amber-400">Destino: 👥 Solicitante</strong>
+                                  <span className="text-slate-300 ml-1">({modalRecipients.requester.name})</span>
+                                </>
+                              ) : target === "both" ? (
+                                <>
+                                  <strong className="text-purple-400">Destino: ✨ Ambos</strong>
+                                  <span className="text-slate-300 ml-1">({modalRecipients.guest.firstName} + {modalRecipients.requester.firstName})</span>
+                                </>
+                              ) : (
+                                <>
+                                  <strong className="text-sky-400">Destino: 👤 Hóspede</strong>
+                                  <span className="text-slate-300 ml-1">({modalRecipients.guest.name})</span>
+                                </>
+                              )}
+                            </span>
+                            <span className="text-emerald-400 font-bold shrink-0">⚡ Clique para disparar</span>
+                          </div>
+                          <div className="absolute top-full left-12 w-2.5 h-2.5 -mt-1 bg-slate-950 dark:bg-black border-r border-b border-slate-700 rotate-45" />
+                        </div>
+                      );
+                    })()}
+
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-emerald-900 dark:text-emerald-300 flex items-center gap-1.5">
+                        <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+                        Disparar WhatsApp (Z-API com Botões)
+                      </span>
+                      <div className="flex items-center gap-2">
+                        {selectedRes.guestPhone && (
+                          <span className="text-[10px] text-muted-foreground font-mono">Destino: {selectedRes.guestPhone}</span>
+                        )}
+                        <a 
+                          href="/whatsapp?tab=quick_messages" 
+                          target="_blank" 
+                          rel="noreferrer" 
+                          className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold hover:underline flex items-center gap-0.5"
+                          title="Gerenciar modelos e ativar/desativar mensagens"
+                        >
+                          <SlidersHorizontal className="w-3 h-3" />
+                          <span>Gerenciar</span>
+                        </a>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5">
+                      {activeQuickMessages.map(qm => {
+                        const isSending = modalSendingMsgId === qm.id;
+                        const target = qm.recipientTarget || "guest";
+                        return (
+                          <Button
+                            key={qm.id}
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={isSending}
+                            onMouseEnter={() => setHoveredModalQuickMsg(qm)}
+                            onMouseLeave={() => setHoveredModalQuickMsg(null)}
+                            title={
+                              target === "both" 
+                                ? `${qm.title} (Envia para Hóspede e Solicitante)` 
+                                : target === "requester" 
+                                  ? `${qm.title} (Envia para o Solicitante)` 
+                                  : `${qm.title} (Envia para o Hóspede)`
+                            }
+                            onClick={async () => {
+                              setModalSendingMsgId(qm.id);
+                              try {
+                                await dispatchQuickMessage(qm, selectedRes);
+                              } finally {
+                                setModalSendingMsgId(null);
+                              }
+                            }}
+                            className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-emerald-300 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 flex items-center gap-1.5 shadow-2xs cursor-pointer active:scale-95"
+                          >
+                            {isSending ? (
+                              <RefreshCw className="w-3 h-3 animate-spin text-emerald-600" />
+                            ) : (
+                              <span>{qm.icon || "💬"}</span>
+                            )}
+                            <span>{qm.title}</span>
+                            {target === "both" && (
+                              <span className="text-[9px] px-1 py-0.2 rounded bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-bold border border-purple-300 dark:border-purple-800 leading-tight" title="Hóspede + Solicitante">
+                                ✨ Ambos
+                              </span>
+                            )}
+                            {target === "requester" && (
+                              <span className="text-[9px] px-1 py-0.2 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-bold border border-amber-300 dark:border-amber-800 leading-tight" title="Só Solicitante">
+                                👥 Solicitante
+                              </span>
+                            )}
+                          </Button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+              )}
+
+              {/* ABA 2: Pagamentos & Diárias */}
+              {resModalTab === "payments" && (
+                <div className="py-2.5 space-y-4">
+                  {/* 1. Indicadores Financeiros no Topo */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    {/* Card Total */}
+                    <div className="p-3 bg-muted/40 border rounded-2xl space-y-1">
+                      <span className="text-[11px] font-semibold text-muted-foreground flex items-center gap-1">
+                        <CreditCard className="w-3.5 h-3.5 text-primary" />
+                        <span>Total da Reserva</span>
+                      </span>
+                      <div className="text-base sm:text-lg font-black text-foreground">
+                        R$ {((Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal())).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                      </div>
+                      <span className="text-[10px] text-muted-foreground block">
+                        {formDailyRates.length} {formDailyRates.length === 1 ? "noite" : "noites"} registradas
+                      </span>
+                    </div>
+
+                    {/* Card Total Pago */}
+                    <div className="p-3 bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/80 dark:border-emerald-800/60 rounded-2xl space-y-1">
+                      <span className="text-[11px] font-semibold text-emerald-800 dark:text-emerald-300 flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Total Recebido</span>
+                      </span>
+                      <div className="text-base sm:text-lg font-black text-emerald-700 dark:text-emerald-400">
+                        R$ {(formPayments.length > 0 ? formPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0) : (Number(formPaidAmount) || 0)).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                      </div>
+                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium block">
+                        {formPayments.length} lançamento(s)
+                      </span>
+                    </div>
+
+                    {/* Card Saldo Restante / Devedor */}
+                    {(() => {
+                      const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
+                      const curPaid = formPayments.length > 0 
+                        ? formPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0) 
+                        : (Number(formPaidAmount) || 0);
+                      const remaining = Math.max(0, curTot - curPaid);
+                      const isOverpaid = curPaid > curTot && curTot > 0;
+                      return (
+                        <div className={`p-3 border rounded-2xl space-y-1 ${
+                          remaining > 0 
+                            ? "bg-amber-50/70 dark:bg-amber-950/30 border-amber-300/80 dark:border-amber-800/60" 
+                            : "bg-muted/40"
+                        }`}>
+                          <span className="text-[11px] font-semibold text-muted-foreground flex items-center gap-1">
+                            <Clock className="w-3.5 h-3.5 text-amber-600" />
+                            <span>Saldo Restante</span>
+                          </span>
+                          <div className={`text-base sm:text-lg font-black ${remaining > 0 ? "text-amber-700 dark:text-amber-400" : "text-foreground"}`}>
+                            {remaining > 0 ? `R$ ${remaining.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}` : "R$ 0,00"}
+                          </div>
+                          <span className="text-[10px] text-muted-foreground block font-medium">
+                            {remaining > 0 ? "A receber do hóspede" : (isOverpaid ? "Valor recebido excede total" : "Totalmente quitado")}
+                          </span>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Card Situação & Ações Rápidas */}
+                    <div className="p-3 bg-muted/40 border rounded-2xl space-y-1.5 flex flex-col justify-between">
+                      <span className="text-[11px] font-semibold text-muted-foreground block">
+                        Situação Atual
+                      </span>
+                      <div>
+                        {(() => {
+                          const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
+                          const curPaid = formPayments.length > 0 
+                            ? formPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0) 
+                            : (Number(formPaidAmount) || 0);
+                          const remaining = Math.max(0, curTot - curPaid);
+                          if (remaining === 0 && curTot > 0) {
+                            return <Badge className="bg-emerald-600 text-white font-bold text-xs">✓ Quitado (100%)</Badge>;
+                          } else if (curPaid > 0) {
+                            return <Badge className="bg-amber-600 text-white font-bold text-xs">⚡ Parcial (Sinal)</Badge>;
+                          }
+                          return <Badge className="bg-rose-500 text-white font-bold text-xs">⏳ Pendente</Badge>;
+                        })()}
+                      </div>
+                      <div className="flex gap-1 items-center flex-wrap pt-0.5">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
+                            setFormPayments([
+                              {
+                                id: `pay_${Date.now()}`,
+                                amount: curTot,
+                                method: formPaymentMethod || "pix",
+                                date: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+                                notes: "Quitação 100%"
+                              }
+                            ]);
+                            setFormPaidAmount(String(curTot));
+                            setFormPaymentStatus("pago_total");
+                          }}
+                          className="h-5 px-1.5 text-[9.5px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-950"
+                        >
+                          Quitar 100%
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
+                            const half = Math.round(curTot / 2);
+                            setFormPayments([
+                              {
+                                id: `pay_${Date.now()}`,
+                                amount: half,
+                                method: formPaymentMethod || "pix",
+                                date: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+                                notes: "Sinal de 50%"
+                              }
+                            ]);
+                            setFormPaidAmount(String(half));
+                            setFormPaymentStatus("sinal_pago");
+                          }}
+                          className="h-5 px-1.5 text-[9.5px] font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-950"
+                        >
+                          Sinal 50%
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 2. Diárias Individuais & Canais de Venda Multiplataforma */}
+                  <div className="p-3.5 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-2.5">
+                      <div>
+                        <div className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                          <CalendarDays className="w-4 h-4 text-primary" />
+                          <span>Diárias da Reserva ({formDailyRates.length} {formDailyRates.length === 1 ? "noite" : "noites"})</span>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">
+                          Edite o valor e o canal de cada diária individualmente (ex: 1ª diária pelo Booking e extensão direta via WhatsApp).
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleAddExtraNight}
+                          className="h-7 px-2.5 text-xs font-bold bg-white dark:bg-slate-800 border-primary/40 text-primary hover:bg-primary/10 flex items-center gap-1 shadow-2xs cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>+ Diária Extra</span>
+                        </Button>
+
+                        {formDailyRates.length > 1 && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={handleRemoveLastNight}
+                            className="h-7 px-2 text-xs font-medium text-rose-600 dark:text-rose-400 border-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                            title="Remover última diária e antecipar check-out"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Lista de Diárias */}
+                    <div className="space-y-2">
+                      {formDailyRates.map((d, idx) => {
+                        let formattedDate = d.date;
+                        try {
+                          formattedDate = format(parseISO(d.date), "dd/MM/yyyy (EEE)", { locale: ptBR });
+                        } catch {}
+
+                        return (
+                          <div 
+                            key={d.date || idx}
+                            className="p-2.5 bg-background border border-border rounded-xl flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 text-xs hover:border-primary/40 transition-colors"
+                          >
+                            {/* Identificação da Noite e Data */}
+                            <div className="flex items-center gap-2 min-w-[150px]">
+                              <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                                #{idx + 1}
+                              </span>
+                              <div className="font-semibold text-foreground">
+                                {formattedDate}
+                              </div>
+                            </div>
+
+                            <div className="flex flex-1 items-center gap-2 flex-wrap sm:flex-nowrap">
+                              {/* Canal de Venda Desta Diária */}
+                              <div className="flex-1 min-w-[140px]">
+                                <Select
+                                  value={d.channel || formChannel || "whatsapp"}
+                                  onValueChange={(val) => {
+                                    setFormDailyRates(prev => prev.map((item, i) => i === idx ? { ...item, channel: val } : item));
+                                  }}
+                                >
+                                  <SelectTrigger className="h-8 text-xs font-medium">
+                                    <SelectValue placeholder="Canal" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="whatsapp">💬 WhatsApp / Direta</SelectItem>
+                                    <SelectItem value="booking">🔵 Booking.com</SelectItem>
+                                    <SelectItem value="airbnb">🔴 Airbnb</SelectItem>
+                                    <SelectItem value="site">🌐 Site Próprio</SelectItem>
+                                    <SelectItem value="balcao">🏨 Balcão / Recepção</SelectItem>
+                                    <SelectItem value="empresa">🏢 Empresa (PJ)</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              {/* Valor da Diária */}
+                              <div className="w-32 relative">
+                                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[11px] font-bold text-muted-foreground pointer-events-none">
+                                  R$
+                                </span>
+                                <Input
+                                  type="number"
+                                  value={d.rate}
+                                  onChange={(e) => {
+                                    const val = Number(e.target.value) || 0;
+                                    setFormDailyRates(prev => {
+                                      const nextRates = prev.map((item, i) => i === idx ? { ...item, rate: val } : item);
+                                      const newTot = nextRates.reduce((s, it) => s + (Number(it.rate) || 0), 0);
+                                      setFormTotalAmount(String(newTot));
+                                      if (formPaymentStatus === "pago_total") {
+                                        setFormPaidAmount(String(newTot));
+                                      }
+                                      return nextRates;
+                                    });
+                                  }}
+                                  className="h-8 pl-8 pr-2 text-xs font-bold text-right"
+                                />
+                              </div>
+
+                              {/* Observações da diária */}
+                              <div className="w-full sm:w-40">
+                                <Input
+                                  type="text"
+                                  placeholder="Obs (ex: extra)..."
+                                  value={d.notes || ""}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setFormDailyRates(prev => prev.map((item, i) => i === idx ? { ...item, notes: val } : item));
+                                  }}
+                                  className="h-8 text-[11px]"
+                                />
+                              </div>
+
+                              {/* Ação de Excluir esta noite individual se houver mais de 1 */}
+                              {formDailyRates.length > 1 && (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    const updatedRates = formDailyRates.filter((_, i) => i !== idx);
+                                    if (updatedRates.length > 0) {
+                                      const firstDate = updatedRates[0].date;
+                                      const lastDate = updatedRates[updatedRates.length - 1].date;
+                                      const newCheckout = format(addDays(parseISO(lastDate), 1), "yyyy-MM-dd");
+                                      setFormDailyRates(updatedRates);
+                                      setFormCheckin(firstDate);
+                                      setFormCheckout(newCheckout);
+                                      const newTot = updatedRates.reduce((s, it) => s + (Number(it.rate) || 0), 0);
+                                      setFormTotalAmount(String(newTot));
+                                      if (formPaymentStatus === "pago_total") {
+                                        setFormPaidAmount(String(newTot));
+                                      }
+                                    }
+                                  }}
+                                  className="h-8 w-8 p-0 text-muted-foreground hover:text-rose-600 shrink-0 cursor-pointer"
+                                  title="Excluir esta diária"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Barra de Ações Rápidas de Diárias */}
+                    <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                      <div className="flex items-center gap-2">
+                        <span>Subtotal das diárias: <strong className="text-foreground font-bold">R$ {formDailyRates.reduce((s, it) => s + (Number(it.rate) || 0), 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            if (formDailyRates.length > 0) {
+                              const firstRate = Number(formDailyRates[0].rate) || 250;
+                              const firstChan = formDailyRates[0].channel || formChannel;
+                              setFormDailyRates(prev => prev.map(d => ({ ...d, rate: firstRate, channel: firstChan })));
+                              const newTot = formDailyRates.length * firstRate;
+                              setFormTotalAmount(String(newTot));
+                              toast({ title: "Diárias Equalizadas", description: `Todas as diárias ajustadas para R$ ${firstRate} (${firstChan}).` });
+                            }
+                          }}
+                          className="h-6 px-2 text-[10px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800 cursor-pointer"
+                        >
+                          Equalizar todas com a 1ª diária
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 3. Lançamentos & Formas de Pagamento Individuais */}
+                  <div className="p-3.5 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-2.5">
+                      <div>
+                        <div className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                          <CreditCard className="w-4 h-4 text-emerald-600" />
+                          <span>Pagamentos Realizados ({formPayments.length})</span>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">
+                          Controle de cada pagamento recebido com sua forma de pagamento específica (PIX, Cartão, Dinheiro, etc.).
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleAddPayment()}
+                          className="h-7 px-2.5 text-xs font-bold bg-white dark:bg-slate-800 border-emerald-400 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 flex items-center gap-1 shadow-2xs cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>+ Novo Pagamento</span>
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Se não há pagamentos registrados */}
+                    {formPayments.length === 0 ? (
+                      <div className="p-4 rounded-xl border border-dashed text-center space-y-2 bg-background/50">
+                        <div className="text-xs text-muted-foreground">
+                          Nenhum pagamento registrado nesta reserva ainda.
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
+                            handleAddPayment(curTot, formPaymentMethod || "pix", "Pagamento integral");
+                          }}
+                          className="h-7 text-xs font-bold text-emerald-600 border-emerald-300 hover:bg-emerald-50 cursor-pointer"
+                        >
+                          Registrar Pagamento Integral Agora
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {formPayments.map((pay, pIdx) => {
+                          return (
+                            <div
+                              key={pay.id || pIdx}
+                              className="p-2.5 bg-background border border-border rounded-xl flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 text-xs hover:border-emerald-400/50 transition-colors"
+                            >
+                              {/* Tag e Forma de Pagamento */}
+                              <div className="flex items-center gap-1.5 sm:w-52 shrink-0">
+                                <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 shrink-0">
+                                  #{pIdx + 1}
+                                </span>
+                                <Select
+                                  value={pay.method || "pix"}
+                                  onValueChange={(val) => handleUpdatePayment(pay.id, "method", val)}
+                                >
+                                  <SelectTrigger className="h-8 text-xs font-medium w-full">
+                                    <SelectValue placeholder="Forma" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="pix">⚡ PIX (Instantâneo)</SelectItem>
+                                    <SelectItem value="credit_card">💳 Cartão de Crédito</SelectItem>
+                                    <SelectItem value="debit_card">💳 Cartão de Débito</SelectItem>
+                                    <SelectItem value="dinheiro">💵 Dinheiro em Espécie</SelectItem>
+                                    <SelectItem value="booking">🌐 Booking.com (OTA)</SelectItem>
+                                    <SelectItem value="airbnb">🔴 Airbnb (OTA)</SelectItem>
+                                    <SelectItem value="ted">🏦 TED / Transferência</SelectItem>
+                                    <SelectItem value="faturado_pj">🏢 Faturado Empresa (PJ)</SelectItem>
+                                    <SelectItem value="outro">💰 Outro</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              {/* Valor do Pagamento */}
+                              <div className="w-full sm:w-32 relative shrink-0">
+                                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[11px] font-bold text-emerald-600 pointer-events-none">
+                                  R$
+                                </span>
+                                <Input
+                                  type="number"
+                                  value={pay.amount}
+                                  onChange={(e) => handleUpdatePayment(pay.id, "amount", Number(e.target.value) || 0)}
+                                  className="h-8 pl-8 pr-2 text-xs font-bold text-right text-emerald-700 dark:text-emerald-400"
+                                />
+                              </div>
+
+                              {/* Data e Hora */}
+                              <div className="w-full sm:w-44 shrink-0">
+                                <Input
+                                  type="datetime-local"
+                                  value={pay.date ? (pay.date.includes("T") ? pay.date.substring(0, 16) : pay.date) : ""}
+                                  onChange={(e) => handleUpdatePayment(pay.id, "date", e.target.value)}
+                                  className="h-8 text-[11px]"
+                                />
+                              </div>
+
+                              {/* Observações / Descrição do lançamento */}
+                              <div className="flex-1 min-w-[120px]">
+                                <Input
+                                  type="text"
+                                  placeholder="Obs: ex: Sinal, comprovante no WhatsApp..."
+                                  value={pay.notes || ""}
+                                  onChange={(e) => handleUpdatePayment(pay.id, "notes", e.target.value)}
+                                  className="h-8 text-[11px]"
+                                />
+                              </div>
+
+                              {/* Botão de Excluir Pagamento */}
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleRemovePayment(pay.id)}
+                                className="h-8 w-8 p-0 text-muted-foreground hover:text-rose-600 shrink-0 cursor-pointer"
+                                title="Excluir este lançamento"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Resumo abaixo dos lançamentos */}
+                    {(() => {
+                      const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
+                      const curPaid = formPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+                      const remaining = Math.max(0, curTot - curPaid);
+
+                      return (
+                        <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                          <div className="text-muted-foreground">
+                            Total Pago: <strong className="text-emerald-600 dark:text-emerald-400 font-bold">R$ {curPaid.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong> de <strong className="text-foreground font-bold">R$ {curTot.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong>
+                          </div>
+
+                          {remaining > 0 && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleAddPayment(remaining, formPaymentMethod || "pix", "Quitação do saldo")}
+                              className="h-6 px-2 text-[10px] font-bold text-amber-700 dark:text-amber-300 border-amber-300 hover:bg-amber-50 cursor-pointer"
+                            >
+                              + Lançar Quitação do Saldo (R$ {remaining.toLocaleString("pt-BR", { minimumFractionDigits: 2 })})
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  {/* 4. Conciliação & Dados Oficiais de Gateway */}
+                  {/* 💳 Detalhes Oficiais de Pagamento & Rastreamento Bancário */}
                 {selectedRes && (() => {
                   const chanLower = String(formChannel || selectedRes.channel || "").toLowerCase();
                   const isOta = chanLower.includes("booking") || chanLower.includes("airbnb");
@@ -4986,149 +5399,8 @@ export default function PmsCalendar() {
                     </div>
                   );
                 })()}
-
-                {selectedRes && (
-                  <div className="p-3 bg-emerald-50/80 dark:bg-emerald-950/30 rounded-2xl border border-emerald-200 dark:border-emerald-800 space-y-2 relative">
-                    {/* Janelinha Flutuante de Prévia no Modal (Ao passar o cursor sobre qualquer atalho) */}
-                    {hoveredModalQuickMsg && (() => {
-                      const modalRecipients = getReservationRecipients(selectedRes);
-                      const target = hoveredModalQuickMsg.recipientTarget || "guest";
-                      const isTargetRequester = target === "requester";
-                      return (
-                        <div className="absolute left-2 right-2 bottom-[calc(100%+8px)] z-50 p-3 rounded-2xl bg-slate-950/98 dark:bg-black/98 text-white border border-slate-700 shadow-2xl backdrop-blur-md animate-in fade-in-0 zoom-in-95 pointer-events-none text-left">
-                          <div className="flex items-center justify-between pb-1.5 border-b border-slate-800 mb-2">
-                            <div className="flex items-center gap-1.5 font-bold text-xs text-emerald-400">
-                              <span className="text-sm">{hoveredModalQuickMsg.icon}</span>
-                              <span className="truncate max-w-[200px]">{hoveredModalQuickMsg.title}</span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              {target === "both" ? (
-                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-bold border border-purple-500/30">
-                                  ✨ Ambos
-                                </span>
-                              ) : target === "requester" ? (
-                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
-                                  👥 Solicitante
-                                </span>
-                              ) : (
-                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-sky-500/20 text-sky-300 font-bold border border-sky-500/30">
-                                  👤 Hóspede
-                                </span>
-                              )}
-                              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
-                                Manual
-                              </span>
-                            </div>
-                          </div>
-                          <div className="text-[11px] leading-relaxed text-slate-200 font-normal whitespace-pre-wrap max-h-48 overflow-y-auto pr-1">
-                            {renderQuickMessage(
-                              hoveredModalQuickMsg.message, 
-                              selectedRes, 
-                              typeof window !== "undefined" ? window.location.origin : undefined,
-                              isTargetRequester ? "requester" : "guest"
-                            )}
-                          </div>
-                          <div className="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[9.5px] text-slate-400">
-                            <span className="font-mono truncate max-w-[260px]">
-                              {target === "requester" ? (
-                                <>
-                                  <strong className="text-amber-400">Destino: 👥 Solicitante</strong>
-                                  <span className="text-slate-300 ml-1">({modalRecipients.requester.name})</span>
-                                </>
-                              ) : target === "both" ? (
-                                <>
-                                  <strong className="text-purple-400">Destino: ✨ Ambos</strong>
-                                  <span className="text-slate-300 ml-1">({modalRecipients.guest.firstName} + {modalRecipients.requester.firstName})</span>
-                                </>
-                              ) : (
-                                <>
-                                  <strong className="text-sky-400">Destino: 👤 Hóspede</strong>
-                                  <span className="text-slate-300 ml-1">({modalRecipients.guest.name})</span>
-                                </>
-                              )}
-                            </span>
-                            <span className="text-emerald-400 font-bold shrink-0">⚡ Clique para disparar</span>
-                          </div>
-                          <div className="absolute top-full left-12 w-2.5 h-2.5 -mt-1 bg-slate-950 dark:bg-black border-r border-b border-slate-700 rotate-45" />
-                        </div>
-                      );
-                    })()}
-
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-emerald-900 dark:text-emerald-300 flex items-center gap-1.5">
-                        <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
-                        Disparar WhatsApp (Z-API com Botões)
-                      </span>
-                      <div className="flex items-center gap-2">
-                        {selectedRes.guestPhone && (
-                          <span className="text-[10px] text-muted-foreground font-mono">Destino: {selectedRes.guestPhone}</span>
-                        )}
-                        <a 
-                          href="/whatsapp?tab=quick_messages" 
-                          target="_blank" 
-                          rel="noreferrer" 
-                          className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold hover:underline flex items-center gap-0.5"
-                          title="Gerenciar modelos e ativar/desativar mensagens"
-                        >
-                          <SlidersHorizontal className="w-3 h-3" />
-                          <span>Gerenciar</span>
-                        </a>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap gap-1.5">
-                      {activeQuickMessages.map(qm => {
-                        const isSending = modalSendingMsgId === qm.id;
-                        const target = qm.recipientTarget || "guest";
-                        return (
-                          <Button
-                            key={qm.id}
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            disabled={isSending}
-                            onMouseEnter={() => setHoveredModalQuickMsg(qm)}
-                            onMouseLeave={() => setHoveredModalQuickMsg(null)}
-                            title={
-                              target === "both" 
-                                ? `${qm.title} (Envia para Hóspede e Solicitante)` 
-                                : target === "requester" 
-                                  ? `${qm.title} (Envia para o Solicitante)` 
-                                  : `${qm.title} (Envia para o Hóspede)`
-                            }
-                            onClick={async () => {
-                              setModalSendingMsgId(qm.id);
-                              try {
-                                await dispatchQuickMessage(qm, selectedRes);
-                              } finally {
-                                setModalSendingMsgId(null);
-                              }
-                            }}
-                            className="h-7 text-[11px] bg-white dark:bg-neutral-800 border-emerald-300 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 flex items-center gap-1.5 shadow-2xs cursor-pointer active:scale-95"
-                          >
-                            {isSending ? (
-                              <RefreshCw className="w-3 h-3 animate-spin text-emerald-600" />
-                            ) : (
-                              <span>{qm.icon || "💬"}</span>
-                            )}
-                            <span>{qm.title}</span>
-                            {target === "both" && (
-                              <span className="text-[9px] px-1 py-0.2 rounded bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-bold border border-purple-300 dark:border-purple-800 leading-tight" title="Hóspede + Solicitante">
-                                ✨ Ambos
-                              </span>
-                            )}
-                            {target === "requester" && (
-                              <span className="text-[9px] px-1 py-0.2 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-bold border border-amber-300 dark:border-amber-800 leading-tight" title="Só Solicitante">
-                                👥 Solicitante
-                              </span>
-                            )}
-                          </Button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
+                </div>
+              )}
 
               <DialogFooter className="gap-2 justify-between">
                 {selectedRes ? (
@@ -5374,7 +5646,7 @@ export default function PmsCalendar() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => setResModalTab("details")}
+                    onClick={() => setResModalTab("reservation")}
                     className="text-xs font-semibold"
                   >
                     ← Voltar para Dados da Reserva
@@ -6195,7 +6467,7 @@ export default function PmsCalendar() {
                       type="button"
                       variant="ghost"
                       size="sm"
-                      onClick={() => setResModalTab("details")}
+                      onClick={() => setResModalTab("reservation")}
                       className="rounded-xl text-xs font-bold text-muted-foreground hover:text-foreground"
                     >
                       ← Voltar aos Dados da Reserva

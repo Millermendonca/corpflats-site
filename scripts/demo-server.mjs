@@ -2700,6 +2700,22 @@ function diffReservationFields(oldRes, newBody, flatsList = []) {
     }
   }
 
+  // Detalhamento de pagamentos efetuados (payments)
+  if (Array.isArray(newBody.payments)) {
+    const oldPayments = Array.isArray(oldRes.payments) ? oldRes.payments : [];
+    const summarizePayments = (pays) => pays.map(p => `R$ ${Number(p.amount || 0).toFixed(2)} via ${p.method || 'pix'}`).join(", ");
+    const oldSumm = summarizePayments(oldPayments);
+    const newSumm = summarizePayments(newBody.payments);
+    if (oldSumm !== newSumm && (oldPayments.length > 0 || newBody.payments.length > 0)) {
+      changes.push({
+        field: "payments",
+        label: "Lançamentos de Pagamento",
+        oldValue: oldSumm || "(nenhum)",
+        newValue: newSumm
+      });
+    }
+  }
+
   return changes;
 }
 
@@ -7080,6 +7096,7 @@ app.post("/api/pms/reservations", (req, res) => {
     paymentMethod = null,
     dailyRate = 0,
     dailyRates = [],
+    payments = [],
     totalAmount = 0,
     paidAmount = 0,
     paymentStatus = "pendente",
@@ -7150,13 +7167,47 @@ app.post("/api/pms/reservations", (req, res) => {
     else resolvedPaymentMethod = "pix";
   }
   ensurePaymentMethodExists(resolvedPaymentMethod);
-  if (resolvedPaymentStatus === "pago_total" && finalTotalAmount > 0 && resolvedPaidAmount === 0) {
-    resolvedPaidAmount = finalTotalAmount;
+
+  // Normalização de múltiplos pagamentos (payments)
+  let normalizedPayments = [];
+  if (Array.isArray(payments) && payments.length > 0) {
+    normalizedPayments = payments.map(p => ({
+      id: String(p.id || `pay_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`),
+      amount: Number(p.amount) || 0,
+      method: String(p.method || resolvedPaymentMethod || "pix"),
+      date: String(p.date || new Date().toISOString()),
+      notes: p.notes ? String(p.notes) : undefined
+    })).filter(p => p.amount > 0 || p.method);
   }
-  if (resolvedPaidAmount > 0 && resolvedPaidAmount < finalTotalAmount && resolvedPaymentStatus === "pendente") {
-    resolvedPaymentStatus = "sinal_pago";
-  } else if (resolvedPaidAmount >= finalTotalAmount && finalTotalAmount > 0) {
-    resolvedPaymentStatus = "pago_total";
+
+  if (normalizedPayments.length > 0) {
+    resolvedPaidAmount = normalizedPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+    if (resolvedPaidAmount >= finalTotalAmount && finalTotalAmount > 0) {
+      resolvedPaymentStatus = "pago_total";
+    } else if (resolvedPaidAmount > 0) {
+      resolvedPaymentStatus = "sinal_pago";
+    } else {
+      resolvedPaymentStatus = "pendente";
+    }
+  } else {
+    if (resolvedPaymentStatus === "pago_total" && finalTotalAmount > 0 && resolvedPaidAmount === 0) {
+      resolvedPaidAmount = finalTotalAmount;
+    }
+    if (resolvedPaidAmount > 0 && resolvedPaidAmount < finalTotalAmount && resolvedPaymentStatus === "pendente") {
+      resolvedPaymentStatus = "sinal_pago";
+    } else if (resolvedPaidAmount >= finalTotalAmount && finalTotalAmount > 0) {
+      resolvedPaymentStatus = "pago_total";
+    }
+
+    if (resolvedPaidAmount > 0) {
+      normalizedPayments = [{
+        id: `pay_${Date.now()}_init`,
+        amount: resolvedPaidAmount,
+        method: resolvedPaymentMethod || "pix",
+        date: new Date().toISOString(),
+        notes: resolvedPaymentStatus === "pago_total" ? "Pagamento integral" : "Pagamento inicial"
+      }];
+    }
   }
 
   // A reserva só é confirmada de fato se explicitamente informada como confirmada no campo (ou canal OTA)
@@ -7314,6 +7365,7 @@ app.post("/api/pms/reservations", (req, res) => {
     totalAmount: finalTotalAmount,
     paidAmount: resolvedPaidAmount,
     paymentStatus: resolvedPaymentStatus,
+    payments: normalizedPayments,
     adults: numGuests,
     children: Number(children),
     notes,
@@ -7471,7 +7523,7 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   const fields = [
     "flatId", "checkinDate", "checkoutDate", "checkinTime", "checkoutTime", "status", "channel", 
     "paymentMethod",
-    "dailyRate", "dailyRates", "totalAmount", "paidAmount", "paymentStatus", 
+    "dailyRate", "dailyRates", "payments", "totalAmount", "paidAmount", "paymentStatus", 
     "adults", "children", "notes", "prefersHighFloor", "twinBeds", 
     "extraMattress", "specialRequests", "isMonthlyGuest", "clientType", "includeBreakfast",
     "autoEmitInvoice", "earlyCheckinAuthorized", "receptionNotes",
@@ -7493,6 +7545,28 @@ app.put("/api/pms/reservations/:id", (req, res) => {
 
     if (req.body.totalAmount === undefined && r.dailyRates.length > 0) {
       r.totalAmount = r.dailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0);
+    }
+  }
+
+  // Normalização de payments na edição
+  if (Array.isArray(req.body.payments)) {
+    r.payments = req.body.payments.map(p => ({
+      id: String(p.id || `pay_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`),
+      amount: Number(p.amount) || 0,
+      method: String(p.method || r.paymentMethod || "pix"),
+      date: String(p.date || new Date().toISOString()),
+      notes: p.notes ? String(p.notes) : undefined
+    })).filter(p => p.amount > 0 || p.method);
+
+    const sumPaid = r.payments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+    r.paidAmount = sumPaid;
+    const currentTot = Number(r.totalAmount) || 0;
+    if (sumPaid >= currentTot && currentTot > 0) {
+      r.paymentStatus = "pago_total";
+    } else if (sumPaid > 0) {
+      r.paymentStatus = "sinal_pago";
+    } else {
+      r.paymentStatus = "pendente";
     }
   }
 
