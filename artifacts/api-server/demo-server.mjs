@@ -2684,6 +2684,22 @@ function diffReservationFields(oldRes, newBody, flatsList = []) {
     }
   }
 
+  // Detalhamento individual de diárias (dailyRates)
+  if (Array.isArray(newBody.dailyRates)) {
+    const oldRates = Array.isArray(oldRes.dailyRates) ? oldRes.dailyRates : [];
+    const summarizeRates = (rates) => rates.map(d => `${d.date}: R$ ${Number(d.rate || 0)} (${d.channel || 'whatsapp'})`).join(", ");
+    const oldSummary = summarizeRates(oldRates);
+    const newSummary = summarizeRates(newBody.dailyRates);
+    if (oldSummary !== newSummary && (oldRates.length > 0 || newBody.dailyRates.length > 0)) {
+      changes.push({
+        field: "dailyRates",
+        label: "Detalhamento das Diárias",
+        oldValue: oldSummary || "(tarifa única)",
+        newValue: newSummary
+      });
+    }
+  }
+
   return changes;
 }
 
@@ -7063,6 +7079,7 @@ app.post("/api/pms/reservations", (req, res) => {
     channel = "direta",
     paymentMethod = null,
     dailyRate = 0,
+    dailyRates = [],
     totalAmount = 0,
     paidAmount = 0,
     paymentStatus = "pendente",
@@ -7084,6 +7101,36 @@ app.post("/api/pms/reservations", (req, res) => {
     return res.status(400).json({ error: "Apartamento, Hóspede e Datas são obrigatórios." });
   }
 
+  // Normalização de diárias individuais (dailyRates)
+  let normalizedDailyRates = [];
+  if (Array.isArray(dailyRates) && dailyRates.length > 0) {
+    normalizedDailyRates = dailyRates.map(d => ({
+      date: String(d.date || ""),
+      rate: Number(d.rate) || 0,
+      channel: String(d.channel || channel || "whatsapp").toLowerCase(),
+      notes: d.notes ? String(d.notes) : undefined
+    })).filter(d => d.date);
+  } else if (checkinDate && checkoutDate) {
+    const d1 = new Date(checkinDate + "T00:00:00Z");
+    const d2 = new Date(checkoutDate + "T00:00:00Z");
+    const nights = Math.max(1, Math.round((d2 - d1) / (1000 * 60 * 60 * 24)));
+    const baseRate = Number(dailyRate) || (Number(totalAmount) > 0 ? Math.round(Number(totalAmount) / nights) : 250);
+    for (let i = 0; i < nights; i++) {
+      const cur = new Date(d1.getTime() + i * 86400000);
+      normalizedDailyRates.push({
+        date: cur.toISOString().substring(0, 10),
+        rate: baseRate,
+        channel: channel || "whatsapp"
+      });
+    }
+  }
+
+  let finalTotalAmount = Number(totalAmount) || 0;
+  if (finalTotalAmount === 0 && normalizedDailyRates.length > 0) {
+    finalTotalAmount = normalizedDailyRates.reduce((sum, d) => sum + (Number(d.rate) || 0), 0);
+  }
+  let finalDailyRate = Number(dailyRate) || (normalizedDailyRates.length > 0 ? Math.round(finalTotalAmount / normalizedDailyRates.length) : 0);
+
   const isMonthly = Boolean(isMonthlyGuest || clientType === "mensalista" || req.body.isMonthlyGuest || req.body.clientType === "mensalista");
   const autoInvoice = Boolean(autoEmitInvoice || req.body.autoEmitInvoice);
 
@@ -7103,12 +7150,12 @@ app.post("/api/pms/reservations", (req, res) => {
     else resolvedPaymentMethod = "pix";
   }
   ensurePaymentMethodExists(resolvedPaymentMethod);
-  if (resolvedPaymentStatus === "pago_total" && Number(totalAmount) > 0 && resolvedPaidAmount === 0) {
-    resolvedPaidAmount = Number(totalAmount);
+  if (resolvedPaymentStatus === "pago_total" && finalTotalAmount > 0 && resolvedPaidAmount === 0) {
+    resolvedPaidAmount = finalTotalAmount;
   }
-  if (resolvedPaidAmount > 0 && resolvedPaidAmount < Number(totalAmount) && resolvedPaymentStatus === "pendente") {
+  if (resolvedPaidAmount > 0 && resolvedPaidAmount < finalTotalAmount && resolvedPaymentStatus === "pendente") {
     resolvedPaymentStatus = "sinal_pago";
-  } else if (resolvedPaidAmount >= Number(totalAmount) && Number(totalAmount) > 0) {
+  } else if (resolvedPaidAmount >= finalTotalAmount && finalTotalAmount > 0) {
     resolvedPaymentStatus = "pago_total";
   }
 
@@ -7262,8 +7309,9 @@ app.post("/api/pms/reservations", (req, res) => {
     status: resolvedStatus,
     channel,
     paymentMethod: resolvedPaymentMethod,
-    dailyRate: Number(dailyRate),
-    totalAmount: Number(totalAmount),
+    dailyRate: finalDailyRate,
+    dailyRates: normalizedDailyRates,
+    totalAmount: finalTotalAmount,
     paidAmount: resolvedPaidAmount,
     paymentStatus: resolvedPaymentStatus,
     adults: numGuests,
@@ -7410,7 +7458,7 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   const fields = [
     "flatId", "checkinDate", "checkoutDate", "checkinTime", "checkoutTime", "status", "channel", 
     "paymentMethod",
-    "dailyRate", "totalAmount", "paidAmount", "paymentStatus", 
+    "dailyRate", "dailyRates", "totalAmount", "paidAmount", "paymentStatus", 
     "adults", "children", "notes", "prefersHighFloor", "twinBeds", 
     "extraMattress", "specialRequests", "isMonthlyGuest", "clientType", "includeBreakfast",
     "autoEmitInvoice", "earlyCheckinAuthorized", "receptionNotes",
@@ -7420,6 +7468,21 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   for (const f of fields) {
     if (req.body[f] !== undefined) r[f] = req.body[f];
   }
+
+  // Normalização de dailyRates na edição
+  if (Array.isArray(req.body.dailyRates)) {
+    r.dailyRates = req.body.dailyRates.map(d => ({
+      date: String(d.date || ""),
+      rate: Number(d.rate) || 0,
+      channel: String(d.channel || r.channel || "whatsapp").toLowerCase(),
+      notes: d.notes ? String(d.notes) : undefined
+    })).filter(d => d.date);
+
+    if (req.body.totalAmount === undefined && r.dailyRates.length > 0) {
+      r.totalAmount = r.dailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0);
+    }
+  }
+
   if (r.paymentMethod) {
     ensurePaymentMethodExists(r.paymentMethod);
   }
@@ -9066,18 +9129,35 @@ app.get("/api/pms/analytics/reports", (req, res) => {
     }
     totalNightsSold += nights;
 
-    // Canal de Origem
-    const source = (r.source || r.channel || "").toLowerCase();
-    if (source.includes("site") || source.includes("motor") || source.includes("direct")) {
-      channelCounts["Site CorpFlats"] += 1;
-    } else if (source.includes("booking")) {
-      channelCounts["Booking.com"] += 1;
-    } else if (source.includes("airbnb")) {
-      channelCounts["Airbnb"] += 1;
-    } else if (source.includes("corp") || source.includes("b2b") || source.includes("empresa")) {
-      channelCounts["Corporativo B2B"] += 1;
+    // Canal de Origem (por diária se houver dailyRates)
+    if (Array.isArray(r.dailyRates) && r.dailyRates.length > 0) {
+      r.dailyRates.forEach(dr => {
+        const dSource = String(dr.channel || r.channel || "").toLowerCase();
+        if (dSource.includes("site") || dSource.includes("motor") || dSource.includes("direct")) {
+          channelCounts["Site CorpFlats"] += 1;
+        } else if (dSource.includes("booking")) {
+          channelCounts["Booking.com"] += 1;
+        } else if (dSource.includes("airbnb")) {
+          channelCounts["Airbnb"] += 1;
+        } else if (dSource.includes("corp") || dSource.includes("b2b") || dSource.includes("empresa")) {
+          channelCounts["Corporativo B2B"] += 1;
+        } else {
+          channelCounts["WhatsApp / Balcão"] += 1;
+        }
+      });
     } else {
-      channelCounts["WhatsApp / Balcão"] += 1;
+      const source = (r.source || r.channel || "").toLowerCase();
+      if (source.includes("site") || source.includes("motor") || source.includes("direct")) {
+        channelCounts["Site CorpFlats"] += 1;
+      } else if (source.includes("booking")) {
+        channelCounts["Booking.com"] += 1;
+      } else if (source.includes("airbnb")) {
+        channelCounts["Airbnb"] += 1;
+      } else if (source.includes("corp") || source.includes("b2b") || source.includes("empresa")) {
+        channelCounts["Corporativo B2B"] += 1;
+      } else {
+        channelCounts["WhatsApp / Balcão"] += 1;
+      }
     }
 
     // Flat Stats

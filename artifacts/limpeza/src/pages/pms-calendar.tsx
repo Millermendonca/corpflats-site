@@ -51,6 +51,57 @@ const DEFAULT_CLIENT_PAYMENT_METHODS: PaymentMethod[] = [
 
 
 
+export interface DailyRateItem {
+  date: string;
+  rate: number;
+  channel: string;
+  notes?: string;
+}
+
+export function buildReservationDailyRates(
+  checkinStr: string,
+  checkoutStr: string,
+  defaultRate: number,
+  defaultChannel: string,
+  existingRates: DailyRateItem[] = []
+): DailyRateItem[] {
+  if (!checkinStr || !checkoutStr) return [];
+  try {
+    const d1 = parseISO(checkinStr);
+    const d2 = parseISO(checkoutStr);
+    const nights = Math.max(1, differenceInDays(d2, d1));
+    const existingMap = new Map<string, DailyRateItem>();
+    if (Array.isArray(existingRates)) {
+      existingRates.forEach(r => {
+        if (r && r.date) existingMap.set(r.date, r);
+      });
+    }
+
+    const result: DailyRateItem[] = [];
+    for (let i = 0; i < nights; i++) {
+      const dateStr = format(addDays(d1, i), "yyyy-MM-dd");
+      const exist = existingMap.get(dateStr);
+      if (exist) {
+        result.push({
+          date: dateStr,
+          rate: Number(exist.rate) >= 0 ? Number(exist.rate) : defaultRate,
+          channel: exist.channel || defaultChannel,
+          notes: exist.notes
+        });
+      } else {
+        result.push({
+          date: dateStr,
+          rate: defaultRate,
+          channel: defaultChannel
+        });
+      }
+    }
+    return result;
+  } catch {
+    return [];
+  }
+}
+
 export default function PmsCalendar() {
   const [, setLocation] = useLocation()
   const { toast } = useToast()
@@ -120,6 +171,7 @@ export default function PmsCalendar() {
   }
 
   const [formDailyRate, setFormDailyRate] = useState("250")
+  const [formDailyRates, setFormDailyRates] = useState<DailyRateItem[]>([])
   const [formTotalAmount, setFormTotalAmount] = useState("")
   const [formPaidAmount, setFormPaidAmount] = useState("0")
   const [formPaymentStatus, setFormPaymentStatus] = useState("pendente")
@@ -1464,6 +1516,8 @@ export default function PmsCalendar() {
     const rangeNights = Math.max(1, differenceInDays(parseISO(cout), parseISO(cin))) || 1
     const initialTotal = rangeNights * 250
     setFormDailyRate("250")
+    const initialRates = buildReservationDailyRates(cin, cout, 250, "whatsapp")
+    setFormDailyRates(initialRates)
     setFormTotalAmount(String(initialTotal))
     setFormPaidAmount(String(initialTotal)) // 100% pago como padrão!
     setFormPaymentStatus("pago_total")
@@ -1606,6 +1660,8 @@ export default function PmsCalendar() {
     const initialNights = 1
     const initialTotal = initialNights * 250
     setFormDailyRate("250")
+    const initialRates = buildReservationDailyRates(cin, cout, 250, "whatsapp")
+    setFormDailyRates(initialRates)
     setFormTotalAmount(String(initialTotal))
     setFormPaidAmount(String(initialTotal)) // 100% pago como padrão!
     setFormPaymentStatus("pago_total")
@@ -1671,7 +1727,6 @@ export default function PmsCalendar() {
     const isOtaRes = (chan === "booking" || chan === "airbnb")
     const isResCurrentlyPaid = isOtaRes || resItem.paymentStatus === "pago_total" || resItem.paymentStatus === "pago" || (Number(resItem.paidAmount) >= Number(resItem.totalAmount) && Number(resItem.totalAmount) > 0)
     const nights = differenceInDays(parseISO(resItem.checkoutDate), parseISO(resItem.checkinDate)) || 1
-    const totCalculated = Number(resItem.totalAmount) > 0 ? resItem.totalAmount : (Number(resItem.dailyRate || 0) * nights)
 
     setFormChannel(chan)
     let resolvedMethod = resItem.paymentMethod
@@ -1683,7 +1738,18 @@ export default function PmsCalendar() {
       else resolvedMethod = "pix"
     }
     setFormPaymentMethod(resolvedMethod)
-    setFormDailyRate(String(resItem.dailyRate || 0))
+    const baseDailyRate = Number(resItem.dailyRate || 0) || (nights > 0 && Number(resItem.totalAmount) > 0 ? Math.round(Number(resItem.totalAmount) / nights) : 250)
+    setFormDailyRate(String(baseDailyRate))
+    const loadedDailyRates = buildReservationDailyRates(
+      resItem.checkinDate,
+      resItem.checkoutDate,
+      baseDailyRate,
+      chan,
+      Array.isArray(resItem.dailyRates) ? resItem.dailyRates : []
+    )
+    setFormDailyRates(loadedDailyRates)
+    const calcFromRates = loadedDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0)
+    const totCalculated = Number(resItem.totalAmount) > 0 ? Number(resItem.totalAmount) : (calcFromRates > 0 ? calcFromRates : (baseDailyRate * nights))
     setFormTotalAmount(totCalculated > 0 ? String(totCalculated) : "")
     setFormPaidAmount(String(resItem.paidAmount !== undefined ? resItem.paidAmount : (isResCurrentlyPaid ? totCalculated : 0)))
     setFormPaymentStatus(isResCurrentlyPaid ? "pago_total" : (resItem.paymentStatus || "pendente"))
@@ -1879,6 +1945,9 @@ export default function PmsCalendar() {
   }
 
   const calculateTotal = () => {
+    if (formDailyRates && formDailyRates.length > 0) {
+      return formDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0)
+    }
     try {
       const d1 = parseISO(formCheckin)
       const d2 = parseISO(formCheckout)
@@ -1959,9 +2028,12 @@ export default function PmsCalendar() {
         checkinTime: formCheckinTime || defaultCheckinTime || "14:00",
         checkoutTime: formCheckoutTime || defaultCheckoutTime || "12:00",
         status: formStatus,
-        channel: formChannel,
+        channel: formDailyRates.length > 0 && formDailyRates[0].channel ? formDailyRates[0].channel : formChannel,
         paymentMethod: formPaymentMethod,
-        dailyRate: Number(formDailyRate) || 0,
+        dailyRate: formDailyRates.length > 0 
+          ? Math.round(totalAmount / formDailyRates.length) 
+          : (Number(formDailyRate) || 0),
+        dailyRates: formDailyRates,
         totalAmount,
         paidAmount: resolvedPaidAmount,
         paymentStatus: resolvedPaymentStatus,
@@ -2771,6 +2843,12 @@ export default function PmsCalendar() {
                         const isLongPressActive = longPressActiveResId === resItem.id;
                         const isSingleNight = nightsCount <= 1;
 
+                        const isMultiChannel = Array.isArray(resItem.dailyRates) && 
+                          new Set(resItem.dailyRates.map((d: any) => (d.channel || resItem.channel || "whatsapp").toLowerCase())).size > 1;
+                        const uniqueChannels = isMultiChannel 
+                          ? Array.from(new Set(resItem.dailyRates.map((d: any) => (d.channel || resItem.channel || "whatsapp").toLowerCase()))) 
+                          : [];
+
                         return (
                           <ReservationHoverCard
                             key={`res-${resItem.id}`}
@@ -2794,9 +2872,11 @@ export default function PmsCalendar() {
                                 touchAction: isLongPressActive ? "none" : undefined
                               }}
                               onPointerDown={(e) => handleStartResDrag(resItem, flat, "move", e)}
-                              className={`rounded-xl select-none ${
+                              className={`rounded-xl select-none relative ${
                                 isMensalista 
                                   ? 'bg-gradient-to-r from-purple-800 via-indigo-900 to-purple-800 text-white border-2 border-purple-300 shadow-md ring-2 ring-purple-500/80' 
+                                  : isMultiChannel
+                                  ? 'bg-slate-900 text-white border-2 border-indigo-400/80 shadow-md ring-1 ring-indigo-500/50'
                                   : `${channelCfg?.bg} ${channelCfg?.text} border ${channelCfg?.border} shadow-xs`
                               } ${
                                 resItem.status === 'pre_reserva'
@@ -2813,8 +2893,25 @@ export default function PmsCalendar() {
                               } ${
                                 isLongPressActive ? 'ring-4 ring-indigo-400 ring-offset-2 scale-[1.04] shadow-2xl z-40 animate-pulse brightness-125' : ''
                               }`}
-                              title={`${resItem.guestName}${formattedTotal ? ` • ${formattedTotal}` : ""} (${channelCfg?.label || resItem.channel}) • Entrada: ${resItem.checkinDate} às ${cinTime} | Saída: ${resItem.checkoutDate} às ${coutTime} • Toque para ver detalhes ou segure para mover`}
+                              title={`${resItem.guestName}${formattedTotal ? ` • ${formattedTotal}` : ""} (${isMultiChannel ? "Multi-Canal: " + uniqueChannels.join("/") : (channelCfg?.label || resItem.channel)}) • Entrada: ${resItem.checkinDate} às ${cinTime} | Saída: ${resItem.checkoutDate} às ${coutTime} • Toque para ver detalhes ou segure para mover`}
                             >
+                              {/* Background Segmentado por Diária para Reservas Multi-Canal */}
+                              {isMultiChannel && (
+                                <div className="absolute inset-0 flex pointer-events-none overflow-hidden rounded-xl z-0">
+                                  {resItem.dailyRates.map((d: any, dIdx: number) => {
+                                    const dChan = (d.channel || resItem.channel || "whatsapp").toLowerCase();
+                                    const cfg = CHANNEL_CONFIG[dChan] || CHANNEL_CONFIG.direta;
+                                    return (
+                                      <div 
+                                        key={dIdx} 
+                                        className={`flex-1 h-full ${cfg.bg} opacity-90 border-r border-white/30 last:border-r-0`}
+                                        title={`${d.date}: ${cfg.label} (R$ ${d.rate})`}
+                                      />
+                                    );
+                                  })}
+                                </div>
+                              )}
+
                               {/* Handle Esquerdo: Redimensionar Início (Check-in) */}
                               <div
                                 style={{ touchAction: "none" }}
@@ -2829,10 +2926,15 @@ export default function PmsCalendar() {
                               </div>
 
                               {/* Conteúdo Central com Nome, Valor e Diárias Contínuos */}
-                              <div className="flex items-center gap-1.5 min-w-0 w-full overflow-hidden whitespace-nowrap px-1 pointer-events-none select-none">
+                              <div className="relative z-10 flex items-center gap-1.5 min-w-0 w-full overflow-hidden whitespace-nowrap px-1 pointer-events-none select-none">
                                 {resItem.status === 'pre_reserva' && (
                                   <span title="Pré-Reserva (Aguardando Pagamento / Confirmação)" className="shrink-0 text-[9px] px-1 py-0.2 bg-amber-400 text-slate-950 font-black rounded shadow-xs flex items-center gap-0.5">
                                     ⏳ Pré-Reserva
+                                  </span>
+                                )}
+                                {isMultiChannel && (
+                                  <span title="Reserva com múltiplos canais de diárias" className="shrink-0 text-[8.5px] px-1 py-0.2 bg-black/60 backdrop-blur-xs text-white font-black rounded shadow-xs border border-white/40 flex items-center gap-0.5">
+                                    🔀 Multi
                                   </span>
                                 )}
                                 {resItem.includeBreakfast && (
@@ -2853,7 +2955,7 @@ export default function PmsCalendar() {
                                     ⚠️ &lt;30a
                                   </span>
                                 )}
-                                <span className="truncate font-black text-white text-[11px] min-w-0">
+                                <span className="truncate font-black text-white text-[11px] min-w-0 drop-shadow-xs">
                                   {resItem.guestName}
                                   {formattedTotal ? ` • ${formattedTotal}` : ""}
                                   {` • ${nightsCount} ${nightsCount === 1 ? 'diária' : 'diárias'}`}
@@ -3267,6 +3369,13 @@ export default function PmsCalendar() {
                       value={formChannel} 
                       onValueChange={val => {
                         setFormChannel(val);
+                        setFormDailyRates(prev => {
+                          const allSame = prev.length <= 1 || prev.every(d => (d.channel || "whatsapp") === formChannel);
+                          if (allSame) {
+                            return prev.map(d => ({ ...d, channel: val }));
+                          }
+                          return prev;
+                        });
                         if (val === "booking") {
                           setFormPaymentStatus("pago_total");
                           setFormPaymentMethod("booking");
@@ -3341,7 +3450,17 @@ export default function PmsCalendar() {
                         <Input 
                           type="date" 
                           value={formCheckin} 
-                          onChange={e => setFormCheckin(e.target.value)} 
+                          onChange={e => {
+                            const val = e.target.value;
+                            setFormCheckin(val);
+                            if (val && formCheckout && val < formCheckout) {
+                              const updated = buildReservationDailyRates(val, formCheckout, Number(formDailyRate) || 250, formChannel, formDailyRates);
+                              setFormDailyRates(updated);
+                              const newTot = updated.reduce((s, d) => s + (Number(d.rate) || 0), 0);
+                              setFormTotalAmount(String(newTot));
+                              if (formPaymentStatus === "pago_total") setFormPaidAmount(String(newTot));
+                            }
+                          }} 
                           required 
                           className="text-xs h-9 w-full min-w-0 px-2"
                         />
@@ -3375,7 +3494,17 @@ export default function PmsCalendar() {
                         <Input 
                           type="date" 
                           value={formCheckout} 
-                          onChange={e => setFormCheckout(e.target.value)} 
+                          onChange={e => {
+                            const val = e.target.value;
+                            setFormCheckout(val);
+                            if (val && formCheckin && formCheckin < val) {
+                              const updated = buildReservationDailyRates(formCheckin, val, Number(formDailyRate) || 250, formChannel, formDailyRates);
+                              setFormDailyRates(updated);
+                              const newTot = updated.reduce((s, d) => s + (Number(d.rate) || 0), 0);
+                              setFormTotalAmount(String(newTot));
+                              if (formPaymentStatus === "pago_total") setFormPaidAmount(String(newTot));
+                            }
+                          }} 
                           required 
                           className="text-xs h-9 w-full min-w-0 px-2"
                         />
@@ -4168,12 +4297,20 @@ export default function PmsCalendar() {
                         onChange={e => {
                           const val = e.target.value;
                           setFormDailyRate(val);
+                          const numVal = Number(val) || 0;
                           try {
                             const d1 = parseISO(formCheckin);
                             const d2 = parseISO(formCheckout);
                             const nights = Math.max(1, differenceInDays(d2, d1));
                             if (val !== "") {
-                              const newTot = nights * (Number(val) || 0);
+                              setFormDailyRates(prev => {
+                                const allSame = prev.length <= 1 || prev.every(d => Number(d.rate) === Number(formDailyRate));
+                                if (allSame) {
+                                  return prev.map(d => ({ ...d, rate: numVal }));
+                                }
+                                return prev;
+                              });
+                              const newTot = nights * numVal;
                               setFormTotalAmount(String(newTot));
                               setFormPaidAmount(String(newTot)); // 100% pago como padrão!
                               setFormPaymentStatus(newTot > 0 ? "pago_total" : "pendente");
@@ -4330,6 +4467,202 @@ export default function PmsCalendar() {
                         </SelectContent>
                       </Select>
                     </div>
+                  </div>
+
+                  {/* ── CARD DE DETALHAMENTO INDIVIDUAL DE DIÁRIAS ────────────────────────────── */}
+                  <div className="p-3 rounded-xl bg-slate-100/70 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-lg bg-indigo-100 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold text-xs shrink-0">
+                          🌙
+                        </div>
+                        <div>
+                          <span className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5 flex-wrap">
+                            <span>Detalhamento por Diária (Valores & Canais Individuais)</span>
+                            <Badge variant="outline" className="text-[10px] font-bold bg-white dark:bg-slate-800 px-1.5 py-0">
+                              {formDailyRates.length} {formDailyRates.length === 1 ? "diária" : "diárias"}
+                            </Badge>
+                          </span>
+                          <span className="text-[10.5px] text-muted-foreground block">
+                            Edite o canal ou valor de cada noite individualmente (ex: 1ª diária Booking, 2ª WhatsApp com valor diferente).
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Ações em Lote */}
+                      {formDailyRates.length > 1 && (
+                        <div className="flex items-center gap-1.5 text-[10px] flex-wrap">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              if (formDailyRates.length === 0) return;
+                              const targetRate = formDailyRates[0].rate;
+                              setFormDailyRates(prev => prev.map(d => ({ ...d, rate: targetRate })));
+                              const newTot = formDailyRates.length * targetRate;
+                              setFormTotalAmount(String(newTot));
+                              setFormDailyRate(String(targetRate));
+                              if (formPaymentStatus === "pago_total") setFormPaidAmount(String(newTot));
+                              toast({ title: "Valores igualados", description: `Todas as diárias ajustadas para R$ ${targetRate}` });
+                            }}
+                            className="h-6 px-2 text-[10px] font-semibold cursor-pointer"
+                            title="Aplica o valor da 1ª diária a todas as outras"
+                          >
+                            Copiar 1º valor p/ todas
+                          </Button>
+
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              if (formDailyRates.length === 0) return;
+                              const targetChan = formDailyRates[0].channel;
+                              setFormDailyRates(prev => prev.map(d => ({ ...d, channel: targetChan })));
+                              setFormChannel(targetChan);
+                              toast({ title: "Canais igualados", description: `Todas as diárias ajustadas para o canal da 1ª diária` });
+                            }}
+                            className="h-6 px-2 text-[10px] font-semibold cursor-pointer"
+                            title="Aplica o canal da 1ª diária a todas as outras"
+                          >
+                            Copiar 1º canal p/ todas
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Lista de Diárias Individuais */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                      {formDailyRates.map((item, idx) => {
+                        let formattedDate = item.date;
+                        try {
+                          formattedDate = format(parseISO(item.date), "dd/MM (EEE)", { locale: ptBR });
+                        } catch {}
+
+                        return (
+                          <div 
+                            key={item.date || idx}
+                            className="p-2.5 rounded-lg bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 shadow-2xs space-y-1.5"
+                          >
+                            <div className="flex items-center justify-between text-[11px] font-bold">
+                              <span className="flex items-center gap-1.5 text-slate-800 dark:text-slate-200">
+                                <span className="w-4 h-4 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center justify-center text-[9px] font-black">
+                                  {idx + 1}
+                                </span>
+                                <span>{formattedDate}</span>
+                              </span>
+                              {idx > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const prev = formDailyRates[idx - 1];
+                                    if (!prev) return;
+                                    setFormDailyRates(prevRates => {
+                                      const next = [...prevRates];
+                                      next[idx] = { ...next[idx], rate: prev.rate, channel: prev.channel };
+                                      const newTot = next.reduce((sum, d) => sum + (Number(d.rate) || 0), 0);
+                                      setFormTotalAmount(String(newTot));
+                                      setFormDailyRate(String(Math.round(newTot / next.length)));
+                                      if (formPaymentStatus === "pago_total") setFormPaidAmount(String(newTot));
+                                      return next;
+                                    });
+                                  }}
+                                  className="text-[9.5px] text-primary hover:underline font-medium cursor-pointer"
+                                  title="Copiar valor e canal da diária anterior"
+                                >
+                                  Igual anterior
+                                </button>
+                              )}
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-1.5">
+                              {/* Canal da Diária */}
+                              <div className="space-y-0.5">
+                                <Label className="text-[9.5px] text-muted-foreground block font-medium">Canal</Label>
+                                <Select
+                                  value={item.channel || "whatsapp"}
+                                  onValueChange={(val) => {
+                                    setFormDailyRates(prevRates => {
+                                      const next = [...prevRates];
+                                      next[idx] = { ...next[idx], channel: val };
+                                      return next;
+                                    });
+                                  }}
+                                >
+                                  <SelectTrigger className="h-7 text-[10.5px] font-semibold px-1.5">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="whatsapp" className="text-xs">💬 WhatsApp</SelectItem>
+                                    <SelectItem value="booking" className="text-xs">🔵 Booking</SelectItem>
+                                    <SelectItem value="airbnb" className="text-xs">🔴 Airbnb</SelectItem>
+                                    <SelectItem value="site" className="text-xs">🌐 Site</SelectItem>
+                                    <SelectItem value="direta" className="text-xs">🏨 Balcão</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              {/* Valor da Diária */}
+                              <div className="space-y-0.5">
+                                <Label className="text-[9.5px] text-muted-foreground block font-medium">Valor (R$)</Label>
+                                <Input
+                                  type="number"
+                                  value={item.rate}
+                                  onChange={(e) => {
+                                    const val = Number(e.target.value) || 0;
+                                    setFormDailyRates(prevRates => {
+                                      const next = [...prevRates];
+                                      next[idx] = { ...next[idx], rate: val };
+                                      const newTot = next.reduce((sum, d) => sum + (Number(d.rate) || 0), 0);
+                                      setFormTotalAmount(String(newTot));
+                                      setFormDailyRate(String(Math.round(newTot / next.length)));
+                                      if (formPaymentStatus === "pago_total") setFormPaidAmount(String(newTot));
+                                      return next;
+                                    });
+                                  }}
+                                  className="h-7 text-[11px] font-bold text-emerald-700 dark:text-emerald-300 px-1.5"
+                                  placeholder="250"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Resumo e alerta multi-canal */}
+                    {(() => {
+                      const channels = Array.from(new Set(formDailyRates.map(d => d.channel || "whatsapp")));
+                      const sumTotal = formDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0);
+                      const isMulti = channels.length > 1;
+
+                      return (
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 text-[11px]">
+                          <div className="flex items-center gap-1.5">
+                            {isMulti ? (
+                              <Badge className="text-[9.5px] font-bold bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-500/30">
+                                ⚡ Multi-Canal: {channels.map(ch => {
+                                  const count = formDailyRates.filter(d => (d.channel || "whatsapp") === ch).length;
+                                  const name = ch === "booking" ? "Booking" : ch === "airbnb" ? "Airbnb" : ch === "site" ? "Site" : "WhatsApp";
+                                  return `${count}x ${name}`;
+                                }).join(" + ")}
+                              </Badge>
+                            ) : (
+                              <span className="text-[10px] text-muted-foreground">
+                                Canal uniforme em todas as diárias.
+                              </span>
+                            )}
+                          </div>
+                          <div className="font-bold text-slate-800 dark:text-slate-200">
+                            <span>Soma das Diárias: </span>
+                            <span className="text-emerald-600 dark:text-emerald-400 font-black">
+                              R$ {sumTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Atalhos Rápidos de Valor Pago & Saldo Restante */}

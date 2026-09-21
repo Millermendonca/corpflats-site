@@ -8,6 +8,7 @@ import {
   Users, Calendar, Eye, Building2, X, Zap, SlidersHorizontal, RefreshCw
 } from "lucide-react"
 import { format, parseISO, differenceInDays } from "date-fns"
+import { ptBR } from "date-fns/locale"
 import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage, getReservationRecipients } from "@/hooks/use-quick-messages"
 
 interface ReservationHoverCardProps {
@@ -369,11 +370,28 @@ export function ReservationHoverCard({
                   👑 Mensalista
                 </span>
               )}
-              {channelCfg && (
-                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 shadow-2xs">
-                  {channelCfg.label || resItem.channel}
-                </span>
-              )}
+              {(() => {
+                if (Array.isArray(resItem.dailyRates) && resItem.dailyRates.length > 0) {
+                  const uniqueChannels = Array.from(new Set(resItem.dailyRates.map((d: any) => (d.channel || resItem.channel || "whatsapp").toLowerCase())));
+                  if (uniqueChannels.length > 1) {
+                    return uniqueChannels.map(ch => {
+                      const label = ch.includes("booking") ? "Booking" : ch.includes("airbnb") ? "Airbnb" : ch.includes("site") ? "Site" : "WhatsApp";
+                      const color = ch.includes("booking") ? "text-sky-700 bg-sky-50 border-sky-300 dark:bg-sky-950/60 dark:text-sky-300 dark:border-sky-700" : ch.includes("airbnb") ? "text-rose-700 bg-rose-50 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-700" : ch.includes("site") ? "text-indigo-700 bg-indigo-50 border-indigo-300 dark:bg-indigo-950/60 dark:text-indigo-300 dark:border-indigo-700" : "text-emerald-700 bg-emerald-50 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-700";
+                      const count = resItem.dailyRates.filter((d: any) => (d.channel || resItem.channel || "whatsapp").toLowerCase() === ch).length;
+                      return (
+                        <span key={ch} className={`text-[8.5px] font-bold px-1.5 py-0.5 rounded border shadow-2xs ${color}`}>
+                          {label} ({count}d)
+                        </span>
+                      );
+                    });
+                  }
+                }
+                return channelCfg ? (
+                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700 shadow-2xs">
+                    {channelCfg.label || resItem.channel}
+                  </span>
+                ) : null;
+              })()}
               <Badge variant="outline" className={`text-[10px] font-bold py-0.5 px-2 ${statusCfg.className}`}>
                 {statusCfg.label}
               </Badge>
@@ -507,6 +525,43 @@ export function ReservationHoverCard({
                 </div>
               );
             })()}
+
+            {/* Detalhamento por Diária Individual */}
+            {Array.isArray(resItem.dailyRates) && resItem.dailyRates.length > 0 && (
+              <div className="mt-1 pt-1.5 border-t border-slate-200/60 dark:border-slate-700/60 space-y-1">
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Diárias Discriminadas ({resItem.dailyRates.length}):
+                </span>
+                <div className="space-y-1 max-h-24 overflow-y-auto pr-0.5">
+                  {resItem.dailyRates.map((d: any, dIdx: number) => {
+                    const dChan = (d.channel || resItem.channel || "whatsapp").toLowerCase();
+                    const dChanLabel = dChan.includes("booking") ? "Booking" : dChan.includes("airbnb") ? "Airbnb" : dChan.includes("site") ? "Site" : "WhatsApp";
+                    const dChanColor = dChan.includes("booking") ? "text-sky-700 bg-sky-50 dark:bg-sky-950/50 border-sky-200" : dChan.includes("airbnb") ? "text-rose-700 bg-rose-50 dark:bg-rose-950/50 border-rose-200" : dChan.includes("site") ? "text-indigo-700 bg-indigo-50 dark:bg-indigo-950/50 border-indigo-200" : "text-emerald-700 bg-emerald-50 dark:bg-emerald-950/50 border-emerald-200";
+                    
+                    let dateFmt = d.date;
+                    try {
+                      dateFmt = format(parseISO(d.date), "dd/MM (EEE)", { locale: ptBR });
+                    } catch {}
+
+                    return (
+                      <div key={dIdx} className="flex items-center justify-between text-[10px] bg-white dark:bg-slate-900/80 px-2 py-0.5 rounded border border-slate-200/60 dark:border-slate-800">
+                        <span className="text-slate-600 dark:text-slate-300 font-medium">
+                          {dIdx + 1}ª Noite ({dateFmt})
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className={`text-[8.5px] font-bold px-1 py-0.2 rounded border ${dChanColor}`}>
+                            {dChanLabel}
+                          </span>
+                          <span className="font-bold text-slate-900 dark:text-slate-100">
+                            R$ {Number(d.rate || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Café da Manhã */}
