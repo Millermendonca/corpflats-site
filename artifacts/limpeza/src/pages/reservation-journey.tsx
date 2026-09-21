@@ -684,9 +684,9 @@ Você poderia nos dedicar apenas 30 segundos e deixar essa mesma avaliação no 
     channelType: "both",
     recipients: ["hospede", "recepcao", "solicitante"],
     timingLabel: "Imediato à edição no PMS",
-    condition: "Qualquer alteração em datas, quarto, valores ou hóspedes",
+    condition: "Qualquer alteração em datas, quarto, valores ou hóspedes (e-mail à portaria somente se já tiverem recebido a reserva)",
     channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
-    description: "Informa com precisão cirúrgica apenas os campos alterados (ex: Quarto Flat 101 ➔ Flat 113, Entrada: 20/09 ➔ 22/09) para o hóspede e envia e-mail formal à portaria.",
+    description: "Informa com precisão cirúrgica apenas os campos alterados para o hóspede. Para a portaria/recepção, o e-mail de alteração só é enviado caso já tenham recebido os dados da reserva anteriormente (rotina 07h ou pré-check-in do dia). Se a alteração ocorrer antes do envio à portaria, o e-mail a eles é suprimido pois receberão as informações atualizadas no momento programado.",
     messagePreview: `Olá, *{{primeiro_nome}}*! 🔄
 Sua reserva (*{{numero_reserva}}*) no *{{nome_hotel}}* foi alterada.
 
@@ -711,9 +711,9 @@ Os demais dados permanecem inalterados. Você pode consultar todos os detalhes n
     channelType: "both",
     recipients: ["hospede", "recepcao", "solicitante"],
     timingLabel: "Imediato ao cancelamento",
-    condition: "Status alterado para 'Cancelada'",
+    condition: "Status alterado para 'Cancelada' (e-mail à portaria somente se já tiverem recebido a reserva)",
     channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
-    description: "Confirma o cancelamento para o hóspede, convida para futuras estadias e envia alerta vermelho à portaria para não liberar acesso.",
+    description: "Confirma o cancelamento para o hóspede e convida para futuras estadias. Para a recepção/portaria, o e-mail de cancelamento só é enviado caso já tenham recebido a reserva previamente; caso contrário, a notificação a eles é suprimida para evitar confusão com reservas desconhecidas.",
     messagePreview: `Olá, *{{nome_hospede}}*.
 Confirmamos o cancelamento da sua reserva *{{numero_reserva}}* no *{{nome_hotel}}*.
 

@@ -47,6 +47,7 @@ import {
   renderCheckinConfirmedEmail, 
   renderReservationUpdateEmail, 
   renderGarageAuthorizationEmail,
+  hasReceptionReceivedReservation,
   renderManualEmail 
 } from "./mail-service.mjs";
 import { generateFnrhPdf, formatToBrasiliaDateTime, SECURE_FNRH_DIR, LEGACY_FNRH_DIR } from "./fnrh-pdf-service.mjs";
@@ -7746,29 +7747,33 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   }
 
   if (changes.length > 0) {
-    try {
-      const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
-      const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
-      const { subject, bodyHtml } = renderReservationUpdateEmail({ reservation: r, flat, changes, settings: db.settings });
+    if (hasReceptionReceivedReservation(r, db)) {
+      try {
+        const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
+        const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
+        const { subject, bodyHtml } = renderReservationUpdateEmail({ reservation: r, flat, changes, settings: db.settings });
 
-      sendEmailAsync({
-        db,
-        saveDatabase,
-        reservationId: r.code || r.id,
-        recipient: receptionEmail,
-        subject,
-        bodyHtml,
-        type: "email",
-        direction: "outbound",
-        metadata: {
-          trigger: "reservation_update",
-          flatNumber: r.flatNumber,
-          guestName: r.guestName,
-          changes
-        }
-      });
-    } catch (mailErr) {
-      console.warn("[MailService] Erro ao disparar aviso de alteração à portaria:", mailErr.message);
+        sendEmailAsync({
+          db,
+          saveDatabase,
+          reservationId: r.code || r.id,
+          recipient: receptionEmail,
+          subject,
+          bodyHtml,
+          type: "email",
+          direction: "outbound",
+          metadata: {
+            trigger: "reservation_update",
+            flatNumber: r.flatNumber,
+            guestName: r.guestName,
+            changes
+          }
+        });
+      } catch (mailErr) {
+        console.warn("[MailService] Erro ao disparar aviso de alteração à portaria:", mailErr.message);
+      }
+    } else {
+      console.log(`[MailService ℹ️] Aviso de alteração para recepção suprimido: a portaria ainda não recebeu os dados da reserva ${r.code}. Os dados atualizados serão enviados pontualmente na rotina das 07:00 da chegada.`);
     }
   }
 
@@ -8565,31 +8570,35 @@ app.post("/api/pms/guest-portal/:code/cancel", async (req, res) => {
     changes: [{ field: "status", label: "Status da Reserva", oldValue: "Confirmada", newValue: "Cancelada" }]
   });
 
-  // Gatilho B: Notificação de cancelamento para a recepção/portaria
-  try {
-    const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
-    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
-    const changes = [{ field: "status", label: "Status da Reserva", oldValue: "Confirmada", newValue: "CANCELADA (Portal do Hóspede)" }];
-    const { subject, bodyHtml } = renderReservationUpdateEmail({ reservation: r, flat, changes, settings: db.settings });
+  // Gatilho B: Notificação de cancelamento para a recepção/portaria (apenas se a portaria já recebeu a reserva)
+  if (hasReceptionReceivedReservation(r, db)) {
+    try {
+      const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
+      const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
+      const changes = [{ field: "status", label: "Status da Reserva", oldValue: "Confirmada", newValue: "CANCELADA (Portal do Hóspede)" }];
+      const { subject, bodyHtml } = renderReservationUpdateEmail({ reservation: r, flat, changes, settings: db.settings });
 
-    sendEmailAsync({
-      db,
-      saveDatabase,
-      reservationId: r.code || r.id,
-      recipient: receptionEmail,
-      subject,
-      bodyHtml,
-      type: "email",
-      direction: "outbound",
-      metadata: {
-        trigger: "guest_portal_cancel",
-        flatNumber: r.flatNumber,
-        guestName: r.guestName,
-        changes
-      }
-    });
-  } catch (mailErr) {
-    console.warn("[MailService] Erro ao disparar cancelamento à portaria:", mailErr.message);
+      sendEmailAsync({
+        db,
+        saveDatabase,
+        reservationId: r.code || r.id,
+        recipient: receptionEmail,
+        subject,
+        bodyHtml,
+        type: "email",
+        direction: "outbound",
+        metadata: {
+          trigger: "guest_portal_cancel",
+          flatNumber: r.flatNumber,
+          guestName: r.guestName,
+          changes
+        }
+      });
+    } catch (mailErr) {
+      console.warn("[MailService] Erro ao disparar cancelamento à portaria:", mailErr.message);
+    }
+  } else {
+    console.log(`[MailService ℹ️] Aviso de cancelamento para recepção suprimido: a portaria ainda não recebeu os dados da reserva ${r.code}.`);
   }
 
   saveDatabase();
@@ -8805,33 +8814,37 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
     }
   });
 
-  // Gatilho B: Notificação de alteração de datas para a recepção/portaria
-  try {
-    const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
-    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
-    const changes = [
-      { field: "dates", label: "Novo Período", oldValue: `${formatDateBr(r.modificationHistory[r.modificationHistory.length - 1]?.oldCheckin)} a ${formatDateBr(r.modificationHistory[r.modificationHistory.length - 1]?.oldCheckout)}`, newValue: `${formatDateBr(newCheckinDate)} a ${formatDateBr(newCheckoutDate)}` }
-    ];
-    const { subject, bodyHtml } = renderReservationUpdateEmail({ reservation: r, flat, changes, settings: db.settings });
+  // Gatilho B: Notificação de alteração de datas para a recepção/portaria (apenas se a portaria já recebeu a reserva)
+  if (hasReceptionReceivedReservation(r, db)) {
+    try {
+      const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
+      const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
+      const changes = [
+        { field: "dates", label: "Novo Período", oldValue: `${formatDateBr(r.modificationHistory[r.modificationHistory.length - 1]?.oldCheckin)} a ${formatDateBr(r.modificationHistory[r.modificationHistory.length - 1]?.oldCheckout)}`, newValue: `${formatDateBr(newCheckinDate)} a ${formatDateBr(newCheckoutDate)}` }
+      ];
+      const { subject, bodyHtml } = renderReservationUpdateEmail({ reservation: r, flat, changes, settings: db.settings });
 
-    sendEmailAsync({
-      db,
-      saveDatabase,
-      reservationId: r.code || r.id,
-      recipient: receptionEmail,
-      subject,
-      bodyHtml,
-      type: "email",
-      direction: "outbound",
-      metadata: {
-        trigger: "guest_portal_modify",
-        flatNumber: r.flatNumber,
-        guestName: r.guestName,
-        changes
-      }
-    });
-  } catch (mailErr) {
-    console.warn("[MailService] Erro ao disparar aviso de alteração à portaria:", mailErr.message);
+      sendEmailAsync({
+        db,
+        saveDatabase,
+        reservationId: r.code || r.id,
+        recipient: receptionEmail,
+        subject,
+        bodyHtml,
+        type: "email",
+        direction: "outbound",
+        metadata: {
+          trigger: "guest_portal_modify",
+          flatNumber: r.flatNumber,
+          guestName: r.guestName,
+          changes
+        }
+      });
+    } catch (mailErr) {
+      console.warn("[MailService] Erro ao disparar aviso de alteração à portaria:", mailErr.message);
+    }
+  } else {
+    console.log(`[MailService ℹ️] Aviso de alteração de datas para recepção suprimido: a portaria ainda não recebeu os dados da reserva ${r.code}.`);
   }
 
   // Se houver solicitação de limpeza correspondente, sincroniza as datas
@@ -9239,31 +9252,35 @@ app.delete("/api/pms/reservations/:id", (req, res) => {
 
   r.updatedAt = new Date().toISOString();
 
-  // Gatilho B: Notificação de cancelamento para a recepção/portaria
-  try {
-    const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
-    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
-    const changes = [{ field: "status", label: "Status da Reserva", oldValue: "Confirmada", newValue: "CANCELADA" }];
-    const { subject, bodyHtml } = renderReservationUpdateEmail({ reservation: r, flat, changes, settings: db.settings });
+  // Gatilho B: Notificação de cancelamento para a recepção/portaria (apenas se a portaria já recebeu a reserva)
+  if (hasReceptionReceivedReservation(r, db)) {
+    try {
+      const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
+      const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
+      const changes = [{ field: "status", label: "Status da Reserva", oldValue: "Confirmada", newValue: "CANCELADA" }];
+      const { subject, bodyHtml } = renderReservationUpdateEmail({ reservation: r, flat, changes, settings: db.settings });
 
-    sendEmailAsync({
-      db,
-      saveDatabase,
-      reservationId: r.code || r.id,
-      recipient: receptionEmail,
-      subject,
-      bodyHtml,
-      type: "email",
-      direction: "outbound",
-      metadata: {
-        trigger: "cancellation",
-        flatNumber: r.flatNumber,
-        guestName: r.guestName,
-        changes
-      }
-    });
-  } catch (mailErr) {
-    console.warn("[MailService] Erro ao disparar cancelamento à portaria:", mailErr.message);
+      sendEmailAsync({
+        db,
+        saveDatabase,
+        reservationId: r.code || r.id,
+        recipient: receptionEmail,
+        subject,
+        bodyHtml,
+        type: "email",
+        direction: "outbound",
+        metadata: {
+          trigger: "cancellation",
+          flatNumber: r.flatNumber,
+          guestName: r.guestName,
+          changes
+        }
+      });
+    } catch (mailErr) {
+      console.warn("[MailService] Erro ao disparar cancelamento à portaria:", mailErr.message);
+    }
+  } else {
+    console.log(`[MailService ℹ️] Aviso de cancelamento para recepção suprimido: a portaria ainda não recebeu os dados da reserva ${r.code}.`);
   }
 
   saveDatabase();
@@ -11647,47 +11664,56 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   }
 
   // Gatilho A & D: Envio Automático de Notificação à Recepção/Portaria e Garagem com FNRH PDF Anexo
-  try {
-    const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
-    const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
-    const garageEmail = db.settings?.garageEmail || process.env.GARAGE_EMAIL || "millerpessanha@gmail.com";
-    const { subject, bodyHtml } = renderCheckinConfirmedEmail({ reservation: r, flat, settings: db.settings });
+  // Apenas despacha imediatamente se a data de check-in for hoje (ou anterior).
+  // Se for reserva com check-in futuro, a FNRH fica salva e o disparo à recepção ocorrerá pontualmente às 07:00 do dia de chegada.
+  const nowUtc = Date.now() + (new Date().getTimezoneOffset() * 60000);
+  const brToday = new Date(nowUtc - (3 * 3600000)).toISOString().substring(0, 10);
+  const isCheckinTodayOrPast = r.checkinDate <= brToday;
 
-    const emailAttachments = [];
-    if (fnrhDocument?.filePath && fs.existsSync(fnrhDocument.filePath)) {
-      emailAttachments.push({
-        filename: `FNRH_${r.code || r.id}_${validName.replace(/\s+/g, '_')}.pdf`,
-        path: fnrhDocument.filePath
-      });
-    }
+  if (isCheckinTodayOrPast) {
+    try {
+      const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
+      const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
+      const garageEmail = db.settings?.garageEmail || process.env.GARAGE_EMAIL || "millerpessanha@gmail.com";
+      const { subject, bodyHtml } = renderCheckinConfirmedEmail({ reservation: r, flat, settings: db.settings });
 
-    sendEmailAsync({
-      db,
-      saveDatabase,
-      reservationId: r.code || r.id,
-      recipient: receptionEmail,
-      cc: garageEmail !== receptionEmail ? garageEmail : undefined,
-      subject,
-      bodyHtml,
-      type: "email",
-      direction: "outbound",
-      attachments: emailAttachments,
-      metadata: {
-        trigger: "pre_checkin",
-        flatNumber: r.flatNumber,
-        guestName: validName,
-        buildingName: flat?.buildingName || db.settings?.buildingName || "Edifício Soho Residence Service",
-        hasPdfAttached: emailAttachments.length > 0,
-        receptionEmail,
-        garageEmail
+      const emailAttachments = [];
+      if (fnrhDocument?.filePath && fs.existsSync(fnrhDocument.filePath)) {
+        emailAttachments.push({
+          filename: `FNRH_${r.code || r.id}_${validName.replace(/\s+/g, '_')}.pdf`,
+          path: fnrhDocument.filePath
+        });
       }
-    });
-    const nowUtc = Date.now() + (new Date().getTimezoneOffset() * 60000);
-    const brToday = new Date(nowUtc - (3 * 3600000)).toISOString().substring(0, 10);
-    r.morningEmailSentDate = brToday;
-    r.morningEmailSentAt = new Date().toISOString();
-  } catch (mailErr) {
-    console.warn("[MailService] Erro ao disparar aviso de check-in à portaria:", mailErr.message);
+
+      sendEmailAsync({
+        db,
+        saveDatabase,
+        reservationId: r.code || r.id,
+        recipient: receptionEmail,
+        cc: garageEmail !== receptionEmail ? garageEmail : undefined,
+        subject,
+        bodyHtml,
+        type: "email",
+        direction: "outbound",
+        attachments: emailAttachments,
+        metadata: {
+          trigger: "pre_checkin",
+          flatNumber: r.flatNumber,
+          guestName: validName,
+          buildingName: flat?.buildingName || db.settings?.buildingName || "Edifício Soho Residence Service",
+          hasPdfAttached: emailAttachments.length > 0,
+          receptionEmail,
+          garageEmail
+        }
+      });
+      r.morningEmailSentDate = brToday;
+      r.morningEmailSentAt = new Date().toISOString();
+      r.receptionNotifiedAt = new Date().toISOString();
+    } catch (mailErr) {
+      console.warn("[MailService] Erro ao disparar aviso de check-in à portaria:", mailErr.message);
+    }
+  } else {
+    console.log(`[MailService ℹ️] Pré-check-in concluído com antecedência para ${r.code}. FNRH gerada e salva. Notificação à recepção agendada para o dia do check-in (${r.checkinDate}) às 07:00.`);
   }
 
   reconcileAndMergeGuests(db);
@@ -20568,6 +20594,7 @@ setInterval(async () => {
 
           r.morningEmailSentDate = todayStr;
           r.morningEmailSentAt = new Date().toISOString();
+          r.receptionNotifiedAt = new Date().toISOString();
           saveDatabase();
         } catch (rErr) {
           console.error(`[Rotina 07:00] Erro ao enviar e-mail para reserva ${r.code || r.id}:`, rErr.message);

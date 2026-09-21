@@ -531,6 +531,55 @@ export function renderGarageAuthorizationEmail({ reservation, flat, vehicle, set
 }
 
 /**
+ * Verifica se a recepção/portaria já recebeu os dados desta reserva por e-mail previamente.
+ * Alterações e cancelamentos só devem ser informados à recepção se eles já receberam a reserva antes.
+ * Se a alteração/cancelamento ocorrer antes do disparo para o e-mail deles (ex: antes da rotina das 07h do check-in),
+ * a recepção não precisa ser notificada, pois já receberá as informações atualizadas quando forem disparadas.
+ */
+export function hasReceptionReceivedReservation(reservation, db = {}) {
+  if (!reservation) return false;
+
+  // 1. Indicadores diretos gravados na própria reserva
+  if (Boolean(reservation.morningEmailSentDate) || 
+      Boolean(reservation.morningEmailSentAt) || 
+      Boolean(reservation.receptionNotifiedAt) || 
+      Boolean(reservation.receptionEmailSentAt)) {
+    return true;
+  }
+
+  const resCode = String(reservation.code || reservation.reservationCode || "").trim().toUpperCase();
+  const resId = String(reservation.id || "").trim();
+
+  // 2. E-mail oficial da recepção para o flat/hotel
+  const flat = (db?.flats || []).find(f => f.id === reservation.flatId || String(f.number) === String(reservation.flatNumber));
+  const receptionEmail = (flat?.receptionEmail || db?.settings?.receptionEmail || db?.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com").toLowerCase().trim();
+
+  // 3. Checa histórico de comunicações
+  const comms = db?.reservationCommunications || [];
+  return comms.some(c => {
+    if (!c || c.type !== "email") return false;
+    const cResId = String(c.reservation_id || "").trim().toUpperCase();
+    const isSameRes = (resCode && cResId === resCode) || (resId && cResId === resId);
+    if (!isSameRes) return false;
+
+    const recipient = String(c.recipient || "").toLowerCase().trim();
+    const cc = String(c.cc || "").toLowerCase().trim();
+    const isToReception = recipient.includes(receptionEmail) || cc.includes(receptionEmail);
+    if (!isToReception) return false;
+
+    // Disparos que configuram que a portaria recebeu a reserva (rotina 07h, ficha pre-checkin ou entrada)
+    const trigger = c.metadata?.trigger;
+    const isInitialDispatch = trigger === "morning_checkin_07h" || 
+                              trigger === "pre_checkin" || 
+                              trigger === "checkin_confirmed" || 
+                              trigger === "pms_reservation_created" ||
+                              (c.subject && c.subject.toUpperCase().includes("CHECK-IN"));
+
+    return isInitialDispatch && (c.status === "sent" || c.status === "delivered" || c.status === "pending");
+  });
+}
+
+/**
  * Fila / Serviço Assíncrono de Disparo de E-mail
  * Grava o log imediatamente no histórico e despacha em background sem bloquear a requisição HTTP.
  */
