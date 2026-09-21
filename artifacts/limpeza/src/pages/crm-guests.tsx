@@ -62,6 +62,47 @@ export default function CrmGuests() {
   const [formAutoInvoice, setFormAutoInvoice] = useState(false)
   const [savingGuest, setSavingGuest] = useState(false)
 
+  // Modal de Exclusão Definitiva de Hóspede e Todos os Dados
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [guestToDelete, setGuestToDelete] = useState<any | null>(null)
+  const [isDeletingGuest, setIsDeletingGuest] = useState(false)
+
+  const promptDeleteGuest = (guest: any) => {
+    setGuestToDelete(guest)
+    setDeleteDialogOpen(true)
+  }
+
+  const handleConfirmDeleteGuest = async () => {
+    if (!guestToDelete) return
+    setIsDeletingGuest(true)
+    try {
+      const res = await fetch(`/api/pms/guests/${guestToDelete.id}`, {
+        method: "DELETE",
+        credentials: "include"
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        throw new Error(data.error || "Falha ao excluir cliente")
+      }
+
+      setGuests(prev => prev.filter(g => g.id !== guestToDelete.id))
+
+      if (activeGuest?.id === guestToDelete.id) {
+        setDetailModalOpen(false)
+        setActiveGuest(null)
+      }
+
+      setDeleteDialogOpen(false)
+      const name = guestToDelete.fullName || guestToDelete.name || "Cliente"
+      setGuestToDelete(null)
+      alert(`Cliente "${name}" e todos os seus dados vinculados foram excluídos com sucesso do sistema.`)
+    } catch (err: any) {
+      alert("Erro ao excluir cliente: " + err.message)
+    } finally {
+      setIsDeletingGuest(false)
+    }
+  }
+
   // Modal Create / Edit Company
   const [companyModalOpen, setCompanyModalOpen] = useState(false)
   const [editingCompany, setEditingCompany] = useState<any | null>(null)
@@ -712,6 +753,16 @@ export default function CrmGuests() {
                                 <Eye className="w-3.5 h-3.5" />
                                 <span>Ver 360º</span>
                               </Button>
+
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                onClick={() => promptDeleteGuest(g)}
+                                title="Excluir Cliente e Todos os Dados"
+                                className="h-8 w-8 text-rose-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-xl transition-colors"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
                             </div>
                           </td>
                         </tr>
@@ -1250,6 +1301,14 @@ export default function CrmGuests() {
 
             <DialogFooter className="gap-2 pt-4 border-t border-border flex-wrap sm:flex-nowrap">
               <Button
+                variant="ghost"
+                onClick={() => promptDeleteGuest(activeGuest)}
+                className="rounded-xl h-10 text-xs font-bold text-rose-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 gap-1.5 sm:mr-auto"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Excluir Cliente e Dados</span>
+              </Button>
+              <Button
                 onClick={() => {
                   setDetailModalOpen(false)
                   setLocation(`/notas?doc=${activeGuest?.documentNumber || activeGuest?.document || ''}&nome=${encodeURIComponent(activeGuest?.fullName || activeGuest?.name || '')}`)
@@ -1469,6 +1528,92 @@ export default function CrmGuests() {
             </DialogContent>
           </Dialog>
         )}
+
+        {/* ── MODAL DE CONFIRMAÇÃO DE EXCLUSÃO TOTAL DE CLIENTE ── */}
+        <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+          <DialogContent className="sm:max-w-lg bg-card border border-border rounded-3xl p-6 shadow-2xl">
+            <DialogHeader className="space-y-3">
+              <div className="w-12 h-12 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-rose-600 dark:text-rose-400 flex items-center justify-center">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div>
+                <DialogTitle className="text-lg font-black text-foreground">
+                  Excluir Cliente e TODOS os Dados?
+                </DialogTitle>
+                <DialogDescription className="text-xs text-muted-foreground leading-relaxed mt-1">
+                  Esta ação é <strong className="text-rose-600 dark:text-rose-400 font-bold">permanente e irreversível</strong>. Todos os registros vinculados a este cliente serão totalmente apagados do sistema CorpFlats.
+                </DialogDescription>
+              </div>
+            </DialogHeader>
+
+            {guestToDelete && (
+              <div className="my-2 space-y-3">
+                <div className="p-3.5 bg-muted/40 rounded-2xl border border-border">
+                  <div className="font-bold text-foreground text-sm">
+                    {guestToDelete.fullName || guestToDelete.name}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 mt-1.5 text-[11px] text-muted-foreground">
+                    {guestToDelete.guestCode && (
+                      <span className="font-mono bg-muted px-1.5 py-0.5 rounded border border-border">
+                        {guestToDelete.guestCode}
+                      </span>
+                    )}
+                    <span>CPF/Doc: <strong>{guestToDelete.documentNumber || guestToDelete.document || "Não informado"}</strong></span>
+                    {guestToDelete.phone && <span>• Tel: {guestToDelete.phone}</span>}
+                    {guestToDelete.email && <span>• Email: {guestToDelete.email}</span>}
+                  </div>
+                </div>
+
+                <div className="space-y-1.5 text-xs p-3.5 bg-rose-500/5 border border-rose-500/20 rounded-2xl">
+                  <p className="font-bold text-rose-600 dark:text-rose-400 flex items-center gap-1.5 text-xs">
+                    <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                    O que será apagado permanentemente:
+                  </p>
+                  <ul className="list-disc list-inside space-y-1 text-[11px] text-muted-foreground pl-1">
+                    <li>Ficha cadastral no CRM CorpFlats</li>
+                    <li>Todas as reservas (titular e acompanhante)</li>
+                    <li>Arquivos físicos: selfies, fotos de documentos e assinaturas</li>
+                    <li>Fichas digitais FNRH e tokens de assinatura</li>
+                    <li>Pedidos e preferências de café da manhã</li>
+                    <li>Histórico de mensagens no WhatsApp</li>
+                    <li>Notas fiscais e faturas associadas</li>
+                    <li>Conta de acesso ao Portal do Hóspede (login desativado)</li>
+                  </ul>
+                </div>
+              </div>
+            )}
+
+            <DialogFooter className="gap-2 pt-3 border-t border-border flex flex-col-reverse sm:flex-row sm:justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setDeleteDialogOpen(false)}
+                disabled={isDeletingGuest}
+                className="rounded-xl h-10 text-xs font-bold"
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                onClick={handleConfirmDeleteGuest}
+                disabled={isDeletingGuest}
+                className="rounded-xl h-10 text-xs font-black bg-rose-600 hover:bg-rose-700 text-white gap-2 shadow-sm"
+              >
+                {isDeletingGuest ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Excluindo tudo...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Sim, Excluir Todos os Dados</span>
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </Shell>
   )

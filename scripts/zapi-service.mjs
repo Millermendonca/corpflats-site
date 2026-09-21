@@ -783,8 +783,6 @@ Para agilizar sua entrada na portaria sem filas na chegada, realize com anteced�
     message: `Olá, *{{primeiro_nome}}*! 🌟🔑
 Sua reserva no *{{nome_hotel}}* para *HOJE* está *Confirmada*!
 
-Como sua reserva foi confirmada no próprio dia da chegada, já adiantamos todas as suas instruções para uma entrada rápida e sem filas:
-
 📋 *Sua Hospedagem:*
 • Código da Reserva: *{{numero_reserva}}*
 • Acomodação: *Flat {{quarto}}*
@@ -1367,13 +1365,13 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   
   const hotelName = db.siteConfig?.branding?.brandName || "CorpFlats";
   const hotelAddress = db.settings?.hotelAddress || "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ";
-  const mapsUrl = db.settings?.googleMapsUrl || "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac";
+  const mapsUrl = db.settings?.googleMapsUrl || "https://share.google/LHu3541d5lhkdvbL2";
   
   const zapiCfg = db.zapiConfig || {};
   const wifiNetwork = zapiCfg.wifiNetwork || "CorpFlats-Hospedes";
   const wifiPassword = zapiCfg.wifiPassword || "corpflats2026";
   const adminWhatsApp = db.settings?.adminWhatsApp || "5522997124021";
-  const googleReviewUrl = zapiCfg.googleReviewUrl || "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac";
+  const googleReviewUrl = zapiCfg.googleReviewUrl || "https://share.google/LHu3541d5lhkdvbL2";
 
   let totalNights = 1;
   if (reservation.checkinDate && reservation.checkoutDate) {
@@ -3396,7 +3394,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         fallbackToText: true,
         wifiNetwork: "CorpFlats-Hospedes",
         wifiPassword: "corpflats2026",
-        googleReviewUrl: "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac",
+        googleReviewUrl: "https://share.google/LHu3541d5lhkdvbL2",
         guestGuidePdfUrl: "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
         guestGuidePdfName: "Manual_do_Hospede_CorpFlats.pdf",
         alertEmail: "millerpessanha@gmail.com",
@@ -3420,8 +3418,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         testAllowedPhones: "22998505276"
       };
     } else {
-      if (!db.zapiConfig.googleReviewUrl || db.zapiConfig.googleReviewUrl.includes("maps.google.com/?q=") || db.zapiConfig.googleReviewUrl.includes("g.page/r/corpflats")) {
-        db.zapiConfig.googleReviewUrl = "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac";
+      if (!db.zapiConfig.googleReviewUrl || db.zapiConfig.googleReviewUrl.includes("maps.google.com/?q=") || db.zapiConfig.googleReviewUrl.includes("g.page/r/corpflats") || db.zapiConfig.googleReviewUrl.includes("maps.app.goo.gl")) {
+        db.zapiConfig.googleReviewUrl = "https://share.google/LHu3541d5lhkdvbL2";
       }
       if (!db.zapiConfig.deliveryMode) {
         db.zapiConfig.deliveryMode = "text_links";
