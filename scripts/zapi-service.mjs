@@ -59,13 +59,54 @@ export function isTemplateAllowedForChannel(template, rawChannel) {
   return template.channels.includes(norm) || template.channels.includes(rawLower);
 }
 
+function crc16(data) {
+  let crc = 0xFFFF;
+  for (let i = 0; i < data.length; i++) {
+    crc ^= data.charCodeAt(i) << 8;
+    for (let j = 0; j < 8; j++) {
+      if ((crc & 0x8000) !== 0) {
+        crc = ((crc << 1) ^ 0x1021) & 0xFFFF;
+      } else {
+        crc = (crc << 1) & 0xFFFF;
+      }
+    }
+  }
+  return crc.toString(16).toUpperCase().padStart(4, "0");
+}
+
+export function generateStaticPixPayload({ pixKey = "47964813000165", amount = 0, merchantName = "CORPFLATS LTDA", merchantCity = "CAMPOS DOS GOYTACAZES", txid = "***" }) {
+  const formatTag = (id, value) => `${id}${String(value.length).padStart(2, "0")}${value}`;
+  let payload = formatTag("00", "01");
+  const gui = formatTag("00", "br.gov.bcb.pix");
+  const key = formatTag("01", pixKey);
+  payload += formatTag("26", `${gui}${key}`);
+  payload += formatTag("52", "0000");
+  payload += formatTag("53", "986");
+  if (amount && Number(amount) > 0) {
+    payload += formatTag("54", Number(amount).toFixed(2));
+  }
+  payload += formatTag("58", "BR");
+  const cleanName = (merchantName || "CORPFLATS LTDA")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9 ]/g, "").trim().substring(0, 25);
+  payload += formatTag("59", cleanName || "CORPFLATS LTDA");
+  const cleanCity = (merchantCity || "CAMPOS")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9 ]/g, "").trim().substring(0, 15);
+  payload += formatTag("60", cleanCity || "CAMPOS");
+  const cleanTxId = (txid || "***").replace(/[^a-zA-Z0-9]/g, "").substring(0, 25) || "***";
+  payload += formatTag("62", formatTag("05", cleanTxId));
+  const toCrc = `${payload}6304`;
+  return `${toCrc}${crc16(toCrc)}`;
+}
+
 // ── Templates Padrão de Alta Conversão & Boas Práticas Hoteleiras ──────────────
 export const DEFAULT_WHATSAPP_TEMPLATES = [
   {
     id: "tpl_pre_reserva",
     triggerEvent: "pre_reservation_created",
     title: "Pré-Reserva • Confirmação & Aguardando Pagamento",
-    description: "Enviado automaticamente apenas para o solicitante quando uma pré-reserva é registrada, informando expressamente que está aguardando pagamento para confirmação definitiva e chave PIX.",
+    description: "Enviado automaticamente para o solicitante quando uma pré-reserva é registrada, informando os dados da estadia, valores e botão de copiar o código PIX.",
     enabled: true,
     channels: ["site", "whatsapp", "outros"],
     recipientTarget: "requester",
@@ -90,12 +131,14 @@ Recebemos o pedido de *Pré-Reserva* no *{{nome_hotel}}*!
 • Quanto foi Pago: *{{valor_pago}}*
 • Quanto Falta Pagar: *{{quanto_falta}}*
 
-⚡ *Pagamento com Confirmação Automática (Banco Inter):*
-Para que seu pagamento seja identificado e sua reserva confirmada na hora pelo sistema (sem precisar enviar comprovante), acesse o link seguro abaixo para gerar o PIX oficial ou parcelar no cartão em até 12x:
+{{instrucao_pagamento}}
+
+Para agilizar sua estadia ou efetuar o pagamento via PIX ou cartão, acesse seu portal seguro:
 👉 {{link_portal_hospede}}`,
     footer: "CorpFlats • Hospedagem Contemporânea",
     buttons: [
-      { id: "btn_portal", type: "URL", label: "💳 Pagar com Baixa Automática", url: "{{link_portal_hospede}}" },
+      { id: "btn_portal", type: "URL", label: "💳 Ver Reserva & Pagar", url: "{{link_portal_hospede}}" },
+      { id: "btn_pix", type: "COPY", label: "📋 Copiar Código PIX", copyCode: "{{pix_copia_e_cola}}", url: "https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code={{pix_copia_e_cola}}" },
       { id: "btn_admin", type: "CALL", label: "📞 Falar com Atendimento", phone: "{{telefone_hotel}}" }
     ]
   },
@@ -561,12 +604,12 @@ Sua pré-reserva no *{{nome_hotel}}* (*Flat {{quarto}}*) foi gerada há 1 hora e
 • Período: *{{data_checkin}} a {{data_checkout}}*
 • Valor Pendente: *{{quanto_falta}}*
 
-⚡ *Pagamento com Confirmação Automática (Banco Inter):*
-Para que seu pagamento seja identificado e sua reserva confirmada imediatamente pelo sistema, efetue a quitação pelo link seguro abaixo (PIX Oficial com QR Code ou cartão em até 12x):
+Para garantir sua acomodação antes que as datas sejam liberadas, efetue o pagamento via PIX ou parcele em até 12x no cartão pelo portal seguro:
 👉 {{link_portal_hospede}}`,
     footer: "CorpFlats • Pagamento Seguro",
     buttons: [
-      { id: "btn_pagar", type: "URL", label: "💳 Pagar com Baixa Automática", url: "{{link_portal_hospede}}" },
+      { id: "btn_pagar", type: "URL", label: "💳 Ver Reserva & Pagar", url: "{{link_portal_hospede}}" },
+      { id: "btn_pix", type: "COPY", label: "📋 Copiar Código PIX", copyCode: "{{pix_copia_e_cola}}", url: "https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code={{pix_copia_e_cola}}" },
       { id: "btn_chk", type: "URL", label: "🏨 Ver Minha Reserva", url: "{{link_portal_hospede}}" }
     ]
   },
@@ -593,12 +636,12 @@ Confirmamos a solicitação de alteração/extensão da sua estadia no *{{nome_h
 💰 *Saldo Pendente da Alteração:*
 • Valor a Quitar: *{{quanto_falta}}*
 
-⚡ *Pagamento com Confirmação Automática (Banco Inter):*
-Para que a extensão seja confirmada na hora pelo sistema, efetue a quitação pelo link seguro do seu portal (PIX Oficial com QR Code ou cartão em até 12x):
+Você também pode consultar o extrato detalhado e efetuar o pagamento via PIX ou cartão em seu portal seguro:
 👉 {{link_portal_hospede}}`,
     footer: "CorpFlats • Alteração Confirmada",
     buttons: [
-      { id: "btn_pagar", type: "URL", label: "💳 Pagar com Baixa Automática", url: "{{link_portal_hospede}}" },
+      { id: "btn_pagar", type: "URL", label: "💳 Ver Detalhes & Pagar", url: "{{link_portal_hospede}}" },
+      { id: "btn_pix", type: "COPY", label: "📋 Copiar Código PIX", copyCode: "{{pix_copia_e_cola}}", url: "https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code={{pix_copia_e_cola}}" },
       { id: "btn_admin", type: "CALL", label: "📞 Falar com Atendimento", phone: "{{telefone_hotel}}" }
     ]
   },
@@ -1153,18 +1196,34 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
 
   let instrucaoPagamento = "";
   if (paidAmount === 0) {
-    instrucaoPagamento = `Para que seu pagamento seja identificado e sua reserva confirmada na hora de forma 100% automática pelo Banco Inter, acesse o link seguro para gerar o PIX oficial ou parcelar no cartão:\n👉 ${linkPortalHospede}`;
+    instrucaoPagamento = `Para garantir e confirmar definitivamente sua acomodação, efetue o pagamento via PIX ou cartão de crédito pelo portal do hóspede:\n👉 ${linkPortalHospede}`;
   } else if (paidAmount > 0 && pendingAmount > 0) {
-    instrucaoPagamento = `Identificamos o pagamento parcial de *${formatCurrency(paidAmount)}*. O saldo restante de *${formatCurrency(pendingAmount)}* poderá ser quitado com baixa automática pelo Banco Inter acessando o link seguro do portal:\n👉 ${linkPortalHospede}`;
+    instrucaoPagamento = `Identificamos o pagamento parcial de *${formatCurrency(paidAmount)}*. O saldo restante de *${formatCurrency(pendingAmount)}* poderá ser quitado pelo portal:\n👉 ${linkPortalHospede}`;
   } else {
     instrucaoPagamento = "Reserva 100% quitada! Nenhuma pendência financeira.";
   }
 
   let instrucaoSaldo = "";
   if (pendingAmount > 0) {
-    instrucaoSaldo = `ℹ️ *Aviso de Pagamento:* Resta o saldo de *${formatCurrency(pendingAmount)}*. Para identificação e confirmação automática pelo Banco Inter, efetue o pagamento pelo link seguro do seu portal:\n👉 ${linkPortalHospede}`;
+    instrucaoSaldo = `ℹ️ *Aviso de Pagamento:* Resta o saldo de *${formatCurrency(pendingAmount)}*, que poderá ser quitado pelo link seguro do seu portal:\n👉 ${linkPortalHospede}`;
   } else {
     instrucaoSaldo = "✅ *Pagamento 100% Concluído:* Sua hospedagem está totalmente quitada.";
+  }
+
+  // Código PIX Copia e Cola da transação integrada (Inter ou payload oficial)
+  let pixCopiaECola = reservation.pixCopiaECola || "";
+  if (!pixCopiaECola && pendingAmount > 0) {
+    const cleanTxId = (resCode || "").replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
+    pixCopiaECola = generateStaticPixPayload({
+      pixKey: db.settings?.interConfig?.pixKey || db.settings?.pixKey || "47964813000165",
+      amount: pendingAmount,
+      merchantName: db.siteConfig?.branding?.brandName || "CORPFLATS LTDA",
+      merchantCity: "CAMPOS DOS GOYTACAZES",
+      txid: cleanTxId || "***"
+    });
+    if (reservation && typeof reservation === "object") {
+      reservation.pixCopiaECola = pixCopiaECola;
+    }
   }
 
   const statusConfirmacao = reservation.status === "confirmada" ? "Confirmada" : "Pré-Reserva";
@@ -1271,6 +1330,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{valor_restante}}": formatCurrency(pendingAmount),
     "{{chave_pix}}": pixKey,
     "{{titular_pix}}": titularPix,
+    "{{pix_copia_e_cola}}": pixCopiaECola,
     "{{instrucao_pagamento}}": instrucaoPagamento,
     "{{instrucao_saldo}}": instrucaoSaldo,
     "{{status_confirmacao}}": statusConfirmacao,
@@ -1311,20 +1371,26 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
 // ── Formatador de Mensagem com Links Clicáveis (100% compatível com qualquer WhatsApp) ──
 export function formatMessageWithLinks(message, footer = "", buttons = []) {
   let text = (message || "").trim();
-  const validButtons = (buttons || []).filter(b => b && b.label && (b.url || b.phone || b.type === "REPLY"));
+  const validButtons = (buttons || []).filter(b => b && b.label && (b.url || b.phone || b.copyCode || b.type === "REPLY" || b.type === "COPY"));
 
   if (validButtons.length > 0) {
     const linkItems = validButtons
-      .filter(b => b.url || b.phone)
+      .filter(b => b.url || b.phone || b.copyCode || b.type === "COPY")
       .map(b => {
         if (b.type === "CALL" || b.phone) {
           return `📞 *${b.label}:* ${b.phone}`;
+        }
+        if (b.type === "COPY" || b.copyCode) {
+          const code = b.copyCode || b.code || (b.url && b.url.startsWith("000201") ? b.url : "");
+          if (code) {
+            return `📋 *${b.label} (PIX Copia e Cola):*\n\`${code}\``;
+          }
         }
         return `👉 *${b.label}:*\n${b.url}`;
       });
 
     if (linkItems.length > 0) {
-      text += `\n\n🔗 *Links de Acesso Rápido:*\n` + linkItems.join("\n\n");
+      text += `\n\n🔗 *Acesso Rápido:*\n` + linkItems.join("\n\n");
     }
   }
 
@@ -1558,7 +1624,7 @@ export async function sendZapiMessage(config, {
     // 2. Tentativa com Botões Interativos (/send-button-actions)
     const buttonActionsUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-button-actions`;
 
-    const hasCallOrUrl = validButtons.some(b => b.type === "CALL" || b.type === "URL");
+    const hasCallOrUrl = validButtons.some(b => b.type === "CALL" || b.type === "URL" || b.type === "COPY" || b.copyCode);
     const hasReply = validButtons.some(b => b.type === "REPLY");
 
     let filteredButtons = validButtons;
@@ -1567,7 +1633,8 @@ export async function sendZapiMessage(config, {
     }
 
     const formattedActions = filteredButtons.slice(0, 3).map((b, idx) => {
-      const type = (b.type === "CALL" || b.type === "URL") ? b.type : "URL";
+      const isCall = b.type === "CALL" || Boolean(b.phone);
+      const type = isCall ? "CALL" : "URL";
       const action = {
         id: String(b.id || `btn_${idx + 1}`),
         type,
@@ -1576,8 +1643,9 @@ export async function sendZapiMessage(config, {
 
       if (type === "URL") {
         let rawUrl = String(b.url || "").trim();
-        if (b.copyCode) {
-          rawUrl = `https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code=${encodeURIComponent(b.copyCode)}`;
+        const codeToCopy = b.copyCode || b.code || (b.type === "COPY" && rawUrl.startsWith("000201") ? rawUrl : "");
+        if (codeToCopy) {
+          rawUrl = `https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code=${encodeURIComponent(codeToCopy)}`;
         } else if (!rawUrl.startsWith("http://") && !rawUrl.startsWith("https://")) {
           rawUrl = "https://" + rawUrl;
         }
@@ -3277,7 +3345,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         if (tpl.id === "tpl_pre_reserva") {
           tpl.recipientTarget = "requester";
           tpl.channels = ["site", "whatsapp", "outros"];
-          if (tpl.message.includes("{{chave_pix}}") || !tpl.message.includes("Aguardando Pagamento")) {
+          if (tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix")) {
             const defPre = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_reserva");
             if (defPre) {
               tpl.title = defPre.title;
@@ -3293,7 +3361,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           tpl.offsetValue = 1;
           tpl.offsetUnit = "hours";
           tpl.channels = ["site", "whatsapp", "outros"];
-          if (tpl.message.includes("{{chave_pix}}")) {
+          if (tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix")) {
             const defPend = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_payment_pending");
             if (defPend) {
               tpl.title = defPend.title;
@@ -3304,7 +3372,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           }
         }
         if (tpl.id === "tpl_additional_daily_pending") {
-          if (tpl.message.includes("{{chave_pix}}")) {
+          if (tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix")) {
             const defAdd = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_additional_daily_pending");
             if (defAdd) {
               tpl.title = defAdd.title;
@@ -3953,7 +4021,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       const renderedButtons = (template.buttons || []).map(b => ({
         ...b,
         url: b.url ? resolveWhatsAppTags(b.url, reservation, db, baseUrl, d.type) : undefined,
-        phone: b.phone ? resolveWhatsAppTags(b.phone, reservation, db, baseUrl, d.type) : undefined
+        phone: b.phone ? resolveWhatsAppTags(b.phone, reservation, db, baseUrl, d.type) : undefined,
+        copyCode: b.copyCode ? resolveWhatsAppTags(b.copyCode, reservation, db, baseUrl, d.type) : undefined
       }));
 
       const sendRes = await sendZapiMessage(db?.zapiConfig, {
@@ -5260,7 +5329,8 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
             const renderedButtons = (tpl.buttons || []).map(b => ({
               ...b,
               url: b.url ? resolveWhatsAppTags(b.url, resv, db, baseUrl, targetItem.type) : undefined,
-              phone: b.phone ? resolveWhatsAppTags(b.phone, resv, db, baseUrl, targetItem.type) : undefined
+              phone: b.phone ? resolveWhatsAppTags(b.phone, resv, db, baseUrl, targetItem.type) : undefined,
+              copyCode: b.copyCode ? resolveWhatsAppTags(b.copyCode, resv, db, baseUrl, targetItem.type) : undefined
             }));
 
             db.whatsappQueue.push({
@@ -5428,7 +5498,8 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
         const renderedButtons = (tpl.buttons || []).map(b => ({
           ...b,
           url: b.url ? resolveWhatsAppTags(b.url, reservation, db, baseUrl, d.type) : undefined,
-          phone: b.phone ? resolveWhatsAppTags(b.phone, reservation, db, baseUrl, d.type) : undefined
+          phone: b.phone ? resolveWhatsAppTags(b.phone, reservation, db, baseUrl, d.type) : undefined,
+          copyCode: b.copyCode ? resolveWhatsAppTags(b.copyCode, reservation, db, baseUrl, d.type) : undefined
         }));
 
         const hasAttachment = Boolean(tpl.hasAttachment || tpl.documentUrl);

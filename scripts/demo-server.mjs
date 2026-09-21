@@ -7076,7 +7076,7 @@ app.get("/api/pms/reservations/:id/audit-logs", (req, res) => {
   });
 });
 
-app.post("/api/pms/reservations", (req, res) => {
+app.post("/api/pms/reservations", async (req, res) => {
   const {
     flatId,
     guestName,
@@ -7442,6 +7442,32 @@ app.post("/api/pms/reservations", (req, res) => {
   saveDatabase();
 
   if (resolvedStatus === "pre_reserva") {
+    if (!newReservation.pixCopiaECola && Number(newReservation.totalAmount) > 0) {
+      try {
+        const pixResult = await createInterPixCob({
+          amount: newReservation.totalAmount,
+          description: `Reserva CorpFlats ${newReservation.code}`,
+          debtorName: newReservation.guestName,
+          debtorDocument: newReservation.guestDocument || newReservation.document,
+          reservationCode: newReservation.code
+        });
+        newReservation.pixTxId = pixResult.txid;
+        newReservation.pixCopiaECola = pixResult.pixCopiaECola;
+      } catch (pixErr) {
+        console.warn("[PMS Reservation] Falha na emissão de PIX dinâmico Inter, gerando PIX estático:", pixErr.message);
+        const cleanTxId = newReservation.code.replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
+        const staticPayload = generateStaticPixPayload({
+          pixKey: db.settings?.interConfig?.pixKey || "47964813000165",
+          amount: newReservation.totalAmount,
+          merchantName: "CORPFLATS LTDA",
+          merchantCity: "CAMPOS DOS GOYTACAZES",
+          txid: cleanTxId
+        });
+        newReservation.pixTxId = cleanTxId;
+        newReservation.pixCopiaECola = staticPayload;
+      }
+      saveDatabase();
+    }
     triggerImmediateWhatsApp(db, saveDatabase, "pre_reservation_created", newReservation);
   } else {
     // Verifica se é no próprio dia do check-in após as 07:01
