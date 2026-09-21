@@ -104,10 +104,7 @@ Recebemos o pedido de *Pré-Reserva* no *{{nome_hotel}}*!
 • Valor Total: *{{valor_total}}*
 • Quanto Falta Pagar: *{{quanto_falta}}*
 
-{{instrucao_pagamento}}
-
-Para agilizar sua estadia ou efetuar o pagamento via PIX ou cartão de crédito, acesse seu portal seguro:
-👉 {{link_portal_hospede}}`,
+{{instrucao_pagamento}}`,
     buttons: [
       { label: "💳 Ver Reserva & Pagar", type: "URL", url: "{{link_portal_hospede}}" },
       { label: "📋 Copiar Código PIX", type: "COPY", url: "https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code={{pix_copia_e_cola}}" },

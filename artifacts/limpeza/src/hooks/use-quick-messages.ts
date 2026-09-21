@@ -397,6 +397,7 @@ export function renderQuickMessage(
     "{{chave_pix}}": "47.964.813/0001-65",
     "{{titular_pix}}": "CorpFlats Hospedagem",
     "{{instrucao_saldo}}": pendingAmount > 0 ? `Saldo restante de ${formattedPending} a acertar no check-in.` : "Reserva quitada.",
+    "{{instrucao_pagamento}}": pendingAmount > 0 ? `Para garantir e confirmar sua acomodação, efetue o pagamento via PIX ou cartão pelo portal do hóspede:\n👉 ${linkPortal}` : "Reserva 100% quitada! Nenhuma pendência financeira.",
     "{{canal_reserva}}": resItem.channel || "Site CorpFlats",
     "{{nome_hotel}}": "CorpFlats",
     "{{endereco_hotel}}": "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ",

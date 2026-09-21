@@ -1001,6 +1001,7 @@ export default function WhatsappAutomation() {
       "{{chave_pix}}": "47.964.813/0001-65",
       "{{titular_pix}}": "CorpFlats Hospedagem",
       "{{instrucao_saldo}}": pendingAmount > 0 ? `Saldo restante de ${fmtPending} a acertar no check-in.` : "Reserva 100% quitada.",
+      "{{instrucao_pagamento}}": `Para garantir e confirmar sua acomodação, efetue o pagamento via PIX ou cartão pelo portal do hóspede:\n👉 https://corpflats.onrender.com/minha-reserva/${code}`,
       "{{canal_reserva}}": targetRes.channel || "Site CorpFlats",
       "{{nome_hotel}}": "CorpFlats - Soho Residence",
       "{{endereco_hotel}}": "Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ",

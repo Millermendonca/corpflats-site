@@ -156,10 +156,7 @@ Recebemos o pedido de *Pré-Reserva* no *{{nome_hotel}}*!
 • Quanto foi Pago: *{{valor_pago}}*
 • Quanto Falta Pagar: *{{quanto_falta}}*
 
-{{instrucao_pagamento}}
-
-Para agilizar sua estadia ou efetuar o pagamento via PIX ou cartão, acesse seu portal seguro:
-👉 {{link_portal_hospede}}`,
+{{instrucao_pagamento}}`,
     footer: "CorpFlats • Hospedagem Contemporânea",
     buttons: [
       { id: "btn_portal", type: "URL", label: "💳 Ver Reserva & Pagar", url: "{{link_portal_hospede}}" },
@@ -3508,7 +3505,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         if (tpl.id === "tpl_pre_reserva") {
           tpl.recipientTarget = "requester";
           tpl.channels = ["site", "whatsapp", "outros"];
-          if (tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix")) {
+          if (tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.message.includes("Para agilizar sua estadia")) {
             const defPre = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_reserva");
             if (defPre) {
               tpl.title = defPre.title;
