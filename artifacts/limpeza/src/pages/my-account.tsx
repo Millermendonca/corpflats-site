@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { 
   User, Shield, Key, KeyRound, Fingerprint, Calendar, Car, Briefcase, 
   Trash2, Download, CheckCircle2, AlertTriangle, LogOut, ArrowRight, 
-  Sparkles, ExternalLink, Lock, Eye, EyeOff, Save, Check, Smartphone, Globe
+  ExternalLink, Lock, Eye, EyeOff, Save, Check, Smartphone, Globe
 } from "lucide-react"
 import { 
   getCurrentSession, updateAccountProfile, changeAccountPassword, 
@@ -31,6 +31,12 @@ export default function MyAccount() {
   const [name, setName] = useState("")
   const [phone, setPhone] = useState("")
   const [document, setDocument] = useState("")
+  const [birthDate, setBirthDate] = useState("")
+  const [cep, setCep] = useState("")
+  const [address, setAddress] = useState("")
+  const [city, setCity] = useState("")
+  const [state, setState] = useState("RJ")
+  const [loadingCep, setLoadingCep] = useState(false)
   const [vehiclePlate, setVehiclePlate] = useState("")
   const [vehicleModel, setVehicleModel] = useState("")
   const [vehicleColor, setVehicleColor] = useState("")
@@ -93,6 +99,47 @@ export default function MyAccount() {
       // Ignore
     } finally {
       setLoading(false)
+    }
+  }
+
+  const maskCpf = (v: string) => {
+    const clean = v.replace(/\D/g, "").slice(0, 11)
+    if (clean.length <= 3) return clean
+    if (clean.length <= 6) return `${clean.slice(0, 3)}.${clean.slice(3)}`
+    if (clean.length <= 9) return `${clean.slice(0, 3)}.${clean.slice(3, 6)}.${clean.slice(6)}`
+    return `${clean.slice(0, 3)}.${clean.slice(3, 6)}.${clean.slice(6, 9)}-${clean.slice(9)}`
+  }
+
+  const maskPhone = (v: string) => {
+    const clean = v.replace(/\D/g, "").slice(0, 11)
+    if (clean.length <= 2) return clean
+    if (clean.length <= 7) return `(${clean.slice(0, 2)}) ${clean.slice(2)}`
+    return `(${clean.slice(0, 2)}) ${clean.slice(2, 7)}-${clean.slice(7)}`
+  }
+
+  const maskCep = (v: string) => {
+    const clean = v.replace(/\D/g, "").slice(0, 8)
+    if (clean.length <= 5) return clean
+    return `${clean.slice(0, 5)}-${clean.slice(5)}`
+  }
+
+  const handleLookupCep = async (val: string) => {
+    const clean = val.replace(/\D/g, "")
+    setCep(clean)
+    if (clean.length === 8) {
+      setLoadingCep(true)
+      try {
+        const res = await fetch(`/api/lookup-cep/${clean}`)
+        if (res.ok) {
+          const data = await res.json()
+          if (data.logradouro) setAddress(`${data.logradouro}, ${data.bairro || ''}`.trim())
+          if (data.cidade) setCity(data.cidade)
+          if (data.uf) setState(data.uf)
+        }
+      } catch {}
+      finally {
+        setLoadingCep(false)
+      }
     }
   }
 
@@ -167,7 +214,7 @@ export default function MyAccount() {
       const res = await changeAccountPassword(currentPassword, newPassword)
       if (res.success) {
         toast({
-          title: "Senha alterada com sucesso! 🔐",
+          title: "Senha alterada com sucesso!",
           description: "Sua nova senha já está ativa."
         })
         setCurrentPassword("")
@@ -194,7 +241,7 @@ export default function MyAccount() {
       const res = await registerPasskeyDevice(deviceLabel)
       if (res.success) {
         toast({
-          title: "Passkey cadastrada! 📱✨",
+          title: "Passkey cadastrada!",
           description: "Agora você pode entrar instantaneamente usando Touch ID, Face ID ou Windows Hello."
         })
         loadUserData()
@@ -332,7 +379,7 @@ export default function MyAccount() {
               onClick={() => setLocation("/reservar")}
               className="text-xs font-bold gap-1.5 h-9 rounded-xl flex-1 sm:flex-none border-slate-200 bg-sky-50 text-sky-700 hover:bg-sky-100 dark:bg-sky-950/40 dark:text-sky-300"
             >
-              <Sparkles className="w-3.5 h-3.5 text-sky-600" />
+              <Calendar className="w-3.5 h-3.5 text-sky-600" />
               <span>Fazer Reserva</span>
             </Button>
 

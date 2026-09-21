@@ -11229,6 +11229,179 @@ app.post("/api/emails/send-manual", async (req, res) => {
   res.json({ success: true, communication: commLog });
 });
 
+// ── Sincronização Bidirecional Atômica: Perfil (Minha Conta) & Check-in Digital ──
+export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) {
+  if (!db) return null;
+  if (!db.guests) db.guests = [];
+  if (!db.guestAccounts) db.guestAccounts = [];
+
+  const cleanEmail = (accountOrGuest?.email || updates.email || "").trim().toLowerCase();
+  const cleanPhone = normalizePhone(accountOrGuest?.phone || updates.phone || "");
+  const cleanDoc = (accountOrGuest?.document || accountOrGuest?.documentNumber || updates.document || "").replace(/\D/g, "");
+  const cleanName = (accountOrGuest?.name || accountOrGuest?.fullName || updates.name || updates.fullName || "").trim();
+  const normName = normalizeName(cleanName);
+
+  // 1. Sincroniza em db.guests (CRM PMS)
+  let guest = null;
+  if (accountOrGuest?.id && db.guests.some(g => g.id === accountOrGuest.id)) {
+    guest = db.guests.find(g => g.id === accountOrGuest.id);
+  }
+  if (!guest) {
+    guest = db.guests.find(g => 
+      (cleanEmail && cleanEmail.includes("@") && (g.email || "").trim().toLowerCase() === cleanEmail) ||
+      (cleanDoc && cleanDoc.length >= 8 && (g.documentNumber || g.document || "").replace(/\D/g, "") === cleanDoc) ||
+      (cleanPhone && cleanPhone.length >= 8 && normalizePhone(g.phone || "") === cleanPhone) ||
+      (normName && normName.length >= 5 && normalizeName(g.fullName || g.name || "") === normName)
+    );
+  }
+
+  if (!guest) {
+    const nextId = db.guests.length > 0 ? Math.max(...db.guests.map(g => Number(g.id) || 0)) + 1 : 1;
+    guest = {
+      id: nextId,
+      guestCode: `HOSP-${String(nextId).padStart(5, "0")}`,
+      name: cleanName || "Hóspede",
+      fullName: cleanName || "Hóspede",
+      email: cleanEmail,
+      phone: accountOrGuest?.phone || updates.phone || "",
+      document: cleanDoc,
+      documentNumber: cleanDoc,
+      createdAt: new Date().toISOString()
+    };
+    db.guests.push(guest);
+  }
+
+  if (cleanName) {
+    guest.name = cleanName;
+    guest.fullName = cleanName;
+  }
+  if (updates.phone || accountOrGuest?.phone) guest.phone = (updates.phone || accountOrGuest.phone).trim();
+  if (cleanEmail) guest.email = cleanEmail;
+  if (cleanDoc) {
+    guest.document = updates.document || accountOrGuest.document || cleanDoc;
+    guest.documentNumber = updates.document || accountOrGuest.document || cleanDoc;
+  }
+  if (updates.birthDate || accountOrGuest?.birthDate) guest.birthDate = updates.birthDate || accountOrGuest.birthDate;
+  if (updates.gender || accountOrGuest?.gender) guest.gender = updates.gender || accountOrGuest.gender;
+  if (updates.address || accountOrGuest?.address) guest.address = (updates.address || accountOrGuest.address).trim();
+  if (updates.city || accountOrGuest?.city) guest.city = (updates.city || accountOrGuest.city).trim();
+  if (updates.state || accountOrGuest?.state) guest.state = (updates.state || accountOrGuest.state).trim();
+  if (updates.cep || accountOrGuest?.cep) guest.cep = (updates.cep || accountOrGuest.cep).trim();
+  if (updates.vehiclePlate || accountOrGuest?.vehicle?.plate || accountOrGuest?.vehiclePlate) {
+    guest.vehiclePlate = (updates.vehiclePlate || accountOrGuest.vehicle?.plate || accountOrGuest.vehiclePlate || "").toUpperCase().trim();
+    guest.vehicleBrand = updates.vehicleBrand || accountOrGuest.vehicle?.brand || accountOrGuest.vehicleBrand || "";
+    guest.vehicleModel = updates.vehicleModel || accountOrGuest.vehicle?.model || accountOrGuest.vehicleModel || "";
+    guest.vehicleColor = updates.vehicleColor || accountOrGuest.vehicle?.color || accountOrGuest.vehicleColor || "";
+  }
+  if (updates.docPhotoUrl) guest.docPhotoUrl = updates.docPhotoUrl;
+  if (updates.signatureUrl) guest.signatureUrl = updates.signatureUrl;
+
+  // 2. Sincroniza em db.guestAccounts (Minha Conta / Autenticação)
+  let account = null;
+  if (accountOrGuest?.email || cleanEmail) {
+    account = db.guestAccounts.find(a => 
+      (cleanEmail && a.email.toLowerCase() === cleanEmail) ||
+      (cleanDoc && cleanDoc.length >= 8 && a.document && a.document.replace(/\D/g, "") === cleanDoc) ||
+      (cleanPhone && cleanPhone.length >= 8 && a.phone && normalizePhone(a.phone) === cleanPhone)
+    );
+  }
+
+  if (!account && cleanEmail) {
+    const nextAccId = db.guestAccounts.length > 0 ? Math.max(...db.guestAccounts.map(a => a.id || 0)) + 1 : 1;
+    account = {
+      id: nextAccId,
+      name: cleanName || cleanEmail.split("@")[0],
+      email: cleanEmail,
+      passwordHash: null,
+      phone: guest.phone || "",
+      document: guest.document || "",
+      birthDate: guest.birthDate || null,
+      address: guest.address || "",
+      city: guest.city || "",
+      state: guest.state || "RJ",
+      cep: guest.cep || "",
+      vehicle: guest.vehiclePlate ? {
+        plate: guest.vehiclePlate,
+        brand: guest.vehicleBrand || "",
+        model: guest.vehicleModel || "",
+        color: guest.vehicleColor || ""
+      } : null,
+      createdAt: new Date().toISOString(),
+      lastLoginAt: new Date().toISOString()
+    };
+    db.guestAccounts.push(account);
+  } else if (account) {
+    if (cleanName) account.name = cleanName;
+    if (guest.phone) account.phone = guest.phone;
+    if (guest.document) account.document = guest.document;
+    if (guest.birthDate) account.birthDate = guest.birthDate;
+    if (guest.address) account.address = guest.address;
+    if (guest.city) account.city = guest.city;
+    if (guest.state) account.state = guest.state;
+    if (guest.cep) account.cep = guest.cep;
+    if (guest.vehiclePlate) {
+      account.vehicle = {
+        plate: guest.vehiclePlate,
+        brand: guest.vehicleBrand || "",
+        model: guest.vehicleModel || "",
+        color: guest.vehicleColor || ""
+      };
+    }
+  }
+
+  // 3. Atualiza reservas correspondentes
+  const reservations = (db.reservations || []).filter(r => 
+    (cleanEmail && r.guestEmail && r.guestEmail.trim().toLowerCase() === cleanEmail) ||
+    (cleanDoc && (r.guestDocument || "").replace(/\D/g, "") === cleanDoc) ||
+    (cleanPhone && cleanPhone.length >= 8 && normalizePhone(r.guestPhone || "") === cleanPhone) ||
+    (guest && r.guestId && r.guestId === guest.id)
+  );
+
+  for (const r of reservations) {
+    if (!r.guestId && guest) r.guestId = guest.id;
+    if (!r.guestCode && guest) r.guestCode = guest.guestCode;
+    if (cleanName) r.guestName = cleanName;
+    if (guest.phone) r.guestPhone = guest.phone;
+    if (guest.document) r.guestDocument = guest.document;
+    if (guest.address) r.guestAddress = guest.address;
+    if (guest.city) r.guestCity = guest.city;
+    if (guest.state) r.guestState = guest.state;
+    if (guest.cep) r.guestCep = guest.cep;
+    if (guest.birthDate) r.birthDate = guest.birthDate;
+    if (guest.vehiclePlate) {
+      r.vehiclePlate = guest.vehiclePlate;
+      r.vehicle = {
+        plate: guest.vehiclePlate,
+        brand: guest.vehicleBrand || "",
+        model: guest.vehicleModel || "",
+        color: guest.vehicleColor || ""
+      };
+    }
+
+    if (Array.isArray(r.guests) && r.guests[0]) {
+      const g0 = r.guests[0];
+      if (guest) {
+        g0.guestId = guest.id;
+        g0.guestCode = guest.guestCode;
+      }
+      if (cleanName) g0.name = cleanName;
+      if (guest.document) g0.cpf = guest.document;
+      if (guest.phone) g0.phone = guest.phone;
+      if (cleanEmail) g0.email = cleanEmail;
+      if (guest.address) g0.address = guest.address;
+      if (guest.city) g0.city = guest.city;
+      if (guest.state) g0.state = guest.state;
+      if (guest.cep) g0.cep = guest.cep;
+      if (guest.birthDate) g0.birthDate = guest.birthDate;
+      if (guest.gender) g0.gender = guest.gender;
+      if (guest.docPhotoUrl && !g0.docPhotoUrl) g0.docPhotoUrl = guest.docPhotoUrl;
+      if (guest.signatureUrl && !g0.signatureUrl) g0.signatureUrl = guest.signatureUrl;
+    }
+  }
+
+  return { guest, account };
+}
+
 // ── FNHR Pre-Checkin Digital Endpoints ──────────────────────────────────────
 app.get("/api/pms/pre-checkin/:code", (req, res) => {
   const code = req.params.code;
@@ -16219,8 +16392,25 @@ app.patch("/api/guest-auth/profile", (req, res) => {
     if (address !== undefined) account.address = address.trim();
     if (city !== undefined) account.city = city.trim();
     if (state !== undefined) account.state = state.trim();
+    if (birthDate !== undefined) account.birthDate = birthDate;
     if (cep !== undefined) account.cep = cep.trim();
     if (companyData !== undefined) account.companyData = companyData;
+
+    // Sincronização bidirecional imediata
+    syncBidirectionalGuestProfile(db, account, {
+      name: account.name,
+      phone: account.phone,
+      document: account.document,
+      birthDate: account.birthDate,
+      address: account.address,
+      city: account.city,
+      state: account.state,
+      cep: account.cep,
+      vehiclePlate: account.vehicle?.plate,
+      vehicleBrand: account.vehicle?.brand,
+      vehicleModel: account.vehicle?.model,
+      vehicleColor: account.vehicle?.color
+    });
     if (vehicle !== undefined) {
       account.vehicle = vehicle;
       if (vehicle && vehicle.plate) {

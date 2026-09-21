@@ -10,6 +10,7 @@ export interface UserProfile {
   avatarUrl?: string
   phone?: string
   document?: string
+  birthDate?: string
   address?: string
   city?: string
   state?: string

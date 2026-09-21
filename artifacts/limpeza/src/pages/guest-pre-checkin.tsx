@@ -9,9 +9,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { 
   Building2, User, Phone, Mail, Camera, FileText, CheckCircle2, 
-  MapPin, ShieldCheck, ArrowRight, ArrowLeft, PenTool, Sparkles, AlertCircle, Zap, Car,
+  MapPin, ShieldCheck, ArrowRight, ArrowLeft, PenTool, AlertCircle, Zap, Car,
   Printer, Edit3, Share2, Eye, ZoomIn, Download, ExternalLink, MessageCircle, Clock, Calendar, Check, Ban, Lock, Award, KeyRound, Search, RefreshCw, Copy
 } from "lucide-react"
+import { getCurrentSession, saveSessionLocally } from "@/lib/auth-client"
 import { compressImage } from "@/lib/image-compression"
 
 export default function GuestPreCheckin() {
@@ -237,6 +238,39 @@ export default function GuestPreCheckin() {
 
     setMinorKinship(currentG?.minorKinship || "filho")
     setMinorAuthDocPhoto(currentG?.minorAuthDocUrl || null)
+
+    // Sincronização direta com perfil permanente do hóspede autenticado
+    if (isTitular) {
+      getCurrentSession().then((sessionUser) => {
+        if (!sessionUser) return
+        if (!gName && sessionUser.name) setFullName(sessionUser.name)
+        if (!gEmail && sessionUser.email) setEmail(sessionUser.email)
+        if (!gPhone && sessionUser.phone) setPhone(sessionUser.phone)
+        if (!gDoc && sessionUser.document) setDocument(sessionUser.document)
+        if (!currentG?.birthDate && !guest.birthDate && !res.birthDate && sessionUser.birthDate) {
+          setBirthDate(sessionUser.birthDate)
+        }
+        if (!currentG?.address && !guest.address && !res.guestAddress && sessionUser.address) {
+          setAddress(sessionUser.address)
+        }
+        if (!currentG?.city && !guest.city && !res.guestCity && sessionUser.city) {
+          setCity(sessionUser.city)
+        }
+        if (!currentG?.state && !guest.state && !res.guestState && sessionUser.state) {
+          setState(sessionUser.state)
+        }
+        if (sessionUser.cep) {
+          setCep(sessionUser.cep)
+        }
+        if (sessionUser.vehicle?.plate && !v?.plate) {
+          setVehiclePlate(sessionUser.vehicle.plate)
+          setVehicleModel(sessionUser.vehicle.model || "")
+          setVehicleBrand(sessionUser.vehicle.brand || "")
+          setVehicleColor(sessionUser.vehicle.color || "")
+          setTransportMethod("carro")
+        }
+      }).catch(() => {})
+    }
 
     const v = res.vehicle || guest.vehicle || (guest.vehiclePlate ? {
       plate: guest.vehiclePlate,
@@ -601,6 +635,32 @@ export default function GuestPreCheckin() {
 
       const resData = await res.json()
       if (res.ok) {
+        // Atualiza perfil permanente local em cache para sincronização imediata
+        try {
+          if (typeof window !== "undefined") {
+            const rawProfile = localStorage.getItem("corpflats_guest_profile")
+            const currentProf = rawProfile ? JSON.parse(rawProfile) : {}
+            saveSessionLocally({
+              ...currentProf,
+              id: currentProf.id || resData.guest?.guestCode || resData.reservation?.id,
+              name: fullName || currentProf.name,
+              email: email || currentProf.email,
+              phone: phone || currentProf.phone,
+              document: document || currentProf.document,
+              birthDate: birthDate || currentProf.birthDate,
+              address: address || currentProf.address,
+              city: city || currentProf.city,
+              state: state || currentProf.state,
+              cep: cep || currentProf.cep,
+              vehicle: cleanPlate ? {
+                plate: cleanPlate,
+                brand: cleanBrand,
+                model: cleanModel,
+                color: cleanColor
+              } : currentProf.vehicle
+            })
+          }
+        } catch {}
         if (resData.fnrhDocument) {
           setGeneratedPdfInfo(resData.fnrhDocument)
         }
@@ -674,14 +734,14 @@ export default function GuestPreCheckin() {
 
           <div className="relative z-10 max-w-xl mx-auto space-y-1.5 text-white">
             <div className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-white/20 backdrop-blur-md border border-white/25 text-[11px] font-semibold tracking-wide text-white/95 mb-1 shadow-xs">
-              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-              <span>✨ Cadastro Único • Preencha apenas 1x para todas as suas estadias</span>
+              <ShieldCheck className="w-3.5 h-3.5 text-sky-300" />
+              <span>Ficha Nacional de Registro de Hóspedes (FNRH)</span>
             </div>
             <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight drop-shadow-md text-white">
-              Pré-Check-in Digital
+              Check-in Digital
             </h1>
             <p className="text-xs sm:text-sm font-normal text-white/90 drop-shadow-sm tracking-normal">
-              Ficha Nacional de Registro de Hóspedes (FNHR) • Seus dados ficam salvos permanentemente
+              Localize sua reserva e confirme seus dados cadastrais para liberação de acesso
             </p>
           </div>
         </header>
@@ -1408,14 +1468,14 @@ export default function GuestPreCheckin() {
 
         <div className="relative z-10 max-w-xl mx-auto space-y-1.5 text-white">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/20 backdrop-blur-md border border-white/25 text-[11px] font-semibold tracking-wide text-white/95 mb-1 shadow-xs">
-            <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-            <span>Ficha Nacional de Registro de Hóspedes (FNHR)</span>
+            <ShieldCheck className="w-3.5 h-3.5 text-sky-300" />
+            <span>Ficha de Hospedagem (FNRH)</span>
           </div>
           <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight drop-shadow-md text-white">
-            Pré-Check-in Digital
+            Check-in Digital
           </h1>
           <p className="text-xs sm:text-sm font-normal text-white/90 drop-shadow-sm tracking-normal">
-            Agilize sua entrada e libere seu acesso à portaria em menos de 2 minutos
+            Confirme seus dados cadastrais e assine para liberação do acesso
           </p>
         </div>
       </header>
@@ -1473,25 +1533,7 @@ export default function GuestPreCheckin() {
           </Card>
         )}
 
-        {/* Banner de Preenchimento Único CorpFlats */}
-        <div className="p-4 sm:p-5 bg-gradient-to-r from-sky-50 via-indigo-50/50 to-emerald-50/50 border border-sky-200/90 rounded-2xl flex items-start gap-3.5 shadow-xs">
-          <div className="p-2.5 bg-slate-900 text-white rounded-xl shrink-0 mt-0.5 shadow-2xs">
-            <Sparkles className="w-5 h-5 text-amber-400" />
-          </div>
-          <div className="space-y-1 text-xs">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-bold text-slate-900 text-xs sm:text-sm">
-                ✨ Preencha seus dados cadastrais apenas 1 única vez!
-              </span>
-              <Badge className="bg-emerald-100 text-emerald-800 text-[10px] font-bold border-emerald-300 py-0.5 px-2">
-                1x Apenas • Permanente
-              </Badge>
-            </div>
-            <p className="text-slate-600 leading-relaxed text-[11px] sm:text-xs">
-              Na CorpFlats seus dados cadastrais precisam ser preenchidos <strong>apenas 1 única vez</strong>. Nas suas próximas reservas conosco, sua ficha cadastral (FNHR) já estará pronta e você não precisará preencher tudo novamente! Cada hóspede possui um cadastro único, seguro e intransferível.
-            </p>
-          </div>
-        </div>
+        
 
         {/* Alerta de Token Expirado (Link de 2 horas) com Botão de Renovação */}
         {tokenInfo && !tokenInfo.valid && (
@@ -1625,35 +1667,29 @@ export default function GuestPreCheckin() {
                 )}
               </div>
 
-              {/* Card de Dados Já Preenchidos & Reconhecimento de Hóspede Frequente */}
+              {/* Card de Dados Cadastrais Salvos */}
               {Boolean(fullName.trim() && document.trim() && phone.trim() && email.trim() && address.trim()) && !isEditingProfile ? (
                 <div className="space-y-4">
-                  <div className={`p-4 sm:p-5 rounded-2xl space-y-3 shadow-2xs border ${
-                    isReturningGuest && (docPhoto || reservation?.docPhotoUrl)
-                      ? "bg-gradient-to-br from-emerald-50 via-teal-50/70 to-sky-50 border-emerald-300"
-                      : "bg-gradient-to-br from-emerald-50/80 via-teal-50/60 to-slate-50 border-emerald-200/90"
-                  }`}>
+                  <div className="p-4 sm:p-5 rounded-2xl space-y-3 shadow-2xs border bg-slate-50/90 border-slate-200">
                     <div className="flex items-center justify-between flex-wrap gap-2">
-                      <span className="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
                         <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                        {isReturningGuest ? "Hóspede Frequente • Cadastro Completo Identificado" : "Cadastro Identificado no Sistema"}
+                        Dados Cadastrais Salvos
                       </span>
                       <div className="flex items-center gap-1.5">
                         {(guestCode || reservation?.guestCode) && (
-                          <Badge className="bg-sky-100 text-sky-800 border-sky-200 text-[10px] font-mono font-bold">
+                          <Badge className="bg-slate-100 text-slate-800 border-slate-200 text-[10px] font-mono font-bold">
                             {guestCode || reservation?.guestCode}
                           </Badge>
                         )}
-                        <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200 text-[10px] font-bold">
-                          {isReturningGuest && (docPhoto || reservation?.docPhotoUrl) ? "Ficha & Documentos Salvos" : "Dados Prontos"}
+                        <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-bold">
+                          Verificado
                         </Badge>
                       </div>
                     </div>
 
                     <p className="text-xs text-slate-600 leading-relaxed">
-                      {isReturningGuest && (docPhoto || reservation?.docPhotoUrl)
-                        ? `Olá, ${fullName.split(" ")[0]}! Seus dados cadastrais, foto do documento e assinatura já estão salvos e autenticados de suas estadias anteriores. Você pode confirmar sua entrada no Flat ${reservation?.flatNumber || ''} com apenas 1 clique!`
-                        : "Seus dados cadastrais já constam em nosso sistema e não precisam ser digitados novamente. Confira as informações abaixo ou clique em editar se desejar atualizar algo:"}
+                      Confira seus dados antes de prosseguir para o envio do documento.
                     </p>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1 text-xs">
@@ -1714,7 +1750,7 @@ export default function GuestPreCheckin() {
                         className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm h-12 rounded-xl gap-2 shadow-md shadow-emerald-600/20"
                       >
                         <CheckCircle2 className="w-5 h-5" />
-                        <span>{loading ? "Validando Entrada..." : `⚡ Confirmar Estadia no Flat ${reservation?.flatNumber || ''} (1 Toque)`}</span>
+                        <span>{loading ? "Validando Entrada..." : `Confirmar Check-in no Flat ${reservation?.flatNumber || ''}`}</span>
                       </Button>
 
                       <div className="flex items-center justify-between text-xs px-1 text-slate-500">
@@ -2174,7 +2210,7 @@ export default function GuestPreCheckin() {
                 ) : (
                   <label className="cursor-pointer flex flex-col items-center gap-2 py-4">
                     <div className="w-14 h-14 rounded-2xl bg-sky-50 border border-sky-100 flex items-center justify-center text-sky-600 shadow-2xs">
-                      {compressing ? <Sparkles className="w-7 h-7 animate-spin text-sky-600" /> : <Camera className="w-7 h-7" />}
+                      {compressing ? <RefreshCw className="w-7 h-7 animate-spin text-sky-600" /> : <Camera className="w-7 h-7" />}
                     </div>
                     <span className="font-bold text-sm text-slate-900 mt-1">
                       {compressing ? "Processando imagem..." : "Tirar Foto ou Enviar Arquivo"}
@@ -2405,7 +2441,7 @@ export default function GuestPreCheckin() {
                       Declaração Obrigatória de Veracidade e LGPD *
                     </span>
                     <p className="text-slate-800 font-medium">
-                      Declaro que as informações prestadas são verdadeiras e estou ciente do tratamento dos meus dados para fins de cumprimento legal da FNRH e execução da hospedagem.
+                      Declaro que as informações prestadas são verdadeiras e estou ciente dos termos de hospedagem e política de privacidade/LGPD.
                     </p>
                     <div className="mt-1.5 flex flex-wrap gap-2 text-[11px]">
                       <button 
