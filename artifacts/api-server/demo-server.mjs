@@ -16708,6 +16708,33 @@ app.post("/api/ai/import-review", (req, res) => {
 // MÓDULO 3B: ANÁLISE DE SENTIMENTO DE HÓSPEDES (WhatsApp + NPS + Filtro Google)
 // ══════════════════════════════════════════════════════════════════════════════
 
+// Normalizador e unificador canônico de palavras-chave para sentimento (remove pontuação e unifica lemas)
+function sanitizeKeyword(raw) {
+  if (!raw || typeof raw !== "string") return "";
+  let clean = raw.trim()
+    .replace(/^[\p{P}\p{S}\s]+|[\p{P}\p{S}\s]+$/gu, "")
+    .toLowerCase();
+
+  const lemmaMap = {
+    "problemas": "problema",
+    "suja": "sujo", "sujas": "sujo", "sujos": "sujo",
+    "demorada": "demorado", "demoradas": "demorado", "demorados": "demorado", "demoras": "demora",
+    "barulhenta": "barulhento", "barulhentas": "barulhento", "barulhentos": "barulhento", "barulhos": "barulho",
+    "quebrada": "quebrado", "quebradas": "quebrado", "quebrados": "quebrado",
+    "estragada": "estragado", "estragadas": "estragado", "estragados": "estragado",
+    "defeitos": "defeito", "falhas": "falha", "vazamentos": "vazamento", "goteiras": "goteira",
+    "ruins": "ruim", "pessimo": "péssimo", "pessima": "péssimo", "péssima": "péssimo",
+    "terrivel": "terrível", "terriveis": "terrível", "terríveis": "terrível",
+    "horrivel": "horrível", "horriveis": "horrível", "horríveis": "horrível",
+    "otimo": "ótimo", "otima": "ótimo", "ótima": "ótimo", "otimos": "ótimo", "ótimos": "ótimo",
+    "excelentes": "excelente", "maravilhosa": "maravilhoso", "maravilhosas": "maravilhoso", "maravilhosos": "maravilhoso",
+    "perfeita": "perfeito", "perfeitas": "perfeito", "perfeitos": "perfeito",
+    "impecavel": "impecável", "impecaveis": "impecável", "impecáveis": "impecável",
+    "confortavel": "confortável", "confortaveis": "confortável", "confortáveis": "confortável"
+  };
+  return lemmaMap[clean] || clean;
+}
+
 // Helper: chama Gemini para analisar sentimento de texto livre com fallback heurístico automático
 async function analyzeTextSentimentWithAI(text, context) {
   const ctx = context || "";
@@ -16732,9 +16759,10 @@ async function analyzeTextSentimentWithAI(text, context) {
       tone = "positive";
     }
 
-    const words = (text || "").toLowerCase().split(/\s+/).filter(w => w.length > 3);
-    const posKw = words.filter(w => positiveWords.test(w)).slice(0, 4);
-    const negKw = words.filter(w => negativeWords.test(w) || maintWords.test(w)).slice(0, 4);
+    const rawWords = (text || "").split(/\s+/);
+    const words = rawWords.map(w => sanitizeKeyword(w)).filter(w => w.length >= 3);
+    const posKw = Array.from(new Set(words.filter(w => positiveWords.test(w)).map(sanitizeKeyword))).slice(0, 4);
+    const negKw = Array.from(new Set(words.filter(w => negativeWords.test(w) || maintWords.test(w)).map(sanitizeKeyword))).slice(0, 4);
 
     const flatMatch = (text || "").match(/(?:apto|apt|flat|quarto|unidade|su[ií]te)\s*[:#º°]?\s*(\d{2,4}[a-z]?)/i);
     const flats = flatMatch ? [flatMatch[1]] : [];
@@ -16783,9 +16811,9 @@ async function analyzeTextSentimentWithAI(text, context) {
         return {
           score: Number(parsed.score) || 65,
           tone: parsed.tone || "neutral",
-          keywords: Array.isArray(parsed.keywords) ? parsed.keywords : [],
-          positiveKeywords: Array.isArray(parsed.positiveKeywords) ? parsed.positiveKeywords : [],
-          negativeKeywords: Array.isArray(parsed.negativeKeywords) ? parsed.negativeKeywords : [],
+          keywords: Array.isArray(parsed.keywords) ? Array.from(new Set(parsed.keywords.map(sanitizeKeyword).filter(w => w.length >= 3))) : [],
+          positiveKeywords: Array.isArray(parsed.positiveKeywords) ? Array.from(new Set(parsed.positiveKeywords.map(sanitizeKeyword).filter(w => w.length >= 3))) : [],
+          negativeKeywords: Array.isArray(parsed.negativeKeywords) ? Array.from(new Set(parsed.negativeKeywords.map(sanitizeKeyword).filter(w => w.length >= 3))) : [],
           suggestions: Array.isArray(parsed.suggestions) ? parsed.suggestions : [],
           flatsMentioned: Array.isArray(parsed.flatsMentioned) ? parsed.flatsMentioned : [],
           summary: parsed.summary || "",
@@ -16801,11 +16829,48 @@ async function analyzeTextSentimentWithAI(text, context) {
   return runHeuristicAnalysis("fallback por cota ou indisponibilidade da API Gemini");
 }
 
-// Inicializar estrutura de sentimentos se não existir
+// Inicializar estrutura de sentimentos se não existir e higienizar histórico
 function ensureSentimentDB() {
   if (!db.guestSentiment) db.guestSentiment = [];
   if (!db.npsResponses) db.npsResponses = [];
   if (!db.whatsappInboundMessages) db.whatsappInboundMessages = [];
+
+  let modified = false;
+  for (const s of db.guestSentiment) {
+    if (Array.isArray(s.negativeKeywords)) {
+      const cleaned = Array.from(new Set(s.negativeKeywords.map(sanitizeKeyword).filter(w => w.length >= 3)));
+      if (cleaned.length !== s.negativeKeywords.length || cleaned.some((w, i) => w !== s.negativeKeywords[i])) {
+        s.negativeKeywords = cleaned;
+        modified = true;
+      }
+    }
+    if (Array.isArray(s.positiveKeywords)) {
+      const cleaned = Array.from(new Set(s.positiveKeywords.map(sanitizeKeyword).filter(w => w.length >= 3)));
+      if (cleaned.length !== s.positiveKeywords.length || cleaned.some((w, i) => w !== s.positiveKeywords[i])) {
+        s.positiveKeywords = cleaned;
+        modified = true;
+      }
+    }
+  }
+  if (Array.isArray(db.reviews)) {
+    for (const r of db.reviews) {
+      if (Array.isArray(r.negativeKeywords)) {
+        const cleaned = Array.from(new Set(r.negativeKeywords.map(sanitizeKeyword).filter(w => w.length >= 3)));
+        if (cleaned.length !== r.negativeKeywords.length || cleaned.some((w, i) => w !== r.negativeKeywords[i])) {
+          r.negativeKeywords = cleaned;
+          modified = true;
+        }
+      }
+      if (Array.isArray(r.positiveKeywords)) {
+        const cleaned = Array.from(new Set(r.positiveKeywords.map(sanitizeKeyword).filter(w => w.length >= 3)));
+        if (cleaned.length !== r.positiveKeywords.length || cleaned.some((w, i) => w !== r.positiveKeywords[i])) {
+          r.positiveKeywords = cleaned;
+          modified = true;
+        }
+      }
+    }
+  }
+  if (modified) saveDatabase();
 }
 
 // 3B.1 — Visão geral de sentimento consolidada
@@ -16838,11 +16903,22 @@ app.get("/api/ai/sentiment/overview", (req, res) => {
     ? (reviews.reduce((a, r) => a + (r.rating || 5), 0) / reviews.length).toFixed(1)
     : 0;
 
-  const allNegKw = [];
-  wppAnalyzed.forEach(s => { if (Array.isArray(s.negativeKeywords)) allNegKw.push(...s.negativeKeywords); });
-  reviews.forEach(r => { if (Array.isArray(r.negativeKeywords)) allNegKw.push(...r.negativeKeywords); });
   const kwFreq = {};
-  allNegKw.forEach(k => { kwFreq[k] = (kwFreq[k] || 0) + 1; });
+  const countKeywords = (list) => {
+    if (!Array.isArray(list)) return;
+    const seen = new Set();
+    list.forEach(k => {
+      const clean = sanitizeKeyword(k);
+      if (clean && clean.length >= 3 && !seen.has(clean)) {
+        seen.add(clean);
+        kwFreq[clean] = (kwFreq[clean] || 0) + 1;
+      }
+    });
+  };
+
+  wppAnalyzed.forEach(s => countKeywords(s.negativeKeywords));
+  reviews.forEach(r => countKeywords(r.negativeKeywords));
+
   const topNegativeKeywords = Object.entries(kwFreq)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 8)

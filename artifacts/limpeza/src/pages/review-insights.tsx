@@ -400,12 +400,25 @@ export default function ReviewInsights() {
                 <h3 className="text-xs font-black uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-2"><AlertTriangle className="w-3.5 h-3.5 text-rose-400" />Top Pontos Negativos</h3>
                 {sentimentOverview?.topNegativeKeywords?.length > 0 ? (
                   <div className="space-y-1.5">
-                    {sentimentOverview.topNegativeKeywords.map((kw: any) => (
-                      <div key={kw.word} className="flex items-center justify-between text-xs">
-                        <span className="text-slate-300 capitalize">{kw.word}</span>
-                        <Badge className="bg-rose-950 text-rose-300 border-rose-800 text-[10px] font-bold">{kw.count}x</Badge>
-                      </div>
-                    ))}
+                    {(() => {
+                      const deduplicated: { word: string; count: number }[] = []
+                      for (const kw of sentimentOverview.topNegativeKeywords) {
+                        const cleanWord = (kw.word || "").replace(/^[\p{P}\p{S}\s]+|[\p{P}\p{S}\s]+$/gu, "").toLowerCase()
+                        if (!cleanWord || cleanWord.length < 3) continue
+                        const existing = deduplicated.find(d => d.word.toLowerCase() === cleanWord)
+                        if (existing) {
+                          existing.count += kw.count
+                        } else {
+                          deduplicated.push({ word: cleanWord, count: kw.count })
+                        }
+                      }
+                      return deduplicated.sort((a, b) => b.count - a.count).map((kw: any) => (
+                        <div key={kw.word} className="flex items-center justify-between text-xs">
+                          <span className="text-slate-300 capitalize">{kw.word}</span>
+                          <Badge className="bg-rose-950 text-rose-300 border-rose-800 text-[10px] font-bold">{kw.count}x</Badge>
+                        </div>
+                      ))
+                    })()}
                   </div>
                 ) : (
                   <p className="text-xs text-slate-500 italic">Sem palavras-chave negativas identificadas. Rode a análise de IA!</p>
