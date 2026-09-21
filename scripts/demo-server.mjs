@@ -341,6 +341,14 @@ function verifyPassword(password, storedHash) {
   return key === testHash;
 }
 
+function isPasswordExpired(user) {
+  if (!user || !user.password_updated_at) return false;
+  const MAX_PASSWORD_AGE_MS = 90 * 24 * 60 * 60 * 1000;
+  const updatedAt = new Date(user.password_updated_at).getTime();
+  if (isNaN(updatedAt)) return false;
+  return (Date.now() - updatedAt) > MAX_PASSWORD_AGE_MS;
+}
+
 // ── Database Persistence ────────────────────────────────────────────────────
 const DATA_DIR = path.resolve(__dirname, "../../data");
 if (!fs.existsSync(DATA_DIR)) {
@@ -3345,7 +3353,7 @@ app.post("/api/auth/login", (req, res) => {
     maxAge: 30 * 24 * 60 * 60 * 1000 // 30 dias
   });
   const mustChange = !!found.must_change_password;
-  const expired = isPasswordExpired(found);
+  const expired = typeof isPasswordExpired === "function" ? isPasswordExpired(found) : false;
   res.json({
     id: found.id,
     username: found.username,
@@ -4190,7 +4198,7 @@ function getRequestsForDate(dateStr, isNested = false) {
         c.status === "clean"
       );
 
-      if (!alreadyCleanedAfter && !stayoverFlatNumbers.has(fNumber)) {
+      if (!alreadyCleanedAfter) {
         const arrivingRes = (db.reservations || []).find(r =>
           r.status !== "cancelada" &&
           r.status !== "cancelado" &&
@@ -4260,7 +4268,6 @@ function getRequestsForDate(dateStr, isNested = false) {
   for (const res of pmsCheckouts) {
     const fNumber = String(res.flatNumber || (db.flats.find(f => f.id === res.flatId)?.number || ""));
     if (!fNumber) continue;
-    if (stayoverFlatNumbers.has(fNumber)) continue;
     pmsCheckoutsByFlat.set(fNumber, res);
   }
 
@@ -4353,7 +4360,7 @@ function getRequestsForDate(dateStr, isNested = false) {
   // 4.5. Solicitações de dias anteriores que foram trabalhadas ou concluídas nesta data (ex: carry-over limpo hoje)
   for (const r of (db.cleaningRequests || [])) {
     const fNumber = String(r.flatNumber || "");
-    if (!existingFlatNumbersForDate.has(fNumber) && !stayoverFlatNumbers.has(fNumber)) {
+    if (!existingFlatNumbersForDate.has(fNumber)) {
       const execDate = r.effectiveDate || 
         (r.completedAt ? r.completedAt.substring(0, 10) : null) || 
         (r.cleaningStartedAt ? r.cleaningStartedAt.substring(0, 10) : null) ||
@@ -4376,7 +4383,6 @@ function getRequestsForDate(dateStr, isNested = false) {
       const fNumber = String(r.flatNumber || "");
       if (!r.requestDate || r.requestDate < "2026-09-01" || r.requestDate >= dateStr || r.status === "clean" || r.status === "extended" || r.status === "no_show") return false;
       if (!r.leavingGuest && r.source !== "manual" && r.source !== "admin_manual" && r.source !== "guest_checkout") return false;
-      if (stayoverFlatNumbers.has(fNumber)) return false;
       if (existingFlatNumbersForDate.has(fNumber)) return false;
 
       // Se o flat já possui qualquer limpeza concluída (status === "clean") nessa mesma data ou em data posterior,

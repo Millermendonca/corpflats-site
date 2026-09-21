@@ -1017,7 +1017,7 @@ export function FlatCard({
             </div>
 
             {/* Guest Info - Admin View (Nomes dos hóspedes em box limpo) */}
-            {isAdmin && (flat?.leavingGuest || flat?.arrivingGuest) && (
+            {isAdmin && (flat?.leavingGuest || flat?.arrivingGuest || flat?.activeReservation?.guestName) && (
               <div className="text-[11px] bg-muted/40 rounded-xl p-2.5 border border-border/70 space-y-1">
                 {flat.leavingGuest && (
                   <div className="flex items-start gap-1.5 text-slate-700 dark:text-slate-300">
@@ -1031,6 +1031,12 @@ export function FlatCard({
                     <span className="font-semibold break-words">{flat.arrivingGuest}</span>
                   </div>
                 )}
+                {flat.activeReservation?.guestName && flat.activeReservation.guestName !== flat.leavingGuest && flat.activeReservation.guestName !== flat.arrivingGuest && (
+                  <div className="flex items-start gap-1.5 text-amber-700 dark:text-amber-400">
+                    <span className="font-bold text-amber-600 dark:text-amber-500 shrink-0">Hóspede no quarto:</span>
+                    <span className="font-semibold break-words">{flat.activeReservation.guestName}</span>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1038,6 +1044,11 @@ export function FlatCard({
             {!isAdmin && hasCheckin && (
               <div className="text-[11px] text-emerald-900 dark:text-emerald-200 bg-emerald-50/90 dark:bg-emerald-950/40 rounded-xl px-2.5 py-1.5 border border-emerald-200 dark:border-emerald-800/50 font-semibold flex items-center gap-1.5">
                 <span>🟢 Há novo check-in previsto para este flat hoje.</span>
+              </div>
+            )}
+            {!isAdmin && flat?.activeReservation?.guestName && (
+              <div className="text-[11px] text-amber-900 dark:text-amber-200 bg-amber-50/90 dark:bg-amber-950/40 rounded-xl px-2.5 py-1.5 border border-amber-200 dark:border-amber-800/50 font-semibold flex items-center gap-1.5">
+                <span>⚠️ Quarto atualmente ocupado por hóspede em estadia.</span>
               </div>
             )}
 
