@@ -180,13 +180,17 @@ export default function Dashboard() {
 
   const isLoading = loadingCheckouts || loadingCheckins
 
-  // Sort logic: Priority first, then Check-in today, then by flat number
+  // Sort logic: Priority first, then Pending from previous day, then Check-in today, then by flat number
   const sortedFlats = useMemo(() => {
     if (!checkouts || !Array.isArray(checkouts)) return []
     return [...checkouts].sort((a: any, b: any) => {
       const aPriority = a?.isPriority || a?.cleaningRequest?.isPriority ? 1 : 0
       const bPriority = b?.isPriority || b?.cleaningRequest?.isPriority ? 1 : 0
       if (aPriority !== bPriority) return bPriority - aPriority
+
+      const aPending = a?.isPendingFromPreviousDay || a?.cleaningRequest?.isPendingFromPreviousDay ? 1 : 0
+      const bPending = b?.isPendingFromPreviousDay || b?.cleaningRequest?.isPendingFromPreviousDay ? 1 : 0
+      if (aPending !== bPending) return bPending - aPending
 
       const aCheckin = a?.hasCheckinToday ? 1 : 0
       const bCheckin = b?.hasCheckinToday ? 1 : 0

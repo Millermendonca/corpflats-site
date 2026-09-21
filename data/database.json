@@ -771,6 +771,32 @@
       "durationMinutes": 18,
       "createdAt": "2026-09-08T08:00:00.000Z",
       "updatedAt": "2026-09-08T13:14:25.262Z"
+    },
+    {
+      "id": 293,
+      "flatId": 2,
+      "flatNumber": "114",
+      "requestDate": "2026-09-20",
+      "source": "checkout",
+      "status": "dirty",
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "assignedUserName": null,
+      "isVacant": false,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": null,
+      "leavingGuest": "Hiago Santana",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": null,
+      "cleaningStartedAt": null,
+      "completedAt": null,
+      "durationMinutes": null,
+      "createdAt": "2026-09-20T08:00:00.000Z",
+      "updatedAt": "2026-09-20T08:00:00.000Z"
     }
   ],
   "periodicTasks": [

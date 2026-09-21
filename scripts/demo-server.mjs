@@ -4139,11 +4139,17 @@ app.post("/api/cleaning/requests/manual", (req, res) => {
   return res.status(201).json(newReq);
 });
 
-function getRequestsForDate(dateStr) {
+function getRequestsForDate(dateStr, isNested = false) {
+  // Se a consulta for para uma data futura (ex: amanhã), garante que as solicitações de hoje já estão geradas e sincronizadas
+  if (!isNested && typeof getTodayStr === "function" && dateStr > getTodayStr()) {
+    getRequestsForDate(getTodayStr(), true);
+  }
+
   // Garante que cleaningRequests existe e não possui registros nulos
   db.cleaningRequests = (db.cleaningRequests || []).filter(r => r && (r.flatId || r.flatNumber));
   const requestsForDate = [];
   const existingFlatNumbersForDate = new Set();
+  let shouldSaveDb = false;
 
   // 1. Identifica flats que estão com hóspede contínuo (STAYOVER) na data consultada
   // Se o hóspede entrou ANTES de dateStr (checkinDate < dateStr) e só sai DEPOIS de dateStr (checkoutDate > dateStr),
@@ -4153,6 +4159,94 @@ function getRequestsForDate(dateStr) {
       .filter(r => r.status !== "cancelada" && r.checkinDate < dateStr && r.checkoutDate > dateStr)
       .map(r => String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || "")))
   );
+
+  // 1.5. Garante que checkouts de reservas ativas recentes (últimos 7 dias até dateStr) possuam registro de limpeza
+  // Isso protege contra reinicializações do servidor ou avanços de dia sem que o checkout fosse registrado em db.cleaningRequests
+  const minRecentCheckoutDate = typeof getOffsetDateStr === "function" ? getOffsetDateStr(-7) : "2026-09-01";
+  const recentPmsCheckouts = (db.reservations || []).filter(r =>
+    r.status !== "cancelada" &&
+    r.status !== "no_show" &&
+    r.checkoutDate &&
+    r.checkoutDate >= minRecentCheckoutDate &&
+    r.checkoutDate <= dateStr
+  );
+
+  for (const pmsRes of recentPmsCheckouts) {
+    const fNumber = String(pmsRes.flatNumber || (db.flats.find(f => f.id === pmsRes.flatId)?.number || ""));
+    if (!fNumber) continue;
+
+    const resDate = pmsRes.checkoutDate;
+    const flat = db.flats.find(f => String(f.number) === fNumber) || { id: pmsRes.flatId, number: fNumber, isOccupied: true };
+
+    const matchingCleanings = (db.cleaningRequests || []).filter(c =>
+      (String(c.flatNumber) === fNumber || c.flatId === flat.id) &&
+      c.requestDate === resDate
+    );
+
+    if (matchingCleanings.length === 0) {
+      const alreadyCleanedAfter = (db.cleaningRequests || []).some(c =>
+        (String(c.flatNumber) === fNumber || c.flatId === flat.id) &&
+        (c.effectiveDate || (c.completedAt ? c.completedAt.substring(0, 10) : c.requestDate)) >= resDate &&
+        c.status === "clean"
+      );
+
+      if (!alreadyCleanedAfter && !stayoverFlatNumbers.has(fNumber)) {
+        const arrivingRes = (db.reservations || []).find(r =>
+          r.status !== "cancelada" &&
+          r.status !== "cancelado" &&
+          String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || "")) === fNumber &&
+          r.checkinDate === resDate
+        );
+
+        let nextUpcomingRes = arrivingRes;
+        if (!nextUpcomingRes) {
+          const upcoming = (db.reservations || [])
+            .filter(r =>
+              r.status !== "cancelada" &&
+              r.status !== "cancelado" &&
+              String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || "")) === fNumber &&
+              r.checkinDate >= resDate
+            )
+            .sort((a, b) => a.checkinDate.localeCompare(b.checkinDate));
+          nextUpcomingRes = upcoming[0] || null;
+        }
+
+        const nextResHasTwin = Boolean(nextUpcomingRes && (nextUpcomingRes.twinBeds || nextUpcomingRes.bedType === "2 Solteiro" || nextUpcomingRes.bedType === "twin"));
+        const nextResHasExtraMattress = Boolean(nextUpcomingRes && nextUpcomingRes.extraMattress);
+
+        const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
+        const card = {
+          id: maxId + 1,
+          flatId: flat.id,
+          flatNumber: flat.number,
+          requestDate: resDate,
+          source: "checkout",
+          status: "dirty",
+          assignedUserId: null,
+          assignedUsername: null,
+          assignedUserName: null,
+          isVacant: false,
+          isPriority: Boolean(pmsRes.isPriority),
+          isExtended: false,
+          twinBeds: nextResHasTwin,
+          extraMattress: nextResHasExtraMattress,
+          adminNote: pmsRes.notes || pmsRes.specialRequests || null,
+          leavingGuest: pmsRes.guestName || pmsRes.title || "Hóspede",
+          arrivingGuest: arrivingRes ? (arrivingRes.guestName || arrivingRes.title) : (nextUpcomingRes ? nextUpcomingRes.guestName : null),
+          pendingObservation: null,
+          willCleanAt: null,
+          cleaningStartedAt: null,
+          completedAt: null,
+          durationMinutes: null,
+          createdAt: `${resDate}T08:00:00.000Z`,
+          updatedAt: `${resDate}T08:00:00.000Z`
+        };
+
+        db.cleaningRequests.push(card);
+        shouldSaveDb = true;
+      }
+    }
+  }
 
   // 2. Busca todas as reservas ativas que possuem CHECKOUT na data consultada (checkoutDate === dateStr)
   const pmsCheckouts = (db.reservations || []).filter(r => 
@@ -4240,6 +4334,7 @@ function getRequestsForDate(dateStr) {
 
     if (!existingCleaning && dateStr >= "2026-09-01") {
       db.cleaningRequests.push(card);
+      shouldSaveDb = true;
     }
 
     requestsForDate.push(card);
@@ -4268,15 +4363,15 @@ function getRequestsForDate(dateStr) {
         requestsForDate.push({
           ...r,
           isPendingFromPreviousDay: true,
-          originalRequestDate: r.requestDate
+          originalRequestDate: r.originalRequestDate || r.requestDate
         });
         existingFlatNumbersForDate.add(fNumber);
       }
     }
   }
 
-  // 5. Carry-Over de pendências não limpas de dias anteriores (apenas se o quarto NÃO virou stayover e APENAS PARA HOJE)
-  if (dateStr === getTodayStr()) {
+  // 5. Carry-Over de pendências não limpas de dias anteriores (para hoje e dias futuros)
+  if (typeof getTodayStr === "function" && dateStr >= getTodayStr()) {
     const previousUncleaned = (db.cleaningRequests || []).filter(r => {
       const fNumber = String(r.flatNumber || "");
       if (!r.requestDate || r.requestDate < "2026-09-01" || r.requestDate >= dateStr || r.status === "clean" || r.status === "extended" || r.status === "no_show") return false;
@@ -4304,11 +4399,15 @@ function getRequestsForDate(dateStr) {
         requestsForDate.push({
           ...prevReq,
           isPendingFromPreviousDay: true,
-          originalRequestDate: prevReq.requestDate
+          originalRequestDate: prevReq.originalRequestDate || prevReq.requestDate
         });
         existingFlatNumbersForDate.add(fNumber);
       }
     }
+  }
+
+  if (shouldSaveDb) {
+    saveDatabase();
   }
 
   return requestsForDate;
@@ -4338,7 +4437,16 @@ app.get("/api/reservations/checkouts", (req, res) => {
   const result = requestsForDate.map(req_ => {
     const flat = db.flats.find(f => f.id === req_.flatId) || { id: req_.flatId, number: req_.flatNumber || String(req_.flatId), isOccupied: true };
     const assignedUser = db.users.find(u => u.id === req_.assignedUserId);
-    const hasCheckinToday = Boolean(req_.arrivingGuest) || (db.reservations || []).some(r => (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) && r.checkinDate === dateStr && r.status !== "cancelada");
+    const checkinResToday = (db.reservations || []).find(r => 
+      (r.flatId === flat.id || String(r.flatNumber || "") === String(flat.number)) && 
+      r.checkinDate === dateStr && 
+      r.status !== "cancelada" && 
+      r.status !== "cancelado"
+    );
+    const hasCheckinToday = Boolean(checkinResToday) || (!req_.isPendingFromPreviousDay && Boolean(req_.arrivingGuest));
+    const resolvedArrivingGuest = checkinResToday 
+      ? (checkinResToday.guestName || checkinResToday.title) 
+      : (!req_.isPendingFromPreviousDay ? req_.arrivingGuest : null);
 
     const pendingTasks = [];
     for (const pt of (db.periodicTasks || []).filter(t => t.isActive && t.assignToHousekeeping !== false && (!Array.isArray(t.flatIds) || t.flatIds.length === 0 || t.flatIds.map(Number).includes(Number(flat.id))))) {
@@ -4441,7 +4549,7 @@ app.get("/api/reservations/checkouts", (req, res) => {
       isPendingFromPreviousDay: Boolean(req_.isPendingFromPreviousDay),
       originalRequestDate: req_.originalRequestDate || null,
       leavingGuest: req_.leavingGuest || null,
-      arrivingGuest: req_.arrivingGuest || null,
+      arrivingGuest: resolvedArrivingGuest || null,
       activeReservation: activeResToday ? {
         guestName: activeResToday.guestName,
         checkinDate: activeResToday.checkinDate,

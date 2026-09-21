@@ -990,10 +990,10 @@ export function FlatCard({
                 </Badge>
               )}
 
-              {flat.isPendingFromPreviousDay && (
+              {(flat.isPendingFromPreviousDay || request?.isPendingFromPreviousDay) && (
                 <Badge className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] shadow-2xs px-2 py-0.5 flex items-center gap-1 rounded-lg">
                   <AlertTriangle className="w-3 h-3 shrink-0" />
-                  <span>Não limpo em {flat.originalRequestDate ? format(new Date(flat.originalRequestDate + "T12:00:00"), "dd/MM") : "dia anterior"}</span>
+                  <span>Não limpo em {(flat.originalRequestDate || request?.originalRequestDate) ? format(new Date((flat.originalRequestDate || request?.originalRequestDate) + "T12:00:00"), "dd/MM") : "dia anterior"}</span>
                 </Badge>
               )}
 
