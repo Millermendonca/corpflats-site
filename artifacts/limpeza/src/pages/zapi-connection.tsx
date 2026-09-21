@@ -73,6 +73,8 @@ interface ZapiConfig {
   conciergeGroupId?: string
   conciergeGroupName?: string
   conciergeRequireKeywords?: boolean
+  testModeOnly?: boolean
+  testAllowedPhones?: string
 }
 
 export default function ZapiConnection() {
@@ -88,6 +90,8 @@ export default function ZapiConnection() {
     enabled: false,
     deliveryMode: "text_links",
     fallbackToText: true,
+    testModeOnly: true,
+    testAllowedPhones: "22998505276",
     wifiNetwork: "CorpFlats-Hospedes",
     wifiPassword: "corpflats2026",
     googleReviewUrl: "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac",
@@ -103,6 +107,7 @@ export default function ZapiConnection() {
   const [statusInfo, setStatusInfo] = useState<any>(null)
   const [loadingStatus, setLoadingStatus] = useState<boolean>(false)
   const [savingConfig, setSavingConfig] = useState<boolean>(false)
+  const [purgingRealGuests, setPurgingRealGuests] = useState<boolean>(false)
 
   // State: Webhooks & Monitoring
   const [syncingWebhooks, setSyncingWebhooks] = useState<boolean>(false)
@@ -406,6 +411,29 @@ export default function ZapiConnection() {
       toast({ title: "Erro de rede", description: err.message, variant: "destructive" })
     } finally {
       setSavingConfig(false)
+    }
+  }
+
+  const handlePurgeRealGuests = async () => {
+    if (!confirm("Deseja cancelar todos os agendamentos pendentes de hóspedes reais na fila? Apenas testes continuarão autorizados.")) {
+      return
+    }
+    setPurgingRealGuests(true)
+    try {
+      const res = await fetch("/api/whatsapp/queue/cancel-real-guests", { method: "POST" })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        toast({
+          title: "Fila limpa com sucesso!",
+          description: `${data.cancelledCount} agendamento(s) de hóspedes reais cancelados com segurança.`
+        })
+      } else {
+        toast({ title: "Erro ao limpar fila", description: data.error || "Não foi possível cancelar os itens.", variant: "destructive" })
+      }
+    } catch (err: any) {
+      toast({ title: "Erro de rede", description: err.message, variant: "destructive" })
+    } finally {
+      setPurgingRealGuests(false)
     }
   }
 
@@ -1477,6 +1505,66 @@ export default function ZapiConnection() {
                     <strong>Fallback Automático de Segurança:</strong> Caso o WhatsApp ou a Z-API rejeitem o botão por qualquer motivo momentâneo, o CorpFlats converte a mensagem instantaneamente em texto formatado com os links clicáveis, assegurando que o hóspede nunca deixe de receber a mensagem.
                   </li>
                 </ul>
+              </div>
+            </div>
+
+            {/* Trava de Segurança & Modo Sandbox / Teste */}
+            <div className={`p-4 rounded-2xl border transition-all ${
+              config.testModeOnly !== false 
+                ? "bg-blue-500/5 border-blue-500/30" 
+                : "bg-red-500/5 border-red-500/30"
+            } space-y-3`}>
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div>
+                  <Label className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                    <ShieldCheck className={`w-4 h-4 ${config.testModeOnly !== false ? "text-blue-600" : "text-red-600"}`} />
+                    Trava de Segurança: Modo de Teste / Sandbox (Whitelist de Telefones)
+                  </Label>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                    Quando ativado, <strong>hóspedes reais nunca receberão nenhuma mensagem</strong> (automática, agendada ou manual). Apenas os números autorizados abaixo receberão disparos.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge className={config.testModeOnly !== false ? "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-200" : "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200"}>
+                    {config.testModeOnly !== false ? "🛡️ Modo Teste Ativo (Seguro)" : "⚠️ Produção (Hóspedes Reais)"}
+                  </Badge>
+                  <Switch 
+                    checked={config.testModeOnly !== false}
+                    onCheckedChange={(val) => setConfig({ ...config, testModeOnly: val })}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end pt-1">
+                <div className="md:col-span-2 space-y-1">
+                  <Label className="text-[11px] flex items-center gap-1.5 font-semibold">
+                    <Phone className="w-3 h-3 text-muted-foreground" />
+                    Telefones Autorizados para Teste (separados por vírgula):
+                  </Label>
+                  <Input 
+                    value={config.testAllowedPhones ?? "22998505276"}
+                    onChange={(e) => setConfig({ ...config, testAllowedPhones: e.target.value })}
+                    placeholder="Ex: 22998505276, 22997124021"
+                    className="text-xs font-mono h-9 rounded-xl"
+                  />
+                  <span className="text-[10px] text-muted-foreground block">
+                    O seu número <code>22998505276</code> já vem autorizado por padrão. Você pode adicionar outros telefones da sua equipe de teste.
+                  </span>
+                </div>
+
+                <div>
+                  <Button 
+                    type="button"
+                    variant="outline" 
+                    size="sm" 
+                    onClick={handlePurgeRealGuests}
+                    disabled={purgingRealGuests}
+                    className="w-full text-xs h-9 gap-1.5 border-red-200 text-red-700 hover:bg-red-50 hover:border-red-300 dark:border-red-900/50 dark:text-red-400"
+                  >
+                    {purgingRealGuests ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5 text-red-500" />}
+                    Cancelar Fila de Hóspedes Reais
+                  </Button>
+                </div>
               </div>
             </div>
 

@@ -940,6 +940,63 @@ export function cleanWhatsAppPhone(rawPhone) {
   return digits;
 }
 
+// ── Verificação de Whitelist / Modo de Teste (Sandbox) ─────────────────────────
+export function isPhoneAllowedInTestMode(phone, config = {}) {
+  // Se testModeOnly for false explicitamente, estamos em produção total (todos permitidos)
+  if (config?.testModeOnly === false) {
+    return true;
+  }
+
+  if (!phone) return false;
+  const targetDigits = String(phone).replace(/\D/g, "");
+  if (!targetDigits) return false;
+
+  // Miller Mendonça (gestor do hotel / desenvolvedor)
+  const defaultAllowed = ["22998505276", "5522998505276"];
+
+  // Telefones autorizados configurados pelo usuário
+  const userConfigured = String(config?.testAllowedPhones || "")
+    .split(/[,;\s\n]+/)
+    .map(p => p.replace(/\D/g, ""))
+    .filter(Boolean);
+
+  const allAllowed = [...defaultAllowed, ...userConfigured];
+
+  return allAllowed.some(allowed => {
+    if (!allowed) return false;
+    if (targetDigits === allowed) return true;
+    if (targetDigits.endsWith(allowed) && allowed.length >= 8) return true;
+    if (allowed.endsWith(targetDigits) && targetDigits.length >= 8) return true;
+    return false;
+  });
+}
+
+// ── Cancelamento em Massa de Hóspedes Reais da Fila ────────────────────────────
+export function cancelRealGuestsFromQueue(db, saveDatabase) {
+  if (!db || !Array.isArray(db.whatsappQueue)) return { cancelledCount: 0 };
+
+  let cancelledCount = 0;
+  const nowIso = new Date().toISOString();
+
+  for (const item of db.whatsappQueue) {
+    if (item.status === "scheduled") {
+      const allowed = isPhoneAllowedInTestMode(item.guestPhone, db?.zapiConfig);
+      if (!allowed) {
+        item.status = "cancelled";
+        item.error = "Cancelado pelo Modo de Teste / Sandbox: destinatário não está na lista de telefones autorizados.";
+        item.updatedAt = nowIso;
+        cancelledCount++;
+      }
+    }
+  }
+
+  if (cancelledCount > 0 && typeof saveDatabase === "function") {
+    saveDatabase();
+  }
+
+  return { cancelledCount };
+}
+
 // ── Formatação de Datas em pt-BR ──────────────────────────────────────────────
 function formatDateBr(isoDate) {
   if (!isoDate) return "";
@@ -1412,6 +1469,16 @@ export async function sendZapiDocument(config, {
   if (!cleanPhone) {
     return { success: false, error: "Número de WhatsApp do destinatário inválido ou ausente." };
   }
+
+  // Trava de Segurança: Modo de Teste / Sandbox
+  if (!isPhoneAllowedInTestMode(cleanPhone, config)) {
+    console.warn(`[Z-API Sandbox] Documento para ${cleanPhone} BLOQUEADO pelo Modo de Teste. Permitido apenas para: ${config?.testAllowedPhones || "22998505276"}`);
+    return {
+      success: false,
+      blockedByTestMode: true,
+      error: `Disparo bloqueado: O WhatsApp está em Modo de Teste / Sandbox e o telefone ${cleanPhone} não está na lista de números autorizados.`
+    };
+  }
   if (!document) {
     return { success: false, error: "Arquivo ou link do documento não especificado." };
   }
@@ -1529,6 +1596,16 @@ export async function sendZapiMessage(config, {
   const cleanPhone = cleanWhatsAppPhone(phone);
   if (!cleanPhone) {
     return { success: false, error: "Número de WhatsApp do destinatário inválido ou ausente." };
+  }
+
+  // Trava de Segurança: Modo de Teste / Sandbox
+  if (!isPhoneAllowedInTestMode(cleanPhone, config)) {
+    console.warn(`[Z-API Sandbox] Disparo para ${cleanPhone} BLOQUEADO pelo Modo de Teste / Sandbox. Permitido apenas para: ${config?.testAllowedPhones || "22998505276"}`);
+    return {
+      success: false,
+      blockedByTestMode: true,
+      error: `Disparo bloqueado: O WhatsApp está em Modo de Teste / Sandbox e o telefone ${cleanPhone} não está na lista de números autorizados.`
+    };
   }
 
   const hasDoc = Boolean(documentUrl || fileBase64);
@@ -3258,7 +3335,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         conciergeMonitoringEnabled: true,
         conciergeGroupId: "",
         conciergeGroupName: "",
-        conciergeRequireKeywords: false
+        conciergeRequireKeywords: false,
+        testModeOnly: true,
+        testAllowedPhones: "22998505276"
       };
     } else {
       if (!db.zapiConfig.googleReviewUrl || db.zapiConfig.googleReviewUrl.includes("maps.google.com/?q=") || db.zapiConfig.googleReviewUrl.includes("g.page/r/corpflats")) {
@@ -3311,6 +3390,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       }
       if (db.zapiConfig.conciergeRequireKeywords === undefined) {
         db.zapiConfig.conciergeRequireKeywords = false;
+      }
+      if (db.zapiConfig.testModeOnly === undefined) {
+        db.zapiConfig.testModeOnly = true;
+      }
+      if (db.zapiConfig.testAllowedPhones === undefined) {
+        db.zapiConfig.testAllowedPhones = "22998505276";
       }
     }
 
@@ -3479,16 +3564,19 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           const resv = (db.reservations || []).find(r => r.id === item.reservationId || r.code === item.reservationCode);
           const isOldResv = resv && resv.checkoutDate && resv.checkoutDate < threeDaysAgoStr;
           const isOverdue = item.scheduledFor && (now.getTime() - new Date(item.scheduledFor).getTime()) > 2 * 3600 * 1000;
-          if (isOldResv || isOverdue) {
+          const isTestBlocked = db.zapiConfig?.testModeOnly !== false && !isPhoneAllowedInTestMode(item.guestPhone, db.zapiConfig);
+          if (isOldResv || isOverdue || isTestBlocked) {
             item.status = "cancelled";
-            item.error = "Cancelado na inicialização: agendamento retroativo ou reserva antiga";
+            item.error = isTestBlocked 
+              ? "Cancelado na inicialização: destinatário não autorizado no Modo de Teste (Sandbox)" 
+              : "Cancelado na inicialização: agendamento retroativo ou reserva antiga";
             item.updatedAt = nowIso;
             cleanedOldCount++;
           }
         }
       }
       if (cleanedOldCount > 0) {
-        console.log(`[Z-API Init] Cancelados ${cleanedOldCount} agendamentos antigos para evitar disparos indevidos.`);
+        console.log(`[Z-API Init] Cancelados ${cleanedOldCount} agendamentos antigos ou bloqueados pelo Modo de Teste.`);
       }
     }
 
@@ -3521,6 +3609,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       ...(db.zapiConfig || {}),
       ...req.body
     };
+    if (db.zapiConfig.testModeOnly !== false) {
+      cancelRealGuestsFromQueue(db, saveDatabase);
+    }
     saveDatabase();
     res.json({ success: true, config: db.zapiConfig });
   });
@@ -3793,6 +3884,40 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     item.updatedAt = new Date().toISOString();
     saveDatabase();
     res.json({ success: true, message: "Agendamento cancelado com sucesso." });
+  });
+
+  // 10.1. Cancelar Agendamentos de Hóspedes Reais (Purgar fila em Modo de Teste)
+  app.post("/api/whatsapp/queue/cancel-real-guests", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const result = cancelRealGuestsFromQueue(db, saveDatabase);
+    res.json({ 
+      success: true, 
+      ...result, 
+      message: `${result.cancelledCount} agendamento(s) de hóspedes reais cancelados com sucesso.` 
+    });
+  });
+
+  // 10.2. Cancelar Todos os Agendamentos Pendentes da Fila
+  app.post("/api/whatsapp/queue/cancel-all", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    let cancelledCount = 0;
+    const nowIso = new Date().toISOString();
+    for (const item of (db?.whatsappQueue || [])) {
+      if (item.status === "scheduled") {
+        item.status = "cancelled";
+        item.error = "Cancelado manualmente pelo usuário administrador";
+        item.updatedAt = nowIso;
+        cancelledCount++;
+      }
+    }
+    if (cancelledCount > 0) saveDatabase();
+    res.json({ 
+      success: true, 
+      cancelledCount, 
+      message: `${cancelledCount} agendamento(s) cancelados com sucesso.` 
+    });
   });
 
   // 11. Disparo de Teste Imediato (Avulso)
@@ -5108,7 +5233,17 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           }
         }
 
-                console.log(`[Auto-WhatsApp] Disparando agendamento automático para ${item.recipientName || item.guestName} (${item.recipientType === 'requester' ? 'Solicitante' : 'Hóspede'} / ${item.triggerEvent} / Canal: ${itemChannel || 'Padrão'})...`);
+        // Trava de Segurança: Modo de Teste / Sandbox
+        if (!isPhoneAllowedInTestMode(item.guestPhone, db.zapiConfig)) {
+          console.log(`[Auto-WhatsApp Sandbox] Agendamento para ${item.guestPhone} (${item.recipientName || item.guestName}) CANCELADO da fila: Modo de Teste ativo.`);
+          item.status = "cancelled";
+          item.error = "Cancelado pelo Modo de Teste: destinatário não está na lista autorizada.";
+          item.updatedAt = nowIso;
+          saveDatabase();
+          continue;
+        }
+
+        console.log(`[Auto-WhatsApp] Disparando agendamento automático para ${item.recipientName || item.guestName} (${item.recipientType === 'requester' ? 'Solicitante' : 'Hóspede'} / ${item.triggerEvent} / Canal: ${itemChannel || 'Padrão'})...`);
         const result = await sendZapiMessage(db.zapiConfig, {
           phone: item.guestPhone,
           message: item.renderedMessage,
@@ -5293,6 +5428,11 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
 
       for (const targetItem of targetsToSchedule) {
         if (!targetItem.phone) continue;
+
+        // Trava de Segurança: Modo de Teste / Sandbox (não agenda na fila se não for número de teste)
+        if (db?.zapiConfig?.testModeOnly !== false && !isPhoneAllowedInTestMode(targetItem.phone, db?.zapiConfig)) {
+          continue;
+        }
 
         // Verifica se já existe agendamento ou envio para essa combinação (reserva + trigger + recipientType)
         const alreadyQueued = (db.whatsappQueue || []).some(q => 
@@ -5480,6 +5620,14 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
       }
 
       for (const d of dispatches) {
+        if (!d.phone) continue;
+
+        // Trava de Segurança: Modo de Teste / Sandbox
+        if (db?.zapiConfig?.testModeOnly !== false && !isPhoneAllowedInTestMode(d.phone, db?.zapiConfig)) {
+          console.warn(`[WhatsApp Sandbox] Envio imediato de '${tpl.title}' para ${d.phone} (${d.name}) IGNORADO: Modo de Teste ativo.`);
+          continue;
+        }
+
         // Validação anti-duplicação para checkout_completed
         if (eventName === "checkout_completed" || eventName === "on_checkout") {
           const alreadySent = (db.whatsappHistory || []).some(h =>
@@ -5641,6 +5789,12 @@ export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId,
     const now = new Date();
 
     for (const resv of arrivingToday) {
+      // Trava de Segurança: Modo de Teste / Sandbox
+      if (db?.zapiConfig?.testModeOnly !== false && !isPhoneAllowedInTestMode(resv.guestPhone, db?.zapiConfig)) {
+        console.log(`[Room Ready Sandbox] Ignorando disparo de quarto pronto para ${resv.guestPhone} (${resv.guestName}): Modo de Teste ativo.`);
+        continue;
+      }
+
       const resvChannel = normalizeReservationChannel(resv.channel || resv.source || "site");
       const isOtaChannel = resvChannel === "booking" || resvChannel === "airbnb";
 

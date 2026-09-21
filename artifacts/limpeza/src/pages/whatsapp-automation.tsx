@@ -182,6 +182,8 @@ interface ZapiConfig {
   googleReviewUrl: string
   guestGuidePdfUrl?: string
   guestGuidePdfName?: string
+  testModeOnly?: boolean
+  testAllowedPhones?: string
 }
 
 const TAG_GROUPS = [
@@ -310,12 +312,16 @@ export default function WhatsappAutomation() {
     enabled: false,
     deliveryMode: "text_links",
     fallbackToText: true,
+    testModeOnly: true,
+    testAllowedPhones: "22998505276",
     wifiNetwork: "CorpFlats-Hospedes",
     wifiPassword: "corpflats2026",
     googleReviewUrl: "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac"
   })
   const [statusInfo, setStatusInfo] = useState<any>(null)
   const [loadingStatus, setLoadingStatus] = useState<boolean>(false)
+  const [purgingRealGuests, setPurgingRealGuests] = useState<boolean>(false)
+  const [togglingTestMode, setTogglingTestMode] = useState<boolean>(false)
 
   // State: Quick Test Modal
   const [testModalOpen, setTestModalOpen] = useState<boolean>(false)
@@ -738,6 +744,59 @@ export default function WhatsappAutomation() {
     }
   }
 
+  const handleToggleTestMode = async (enabled: boolean) => {
+    setTogglingTestMode(true)
+    try {
+      const res = await fetch("/api/whatsapp/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ testModeOnly: enabled })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setConfig(prev => ({ ...prev, testModeOnly: enabled }))
+        toast({
+          title: enabled ? "🛡️ Modo Teste Ativado (Sandbox)" : "⚠️ Modo Produção Ativado",
+          description: enabled 
+            ? "Hóspedes reais estão protegidos e não receberão mensagens. Apenas telefones autorizados receberão envios."
+            : "Atenção: O sistema está em Modo Produção. Mensagens serão entregues aos hóspedes reais das reservas.",
+          variant: enabled ? "default" : "destructive"
+        })
+        fetchQueue()
+      } else {
+        toast({ title: "Erro ao alternar modo de teste", variant: "destructive" })
+      }
+    } catch (err: any) {
+      toast({ title: "Erro de conexão", description: err.message, variant: "destructive" })
+    } finally {
+      setTogglingTestMode(false)
+    }
+  }
+
+  const handlePurgeRealGuests = async () => {
+    if (!confirm("Deseja cancelar todos os agendamentos pendentes de hóspedes reais na fila? O seu número de teste continuará funcionando normalmente.")) {
+      return
+    }
+    setPurgingRealGuests(true)
+    try {
+      const res = await fetch("/api/whatsapp/queue/cancel-real-guests", { method: "POST" })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        toast({
+          title: "Fila limpa com segurança!",
+          description: `${data.cancelledCount} agendamento(s) de hóspedes reais cancelados com sucesso.`
+        })
+        fetchQueue()
+      } else {
+        toast({ title: "Erro ao limpar fila", description: data.error || "Não foi possível cancelar os itens.", variant: "destructive" })
+      }
+    } catch (err: any) {
+      toast({ title: "Erro de rede", description: err.message, variant: "destructive" })
+    } finally {
+      setPurgingRealGuests(false)
+    }
+  }
+
   // Toggle template enabled state directly from cards
   const handleToggleTemplate = async (tpl: WhatsAppTemplate, newEnabled: boolean) => {
     const updated = { ...tpl, enabled: newEnabled }
@@ -1050,6 +1109,26 @@ export default function WhatsappAutomation() {
               />
             </div>
 
+            {/* Test Mode / Sandbox Switch */}
+            <div 
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-semibold shadow-xs transition-colors ${
+                config.testModeOnly !== false 
+                  ? "bg-blue-50 dark:bg-blue-950/40 border-blue-300 dark:border-blue-700 text-blue-800 dark:text-blue-300"
+                  : "bg-red-50 dark:bg-red-950/40 border-red-300 dark:border-red-700 text-red-800 dark:text-red-300"
+              }`}
+            >
+              <ShieldCheck className={`w-3.5 h-3.5 ${config.testModeOnly !== false ? "text-blue-600" : "text-red-600"}`} />
+              <span className="text-xs font-bold">
+                {config.testModeOnly !== false ? "Modo Teste: ATIVO" : "Produção: HÓSPEDES"}
+              </span>
+              <Switch 
+                checked={config.testModeOnly !== false}
+                onCheckedChange={handleToggleTestMode}
+                disabled={togglingTestMode}
+                className="scale-75 data-[state=checked]:bg-blue-600"
+              />
+            </div>
+
             {/* Status Z-API Badge */}
             <div 
               onClick={() => setLocation("/zapi-conexao")}
@@ -1149,6 +1228,66 @@ export default function WhatsappAutomation() {
             >
               <Zap className="w-3.5 h-3.5 fill-white" />
               Ativar Motor de Envio Agora
+            </Button>
+          </div>
+        )}
+
+        {/* Banner do Modo de Teste / Sandbox */}
+        {config.testModeOnly !== false ? (
+          <div className="p-4 rounded-2xl border border-blue-300 dark:border-blue-800 bg-blue-50/90 dark:bg-blue-950/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                <ShieldCheck className="w-5 h-5" />
+              </div>
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h4 className="text-sm font-bold text-blue-950 dark:text-blue-100">
+                    Modo de Teste / Sandbox Ativo — Hóspedes Reais Protegidos
+                  </h4>
+                  <Badge className="bg-blue-200 text-blue-900 dark:bg-blue-900 dark:text-blue-100 text-[10px] font-bold">
+                    Whitelist Ativa
+                  </Badge>
+                </div>
+                <p className="text-xs text-blue-800 dark:text-blue-300">
+                  Nenhuma mensagem será enviada para hóspedes reais. Apenas o seu telefone (<strong>{config.testAllowedPhones || "22998505276"}</strong>) receberá disparos de teste e simulações.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handlePurgeRealGuests}
+                disabled={purgingRealGuests}
+                className="bg-white dark:bg-zinc-900 border-blue-300 dark:border-blue-700 text-blue-900 dark:text-blue-200 text-xs font-semibold gap-1.5 shadow-xs hover:bg-blue-100"
+              >
+                {purgingRealGuests ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5 text-red-500" />}
+                Limpar Fila de Hóspedes Reais
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="p-4 rounded-2xl border border-red-300 dark:border-red-800 bg-red-50/90 dark:bg-red-950/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-red-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                <AlertCircle className="w-5 h-5" />
+              </div>
+              <div className="space-y-0.5">
+                <h4 className="text-sm font-bold text-red-950 dark:text-red-100">
+                  ⚠️ ATENÇÃO: MODO PRODUÇÃO ATIVADO
+                </h4>
+                <p className="text-xs text-red-800 dark:text-red-300">
+                  O sistema enviará mensagens reais aos números de telefone dos hóspedes de acordo com as réguas programadas.
+                </p>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              onClick={() => handleToggleTestMode(true)}
+              className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold gap-1.5 shrink-0 shadow-xs"
+            >
+              <ShieldCheck className="w-3.5 h-3.5" />
+              Ativar Modo de Teste Seguro
             </Button>
           </div>
         )}
@@ -2434,6 +2573,17 @@ export default function WhatsappAutomation() {
                     <Button 
                       variant="outline" 
                       size="sm" 
+                      onClick={handlePurgeRealGuests}
+                      disabled={purgingRealGuests}
+                      className="text-xs h-8 gap-1 border-blue-300 dark:border-blue-800 text-blue-800 dark:text-blue-300 hover:bg-blue-50"
+                      title="Cancela todos os disparos agendados para hóspedes reais, mantendo apenas seu telefone de teste."
+                    >
+                      {purgingRealGuests ? <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-600" /> : <ShieldCheck className="w-3.5 h-3.5 text-blue-600" />}
+                      Limpar Hóspedes Reais
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
                       onClick={fetchQueue}
                       disabled={loadingQueue}
                       className="text-xs h-8 gap-1"
@@ -2763,6 +2913,15 @@ export default function WhatsappAutomation() {
                       Meu Celular ({statusInfo.phone.slice(-4)})
                     </Button>
                   )}
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    size="sm" 
+                    className="text-[10px] h-6 px-2 py-0 border-blue-300 text-blue-700 bg-blue-50/50 hover:bg-blue-100"
+                    onClick={() => setTestPhone("22998505276")}
+                  >
+                    Meu WhatsApp (22 99850-5276)
+                  </Button>
                   <Button 
                     type="button" 
                     variant="outline" 
