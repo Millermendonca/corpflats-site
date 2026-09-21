@@ -10,7 +10,7 @@ import {
   MessageSquareWarning, BarChart3, Bell, ClipboardCheck, Sparkles, Key, Check, AlertCircle,
   CalendarDays, Users, Tablet, Globe, DollarSign, Bot, FileText, Coffee, Menu, X, Search, ChevronRight,
   CreditCard, Palette, Coins, ScrollText, Building2, Package, TrendingUp, Car, ThumbsUp, MessageSquare,
-  Smartphone, ShoppingCart, Wallet, Mail
+  Smartphone, ShoppingCart, Wallet, Mail, Workflow
 } from "lucide-react"
 import { Button } from "./ui/button"
 import { Skeleton } from "./ui/skeleton"
@@ -233,6 +233,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       {
         title: "💬 Central de Comunicação",
         items: [
+          { href: "/jornada-reservas", label: "Mapa da Jornada (Fluxograma)", icon: Workflow, description: "Fluxograma completo de mensagens WhatsApp e e-mails por etapa da reserva" },
           { href: "/whatsapp-chat", label: "WhatsApp Web (Chat)", icon: MessageSquare, description: "Conversas em tempo real, envio e histórico completo" },
           { href: "/whatsapp", label: "Automação WhatsApp", icon: Bot, description: "Réguas de gatilhos, editor, fila e histórico" },
           { href: "/emails", label: "Gerenciador de E-mails", icon: Mail, description: "E-mails enviados, agendados, redator e controle do motor" },

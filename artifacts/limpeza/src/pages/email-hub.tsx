@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react"
+import { useLocation } from "wouter"
 import { Shell } from "@/components/layout"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -14,10 +15,11 @@ import { useToast } from "@/hooks/use-toast"
 import { 
   Mail, Send, Clock, CheckCircle2, AlertCircle, RefreshCw, 
   Settings, Play, Pause, Search, Eye, Filter, Sparkles, Building2,
-  Calendar, User, Check, Trash2, ArrowRight, ShieldCheck, HelpCircle
+  Calendar, User, Check, Trash2, ArrowRight, ShieldCheck, HelpCircle, Workflow
 } from "lucide-react"
 
 export default function EmailHub() {
+  const [, setLocation] = useLocation()
   const { toast } = useToast()
   const [activeTab, setActiveTab] = useState<string>("history")
 
@@ -348,7 +350,16 @@ export default function EmailHub() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setLocation("/jornada-reservas")}
+              className="text-xs font-semibold gap-1.5 rounded-xl h-9 bg-amber-500/10 border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20 shadow-xs"
+            >
+              <Workflow className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+              <span>Mapa da Jornada (Fluxograma)</span>
+            </Button>
             <Button
               variant="outline"
               size="sm"

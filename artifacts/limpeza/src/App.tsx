@@ -47,6 +47,7 @@ import ShoppingListPage from '@/pages/shopping-list';
 import MaidStatementPage from '@/pages/maid-statement';
 import ZapiConnection from '@/pages/zapi-connection';
 import EmailHub from '@/pages/email-hub';
+import ReservationJourney from '@/pages/reservation-journey';
 import NotFound from '@/pages/not-found';
 
 const queryClient = new QueryClient({
@@ -144,6 +145,11 @@ function Router() {
         <Route path="/fechamento-limpeza" component={Reports} />
 
         {/* WhatsApp Automation, Email Hub & Z-API Connection Routes */}
+        <Route path="/jornada-reservas" component={ReservationJourney} />
+        <Route path="/jornada-comunicacao" component={ReservationJourney} />
+        <Route path="/fluxo-reservas" component={ReservationJourney} />
+        <Route path="/mapa-jornada" component={ReservationJourney} />
+        <Route path="/jornada" component={ReservationJourney} />
         <Route path="/emails" component={EmailHub} />
         <Route path="/email-hub" component={EmailHub} />
         <Route path="/gerenciador-emails" component={EmailHub} />

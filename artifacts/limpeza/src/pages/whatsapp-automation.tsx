@@ -49,7 +49,8 @@ import {
   Eye,
   ShieldCheck,
   RotateCcw,
-  FileText
+  FileText,
+  Workflow
 } from "lucide-react"
 import { AccessDenied } from "@/components/access-denied"
 import { useQuickMessages, WhatsAppQuickMessage, renderQuickMessage } from "@/hooks/use-quick-messages"
@@ -1078,6 +1079,16 @@ export default function WhatsappAutomation() {
                 </>
               )}
             </div>
+
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="gap-1.5 text-xs rounded-xl bg-amber-500/10 border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20 font-semibold shadow-xs"
+              onClick={() => setLocation("/jornada-reservas")}
+            >
+              <Workflow className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+              Mapa da Jornada (Fluxograma)
+            </Button>
 
             <Button 
               size="sm" 
