@@ -104,12 +104,11 @@ Recebemos o pedido de *Pré-Reserva* no *{{nome_hotel}}*!
 • Valor Total: *{{valor_total}}*
 • Quanto Falta Pagar: *{{quanto_falta}}*
 
-🔑 *Chave PIX (CNPJ):* {{chave_pix}}
-• Favorecido: {{titular_pix}}
-
-Para garantir sua acomodação antes da liberação das datas, pague via PIX acima ou parcele no cartão em até 12x:`,
+⚡ *Pagamento com Confirmação Automática (Banco Inter):*
+Para que seu pagamento seja identificado e sua reserva confirmada na hora pelo sistema (sem precisar enviar comprovante), acesse o link seguro abaixo para gerar o PIX oficial ou parcelar no cartão em até 12x:
+👉 {{link_portal_hospede}}`,
     buttons: [
-      { label: "💳 Ver Reserva & Pagar", type: "URL", url: "{{link_portal_hospede}}" },
+      { label: "💳 Pagar com Baixa Automática", type: "URL", url: "{{link_portal_hospede}}" },
       { label: "📞 Falar com Atendimento", type: "CALL", url: "{{telefone_hotel}}" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_pre_reserva",
@@ -136,12 +135,11 @@ Sua pré-reserva no *{{nome_hotel}}* (*Flat {{quarto}}*) foi gerada há 1 hora e
 • Período: *{{data_checkin}} a {{data_checkout}}*
 • Valor Pendente: *{{quanto_falta}}*
 
-🔑 *Chave PIX (CNPJ):* {{chave_pix}}
-• Favorecido: {{titular_pix}}
-
-Para garantir sua acomodação antes que as datas sejam liberadas, pague via PIX ou parcele em até 12x no cartão:`,
+⚡ *Pagamento com Confirmação Automática (Banco Inter):*
+Para que seu pagamento seja identificado e sua reserva confirmada imediatamente pelo sistema, efetue a quitação pelo link seguro abaixo (PIX Oficial com QR Code ou cartão em até 12x):
+👉 {{link_portal_hospede}}`,
     buttons: [
-      { label: "💳 Pagar e Confirmar", type: "URL", url: "{{link_portal_hospede}}" },
+      { label: "💳 Pagar com Baixa Automática", type: "URL", url: "{{link_portal_hospede}}" },
       { label: "🏨 Ver Minha Reserva", type: "URL", url: "{{link_portal_hospede}}" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_payment_pending",
@@ -161,7 +159,7 @@ Para garantir sua acomodação antes que as datas sejam liberadas, pague via PIX
     timingLabel: "Imediato à inclusão da diária extra/saldo",
     condition: "Acréscimo de diária ou saldo pendente em reserva existente",
     channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
-    description: "Se uma reserva de qualquer origem (inclusive Booking ou Airbnb) solicita mais 1 diária pelo WhatsApp ou altera a estadia com saldo a pagar, dispara mensagem informando a alteração, período atualizado, valor pendente e chave PIX/link para quitação.",
+    description: "Se uma reserva de qualquer origem (inclusive Booking ou Airbnb) solicita mais 1 diária pelo WhatsApp ou altera a estadia com saldo a pagar, dispara mensagem informando a alteração, período atualizado, valor pendente e link seguro do Banco Inter para quitação com baixa automática.",
     messagePreview: `Olá, *{{nome_destinatario}}*! 🔄✨
 Confirmamos a solicitação de alteração/extensão da sua estadia no *{{nome_hotel}}* (*Flat {{quarto}}*)!
 
@@ -173,12 +171,11 @@ Confirmamos a solicitação de alteração/extensão da sua estadia no *{{nome_h
 💰 *Saldo Pendente da Alteração:*
 • Valor a Quitar: *{{quanto_falta}}*
 
-🔑 *Chave PIX (CNPJ):* {{chave_pix}}
-• Favorecido: {{titular_pix}}
-
-Efetue o pagamento pelo PIX acima ou parcele no cartão pelo seu portal:`,
+⚡ *Pagamento com Confirmação Automática (Banco Inter):*
+Para que a extensão seja confirmada na hora pelo sistema, efetue a quitação pelo link seguro do seu portal (PIX Oficial com QR Code ou cartão em até 12x):
+👉 {{link_portal_hospede}}`,
     buttons: [
-      { label: "💳 Pagar Saldo Pendente", type: "URL", url: "{{link_portal_hospede}}" },
+      { label: "💳 Pagar com Baixa Automática", type: "URL", url: "{{link_portal_hospede}}" },
       { label: "🏨 Ver Reserva Atualizada", type: "URL", url: "{{link_portal_hospede}}" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_additional_daily_pending",
@@ -839,7 +836,7 @@ const SIMULATION_SCENARIOS: Scenario[] = [
       "node_additional_daily_pending",
       "node_reservation_updated"
     ],
-    description: "Hóspede de qualquer canal (inclusive Booking/Airbnb) solicita mais 1 diária pelo WhatsApp. Ao lançar a alteração com saldo a pagar, dispara mensagem com resumo, noites atualizadas, valor pendente e chave PIX para quitação."
+    description: "Hóspede de qualquer canal (inclusive Booking/Airbnb) solicita mais 1 diária pelo WhatsApp. Ao lançar a alteração com saldo a pagar, dispara mensagem com resumo, noites atualizadas, valor pendente e link seguro do Banco Inter para quitação com baixa automática."
   },
   {
     id: "precheckin_two_guests",

@@ -90,16 +90,12 @@ Recebemos o pedido de *Pré-Reserva* no *{{nome_hotel}}*!
 • Quanto foi Pago: *{{valor_pago}}*
 • Quanto Falta Pagar: *{{quanto_falta}}*
 
-🔑 *Dados para Pagamento via PIX:*
-• Chave PIX (CNPJ): *{{chave_pix}}*
-• Favorecido: *{{titular_pix}}*
-
-{{instrucao_pagamento}}
-
-Para agilizar sua estadia ou pagar via cartão em até 12x, acesse seu portal:`,
+⚡ *Pagamento com Confirmação Automática (Banco Inter):*
+Para que seu pagamento seja identificado e sua reserva confirmada na hora pelo sistema (sem precisar enviar comprovante), acesse o link seguro abaixo para gerar o PIX oficial ou parcelar no cartão em até 12x:
+👉 {{link_portal_hospede}}`,
     footer: "CorpFlats • Hospedagem Contemporânea",
     buttons: [
-      { id: "btn_portal", type: "URL", label: "💳 Ver Reserva & Pagar", url: "{{link_portal_hospede}}" },
+      { id: "btn_portal", type: "URL", label: "💳 Pagar com Baixa Automática", url: "{{link_portal_hospede}}" },
       { id: "btn_admin", type: "CALL", label: "📞 Falar com Atendimento", phone: "{{telefone_hotel}}" }
     ]
   },
@@ -565,13 +561,12 @@ Sua pré-reserva no *{{nome_hotel}}* (*Flat {{quarto}}*) foi gerada há 1 hora e
 • Período: *{{data_checkin}} a {{data_checkout}}*
 • Valor Pendente: *{{quanto_falta}}*
 
-🔑 *Chave PIX (CNPJ):* *{{chave_pix}}*
-• Favorecido: *{{titular_pix}}*
-
-Para garantir sua acomodação antes que as datas sejam liberadas, pague via PIX acima ou parcele em até 12x no cartão pelo portal seguro:`,
+⚡ *Pagamento com Confirmação Automática (Banco Inter):*
+Para que seu pagamento seja identificado e sua reserva confirmada imediatamente pelo sistema, efetue a quitação pelo link seguro abaixo (PIX Oficial com QR Code ou cartão em até 12x):
+👉 {{link_portal_hospede}}`,
     footer: "CorpFlats • Pagamento Seguro",
     buttons: [
-      { id: "btn_pagar", type: "URL", label: "💳 Pagar e Confirmar", url: "{{link_portal_hospede}}" },
+      { id: "btn_pagar", type: "URL", label: "💳 Pagar com Baixa Automática", url: "{{link_portal_hospede}}" },
       { id: "btn_chk", type: "URL", label: "🏨 Ver Minha Reserva", url: "{{link_portal_hospede}}" }
     ]
   },
@@ -598,13 +593,12 @@ Confirmamos a solicitação de alteração/extensão da sua estadia no *{{nome_h
 💰 *Saldo Pendente da Alteração:*
 • Valor a Quitar: *{{quanto_falta}}*
 
-🔑 *Chave PIX (CNPJ):* *{{chave_pix}}*
-• Favorecido: *{{titular_pix}}*
-
-Você também pode consultar o extrato detalhado e quitar via cartão em seu portal seguro:`,
+⚡ *Pagamento com Confirmação Automática (Banco Inter):*
+Para que a extensão seja confirmada na hora pelo sistema, efetue a quitação pelo link seguro do seu portal (PIX Oficial com QR Code ou cartão em até 12x):
+👉 {{link_portal_hospede}}`,
     footer: "CorpFlats • Alteração Confirmada",
     buttons: [
-      { id: "btn_pagar", type: "URL", label: "💳 Ver Detalhes & Pagar", url: "{{link_portal_hospede}}" },
+      { id: "btn_pagar", type: "URL", label: "💳 Pagar com Baixa Automática", url: "{{link_portal_hospede}}" },
       { id: "btn_admin", type: "CALL", label: "📞 Falar com Atendimento", phone: "{{telefone_hotel}}" }
     ]
   },
@@ -1146,19 +1140,29 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   } else {
     formaPagamento = "PIX";
   }
-  
+
+  // URL Base pública do sistema (prioriza domínio de produção ou host)
+  const appOrigin = baseUrl || "https://corpflats.onrender.com";
+
+  // Links inteligentes com autenticação por código de reserva
+  const linkCheckinDigital = `${appOrigin}/pre-checkin/${resCode}`;
+  const linkPortalHospede = `${appOrigin}/minha-reserva/${resCode}`;
+  const linkPagamento = `${appOrigin}/minha-reserva/${resCode}`;
+  const linkCafeManha = `${appOrigin}/cafe/${resCode}`;
+  const linkCheckout = `${appOrigin}/checkout/${resCode}`;
+
   let instrucaoPagamento = "";
   if (paidAmount === 0) {
-    instrucaoPagamento = "Para garantir e confirmar definitivamente sua acomodação, realize o pagamento via PIX da chave acima ou acesse o link para cartão de crédito e nos envie o comprovante por aqui.";
+    instrucaoPagamento = `Para que seu pagamento seja identificado e sua reserva confirmada na hora de forma 100% automática pelo Banco Inter, acesse o link seguro para gerar o PIX oficial ou parcelar no cartão:\n👉 ${linkPortalHospede}`;
   } else if (paidAmount > 0 && pendingAmount > 0) {
-    instrucaoPagamento = `Identificamos o pagamento parcial de *${formatCurrency(paidAmount)}*. O saldo restante de *${formatCurrency(pendingAmount)}* poderá ser quitado via PIX ou diretamente na recepção no momento do check-in.`;
+    instrucaoPagamento = `Identificamos o pagamento parcial de *${formatCurrency(paidAmount)}*. O saldo restante de *${formatCurrency(pendingAmount)}* poderá ser quitado com baixa automática pelo Banco Inter acessando o link seguro do portal:\n👉 ${linkPortalHospede}`;
   } else {
     instrucaoPagamento = "Reserva 100% quitada! Nenhuma pendência financeira.";
   }
 
   let instrucaoSaldo = "";
   if (pendingAmount > 0) {
-    instrucaoSaldo = `ℹ️ *Aviso de Pagamento:* Resta o saldo de *${formatCurrency(pendingAmount)}*, que poderá ser quitado via PIX (Chave CNPJ: *${pixKey}*) ou diretamente na recepção no momento do check-in.`;
+    instrucaoSaldo = `ℹ️ *Aviso de Pagamento:* Resta o saldo de *${formatCurrency(pendingAmount)}*. Para identificação e confirmação automática pelo Banco Inter, efetue o pagamento pelo link seguro do seu portal:\n👉 ${linkPortalHospede}`;
   } else {
     instrucaoSaldo = "✅ *Pagamento 100% Concluído:* Sua hospedagem está totalmente quitada.";
   }
@@ -1174,16 +1178,6 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const wifiPassword = zapiCfg.wifiPassword || "corpflats2026";
   const adminWhatsApp = db.settings?.adminWhatsApp || "5522997124021";
   const googleReviewUrl = zapiCfg.googleReviewUrl || "https://maps.app.goo.gl/7L3LnGksmimABGCH7?g_st=ac";
-
-  // URL Base pública do sistema (prioriza domínio de produção ou host)
-  const appOrigin = baseUrl || "https://corpflats.onrender.com";
-
-  // Links inteligentes com autenticação por código de reserva
-  const linkCheckinDigital = `${appOrigin}/pre-checkin/${resCode}`;
-  const linkPortalHospede = `${appOrigin}/minha-reserva/${resCode}`;
-  const linkPagamento = `${appOrigin}/minha-reserva/${resCode}`;
-  const linkCafeManha = `${appOrigin}/cafe/${resCode}`;
-  const linkCheckout = `${appOrigin}/checkout/${resCode}`;
 
   let totalNights = 1;
   if (reservation.checkinDate && reservation.checkoutDate) {
@@ -3283,12 +3277,13 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         if (tpl.id === "tpl_pre_reserva") {
           tpl.recipientTarget = "requester";
           tpl.channels = ["site", "whatsapp", "outros"];
-          if (!tpl.message.includes("Aguardando Pagamento")) {
+          if (tpl.message.includes("{{chave_pix}}") || !tpl.message.includes("Aguardando Pagamento")) {
             const defPre = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_reserva");
             if (defPre) {
               tpl.title = defPre.title;
               tpl.description = defPre.description;
               tpl.message = defPre.message;
+              tpl.buttons = defPre.buttons;
             }
           }
         }
@@ -3298,6 +3293,26 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           tpl.offsetValue = 1;
           tpl.offsetUnit = "hours";
           tpl.channels = ["site", "whatsapp", "outros"];
+          if (tpl.message.includes("{{chave_pix}}")) {
+            const defPend = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_payment_pending");
+            if (defPend) {
+              tpl.title = defPend.title;
+              tpl.description = defPend.description;
+              tpl.message = defPend.message;
+              tpl.buttons = defPend.buttons;
+            }
+          }
+        }
+        if (tpl.id === "tpl_additional_daily_pending") {
+          if (tpl.message.includes("{{chave_pix}}")) {
+            const defAdd = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_additional_daily_pending");
+            if (defAdd) {
+              tpl.title = defAdd.title;
+              tpl.description = defAdd.description;
+              tpl.message = defAdd.message;
+              tpl.buttons = defAdd.buttons;
+            }
+          }
         }
         if (tpl.id === "tpl_payment_confirmed") {
           tpl.channels = ["site", "whatsapp"];
