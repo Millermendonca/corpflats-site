@@ -203,13 +203,16 @@ function wrapEmailTemplate({ title, badge, contentHtml }) {
  * Gatilho A: Template de Aviso de Check-in Concluído à Recepção/Portaria
  */
 export function renderCheckinConfirmedEmail({ reservation, flat, settings }) {
-  const flatNumber = flat?.number || reservation?.flatNumber || "Não informado";
+  const rawFlat = flat?.number || reservation?.flatNumber || "Não informado";
+  const cleanFlat = String(rawFlat).replace(/^flat\s*/i, "").trim();
+  const flatDisplay = cleanFlat ? `Flat ${cleanFlat}` : "Flat Não informado";
+  const flatNumber = cleanFlat || "Não informado";
   const buildingName = flat?.buildingName || flat?.building || settings?.buildingName || "Edifício Soho Residence Service";
   const guestName = reservation?.guestName || "Hóspede Titular";
   const checkinDateBr = formatDateBr(reservation?.checkinDate);
   const checkoutDateBr = formatDateBr(reservation?.checkoutDate);
 
-  const subject = `[CHECK-IN CONFIRMADO] Flat ${flatNumber} - ${guestName} (${checkinDateBr} a ${checkoutDateBr})`;
+  const subject = `${flatDisplay} - ${guestName} (${checkinDateBr} a ${checkoutDateBr})`;
 
   const checkinTime = settings?.checkinTime || "14:00";
   const checkoutTime = settings?.checkoutTime || "12:00";
@@ -457,8 +460,8 @@ export function renderGarageAuthorizationEmail({ reservation, flat, vehicle, set
   const vColor = (v.color || "").trim();
   const vehicleDesc = [vBrand, vModel].filter(Boolean).join(" - ") || "Veículo de Passeio";
 
-  // Sempre colocar no assunto do e-mail o número do flat conforme instrução
-  const subject = `[LIBERAÇÃO DE GARAGEM] ${flatDisplay} - ${guestName} - Veículo: ${vPlate}`;
+  // Sempre colocar no assunto do e-mail apenas número do flat, nome do hóspede e período conforme instrução
+  const subject = `${flatDisplay} - ${guestName} (${checkinDateBr} a ${checkoutDateBr})`;
 
   const contentHtml = `
     <div style="margin-bottom: 20px;">

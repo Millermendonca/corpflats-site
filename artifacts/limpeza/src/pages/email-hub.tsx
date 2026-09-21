@@ -297,11 +297,11 @@ export default function EmailHub() {
     setFormTemplate(tplKey)
     if (tplKey === "portaria") {
       setFormRecipient(engineConfig.receptionEmail || "millerpessanha@gmail.com")
-      setFormSubject("[AVISO PORTARIA] Autorização de Acesso • Flat CorpFlats")
+      setFormSubject("Flat [Número] - [Nome do Hóspede] ([Data Check-in] a [Data Check-out])")
       setFormBody("Prezada Recepção / Portaria,\n\nSolicitamos liberação de acesso para o hóspede titular referente ao Flat CorpFlats para a estadia informada.\n\nQualquer dúvida, estamos à inteira disposição!\nEquipe CorpFlats")
     } else if (tplKey === "garagem") {
       setFormRecipient(engineConfig.garageEmail || "millerpessanha@gmail.com")
-      setFormSubject("[AUTORIZAÇÃO GARAGEM] Vaga Rotativa • Flat CorpFlats")
+      setFormSubject("Flat [Número] - [Nome do Hóspede] ([Data Check-in] a [Data Check-out])")
       setFormBody("Prezada Administração da Garagem / Estacionamento,\n\nSolicitamos cadastro e autorização de vaga de garagem para o veículo do hóspede referente ao Flat CorpFlats.\n\nAtenciosamente,\nEquipe CorpFlats")
     } else if (tplKey === "hospede_welcome") {
       setFormSubject("Bem-vindo(a) ao CorpFlats • Orientações da sua Estadia")

@@ -20924,7 +20924,7 @@ setInterval(async () => {
             reservationId: r.code || r.id,
             recipient: receptionEmail,
             cc: garageEmail !== receptionEmail ? garageEmail : undefined,
-            subject: `[CHECK-IN DO DIA - 07:00] ${subject}`,
+            subject,
             bodyHtml,
             type: "email",
             direction: "outbound",

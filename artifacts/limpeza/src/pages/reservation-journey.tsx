@@ -352,7 +352,7 @@ Para que a portaria libere sua entrada imediatamente na chegada sem filas, acess
     hasAttachment: true,
     attachmentName: "FNRH_Assinada_Com_Auditoria.pdf",
     description: "Disparado às 07:00 da manhã para cada check-in do dia, enviado conjuntamente para a Recepção e Garagem. Anexa o PDF da FNRH assinada digitalmente com auditoria e QR Code, foto, veículo, alerta destacado se apenas 1 de 2 hóspedes preencheu, e link chamativo para o Terminal da Portaria (/portaria). Se o pré-checkin for preenchido após as 07:00, é enviado imediatamente.",
-    messagePreview: `Assunto: [CHECK-IN DO DIA - 07:00] [CHECK-IN CONFIRMADO] Flat {{quarto}} - {{nome_hospede}} ({{data_checkin}} a {{data_checkout}})
+    messagePreview: `Assunto: Flat {{quarto}} - {{nome_hospede}} ({{data_checkin}} a {{data_checkout}})
 
 🖥️ Painel da Recepção & Portaria 24h:
 Consulte detalhes no Terminal da Portaria: https://corpflats.onrender.com/portaria
@@ -380,7 +380,7 @@ Segue o informativo cadastral da reserva referente ao Flat {{quarto}}:
     condition: "Veículo cadastrado ou placa alterada após as 07:00",
     channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
     description: "E-mail com autorização de vaga rotativa para o estacionamento Soho/PFB, acionado exclusivamente se o veículo for preenchido ou alterado após a rotina matinal das 07:00.",
-    messagePreview: `Assunto: [LIBERAÇÃO DE GARAGEM] Flat {{quarto}} - {{nome_hospede}} - Veículo: {{placa}}
+    messagePreview: `Assunto: Flat {{quarto}} - {{nome_hospede}} ({{data_checkin}} a {{data_checkout}})
 
 Solicitamos a liberação de entrada e acesso à vaga rotativa para o veículo cadastrado:
 🚗 Placa: {{placa}} | Modelo: {{modelo}} | Cor: {{cor}}
