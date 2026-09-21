@@ -7363,6 +7363,13 @@ app.post("/api/pms/reservations", async (req, res) => {
     paymentMethod: resolvedPaymentMethod,
     dailyRate: finalDailyRate,
     dailyRates: normalizedDailyRates,
+    charges: Array.isArray(req.body.charges) ? req.body.charges.map(c => ({
+      id: String(c.id || `charge_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`),
+      type: String(c.type || "other"),
+      title: String(c.title || "Taxa / Adicional"),
+      amount: Number(c.amount) || 0,
+      notes: c.notes ? String(c.notes) : undefined
+    })) : [],
     totalAmount: finalTotalAmount,
     paidAmount: resolvedPaidAmount,
     paymentStatus: resolvedPaymentStatus,
@@ -7550,7 +7557,7 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   const fields = [
     "flatId", "checkinDate", "checkoutDate", "checkinTime", "checkoutTime", "status", "channel", 
     "paymentMethod",
-    "dailyRate", "dailyRates", "payments", "totalAmount", "paidAmount", "paymentStatus", 
+    "dailyRate", "dailyRates", "charges", "payments", "totalAmount", "paidAmount", "paymentStatus", 
     "adults", "children", "notes", "prefersHighFloor", "twinBeds", 
     "extraMattress", "specialRequests", "isMonthlyGuest", "clientType", "includeBreakfast",
     "autoEmitInvoice", "earlyCheckinAuthorized", "receptionNotes",
@@ -7573,6 +7580,17 @@ app.put("/api/pms/reservations/:id", (req, res) => {
     if (req.body.totalAmount === undefined && r.dailyRates.length > 0) {
       r.totalAmount = r.dailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0);
     }
+  }
+
+  // Normalização de charges na edição
+  if (Array.isArray(req.body.charges)) {
+    r.charges = req.body.charges.map(c => ({
+      id: String(c.id || `charge_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`),
+      type: String(c.type || "other"),
+      title: String(c.title || "Taxa / Adicional"),
+      amount: Number(c.amount) || 0,
+      notes: c.notes ? String(c.notes) : undefined
+    }));
   }
 
   // Normalização de payments na edição

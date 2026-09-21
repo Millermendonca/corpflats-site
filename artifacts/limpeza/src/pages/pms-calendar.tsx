@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
 import { 
-  CalendarDays, Plus, ChevronLeft, ChevronRight, Search, 
+  CalendarDays, Plus, Wand2, ChevronLeft, ChevronRight, Search, 
   Calendar as CalendarIcon, User, Users, Phone, Mail, ShieldAlert, CheckCircle2,
   Clock, DollarSign, BedDouble, AlertTriangle, Lock, Trash2, Edit3, MessageCircle, KeyRound, Sparkles, FileText, Tag, Coffee, Building2, Wind, Zap, Bed, Check, RotateCcw, AlertCircle, RefreshCw, SlidersHorizontal, Copy,
   LogIn, LogOut, TrendingUp, Send, ChevronDown, ChevronUp, History, ArrowRight, CreditCard, ExternalLink, QrCode, Link2, DoorOpen, Car
@@ -58,10 +58,19 @@ export interface DailyRateItem {
   notes?: string;
 }
 
+export interface ReservationChargeItem {
+  id: string;
+  type: "cleaning" | "pet" | "extra_bed" | "breakfast" | "garage" | "damage" | "discount" | "other";
+  title: string;
+  amount: number;
+  notes?: string;
+}
+
 export interface ReservationPaymentItem {
   id: string;
   amount: number;
   method: string;
+  category?: string; // "quitacao" | "sinal" | "diarias" | "taxa_limpeza" | "consumo" | "outro"
   date: string;
   notes?: string;
 }
@@ -181,6 +190,8 @@ export default function PmsCalendar() {
 
   const [formDailyRate, setFormDailyRate] = useState("250")
   const [formDailyRates, setFormDailyRates] = useState<DailyRateItem[]>([])
+  const [formCharges, setFormCharges] = useState<ReservationChargeItem[]>([])
+  const [packageTotalInput, setPackageTotalInput] = useState("")
   const [formPayments, setFormPayments] = useState<ReservationPaymentItem[]>([])
   const [formTotalAmount, setFormTotalAmount] = useState("")
   const [formPaidAmount, setFormPaidAmount] = useState("0")
@@ -1541,6 +1552,8 @@ export default function PmsCalendar() {
     ])
     setFormPaymentStatus("pago_total")
     setFormStatus("confirmada")
+    setFormCharges([])
+    setPackageTotalInput(String(initialTotal))
     setShowGuestSuggestions(false)
     setFormNotes("")
     setFormEarlyCheckin(false)
@@ -1829,6 +1842,17 @@ export default function PmsCalendar() {
     }
     setFormPayments(loadedPayments);
 
+    // Carregando taxas e cobranças adicionais (charges)
+    const loadedCharges: ReservationChargeItem[] = Array.isArray(resItem.charges) ? resItem.charges.map((c: any) => ({
+      id: c.id || `charge_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      type: c.type || "other",
+      title: c.title || "Taxa / Adicional",
+      amount: Number(c.amount) || 0,
+      notes: c.notes || ""
+    })) : [];
+    setFormCharges(loadedCharges);
+    setPackageTotalInput(totCalculated > 0 ? String(totCalculated) : "");
+
     setFormPaymentStatus(isResCurrentlyPaid ? "pago_total" : (resItem.paymentStatus || "pendente"))
     setFormStatus((resItem.status === "confirmada" || isResCurrentlyPaid) ? "confirmada" : (resItem.status || "pre_reserva"))
     setFormNotes(resItem.notes || "")
@@ -2022,20 +2046,113 @@ export default function PmsCalendar() {
   }
 
   const calculateTotal = () => {
+    let nightsSubtotal = 0;
     if (formDailyRates && formDailyRates.length > 0) {
-      return formDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0)
+      nightsSubtotal = formDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0);
+    } else {
+      try {
+        const d1 = parseISO(formCheckin);
+        const d2 = parseISO(formCheckout);
+        const nights = Math.max(1, differenceInDays(d2, d1));
+        nightsSubtotal = nights * (Number(formDailyRate) || 0);
+      } catch {
+        nightsSubtotal = 0;
+      }
     }
-    try {
-      const d1 = parseISO(formCheckin)
-      const d2 = parseISO(formCheckout)
-      const nights = Math.max(1, differenceInDays(d2, d1))
-      return nights * (Number(formDailyRate) || 0)
-    } catch {
-      return 0
-    }
+    const chargesSubtotal = formCharges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
+    return Math.max(0, nightsSubtotal + chargesSubtotal);
   }
 
   // ── Helpers de Gerenciamento de Diárias & Pagamentos ──────────────
+  // ── Funções de Gestão de Taxas, Adicionais & Rateio Inteligente ──
+  const handleAddCharge = (type: ReservationChargeItem["type"], defaultTitle: string, defaultAmount: number) => {
+    const newCharge: ReservationChargeItem = {
+      id: `charge_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      type,
+      title: defaultTitle,
+      amount: defaultAmount,
+      notes: ""
+    };
+    const updated = [...formCharges, newCharge];
+    setFormCharges(updated);
+    const subNights = formDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0);
+    const subCharges = updated.reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
+    const newTot = Math.max(0, subNights + subCharges);
+    setFormTotalAmount(String(newTot));
+    setPackageTotalInput(String(newTot));
+    if (formPaymentStatus === "pago_total") {
+      setFormPaidAmount(String(newTot));
+    }
+    toast({
+      title: "Taxa Adicionada",
+      description: `${defaultTitle} (R$ ${defaultAmount > 0 ? defaultAmount.toFixed(2) : `-${Math.abs(defaultAmount).toFixed(2)}`}) incluída no custo da estadia.`
+    });
+  };
+
+  const handleRemoveCharge = (chargeId: string) => {
+    const updated = formCharges.filter(c => c.id !== chargeId);
+    setFormCharges(updated);
+    const subNights = formDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0);
+    const subCharges = updated.reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
+    const newTot = Math.max(0, subNights + subCharges);
+    setFormTotalAmount(String(newTot));
+    setPackageTotalInput(String(newTot));
+    if (formPaymentStatus === "pago_total") {
+      setFormPaidAmount(String(newTot));
+    }
+  };
+
+  const handleUpdateCharge = (chargeId: string, field: keyof ReservationChargeItem, value: any) => {
+    const updated = formCharges.map(c => {
+      if (c.id === chargeId) {
+        return { ...c, [field]: value };
+      }
+      return c;
+    });
+    setFormCharges(updated);
+    const subNights = formDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0);
+    const subCharges = updated.reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
+    const newTot = Math.max(0, subNights + subCharges);
+    setFormTotalAmount(String(newTot));
+    setPackageTotalInput(String(newTot));
+    if (formPaymentStatus === "pago_total") {
+      setFormPaidAmount(String(newTot));
+    }
+  };
+
+  const handleDistributeTotalToNights = (targetTotal: number) => {
+    if (targetTotal <= 0) {
+      toast({
+        title: "Valor Inválido",
+        description: "Informe um valor total maior que zero para ratear.",
+        variant: "destructive"
+      });
+      return;
+    }
+    const nightsCount = formDailyRates.length || 1;
+    const totalCharges = formCharges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
+    const amountForNights = Math.max(0, targetTotal - totalCharges);
+
+    const baseNightRate = Math.floor(amountForNights / nightsCount);
+    const remainder = amountForNights - (baseNightRate * nightsCount);
+
+    const updatedDailyRates = formDailyRates.map((item, idx) => {
+      const rate = idx === formDailyRates.length - 1 ? (baseNightRate + remainder) : baseNightRate;
+      return { ...item, rate };
+    });
+
+    setFormDailyRates(updatedDailyRates);
+    setFormTotalAmount(String(targetTotal));
+    setPackageTotalInput(String(targetTotal));
+    if (formPaymentStatus === "pago_total") {
+      setFormPaidAmount(String(targetTotal));
+    }
+    toast({
+      title: "Rateio Realizado com Sucesso!",
+      description: `R$ ${targetTotal.toFixed(2)} distribuído em ${nightsCount} diária(s)${totalCharges > 0 ? ` (descontando R$ ${totalCharges.toFixed(2)} de taxas/adicionais)` : ""}.`
+    });
+  };
+
   const handleAddPayment = (customAmount?: number, customMethod?: string, customNotes?: string) => {
     const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal()
     const curPaid = formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
@@ -2221,6 +2338,7 @@ export default function PmsCalendar() {
           ? Math.round(totalAmount / formDailyRates.length) 
           : (Number(formDailyRate) || 0),
         dailyRates: formDailyRates,
+        charges: formCharges,
         payments: formPayments,
         totalAmount,
         paidAmount: resolvedPaidAmount,
@@ -4681,33 +4799,37 @@ export default function PmsCalendar() {
               {/* ABA: Pagamento & Diárias */}
               {resModalTab === "payments" && (
                 <div className="py-2 space-y-3.5">
-                  {/* 1. Barra de Indicadores Financeiros Unificada */}
+                  {/* 1. Cockpit Financeiro: Barra de Indicadores Unificada */}
                   {(() => {
                     const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
                     const isResPaid = formPaymentStatus === "pago_total" || formPaymentStatus === "pago";
                     const sumPay = formPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
                     const curPaid = isResPaid ? Math.max(curTot, sumPay || Number(formPaidAmount) || 0) : (sumPay > 0 ? sumPay : (Number(formPaidAmount) || 0));
-                    const remaining = Math.max(0, curTot - curPaid);
+                    const remaining = isResPaid ? 0 : Math.max(0, curTot - curPaid);
                     const isPaid = isResPaid || (curTot > 0 && remaining === 0);
 
+                    const subtotalNights = formDailyRates.reduce((s, d) => s + (Number(d.rate) || 0), 0);
+                    const subtotalCharges = formCharges.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+
                     return (
-                      <div className="p-3 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl flex flex-wrap items-center justify-between gap-3 text-xs">
+                      <div className="p-3.5 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl flex flex-wrap items-center justify-between gap-3 text-xs shadow-2xs">
                         <div className="flex items-center gap-4 sm:gap-6 flex-wrap">
                           <div>
-                            <span className="text-[10px] uppercase font-bold text-muted-foreground block">Total</span>
-                            <span className="text-base sm:text-lg font-black text-foreground">
+                            <span className="text-[10px] uppercase font-bold text-muted-foreground block tracking-wider">Total da Estadia</span>
+                            <span className="text-lg sm:text-xl font-black text-foreground">
                               R$ {curTot.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                             </span>
                             <span className="text-[10px] text-muted-foreground block">
                               {formDailyRates.length} {formDailyRates.length === 1 ? "diária" : "diárias"}
+                              {formCharges.length > 0 && ` + ${formCharges.length} item(ns)`}
                             </span>
                           </div>
 
-                          <div className="h-7 w-[1px] bg-border hidden sm:block" />
+                          <div className="h-8 w-[1px] bg-border hidden sm:block" />
 
                           <div>
-                            <span className="text-[10px] uppercase font-bold text-muted-foreground block">Recebido</span>
-                            <span className="text-base sm:text-lg font-black text-emerald-600 dark:text-emerald-400">
+                            <span className="text-[10px] uppercase font-bold text-muted-foreground block tracking-wider">Total Recebido</span>
+                            <span className="text-lg sm:text-xl font-black text-emerald-600 dark:text-emerald-400">
                               R$ {curPaid.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                             </span>
                             <span className="text-[10px] text-emerald-600/80 block font-medium">
@@ -4715,15 +4837,15 @@ export default function PmsCalendar() {
                             </span>
                           </div>
 
-                          <div className="h-7 w-[1px] bg-border hidden sm:block" />
+                          <div className="h-8 w-[1px] bg-border hidden sm:block" />
 
                           <div>
-                            <span className="text-[10px] uppercase font-bold text-muted-foreground block">Saldo a Pagar</span>
-                            <span className={`text-base sm:text-lg font-black ${remaining > 0 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                            <span className="text-[10px] uppercase font-bold text-muted-foreground block tracking-wider">Saldo a Pagar</span>
+                            <span className={`text-lg sm:text-xl font-black ${remaining > 0 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`}>
                               {remaining > 0 ? `R$ ${remaining.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}` : "R$ 0,00"}
                             </span>
                             <span className="text-[10px] text-muted-foreground block font-medium">
-                              {remaining > 0 ? "Pendente" : "Quitado"}
+                              {remaining > 0 ? "Pendente" : "✓ 100% Quitado"}
                             </span>
                           </div>
                         </div>
@@ -4753,6 +4875,7 @@ export default function PmsCalendar() {
                                   id: `pay_${Date.now()}`,
                                   amount: remaining,
                                   method: formPaymentMethod || "pix",
+                                  category: "quitacao",
                                   date: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
                                   notes: "Quitação de saldo"
                                 };
@@ -4779,12 +4902,14 @@ export default function PmsCalendar() {
                                   id: `pay_${Date.now()}`,
                                   amount: half,
                                   method: formPaymentMethod || "pix",
+                                  category: "sinal",
                                   date: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
                                   notes: "Sinal 50%"
                                 };
                                 setFormPayments([newPay]);
                                 setFormPaidAmount(String(half));
                                 setFormPaymentStatus("sinal_pago");
+                                toast({ title: "Sinal de 50% Lançado", description: `Lançamento de R$ ${half.toFixed(2)} registrado.` });
                               }}
                               className="h-7 text-xs font-semibold text-amber-700 dark:text-amber-300 border-amber-300 px-2 cursor-pointer"
                             >
@@ -4866,153 +4991,382 @@ export default function PmsCalendar() {
                     </div>
                   )}
 
-                  {/* 3. Diárias da Estadia (Detalhamento por Noite & Canais) */}
-                  <div className="p-3 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-2.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-1.5">
-                        <CalendarDays className="w-4 h-4 text-primary" />
-                        <span className="text-xs font-bold text-foreground">Diárias da Hospedagem ({formDailyRates.length})</span>
+                  {/* 3. Composição de Valores da Hospedagem (Diárias, Taxas, Adicionais e Rateio Rápido) */}
+                  <div className="p-3.5 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-3 shadow-2xs">
+                    {/* Barra de Rateio Rápido do Pacote Total */}
+                    <div className="p-2.5 bg-primary/5 dark:bg-primary/10 border border-primary/20 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="w-7 h-7 rounded-lg bg-primary/15 text-primary flex items-center justify-center shrink-0">
+                          <Wand2 className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <span className="text-xs font-bold text-foreground block">Definir Pacote Total & Ratear</span>
+                          <span className="text-[10.5px] text-muted-foreground block">
+                            Digite o valor total negociado para dividir automaticamente entre as diárias
+                          </span>
+                        </div>
                       </div>
 
-                      <div className="flex items-center gap-1.5">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={handleAddExtraNight}
-                          className="h-7 px-2 text-xs font-bold text-primary border-primary/30 hover:bg-primary/10 cursor-pointer"
-                        >
-                          <Plus className="w-3.5 h-3.5 mr-1" /> Diária Extra
-                        </Button>
-
-                        {formDailyRates.length > 1 && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              if (formDailyRates.length > 0) {
-                                const firstRate = Number(formDailyRates[0].rate) || 250;
-                                const firstChan = formDailyRates[0].channel || formChannel;
-                                setFormDailyRates(prev => prev.map(d => ({ ...d, rate: firstRate, channel: firstChan })));
-                                const newTot = formDailyRates.length * firstRate;
-                                setFormTotalAmount(String(newTot));
-                                toast({ title: "Diárias Equalizadas", description: `Todas as diárias ajustadas para R$ ${firstRate}.` });
+                      <div className="flex items-center gap-1.5 w-full sm:w-auto shrink-0">
+                        <div className="relative flex-1 sm:w-32">
+                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-muted-foreground">R$</span>
+                          <Input
+                            type="number"
+                            placeholder="Ex: 300"
+                            value={packageTotalInput}
+                            onChange={e => setPackageTotalInput(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                const val = Number(packageTotalInput);
+                                if (val > 0) handleDistributeTotalToNights(val);
                               }
                             }}
-                            className="h-7 px-2 text-[10.5px] text-muted-foreground hover:text-foreground cursor-pointer"
-                            title="Igualar o valor de todas as diárias com a 1ª"
-                          >
-                            Igualar Valores
-                          </Button>
-                        )}
+                            className="h-7 pl-7 pr-2 text-xs font-bold bg-background text-foreground"
+                          />
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => {
+                            const val = Number(packageTotalInput);
+                            if (val > 0) handleDistributeTotalToNights(val);
+                            else toast({ title: "Informe o valor", description: "Digite o valor total para ratear entre as diárias.", variant: "destructive" });
+                          }}
+                          className="h-7 px-2.5 text-xs font-bold bg-primary hover:bg-primary/90 text-primary-foreground flex items-center gap-1 shrink-0 shadow-xs cursor-pointer"
+                        >
+                          <Wand2 className="w-3.5 h-3.5" />
+                          <span>Ratear Diárias</span>
+                        </Button>
                       </div>
                     </div>
 
-                    <div className="space-y-1.5">
-                      {formDailyRates.map((d, idx) => {
-                        let formattedDate = d.date;
-                        try {
-                          formattedDate = format(parseISO(d.date), "dd/MM/yyyy (EEE)", { locale: ptBR });
-                        } catch {}
+                    {/* Subseção A: Diárias da Hospedagem */}
+                    <div className="space-y-2 pt-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <CalendarDays className="w-4 h-4 text-primary" />
+                          <span className="text-xs font-bold text-foreground">Diárias da Hospedagem ({formDailyRates.length})</span>
+                        </div>
 
-                        return (
-                          <div 
-                            key={d.date || idx}
-                            className="p-2 bg-background border border-border rounded-xl flex items-center justify-between gap-2 text-xs"
+                        <div className="flex items-center gap-1.5">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={handleAddExtraNight}
+                            className="h-7 px-2 text-xs font-bold text-primary border-primary/30 hover:bg-primary/10 cursor-pointer"
                           >
-                            <div className="flex items-center gap-1.5 min-w-[140px]">
-                              <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-                                #{idx + 1}
-                              </span>
-                              <span className="font-medium text-foreground text-xs truncate">
-                                {formattedDate}
-                              </span>
-                            </div>
+                            <Plus className="w-3.5 h-3.5 mr-1" /> Diária Extra
+                          </Button>
 
-                            <div className="w-36">
-                              <Select
-                                value={d.channel || formChannel || "whatsapp"}
-                                onValueChange={(val) => {
-                                  setFormDailyRates(prev => prev.map((item, i) => i === idx ? { ...item, channel: val } : item));
-                                }}
-                              >
-                                <SelectTrigger className="h-7 text-xs font-medium">
-                                  <SelectValue placeholder="Canal" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="whatsapp">💬 WhatsApp / Direta</SelectItem>
-                                  <SelectItem value="booking">🔵 Booking.com</SelectItem>
-                                  <SelectItem value="airbnb">🔴 Airbnb</SelectItem>
-                                  <SelectItem value="site">🌐 Site Próprio</SelectItem>
-                                  <SelectItem value="balcao">🏨 Balcão</SelectItem>
-                                  <SelectItem value="empresa">🏢 Empresa (PJ)</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </div>
+                          {formDailyRates.length > 1 && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                if (formDailyRates.length > 0) {
+                                  const firstRate = Number(formDailyRates[0].rate) || 250;
+                                  const firstChan = formDailyRates[0].channel || formChannel;
+                                  setFormDailyRates(prev => prev.map(d => ({ ...d, rate: firstRate, channel: firstChan })));
+                                  const subNights = formDailyRates.length * firstRate;
+                                  const subCharges = formCharges.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+                                  const newTot = subNights + subCharges;
+                                  setFormTotalAmount(String(newTot));
+                                  setPackageTotalInput(String(newTot));
+                                  toast({ title: "Diárias Equalizadas", description: `Todas as diárias ajustadas para R$ ${firstRate}.` });
+                                }
+                              }}
+                              className="h-7 px-2 text-[10.5px] text-muted-foreground hover:text-foreground cursor-pointer"
+                              title="Igualar o valor de todas as diárias com a 1ª"
+                            >
+                              Igualar Valores
+                            </Button>
+                          )}
+                        </div>
+                      </div>
 
-                            <div className="w-28 relative">
-                              <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground">
-                                R$
-                              </span>
-                              <Input
-                                type="number"
-                                value={d.rate}
-                                onChange={(e) => {
-                                  const val = Number(e.target.value) || 0;
-                                  setFormDailyRates(prev => {
-                                    const nextRates = prev.map((item, i) => i === idx ? { ...item, rate: val } : item);
-                                    const newTot = nextRates.reduce((s, it) => s + (Number(it.rate) || 0), 0);
-                                    setFormTotalAmount(String(newTot));
-                                    if (formPaymentStatus === "pago_total") {
-                                      setFormPaidAmount(String(newTot));
+                      <div className="space-y-1.5">
+                        {formDailyRates.map((d, idx) => {
+                          let formattedDate = d.date;
+                          try {
+                            formattedDate = format(parseISO(d.date), "dd/MM/yyyy (EEE)", { locale: ptBR });
+                          } catch {}
+
+                          return (
+                            <div 
+                              key={d.date || idx}
+                              className="p-2 bg-background border border-border rounded-xl flex items-center justify-between gap-2 text-xs"
+                            >
+                              <div className="flex items-center gap-1.5 min-w-[130px]">
+                                <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                                  #{idx + 1}
+                                </span>
+                                <span className="font-medium text-foreground text-xs truncate">
+                                  {formattedDate}
+                                </span>
+                              </div>
+
+                              <div className="w-36">
+                                <Select
+                                  value={d.channel || formChannel || "whatsapp"}
+                                  onValueChange={(val) => {
+                                    setFormDailyRates(prev => prev.map((item, i) => i === idx ? { ...item, channel: val } : item));
+                                  }}
+                                >
+                                  <SelectTrigger className="h-7 text-xs font-medium">
+                                    <SelectValue placeholder="Canal" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="whatsapp">💬 WhatsApp / Direta</SelectItem>
+                                    <SelectItem value="booking">🔵 Booking.com</SelectItem>
+                                    <SelectItem value="airbnb">🔴 Airbnb</SelectItem>
+                                    <SelectItem value="site">🌐 Site Próprio</SelectItem>
+                                    <SelectItem value="balcao">🏨 Balcão</SelectItem>
+                                    <SelectItem value="empresa">🏢 Empresa (PJ)</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              <div className="w-28 relative">
+                                <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground">
+                                  R$
+                                </span>
+                                <Input
+                                  type="number"
+                                  value={d.rate}
+                                  onChange={(e) => {
+                                    const val = Number(e.target.value) || 0;
+                                    setFormDailyRates(prev => {
+                                      const nextRates = prev.map((item, i) => i === idx ? { ...item, rate: val } : item);
+                                      const subNights = nextRates.reduce((s, it) => s + (Number(it.rate) || 0), 0);
+                                      const subCharges = formCharges.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+                                      const newTot = subNights + subCharges;
+                                      setFormTotalAmount(String(newTot));
+                                      setPackageTotalInput(String(newTot));
+                                      if (formPaymentStatus === "pago_total") {
+                                        setFormPaidAmount(String(newTot));
+                                      }
+                                      return nextRates;
+                                    });
+                                  }}
+                                  className="h-7 pl-7 pr-2 text-xs font-bold text-right"
+                                />
+                              </div>
+
+                              {formDailyRates.length > 1 && (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    const updatedRates = formDailyRates.filter((_, i) => i !== idx);
+                                    if (updatedRates.length > 0) {
+                                      const firstDate = updatedRates[0].date;
+                                      const lastDate = updatedRates[updatedRates.length - 1].date;
+                                      const newCheckout = format(addDays(parseISO(lastDate), 1), "yyyy-MM-dd");
+                                      setFormDailyRates(updatedRates);
+                                      setFormCheckin(firstDate);
+                                      setFormCheckout(newCheckout);
+                                      const subNights = updatedRates.reduce((s, it) => s + (Number(it.rate) || 0), 0);
+                                      const subCharges = formCharges.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+                                      const newTot = subNights + subCharges;
+                                      setFormTotalAmount(String(newTot));
+                                      setPackageTotalInput(String(newTot));
+                                      if (formPaymentStatus === "pago_total") {
+                                        setFormPaidAmount(String(newTot));
+                                      }
                                     }
-                                    return nextRates;
-                                  });
-                                }}
-                                className="h-7 pl-7 pr-2 text-xs font-bold text-right"
-                              />
+                                  }}
+                                  className="h-7 w-7 p-0 text-muted-foreground hover:text-rose-600 shrink-0 cursor-pointer"
+                                  title="Excluir diária"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              )}
                             </div>
+                          );
+                        })}
+                      </div>
+                    </div>
 
-                            {formDailyRates.length > 1 && (
+                    {/* Subseção B: Taxas, Adicionais & Descontos */}
+                    <div className="space-y-2 pt-2 border-t border-border/70">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-1.5">
+                          <Sparkles className="w-4 h-4 text-amber-500" />
+                          <span className="text-xs font-bold text-foreground">Taxas, Serviços Adicionais & Descontos ({formCharges.length})</span>
+                        </div>
+
+                        {/* Botões de Atalho Rápido para Itens Comuns */}
+                        <div className="flex items-center gap-1 flex-wrap">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleAddCharge("cleaning", "Taxa de Limpeza", 80)}
+                            className="h-6 px-1.5 text-[10.5px] font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                          >
+                            🧹 + Limpeza
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleAddCharge("pet", "Taxa Pet", 50)}
+                            className="h-6 px-1.5 text-[10.5px] font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                          >
+                            🐾 + Pet
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleAddCharge("extra_bed", "Cama Extra", 70)}
+                            className="h-6 px-1.5 text-[10.5px] font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                          >
+                            🛏️ + Cama Extra
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleAddCharge("breakfast", "Café da Manhã Avulso", 35)}
+                            className="h-6 px-1.5 text-[10.5px] font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                          >
+                            ☕ + Café
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleAddCharge("garage", "Garagem Adicional", 30)}
+                            className="h-6 px-1.5 text-[10.5px] font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                          >
+                            🚗 + Garagem
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleAddCharge("discount", "Desconto Negociado", -50)}
+                            className="h-6 px-1.5 text-[10.5px] font-semibold text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-900/60 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                          >
+                            🏷️ - Desconto
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleAddCharge("other", "Adicional", 50)}
+                            className="h-6 px-1.5 text-[10.5px] font-semibold text-primary border-primary/30 hover:bg-primary/10 cursor-pointer"
+                          >
+                            <Plus className="w-3 h-3 mr-0.5" /> Outro
+                          </Button>
+                        </div>
+                      </div>
+
+                      {formCharges.length === 0 ? (
+                        <div className="p-2.5 rounded-xl border border-dashed text-center text-[11px] text-muted-foreground bg-background/50">
+                          Nenhuma taxa ou adicional configurado. Clique nos botões acima caso queira incluir Taxa de Limpeza, Pet, Cama Extra, Desconto, etc.
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {formCharges.map((charge, cIdx) => (
+                            <div
+                              key={charge.id || cIdx}
+                              className="p-2 bg-background border border-border rounded-xl flex items-center justify-between gap-2 text-xs"
+                            >
+                              <div className="w-32 shrink-0">
+                                <Select
+                                  value={charge.type}
+                                  onValueChange={(val: any) => handleUpdateCharge(charge.id, "type", val)}
+                                >
+                                  <SelectTrigger className="h-7 text-xs font-medium">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="cleaning">🧹 Limpeza</SelectItem>
+                                    <SelectItem value="pet">🐾 Pet</SelectItem>
+                                    <SelectItem value="extra_bed">🛏️ Cama Extra</SelectItem>
+                                    <SelectItem value="breakfast">☕ Café Extra</SelectItem>
+                                    <SelectItem value="garage">🚗 Garagem</SelectItem>
+                                    <SelectItem value="damage">🛠️ Consumo / Dano</SelectItem>
+                                    <SelectItem value="discount">🏷️ Desconto</SelectItem>
+                                    <SelectItem value="other">📦 Outro</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              <div className="flex-1 min-w-[120px]">
+                                <Input
+                                  type="text"
+                                  placeholder="Descrição do item..."
+                                  value={charge.title}
+                                  onChange={e => handleUpdateCharge(charge.id, "title", e.target.value)}
+                                  className="h-7 text-xs font-medium"
+                                />
+                              </div>
+
+                              <div className="w-28 relative shrink-0">
+                                <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground">
+                                  R$
+                                </span>
+                                <Input
+                                  type="number"
+                                  value={charge.amount}
+                                  onChange={e => handleUpdateCharge(charge.id, "amount", Number(e.target.value) || 0)}
+                                  className={`h-7 pl-7 pr-2 text-xs font-bold text-right ${charge.amount < 0 ? "text-rose-600 dark:text-rose-400 font-black" : "text-foreground"}`}
+                                />
+                              </div>
+
                               <Button
                                 type="button"
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => {
-                                  const updatedRates = formDailyRates.filter((_, i) => i !== idx);
-                                  if (updatedRates.length > 0) {
-                                    const firstDate = updatedRates[0].date;
-                                    const lastDate = updatedRates[updatedRates.length - 1].date;
-                                    const newCheckout = format(addDays(parseISO(lastDate), 1), "yyyy-MM-dd");
-                                    setFormDailyRates(updatedRates);
-                                    setFormCheckin(firstDate);
-                                    setFormCheckout(newCheckout);
-                                    const newTot = updatedRates.reduce((s, it) => s + (Number(it.rate) || 0), 0);
-                                    setFormTotalAmount(String(newTot));
-                                    if (formPaymentStatus === "pago_total") {
-                                      setFormPaidAmount(String(newTot));
-                                    }
-                                  }
-                                }}
+                                onClick={() => handleRemoveCharge(charge.id)}
                                 className="h-7 w-7 p-0 text-muted-foreground hover:text-rose-600 shrink-0 cursor-pointer"
-                                title="Excluir diária"
+                                title="Remover item"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Resumo da Composição */}
+                    {(() => {
+                      const subtotalNights = formDailyRates.reduce((s, d) => s + (Number(d.rate) || 0), 0);
+                      const subtotalCharges = formCharges.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+                      const totalCalculated = Math.max(0, subtotalNights + subtotalCharges);
+                      return (
+                        <div className="pt-2 flex items-center justify-between text-[11px] text-muted-foreground px-1 border-t border-border/60">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span>Diárias ({formDailyRates.length}): <strong className="text-foreground">R$ {subtotalNights.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
+                            {subtotalCharges !== 0 && (
+                              <>
+                                <span>•</span>
+                                <span>Taxas & Adicionais: <strong className={subtotalCharges > 0 ? "text-foreground" : "text-rose-600"}>R$ {subtotalCharges.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
+                              </>
                             )}
                           </div>
-                        );
-                      })}
-                    </div>
+                          <span className="font-bold text-foreground text-xs">
+                            Total Composto: <strong className="text-primary font-black">R$ {totalCalculated.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong>
+                          </span>
+                        </div>
+                      );
+                    })()}
                   </div>
 
-                  {/* 4. Registros de Pagamento (Ledger) */}
-                  <div className="p-3 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-2.5">
+                  {/* 4. Registros de Pagamento (Quem pagou, Como pagou, Quanto pagou e Para quê) */}
+                  <div className="p-3.5 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-2.5 shadow-2xs">
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-1.5">
                         <CreditCard className="w-4 h-4 text-emerald-600" />
-                        <span className="text-xs font-bold text-foreground">Pagamentos Registrados ({formPayments.length})</span>
+                        <span className="text-xs font-bold text-foreground">Pagamentos Recebidos ({formPayments.length})</span>
                       </div>
 
                       <Button
@@ -5028,20 +5382,21 @@ export default function PmsCalendar() {
 
                     {formPayments.length === 0 ? (
                       <div className="p-3 rounded-xl border border-dashed text-center text-xs text-muted-foreground bg-background/50">
-                        Nenhum pagamento registrado nesta reserva.
+                        Nenhum pagamento registrado nesta reserva. Clique em "+ Novo Pagamento" ou utilize o botão "Quitar Saldo" no topo.
                       </div>
                     ) : (
                       <div className="space-y-1.5">
                         {formPayments.map((pay, pIdx) => (
                           <div
                             key={pay.id || pIdx}
-                            className="p-2 bg-background border border-border rounded-xl flex items-center justify-between gap-2 text-xs"
+                            className="p-2 bg-background border border-border rounded-xl flex items-center justify-between gap-2 text-xs flex-wrap sm:flex-nowrap"
                           >
                             <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 shrink-0">
                               #{pIdx + 1}
                             </span>
 
-                            <div className="w-40 shrink-0">
+                            {/* Forma de Pagamento */}
+                            <div className="w-36 shrink-0">
                               <Select
                                 value={pay.method || "pix"}
                                 onValueChange={(val) => handleUpdatePayment(pay.id, "method", val)}
@@ -5051,18 +5406,39 @@ export default function PmsCalendar() {
                                 </SelectTrigger>
                                 <SelectContent>
                                   <SelectItem value="pix">⚡ PIX</SelectItem>
-                                  <SelectItem value="credit_card">💳 Cartão de Crédito</SelectItem>
-                                  <SelectItem value="debit_card">💳 Cartão de Débito</SelectItem>
+                                  <SelectItem value="credit_card">💳 Cartão Crédito</SelectItem>
+                                  <SelectItem value="debit_card">💳 Cartão Débito</SelectItem>
                                   <SelectItem value="dinheiro">💵 Dinheiro</SelectItem>
-                                  <SelectItem value="booking">🌐 Booking.com (OTA)</SelectItem>
-                                  <SelectItem value="airbnb">🔴 Airbnb (OTA)</SelectItem>
-                                  <SelectItem value="ted">🏦 TED / Transferência</SelectItem>
-                                  <SelectItem value="faturado_pj">🏢 Empresa (PJ)</SelectItem>
+                                  <SelectItem value="booking">🌐 Booking.com</SelectItem>
+                                  <SelectItem value="airbnb">🔴 Airbnb</SelectItem>
+                                  <SelectItem value="ted">🏦 Transferência</SelectItem>
+                                  <SelectItem value="faturado_pj">🏢 Faturado (PJ)</SelectItem>
                                   <SelectItem value="outro">💰 Outro</SelectItem>
                                 </SelectContent>
                               </Select>
                             </div>
 
+                            {/* Categoria / Destinação do Pagamento */}
+                            <div className="w-36 shrink-0">
+                              <Select
+                                value={pay.category || "quitacao"}
+                                onValueChange={(val) => handleUpdatePayment(pay.id, "category", val)}
+                              >
+                                <SelectTrigger className="h-7 text-xs font-medium">
+                                  <SelectValue placeholder="Destinação" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="quitacao">✓ Quitação Total</SelectItem>
+                                  <SelectItem value="sinal">⚡ Sinal 50%</SelectItem>
+                                  <SelectItem value="diarias">📅 Diárias</SelectItem>
+                                  <SelectItem value="taxa_limpeza">🧹 Taxa Limpeza</SelectItem>
+                                  <SelectItem value="consumo">☕ Consumo / Extras</SelectItem>
+                                  <SelectItem value="outro">🏷️ Outro</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+
+                            {/* Valor Pago */}
                             <div className="w-28 relative shrink-0">
                               <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-emerald-600">
                                 R$
@@ -5075,6 +5451,7 @@ export default function PmsCalendar() {
                               />
                             </div>
 
+                            {/* Data e Hora */}
                             <div className="w-36 shrink-0">
                               <Input
                                 type="datetime-local"
@@ -5084,10 +5461,11 @@ export default function PmsCalendar() {
                               />
                             </div>
 
+                            {/* Observação rápida */}
                             <div className="flex-1 min-w-[100px]">
                               <Input
                                 type="text"
-                                placeholder="Obs (ex: sinal)..."
+                                placeholder="Obs opcional..."
                                 value={pay.notes || ""}
                                 onChange={(e) => handleUpdatePayment(pay.id, "notes", e.target.value)}
                                 className="h-7 text-[11px]"
@@ -5120,10 +5498,13 @@ export default function PmsCalendar() {
                   </Button>
                 ) : <div />}
 
-                <div className="flex gap-2">
-                  <Button type="button" variant="outline" size="sm" onClick={() => setResModalOpen(false)}>Cancelar</Button>
-                  <Button type="submit" size="sm" disabled={savingRes} className="font-semibold text-xs">
-                    {savingRes ? "Salvando..." : (selectedRes ? "Salvar Alterações" : "Criar Reserva")}
+                <div className="flex items-center gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={() => setEditingRes(null)} className="font-semibold text-xs">
+                    Cancelar
+                  </Button>
+                  <Button type="submit" size="sm" disabled={savingRes} className="font-bold text-xs bg-primary hover:bg-primary/90 text-primary-foreground min-w-[100px] shadow-sm">
+                    {savingRes ? <RefreshCw className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
+                    {selectedRes ? "Salvar Alterações" : "Criar Reserva"}
                   </Button>
                 </div>
               </DialogFooter>
