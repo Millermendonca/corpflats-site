@@ -1755,41 +1755,48 @@ export default function PmsCalendar() {
 
     const chan = resItem.channel || "whatsapp"
     const isOtaRes = (chan === "booking" || chan === "airbnb")
-    const isGatewayPaid = Boolean(resItem.pixEndToEndId || resItem.mpPaymentId || resItem.paidAt)
-    const isResCurrentlyPaid = isOtaRes || isGatewayPaid || resItem.paymentStatus === "pago_total" || resItem.paymentStatus === "pago" || (Number(resItem.paidAmount) >= Number(resItem.totalAmount) && Number(resItem.totalAmount) > 0)
-    const nights = differenceInDays(parseISO(resItem.checkoutDate), parseISO(resItem.checkinDate)) || 1
+    const isGatewayPaid = Boolean(resItem.pixEndToEndId || resItem.mpPaymentId || resItem.paidAt);
+    const isResCurrentlyPaid = 
+      isOtaRes || 
+      isGatewayPaid || 
+      resItem.paymentStatus === "pago_total" || 
+      resItem.paymentStatus === "pago" || 
+      (Number(resItem.paidAmount) >= Number(resItem.totalAmount) && Number(resItem.totalAmount) > 0);
+    const nights = differenceInDays(parseISO(resItem.checkoutDate), parseISO(resItem.checkinDate)) || 1;
 
-    setFormChannel(chan)
-    let resolvedMethod = resItem.paymentMethod
+    setFormChannel(chan);
+    let resolvedMethod = resItem.paymentMethod;
     if (!resolvedMethod) {
-      if (chan === "booking") resolvedMethod = "booking"
-      else if (chan === "airbnb") resolvedMethod = "airbnb"
-      else if (resItem.pixTxId || resItem.pixEndToEndId || chan === "site") resolvedMethod = "pix"
-      else if (resItem.mpPaymentId) resolvedMethod = "cartao_credito"
-      else resolvedMethod = "pix"
+      if (chan === "booking") resolvedMethod = "booking";
+      else if (chan === "airbnb") resolvedMethod = "airbnb";
+      else if (resItem.pixTxId || resItem.pixEndToEndId || chan === "site") resolvedMethod = "pix";
+      else if (resItem.mpPaymentId) resolvedMethod = "cartao_credito";
+      else resolvedMethod = "pix";
     }
-    setFormPaymentMethod(resolvedMethod)
-    const baseDailyRate = Number(resItem.dailyRate || 0) || (nights > 0 && Number(resItem.totalAmount) > 0 ? Math.round(Number(resItem.totalAmount) / nights) : 250)
-    setFormDailyRate(String(baseDailyRate))
+    setFormPaymentMethod(resolvedMethod);
+    const baseDailyRate = Number(resItem.dailyRate || 0) || (nights > 0 && Number(resItem.totalAmount) > 0 ? Math.round(Number(resItem.totalAmount) / nights) : 250);
+    setFormDailyRate(String(baseDailyRate));
     const loadedDailyRates = buildReservationDailyRates(
       resItem.checkinDate,
       resItem.checkoutDate,
       baseDailyRate,
       chan,
       Array.isArray(resItem.dailyRates) ? resItem.dailyRates : []
-    )
-    setFormDailyRates(loadedDailyRates)
-    const calcFromRates = loadedDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0)
-    const totCalculated = Number(resItem.totalAmount) > 0 ? Number(resItem.totalAmount) : (calcFromRates > 0 ? calcFromRates : (baseDailyRate * nights))
-    setFormTotalAmount(totCalculated > 0 ? String(totCalculated) : "")
+    );
+    setFormDailyRates(loadedDailyRates);
+    const calcFromRates = loadedDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0);
+    const totCalculated = Number(resItem.totalAmount) > 0 ? Number(resItem.totalAmount) : (calcFromRates > 0 ? calcFromRates : (baseDailyRate * nights));
+    setFormTotalAmount(totCalculated > 0 ? String(totCalculated) : "");
 
-    // Resolvendo valor pago com consistência absoluta
+    // 2. Real Paid Amount: se quitada ou comprovante existe, garante o valor total
+    const rawPaid = Number(resItem.paidAmount) || 0;
     const effectivePaid = isResCurrentlyPaid
-      ? Math.max(Number(resItem.paidAmount) || 0, totCalculated)
-      : (Number(resItem.paidAmount) || 0)
-    setFormPaidAmount(String(effectivePaid))
+      ? (rawPaid > 0 ? rawPaid : totCalculated)
+      : rawPaid;
+    setFormPaidAmount(String(effectivePaid));
 
-    let loadedPayments: ReservationPaymentItem[] = []
+    // 3. Pagamentos individuais carregados e reconciliados
+    let loadedPayments: ReservationPaymentItem[] = [];
     if (Array.isArray(resItem.payments) && resItem.payments.length > 0) {
       loadedPayments = resItem.payments.map((p: any, idx: number) => ({
         id: p.id || `pay_${resItem.id}_${idx}`,
@@ -1797,29 +1804,30 @@ export default function PmsCalendar() {
         method: p.method || resolvedMethod,
         date: p.date ? (p.date.includes("T") ? p.date.substring(0, 16) : p.date) : format(new Date(), "yyyy-MM-dd'T'HH:mm"),
         notes: p.notes || ""
-      }))
+      }));
     }
 
-    const sumLoadedPayments = loadedPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
-    if (effectivePaid > 0 && sumLoadedPayments === 0) {
-      if (loadedPayments.length > 0) {
-        loadedPayments[0].amount = effectivePaid
-        loadedPayments[0].method = resItem.pixEndToEndId ? "pix" : (resItem.mpPaymentId ? "cartao_credito" : resolvedMethod)
-        if (resItem.paidAt) {
-          loadedPayments[0].date = resItem.paidAt.includes("T") ? resItem.paidAt.substring(0, 16) : resItem.paidAt
-        }
-        loadedPayments[0].notes = isGatewayPaid ? "Pagamento liquidado via Gateway" : "Pagamento integral"
-      } else {
+    const sumLoadedPayments = loadedPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+    if (isResCurrentlyPaid || effectivePaid > 0) {
+      if (loadedPayments.length === 0 || sumLoadedPayments === 0) {
         loadedPayments = [{
           id: `pay_${resItem.id}_reconciled`,
           amount: effectivePaid,
           method: resItem.pixEndToEndId ? "pix" : (resItem.mpPaymentId ? "cartao_credito" : resolvedMethod),
           date: resItem.paidAt ? (resItem.paidAt.includes("T") ? resItem.paidAt.substring(0, 16) : resItem.paidAt) : format(new Date(), "yyyy-MM-dd'T'HH:mm"),
           notes: isGatewayPaid ? "Pagamento liquidado via Gateway" : "Pagamento integral"
-        }]
+        }];
+      } else if (sumLoadedPayments < effectivePaid) {
+        loadedPayments.push({
+          id: `pay_${resItem.id}_diff`,
+          amount: effectivePaid - sumLoadedPayments,
+          method: resItem.pixEndToEndId ? "pix" : resolvedMethod,
+          date: resItem.paidAt ? (resItem.paidAt.includes("T") ? resItem.paidAt.substring(0, 16) : resItem.paidAt) : format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+          notes: "Complemento de quitação"
+        });
       }
     }
-    setFormPayments(loadedPayments)
+    setFormPayments(loadedPayments);
 
     setFormPaymentStatus(isResCurrentlyPaid ? "pago_total" : (resItem.paymentStatus || "pendente"))
     setFormStatus((resItem.status === "confirmada" || isResCurrentlyPaid) ? "confirmada" : (resItem.status || "pre_reserva"))
@@ -4483,11 +4491,11 @@ export default function PmsCalendar() {
                       <span className="text-xs font-bold text-foreground">Resumo Financeiro da Hospedagem</span>
                       {(() => {
                         const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
-                        const curPaid = formPayments.length > 0 
-                          ? formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0) 
-                          : (Number(formPaidAmount) || 0);
+                        const isResPaid = formPaymentStatus === "pago_total" || formPaymentStatus === "pago";
+                        const sumPay = formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+                        const curPaid = isResPaid ? Math.max(curTot, sumPay || Number(formPaidAmount) || 0) : (sumPay > 0 ? sumPay : (Number(formPaidAmount) || 0));
                         const remaining = Math.max(0, curTot - curPaid);
-                        if (remaining === 0 && curTot > 0) {
+                        if (isResPaid || (remaining === 0 && curTot > 0)) {
                           return <Badge className="bg-emerald-600 text-white font-bold text-[10px]">✓ Quitado</Badge>;
                         } else if (curPaid > 0) {
                           return <Badge className="bg-amber-600 text-white font-bold text-[10px]">⚡ Sinal Pago</Badge>;
@@ -4496,11 +4504,21 @@ export default function PmsCalendar() {
                       })()}
                     </div>
                     <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
-                      <span>Total: <strong className="text-foreground font-bold">R$ {((Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal())).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
-                      <span>•</span>
-                      <span>Pago: <strong className="text-emerald-600 dark:text-emerald-400 font-bold">R$ {(formPayments.length > 0 ? formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0) : (Number(formPaidAmount) || 0)).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
-                      <span>•</span>
-                      <span>{formDailyRates.length} {formDailyRates.length === 1 ? "diária" : "diárias"} configuradas</span>
+                      {(() => {
+                        const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
+                        const isResPaid = formPaymentStatus === "pago_total" || formPaymentStatus === "pago";
+                        const sumPay = formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+                        const curPaid = isResPaid ? Math.max(curTot, sumPay || Number(formPaidAmount) || 0) : (sumPay > 0 ? sumPay : (Number(formPaidAmount) || 0));
+                        return (
+                          <>
+                            <span>Total: <strong className="text-foreground font-bold">R$ {curTot.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
+                            <span>•</span>
+                            <span>Pago: <strong className="text-emerald-600 dark:text-emerald-400 font-bold">R$ {curPaid.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</strong></span>
+                            <span>•</span>
+                            <span>{formDailyRates.length} {formDailyRates.length === 1 ? "diária" : "diárias"} configuradas</span>
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
 
@@ -4666,11 +4684,11 @@ export default function PmsCalendar() {
                   {/* 1. Barra de Indicadores Financeiros Unificada */}
                   {(() => {
                     const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
-                    const curPaid = formPayments.length > 0 
-                      ? formPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0) 
-                      : (Number(formPaidAmount) || 0);
+                    const isResPaid = formPaymentStatus === "pago_total" || formPaymentStatus === "pago";
+                    const sumPay = formPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+                    const curPaid = isResPaid ? Math.max(curTot, sumPay || Number(formPaidAmount) || 0) : (sumPay > 0 ? sumPay : (Number(formPaidAmount) || 0));
                     const remaining = Math.max(0, curTot - curPaid);
-                    const isPaid = curTot > 0 && remaining === 0;
+                    const isPaid = isResPaid || (curTot > 0 && remaining === 0);
 
                     return (
                       <div className="p-3 bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-2xl flex flex-wrap items-center justify-between gap-3 text-xs">

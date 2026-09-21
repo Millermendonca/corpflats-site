@@ -19975,14 +19975,28 @@ function serveSpaWithMetadata(distFolder, req, res) {
       .replace(/<meta\s+name=["']twitter:image["']\s+content=["'].*?["']\s*\/?>/i, `<meta name="twitter:image" content="${image}" />`);
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
     return res.send(html);
   } catch {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
     return res.sendFile(indexPath);
   }
 }
 
 if (fs.existsSync(distPath)) {
-  app.use(express.static(distPath));
+  app.use(express.static(distPath, {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+      }
+    }
+  }));
   app.use((req, res, next) => {
     if (req.method === "GET" && !req.path.startsWith("/api")) {
       return serveSpaWithMetadata(distPath, req, res);
@@ -19991,7 +20005,15 @@ if (fs.existsSync(distPath)) {
   });
   console.log(`[Production Server] Servindo frontend em: ${distPath}`);
 } else if (fs.existsSync(fallbackDistPath)) {
-  app.use(express.static(fallbackDistPath));
+  app.use(express.static(fallbackDistPath, {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+      }
+    }
+  }));
   app.use((req, res, next) => {
     if (req.method === "GET" && !req.path.startsWith("/api")) {
       return serveSpaWithMetadata(fallbackDistPath, req, res);
