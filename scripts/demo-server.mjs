@@ -2654,6 +2654,26 @@ function reconcileCleaningRequests() {
   ensureUniqueRequestIds();
 }
 
+let backupsTableReady = false;
+async function ensureBackupsTable() {
+  if (!pgPool || backupsTableReady) return;
+  try {
+    await pgPool.query(`
+      CREATE TABLE IF NOT EXISTS system_store_backups (
+        id BIGSERIAL PRIMARY KEY,
+        timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        reason TEXT NOT NULL,
+        reservations_count INT NOT NULL,
+        value JSONB NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_backups_timestamp ON system_store_backups (timestamp DESC);
+    `);
+    backupsTableReady = true;
+  } catch (err) {
+    console.warn("[PostgreSQL] Erro ao assegurar tabela system_store_backups:", err.message);
+  }
+}
+
 function saveDatabase(reason = "auto_save") {
   try {
     reconcileCleaningRequests();
@@ -2667,10 +2687,12 @@ function saveDatabase(reason = "auto_save") {
 
       const resCount = db.reservations ? db.reservations.length : 0;
       if (resCount > 0) {
-        pgPool.query(
-          "INSERT INTO system_store_backups (timestamp, reason, reservations_count, value) VALUES (NOW(), $1, $2, $3)",
-          [reason, resCount, stateJson]
-        ).then(() => {
+        ensureBackupsTable().then(() => {
+          return pgPool.query(
+            "INSERT INTO system_store_backups (timestamp, reason, reservations_count, value) VALUES (NOW(), $1, $2, $3)",
+            [reason, resCount, stateJson]
+          );
+        }).then(() => {
           pgPool.query("DELETE FROM system_store_backups WHERE id NOT IN (SELECT id FROM system_store_backups ORDER BY timestamp DESC LIMIT 100)").catch(() => {});
         }).catch(e => console.warn("[PostgreSQL Backup Snapshot]", e.message));
       }
@@ -7444,6 +7466,7 @@ app.all(["/api/pms/reservations/restore-sept", "/api/system/restore-sept"], (req
 app.get("/api/system/snapshots", async (req, res) => {
   if (!pgPool) return res.json({ error: "PostgreSQL não conectado", snapshots: [] });
   try {
+    await ensureBackupsTable();
     const q = await pgPool.query("SELECT id, timestamp, reason, reservations_count, length(value::text) as size_bytes FROM system_store_backups ORDER BY timestamp DESC LIMIT 50");
     res.json({ success: true, count: q.rows.length, snapshots: q.rows });
   } catch (e) {
