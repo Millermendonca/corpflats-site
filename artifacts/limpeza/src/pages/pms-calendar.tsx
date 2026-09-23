@@ -1269,7 +1269,7 @@ export default function PmsCalendar() {
     try {
       const startStr = format(subDays(timelineStart, 5), "yyyy-MM-dd");
       const endStr = format(addDays(timelineEnd, 5), "yyyy-MM-dd");
-      const res = await fetch(`/api/pms/calendar?startDate=${startStr}&endDate=${endStr}`, { credentials: "include" });
+      const res = await fetch(`/api/pms/calendar?startDate=${startStr}&endDate=${endStr}&_t=${Date.now()}`, { cache: "no-store", credentials: "include" });
       if (res.ok) {
         const json = await res.json();
         setData(json);
