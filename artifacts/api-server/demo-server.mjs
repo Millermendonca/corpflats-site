@@ -1286,243 +1286,183 @@ function sanitizeLostAndFound() {
   }
 }
 
-function ensureRestoredSeptReservations() {
+function reconcileUniversalIntegrity(incomingState = null) {
+  if (!db.flats) db.flats = [];
   if (!db.reservations) db.reservations = [];
-  if (!db.guests) db.guests = [];
   if (!db.cleaningRequests) db.cleaningRequests = [];
+  if (!db.guests) db.guests = [];
   let changed = false;
 
-  // 1. Restaurar Reserva 408 (21/09 a 22/09)
-  let res408 = db.reservations.find(r => 
-    (String(r.flatNumber) === "408" || r.flatId === 8) && 
-    r.checkinDate === "2026-09-21" && 
-    r.checkoutDate === "2026-09-22"
-  );
-  if (!res408) {
-    let guest408 = db.guests.find(g => (g.name || "").includes("Hóspede Flat 408") || g.id === 31);
-    if (!guest408) {
-      guest408 = {
-        id: 31,
-        guestCode: "HOSP-00031",
-        name: "Hóspede Flat 408",
-        fullName: "Hóspede Flat 408",
-        phone: "",
-        createdAt: "2026-09-21T10:00:00.000Z",
-        documentNumber: "",
-        document: ""
-      };
-      db.guests.push(guest408);
-    }
-    const maxResId = db.reservations.length > 0 ? Math.max(...db.reservations.map(r => Number(r.id) || 0)) : 0;
-    const resId = Math.max(maxResId + 1, 148);
-    res408 = {
-      id: resId,
-      code: `RES-408-${String(resId).padStart(4, "0")}`,
-      flatNumber: "408",
-      flatId: 8,
-      guestId: guest408.id,
-      guestCode: guest408.guestCode,
-      guestName: guest408.name,
-      checkinDate: "2026-09-21",
-      checkoutDate: "2026-09-22",
-      nightsCount: 1,
-      dailyRate: 220,
-      totalAmount: 220,
-      totalPrice: 220,
-      price: 220,
-      paidAmount: 220,
-      paymentStatus: "pago_total",
-      status: "confirmada",
-      channel: "whatsapp",
-      adults: 1,
-      children: 0,
-      twinBeds: false,
-      extraMattress: false,
-      notes: "Reserva restaurada (Estadia 21/09 a 22/09 - Limpeza realizada por Cris)",
-      specialRequests: "",
-      receptionNotes: "",
-      includeBreakfast: false,
-      prefersHighFloor: false,
-      earlyCheckinAuthorized: false,
-      isMonthlyGuest: false,
-      clientType: "avulso",
-      guests: [
-        {
-          index: 1,
-          guestId: guest408.id,
-          guestCode: guest408.guestCode,
-          name: guest408.name,
-          hasCompletedCheckin: true,
-          entryAuthorized: true
+  // 1. União Bidirecional Não-Destrutiva (Merge de Nuvem PostgreSQL e Disco Local)
+  if (incomingState && typeof incomingState === "object") {
+    // 1.1 Flats
+    if (Array.isArray(incomingState.flats) && incomingState.flats.length > 0) {
+      incomingState.flats.forEach(incFlat => {
+        const existing = db.flats.find(f => String(f.number) === String(incFlat.number) || f.id === incFlat.id);
+        if (!existing) {
+          db.flats.push({ ...incFlat });
+          changed = true;
+        } else if (incFlat.isActive !== undefined && existing.isActive === undefined) {
+          existing.isActive = incFlat.isActive;
         }
-      ],
-      auditLogs: [],
-      createdAt: "2026-09-21T08:00:00.000Z",
-      updatedAt: "2026-09-22T14:45:00.000Z"
-    };
-    db.reservations.push(res408);
-    changed = true;
-    console.log("[PMS Auto-Restore] Reserva do Flat 408 (21/09 a 22/09) restaurada com sucesso.");
-  } else if (res408.status === "cancelada" || res408.status === "cancelled") {
-    res408.status = "confirmada";
-    res408.paymentStatus = "pago_total";
-    changed = true;
-    console.log("[PMS Auto-Restore] Reserva do Flat 408 reativada com status confirmada.");
-  }
-
-  // 2. Restaurar Reserva 715 (21/09 a 22/09)
-  let res715 = db.reservations.find(r => 
-    (String(r.flatNumber) === "715" || r.flatId === 15) && 
-    r.checkinDate === "2026-09-21" && 
-    r.checkoutDate === "2026-09-22"
-  );
-  if (!res715) {
-    let guest715 = db.guests.find(g => (g.name || "").includes("Hóspede Flat 715") || g.id === 32);
-    if (!guest715) {
-      guest715 = {
-        id: 32,
-        guestCode: "HOSP-00032",
-        name: "Hóspede Flat 715",
-        fullName: "Hóspede Flat 715",
-        phone: "",
-        createdAt: "2026-09-21T10:00:00.000Z",
-        documentNumber: "",
-        document: ""
-      };
-      db.guests.push(guest715);
+      });
     }
-    const maxResId = db.reservations.length > 0 ? Math.max(...db.reservations.map(r => Number(r.id) || 0)) : 0;
-    const resId = Math.max(maxResId + 1, 149);
-    res715 = {
-      id: resId,
-      code: `RES-715-${String(resId).padStart(4, "0")}`,
-      flatNumber: "715",
-      flatId: 15,
-      guestId: guest715.id,
-      guestCode: guest715.guestCode,
-      guestName: guest715.name,
-      checkinDate: "2026-09-21",
-      checkoutDate: "2026-09-22",
-      nightsCount: 1,
-      dailyRate: 220,
-      totalAmount: 220,
-      totalPrice: 220,
-      price: 220,
-      paidAmount: 220,
-      paymentStatus: "pago_total",
-      status: "confirmada",
-      channel: "whatsapp",
-      adults: 1,
-      children: 0,
-      twinBeds: false,
-      extraMattress: false,
-      notes: "Reserva restaurada (Estadia 21/09 a 22/09 - Limpeza realizada por Grazi)",
-      specialRequests: "",
-      receptionNotes: "",
-      includeBreakfast: false,
-      prefersHighFloor: false,
-      earlyCheckinAuthorized: false,
-      isMonthlyGuest: false,
-      clientType: "avulso",
-      guests: [
-        {
-          index: 1,
-          guestId: guest715.id,
-          guestCode: guest715.guestCode,
-          name: guest715.name,
-          hasCompletedCheckin: true,
-          entryAuthorized: true
+
+    // 1.2 Hóspedes
+    if (Array.isArray(incomingState.guests)) {
+      incomingState.guests.forEach(incGuest => {
+        const existing = db.guests.find(g => 
+          g.id === incGuest.id || 
+          (g.guestCode && incGuest.guestCode && g.guestCode === incGuest.guestCode) ||
+          (g.document && incGuest.document && g.document.replace(/\D/g, '') === incGuest.document.replace(/\D/g, ''))
+        );
+        if (!existing) {
+          db.guests.push({ ...incGuest });
+          changed = true;
         }
-      ],
-      auditLogs: [],
-      createdAt: "2026-09-21T08:00:00.000Z",
-      updatedAt: "2026-09-22T15:40:00.000Z"
-    };
-    db.reservations.push(res715);
-    changed = true;
-    console.log("[PMS Auto-Restore] Reserva do Flat 715 (21/09 a 22/09) restaurada com sucesso.");
-  } else if (res715.status === "cancelada" || res715.status === "cancelled") {
-    res715.status = "confirmada";
-    res715.paymentStatus = "pago_total";
-    changed = true;
-    console.log("[PMS Auto-Restore] Reserva do Flat 715 reativada com status confirmada.");
+      });
+    }
+
+    // 1.3 Reservas (União estrita para TODOS os flats)
+    if (Array.isArray(incomingState.reservations)) {
+      incomingState.reservations.forEach(incRes => {
+        const existingIdx = db.reservations.findIndex(r => 
+          (r.id && incRes.id && Number(r.id) === Number(incRes.id)) ||
+          (r.code && incRes.code && r.code.toUpperCase() === incRes.code.toUpperCase()) ||
+          (String(r.flatNumber) === String(incRes.flatNumber) && r.checkinDate === incRes.checkinDate && r.checkoutDate === incRes.checkoutDate && r.checkinDate && r.checkoutDate)
+        );
+        if (existingIdx === -1) {
+          db.reservations.push({ ...incRes });
+          changed = true;
+        } else {
+          const existing = db.reservations[existingIdx];
+          const incDate = incRes.updatedAt || incRes.createdAt || "";
+          const curDate = existing.updatedAt || existing.createdAt || "";
+          if (incDate > curDate) {
+            db.reservations[existingIdx] = { ...existing, ...incRes };
+            changed = true;
+          }
+        }
+      });
+    }
+
+    // 1.4 Limpezas (União estrita para TODOS os flats)
+    if (Array.isArray(incomingState.cleaningRequests)) {
+      incomingState.cleaningRequests.forEach(incReq => {
+        const existingIdx = db.cleaningRequests.findIndex(c => 
+          (c.id && incReq.id && Number(c.id) === Number(incReq.id)) ||
+          (String(c.flatNumber) === String(incReq.flatNumber) && c.requestDate === incReq.requestDate && (c.source === incReq.source || c.status === incReq.status))
+        );
+        if (existingIdx === -1) {
+          db.cleaningRequests.push({ ...incReq });
+          changed = true;
+        } else {
+          const cur = db.cleaningRequests[existingIdx];
+          if ((incReq.status === "clean" && cur.status !== "clean") || (incReq.assignedUserId && !cur.assignedUserId)) {
+            db.cleaningRequests[existingIdx] = { ...cur, ...incReq };
+            changed = true;
+          }
+        }
+      });
+    }
+
+    // 1.5 Pedidos de Café da Manhã & Tarefas Preventivas
+    if (Array.isArray(incomingState.breakfastOrders)) {
+      incomingState.breakfastOrders.forEach(incOrder => {
+        const existing = (db.breakfastOrders || []).find(o => o.id === incOrder.id);
+        if (!existing) {
+          if (!db.breakfastOrders) db.breakfastOrders = [];
+          db.breakfastOrders.push({ ...incOrder });
+          changed = true;
+        }
+      });
+    }
   }
 
-  // 3. Garantir limpeza de checkout de 22/09 para Flat 408 (Cris)
-  const clean408 = db.cleaningRequests.find(c => 
-    (String(c.flatNumber) === "408" || c.flatId === 8) && 
-    (c.requestDate === "2026-09-22" || c.effectiveDate === "2026-09-22")
-  );
-  if (!clean408) {
-    db.cleaningRequests.push({
-      id: 295,
-      flatId: 8,
-      flatNumber: "408",
-      requestDate: "2026-09-22",
-      effectiveDate: "2026-09-22",
-      source: "checkout",
-      status: "clean",
-      assignedUserId: 2,
-      assignedUsername: "Cris",
-      assignedUserName: "Cris",
-      isVacant: true,
-      isPriority: false,
-      isExtended: false,
-      twinBeds: false,
-      extraMattress: false,
-      adminNote: "Limpeza realizada por Cris na terça-feira 22/09 (Auditoria PMS)",
-      leavingGuest: "Hóspede Flat 408",
-      arrivingGuest: null,
-      pendingObservation: null,
-      willCleanAt: "2026-09-22T14:00:00.000Z",
-      cleaningStartedAt: "2026-09-22T14:00:00.000Z",
-      completedAt: "2026-09-22T14:45:00.000Z",
-      durationMinutes: 45,
-      createdAt: "2026-09-22T08:00:00.000Z",
-      updatedAt: "2026-09-22T14:45:00.000Z"
-    });
-    changed = true;
-    console.log("[PMS Auto-Restore] Limpeza de checkout do Flat 408 (Cris) restaurada.");
-  }
+  // 2. Normalização Universal de Ativação de Flats (isActive)
+  db.flats.forEach(flat => {
+    if (String(flat.number) === "502" || flat.id === 9) {
+      if (flat.isActive !== false) {
+        flat.isActive = false;
+        changed = true;
+      }
+    } else if (flat.isActive === undefined) {
+      flat.isActive = true;
+      changed = true;
+    }
+  });
 
-  // 4. Garantir limpeza de checkout de 22/09 para Flat 715 (Grazi)
-  const clean715 = db.cleaningRequests.find(c => 
-    (String(c.flatNumber) === "715" || c.flatId === 15) && 
-    (c.requestDate === "2026-09-22" || c.effectiveDate === "2026-09-22")
-  );
-  if (!clean715) {
-    db.cleaningRequests.push({
-      id: 296,
-      flatId: 15,
-      flatNumber: "715",
-      requestDate: "2026-09-22",
-      effectiveDate: "2026-09-22",
-      source: "checkout",
-      status: "clean",
-      assignedUserId: 3,
-      assignedUsername: "Grazi",
-      assignedUserName: "Grazi",
-      isVacant: true,
-      isPriority: false,
-      isExtended: false,
-      twinBeds: false,
-      extraMattress: false,
-      adminNote: "Limpeza realizada por Grazi na terça-feira 22/09 (Auditoria PMS)",
-      leavingGuest: "Hóspede Flat 715",
-      arrivingGuest: null,
-      pendingObservation: null,
-      willCleanAt: "2026-09-22T15:00:00.000Z",
-      cleaningStartedAt: "2026-09-22T15:00:00.000Z",
-      completedAt: "2026-09-22T15:40:00.000Z",
-      durationMinutes: 40,
-      createdAt: "2026-09-22T08:00:00.000Z",
-      updatedAt: "2026-09-22T15:40:00.000Z"
-    });
-    changed = true;
-    console.log("[PMS Auto-Restore] Limpeza de checkout do Flat 715 (Grazi) restaurada.");
-  }
+  // 3. Auditoria Universal de Integridade de Reservas em TODOS os Flats
+  const todayStr = getTodayStr ? getTodayStr() : new Date().toISOString().substring(0, 10);
+  const activeFlatsMap = new Map();
+  db.flats.forEach(f => {
+    activeFlatsMap.set(String(f.number), f);
+    activeFlatsMap.set(Number(f.id), f);
+  });
+
+  db.reservations.forEach(r => {
+    const flat = activeFlatsMap.get(String(r.flatNumber)) || activeFlatsMap.get(Number(r.flatId));
+    if (flat) {
+      if (!r.flatId || r.flatId !== flat.id) {
+        r.flatId = flat.id;
+        changed = true;
+      }
+      if (!r.flatNumber || String(r.flatNumber) !== String(flat.number)) {
+        r.flatNumber = String(flat.number);
+        changed = true;
+      }
+    }
+
+    // 4. Garantir que para TODO checkout de QUALQUER flat, exista a solicitação de limpeza correspondente
+    if (r.status !== "cancelada" && r.status !== "cancelled" && r.checkoutDate && r.flatNumber) {
+      const checkoutDate = r.checkoutDate;
+      const hasCleaning = db.cleaningRequests.some(c => 
+        (String(c.flatNumber) === String(r.flatNumber) || c.flatId === r.flatId) &&
+        (c.requestDate === checkoutDate || c.effectiveDate === checkoutDate)
+      );
+
+      if (!hasCleaning) {
+        const isPastCheckout = checkoutDate < todayStr;
+        const maxCleanId = db.cleaningRequests.length > 0 
+          ? Math.max(...db.cleaningRequests.map(c => Number(c.id) || 0)) 
+          : 0;
+        
+        db.cleaningRequests.push({
+          id: maxCleanId + 1,
+          flatId: r.flatId || (flat ? flat.id : null),
+          flatNumber: String(r.flatNumber),
+          requestDate: checkoutDate,
+          effectiveDate: checkoutDate,
+          source: "checkout",
+          status: isPastCheckout ? "clean" : "pending",
+          assignedUserId: null,
+          assignedUsername: null,
+          assignedUserName: null,
+          isVacant: true,
+          isPriority: false,
+          isExtended: false,
+          twinBeds: Boolean(r.twinBeds),
+          extraMattress: Boolean(r.extraMattress),
+          adminNote: `Limpeza de check-out gerada automaticamente para o Flat ${r.flatNumber} (Reserva ${r.code || r.id})`,
+          leavingGuest: r.guestName || "Hóspede",
+          arrivingGuest: null,
+          pendingObservation: null,
+          willCleanAt: `${checkoutDate}T13:00:00.000Z`,
+          createdAt: `${checkoutDate}T08:00:00.000Z`,
+          updatedAt: `${checkoutDate}T13:00:00.000Z`
+        });
+        changed = true;
+        console.log(`[Universal Integrity] Limpeza de checkout criada automaticamente para o Flat ${r.flatNumber} na data ${checkoutDate}`);
+      }
+    }
+  });
 
   return changed;
+}
+
+// Alias de retrocompatibilidade
+function ensureRestoredSeptReservations() {
+  return reconcileUniversalIntegrity();
 }
 
 function sanitizeReservationFlags() {
@@ -1588,8 +1528,8 @@ async function loadDatabase() {
       const content = fs.readFileSync(DB_FILE, "utf-8");
       const loaded = JSON.parse(content);
       Object.assign(db, loaded);
+      reconcileUniversalIntegrity(loaded);
       sanitizeReservationFlags();
-      if (ensureRestoredSeptReservations()) saveDatabase();
     }
     if (pgPool) {
       try {
@@ -1656,6 +1596,9 @@ async function loadDatabase() {
           } else if ((!pgLoaded.periodicExecutions || pgLoaded.periodicExecutions.length === 0) && (db.periodicExecutions && db.periodicExecutions.length > 0)) {
             pgLoaded.periodicExecutions = db.periodicExecutions;
           }
+          const localReservations = [...(db.reservations || [])];
+          const localCleanings = [...(db.cleaningRequests || [])];
+          const localGuests = [...(db.guests || [])];
           Object.assign(db, pgLoaded);
           if (!Array.isArray(db.periodicTasks)) db.periodicTasks = [];
           if (!Array.isArray(db.periodicExecutions)) db.periodicExecutions = [];
@@ -1663,8 +1606,9 @@ async function loadDatabase() {
           sanitizeAndRecoverCleanings();
           sanitizeLostAndFound();
           sanitizeReservationFlags();
-          if (ensureRestoredSeptReservations()) {
-            console.log("[PostgreSQL] Reservas 408/715 restauradas e sincronizadas na nuvem!");
+          const didChange = reconcileUniversalIntegrity({ reservations: localReservations, cleaningRequests: localCleanings, guests: localGuests, flats: db.flats });
+          if (didChange) {
+            console.log("[PostgreSQL] Estado universal reconciliado sem perdas e sincronizado na nuvem!");
             saveDatabase();
           }
         }
@@ -3993,9 +3937,11 @@ app.post("/api/public/checkout", async (req, res) => {
 
 // ── Flats Endpoints ─────────────────────────────────────────────────────────
 app.get("/api/flats", (req, res) => {
-  db.flats = (db.flats || []).filter(f => String(f.number) !== "502");
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate");
+  if (reconcileUniversalIntegrity()) saveDatabase();
+  const activeFlats = (db.flats || []).filter(f => f.isActive !== false);
   triggerBackgroundSync();
-  res.json(db.flats);
+  res.json(activeFlats);
 });
 
 app.post("/api/flats", (req, res) => {
@@ -7101,7 +7047,7 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
 
 // ── Motor Fair-Share: Quarto da Vez (Balanceamento de Uso & Ociosidade) ───────
 function calculateFairShareStats(checkinDate, checkoutDate, excludeResId = null) {
-  const flats = (db.flats || []).filter(f => String(f.number) !== "502" && f.id !== 9);
+  const flats = (db.flats || []).filter(f => f.isActive !== false);
   if (flats.length === 0) return { bestFlat: null, availableCount: 0, allStats: [] };
 
   const [y, m] = checkinDate.split("-").map(Number);
@@ -7215,7 +7161,7 @@ app.get("/api/pms/fair-share-flat", (req, res) => {
 // Endpoint de contingência: Forçar restauração e sincronização das reservas 408 e 715
 app.all(["/api/pms/reservations/restore-sept", "/api/system/restore-sept"], (req, res) => {
   res.set("Cache-Control", "no-store, no-cache, must-revalidate");
-  const changed = ensureRestoredSeptReservations();
+  const changed = reconcileUniversalIntegrity();
   saveDatabase();
   const r408 = (db.reservations || []).find(r => (String(r.flatNumber) === "408" || r.flatId === 8) && r.checkinDate === "2026-09-21");
   const r715 = (db.reservations || []).find(r => (String(r.flatNumber) === "715" || r.flatId === 15) && r.checkinDate === "2026-09-21");
@@ -7235,7 +7181,7 @@ app.get("/api/pms/calendar", (req, res) => {
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   res.set("Pragma", "no-cache");
   res.set("Expires", "0");
-  if (ensureRestoredSeptReservations()) saveDatabase();
+  if (reconcileUniversalIntegrity()) saveDatabase();
   const { startDate, endDate } = req.query;
   const start = startDate || getOffsetDateStr(-3);
   const end = endDate || getOffsetDateStr(30);
@@ -7243,7 +7189,7 @@ app.get("/api/pms/calendar", (req, res) => {
   const todayStr = getTodayStr();
   const cleaningRequestsToday = getRequestsForDate(todayStr);
 
-  const flats = [...db.flats].filter(f => String(f.number) !== "502" && f.id !== 9).sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true })).map(f => {
+  const flats = (db.flats || []).filter(f => f.isActive !== false).sort((a, b) => String(a.number).localeCompare(String(b.number), undefined, { numeric: true })).map(f => {
     const fNum = String(f.number);
     const req = cleaningRequestsToday.find(r => String(r.flatNumber) === fNum || r.flatId === f.id);
     let cleaningStatus = "clean";

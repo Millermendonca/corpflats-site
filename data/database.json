@@ -46,7 +46,8 @@
       "bedType": "casal",
       "hasMicrowave": true,
       "features": [],
-      "notes": ""
+      "notes": "",
+      "isActive": true
     },
     {
       "id": 2,
@@ -54,7 +55,8 @@
       "colIndex": 3,
       "colName": "114 Solteiro",
       "isOccupied": true,
-      "updatedAt": "2026-09-01T07:26:30.433Z"
+      "updatedAt": "2026-09-01T07:26:30.433Z",
+      "isActive": true
     },
     {
       "id": 3,
@@ -62,7 +64,8 @@
       "colIndex": 4,
       "colName": "116",
       "isOccupied": true,
-      "updatedAt": "2026-09-01T07:26:30.433Z"
+      "updatedAt": "2026-09-01T07:26:30.433Z",
+      "isActive": true
     },
     {
       "id": 4,
@@ -70,7 +73,8 @@
       "colIndex": 5,
       "colName": "211 de casal",
       "isOccupied": false,
-      "updatedAt": "2026-09-01T07:26:30.433Z"
+      "updatedAt": "2026-09-01T07:26:30.433Z",
+      "isActive": true
     },
     {
       "id": 5,
@@ -78,7 +82,8 @@
       "colIndex": 6,
       "colName": "212 solteiro",
       "isOccupied": true,
-      "updatedAt": "2026-09-01T07:26:30.433Z"
+      "updatedAt": "2026-09-01T07:26:30.433Z",
+      "isActive": true
     },
     {
       "id": 6,
@@ -86,7 +91,8 @@
       "colIndex": 7,
       "colName": "215 Solteiro",
       "isOccupied": true,
-      "updatedAt": "2026-09-01T07:26:30.433Z"
+      "updatedAt": "2026-09-01T07:26:30.433Z",
+      "isActive": true
     },
     {
       "id": 7,
@@ -94,7 +100,8 @@
       "colIndex": 8,
       "colName": "313 Solteiro X SPLIT",
       "isOccupied": true,
-      "updatedAt": "2026-09-01T07:26:30.433Z"
+      "updatedAt": "2026-09-01T07:26:30.433Z",
+      "isActive": true
     },
     {
       "id": 8,
@@ -102,7 +109,16 @@
       "colIndex": 9,
       "colName": "408 Casal",
       "isOccupied": true,
-      "updatedAt": "2026-09-01T07:26:30.433Z"
+      "updatedAt": "2026-09-01T07:26:30.433Z",
+      "isActive": true
+    },
+    {
+      "id": 9,
+      "number": "502",
+      "colName": "502",
+      "isActive": false,
+      "isOccupied": false,
+      "updatedAt": "2026-09-23T18:59:41.707Z"
     },
     {
       "id": 10,
@@ -110,7 +126,8 @@
       "colIndex": 11,
       "colName": "509 casal",
       "isOccupied": true,
-      "updatedAt": "2026-09-01T07:26:30.433Z"
+      "updatedAt": "2026-09-01T07:26:30.433Z",
+      "isActive": true
     },
     {
       "id": 11,
@@ -118,7 +135,8 @@
       "colIndex": 12,
       "colName": "511 casal X",
       "isOccupied": true,
-      "updatedAt": "2026-09-01T07:26:30.433Z"
+      "updatedAt": "2026-09-01T07:26:30.433Z",
+      "isActive": true
     },
     {
       "id": 12,
@@ -126,7 +144,8 @@
       "colIndex": 13,
       "colName": "512 Solteiro",
       "isOccupied": true,
-      "updatedAt": "2026-09-01T07:26:30.433Z"
+      "updatedAt": "2026-09-01T07:26:30.433Z",
+      "isActive": true
     },
     {
       "id": 13,
@@ -134,7 +153,8 @@
       "colIndex": 14,
       "colName": "605 solteiro",
       "isOccupied": true,
-      "updatedAt": "2026-09-01T07:26:30.433Z"
+      "updatedAt": "2026-09-01T07:26:30.433Z",
+      "isActive": true
     },
     {
       "id": 14,
@@ -142,7 +162,8 @@
       "colIndex": 15,
       "colName": "712 Solteiro SPLIT",
       "isOccupied": true,
-      "updatedAt": "2026-09-01T07:26:30.433Z"
+      "updatedAt": "2026-09-01T07:26:30.433Z",
+      "isActive": true
     },
     {
       "id": 15,
@@ -150,7 +171,8 @@
       "colIndex": 16,
       "colName": "715 Solteiro",
       "isOccupied": true,
-      "updatedAt": "2026-09-01T07:26:30.433Z"
+      "updatedAt": "2026-09-01T07:26:30.433Z",
+      "isActive": true
     },
     {
       "id": 16,
@@ -158,7 +180,8 @@
       "colIndex": 17,
       "colName": "904 split",
       "isOccupied": true,
-      "updatedAt": "2026-09-01T07:26:30.433Z"
+      "updatedAt": "2026-09-01T07:26:30.433Z",
+      "isActive": true
     },
     {
       "id": 17,
@@ -166,7 +189,8 @@
       "colIndex": 18,
       "colName": "905 split",
       "isOccupied": true,
-      "updatedAt": "2026-09-01T07:26:30.433Z"
+      "updatedAt": "2026-09-01T07:26:30.433Z",
+      "isActive": true
     },
     {
       "id": 18,
@@ -174,7 +198,8 @@
       "colIndex": 19,
       "colName": "X 907 casal",
       "isOccupied": true,
-      "updatedAt": "2026-09-01T07:26:30.433Z"
+      "updatedAt": "2026-09-01T07:26:30.433Z",
+      "isActive": true
     },
     {
       "id": 19,
@@ -182,7 +207,8 @@
       "colIndex": 20,
       "colName": "1004 Solteiro X",
       "isOccupied": false,
-      "updatedAt": "2026-09-20T03:12:12.880Z"
+      "updatedAt": "2026-09-20T03:12:12.880Z",
+      "isActive": true
     },
     {
       "id": 21,
@@ -190,7 +216,8 @@
       "colIndex": 22,
       "colName": "1304 Solteiro(ferro unindo)",
       "isOccupied": true,
-      "updatedAt": "2026-09-01T07:26:30.433Z"
+      "updatedAt": "2026-09-01T07:26:30.433Z",
+      "isActive": true
     }
   ],
   "cleaningRequests": [
@@ -877,6 +904,318 @@
       "durationMinutes": 40,
       "createdAt": "2026-09-22T08:00:00.000Z",
       "updatedAt": "2026-09-22T15:40:00.000Z"
+    },
+    {
+      "id": 297,
+      "flatId": 3,
+      "flatNumber": "116",
+      "requestDate": "2026-09-03",
+      "effectiveDate": "2026-09-03",
+      "source": "checkout",
+      "status": "clean",
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "assignedUserName": null,
+      "isVacant": true,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 116 (Reserva RES-116-0032)",
+      "leavingGuest": "Aline",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-09-03T13:00:00.000Z",
+      "createdAt": "2026-09-03T08:00:00.000Z",
+      "updatedAt": "2026-09-03T13:00:00.000Z"
+    },
+    {
+      "id": 298,
+      "flatId": 13,
+      "flatNumber": "605",
+      "requestDate": "2026-09-03",
+      "effectiveDate": "2026-09-03",
+      "source": "checkout",
+      "status": "clean",
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "assignedUserName": null,
+      "isVacant": true,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 605 (Reserva RES-605-0031)",
+      "leavingGuest": "William",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-09-03T13:00:00.000Z",
+      "createdAt": "2026-09-03T08:00:00.000Z",
+      "updatedAt": "2026-09-03T13:00:00.000Z"
+    },
+    {
+      "id": 299,
+      "flatId": 16,
+      "flatNumber": "904",
+      "requestDate": "2026-09-04",
+      "effectiveDate": "2026-09-04",
+      "source": "checkout",
+      "status": "clean",
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "assignedUserName": null,
+      "isVacant": true,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 904 (Reserva RES-904-0030)",
+      "leavingGuest": "Leonardo",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-09-04T13:00:00.000Z",
+      "createdAt": "2026-09-04T08:00:00.000Z",
+      "updatedAt": "2026-09-04T13:00:00.000Z"
+    },
+    {
+      "id": 300,
+      "flatId": 14,
+      "flatNumber": "712",
+      "requestDate": "2026-09-04",
+      "effectiveDate": "2026-09-04",
+      "source": "checkout",
+      "status": "clean",
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "assignedUserName": null,
+      "isVacant": true,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 712 (Reserva RES-904-0028)",
+      "leavingGuest": "Kaiky",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-09-04T13:00:00.000Z",
+      "createdAt": "2026-09-04T08:00:00.000Z",
+      "updatedAt": "2026-09-04T13:00:00.000Z"
+    },
+    {
+      "id": 301,
+      "flatId": 5,
+      "flatNumber": "212",
+      "requestDate": "2026-09-05",
+      "effectiveDate": "2026-09-05",
+      "source": "checkout",
+      "status": "clean",
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "assignedUserName": null,
+      "isVacant": true,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 212 (Reserva RES-212-0027)",
+      "leavingGuest": "Felipe",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-09-05T13:00:00.000Z",
+      "createdAt": "2026-09-05T08:00:00.000Z",
+      "updatedAt": "2026-09-05T13:00:00.000Z"
+    },
+    {
+      "id": 302,
+      "flatId": 6,
+      "flatNumber": "215",
+      "requestDate": "2026-09-05",
+      "effectiveDate": "2026-09-05",
+      "source": "checkout",
+      "status": "clean",
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "assignedUserName": null,
+      "isVacant": true,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 215 (Reserva RES-215-0026)",
+      "leavingGuest": "Claudia",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-09-05T13:00:00.000Z",
+      "createdAt": "2026-09-05T08:00:00.000Z",
+      "updatedAt": "2026-09-05T13:00:00.000Z"
+    },
+    {
+      "id": 303,
+      "flatId": 10,
+      "flatNumber": "509",
+      "requestDate": "2026-09-03",
+      "effectiveDate": "2026-09-03",
+      "source": "checkout",
+      "status": "clean",
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "assignedUserName": null,
+      "isVacant": true,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 509 (Reserva RES-212-0024)",
+      "leavingGuest": "Guido",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-09-03T13:00:00.000Z",
+      "createdAt": "2026-09-03T08:00:00.000Z",
+      "updatedAt": "2026-09-03T13:00:00.000Z"
+    },
+    {
+      "id": 304,
+      "flatId": 21,
+      "flatNumber": "1304",
+      "requestDate": "2026-09-03",
+      "effectiveDate": "2026-09-03",
+      "source": "checkout",
+      "status": "clean",
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "assignedUserName": null,
+      "isVacant": true,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 1304 (Reserva RES-211-0023)",
+      "leavingGuest": "Thaiza",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-09-03T13:00:00.000Z",
+      "createdAt": "2026-09-03T08:00:00.000Z",
+      "updatedAt": "2026-09-03T13:00:00.000Z"
+    },
+    {
+      "id": 305,
+      "flatId": 19,
+      "flatNumber": "1004",
+      "requestDate": "2026-09-03",
+      "effectiveDate": "2026-09-03",
+      "source": "checkout",
+      "status": "clean",
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "assignedUserName": null,
+      "isVacant": true,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 1004 (Reserva RES-116-0022)",
+      "leavingGuest": "Malu",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-09-03T13:00:00.000Z",
+      "createdAt": "2026-09-03T08:00:00.000Z",
+      "updatedAt": "2026-09-03T13:00:00.000Z"
+    },
+    {
+      "id": 306,
+      "flatId": 18,
+      "flatNumber": "907",
+      "requestDate": "2026-09-03",
+      "effectiveDate": "2026-09-03",
+      "source": "checkout",
+      "status": "clean",
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "assignedUserName": null,
+      "isVacant": true,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 907 (Reserva RES-907-0021)",
+      "leavingGuest": "Fabiana",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-09-03T13:00:00.000Z",
+      "createdAt": "2026-09-03T08:00:00.000Z",
+      "updatedAt": "2026-09-03T13:00:00.000Z"
+    },
+    {
+      "id": 307,
+      "flatId": 15,
+      "flatNumber": "715",
+      "requestDate": "2026-09-03",
+      "effectiveDate": "2026-09-03",
+      "source": "checkout",
+      "status": "clean",
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "assignedUserName": null,
+      "isVacant": true,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 715 (Reserva RES-715-0013)",
+      "leavingGuest": "Gustavo",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-09-03T13:00:00.000Z",
+      "createdAt": "2026-09-03T08:00:00.000Z",
+      "updatedAt": "2026-09-03T13:00:00.000Z"
+    },
+    {
+      "id": 308,
+      "flatId": 1,
+      "flatNumber": "113",
+      "requestDate": "2026-09-03",
+      "effectiveDate": "2026-09-03",
+      "source": "checkout",
+      "status": "clean",
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "assignedUserName": null,
+      "isVacant": true,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 113 (Reserva RES-113-0007)",
+      "leavingGuest": "Anyelle",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-09-03T13:00:00.000Z",
+      "createdAt": "2026-09-03T08:00:00.000Z",
+      "updatedAt": "2026-09-03T13:00:00.000Z"
+    },
+    {
+      "id": 309,
+      "flatId": 12,
+      "flatNumber": "512",
+      "requestDate": "2026-09-04",
+      "effectiveDate": "2026-09-04",
+      "source": "checkout",
+      "status": "clean",
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "assignedUserName": null,
+      "isVacant": true,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 512 (Reserva RES-512-0005)",
+      "leavingGuest": "Marco",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-09-04T13:00:00.000Z",
+      "createdAt": "2026-09-04T08:00:00.000Z",
+      "updatedAt": "2026-09-04T13:00:00.000Z"
     }
   ],
   "periodicTasks": [
@@ -3851,7 +4190,7 @@
       "code": "RES-212-0024",
       "notes": "",
       "adults": 2,
-      "flatId": 22,
+      "flatId": 10,
       "guests": [
         {
           "cpf": "",
@@ -5025,7 +5364,7 @@
       "code": "RES-509-0011",
       "notes": "",
       "adults": 1,
-      "flatId": 22,
+      "flatId": 10,
       "guests": [
         {
           "cpf": "",
