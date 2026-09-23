@@ -31,7 +31,7 @@ const defaultGuestPref: GuestPreference = {
   coffee: "Café com leite",
   otherBeverage: "Suco de laranja",
   breads: ["Pão francês", "Pão de queijo"],
-  accompaniments: ["Queijo mussarela", "Presunto"],
+  accompaniments: ["Queijo mussarela", "Presunto", "Ovos mexidos"],
   complements: ["Manteiga"],
   sweets: ["Bolo do dia"],
   fruit: "Banana",
@@ -1217,7 +1217,7 @@ export default function GuestBreakfast() {
                   </Badge>
                 </div>
                 <p className="text-[11px] text-slate-600 leading-snug mt-1 font-medium">
-                  Café completo tradicional pronto com: <strong>{stdConfig?.description || "Café, Leite, Suco de laranja, Pão francês, Pão de queijo, Queijo mussarela, Presunto, Manteiga, Bolo do dia e Fruta do dia (Mamão, maçã ou banana)."}</strong>
+                  Café completo tradicional pronto com: <strong>{stdConfig?.description || "Café, Leite, Suco de laranja, Pão francês, Pão de queijo, Queijo mussarela, Presunto, Ovos mexidos, Manteiga, Bolo do dia e Fruta do dia (Mamão, maçã ou banana)."}</strong>
                 </p>
               </div>
             </div>

@@ -292,6 +292,7 @@ app.post("/api/admin/restore-historical-cleanings", (req, res) => {
 
   sanitizeAndRecoverCleanings();
   sanitizeReservationFlags();
+      ensureRestoredSeptReservations();
   saveDatabase();
 
   const septGrazi = (db.cleaningRequests || []).filter(r => r.status === "clean" && r.assignedUserId === 3 && (r.requestDate >= "2026-09-01" && r.requestDate <= "2026-09-15")).length;
@@ -1136,8 +1137,64 @@ function sanitizeAndRecoverCleanings() {
       cleaningStartedAt: "2026-09-08T12:56:32.161Z",
       completedAt: "2026-09-08T13:14:25.262Z",
       durationMinutes: 18,
-      createdAt: "2026-09-08T08:00:00.000Z",
+            createdAt: "2026-09-08T08:00:00.000Z",
       updatedAt: "2026-09-08T13:14:25.262Z"
+    },
+    // 22/09/2026 - Cris (Flat 408)
+    {
+      id: 295,
+      flatId: 8,
+      flatNumber: "408",
+      requestDate: "2026-09-22",
+      effectiveDate: "2026-09-22",
+      source: "checkout",
+      status: "clean",
+      assignedUserId: 2,
+      assignedUsername: "Cris",
+      assignedUserName: "Cris",
+      isVacant: true,
+      isPriority: false,
+      isExtended: false,
+      twinBeds: false,
+      extraMattress: false,
+      adminNote: "Limpeza realizada por Cris na terça-feira 22/09 (Auditoria PMS)",
+      leavingGuest: "Hóspede Flat 408",
+      arrivingGuest: null,
+      pendingObservation: null,
+      willCleanAt: "2026-09-22T14:00:00.000Z",
+      cleaningStartedAt: "2026-09-22T14:00:00.000Z",
+      completedAt: "2026-09-22T14:45:00.000Z",
+      durationMinutes: 45,
+      createdAt: "2026-09-22T08:00:00.000Z",
+      updatedAt: "2026-09-22T14:45:00.000Z"
+    },
+    // 22/09/2026 - Grazi (Flat 715)
+    {
+      id: 296,
+      flatId: 15,
+      flatNumber: "715",
+      requestDate: "2026-09-22",
+      effectiveDate: "2026-09-22",
+      source: "checkout",
+      status: "clean",
+      assignedUserId: 3,
+      assignedUsername: "Grazi",
+      assignedUserName: "Grazi",
+      isVacant: true,
+      isPriority: false,
+      isExtended: false,
+      twinBeds: false,
+      extraMattress: false,
+      adminNote: "Limpeza realizada por Grazi na terça-feira 22/09 (Auditoria PMS)",
+      leavingGuest: "Hóspede Flat 715",
+      arrivingGuest: null,
+      pendingObservation: null,
+      willCleanAt: "2026-09-22T15:00:00.000Z",
+      cleaningStartedAt: "2026-09-22T15:00:00.000Z",
+      completedAt: "2026-09-22T15:40:00.000Z",
+      durationMinutes: 40,
+      createdAt: "2026-09-22T08:00:00.000Z",
+      updatedAt: "2026-09-22T15:40:00.000Z"
     }
   ];
 
@@ -1226,6 +1283,155 @@ function sanitizeLostAndFound() {
         }
       }
     }
+  }
+}
+
+function ensureRestoredSeptReservations() {
+  if (!db.reservations) db.reservations = [];
+  if (!db.guests) db.guests = [];
+
+  // 1. Restaurar Reserva 408 (21/09 a 22/09)
+  const has408 = db.reservations.some(r => 
+    String(r.flatNumber) === "408" && 
+    r.checkinDate === "2026-09-21" && 
+    r.checkoutDate === "2026-09-22" &&
+    r.status !== "cancelada"
+  );
+  if (!has408) {
+    let guest408 = db.guests.find(g => (g.name || "").includes("Hóspede Flat 408") || g.id === 31);
+    if (!guest408) {
+      guest408 = {
+        id: 31,
+        guestCode: "HOSP-00031",
+        name: "Hóspede Flat 408",
+        fullName: "Hóspede Flat 408",
+        phone: "",
+        createdAt: "2026-09-21T10:00:00.000Z",
+        documentNumber: "",
+        document: ""
+      };
+      db.guests.push(guest408);
+    }
+    const maxResId = db.reservations.length > 0 ? Math.max(...db.reservations.map(r => Number(r.id) || 0)) : 0;
+    const resId = Math.max(maxResId + 1, 148);
+    db.reservations.push({
+      id: resId,
+      code: `RES-408-${String(resId).padStart(4, "0")}`,
+      flatNumber: "408",
+      flatId: 8,
+      guestId: guest408.id,
+      guestCode: guest408.guestCode,
+      guestName: guest408.name,
+      checkinDate: "2026-09-21",
+      checkoutDate: "2026-09-22",
+      nightsCount: 1,
+      dailyRate: 220,
+      totalAmount: 220,
+      totalPrice: 220,
+      price: 220,
+      paidAmount: 220,
+      paymentStatus: "pago_total",
+      status: "confirmada",
+      channel: "whatsapp",
+      adults: 1,
+      children: 0,
+      twinBeds: false,
+      extraMattress: false,
+      notes: "Reserva restaurada (Estadia 21/09 a 22/09 - Limpeza realizada por Cris)",
+      specialRequests: "",
+      receptionNotes: "",
+      includeBreakfast: false,
+      prefersHighFloor: false,
+      earlyCheckinAuthorized: false,
+      isMonthlyGuest: false,
+      clientType: "avulso",
+      guests: [
+        {
+          index: 1,
+          guestId: guest408.id,
+          guestCode: guest408.guestCode,
+          name: guest408.name,
+          hasCompletedCheckin: true,
+          entryAuthorized: true
+        }
+      ],
+      auditLogs: [],
+      createdAt: "2026-09-21T08:00:00.000Z",
+      updatedAt: "2026-09-22T14:45:00.000Z"
+    });
+    console.log("[PMS Auto-Restore] Reserva do Flat 408 (21/09 a 22/09) restaurada com sucesso.");
+  }
+
+  // 2. Restaurar Reserva 715 (21/09 a 22/09)
+  const has715 = db.reservations.some(r => 
+    String(r.flatNumber) === "715" && 
+    r.checkinDate === "2026-09-21" && 
+    r.checkoutDate === "2026-09-22" &&
+    r.status !== "cancelada"
+  );
+  if (!has715) {
+    let guest715 = db.guests.find(g => (g.name || "").includes("Hóspede Flat 715") || g.id === 32);
+    if (!guest715) {
+      guest715 = {
+        id: 32,
+        guestCode: "HOSP-00032",
+        name: "Hóspede Flat 715",
+        fullName: "Hóspede Flat 715",
+        phone: "",
+        createdAt: "2026-09-21T10:00:00.000Z",
+        documentNumber: "",
+        document: ""
+      };
+      db.guests.push(guest715);
+    }
+    const maxResId = db.reservations.length > 0 ? Math.max(...db.reservations.map(r => Number(r.id) || 0)) : 0;
+    const resId = Math.max(maxResId + 1, 149);
+    db.reservations.push({
+      id: resId,
+      code: `RES-715-${String(resId).padStart(4, "0")}`,
+      flatNumber: "715",
+      flatId: 15,
+      guestId: guest715.id,
+      guestCode: guest715.guestCode,
+      guestName: guest715.name,
+      checkinDate: "2026-09-21",
+      checkoutDate: "2026-09-22",
+      nightsCount: 1,
+      dailyRate: 220,
+      totalAmount: 220,
+      totalPrice: 220,
+      price: 220,
+      paidAmount: 220,
+      paymentStatus: "pago_total",
+      status: "confirmada",
+      channel: "whatsapp",
+      adults: 1,
+      children: 0,
+      twinBeds: false,
+      extraMattress: false,
+      notes: "Reserva restaurada (Estadia 21/09 a 22/09 - Limpeza realizada por Grazi)",
+      specialRequests: "",
+      receptionNotes: "",
+      includeBreakfast: false,
+      prefersHighFloor: false,
+      earlyCheckinAuthorized: false,
+      isMonthlyGuest: false,
+      clientType: "avulso",
+      guests: [
+        {
+          index: 1,
+          guestId: guest715.id,
+          guestCode: guest715.guestCode,
+          name: guest715.name,
+          hasCompletedCheckin: true,
+          entryAuthorized: true
+        }
+      ],
+      auditLogs: [],
+      createdAt: "2026-09-21T08:00:00.000Z",
+      updatedAt: "2026-09-22T15:40:00.000Z"
+    });
+    console.log("[PMS Auto-Restore] Reserva do Flat 715 (21/09 a 22/09) restaurada com sucesso.");
   }
 }
 
@@ -3237,7 +3443,7 @@ function parseSpreadsheetBuffer(buf) {
       const isValidFlat = validFlatNumbers.has(req.flatNumber) || validFlatIds.has(req.flatId);
       if (!isValidFlat) return false;
       // Sempre preserva registros limpos, com no-show, manuais de admin ou com camareira/conclusão
-      if (req.status === "clean" || req.status === "no_show" || req.source === "admin_manual" || req.source === "manual" || req.assignedUserId || req.completedAt) {
+      if (req.status === "clean" || req.status === "no_show" || req.source === "admin_manual" || req.source === "manual" || req.source === "checkout" || req.assignedUserId || req.completedAt) {
         return true;
       }
       const kNum = `${req.flatNumber}-${req.requestDate}`;
@@ -7750,6 +7956,32 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   }
 
   // Sincronização automática de pedidos de café da manhã caso a reserva seja cancelada ou check-out antecipado/estendido
+  // Sincronização automática de pedidos de café da manhã caso o flat da reserva seja alterado
+  const currentFlatNum = String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || ""));
+  const prevFlatNum = String(oldFlatId ? (db.flats.find(f => f.id === oldFlatId)?.number || "") : (r.flatNumber || ""));
+
+  if (oldFlatId !== r.flatId || (prevFlatNum && currentFlatNum && prevFlatNum !== currentFlatNum)) {
+    if (!db.breakfastOrders) db.breakfastOrders = [];
+    let updatedOrdersCount = 0;
+    db.breakfastOrders.forEach(o => {
+      const matchReservation = 
+        (o.reservationId && Number(o.reservationId) === Number(r.id)) ||
+        (o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) ||
+        (prevFlatNum && String(o.roomNumber) === prevFlatNum && o.date >= r.checkinDate && o.date <= r.checkoutDate);
+
+      if (matchReservation) {
+        o.roomNumber = currentFlatNum;
+        if (o.flatNumber) o.flatNumber = currentFlatNum;
+        if (o.flatId !== undefined) o.flatId = r.flatId;
+        o.updatedAt = new Date().toISOString();
+        updatedOrdersCount++;
+      }
+    });
+    if (updatedOrdersCount > 0) {
+      console.log(`[PMS] Sincronizados ${updatedOrdersCount} pedidos de café da manhã para o novo Flat ${currentFlatNum} (Reserva ${r.code || r.id}).`);
+    }
+  }
+
   // Sincronização automática de pedidos de café da manhã caso a reserva seja cancelada ou check-in/check-out alterado
   if (!db.breakfastOrders) db.breakfastOrders = [];
   const nowBrl = getBrasiliaNow();
@@ -8400,6 +8632,117 @@ app.post("/api/pms/guest-portal/:code/claim-early-checkin", (req, res) => {
     message: "🎉 Early Check-in antecipado ativado com sucesso! Seu apartamento foi liberado na portaria.",
     flatNumber: r.flatNumber
   });
+});
+
+// Endpoint: Recepção - Reenviar Link de Check-in Digital via Z-API WhatsApp
+app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reservations/:id/resend-checkin-link"], async (req, res) => {
+  const idOrCode = (req.params.id || "").trim();
+  const { guestIndex = 1, phone: overridePhone } = req.body || {};
+
+  if (!db.reservations) db.reservations = [];
+  const reservation = (typeof findReservationByLocatorOrContact === "function" ? findReservationByLocatorOrContact(idOrCode) : null) || 
+    (db.reservations || []).find(r => String(r.id) === idOrCode || r.code === idOrCode || r.reservationCode === idOrCode);
+
+  if (!reservation) {
+    return res.status(404).json({ error: "Reserva não encontrada." });
+  }
+
+  const targetGuest = (reservation.guests || []).find(g => (g.index || 1) === Number(guestIndex)) || (reservation.guests && reservation.guests[0]);
+  const guestName = (targetGuest?.name || reservation.guestName || "Hóspede").trim();
+  const rawPhone = (overridePhone || targetGuest?.phone || reservation.guestPhone || "").trim();
+  const cleanPhone = typeof cleanWhatsAppPhone === "function" ? cleanWhatsAppPhone(rawPhone) : rawPhone.replace(/\D/g, "");
+
+  if (!cleanPhone || cleanPhone.length < 10) {
+    return res.status(400).json({ 
+      error: `Hóspede ${guestName} não possui número de WhatsApp válido cadastrado.`,
+      needsPhone: true,
+      guestName
+    });
+  }
+
+  const baseUrl = `${req.protocol}://${req.get("host")}`;
+  const preCheckinUrl = `${baseUrl}/pre-checkin/${reservation.code || reservation.id}?guest=${guestIndex || 1}`;
+
+  const template = (db.whatsappTemplates || []).find(t => t.id === "tpl_pre_checkin_reminder");
+  let msgText = "";
+  let buttons = [
+    {
+      id: "btn_chk_digital",
+      type: "URL",
+      label: "📝 Preencher Check-in Digital",
+      url: preCheckinUrl
+    }
+  ];
+
+  if (template && template.enabled && typeof resolveWhatsAppTags === "function") {
+    msgText = resolveWhatsAppTags(template.message, reservation, db, baseUrl, "guest");
+    buttons = (template.buttons || []).map(b => ({
+      ...b,
+      url: b.url ? resolveWhatsAppTags(b.url, reservation, db, baseUrl, "guest") : preCheckinUrl
+    }));
+  } else {
+    const firstName = guestName.split(" ")[0];
+    const flatNum = reservation.flatNumber || (db.flats.find(f => f.id === reservation.flatId)?.number || "");
+    msgText = `Olá, *${firstName}*! Tudo bem? ⏳\n\nIdentificamos que seu *Check-in Digital* para o *Flat ${flatNum}* no CorpFlats ainda está pendente.\n\nPara agilizar a liberação da sua entrada na portaria do Edifício Soho sem filas, por favor preencha seus dados pelo link:\n${preCheckinUrl}\n\nAguardamos você e desejamos uma excelente estadia!`;
+  }
+
+  try {
+    let sendResult = { success: false };
+    if (typeof sendZapiMessage === "function") {
+      sendResult = await sendZapiMessage(db.zapiConfig, {
+        phone: cleanPhone,
+        message: msgText,
+        title: "Lembrete de Check-in Digital",
+        footer: "CorpFlats • Recepção & Portaria",
+        buttons
+      });
+    }
+
+    if (!db.whatsappHistory) db.whatsappHistory = [];
+    db.whatsappHistory.unshift({
+      id: `hist_chk_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      reservationId: reservation.id,
+      reservationCode: reservation.code,
+      guestName,
+      phone: cleanPhone,
+      message: msgText,
+      triggerEvent: "resend_checkin_link",
+      status: sendResult.success ? "sent" : "failed",
+      error: sendResult.error || null,
+      method: "manual_reception",
+      sentAt: new Date().toISOString()
+    });
+
+    if (typeof logAuditEvent === "function") {
+      await logAuditEvent({
+        level: "info",
+        category: "reception",
+        action: "RECEPTION_RESEND_CHECKIN_LINK",
+        actor: typeof getAuthUser === "function" ? (getAuthUser(req) || { name: "Recepção", role: "reception" }) : { name: "Recepção", role: "reception" },
+        details: {
+          reservationId: reservation.id,
+          reservationCode: reservation.code,
+          flatNumber: reservation.flatNumber,
+          guestName,
+          phone: cleanPhone,
+          success: sendResult.success
+        }
+      });
+    }
+
+    saveDatabase();
+
+    return res.json({
+      success: sendResult.success,
+      phone: cleanPhone,
+      guestName,
+      message: sendResult.success 
+        ? `Link de Check-in Digital enviado com sucesso via WhatsApp para ${guestName} (${cleanPhone})!`
+        : `Erro ao enviar via Z-API: ${sendResult.error || "Falha no envio"}`
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // Endpoint: Hóspede informa Previsão de Chegada Hoje (Prioriza Limpeza no Quadro)
@@ -14325,16 +14668,24 @@ function getStandardBreakfastConfig() {
       milk: "Leite",
       otherBeverage: "Suco de laranja",
       breads: ["Pão francês", "Pão de queijo"],
-      accompaniments: ["Queijo mussarela", "Presunto"],
+      accompaniments: ["Queijo mussarela", "Presunto", "Ovos mexidos"],
       complements: ["Manteiga"],
       sweets: ["Bolo do dia"],
       fruit: "Fruta do dia",
       fruitSelected: "Fruta do dia",
       fruitAvailableOptions: ["Fruta do dia (Mamão, maçã ou banana)"],
       sweetener: "Açúcar",
-      description: "Café, Leite, Suco de laranja, Pão francês, Pão de queijo, Queijo mussarela, Presunto, Manteiga, Bolo do dia e Fruta do dia (Mamão, maçã ou banana)."
+      description: "Café, Leite, Suco de laranja, Pão francês, Pão de queijo, Queijo mussarela, Presunto, Ovos mexidos, Manteiga, Bolo do dia e Fruta do dia (Mamão, maçã ou banana)."
     };
   } else {
+    if (!Array.isArray(db.standardBreakfastConfig.accompaniments)) {
+      db.standardBreakfastConfig.accompaniments = ["Queijo mussarela", "Presunto", "Ovos mexidos"];
+    } else if (!db.standardBreakfastConfig.accompaniments.includes("Ovos mexidos")) {
+      db.standardBreakfastConfig.accompaniments.push("Ovos mexidos");
+    }
+    if (!db.standardBreakfastConfig.description || !db.standardBreakfastConfig.description.includes("Ovos mexidos")) {
+      db.standardBreakfastConfig.description = "Café, Leite, Suco de laranja, Pão francês, Pão de queijo, Queijo mussarela, Presunto, Ovos mexidos, Manteiga, Bolo do dia e Fruta do dia (Mamão, maçã ou banana).";
+    }
     if (db.standardBreakfastConfig.coffee === "Café com leite") {
       db.standardBreakfastConfig.coffee = "Café, Leite";
     }

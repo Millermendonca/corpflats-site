@@ -8,7 +8,7 @@ import {
   Building2, User, Phone, CheckCircle2, AlertTriangle, Lock, Unlock, 
   LogOut, Clock, RefreshCw, FileText, ArrowRight, ShieldCheck, Undo2, 
   Sparkles, BedDouble, Calendar, UserCheck, KeyRound, AlertCircle, MessageSquare,
-  ZoomIn, Eye, ExternalLink, X, Gift, MessageCircle, Download, QrCode
+  ZoomIn, Eye, ExternalLink, X, Gift, MessageCircle, Download, QrCode, Send, Loader2
 } from "lucide-react"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
@@ -47,6 +47,40 @@ export default function ReceptionTablet() {
   const [forceCheckinItem, setForceCheckinItem] = useState<any | null>(null)
 
   // Diálogo de Confirmação de Entrada Parcial
+  const [sendingLinkKey, setSendingLinkKey] = useState<string | null>(null)
+
+  const handleResendCheckinLink = async (item: any, guestIndex = 1, phoneOverride?: string) => {
+    const resId = item.id || item.code
+    const key = `${resId}-${guestIndex}`
+    setSendingLinkKey(key)
+    try {
+      const res = await fetch(`/api/pms/reservations/${encodeURIComponent(resId)}/resend-checkin-link`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ guestIndex, phone: phoneOverride })
+      })
+      const result = await res.json()
+      if (res.ok && result.success) {
+        alert(`✓ Link de Check-in Digital enviado com sucesso via WhatsApp!\n\nDestinatário: ${result.guestName || item.guestName} (${result.phone})`)
+      } else if (result.needsPhone) {
+        const manualPhone = window.prompt(
+          `O hóspede ${result.guestName || item.guestName} não possui telefone WhatsApp válido cadastrado.\n\nPor favor, digite o número de WhatsApp com DDD para envio:`,
+          item.guestPhone || ""
+        )
+        if (manualPhone && manualPhone.trim()) {
+          return handleResendCheckinLink(item, guestIndex, manualPhone.trim())
+        }
+      } else {
+        alert(`Não foi possível enviar via WhatsApp:\n\n${result.error || result.message || "Erro desconhecido ao processar Z-API."}`)
+      }
+    } catch (err: any) {
+      alert(`Falha de conexão com o servidor ao tentar enviar link: ${err?.message || "Verifique sua conexão de rede."}`)
+    } finally {
+      setSendingLinkKey(null)
+    }
+  }
+
   const [partialCheckinItem, setPartialCheckinItem] = useState<{
     item: any
     clearedGuests: any[]
@@ -443,10 +477,29 @@ export default function ReceptionTablet() {
                                     <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white text-[9px] font-bold px-1.5 py-0 flex items-center gap-1 shadow-2xs">
                                       <CheckCircle2 className="w-2.5 h-2.5" /> Liberado
                                     </Badge>
-                                  ) : (
-                                    <Badge variant="outline" className="bg-amber-950/60 text-amber-400 border-amber-800 text-[9px] font-bold px-1.5 py-0">
-                                      Pendente
-                                    </Badge>
+                                                                    ) : (
+                                    <div className="flex items-center gap-1.5">
+                                      <Badge variant="outline" className="bg-amber-950/60 text-amber-400 border-amber-800 text-[9px] font-bold px-1.5 py-0">
+                                        Pendente
+                                      </Badge>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleResendCheckinLink(item, g.index || gIdx + 1);
+                                        }}
+                                        disabled={sendingLinkKey === `${item.id || item.code}-${g.index || gIdx + 1}`}
+                                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-700/70 text-emerald-300 text-[9px] font-bold transition-all disabled:opacity-50"
+                                        title={`Reenviar link para ${g.name || `Hóspede ${g.index || gIdx + 1}`} via Z-API`}
+                                      >
+                                        {sendingLinkKey === `${item.id || item.code}-${g.index || gIdx + 1}` ? (
+                                          <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                                        ) : (
+                                          <Send className="w-2.5 h-2.5" />
+                                        )}
+                                        <span>Reenviar</span>
+                                      </button>
+                                    </div>
                                   )}
                                 </div>
                               </div>
@@ -476,20 +529,43 @@ export default function ReceptionTablet() {
                         const clearedNotEntered = guestsList.filter((g: any) => g.hasCompletedCheckin && !g.entryAuthorized)
 
                         return (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-slate-700/60">
-                            <Button 
-                              variant="outline" 
+                          <div className="space-y-2 pt-1 border-t border-slate-700/60">
+                            {/* Botão de 1 Clique: Reenviar Check-in Digital via Z-API */}
+                            <Button
+                              type="button"
                               size="sm"
-                              onClick={() => {
-                                setSelectedItem(item)
-                                setModalGuestIndex(1)
-                                setFnhrModalOpen(true)
-                              }}
-                              className="border-slate-700 bg-slate-900 hover:bg-slate-700 text-slate-200 font-bold text-xs h-12 rounded-xl"
+                              onClick={() => handleResendCheckinLink(item, 1)}
+                              disabled={sendingLinkKey === `${item.id || item.code}-1`}
+                              className="w-full bg-emerald-600/90 hover:bg-emerald-600 text-white font-black text-xs h-11 rounded-xl gap-2 shadow-sm border border-emerald-500/30 transition-all flex items-center justify-center"
+                              title="Disparar link oficial de check-in digital no WhatsApp do hóspede com 1 clique via Z-API"
                             >
-                              <FileText className="w-4 h-4 mr-1 text-primary" />
-                              <span>Ver Ficha / Link</span>
+                              {sendingLinkKey === `${item.id || item.code}-1` ? (
+                                <>
+                                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                                  <span>Enviando link via WhatsApp...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Send className="w-4 h-4 text-emerald-200" />
+                                  <span>Reenviar Check-in Digital (WhatsApp Z-API)</span>
+                                </>
+                              )}
                             </Button>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              <Button 
+                                variant="outline" 
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedItem(item)
+                                  setModalGuestIndex(1)
+                                  setFnhrModalOpen(true)
+                                }}
+                                className="border-slate-700 bg-slate-900 hover:bg-slate-700 text-slate-200 font-bold text-xs h-12 rounded-xl"
+                              >
+                                <FileText className="w-4 h-4 mr-1 text-primary" />
+                                <span>Ver Ficha / Link</span>
+                              </Button>
 
                             {/* Caso 1: Há hóspede liberado que ainda não entrou e há hóspede com check-in pendente */}
                             {clearedNotEntered.length > 0 && pendingGuests.length > 0 ? (
@@ -561,6 +637,7 @@ export default function ReceptionTablet() {
                                 <span>Liberar Entrada</span>
                               </Button>
                             )}
+                            </div>
                           </div>
                         )
                       })()}
@@ -1105,6 +1182,28 @@ export default function ReceptionTablet() {
           })()}
 
           <DialogFooter className="gap-2 sm:gap-0">
+            <Button 
+              type="button" 
+              onClick={() => {
+                if (selectedItem) {
+                  handleResendCheckinLink(selectedItem, modalGuestIndex)
+                }
+              }}
+              disabled={sendingLinkKey === `${selectedItem?.id || selectedItem?.code}-${modalGuestIndex}`}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5"
+            >
+              {sendingLinkKey === `${selectedItem?.id || selectedItem?.code}-${modalGuestIndex}` ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Enviando...</span>
+                </>
+              ) : (
+                <>
+                  <Send className="w-4 h-4" />
+                  <span>Reenviar via WhatsApp (Z-API)</span>
+                </>
+              )}
+            </Button>
             <Button 
               type="button" 
               onClick={() => {

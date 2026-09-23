@@ -823,6 +823,60 @@
       "durationMinutes": null,
       "createdAt": "2026-09-20T22:00:00.000Z",
       "updatedAt": "2026-09-20T22:00:00.000Z"
+    },
+    {
+      "id": 295,
+      "flatId": 8,
+      "flatNumber": "408",
+      "requestDate": "2026-09-22",
+      "effectiveDate": "2026-09-22",
+      "source": "checkout",
+      "status": "clean",
+      "assignedUserId": 2,
+      "assignedUsername": "Cris",
+      "assignedUserName": "Cris",
+      "isVacant": true,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": "Limpeza realizada por Cris na terça-feira 22/09 (Auditoria PMS)",
+      "leavingGuest": "Hóspede Flat 408",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-09-22T14:00:00.000Z",
+      "cleaningStartedAt": "2026-09-22T14:00:00.000Z",
+      "completedAt": "2026-09-22T14:45:00.000Z",
+      "durationMinutes": 45,
+      "createdAt": "2026-09-22T08:00:00.000Z",
+      "updatedAt": "2026-09-22T14:45:00.000Z"
+    },
+    {
+      "id": 296,
+      "flatId": 15,
+      "flatNumber": "715",
+      "requestDate": "2026-09-22",
+      "effectiveDate": "2026-09-22",
+      "source": "checkout",
+      "status": "clean",
+      "assignedUserId": 3,
+      "assignedUsername": "Grazi",
+      "assignedUserName": "Grazi",
+      "isVacant": true,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": "Limpeza realizada por Grazi na terça-feira 22/09 (Auditoria PMS)",
+      "leavingGuest": "Hóspede Flat 715",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-09-22T15:00:00.000Z",
+      "cleaningStartedAt": "2026-09-22T15:00:00.000Z",
+      "completedAt": "2026-09-22T15:40:00.000Z",
+      "durationMinutes": 40,
+      "createdAt": "2026-09-22T08:00:00.000Z",
+      "updatedAt": "2026-09-22T15:40:00.000Z"
     }
   ],
   "periodicTasks": [
@@ -2751,6 +2805,26 @@
       "name": "Igor",
       "fullName": "Igor",
       "createdAt": "2026-09-18T10:00:00.000Z",
+      "documentNumber": "",
+      "document": ""
+    },
+    {
+      "id": 31,
+      "guestCode": "HOSP-00031",
+      "name": "Hóspede Flat 408",
+      "fullName": "Hóspede Flat 408",
+      "phone": "",
+      "createdAt": "2026-09-21T10:00:00.000Z",
+      "documentNumber": "",
+      "document": ""
+    },
+    {
+      "id": 32,
+      "guestCode": "HOSP-00032",
+      "name": "Hóspede Flat 715",
+      "fullName": "Hóspede Flat 715",
+      "phone": "",
+      "createdAt": "2026-09-21T10:00:00.000Z",
       "documentNumber": "",
       "document": ""
     }
@@ -5595,6 +5669,96 @@
       "auditLogs": [],
       "createdAt": "2026-09-18T10:00:00.000Z",
       "updatedAt": "2026-09-20T10:00:00.000Z"
+    },
+    {
+      "id": 148,
+      "code": "RES-408-0148",
+      "flatNumber": "408",
+      "flatId": 8,
+      "guestId": 31,
+      "guestCode": "HOSP-00031",
+      "guestName": "Hóspede Flat 408",
+      "checkinDate": "2026-09-21",
+      "checkoutDate": "2026-09-22",
+      "nightsCount": 1,
+      "dailyRate": 220,
+      "totalAmount": 220,
+      "totalPrice": 220,
+      "price": 220,
+      "paidAmount": 220,
+      "paymentStatus": "pago_total",
+      "status": "confirmada",
+      "channel": "whatsapp",
+      "adults": 1,
+      "children": 0,
+      "twinBeds": false,
+      "extraMattress": false,
+      "notes": "Reserva restaurada (Estadia 21/09 a 22/09 - Limpeza realizada por Cris)",
+      "specialRequests": "",
+      "receptionNotes": "",
+      "includeBreakfast": false,
+      "prefersHighFloor": false,
+      "earlyCheckinAuthorized": false,
+      "isMonthlyGuest": false,
+      "clientType": "avulso",
+      "guests": [
+        {
+          "index": 1,
+          "guestId": 31,
+          "guestCode": "HOSP-00031",
+          "name": "Hóspede Flat 408",
+          "hasCompletedCheckin": true,
+          "entryAuthorized": true
+        }
+      ],
+      "auditLogs": [],
+      "createdAt": "2026-09-21T08:00:00.000Z",
+      "updatedAt": "2026-09-22T14:45:00.000Z"
+    },
+    {
+      "id": 149,
+      "code": "RES-715-0149",
+      "flatNumber": "715",
+      "flatId": 15,
+      "guestId": 32,
+      "guestCode": "HOSP-00032",
+      "guestName": "Hóspede Flat 715",
+      "checkinDate": "2026-09-21",
+      "checkoutDate": "2026-09-22",
+      "nightsCount": 1,
+      "dailyRate": 220,
+      "totalAmount": 220,
+      "totalPrice": 220,
+      "price": 220,
+      "paidAmount": 220,
+      "paymentStatus": "pago_total",
+      "status": "confirmada",
+      "channel": "whatsapp",
+      "adults": 1,
+      "children": 0,
+      "twinBeds": false,
+      "extraMattress": false,
+      "notes": "Reserva restaurada (Estadia 21/09 a 22/09 - Limpeza realizada por Grazi)",
+      "specialRequests": "",
+      "receptionNotes": "",
+      "includeBreakfast": false,
+      "prefersHighFloor": false,
+      "earlyCheckinAuthorized": false,
+      "isMonthlyGuest": false,
+      "clientType": "avulso",
+      "guests": [
+        {
+          "index": 1,
+          "guestId": 32,
+          "guestCode": "HOSP-00032",
+          "name": "Hóspede Flat 715",
+          "hasCompletedCheckin": true,
+          "entryAuthorized": true
+        }
+      ],
+      "auditLogs": [],
+      "createdAt": "2026-09-21T08:00:00.000Z",
+      "updatedAt": "2026-09-22T15:40:00.000Z"
     }
   ],
   "reservationCommunications": [
@@ -6791,7 +6955,8 @@
     ],
     "accompaniments": [
       "Queijo mussarela",
-      "Presunto"
+      "Presunto",
+      "Ovos mexidos"
     ],
     "complements": [
       "Manteiga"
@@ -6805,7 +6970,7 @@
       "Fruta do dia (Mamão, maçã ou banana)"
     ],
     "sweetener": "Açúcar",
-    "description": "Café, Leite, Suco de laranja, Pão francês, Pão de queijo, Queijo mussarela, Presunto, Manteiga, Bolo do dia e Fruta do dia (Mamão, maçã ou banana)."
+    "description": "Café, Leite, Suco de laranja, Pão francês, Pão de queijo, Queijo mussarela, Presunto, Ovos mexidos, Manteiga, Bolo do dia e Fruta do dia (Mamão, maçã ou banana)."
   },
   "abandonedCarts": [
     {
