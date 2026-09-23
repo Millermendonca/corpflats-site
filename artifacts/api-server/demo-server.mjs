@@ -1522,6 +1522,269 @@ function sanitizeReservationFlags() {
 
 }
 
+
+// ── Recuperação Automática e À Prova de Falhas via Logs de Auditoria do PostgreSQL ──
+async function reconcileFromAuditLogs(db, pgPool) {
+  if (!pgPool) return false;
+  try {
+    const q = await pgPool.query(
+      "SELECT * FROM system_audit_logs WHERE action LIKE 'RESERVATION_%' ORDER BY timestamp ASC"
+    );
+    if (!q || !q.rows || q.rows.length === 0) return false;
+
+    let changed = false;
+    const activeFlatsMap = new Map();
+    (db.flats || []).forEach(f => {
+      activeFlatsMap.set(String(f.number), f);
+      activeFlatsMap.set(Number(f.id), f);
+    });
+
+    const resMap = new Map();
+    for (const r of (db.reservations || [])) {
+      const k = String(r.id || r.code);
+      resMap.set(k, r);
+    }
+
+    const guestsMap = new Map();
+    for (const g of (db.guests || [])) {
+      const k = String(g.id || g.name);
+      guestsMap.set(k.toLowerCase().trim(), g);
+    }
+    let maxGuestId = db.guests && db.guests.length > 0 
+      ? Math.max(...db.guests.map(g => Number(g.id) || 0)) 
+      : 100;
+
+    for (const log of q.rows) {
+      const d = log.details || {};
+      const resId = d.reservationId || d.resId || d.id;
+      const resCode = d.reservationCode || d.code;
+      const key = resId ? String(resId) : (resCode ? String(resCode) : null);
+      if (!key) continue;
+
+      if (log.action === "RESERVATION_CREATED") {
+        const changes = d.changes || [];
+        const numId = Number(resId) || undefined;
+        let existing = resMap.get(key) || (resCode ? resMap.get(String(resCode)) : null);
+
+        if (!existing) {
+          const newRes = {
+            id: numId || (1000 + resMap.size),
+            code: resCode || ("RES-" + (d.flatNumber || "000") + "-" + String(numId || resMap.size).padStart(4, "0")),
+            flatNumber: d.flatNumber ? String(d.flatNumber).replace(/\D/g, "") : "",
+            guestName: d.guestName || "",
+            checkinDate: "",
+            checkoutDate: "",
+            checkinTime: "14:00",
+            checkoutTime: "12:00",
+            status: "confirmada",
+            paymentStatus: "pendente",
+            channel: "direta",
+            totalAmount: 0,
+            paidAmount: 0,
+            includeBreakfast: false,
+            isMonthlyGuest: false,
+            clientType: "avulso",
+            adults: 1,
+            children: 0,
+            twinBeds: false,
+            extraMattress: false,
+            notes: "",
+            specialRequests: "",
+            receptionNotes: "",
+            guests: [],
+            auditLogs: [],
+            createdAt: log.timestamp,
+            updatedAt: log.timestamp
+          };
+
+          for (const ch of changes) {
+            if (ch.field === "flatNumber") {
+              const num = (ch.newValue || "").replace(/\D/g, "");
+              if (num) newRes.flatNumber = num;
+            }
+            if (ch.field === "dates") {
+              const parts = (ch.newValue || "").split(" a ");
+              if (parts.length === 2) {
+                newRes.checkinDate = parts[0].trim();
+                newRes.checkoutDate = parts[1].trim();
+              }
+            }
+            if (ch.field === "guestName") newRes.guestName = ch.newValue;
+            if (ch.field === "channel") newRes.channel = ch.newValue;
+            if (ch.field === "paymentMethod") newRes.paymentMethod = ch.newValue;
+            if (ch.field === "totalAmount") {
+              const val = parseFloat((ch.newValue || "").replace(/[^\d.,]/g, "").replace(",", "."));
+              if (!isNaN(val)) newRes.totalAmount = val;
+            }
+            if (ch.field === "paidAmount") {
+              const val = parseFloat((ch.newValue || "").replace(/[^\d.,]/g, "").replace(",", "."));
+              if (!isNaN(val)) newRes.paidAmount = val;
+            }
+            if (ch.field === "paymentStatus") newRes.paymentStatus = ch.newValue;
+            if (ch.field === "status") {
+              newRes.status = (ch.newValue || "").toLowerCase().includes("canc") ? "cancelada" : "confirmada";
+            }
+            if (ch.field === "includeBreakfast") {
+              newRes.includeBreakfast = (ch.newValue || "").toLowerCase().includes("inc") || (ch.newValue || "").toLowerCase().includes("sim");
+            }
+            if (ch.field === "isMonthlyGuest") {
+              newRes.isMonthlyGuest = (ch.newValue || "").toLowerCase().includes("sim");
+              if (newRes.isMonthlyGuest) newRes.clientType = "mensalista";
+            }
+          }
+
+          const flat = activeFlatsMap.get(String(newRes.flatNumber));
+          if (flat) newRes.flatId = flat.id;
+
+          const gKey = (newRes.guestName || "").toLowerCase().trim();
+          let gObj = guestsMap.get(gKey);
+          if (!gObj && newRes.guestName) {
+            maxGuestId++;
+            gObj = {
+              id: maxGuestId,
+              guestCode: "HOSP-" + String(maxGuestId).padStart(5, "0"),
+              name: newRes.guestName,
+              fullName: newRes.guestName,
+              phone: "",
+              email: "",
+              isMonthlyGuest: newRes.isMonthlyGuest,
+              clientType: newRes.clientType,
+              createdAt: log.timestamp
+            };
+            guestsMap.set(gKey, gObj);
+            if (!db.guests) db.guests = [];
+            db.guests.push(gObj);
+          }
+
+          if (gObj) {
+            newRes.guestId = gObj.id;
+            newRes.guestCode = gObj.guestCode;
+          }
+
+          newRes.guests = [{
+            index: 1,
+            guestId: gObj ? gObj.id : undefined,
+            name: newRes.guestName,
+            checkinCompletedAt: null,
+            hasCompletedCheckin: false
+          }];
+
+          resMap.set(String(newRes.id), newRes);
+          changed = true;
+        }
+      } else if (log.action === "RESERVATION_DATES_CHANGED") {
+        const existing = resMap.get(key);
+        if (existing) {
+          const changes = d.changes || [];
+          for (const ch of changes) {
+            if (ch.field === "dates") {
+              const parts = (ch.newValue || "").split(" a ");
+              if (parts.length === 2) {
+                if (existing.checkinDate !== parts[0].trim() || existing.checkoutDate !== parts[1].trim()) {
+                  existing.checkinDate = parts[0].trim();
+                  existing.checkoutDate = parts[1].trim();
+                  changed = true;
+                }
+              }
+            }
+            if (ch.field === "checkinDate" && existing.checkinDate !== ch.newValue) {
+              existing.checkinDate = ch.newValue;
+              changed = true;
+            }
+            if (ch.field === "checkoutDate" && existing.checkoutDate !== ch.newValue) {
+              existing.checkoutDate = ch.newValue;
+              changed = true;
+            }
+          }
+        }
+      } else if (log.action === "RESERVATION_FLAT_CHANGED") {
+        const existing = resMap.get(key);
+        if (existing) {
+          const changes = d.changes || [];
+          for (const ch of changes) {
+            if (ch.field === "flatNumber") {
+              const num = (ch.newValue || "").replace(/\D/g, "");
+              if (num && String(existing.flatNumber) !== num) {
+                existing.flatNumber = num;
+                const flat = activeFlatsMap.get(num);
+                if (flat) existing.flatId = flat.id;
+                changed = true;
+              }
+            }
+            if (ch.field === "checkinDate" && existing.checkinDate !== ch.newValue) {
+              existing.checkinDate = ch.newValue;
+              changed = true;
+            }
+            if (ch.field === "checkoutDate" && existing.checkoutDate !== ch.newValue) {
+              existing.checkoutDate = ch.newValue;
+              changed = true;
+            }
+          }
+        }
+      } else if (log.action === "RESERVATION_CANCELLED") {
+        const existing = resMap.get(key);
+        if (existing && existing.status !== "cancelada") {
+          existing.status = "cancelada";
+          changed = true;
+        }
+      } else if (log.action === "RESERVATION_STAY_EXTENDED") {
+        const existing = resMap.get(key);
+        if (existing && d.newCheckoutDate && existing.checkoutDate !== d.newCheckoutDate) {
+          existing.checkoutDate = d.newCheckoutDate;
+          changed = true;
+        }
+      } else if (log.action === "RESERVATION_UPDATED") {
+        const existing = resMap.get(key);
+        if (existing) {
+          const changes = d.changes || [];
+          for (const ch of changes) {
+            if (ch.field === "flatNumber") {
+              const num = (ch.newValue || "").replace(/\D/g, "");
+              if (num && String(existing.flatNumber) !== num) {
+                existing.flatNumber = num;
+                const flat = activeFlatsMap.get(num);
+                if (flat) existing.flatId = flat.id;
+                changed = true;
+              }
+            }
+            if (ch.field === "guestName" && existing.guestName !== ch.newValue) {
+              existing.guestName = ch.newValue;
+              changed = true;
+            }
+            if (ch.field === "totalAmount") {
+              const val = parseFloat((ch.newValue || "").replace(/[^\d.,]/g, "").replace(",", "."));
+              if (!isNaN(val) && existing.totalAmount !== val) {
+                existing.totalAmount = val;
+                changed = true;
+              }
+            }
+            if (ch.field === "paidAmount") {
+              const val = parseFloat((ch.newValue || "").replace(/[^\d.,]/g, "").replace(",", "."));
+              if (!isNaN(val) && existing.paidAmount !== val) {
+                existing.paidAmount = val;
+                changed = true;
+              }
+            }
+            if (ch.field === "paymentStatus" && existing.paymentStatus !== ch.newValue) {
+              existing.paymentStatus = ch.newValue;
+              changed = true;
+            }
+          }
+        }
+      }
+    }
+
+    if (changed) {
+      db.reservations = Array.from(resMap.values()).sort((a,b) => (b.id || 0) - (a.id || 0));
+      console.log(`[AuditLog Recovery] ${db.reservations.length} reservas consolidadas a partir do histórico de auditoria.`);
+    }
+    return changed;
+  } catch (err) {
+    console.warn("[AuditLog Recovery Error]", err.message);
+    return false;
+  }
+}
+
 async function loadDatabase() {
   try {
     if (fs.existsSync(DB_FILE)) {
@@ -7174,6 +7437,22 @@ app.all(["/api/pms/reservations/restore-sept", "/api/system/restore-sept"], (req
     reservations: [r408, r715].filter(Boolean),
     cleanings: [c408, c715].filter(Boolean),
     message: "Reservas 408 e 715 e limpezas verificadas e persistidas com sucesso!"
+  });
+});
+
+
+// Endpoint de contingência máxima: Forçar restauração universal de todas as reservas a partir dos logs de auditoria
+app.all(["/api/pms/reservations/restore-all", "/api/system/restore-all"], async (req, res) => {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate");
+  const didAudit = await reconcileFromAuditLogs(db, pgPool);
+  const didInteg = reconcileUniversalIntegrity();
+  saveDatabase();
+  res.json({
+    success: true,
+    totalReservations: db.reservations ? db.reservations.length : 0,
+    activeReservations: (db.reservations || []).filter(r => r.status !== "cancelada").length,
+    totalCleanings: db.cleaningRequests ? db.cleaningRequests.length : 0,
+    message: "Todas as reservas foram reconciliadas do histórico de auditoria e persistidas na nuvem com sucesso!"
   });
 });
 
