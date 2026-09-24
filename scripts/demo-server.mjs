@@ -7643,6 +7643,58 @@ app.get("/api/system/snapshots", async (req, res) => {
   }
 });
 
+app.get("/api/system/snapshots/breakfast", async (req, res) => {
+  if (!pgPool) return res.json({ error: "PostgreSQL não conectado", snapshots: [] });
+  try {
+    await ensureBackupsTable();
+    const q = await pgPool.query("SELECT id, timestamp, reason, value FROM system_store_backups ORDER BY id DESC LIMIT 50");
+    const results = [];
+    for (const row of q.rows) {
+      const orders = row.value?.breakfastOrders || [];
+      const orders24 = orders.filter(o => o.date === "2026-09-24");
+      if (orders24.length > 0) {
+        results.push({
+          id: row.id,
+          timestamp: row.timestamp,
+          reason: row.reason,
+          count: orders24.length,
+          orders: orders24
+        });
+      }
+    }
+    res.json({ success: true, count: results.length, snapshots: results });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/system/snapshots/restore-breakfast", async (req, res) => {
+  if (!pgPool) return res.status(400).json({ error: "PostgreSQL não conectado" });
+  const { snapshotId } = req.body || {};
+  if (!snapshotId) return res.status(400).json({ error: "snapshotId obrigatório" });
+  try {
+    const q = await pgPool.query("SELECT value FROM system_store_backups WHERE id = $1", [snapshotId]);
+    if (!q.rows || !q.rows[0]) return res.status(404).json({ error: "Snapshot não encontrado" });
+    const snapValue = q.rows[0].value || {};
+    const snapOrders = snapValue.breakfastOrders || [];
+    const orders24 = snapOrders.filter(o => o.date === "2026-09-24");
+    if (orders24.length === 0) return res.status(400).json({ error: "Nenhum pedido de café para 24/09 neste snapshot" });
+
+    if (!db.breakfastOrders) db.breakfastOrders = [];
+    db.breakfastOrders = db.breakfastOrders.filter(o => o.date !== "2026-09-24");
+    db.breakfastOrders.push(...orders24);
+
+    saveDatabase("restore_breakfast_from_snapshot_" + snapshotId);
+    res.json({
+      success: true,
+      restoredOrdersCount: orders24.length,
+      orders: orders24
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post("/api/system/snapshots/restore", async (req, res) => {
   if (!pgPool) return res.status(400).json({ error: "PostgreSQL não conectado" });
   const { snapshotId } = req.body || {};
