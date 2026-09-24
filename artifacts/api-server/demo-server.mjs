@@ -1528,7 +1528,7 @@ async function reconcileFromAuditLogs(db, pgPool) {
   if (!pgPool) return false;
   try {
     const q = await pgPool.query(
-      "SELECT * FROM system_audit_logs WHERE action LIKE 'RESERVATION_%' ORDER BY timestamp ASC"
+      "SELECT * FROM system_audit_logs ORDER BY timestamp ASC"
     );
     if (!q || !q.rows || q.rows.length === 0) return false;
 
@@ -1539,8 +1539,10 @@ async function reconcileFromAuditLogs(db, pgPool) {
       activeFlatsMap.set(Number(f.id), f);
     });
 
-    const distinct = new Map();
+    const logs = q.rows;
 
+    // 1. RECONCILIAR RESERVAS
+    const distinctRes = new Map();
     function getUniqueKey(d) {
       const code = d.reservationCode || d.code;
       const id = d.reservationId || d.resId || d.id;
@@ -1554,16 +1556,17 @@ async function reconcileFromAuditLogs(db, pgPool) {
 
     for (const r of (db.reservations || [])) {
       const k = getUniqueKey(r);
-      if (k) distinct.set(k, r);
+      if (k) distinctRes.set(k, { ...r });
     }
 
-    for (const log of q.rows) {
+    const resLogs = logs.filter(l => l.action && (l.action.startsWith("RESERVATION_") || l.action.includes("STAY_EXTENDED")));
+    for (const log of resLogs) {
       const d = log.details || {};
       const key = getUniqueKey(d);
       if (!key) continue;
 
-      if (!distinct.has(key)) {
-        distinct.set(key, {
+      if (!distinctRes.has(key)) {
+        distinctRes.set(key, {
           id: Number(d.reservationId) || undefined,
           code: d.reservationCode || undefined,
           flatNumber: d.flatNumber ? String(d.flatNumber).replace(/\D/g, "") : undefined,
@@ -1582,7 +1585,7 @@ async function reconcileFromAuditLogs(db, pgPool) {
         changed = true;
       }
 
-      const r = distinct.get(key);
+      const r = distinctRes.get(key);
       r.updatedAt = log.timestamp;
       if (d.guestName && !r.guestName) r.guestName = d.guestName;
       if (d.flatNumber && !r.flatNumber) r.flatNumber = String(d.flatNumber).replace(/\D/g, "");
@@ -1635,8 +1638,7 @@ async function reconcileFromAuditLogs(db, pgPool) {
       if (log.action === "RESERVATION_STAY_EXTENDED" && d.newCheckoutDate) r.checkoutDate = d.newCheckoutDate;
     }
 
-    // Regras de garantia estrita para casos críticos identificados
-    for (const r of distinct.values()) {
+    for (const r of distinctRes.values()) {
       if (r.guestName && r.guestName.toLowerCase().includes("heverton")) {
         if (!r.checkinDate) r.checkinDate = "2026-09-04";
         r.checkoutDate = "2026-09-29";
@@ -1646,7 +1648,10 @@ async function reconcileFromAuditLogs(db, pgPool) {
         r.clientType = "mensalista";
         r.status = "confirmada";
       }
-      if (r.guestName && r.guestName.toLowerCase().includes("angelo") && String(r.flatNumber) === "712") {
+      if (r.guestName && r.guestName.toLowerCase().includes("angelo") && String(r.code) === "RES-408-0188") {
+        r.status = "cancelada";
+      }
+      if (r.guestName && r.guestName.toLowerCase().includes("angelo") && String(r.code) === "RES-712-0195") {
         r.checkinDate = "2026-09-22";
         r.checkoutDate = "2026-09-25";
         r.flatNumber = "712";
@@ -1669,20 +1674,25 @@ async function reconcileFromAuditLogs(db, pgPool) {
         r.checkoutDate = "2026-09-22";
         r.status = "confirmada";
       }
+      if (r.guestName && r.guestName.toLowerCase().includes("gonçalves") && String(r.flatNumber) === "212") {
+        r.checkinDate = "2026-09-23";
+        r.checkoutDate = "2026-09-24";
+        r.status = "confirmada";
+      }
     }
 
-    const valid = Array.from(distinct.values()).filter(r => r.checkinDate && r.checkoutDate);
-    const usedIds = new Set();
-    let nextId = 250;
+    const validRes = Array.from(distinctRes.values()).filter(r => r.checkinDate && r.checkoutDate);
+    const usedResIds = new Set();
+    let nextResId = 250;
 
-    for (const r of valid) {
-      if (r.id && !usedIds.has(r.id)) {
-        usedIds.add(r.id);
+    for (const r of validRes) {
+      if (r.id && !usedResIds.has(r.id)) {
+        usedResIds.add(r.id);
       } else {
-        while (usedIds.has(nextId)) nextId++;
-        r.id = nextId;
-        usedIds.add(nextId);
-        nextId++;
+        while (usedResIds.has(nextResId)) nextResId++;
+        r.id = nextResId;
+        usedResIds.add(nextResId);
+        nextResId++;
       }
       const flat = activeFlatsMap.get(String(r.flatNumber));
       if (flat) r.flatId = flat.id;
@@ -1691,10 +1701,166 @@ async function reconcileFromAuditLogs(db, pgPool) {
       }
     }
 
-    if (valid.length > (db.reservations ? db.reservations.length : 0)) {
-      db.reservations = valid.sort((a,b) => (b.id || 0) - (a.id || 0));
+    db.reservations = validRes.sort((a,b) => (b.id || 0) - (a.id || 0));
+
+    // 2. RECONCILIAR PEDIDOS DE CAFÉ DA MANHÃ
+    if (!db.breakfastOrders) db.breakfastOrders = [];
+    const bfLogs = logs.filter(l => l.action === "NOTIFICATION_BREAKFAST");
+    let maxBfId = db.breakfastOrders.length > 0 ? Math.max(...db.breakfastOrders.map(o => Number(o.id) || 0)) : 0;
+
+    for (const l of bfLogs) {
+      const d = l.details || {};
+      const meta = d.metadata || {};
+      const dates = meta.dates || [l.timestamp.substring(0, 10)];
+      const room = String(meta.roomNumber || "").trim().replace(/\D/g, "");
+      if (!room) continue;
+      const deliveryTime = meta.deliveryTime || "08:00";
+      const guestCount = meta.guestCount || 1;
+
+      let guestName = "Hóspede";
+      if (d.message) {
+        const match = d.message.match(/^(.+?)\s+agendou café/i);
+        if (match) guestName = match[1].trim();
+      }
+
+      for (const dt of dates) {
+        let existing = db.breakfastOrders.find(o => String(o.roomNumber) === room && o.date === dt);
+        if (existing) {
+          if (existing.status === "cancelled") {
+            existing.status = "pending";
+            existing.cancelReason = null;
+            changed = true;
+          }
+        } else {
+          maxBfId++;
+          const resMatch = db.reservations.find(r => 
+            String(r.flatNumber) === room && r.checkinDate <= dt && r.checkoutDate >= dt && r.status !== "cancelada"
+          );
+
+          db.breakfastOrders.push({
+            id: maxBfId,
+            date: dt,
+            deliveryTime,
+            roomNumber: room,
+            clientName: guestName,
+            guestCount,
+            isStandard: true,
+            orderMode: "unified",
+            guestOrders: null,
+            items: [
+              { name: "Café com leite", quantity: guestCount },
+              { name: "Suco de laranja", quantity: guestCount },
+              { name: "Pão francês", quantity: guestCount },
+              { name: "Pão de queijo", quantity: guestCount },
+              { name: "Queijo mussarela", quantity: guestCount },
+              { name: "Ovos mexidos", quantity: guestCount },
+              { name: "Manteiga", quantity: guestCount },
+              { name: "Bolo do dia", quantity: guestCount },
+              { name: "Mamão", quantity: guestCount }
+            ],
+            notes: "",
+            status: dt < "2026-09-24" ? "delivered" : "pending",
+            phone: resMatch?.guestPhone || "",
+            reservationCode: resMatch?.code || `RES-${room}-0000`,
+            reservationId: resMatch?.id || undefined,
+            originalCheckin: resMatch?.checkinDate || dt,
+            originalCheckout: resMatch?.checkoutDate || dt,
+            createdAt: l.timestamp,
+            updatedAt: l.timestamp
+          });
+          changed = true;
+        }
+      }
+    }
+
+    // 3. RECONCILIAR LIMPEZAS DAS CAMAREIRAS
+    const cleaningsMap = new Map();
+    for (const l of logs) {
+      const d = l.details || {};
+      const flat = String(d.flatNumber || "").replace(/\D/g, "");
+      if (!flat) continue;
+      const maidName = d.assignedMaidName || d.assignedUsername;
+      const userId = d.assignedUserId || (maidName === "Cris" ? 2 : (maidName === "Grazi" ? 3 : null));
+      const date = l.timestamp.substring(0, 10);
+      if (date >= "2026-09-24") continue;
+
+      const key = (maidName || "maid") + "___" + flat + "___" + date;
+
+      if (l.action === "CLEANING_STATUS_WILL_CLEAN" || l.action === "CLEANING_STATUS_CLEANING_NOW") {
+        if (!cleaningsMap.has(key)) {
+          cleaningsMap.set(key, { startedAt: l.timestamp, maidName, userId, flat, date });
+        } else {
+          const item = cleaningsMap.get(key);
+          if (!item.startedAt) item.startedAt = l.timestamp;
+        }
+      }
+
+      if (l.action === "CLEANING_STATUS_CLEAN" || l.action === "CLEANING_COMPLETED_BY_ADMIN_FOR_MAID") {
+        const existing = cleaningsMap.get(key) || { flat, date };
+        existing.completedAt = l.timestamp;
+        existing.maidName = maidName || existing.maidName;
+        existing.userId = userId || existing.userId;
+        existing.status = "clean";
+        cleaningsMap.set(key, existing);
+      }
+    }
+
+    for (const c of (db.cleaningRequests || [])) {
+      if (!c.requestDate || c.requestDate >= "2026-09-24") continue;
+      const keyCris = "Cris___" + c.flatNumber + "___" + c.requestDate;
+      const keyGrazi = "Grazi___" + c.flatNumber + "___" + c.requestDate;
+      const match = cleaningsMap.get(keyGrazi) || cleaningsMap.get(keyCris);
+      if (match && match.status === "clean") {
+        c.status = "clean";
+        c.assignedUserId = match.userId;
+        c.assignedUsername = match.maidName;
+        c.assignedUserName = match.maidName;
+        c.completedAt = match.completedAt;
+        if (match.startedAt) c.cleaningStartedAt = match.startedAt;
+        if (!c.durationMinutes && match.startedAt && match.completedAt) {
+          const diff = Math.round((new Date(match.completedAt) - new Date(match.startedAt)) / 60000);
+          if (diff > 0 && diff <= 120) c.durationMinutes = diff;
+        }
+        c.effectiveDate = match.date;
+        cleaningsMap.delete(match.maidName + "___" + match.flat + "___" + match.date);
+        changed = true;
+      }
+    }
+
+    let maxCleanId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(c => Number(c.id) || 0)) : 1000;
+    for (const item of cleaningsMap.values()) {
+      if (item.status !== "clean") continue;
+      const flatObj = activeFlatsMap.get(item.flat);
+      maxCleanId++;
+      db.cleaningRequests.push({
+        id: maxCleanId,
+        flatId: flatObj ? flatObj.id : Number(item.flat),
+        flatNumber: item.flat,
+        requestDate: item.date,
+        effectiveDate: item.date,
+        executionDate: item.date,
+        source: "checkout",
+        status: "clean",
+        assignedUserId: item.userId,
+        assignedUsername: item.maidName,
+        assignedUserName: item.maidName,
+        isVacant: true,
+        isPriority: false,
+        isExtended: false,
+        twinBeds: false,
+        extraMattress: false,
+        adminNote: null,
+        leavingGuest: null,
+        arrivingGuest: null,
+        pendingObservation: null,
+        willCleanAt: item.startedAt || item.completedAt,
+        cleaningStartedAt: item.startedAt,
+        completedAt: item.completedAt,
+        durationMinutes: 35,
+        createdAt: item.startedAt || item.completedAt,
+        updatedAt: item.completedAt
+      });
       changed = true;
-      console.log(`[AuditLog Recovery] ${db.reservations.length} reservas consolidadas com chaves unificadas e sem colisões.`);
     }
 
     return changed;
@@ -4631,6 +4797,7 @@ function getRequestsForDate(dateStr, isNested = false) {
   for (const pmsRes of recentPmsCheckouts) {
     const fNumber = String(pmsRes.flatNumber || (db.flats.find(f => f.id === pmsRes.flatId)?.number || ""));
     if (!fNumber) continue;
+    if (stayoverFlatNumbers.has(fNumber)) continue;
 
     const resDate = pmsRes.checkoutDate;
     const flat = db.flats.find(f => String(f.number) === fNumber) || { id: pmsRes.flatId, number: fNumber, isOccupied: true };
@@ -4801,6 +4968,7 @@ function getRequestsForDate(dateStr, isNested = false) {
   for (const r of (db.cleaningRequests || [])) {
     const fNumber = String(r.flatNumber || "");
     if (r.requestDate === dateStr && !existingFlatNumbersForDate.has(fNumber)) {
+      if (stayoverFlatNumbers.has(fNumber) && r.source === "checkout") continue;
       requestsForDate.push(r);
       existingFlatNumbersForDate.add(fNumber);
     }
@@ -4830,6 +4998,7 @@ function getRequestsForDate(dateStr, isNested = false) {
   if (typeof getTodayStr === "function" && dateStr >= getTodayStr()) {
     const previousUncleaned = (db.cleaningRequests || []).filter(r => {
       const fNumber = String(r.flatNumber || "");
+      if (stayoverFlatNumbers.has(fNumber)) return false;
       if (!r.requestDate || r.requestDate < "2026-09-01" || r.requestDate >= dateStr || r.status === "clean" || r.status === "extended" || r.status === "no_show") return false;
       if (!r.leavingGuest && r.source !== "manual" && r.source !== "admin_manual" && r.source !== "guest_checkout") return false;
       if (existingFlatNumbersForDate.has(fNumber)) return false;
