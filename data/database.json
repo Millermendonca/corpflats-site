@@ -24630,64 +24630,6 @@
       "updatedAt": "2026-09-22T19:25:49.644Z"
     },
     {
-      "id": 24,
-      "date": "2026-09-24",
-      "deliveryTime": "08:02",
-      "roomNumber": "511",
-      "clientName": "Ana Lúcia",
-      "guestCount": 1,
-      "isStandard": true,
-      "orderMode": "unified",
-      "guestOrders": null,
-      "items": [
-        {
-          "name": "Café com leite",
-          "quantity": 1
-        },
-        {
-          "name": "Suco de laranja",
-          "quantity": 1
-        },
-        {
-          "name": "Pão francês",
-          "quantity": 1
-        },
-        {
-          "name": "Pão de queijo",
-          "quantity": 1
-        },
-        {
-          "name": "Queijo mussarela",
-          "quantity": 1
-        },
-        {
-          "name": "Ovos mexidos",
-          "quantity": 1
-        },
-        {
-          "name": "Manteiga",
-          "quantity": 1
-        },
-        {
-          "name": "Bolo do dia",
-          "quantity": 1
-        },
-        {
-          "name": "Mamão",
-          "quantity": 1
-        }
-      ],
-      "notes": "",
-      "status": "pending",
-      "phone": "",
-      "reservationCode": "RES-511-0192",
-      "reservationId": 192,
-      "originalCheckin": "2026-09-22",
-      "originalCheckout": "2026-09-24",
-      "createdAt": "2026-09-22T19:25:49.644Z",
-      "updatedAt": "2026-09-22T19:25:49.644Z"
-    },
-    {
       "id": 25,
       "date": "2026-09-23",
       "deliveryTime": "08:09",
@@ -24920,296 +24862,6 @@
       "updatedAt": "2026-09-23T00:06:17.563Z"
     },
     {
-      "id": 29,
-      "date": "2026-09-24",
-      "deliveryTime": "08:09",
-      "roomNumber": "1304",
-      "clientName": "Marco",
-      "guestCount": 1,
-      "isStandard": true,
-      "orderMode": "unified",
-      "guestOrders": null,
-      "items": [
-        {
-          "name": "Café com leite",
-          "quantity": 1
-        },
-        {
-          "name": "Suco de laranja",
-          "quantity": 1
-        },
-        {
-          "name": "Pão francês",
-          "quantity": 1
-        },
-        {
-          "name": "Pão de queijo",
-          "quantity": 1
-        },
-        {
-          "name": "Queijo mussarela",
-          "quantity": 1
-        },
-        {
-          "name": "Ovos mexidos",
-          "quantity": 1
-        },
-        {
-          "name": "Manteiga",
-          "quantity": 1
-        },
-        {
-          "name": "Bolo do dia",
-          "quantity": 1
-        },
-        {
-          "name": "Mamão",
-          "quantity": 1
-        }
-      ],
-      "notes": "",
-      "status": "pending",
-      "phone": "",
-      "reservationCode": "RES-512-0176",
-      "reservationId": 176,
-      "originalCheckin": "2026-09-22",
-      "originalCheckout": "2026-09-25",
-      "createdAt": "2026-09-23T14:30:21.800Z",
-      "updatedAt": "2026-09-23T14:30:21.800Z"
-    },
-    {
-      "id": 30,
-      "date": "2026-09-24",
-      "deliveryTime": "06:31",
-      "roomNumber": "211",
-      "clientName": "Elziclay maia",
-      "guestCount": 1,
-      "isStandard": true,
-      "orderMode": "unified",
-      "guestOrders": null,
-      "items": [
-        {
-          "name": "Café com leite",
-          "quantity": 1
-        },
-        {
-          "name": "Suco de laranja",
-          "quantity": 1
-        },
-        {
-          "name": "Pão francês",
-          "quantity": 1
-        },
-        {
-          "name": "Pão de queijo",
-          "quantity": 1
-        },
-        {
-          "name": "Queijo mussarela",
-          "quantity": 1
-        },
-        {
-          "name": "Ovos mexidos",
-          "quantity": 1
-        },
-        {
-          "name": "Manteiga",
-          "quantity": 1
-        },
-        {
-          "name": "Bolo do dia",
-          "quantity": 1
-        },
-        {
-          "name": "Mamão",
-          "quantity": 1
-        }
-      ],
-      "notes": "",
-      "status": "pending",
-      "phone": "",
-      "reservationCode": "RES-116-0197",
-      "reservationId": 197,
-      "originalCheckin": "2026-09-23",
-      "originalCheckout": "2026-09-24",
-      "createdAt": "2026-09-23T22:23:14.255Z",
-      "updatedAt": "2026-09-23T22:23:14.255Z"
-    },
-    {
-      "id": 31,
-      "date": "2026-09-24",
-      "deliveryTime": "09:05",
-      "roomNumber": "715",
-      "clientName": "Anyelle",
-      "guestCount": 1,
-      "isStandard": true,
-      "orderMode": "unified",
-      "guestOrders": null,
-      "items": [
-        {
-          "name": "Café com leite",
-          "quantity": 1
-        },
-        {
-          "name": "Suco de laranja",
-          "quantity": 1
-        },
-        {
-          "name": "Pão francês",
-          "quantity": 1
-        },
-        {
-          "name": "Pão de queijo",
-          "quantity": 1
-        },
-        {
-          "name": "Queijo mussarela",
-          "quantity": 1
-        },
-        {
-          "name": "Ovos mexidos",
-          "quantity": 1
-        },
-        {
-          "name": "Manteiga",
-          "quantity": 1
-        },
-        {
-          "name": "Bolo do dia",
-          "quantity": 1
-        },
-        {
-          "name": "Mamão",
-          "quantity": 1
-        }
-      ],
-      "notes": "",
-      "status": "pending",
-      "phone": "",
-      "reservationCode": "RES-715-0191",
-      "reservationId": 191,
-      "originalCheckin": "2026-09-22",
-      "originalCheckout": "2026-09-24",
-      "createdAt": "2026-09-23T22:54:51.613Z",
-      "updatedAt": "2026-09-23T22:54:51.613Z"
-    },
-    {
-      "id": 32,
-      "date": "2026-09-24",
-      "deliveryTime": "08:02",
-      "roomNumber": "212",
-      "clientName": "Gonçalves",
-      "guestCount": 2,
-      "isStandard": true,
-      "orderMode": "unified",
-      "guestOrders": null,
-      "items": [
-        {
-          "name": "Café com leite",
-          "quantity": 2
-        },
-        {
-          "name": "Suco de laranja",
-          "quantity": 2
-        },
-        {
-          "name": "Pão francês",
-          "quantity": 2
-        },
-        {
-          "name": "Pão de queijo",
-          "quantity": 2
-        },
-        {
-          "name": "Queijo mussarela",
-          "quantity": 2
-        },
-        {
-          "name": "Ovos mexidos",
-          "quantity": 2
-        },
-        {
-          "name": "Manteiga",
-          "quantity": 2
-        },
-        {
-          "name": "Bolo do dia",
-          "quantity": 2
-        },
-        {
-          "name": "Mamão",
-          "quantity": 2
-        }
-      ],
-      "notes": "",
-      "status": "pending",
-      "phone": "",
-      "reservationCode": "RES-212-0198",
-      "reservationId": 198,
-      "originalCheckin": "2026-09-23",
-      "originalCheckout": "2026-09-24",
-      "createdAt": "2026-09-23T23:17:23.939Z",
-      "updatedAt": "2026-09-23T23:17:23.939Z"
-    },
-    {
-      "id": 33,
-      "date": "2026-09-24",
-      "deliveryTime": "07:55",
-      "roomNumber": "605",
-      "clientName": "Renata",
-      "guestCount": 1,
-      "isStandard": true,
-      "orderMode": "unified",
-      "guestOrders": null,
-      "items": [
-        {
-          "name": "Café com leite",
-          "quantity": 1
-        },
-        {
-          "name": "Suco de laranja",
-          "quantity": 1
-        },
-        {
-          "name": "Pão francês",
-          "quantity": 1
-        },
-        {
-          "name": "Pão de queijo",
-          "quantity": 1
-        },
-        {
-          "name": "Queijo mussarela",
-          "quantity": 1
-        },
-        {
-          "name": "Ovos mexidos",
-          "quantity": 1
-        },
-        {
-          "name": "Manteiga",
-          "quantity": 1
-        },
-        {
-          "name": "Bolo do dia",
-          "quantity": 1
-        },
-        {
-          "name": "Mamão",
-          "quantity": 1
-        }
-      ],
-      "notes": "",
-      "status": "pending",
-      "phone": "",
-      "reservationCode": "RES-605-0193",
-      "reservationId": 193,
-      "originalCheckin": "2026-09-22",
-      "originalCheckout": "2026-09-25",
-      "createdAt": "2026-09-24T01:24:40.283Z",
-      "updatedAt": "2026-09-24T01:24:40.283Z"
-    },
-    {
       "id": 34,
       "date": "2026-09-25",
       "deliveryTime": "07:55",
@@ -25266,6 +24918,564 @@
       "originalCheckout": "2026-09-25",
       "createdAt": "2026-09-24T01:24:40.283Z",
       "updatedAt": "2026-09-24T01:24:40.283Z"
+    },
+    {
+      "id": 7,
+      "date": "2026-09-24",
+      "items": [
+        {
+          "name": "Café",
+          "quantity": 1
+        },
+        {
+          "name": "Leite",
+          "quantity": 1
+        },
+        {
+          "name": "Suco de laranja",
+          "quantity": 1
+        },
+        {
+          "name": "Pão francês",
+          "quantity": 1
+        },
+        {
+          "name": "Pão de queijo",
+          "quantity": 1
+        },
+        {
+          "name": "Queijo mussarela",
+          "quantity": 1
+        },
+        {
+          "name": "Ovos mexidos",
+          "quantity": 1
+        },
+        {
+          "name": "Peito de Peru",
+          "quantity": 1
+        },
+        {
+          "name": "Queijo Minas frescal",
+          "quantity": 1
+        },
+        {
+          "name": "Manteiga",
+          "quantity": 1
+        },
+        {
+          "name": "Casadinho (biscoito com goiabada)",
+          "quantity": 1
+        },
+        {
+          "name": "Salada de frutas",
+          "quantity": 1
+        },
+        {
+          "name": "Mel",
+          "quantity": 1
+        },
+        {
+          "name": "Adoçante",
+          "quantity": 1
+        }
+      ],
+      "notes": "Boa noite,  são para dois hóspedes eu acabei encostando no 01 \nE por favor as gemas duras 🙏🏼 🙏🏼",
+      "phone": "",
+      "status": "pending",
+      "createdAt": "2026-09-24T01:24:40.277Z",
+      "orderMode": "unified",
+      "updatedAt": "2026-09-24T01:26:26.844Z",
+      "clientName": "Renata",
+      "guestCount": 1,
+      "isStandard": false,
+      "roomNumber": "605",
+      "guestOrders": null,
+      "preferences": {
+        "fruit": "Salada de frutas",
+        "breads": [
+          "Pão francês",
+          "Pão de queijo"
+        ],
+        "coffee": "Café com leite",
+        "sweets": [
+          "Casadinho (biscoito com goiabada)"
+        ],
+        "sweetener": "Adoçante",
+        "fruitHoney": false,
+        "complements": [
+          "Manteiga"
+        ],
+        "otherBeverage": "Suco de laranja",
+        "accompaniments": [
+          "Queijo mussarela",
+          "Ovos mexidos",
+          "Peito de Peru",
+          "Queijo Minas frescal"
+        ],
+        "fruitSaladOption": "Mel"
+      },
+      "cancelReason": null,
+      "deliveryTime": "07:55",
+      "guestChoices": [
+        {
+          "fruit": "Salada de frutas",
+          "breads": [
+            "Pão francês",
+            "Pão de queijo"
+          ],
+          "coffee": "Café com leite",
+          "sweets": [
+            "Casadinho (biscoito com goiabada)"
+          ],
+          "guestName": "Renata",
+          "sweetener": "Adoçante",
+          "fruitHoney": false,
+          "guestIndex": 1,
+          "isStandard": false,
+          "complements": [
+            "Manteiga"
+          ],
+          "deliveryTime": "07:55",
+          "otherBeverage": "Suco de laranja",
+          "accompaniments": [
+            "Queijo mussarela",
+            "Ovos mexidos",
+            "Peito de Peru",
+            "Queijo Minas frescal"
+          ],
+          "fruitSaladOption": "Mel"
+        }
+      ],
+      "reservationId": 193,
+      "originalCheckin": "2026-09-22",
+      "reservationCode": "RES-605-0193",
+      "originalCheckout": "2026-09-25"
+    },
+    {
+      "id": 6,
+      "date": "2026-09-24",
+      "items": [
+        {
+          "name": "Suco de laranja",
+          "quantity": 2
+        },
+        {
+          "name": "Pão francês",
+          "quantity": 2
+        },
+        {
+          "name": "Pão de queijo",
+          "quantity": 2
+        },
+        {
+          "name": "Queijo mussarela",
+          "quantity": 2
+        },
+        {
+          "name": "Ovos mexidos",
+          "quantity": 2
+        },
+        {
+          "name": "Peito de Peru",
+          "quantity": 2
+        },
+        {
+          "name": "Queijo Minas frescal",
+          "quantity": 2
+        },
+        {
+          "name": "Manteiga",
+          "quantity": 2
+        },
+        {
+          "name": "Bolo do dia",
+          "quantity": 2
+        },
+        {
+          "name": "Torradas amanteigadas",
+          "quantity": 2
+        },
+        {
+          "name": "Mamão",
+          "quantity": 2
+        },
+        {
+          "name": "Adoçante",
+          "quantity": 2
+        },
+        {
+          "name": "Café duplo",
+          "quantity": 1
+        },
+        {
+          "name": "Leite duplo",
+          "quantity": 1
+        }
+      ],
+      "notes": "Podem enviar cafe e leite separados, por gentileza?!",
+      "phone": "",
+      "status": "pending",
+      "createdAt": "2026-09-23T23:17:23.932Z",
+      "orderMode": "unified",
+      "clientName": "Gonçalves",
+      "guestCount": 2,
+      "isStandard": false,
+      "roomNumber": "212",
+      "guestOrders": null,
+      "preferences": {
+        "fruit": "Mamão",
+        "breads": [
+          "Pão francês",
+          "Pão de queijo"
+        ],
+        "coffee": "Café com leite",
+        "sweets": [
+          "Bolo do dia",
+          "Torradas amanteigadas"
+        ],
+        "sweetener": "Adoçante",
+        "fruitHoney": false,
+        "complements": [
+          "Manteiga"
+        ],
+        "otherBeverage": "Suco de laranja",
+        "accompaniments": [
+          "Queijo mussarela",
+          "Ovos mexidos",
+          "Peito de Peru",
+          "Queijo Minas frescal"
+        ]
+      },
+      "deliveryTime": "08:02",
+      "guestChoices": [
+        {
+          "fruit": "Mamão",
+          "breads": [
+            "Pão francês",
+            "Pão de queijo"
+          ],
+          "coffee": "Café com leite",
+          "sweets": [
+            "Bolo do dia",
+            "Torradas amanteigadas"
+          ],
+          "guestName": "Gonçalves",
+          "sweetener": "Adoçante",
+          "fruitHoney": false,
+          "guestIndex": 1,
+          "isStandard": false,
+          "complements": [
+            "Manteiga"
+          ],
+          "deliveryTime": "08:02",
+          "otherBeverage": "Suco de laranja",
+          "accompaniments": [
+            "Queijo mussarela",
+            "Ovos mexidos",
+            "Peito de Peru",
+            "Queijo Minas frescal"
+          ]
+        },
+        {
+          "fruit": "Mamão",
+          "breads": [
+            "Pão francês",
+            "Pão de queijo"
+          ],
+          "coffee": "Café com leite",
+          "sweets": [
+            "Bolo do dia",
+            "Torradas amanteigadas"
+          ],
+          "guestName": "2º Hóspede",
+          "sweetener": "Adoçante",
+          "fruitHoney": false,
+          "guestIndex": 2,
+          "isStandard": false,
+          "complements": [
+            "Manteiga"
+          ],
+          "deliveryTime": "08:02",
+          "otherBeverage": "Suco de laranja",
+          "accompaniments": [
+            "Queijo mussarela",
+            "Ovos mexidos",
+            "Peito de Peru",
+            "Queijo Minas frescal"
+          ]
+        }
+      ],
+      "reservationId": 198,
+      "originalCheckin": "2026-09-23",
+      "reservationCode": "RES-212-0198",
+      "originalCheckout": "2026-09-24"
+    },
+    {
+      "id": 5,
+      "date": "2026-09-24",
+      "items": [
+        {
+          "name": "Café",
+          "quantity": 1
+        },
+        {
+          "name": "Suco de laranja",
+          "quantity": 1
+        },
+        {
+          "name": "Pão francês",
+          "quantity": 1
+        },
+        {
+          "name": "Pão de queijo",
+          "quantity": 1
+        },
+        {
+          "name": "Queijo mussarela",
+          "quantity": 1
+        },
+        {
+          "name": "Ovos mexidos",
+          "quantity": 1
+        },
+        {
+          "name": "Peito de Peru",
+          "quantity": 1
+        },
+        {
+          "name": "Manteiga",
+          "quantity": 1
+        },
+        {
+          "name": "Casadinho (biscoito com goiabada)",
+          "quantity": 1
+        },
+        {
+          "name": "Torradas amanteigadas",
+          "quantity": 1
+        },
+        {
+          "name": "Salada de frutas",
+          "quantity": 1
+        },
+        {
+          "name": "Adoçante",
+          "quantity": 1
+        }
+      ],
+      "notes": "",
+      "phone": "",
+      "status": "pending",
+      "createdAt": "2026-09-23T22:54:51.608Z",
+      "orderMode": "unified",
+      "clientName": "Anyelle",
+      "guestCount": 1,
+      "isStandard": false,
+      "roomNumber": "715",
+      "guestOrders": null,
+      "preferences": {
+        "fruit": "Salada de frutas",
+        "breads": [
+          "Pão francês",
+          "Pão de queijo"
+        ],
+        "coffee": "Café",
+        "sweets": [
+          "Casadinho (biscoito com goiabada)",
+          "Torradas amanteigadas"
+        ],
+        "sweetener": "Adoçante",
+        "fruitHoney": false,
+        "complements": [
+          "Manteiga"
+        ],
+        "otherBeverage": "Suco de laranja",
+        "accompaniments": [
+          "Queijo mussarela",
+          "Ovos mexidos",
+          "Peito de Peru"
+        ],
+        "fruitSaladOption": "Salada pura"
+      },
+      "deliveryTime": "09:05",
+      "guestChoices": [
+        {
+          "fruit": "Salada de frutas",
+          "breads": [
+            "Pão francês",
+            "Pão de queijo"
+          ],
+          "coffee": "Café",
+          "sweets": [
+            "Casadinho (biscoito com goiabada)",
+            "Torradas amanteigadas"
+          ],
+          "guestName": "Anyelle",
+          "sweetener": "Adoçante",
+          "fruitHoney": false,
+          "guestIndex": 1,
+          "isStandard": false,
+          "complements": [
+            "Manteiga"
+          ],
+          "deliveryTime": "09:05",
+          "otherBeverage": "Suco de laranja",
+          "accompaniments": [
+            "Queijo mussarela",
+            "Ovos mexidos",
+            "Peito de Peru"
+          ],
+          "fruitSaladOption": "Salada pura"
+        }
+      ],
+      "reservationId": 191,
+      "originalCheckin": "2026-09-22",
+      "reservationCode": "RES-715-0191",
+      "originalCheckout": "2026-09-24"
+    },
+    {
+      "id": 4,
+      "date": "2026-09-24",
+      "items": [
+        {
+          "name": "Café",
+          "quantity": 1
+        },
+        {
+          "name": "Leite",
+          "quantity": 1
+        },
+        {
+          "name": "Vitamina de banana com iogurte de morango",
+          "quantity": 1
+        },
+        {
+          "name": "Pão francês",
+          "quantity": 1
+        },
+        {
+          "name": "Pão de queijo",
+          "quantity": 1
+        },
+        {
+          "name": "Queijo mussarela",
+          "quantity": 1
+        },
+        {
+          "name": "Presunto",
+          "quantity": 1
+        },
+        {
+          "name": "Ovos mexidos",
+          "quantity": 1
+        },
+        {
+          "name": "Queijo Minas frescal",
+          "quantity": 1
+        },
+        {
+          "name": "Manteiga",
+          "quantity": 1
+        },
+        {
+          "name": "Requeijão",
+          "quantity": 1
+        },
+        {
+          "name": "Bolo do dia",
+          "quantity": 1
+        },
+        {
+          "name": "Casadinho (biscoito com goiabada)",
+          "quantity": 1
+        },
+        {
+          "name": "Salada de frutas",
+          "quantity": 1
+        },
+        {
+          "name": "Leite condensado",
+          "quantity": 1
+        },
+        {
+          "name": "Adoçante",
+          "quantity": 1
+        }
+      ],
+      "notes": "",
+      "phone": "",
+      "status": "pending",
+      "createdAt": "2026-09-23T22:23:14.246Z",
+      "orderMode": "unified",
+      "clientName": "Elziclay maia",
+      "guestCount": 1,
+      "isStandard": false,
+      "roomNumber": "211",
+      "guestOrders": null,
+      "preferences": {
+        "fruit": "Salada de frutas",
+        "breads": [
+          "Pão francês",
+          "Pão de queijo"
+        ],
+        "coffee": "Café com leite",
+        "sweets": [
+          "Bolo do dia",
+          "Casadinho (biscoito com goiabada)"
+        ],
+        "sweetener": "Adoçante",
+        "fruitHoney": false,
+        "complements": [
+          "Manteiga",
+          "Requeijão"
+        ],
+        "otherBeverage": "Vitamina de banana com iogurte de morango",
+        "accompaniments": [
+          "Queijo mussarela",
+          "Presunto",
+          "Ovos mexidos",
+          "Queijo Minas frescal"
+        ],
+        "fruitSaladOption": "Leite condensado"
+      },
+      "deliveryTime": "06:31",
+      "guestChoices": [
+        {
+          "fruit": "Salada de frutas",
+          "breads": [
+            "Pão francês",
+            "Pão de queijo"
+          ],
+          "coffee": "Café com leite",
+          "sweets": [
+            "Bolo do dia",
+            "Casadinho (biscoito com goiabada)"
+          ],
+          "guestName": "Elziclay maia",
+          "sweetener": "Adoçante",
+          "fruitHoney": false,
+          "guestIndex": 1,
+          "isStandard": false,
+          "complements": [
+            "Manteiga",
+            "Requeijão"
+          ],
+          "deliveryTime": "06:31",
+          "otherBeverage": "Vitamina de banana com iogurte de morango",
+          "accompaniments": [
+            "Queijo mussarela",
+            "Presunto",
+            "Ovos mexidos",
+            "Queijo Minas frescal"
+          ],
+          "fruitSaladOption": "Leite condensado"
+        }
+      ],
+      "reservationId": 197,
+      "originalCheckin": "2026-09-23",
+      "reservationCode": "RES-116-0197",
+      "originalCheckout": "2026-09-24"
     }
   ],
   "breakfastMenu": {

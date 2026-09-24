@@ -1725,49 +1725,9 @@ async function reconcileFromAuditLogs(db, pgPool) {
 
       for (const dt of dates) {
         let existing = db.breakfastOrders.find(o => String(o.roomNumber) === room && o.date === dt);
-        if (existing) {
-          if (existing.status === "cancelled") {
-            existing.status = "pending";
-            existing.cancelReason = null;
-            changed = true;
-          }
-        } else {
-          maxBfId++;
-          const resMatch = db.reservations.find(r => 
-            String(r.flatNumber) === room && r.checkinDate <= dt && r.checkoutDate >= dt && r.status !== "cancelada"
-          );
-
-          db.breakfastOrders.push({
-            id: maxBfId,
-            date: dt,
-            deliveryTime,
-            roomNumber: room,
-            clientName: guestName,
-            guestCount,
-            isStandard: true,
-            orderMode: "unified",
-            guestOrders: null,
-            items: [
-              { name: "Café com leite", quantity: guestCount },
-              { name: "Suco de laranja", quantity: guestCount },
-              { name: "Pão francês", quantity: guestCount },
-              { name: "Pão de queijo", quantity: guestCount },
-              { name: "Queijo mussarela", quantity: guestCount },
-              { name: "Ovos mexidos", quantity: guestCount },
-              { name: "Manteiga", quantity: guestCount },
-              { name: "Bolo do dia", quantity: guestCount },
-              { name: "Mamão", quantity: guestCount }
-            ],
-            notes: "",
-            status: dt < "2026-09-24" ? "delivered" : "pending",
-            phone: resMatch?.guestPhone || "",
-            reservationCode: resMatch?.code || `RES-${room}-0000`,
-            reservationId: resMatch?.id || undefined,
-            originalCheckin: resMatch?.checkinDate || dt,
-            originalCheckout: resMatch?.checkoutDate || dt,
-            createdAt: l.timestamp,
-            updatedAt: l.timestamp
-          });
+        if (existing && existing.status === "cancelled") {
+          existing.status = "pending";
+          existing.cancelReason = null;
           changed = true;
         }
       }
