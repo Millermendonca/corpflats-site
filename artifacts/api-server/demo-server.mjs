@@ -7585,20 +7585,26 @@ app.get("/api/system/snapshots", async (req, res) => {
 
 app.get("/api/system/snapshots/breakfast", async (req, res) => {
   if (!pgPool) return res.json({ error: "PostgreSQL não conectado", snapshots: [] });
+  const targetDate = req.query.date || "2026-09-24";
+  const searchRoom = req.query.room;
   try {
     await ensureBackupsTable();
     const q = await pgPool.query("SELECT id, timestamp, reason, value FROM system_store_backups ORDER BY id DESC LIMIT 50");
     const results = [];
     for (const row of q.rows) {
       const orders = row.value?.breakfastOrders || [];
-      const orders24 = orders.filter(o => o.date === "2026-09-24");
-      if (orders24.length > 0) {
+      const filtered = orders.filter(o => {
+        if (targetDate && targetDate !== "all" && o.date !== targetDate) return false;
+        if (searchRoom && String(o.roomNumber) !== String(searchRoom)) return false;
+        return true;
+      });
+      if (filtered.length > 0) {
         results.push({
           id: row.id,
           timestamp: row.timestamp,
           reason: row.reason,
-          count: orders24.length,
-          orders: orders24
+          count: filtered.length,
+          orders: filtered
         });
       }
     }
