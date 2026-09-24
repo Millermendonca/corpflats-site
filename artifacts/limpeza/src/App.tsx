@@ -5,6 +5,8 @@ import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Route, Switch, useLocation, Router as WouterRouter } from 'wouter';
 import { cancelGoogleOneTap } from '@/lib/auth-client';
+import { useGetMe } from '@workspace/api-client-react';
+import { AccessDenied } from '@/components/access-denied';
 
 import Login from '@/pages/login';
 import Dashboard from '@/pages/dashboard';
@@ -65,6 +67,101 @@ function Redirect({ to }: { to: string }) {
   return null;
 }
 
+function AdminGuard({ component: Component, moduleName, params }: { component: React.ComponentType<any>; moduleName: string; params?: any }) {
+  const { data: user, isLoading } = useGetMe();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+          <span className="text-xs text-muted-foreground font-semibold">Verificando permissões...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Redirect to="/login" />;
+  }
+
+  if (user.role !== "admin") {
+    return <AccessDenied moduleName={moduleName} />;
+  }
+
+  return <Component {...params} />;
+}
+
+function AdminRoute({ path, component, moduleName }: { path: string; component: React.ComponentType<any>; moduleName: string }) {
+  return (
+    <Route path={path}>
+      {(params) => <AdminGuard component={component} moduleName={moduleName} params={params} />}
+    </Route>
+  );
+}
+
+function ReceptionGuard({ component: Component, moduleName, params }: { component: React.ComponentType<any>; moduleName: string; params?: any }) {
+  const { data: user, isLoading } = useGetMe();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+          <span className="text-xs text-muted-foreground font-semibold">Verificando credenciais...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Redirect to="/login" />;
+  }
+
+  if (user.role !== "admin" && user.role !== "recepcao") {
+    return <AccessDenied moduleName={moduleName} />;
+  }
+
+  return <Component {...params} />;
+}
+
+function ReceptionRoute({ path, component, moduleName }: { path: string; component: React.ComponentType<any>; moduleName: string }) {
+  return (
+    <Route path={path}>
+      {(params) => <ReceptionGuard component={component} moduleName={moduleName} params={params} />}
+    </Route>
+  );
+}
+
+function StaffGuard({ component: Component, params }: { component: React.ComponentType<any>; params?: any }) {
+  const { data: user, isLoading } = useGetMe();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+          <span className="text-xs text-muted-foreground font-semibold">Carregando governança...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Redirect to="/login" />;
+  }
+
+  return <Component {...params} />;
+}
+
+function StaffRoute({ path, component }: { path: string; component: React.ComponentType<any> }) {
+  return (
+    <Route path={path}>
+      {(params) => <StaffGuard component={component} params={params} />}
+    </Route>
+  );
+}
+
 function Router() {
   return (
     <RoutedErrorBoundary>
@@ -91,9 +188,11 @@ function Router() {
         <Route path="/verificar-ficha/:uuid" component={VerifyFnrh} />
         <Route path="/verificar-ficha" component={VerifyFnrh} />
 
-        {/* Reception Tablet Portaria Route */}
-        <Route path="/portaria" component={ReceptionTablet} />
-        <Route path="/tablet" component={ReceptionTablet} />
+        {/* Reception Tablet Portaria Route (Admin / Recepção) */}
+        <ReceptionRoute path="/portaria" component={ReceptionTablet} moduleName="o Terminal da Portaria" />
+        <ReceptionRoute path="/tablet" component={ReceptionTablet} moduleName="o Terminal da Portaria" />
+        <ReceptionRoute path="/recepcao" component={ReceptionCheckout} moduleName="o Checkout da Recepção" />
+        <ReceptionRoute path="/reception" component={ReceptionCheckout} moduleName="o Checkout da Recepção" />
 
         {/* Public Guest Checkout Route */}
         <Route path="/minha-reserva/:code/checkout" component={GuestCheckout} />
@@ -107,10 +206,6 @@ function Router() {
         <Route path="/saida/:code" component={GuestCheckout} />
         <Route path="/saida" component={GuestCheckout} />
 
-        {/* Reception Fast Checkout Route */}
-        <Route path="/recepcao" component={ReceptionCheckout} />
-        <Route path="/reception" component={ReceptionCheckout} />
-
         {/* Public Breakfast Order Portal */}
         <Route path="/cafe/:code" component={GuestBreakfast} />
         <Route path="/cafe" component={GuestBreakfast} />
@@ -119,115 +214,111 @@ function Router() {
         <Route path="/breakfast/:code" component={GuestBreakfast} />
         <Route path="/breakfast" component={GuestBreakfast} />
 
-        {/* Live 27" Command Operations Panel */}
-        <Route path="/painel-aovivo" component={LiveOperationsPanel} />
-        <Route path="/live-ops" component={LiveOperationsPanel} />
-        <Route path="/aovivo" component={LiveOperationsPanel} />
+        {/* Live Operations & AI (Admin Only) */}
+        <AdminRoute path="/painel-aovivo" component={LiveOperationsPanel} moduleName="o Painel Operacional Ao Vivo" />
+        <AdminRoute path="/live-ops" component={LiveOperationsPanel} moduleName="o Painel Operacional Ao Vivo" />
+        <AdminRoute path="/aovivo" component={LiveOperationsPanel} moduleName="o Painel Operacional Ao Vivo" />
+        <AdminRoute path="/avaliacoes-ia" component={ReviewInsights} moduleName="as Avaliações & Inteligência Artificial" />
+        <AdminRoute path="/reviews-ia" component={ReviewInsights} moduleName="as Avaliações & Inteligência Artificial" />
+        <AdminRoute path="/garagem" component={GarageDashboard} moduleName="o Controle de Garagem & Vagas" />
+        <AdminRoute path="/estacionamento" component={GarageDashboard} moduleName="o Controle de Garagem & Vagas" />
 
-        {/* AI Reviews & Garage Management */}
-        <Route path="/avaliacoes-ia" component={ReviewInsights} />
-        <Route path="/reviews-ia" component={ReviewInsights} />
-        <Route path="/garagem" component={GarageDashboard} />
-        <Route path="/estacionamento" component={GarageDashboard} />
-
-        {/* Staff & Admin Routes */}
+        {/* Staff & Maid Housekeeping Routes (Maids & Admin) */}
         <Route path="/login" component={Login} />
-        <Route path="/dashboard" component={Dashboard} />
-        {/* Shopping List Routes */}
-        <Route path="/lista-compras" component={ShoppingListPage} />
-        <Route path="/compras" component={ShoppingListPage} />
+        <StaffRoute path="/dashboard" component={Dashboard} />
+        <StaffRoute path="/lista-compras" component={ShoppingListPage} />
+        <StaffRoute path="/compras" component={ShoppingListPage} />
+        <StaffRoute path="/extrato" component={Reports} />
+        <StaffRoute path="/meu-extrato" component={Reports} />
+        <StaffRoute path="/extrato-camareiras" component={Reports} />
+        <StaffRoute path="/fechamento" component={Reports} />
+        <StaffRoute path="/fechamento-limpeza" component={Reports} />
+        <StaffRoute path="/tasks" component={Tasks} />
+        <StaffRoute path="/tarefas" component={Tasks} />
+        <StaffRoute path="/achados-perdidos" component={LostAndFoundPage} />
+        <StaffRoute path="/achados" component={LostAndFoundPage} />
+        <StaffRoute path="/lost-and-found" component={LostAndFoundPage} />
+        <StaffRoute path="/observations" component={Observations} />
+        <StaffRoute path="/ocorrencias" component={Observations} />
+        <StaffRoute path="/avarias" component={Observations} />
+        <StaffRoute path="/reports" component={Reports} />
+        <StaffRoute path="/relatorios" component={Reports} />
+        <StaffRoute path="/history" component={History} />
+        <StaffRoute path="/historico" component={History} />
 
-        {/* Maid Financial Statement & Fechamento Routes */}
-        <Route path="/extrato" component={Reports} />
-        <Route path="/meu-extrato" component={Reports} />
-        <Route path="/extrato-camareiras" component={Reports} />
-        <Route path="/fechamento" component={Reports} />
-        <Route path="/fechamento-limpeza" component={Reports} />
+        {/* Administrative Only Routes (Strictly Forbidden to Maids) */}
+        <AdminRoute path="/jornada-reservas" component={ReservationJourney} moduleName="o Mapa da Jornada de Reservas" />
+        <AdminRoute path="/jornada-comunicacao" component={ReservationJourney} moduleName="o Mapa da Jornada de Reservas" />
+        <AdminRoute path="/fluxo-reservas" component={ReservationJourney} moduleName="o Mapa da Jornada de Reservas" />
+        <AdminRoute path="/mapa-jornada" component={ReservationJourney} moduleName="o Mapa da Jornada de Reservas" />
+        <AdminRoute path="/jornada" component={ReservationJourney} moduleName="o Mapa da Jornada de Reservas" />
+        <AdminRoute path="/emails" component={EmailHub} moduleName="o Gerenciador de E-mails" />
+        <AdminRoute path="/email-hub" component={EmailHub} moduleName="o Gerenciador de E-mails" />
+        <AdminRoute path="/gerenciador-emails" component={EmailHub} moduleName="o Gerenciador de E-mails" />
+        <AdminRoute path="/whatsapp-chat" component={WhatsappChat} moduleName="o WhatsApp Web Corporativo" />
+        <AdminRoute path="/chat" component={WhatsappChat} moduleName="o WhatsApp Web Corporativo" />
+        <AdminRoute path="/whatsapp-web" component={WhatsappChat} moduleName="o WhatsApp Web Corporativo" />
+        <AdminRoute path="/chat-whatsapp" component={WhatsappChat} moduleName="o WhatsApp Web Corporativo" />
+        <AdminRoute path="/automacoes-camareiras" component={MaidWhatsappAutomation} moduleName="as Automações de WhatsApp para Camareiras" />
+        <AdminRoute path="/camareiras-whatsapp" component={MaidWhatsappAutomation} moduleName="as Automações de WhatsApp para Camareiras" />
+        <AdminRoute path="/governanca-whatsapp" component={MaidWhatsappAutomation} moduleName="as Automações de WhatsApp para Camareiras" />
+        <AdminRoute path="/whatsapp" component={WhatsappAutomation} moduleName="a Automação de WhatsApp" />
+        <AdminRoute path="/automacao-whatsapp" component={WhatsappAutomation} moduleName="a Automação de WhatsApp" />
+        <AdminRoute path="/zapi-conexao" component={ZapiConnection} moduleName="a Conexão Z-API" />
+        <AdminRoute path="/conexao-zapi" component={ZapiConnection} moduleName="a Conexão Z-API" />
+        <AdminRoute path="/sistema/zapi" component={ZapiConnection} moduleName="a Conexão Z-API" />
+        <AdminRoute path="/zapi" component={ZapiConnection} moduleName="a Conexão Z-API" />
+        <AdminRoute path="/notificacoes" component={NotificationsHub} moduleName="a Central de Notificações" />
+        <AdminRoute path="/notifications" component={NotificationsHub} moduleName="a Central de Notificações" />
+        <AdminRoute path="/alertas" component={NotificationsHub} moduleName="a Central de Notificações" />
+        <AdminRoute path="/pedidos-cafe" component={BreakfastProduction} moduleName="o Painel de Produção do Café da Manhã" />
+        <AdminRoute path="/cafe-dashboard" component={BreakfastProduction} moduleName="o Painel de Produção do Café da Manhã" />
+        <AdminRoute path="/historico-cafe" component={BreakfastProduction} moduleName="o Histórico do Café da Manhã" />
+        <AdminRoute path="/relatorios-cafe" component={BreakfastProduction} moduleName="os Relatórios do Café da Manhã" />
+        <AdminRoute path="/insights-cafe" component={BreakfastProduction} moduleName="os Relatórios do Café da Manhã" />
+        <AdminRoute path="/reservas" component={PmsCalendar} moduleName="o Livro de Reservas & Mapa de Ocupação" />
+        <AdminRoute path="/relatorios-reservas" component={PmsReportsPage} moduleName="os Relatórios de Reservas & Ocupação" />
+        <AdminRoute path="/relatorio-reservas" component={PmsReportsPage} moduleName="os Relatórios de Reservas & Ocupação" />
+        <AdminRoute path="/pms-reports" component={PmsReportsPage} moduleName="os Relatórios de Reservas & Ocupação" />
+        <AdminRoute path="/crm" component={CrmGuests} moduleName="o CRM de Hóspedes & Empresas" />
+        <AdminRoute path="/pagamentos" component={Payments} moduleName="a Gestão de Pagamentos & PIX" />
+        <AdminRoute path="/payments" component={Payments} moduleName="a Gestão de Pagamentos & PIX" />
+        <AdminRoute path="/recebiveis" component={Payments} moduleName="a Gestão de Recebíveis" />
+        <AdminRoute path="/taxas" component={Payments} moduleName="a Gestão de Taxas" />
+        <AdminRoute path="/financeiro" component={FinancialDashboard} moduleName="o ERP Financeiro & DRE" />
+        <AdminRoute path="/precificacao" component={FinancialDashboard} moduleName="a Precificação Financeira" />
+        <AdminRoute path="/finance" component={FinancialDashboard} moduleName="o ERP Financeiro & DRE" />
+        <AdminRoute path="/trafego" component={MarketingTraffic} moduleName="o Tráfego Autônomo & IA" />
+        <AdminRoute path="/marketing" component={MarketingTraffic} moduleName="o Painel de Marketing" />
+        <AdminRoute path="/ads" component={MarketingTraffic} moduleName="o Painel de Tráfego & Ads" />
+        <AdminRoute path="/notas" component={FiscalInvoices} moduleName="o Hub de Notas Fiscais (NFS-e)" />
+        <AdminRoute path="/nfse" component={FiscalInvoices} moduleName="o Hub de Notas Fiscais (NFS-e)" />
+        <AdminRoute path="/invoices" component={FiscalInvoices} moduleName="o Hub de Notas Fiscais (NFS-e)" />
+        <AdminRoute path="/guests" component={CrmGuests} moduleName="o CRM de Hóspedes" />
+        <AdminRoute path="/hospedes" component={CrmGuests} moduleName="o CRM de Hóspedes" />
+        <AdminRoute path="/surveys" component={Surveys} moduleName="as Vistorias de Saída" />
+        <AdminRoute path="/vistorias" component={Surveys} moduleName="as Vistorias de Saída" />
+        <AdminRoute path="/propriedade" component={PropertySettings} moduleName="as Regras & Configurações da Propriedade" />
+        <AdminRoute path="/hotel" component={PropertySettings} moduleName="as Regras & Configurações do Hotel" />
+        <AdminRoute path="/regras" component={PropertySettings} moduleName="as Regras da Casa" />
+        <AdminRoute path="/settings" component={Settings} moduleName="as Configurações do Sistema" />
+        <AdminRoute path="/configuracoes" component={Settings} moduleName="as Configurações do Sistema" />
+        <AdminRoute path="/configuracao" component={Settings} moduleName="as Configurações do Sistema" />
+        <AdminRoute path="/ajustes" component={Settings} moduleName="os Ajustes do Sistema" />
+        <AdminRoute path="/editor-site" component={SiteEditor} moduleName="o Editor Visual do Site" />
+        <AdminRoute path="/configurar-site" component={SiteEditor} moduleName="o Editor Visual do Site" />
+        <AdminRoute path="/personalizar-site" component={SiteEditor} moduleName="o Editor Visual do Site" />
+        <AdminRoute path="/site-editor" component={SiteEditor} moduleName="o Editor Visual do Site" />
+        <AdminRoute path="/cms" component={SiteEditor} moduleName="o CMS do Site" />
+        <AdminRoute path="/tarifas" component={TarifasEditor} moduleName="a Gestão de Tarifas & Políticas" />
+        <AdminRoute path="/gestao-tarifas" component={TarifasEditor} moduleName="a Gestão de Tarifas & Políticas" />
+        <AdminRoute path="/tabela-tarifas" component={TarifasEditor} moduleName="a Tabela de Tarifas" />
+        <AdminRoute path="/precos" component={TarifasEditor} moduleName="a Gestão de Preços" />
+        <AdminRoute path="/logs" component={SystemLogsPage} moduleName="os Logs & Auditoria Fail-Safe" />
+        <AdminRoute path="/auditoria" component={SystemLogsPage} moduleName="os Logs & Auditoria Fail-Safe" />
+        <AdminRoute path="/system-logs" component={SystemLogsPage} moduleName="os Logs do Sistema" />
+        <AdminRoute path="/audit" component={SystemLogsPage} moduleName="a Auditoria do Sistema" />
 
-        {/* WhatsApp Automation, Email Hub & Z-API Connection Routes */}
-        <Route path="/jornada-reservas" component={ReservationJourney} />
-        <Route path="/jornada-comunicacao" component={ReservationJourney} />
-        <Route path="/fluxo-reservas" component={ReservationJourney} />
-        <Route path="/mapa-jornada" component={ReservationJourney} />
-        <Route path="/jornada" component={ReservationJourney} />
-        <Route path="/emails" component={EmailHub} />
-        <Route path="/email-hub" component={EmailHub} />
-        <Route path="/gerenciador-emails" component={EmailHub} />
-        <Route path="/whatsapp-chat" component={WhatsappChat} />
-        <Route path="/chat" component={WhatsappChat} />
-        <Route path="/whatsapp-web" component={WhatsappChat} />
-        <Route path="/chat-whatsapp" component={WhatsappChat} />
-        <Route path="/automacoes-camareiras" component={MaidWhatsappAutomation} />
-        <Route path="/camareiras-whatsapp" component={MaidWhatsappAutomation} />
-        <Route path="/governanca-whatsapp" component={MaidWhatsappAutomation} />
-        <Route path="/whatsapp" component={WhatsappAutomation} />
-        <Route path="/automacao-whatsapp" component={WhatsappAutomation} />
-        <Route path="/zapi-conexao" component={ZapiConnection} />
-        <Route path="/conexao-zapi" component={ZapiConnection} />
-        <Route path="/sistema/zapi" component={ZapiConnection} />
-        <Route path="/zapi" component={ZapiConnection} />
-        <Route path="/notificacoes" component={NotificationsHub} />
-        <Route path="/notifications" component={NotificationsHub} />
-        <Route path="/alertas" component={NotificationsHub} />
-        <Route path="/pedidos-cafe" component={BreakfastProduction} />
-        <Route path="/cafe-dashboard" component={BreakfastProduction} />
-        <Route path="/historico-cafe" component={BreakfastProduction} />
-        <Route path="/relatorios-cafe" component={BreakfastProduction} />
-        <Route path="/insights-cafe" component={BreakfastProduction} />
-        <Route path="/reservas" component={PmsCalendar} />
-        <Route path="/relatorios-reservas" component={PmsReportsPage} />
-        <Route path="/relatorio-reservas" component={PmsReportsPage} />
-        <Route path="/pms-reports" component={PmsReportsPage} />
-        <Route path="/crm" component={CrmGuests} />
-        <Route path="/pagamentos" component={Payments} />
-        <Route path="/payments" component={Payments} />
-        <Route path="/recebiveis" component={Payments} />
-        <Route path="/taxas" component={Payments} />
-        <Route path="/financeiro" component={FinancialDashboard} />
-        <Route path="/precificacao" component={FinancialDashboard} />
-        <Route path="/finance" component={FinancialDashboard} />
-        <Route path="/trafego" component={MarketingTraffic} />
-        <Route path="/marketing" component={MarketingTraffic} />
-        <Route path="/ads" component={MarketingTraffic} />
-        <Route path="/notas" component={FiscalInvoices} />
-        <Route path="/nfse" component={FiscalInvoices} />
-        <Route path="/invoices" component={FiscalInvoices} />
-        <Route path="/guests" component={CrmGuests} />
-        <Route path="/hospedes" component={CrmGuests} />
-        <Route path="/surveys" component={Surveys} />
-        <Route path="/vistorias" component={Surveys} />
-        <Route path="/history" component={History} />
-        <Route path="/historico" component={History} />
-        <Route path="/propriedade" component={PropertySettings} />
-        <Route path="/hotel" component={PropertySettings} />
-        <Route path="/regras" component={PropertySettings} />
-        <Route path="/settings" component={Settings} />
-        <Route path="/configuracoes" component={Settings} />
-        <Route path="/configuracao" component={Settings} />
-        <Route path="/ajustes" component={Settings} />
-        <Route path="/editor-site" component={SiteEditor} />
-        <Route path="/configurar-site" component={SiteEditor} />
-        <Route path="/personalizar-site" component={SiteEditor} />
-        <Route path="/site-editor" component={SiteEditor} />
-        <Route path="/cms" component={SiteEditor} />
-        <Route path="/tarifas" component={TarifasEditor} />
-        <Route path="/gestao-tarifas" component={TarifasEditor} />
-        <Route path="/tabela-tarifas" component={TarifasEditor} />
-        <Route path="/precos" component={TarifasEditor} />
-        <Route path="/tasks" component={Tasks} />
-        <Route path="/tarefas" component={Tasks} />
-        <Route path="/achados-perdidos" component={LostAndFoundPage} />
-        <Route path="/achados" component={LostAndFoundPage} />
-        <Route path="/lost-and-found" component={LostAndFoundPage} />
-        <Route path="/observations" component={Observations} />
-        <Route path="/ocorrencias" component={Observations} />
-        <Route path="/avarias" component={Observations} />
-        <Route path="/reports" component={Reports} />
-        <Route path="/relatorios" component={Reports} />
-        <Route path="/logs" component={SystemLogsPage} />
-        <Route path="/auditoria" component={SystemLogsPage} />
-        <Route path="/system-logs" component={SystemLogsPage} />
-        <Route path="/audit" component={SystemLogsPage} />
         <Route path="/"><Redirect to="/reservar" /></Route>
         <Route component={NotFound} />
       </Switch>

@@ -124,8 +124,10 @@ export default function FinancialDashboard() {
   }
 
   useEffect(() => {
-    fetchAllERPData()
-  }, [])
+    if (!loadingUser && user?.role === "admin") {
+      fetchAllERPData()
+    }
+  }, [loadingUser, user?.role])
 
   // Ações de Contas a Pagar
   const handleMarkPayablePaid = async (id: number) => {
@@ -301,7 +303,15 @@ export default function FinancialDashboard() {
     }
   }
 
-  if (!loadingUser && user?.role !== "admin") {
+  if (loadingUser) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+      </div>
+    )
+  }
+
+  if (user?.role !== "admin") {
     return <AccessDenied moduleName="o ERP Financeiro & Contratos CorpFlats" />
   }
 

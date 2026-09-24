@@ -2132,8 +2132,9 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
         )}
 
         {/* ══════════════════════════════════════════════════════════════════
-            MODAL 1: CONFIGURAR VALORES POR QUARTO (TAXAS BASE E INDIVIDUAIS)
+            MODAL 1: CONFIGURAR VALORES POR QUARTO (TAXAS BASE E INDIVIDUAIS - ADM ONLY)
            ══════════════════════════════════════════════════════════════════ */}
+        {isAdmin && (
         <Dialog open={ratesModalOpen} onOpenChange={setRatesModalOpen}>
           <DialogContent className="sm:max-w-lg bg-card border border-border rounded-3xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
@@ -2219,10 +2220,12 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
             </form>
           </DialogContent>
         </Dialog>
+        )}
 
         {/* ══════════════════════════════════════════════════════════════════
-            MODAL 2: PAGAR PIX / LANÇAR VALE (COM SUGESTÃO INTELIGENTE)
+            MODAL 2: PAGAR PIX / LANÇAR VALE (COM SUGESTÃO INTELIGENTE - ADM ONLY)
            ══════════════════════════════════════════════════════════════════ */}
+        {isAdmin && (
         <Dialog open={payModalOpen} onOpenChange={setPayModalOpen}>
           <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl">
             <DialogHeader>
@@ -2332,6 +2335,7 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
             </form>
           </DialogContent>
         </Dialog>
+        )}
 
         {/* ══════════════════════════════════════════════════════════════════
             MODAL 3: RECIBO TIMBRADO A4 DA QUINZENA (COM WHATSAPP)
@@ -2466,8 +2470,9 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
         </Dialog>
 
         {/* ══════════════════════════════════════════════════════════════════
-            MODAL 4: LANÇAR DIÁRIA MANUAL RETROATIVA (ADM)
+            MODAL 4: LANÇAR DIÁRIA MANUAL RETROATIVA (ADM ONLY)
            ══════════════════════════════════════════════════════════════════ */}
+        {isAdmin && (
         <Dialog open={addCleaningModalOpen} onOpenChange={setAddCleaningModalOpen}>
           <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl">
             <DialogHeader>
@@ -2569,10 +2574,12 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
             </form>
           </DialogContent>
         </Dialog>
+        )}
 
         {/* ══════════════════════════════════════════════════════════════════
-            MODAL 5: CONFIRMAÇÃO DE EXCLUSÃO DE DIÁRIA (ADM)
+            MODAL 5: CONFIRMAÇÃO DE EXCLUSÃO DE DIÁRIA (ADM ONLY)
            ══════════════════════════════════════════════════════════════════ */}
+        {isAdmin && (
         <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
           <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl">
             <DialogHeader>
@@ -2604,6 +2611,7 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        )}
 
         {/* ══════════════════════════════════════════════════════════════════
             MODAL 6: COMPROVANTE DIGITAL DE LANÇAMENTO (DO EXTRATO)

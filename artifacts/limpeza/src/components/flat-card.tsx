@@ -4,6 +4,7 @@ import { format, addDays, parseISO, differenceInDays, isValid } from "date-fns"
 import { useToast } from "@/hooks/use-toast"
 import { 
   useUpdateFlat,
+  useGetMe,
   getListCheckoutsQueryKey,
   getGetDashboardSummaryQueryKey,
   getListPendingPeriodicTasksQueryKey,
@@ -102,7 +103,8 @@ export function FlatCard({
   userRole,
   currentUserId = 1,
 }: FlatCardProps) {
-  const isAdmin = userRole === "admin"
+  const { data: currentUser } = useGetMe()
+  const isAdmin = userRole === "admin" || currentUser?.role === "admin"
   const queryClient = useQueryClient()
   const { toast } = useToast()
 
@@ -152,6 +154,7 @@ export function FlatCard({
   const dailyRate = Number(flat.reservation?.dailyRate || 0)
 
   const handleOpenExtendStayModal = () => {
+    if (!isAdmin) return
     let nextDateStr = ""
     try {
       if (currentCheckoutStr && isValid(parseISO(currentCheckoutStr))) {
@@ -1341,8 +1344,8 @@ export function FlatCard({
                   <span>Item Encontrado no Quarto</span>
                 </Button>
 
-                {/* Extend Stay Button (Admin & Maids, when not clean) */}
-                {currentStatus !== "clean" && currentStatus !== "no_show" && (
+                {/* Extend Stay Button (Admin Only, when not clean) */}
+                {isAdmin && currentStatus !== "clean" && currentStatus !== "no_show" && (
                   <Button 
                     type="button"
                     variant="ghost"
@@ -2006,8 +2009,9 @@ export function FlatCard({
         </Dialog>
       )}
 
-      {/* Modal: Confirmar Estadia Estendida (Hóspede Estendeu) */}
-      <Dialog open={extendStayModalOpen} onOpenChange={setExtendStayModalOpen}>
+      {/* Modal: Confirmar Estadia Estendida (Hóspede Estendeu - Admin Only) */}
+      {isAdmin && (
+        <Dialog open={extendStayModalOpen} onOpenChange={setExtendStayModalOpen}>
         <DialogContent className="sm:max-w-md bg-card border border-border shadow-2xl rounded-3xl">
           <form onSubmit={handleConfirmExtendStay}>
             <DialogHeader>
@@ -2168,6 +2172,7 @@ export function FlatCard({
           </form>
         </DialogContent>
       </Dialog>
+      )}
     </>
   )
 }

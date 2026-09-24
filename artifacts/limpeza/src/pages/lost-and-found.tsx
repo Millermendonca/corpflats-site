@@ -18,6 +18,7 @@ import {
 } from "lucide-react"
 import { format, parseISO } from "date-fns"
 import { ptBR } from "date-fns/locale"
+import { useGetMe } from "@workspace/api-client-react"
 
 interface LostItem {
   id: number
@@ -41,6 +42,8 @@ interface LostItem {
 }
 
 export default function LostAndFoundPage() {
+  const { data: user } = useGetMe()
+  const isAdmin = user?.role === "admin"
   const [items, setItems] = useState<LostItem[]>([])
   const [loading, setLoading] = useState(true)
   const [filterStatus, setFilterStatus] = useState<string>("all")
@@ -349,6 +352,7 @@ export default function LostAndFoundPage() {
   }
 
   const handleDeleteItem = async (id: number) => {
+    if (!isAdmin) return
     if (!confirm("Tem certeza que deseja excluir o registro deste item?")) return
     try {
       await fetch(`/api/lost-and-found/${id}`, { method: "DELETE", credentials: "include" })
@@ -778,14 +782,16 @@ export default function LostAndFoundPage() {
                       )}
                     </div>
 
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => handleDeleteItem(item.id)}
-                      className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive rounded-xl"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
+                    {isAdmin && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleDeleteItem(item.id)}
+                        className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive rounded-xl"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    )}
                   </div>
                 </Card>
               )

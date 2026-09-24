@@ -106,6 +106,7 @@ export default function Dashboard() {
   const [isSubmittingManual, setIsSubmittingManual] = useState(false)
 
   const handleOpenManualModal = () => {
+    if (!isAdmin) return
     setManualDate(selectedDateStr || format(new Date(), "yyyy-MM-dd"))
     setManualFlatId("")
     setManualMarkAsClean(false)
@@ -250,13 +251,15 @@ export default function Dashboard() {
           </div>
           <div className="flex flex-wrap items-center gap-2.5">
             {/* Add Manual Flat Button right on main screen */}
-            <Button 
-              onClick={handleOpenManualModal}
-              className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold shadow-xs flex items-center gap-1.5 text-xs h-9"
-            >
-              <PlusCircle className="w-3.5 h-3.5" />
-              <span>Adicionar Quarto</span>
-            </Button>
+            {isAdmin && (
+              <Button 
+                onClick={handleOpenManualModal}
+                className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold shadow-xs flex items-center gap-1.5 text-xs h-9"
+              >
+                <PlusCircle className="w-3.5 h-3.5" />
+                <span>Adicionar Quarto</span>
+              </Button>
+            )}
 
             {/* Date Picker Buttons */}
             <div className="flex items-center gap-1 bg-card border border-border/80 rounded-xl p-1 shadow-2xs">
@@ -491,7 +494,8 @@ export default function Dashboard() {
       </div>
 
       {/* ── Manual Request Modal with Date, Mark as Clean & Cleaner Selection ── */}
-      <Dialog open={manualModalOpen} onOpenChange={setManualModalOpen}>
+      {isAdmin && (
+        <Dialog open={manualModalOpen} onOpenChange={setManualModalOpen}>
         <DialogContent className="sm:max-w-lg bg-card border border-border shadow-2xl rounded-2xl">
           <form onSubmit={handleCreateManualRequest}>
             <DialogHeader>
@@ -696,6 +700,7 @@ export default function Dashboard() {
           </form>
         </DialogContent>
       </Dialog>
+      )}
     </Shell>
   )
 }

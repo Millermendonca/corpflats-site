@@ -166,7 +166,7 @@ app.get("/api/system/postgres-tables", async (req, res) => {
 // ── No Show (Admin only) ───────────────────────────────────────────────────
 app.post("/api/cleaning/assignments/:requestId/no-show", (req, res) => {
   const userAuth = getAuthUser(req);
-  if (userAuth && userAuth.role !== "admin") {
+  if (!userAuth || userAuth.role !== "admin") {
     return res.status(403).json({ error: "Apenas administradores podem marcar No Show." });
   }
 
@@ -4452,6 +4452,9 @@ app.post("/api/cleaning/assignments/:requestId/mark-extended", (req, res) => {
   }
 
   const userAuth = getAuthUser(req);
+  if (!userAuth || userAuth.role !== "admin") {
+    return res.status(403).json({ error: "Apenas administradores podem prorrogar estadia de hóspede." });
+  }
   const now = new Date().toISOString();
   const requestDate = item?.requestDate || req.body.requestDate || getTodayStr();
 
@@ -4712,6 +4715,10 @@ app.get("/api/cleaners", (req, res) => {
 
 // ── Manual Cleaning Request ─────────────────────────────────────────────────
 app.post("/api/cleaning/requests/manual", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || userAuth.role !== "admin") {
+    return res.status(403).json({ error: "Apenas administradores podem lançar solicitações manuais de limpeza." });
+  }
   const { 
     flatId, 
     requestDate = getTodayStr(), 
@@ -6097,7 +6104,7 @@ app.get("/api/periodic-tasks", (req, res) => {
 
 app.post("/api/admin/restore-periodic-tasks", (req, res) => {
   const userAuth = getAuthUser(req);
-  if (userAuth && userAuth.role !== "admin") {
+  if (!userAuth || userAuth.role !== "admin") {
     return res.status(403).json({ error: "Apenas administradores podem restaurar tarefas preventivas." });
   }
   if (req.body?.tasks && Array.isArray(req.body.tasks)) {
@@ -6116,6 +6123,10 @@ app.post("/api/admin/restore-periodic-tasks", (req, res) => {
 });
 
 app.post("/api/periodic-tasks", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || userAuth.role !== "admin") {
+    return res.status(403).json({ error: "Apenas administradores podem cadastrar tarefas preventivas." });
+  }
   const { name, description, periodDays = 7, firstDueDate, assignToHousekeeping = true, flatIds = [] } = req.body;
   if (!db.periodicTasks) db.periodicTasks = [];
   
@@ -6138,6 +6149,10 @@ app.post("/api/periodic-tasks", (req, res) => {
 });
 
 app.put("/api/periodic-tasks/:id", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || userAuth.role !== "admin") {
+    return res.status(403).json({ error: "Apenas administradores podem gerenciar tarefas preventivas." });
+  }
   const id = Number(req.params.id);
   const task = (db.periodicTasks || []).find(t => t.id === id);
   if (!task) return res.status(404).json({ error: "Tarefa preventiva não encontrada" });
@@ -6168,6 +6183,10 @@ app.patch("/api/periodic-tasks/:id", (req, res) => {
 });
 
 app.delete("/api/periodic-tasks/:id", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || userAuth.role !== "admin") {
+    return res.status(403).json({ error: "Apenas administradores podem gerenciar tarefas preventivas." });
+  }
   const id = Number(req.params.id);
   db.periodicTasks = (db.periodicTasks || []).filter(t => t.id !== id);
   db.periodicExecutions = (db.periodicExecutions || []).filter(e => e.periodicTaskId !== id);
@@ -6323,6 +6342,10 @@ app.get("/api/cleaning/rates", (req, res) => {
 });
 
 app.post("/api/cleaning/rates", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || userAuth.role !== "admin") {
+    return res.status(403).json({ error: "Apenas administradores podem configurar taxas e diárias." });
+  }
   const { defaultRatePerRoom, userRates } = req.body;
   if (!db.cleaningRates) db.cleaningRates = {};
   if (defaultRatePerRoom !== undefined) db.cleaningRates.defaultRatePerRoom = Number(defaultRatePerRoom);
@@ -7696,6 +7719,10 @@ app.all(["/api/pms/reservations/restore-all", "/api/system/restore-all"], async 
 });
 
 app.get("/api/pms/calendar", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "reception")) {
+    return res.status(403).json({ error: "Acesso negado. Apenas administradores e recepção têm acesso ao calendário PMS." });
+  }
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   res.set("Pragma", "no-cache");
   res.set("Expires", "0");
@@ -10107,6 +10134,10 @@ app.patch("/api/lost-and-found/:id", async (req, res) => {
 });
 
 app.delete("/api/lost-and-found/:id", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || userAuth.role !== "admin") {
+    return res.status(403).json({ error: "Apenas administradores podem excluir registros de achados e perdidos." });
+  }
   const id = Number(req.params.id);
   if (!db.lostAndFound) db.lostAndFound = [];
   db.lostAndFound = db.lostAndFound.filter(i => i.id !== id);
@@ -10271,6 +10302,10 @@ app.delete("/api/pms/reservations/:id", (req, res) => {
 
 // ── Central de Relatórios de Reservas & Hospedagem (PMS Analytics) ──────────
 app.get("/api/pms/analytics/reports", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || userAuth.role !== "admin") {
+    return res.status(403).json({ error: "Acesso negado. Apenas administradores têm acesso a relatórios analíticos do PMS." });
+  }
   const startDate = req.query.startDate || new Date(Date.now() - 30 * 86400000).toISOString().substring(0, 10);
   const endDate = req.query.endDate || new Date().toISOString().substring(0, 10);
 
@@ -10449,6 +10484,10 @@ app.get("/api/pms/analytics/reports", (req, res) => {
 });
 
 app.get("/api/pms/guests", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "reception")) {
+    return res.status(403).json({ error: "Acesso negado. Apenas administradores e recepção têm acesso à base de hóspedes." });
+  }
   if (!db.guests) db.guests = [];
   reconcileAndMergeGuests(db);
   const reservations = db.reservations || [];
@@ -13150,6 +13189,10 @@ function getFinancialSettings() {
 }
 
 app.get("/api/finance/overview", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || userAuth.role !== "admin") {
+    return res.status(403).json({ error: "Acesso negado. Apenas administradores têm acesso ao financeiro." });
+  }
   const cfg = getFinancialSettings();
   const totalUHs = Math.max(1, db.flats.length || 24);
   const daysInMonth = 30;
