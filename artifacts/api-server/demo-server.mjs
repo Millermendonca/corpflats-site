@@ -7589,7 +7589,7 @@ app.get("/api/system/snapshots/breakfast", async (req, res) => {
   const searchRoom = req.query.room;
   try {
     await ensureBackupsTable();
-    const q = await pgPool.query("SELECT id, timestamp, reason, value FROM system_store_backups ORDER BY id DESC LIMIT 50");
+    const q = await pgPool.query("SELECT id, timestamp, reason, value FROM system_store_backups ORDER BY id DESC LIMIT 150");
     const results = [];
     for (const row of q.rows) {
       const orders = row.value?.breakfastOrders || [];
