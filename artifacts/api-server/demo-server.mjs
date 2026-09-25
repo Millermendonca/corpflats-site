@@ -1358,7 +1358,15 @@ function reconcileUniversalIntegrity(incomingState = null) {
           changed = true;
         } else {
           const cur = db.cleaningRequests[existingIdx];
-          if ((incReq.status === "clean" && cur.status !== "clean") || (incReq.assignedUserId && !cur.assignedUserId)) {
+          const incDate = incReq.updatedAt || incReq.createdAt || "";
+          const curDate = cur.updatedAt || cur.createdAt || "";
+          if (
+            (incReq.status === "clean" && cur.status !== "clean") ||
+            (incReq.status === "no_show" && cur.status !== "no_show") ||
+            (incReq.status === "extended" && cur.status !== "extended") ||
+            (incReq.assignedUserId && !cur.assignedUserId) ||
+            (incDate > curDate)
+          ) {
             db.cleaningRequests[existingIdx] = { ...cur, ...incReq };
             changed = true;
           }

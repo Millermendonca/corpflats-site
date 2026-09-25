@@ -36,7 +36,7 @@ import { fileURLToPath } from "url";
 import pg from "pg";
 import { uploadImageToStorage } from "./storage-service.mjs";
 import { MicrosoftGraphService } from "./microsoft-graph-service.mjs";
-import { initWhatsAppEngine, triggerImmediateWhatsApp, triggerRoomReadyWhatsApp, cleanWhatsAppPhone, sendZapiMessage, scheduleUpcomingReservationTriggers, triggerCheckoutWhatsApp } from "./zapi-service.mjs";
+import { initWhatsAppEngine, triggerImmediateWhatsApp, triggerRoomReadyWhatsApp, cleanWhatsAppPhone, sendZapiMessage, scheduleUpcomingReservationTriggers, triggerCheckoutWhatsApp, resolveWhatsAppTags } from "./zapi-service.mjs";
 import { initMaidAutomationEngine } from "./maid-automation-service.mjs";
 import { sendInterPix, isInterConfigured, INTER_ENV } from "./inter-pix-service.mjs";
 import { 
@@ -1358,7 +1358,15 @@ function reconcileUniversalIntegrity(incomingState = null) {
           changed = true;
         } else {
           const cur = db.cleaningRequests[existingIdx];
-          if ((incReq.status === "clean" && cur.status !== "clean") || (incReq.assignedUserId && !cur.assignedUserId)) {
+          const incDate = incReq.updatedAt || incReq.createdAt || "";
+          const curDate = cur.updatedAt || cur.createdAt || "";
+          if (
+            (incReq.status === "clean" && cur.status !== "clean") ||
+            (incReq.status === "no_show" && cur.status !== "no_show") ||
+            (incReq.status === "extended" && cur.status !== "extended") ||
+            (incReq.assignedUserId && !cur.assignedUserId) ||
+            (incDate > curDate)
+          ) {
             db.cleaningRequests[existingIdx] = { ...cur, ...incReq };
             changed = true;
           }
@@ -2122,6 +2130,34 @@ async function loadDatabase() {
     if (!db.users || db.users.length === 0) {
       db.users = defaultUsers;
     }
+
+    // Purga definitiva de registros legados de teste/mock de Miller como hóspede
+    if (Array.isArray(db.guests)) {
+      db.guests = db.guests.filter(g => {
+        const doc = (g.document || g.documentNumber || "").replace(/\D/g, "");
+        const name = (g.fullName || g.name || "").trim().toLowerCase();
+        return doc !== "12585736792" && !name.includes("miller mendonca");
+      });
+    }
+    if (Array.isArray(db.reservations)) {
+      db.reservations = db.reservations.filter(r => {
+        const doc = (r.guestDocument || r.document || "").replace(/\D/g, "");
+        const code = r.code || r.reservationCode || "";
+        const name = (r.guestName || "").trim().toLowerCase();
+        return doc !== "12585736792" && !name.includes("miller mendonca");
+      });
+    }
+    if (Array.isArray(db.invoices)) {
+      db.invoices = db.invoices.filter(i => (i.tomadorCpfCnpj || "").replace(/\D/g, "") !== "12585736792" && !(i.tomadorNome || "").toLowerCase().includes("miller mendonca"));
+    }
+    if (Array.isArray(db.whatsappConversations)) {
+      db.whatsappConversations = db.whatsappConversations.filter(c => !(c.name || "").toLowerCase().includes("miller mendonca") && (c.phone || "") !== "5522998505276");
+    }
+    if (!db.deletedGuestDocs) db.deletedGuestDocs = [];
+    if (!db.deletedGuestDocs.includes("12585736792")) {
+      db.deletedGuestDocs.push("12585736792");
+    }
+
     reconcileAndMergeGuests(db);
     saveDatabase();
     sanitizeAndRecoverCleanings();
@@ -2152,12 +2188,6 @@ function normalizePhone(phone) {
   }
   return digits;
 }
-
-const SAMPLE_MILLER_SELFIE = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='400' height='400' viewBox='0 0 400 400'><rect width='400' height='400' fill='%230f172a'/><circle cx='200' cy='150' r='70' fill='%2338bdf8'/><path d='M100 350 C100 250 300 250 300 350 Z' fill='%2338bdf8'/><rect x='130' y='320' width='140' height='30' rx='15' fill='%2322c55e'/><text x='200' y='340' fill='white' font-family='sans-serif' font-size='12' font-weight='bold' text-anchor='middle'>BIOMETRIA FACIAL OK</text></svg>";
-
-const SAMPLE_MILLER_DOC = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='600' height='400' viewBox='0 0 600 400'><rect width='600' height='400' rx='20' fill='%231e293b' stroke='%233b82f6' stroke-width='4'/><rect x='40' y='40' width='520' height='60' rx='10' fill='%231e3a8a'/><text x='60' y='75' fill='%2393c5fd' font-family='sans-serif' font-size='18' font-weight='bold'>REPUBLICA FEDERATIVA DO BRASIL</text><text x='60' y='92' fill='%23cbd5e1' font-family='sans-serif' font-size='12'>CARTEIRA NACIONAL DE HABILITACAO / RG</text><rect x='50' y='130' width='130' height='170' rx='10' fill='%23334155'/><circle cx='115' cy='190' r='35' fill='%2364748b'/><path d='M70 290 C70 240 160 240 160 290 Z' fill='%2364748b'/><text x='210' y='160' fill='%2394a3b8' font-family='sans-serif' font-size='11'>NOME COMPLETO</text><text x='210' y='180' fill='white' font-family='sans-serif' font-size='16' font-weight='bold'>MILLER MENDONCA PESSANHA</text><text x='210' y='220' fill='%2394a3b8' font-family='sans-serif' font-size='11'>CPF</text><text x='210' y='240' fill='white' font-family='sans-serif' font-size='15' font-weight='bold'>125.857.367-92</text><text x='380' y='220' fill='%2394a3b8' font-family='sans-serif' font-size='11'>NASCIMENTO</text><text x='380' y='240' fill='white' font-family='sans-serif' font-size='15' font-weight='bold'>15/05/1990</text><rect x='40' y='330' width='520' height='40' rx='8' fill='%230f172a'/><text x='300' y='355' fill='%2322c55e' font-family='sans-serif' font-size='13' font-weight='bold' text-anchor='middle'>DOCUMENTO VALIDADO PELA IA (AUTENTICO)</text></svg>";
-
-const SAMPLE_MILLER_SIG = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='500' height='200' viewBox='0 0 500 200'><rect width='500' height='200' fill='%23ffffff' rx='15' stroke='%23cbd5e1' stroke-width='2'/><path d='M 50 130 Q 120 40 160 110 T 220 80 T 280 130 T 360 90 T 450 120' fill='none' stroke='%231e293b' stroke-width='4' stroke-linecap='round'/><path d='M 120 140 Q 250 170 420 130' fill='none' stroke='%230284c7' stroke-width='3' stroke-linecap='round'/><text x='250' y='180' fill='%2364748b' font-family='sans-serif' font-size='12' text-anchor='middle'>Assinatura Digital Certificada - Miller Mendonca Pessanha</text></svg>";
 
 function mergeGuestRecords(target, source) {
   if (!target || !source) return;
@@ -2244,6 +2274,17 @@ function reconcileAndMergeGuests(database) {
   if (!currentDb.guests) currentDb.guests = [];
   if (!currentDb.reservations) currentDb.reservations = [];
   if (!currentDb.invoices) currentDb.invoices = [];
+  if (!currentDb.deletedGuestDocs) currentDb.deletedGuestDocs = [];
+  if (!currentDb.deletedGuestIds) currentDb.deletedGuestIds = [];
+
+  const isDeleted = (candidate) => {
+    if (!candidate) return false;
+    const cDoc = normalizeDoc(candidate.document || candidate.documentNumber || candidate.cpf || candidate.tomadorCpfCnpj);
+    if (cDoc && Array.isArray(currentDb.deletedGuestDocs) && currentDb.deletedGuestDocs.includes(cDoc)) return true;
+    if (candidate.id && Array.isArray(currentDb.deletedGuestIds) && currentDb.deletedGuestIds.includes(Number(candidate.id))) return true;
+    if (candidate.guestId && Array.isArray(currentDb.deletedGuestIds) && currentDb.deletedGuestIds.includes(Number(candidate.guestId))) return true;
+    return false;
+  };
 
   const findMatchingGuest = (candidate, list) => {
     const cDoc = normalizeDoc(candidate.document || candidate.documentNumber || candidate.cpf || candidate.tomadorCpfCnpj);
@@ -2270,6 +2311,7 @@ function reconcileAndMergeGuests(database) {
   // 1. Deduplica a base de hóspedes existente
   const deduplicated = [];
   for (const g of currentDb.guests) {
+    if (isDeleted(g)) continue;
     const existing = findMatchingGuest(g, deduplicated);
     if (!existing) {
       deduplicated.push({ ...g });
@@ -2297,6 +2339,8 @@ function reconcileAndMergeGuests(database) {
       vehicleModel: r.vehicle?.model || r.vehicleModel,
       vehicleColor: r.vehicle?.color || r.vehicleColor,
     };
+
+    if (isDeleted(rGuestCand)) continue;
 
     let matched = findMatchingGuest(rGuestCand, deduplicated);
     if (!matched && (rGuestCand.name || rGuestCand.document || rGuestCand.phone)) {
@@ -2346,6 +2390,8 @@ function reconcileAndMergeGuests(database) {
           fnhrCompletedAt: rg.checkinCompletedAt
         };
 
+        if (isDeleted(slotCand)) continue;
+
         let slotMatch = findMatchingGuest(slotCand, deduplicated);
         if (!slotMatch && (slotCand.name || slotCand.document)) {
           const nextId = deduplicated.length > 0 ? Math.max(...deduplicated.map(x => Number(x.id) || 0)) + 1 : 1;
@@ -2378,6 +2424,8 @@ function reconcileAndMergeGuests(database) {
       email: inv.tomadorEmail,
       phone: inv.tomadorTelefone
     };
+
+    if (isDeleted(invCand)) continue;
 
     let matched = findMatchingGuest(invCand, deduplicated);
     if (!matched) {
@@ -2415,106 +2463,6 @@ function reconcileAndMergeGuests(database) {
     if (!g.name) g.name = g.fullName || "Hóspede";
     if (!g.documentNumber) g.documentNumber = g.document || "";
     if (!g.document) g.document = g.documentNumber || "";
-  }
-
-  // 5. Garante ficha 360º completa e verificada para Miller Mendonça Pessanha
-  const miller = deduplicated.find(g => 
-    normalizeName(g.fullName || g.name).includes("miller") || 
-    normalizeDoc(g.document).includes("12585736792")
-  );
-  if (miller) {
-    miller.fullName = "Miller Mendonça Pessanha";
-    miller.name = "Miller Mendonça Pessanha";
-    miller.document = "12585736792";
-    miller.documentNumber = "12585736792";
-    miller.email = miller.email || "millerpessanha@gmail.com";
-    miller.phone = miller.phone || "22998505276";
-    miller.city = miller.city || "Campos dos Goytacazes";
-    miller.state = miller.state || "RJ";
-    miller.address = miller.address || "Av. Pelinca, 200, Apto 408";
-    miller.birthDate = miller.birthDate || "1990-05-15";
-    miller.gender = miller.gender || "masculino";
-    miller.vehiclePlate = miller.vehiclePlate || "KVW8840";
-    miller.vehicleModel = miller.vehicleModel || "Corolla";
-    miller.vehicleBrand = miller.vehicleBrand || "Toyota";
-    miller.vehicleColor = miller.vehicleColor || "Cinza";
-    miller.fnhrCompleted = true;
-    if (!miller.fnhrCompletedAt) miller.fnhrCompletedAt = "2026-08-25T14:20:00.000Z";
-    if (!miller.photoUrl) miller.photoUrl = SAMPLE_MILLER_SELFIE;
-    if (!miller.docPhotoUrl) miller.docPhotoUrl = SAMPLE_MILLER_DOC;
-    if (!miller.signatureUrl) miller.signatureUrl = SAMPLE_MILLER_SIG;
-    if (!miller.aiVerification) {
-      miller.aiVerification = {
-        verified: true,
-        confidence: 99,
-        status: "approved",
-        facialMatch: "100% compativel com documento",
-        documentValidity: "Documento oficial autentico (RG/CNH)",
-        auditTimestamp: "2026-08-25T14:20:00.000Z"
-      };
-    }
-    if (!Array.isArray(miller.tags)) miller.tags = [];
-    if (!miller.tags.includes("VIP")) miller.tags.push("VIP");
-    if (!miller.tags.includes("Recorrente")) miller.tags.push("Recorrente");
-
-    let millerRes = currentDb.reservations.find(r => r.guestId === miller.id || (r.guestDocument && normalizeDoc(r.guestDocument) === "12585736792"));
-    if (!millerRes) {
-      const nextResId = currentDb.reservations.length > 0 ? Math.max(...currentDb.reservations.map(r => r.id || 0)) + 1 : 1;
-      millerRes = {
-        id: nextResId,
-        code: `RES-408-${String(nextResId).padStart(4, "0")}`,
-        flatNumber: "408",
-        flatId: 8,
-        guestId: miller.id,
-        guestCode: miller.guestCode,
-        guestName: miller.fullName,
-        guestDocument: miller.document,
-        guestPhone: miller.phone,
-        guestEmail: miller.email,
-        checkinDate: "2026-08-25",
-        checkoutDate: "2026-08-28",
-        nightsCount: 3,
-        totalAmount: 711,
-        totalPrice: 711,
-        price: 711,
-        status: "concluida",
-        fnhrCompleted: true,
-        fnhrCompletedAt: "2026-08-25T14:20:00.000Z",
-        selfieUrl: miller.photoUrl,
-        docPhotoUrl: miller.docPhotoUrl,
-        signatureUrl: miller.signatureUrl,
-        vehicle: {
-          plate: miller.vehiclePlate,
-          brand: miller.vehicleBrand,
-          model: miller.vehicleModel,
-          color: miller.vehicleColor
-        },
-        guests: [
-          {
-            index: 1,
-            guestId: miller.id,
-            guestCode: miller.guestCode,
-            name: miller.fullName,
-            cpf: miller.document,
-            phone: miller.phone,
-            email: miller.email,
-            birthDate: miller.birthDate,
-            gender: miller.gender,
-            address: miller.address,
-            city: miller.city,
-            state: miller.state,
-            docPhotoUrl: miller.docPhotoUrl,
-            selfieUrl: miller.photoUrl,
-            signatureUrl: miller.signatureUrl,
-            hasCompletedCheckin: true,
-            checkinCompletedAt: "2026-08-25T14:20:00.000Z",
-            aiVerification: miller.aiVerification
-          }
-        ],
-        createdAt: "2026-08-24T18:00:00.000Z"
-      };
-      currentDb.reservations.unshift(millerRes);
-    }
   }
 
   currentDb.guests = deduplicated;
@@ -11632,6 +11580,292 @@ app.post("/api/pms/guests", (req, res) => {
   db.guests.unshift(newGuest);
   saveDatabase();
   res.status(201).json(newGuest);
+});
+
+// Exclusão Total e Definitiva de Hóspede/Cliente e Todos os Dados Vinculados (LGPD & Operacional)
+app.delete("/api/pms/guests/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!db.guests) db.guests = [];
+    const guest = db.guests.find(g => g.id === id);
+    if (!guest) {
+      return res.status(404).json({ error: "Hóspede não encontrado." });
+    }
+
+    const cleanDoc = (guest.documentNumber || guest.document || "").replace(/\D/g, "");
+    const cleanPhone = normalizePhone(guest.phone || "");
+    const cleanEmail = (guest.email || "").trim().toLowerCase();
+    const guestNameLower = normalizeName(guest.fullName || guest.name || "");
+    const guestId = guest.id;
+    const guestCode = guest.guestCode;
+
+    // Função auxiliar para identificar correspondência com o hóspede
+    const matchesGuest = (candDoc, candPhone, candEmail, candName, candGuestId) => {
+      if (candGuestId && Number(candGuestId) === guestId) return true;
+      const cDoc = (candDoc || "").replace(/\D/g, "");
+      if (cleanDoc && cDoc && cleanDoc === cDoc) return true;
+      const cPhone = normalizePhone(candPhone || "");
+      if (cleanPhone && cleanPhone.length >= 8 && cPhone === cleanPhone) return true;
+      const cEmail = (candEmail || "").trim().toLowerCase();
+      if (cleanEmail && cleanEmail.includes("@") && cEmail === cleanEmail) return true;
+      const cName = normalizeName(candName || "");
+      if (guestNameLower && guestNameLower.length >= 5 && cName === guestNameLower) return true;
+      return false;
+    };
+
+    // 1. Armazena documento e ID na lista anti-reconciliação
+    if (!db.deletedGuestDocs) db.deletedGuestDocs = [];
+    if (cleanDoc && !db.deletedGuestDocs.includes(cleanDoc)) {
+      db.deletedGuestDocs.push(cleanDoc);
+    }
+    if (!db.deletedGuestIds) db.deletedGuestIds = [];
+    if (!db.deletedGuestIds.includes(guestId)) {
+      db.deletedGuestIds.push(guestId);
+    }
+
+    // 2. Coletar e remover arquivos físicos em disco (selfies, fotos de documentos, assinaturas)
+    const filesToDelete = new Set();
+    const addFileCandidate = (url) => {
+      if (!url || typeof url !== "string") return;
+      if (url.startsWith("/api/storage/files/")) {
+        const rel = url.replace("/api/storage/files/", "");
+        filesToDelete.add(path.join(UPLOADS_DIR, rel));
+      } else if (url.startsWith("/uploads/")) {
+        const rel = url.replace("/uploads/", "");
+        filesToDelete.add(path.join(UPLOADS_DIR, rel));
+      } else if (url.includes("uploads/")) {
+        const parts = url.split("uploads/");
+        filesToDelete.add(path.join(UPLOADS_DIR, parts[1]));
+      }
+    };
+
+    addFileCandidate(guest.photoUrl);
+    addFileCandidate(guest.docPhotoUrl);
+    addFileCandidate(guest.signatureUrl);
+    addFileCandidate(guest.minorAuthDocUrl);
+    if (Array.isArray(guest.documents)) {
+      guest.documents.forEach(d => addFileCandidate(d.url || d.fileUrl));
+    }
+
+    // 3. Expurgo em Reservas: titular e acompanhante
+    const deletedReservationCodes = new Set();
+    const remainingReservations = [];
+    let reservationsCount = 0;
+
+    for (const r of (db.reservations || [])) {
+      const isTitular = matchesGuest(r.guestDocument || r.document, r.guestPhone, r.guestEmail, r.guestName, r.guestId);
+      if (isTitular) {
+        reservationsCount++;
+        const code = r.code || r.reservationCode;
+        if (code) deletedReservationCodes.add(code);
+        addFileCandidate(r.selfieUrl || r.photoUrl);
+        addFileCandidate(r.docPhotoUrl || r.documentPhotoUrl);
+        addFileCandidate(r.signatureUrl);
+        if (Array.isArray(r.guests)) {
+          r.guests.forEach(rg => {
+            addFileCandidate(rg.selfieUrl);
+            addFileCandidate(rg.docPhotoUrl);
+            addFileCandidate(rg.signatureUrl);
+            addFileCandidate(rg.minorAuthDocUrl);
+          });
+        }
+      } else {
+        if (Array.isArray(r.guests)) {
+          r.guests = r.guests.filter(rg => {
+            const isAccompanier = matchesGuest(rg.cpf || rg.document, rg.phone, rg.email, rg.name, rg.guestId);
+            if (isAccompanier) {
+              addFileCandidate(rg.selfieUrl);
+              addFileCandidate(rg.docPhotoUrl);
+              addFileCandidate(rg.signatureUrl);
+              addFileCandidate(rg.minorAuthDocUrl);
+              return false;
+            }
+            return true;
+          });
+        }
+        remainingReservations.push(r);
+      }
+    }
+    db.reservations = remainingReservations;
+
+    // Verificar documentos FNRH em disco relacionados a CPF, guestCode ou código de reserva
+    try {
+      const fnrhDir = path.join(UPLOADS_DIR, "fnrh_documents");
+      if (fs.existsSync(fnrhDir)) {
+        const fnrhFiles = fs.readdirSync(fnrhDir);
+        for (const f of fnrhFiles) {
+          if (
+            (cleanDoc && f.includes(cleanDoc)) ||
+            (guestCode && f.includes(guestCode)) ||
+            Array.from(deletedReservationCodes).some(c => f.includes(c))
+          ) {
+            filesToDelete.add(path.join(fnrhDir, f));
+          }
+        }
+      }
+    } catch {}
+
+    // Remover fisicamente os arquivos do disco
+    for (const filePath of filesToDelete) {
+      try {
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+      } catch (err) {
+        console.warn(`[Guest Delete] Erro ao remover arquivo ${filePath}:`, err.message);
+      }
+    }
+
+    // 4. Remover de db.guests
+    db.guests = (db.guests || []).filter(g => g.id !== guestId && (!cleanDoc || (g.documentNumber || g.document || "").replace(/\D/g, "") !== cleanDoc));
+
+    // 5. Remover de db.guestAccounts (Contas do Portal do Hóspede)
+    let accountsCount = 0;
+    db.guestAccounts = (db.guestAccounts || []).filter(a => {
+      const match = matchesGuest(a.cpf || a.document, a.phone, a.email, a.name || a.fullName, a.id);
+      if (match) {
+        accountsCount++;
+        return false;
+      }
+      return true;
+    });
+
+    // 6. Remover Notas Fiscais (NFS-e / Invoices)
+    let invoicesCount = 0;
+    db.invoices = (db.invoices || []).filter(inv => {
+      const match = matchesGuest(inv.tomadorCpfCnpj, inv.tomadorTelefone, inv.tomadorEmail, inv.tomadorNome) ||
+                    (inv.reservationCode && deletedReservationCodes.has(inv.reservationCode)) ||
+                    (inv.codigoReserva && deletedReservationCodes.has(inv.codigoReserva));
+      if (match) {
+        invoicesCount++;
+        return false;
+      }
+      return true;
+    });
+
+    // 7. Remover Pedidos de Café da Manhã
+    let ordersCount = 0;
+    db.breakfastOrders = (db.breakfastOrders || []).filter(bo => {
+      const match = matchesGuest(bo.guestDocument, bo.guestPhone, bo.guestEmail, bo.guestName) ||
+                    (bo.reservationCode && deletedReservationCodes.has(bo.reservationCode));
+      if (match) {
+        ordersCount++;
+        return false;
+      }
+      return true;
+    });
+    db.guestBreakfastOrders = (db.guestBreakfastOrders || []).filter(bo => {
+      const match = (bo.reservationCode && deletedReservationCodes.has(bo.reservationCode)) || bo.guestId === guestId;
+      return !match;
+    });
+
+    // 8. Limpar referências em solicitações de camareira (Cleaning Requests)
+    if (Array.isArray(db.cleaningRequests)) {
+      db.cleaningRequests.forEach(req => {
+        if (req.reservationCode && deletedReservationCodes.has(req.reservationCode)) {
+          req.reservationCode = null;
+          req.guestName = null;
+          req.guestPhone = null;
+        }
+        if (req.guestName && normalizeName(req.guestName) === guestNameLower) {
+          req.guestName = null;
+        }
+        if (req.leavingGuest && normalizeName(req.leavingGuest) === guestNameLower) {
+          req.leavingGuest = "Hóspede";
+        }
+        if (req.arrivingGuest && normalizeName(req.arrivingGuest) === guestNameLower) {
+          req.arrivingGuest = null;
+        }
+      });
+    }
+
+    // 9. Autorizações de Garagem & Observações
+    db.garageAuthorizations = (db.garageAuthorizations || []).filter(ga => {
+      return !matchesGuest(ga.cpf || ga.document, ga.phone, null, ga.guestName) &&
+             !(ga.reservationCode && deletedReservationCodes.has(ga.reservationCode));
+    });
+    db.observations = (db.observations || []).filter(obs => {
+      return obs.guestId !== guestId &&
+             !matchesGuest(obs.guestDocument, obs.guestPhone, null, obs.guestName) &&
+             !(obs.reservationCode && deletedReservationCodes.has(obs.reservationCode));
+    });
+
+    // 10. Avaliações, Pesquisas e NPS
+    db.surveys = (db.surveys || []).filter(s => s.guestId !== guestId && !(s.reservationCode && deletedReservationCodes.has(s.reservationCode)));
+    db.npsResponses = (db.npsResponses || []).filter(s => s.guestId !== guestId && !(s.reservationCode && deletedReservationCodes.has(s.reservationCode)));
+    db.reviews = (db.reviews || []).filter(r => r.guestId !== guestId && !(r.reservationCode && deletedReservationCodes.has(r.reservationCode)));
+
+    // 11. Comunicações, FNRH Tokens e Auditoria FNRH
+    db.reservationCommunications = (db.reservationCommunications || []).filter(c => c.guestId !== guestId && !(c.reservationCode && deletedReservationCodes.has(c.reservationCode)));
+    db.fnrhAuditDocuments = (db.fnrhAuditDocuments || []).filter(d => d.guestId !== guestId && !(d.reservationCode && deletedReservationCodes.has(d.reservationCode)));
+    db.fnrhSignatureTokens = (db.fnrhSignatureTokens || []).filter(t => t.guestId !== guestId && !(t.reservationCode && deletedReservationCodes.has(t.reservationCode)));
+    db.fnrhInternalAuditLogs = (db.fnrhInternalAuditLogs || []).filter(l => l.guestId !== guestId && !(l.reservationCode && deletedReservationCodes.has(l.reservationCode)));
+
+    // 12. Mensagens e Histórico de WhatsApp
+    if (cleanPhone) {
+      db.whatsappConversations = (db.whatsappConversations || []).filter(c => normalizePhone(c.phone || c.guestPhone || "") !== cleanPhone);
+      db.whatsappHistory = (db.whatsappHistory || []).filter(h => normalizePhone(h.phone || h.guestPhone || "") !== cleanPhone);
+      db.whatsappInboundMessages = (db.whatsappInboundMessages || []).filter(m => normalizePhone(m.phone || m.from || "") !== cleanPhone);
+      db.whatsappDispatchHistory = (db.whatsappDispatchHistory || []).filter(d => normalizePhone(d.phone || "") !== cleanPhone);
+    }
+
+    // 13. Sentimento do Hóspede
+    db.guestSentiment = (db.guestSentiment || []).filter(s => {
+      return s.guestId !== guestId && (!cleanPhone || normalizePhone(s.guestPhone || "") !== cleanPhone);
+    });
+
+    // 14. Carrinhos Abandonados, Sessões e Contratos
+    db.abandonedCarts = (db.abandonedCarts || []).filter(c => {
+      const match = matchesGuest(null, c.guestPhone, c.guestEmail, c.guestName);
+      return !match;
+    });
+    db.cartSessions = (db.cartSessions || []).filter(c => {
+      const match = matchesGuest(null, c.guestPhone, c.guestEmail, c.guestName);
+      return !match;
+    });
+    db.longStayContracts = (db.longStayContracts || []).filter(c => {
+      return c.guestId !== guestId && !matchesGuest(c.guestDocument, c.guestPhone, c.guestEmail, c.guestName);
+    });
+    if (cleanEmail) {
+      db.emailQueue = (db.emailQueue || []).filter(e => (e.to || "").trim().toLowerCase() !== cleanEmail);
+    }
+
+    // 15. Salvar banco de dados e registrar evento de auditoria
+    saveDatabase();
+
+    await logAuditEvent({
+      level: "warn",
+      category: "crm_security",
+      action: "guest_permanently_deleted",
+      actor: "admin",
+      details: {
+        guestId,
+        guestCode,
+        guestName: guest.fullName || guest.name,
+        document: cleanDoc,
+        deletedReservationsCount: reservationsCount,
+        deletedInvoicesCount: invoicesCount,
+        deletedBreakfastOrdersCount: ordersCount,
+        deletedAccountsCount: accountsCount,
+        deletedFilesCount: filesToDelete.size
+      }
+    });
+
+    res.json({
+      success: true,
+      message: `Cliente ${guest.fullName || guest.name} e todos os seus dados vinculados foram excluídos com sucesso.`,
+      stats: {
+        reservationsDeleted: reservationsCount,
+        invoicesDeleted: invoicesCount,
+        breakfastOrdersDeleted: ordersCount,
+        accountsDeleted: accountsCount,
+        filesDeleted: filesToDelete.size
+      }
+    });
+  } catch (err) {
+    console.error("[Guest Delete] Erro ao excluir cliente:", err);
+    res.status(500).json({ error: "Erro interno ao excluir cliente: " + err.message });
+  }
 });
 
 // Room Blocks (Manutenção / Proprietário)
