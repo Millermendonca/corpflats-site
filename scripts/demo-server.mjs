@@ -1568,6 +1568,61 @@ function sanitizeReservationFlags() {
     console.log("[Auto-Fix] Reserva CORP-212-0066 atualizada com PIX oficial Banco Inter!");
   }
 
+  // Auto-recuperação e blindagem de integridade para a reserva RES-113-0177 (Thayla - 3d Airbnb + 2d WhatsApp)
+  const res113 = (db.reservations || []).find(r => 
+    (r.code && r.code.toUpperCase() === "RES-113-0177") || 
+    (String(r.id) === "177" && String(r.flatNumber) === "113") ||
+    (String(r.flatNumber) === "113" && r.guestName && r.guestName.toLowerCase().includes("thayla"))
+  );
+  if (res113) {
+    let changed = false;
+    if (res113.checkoutDate !== "2026-09-26") {
+      res113.checkoutDate = "2026-09-26";
+      changed = true;
+    }
+    if (Number(res113.totalAmount) !== 1050) {
+      res113.totalAmount = 1050;
+      changed = true;
+    }
+    if (Number(res113.paidAmount) !== 1050) {
+      res113.paidAmount = 1050;
+      changed = true;
+    }
+    if (res113.paymentStatus !== "pago_total") {
+      res113.paymentStatus = "pago_total";
+      changed = true;
+    }
+    if (Number(res113.dailyRate) !== 210) {
+      res113.dailyRate = 210;
+      changed = true;
+    }
+    const hasCorrectRates = Array.isArray(res113.dailyRates) && 
+      res113.dailyRates.length === 5 && 
+      res113.dailyRates.some(d => d.channel === "whatsapp" && Number(d.rate) === 150) &&
+      res113.dailyRates.some(d => d.channel === "airbnb" && Number(d.rate) === 250);
+    if (!hasCorrectRates) {
+      res113.dailyRates = [
+        { date: "2026-09-21", rate: 250, channel: "airbnb", notes: "Diária Airbnb" },
+        { date: "2026-09-22", rate: 250, channel: "airbnb", notes: "Diária Airbnb" },
+        { date: "2026-09-23", rate: 250, channel: "airbnb", notes: "Diária Airbnb" },
+        { date: "2026-09-24", rate: 150, channel: "whatsapp", notes: "Diária extra WhatsApp" },
+        { date: "2026-09-25", rate: 150, channel: "whatsapp", notes: "Diária extra WhatsApp" }
+      ];
+      changed = true;
+    }
+    if (!Array.isArray(res113.payments) || res113.payments.length < 2) {
+      res113.payments = [
+        { id: "pay_177_airbnb", amount: 750, method: "airbnb", category: "diarias", date: "2026-09-21T19:16:54.190Z", notes: "3 diárias originais Airbnb" },
+        { id: "pay_177_whatsapp", amount: 300, method: "pix", category: "diarias", date: "2026-09-24T18:00:00.000Z", notes: "2 diárias extras WhatsApp (R$ 150 cada)" }
+      ];
+      changed = true;
+    }
+    if (changed) {
+      res113.updatedAt = new Date().toISOString();
+      saveDatabase();
+      console.log("[Auto-Fix] Reserva de Thayla (Flat 113) regularizada: 3d Airbnb + 2d WhatsApp (R$ 1.050 total).");
+    }
+  }
 }
 
 
@@ -8980,6 +9035,38 @@ app.put("/api/pms/reservations/:id", (req, res) => {
 
     if (req.body.totalAmount === undefined && r.dailyRates.length > 0) {
       r.totalAmount = r.dailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0);
+    }
+  } else if (Array.isArray(r.dailyRates) && r.dailyRates.length > 0 && (req.body.checkinDate || req.body.checkoutDate)) {
+    // Preserva e adapta dailyRates existentes caso as datas mudem sem envio explícito de dailyRates
+    const existingMap = new Map();
+    r.dailyRates.forEach(d => { if (d && d.date) existingMap.set(d.date, d); });
+    const cin = r.checkinDate;
+    const cout = r.checkoutDate;
+    if (cin && cout) {
+      const d1 = new Date(cin + "T12:00:00Z");
+      const d2 = new Date(cout + "T12:00:00Z");
+      const nights = Math.max(1, Math.round((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24)));
+      const newRates = [];
+      const defaultRate = Number(r.dailyRate) || 250;
+      const defaultChannel = r.channel || "whatsapp";
+      for (let i = 0; i < nights; i++) {
+        const curDate = new Date(d1.getTime() + i * 24 * 60 * 60 * 1000).toISOString().substring(0, 10);
+        const exist = existingMap.get(curDate);
+        if (exist) {
+          newRates.push(exist);
+        } else {
+          const prev = newRates.length > 0 ? newRates[newRates.length - 1] : null;
+          newRates.push({
+            date: curDate,
+            rate: prev && Number(prev.rate) >= 0 ? Number(prev.rate) : defaultRate,
+            channel: prev && prev.channel ? prev.channel : defaultChannel
+          });
+        }
+      }
+      r.dailyRates = newRates;
+      if (req.body.totalAmount === undefined) {
+        r.totalAmount = newRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0);
+      }
     }
   }
 
