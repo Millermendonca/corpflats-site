@@ -321,11 +321,27 @@ if (req408_24) {
 const resThayla = (db.reservations || []).find(r => r.id === 177 || (String(r.flatNumber) === "113" && r.guestName?.includes("Thayla")));
 if (resThayla) {
   resThayla.checkoutDate = "2026-09-26";
+  resThayla.totalAmount = 1050;
+  resThayla.paidAmount = 1050;
+  resThayla.paymentStatus = "pago_total";
+  resThayla.dailyRate = 210;
+  resThayla.dailyRates = [
+    { date: "2026-09-21", rate: 250, channel: "airbnb", notes: "Diária Airbnb" },
+    { date: "2026-09-22", rate: 250, channel: "airbnb", notes: "Diária Airbnb" },
+    { date: "2026-09-23", rate: 250, channel: "airbnb", notes: "Diária Airbnb" },
+    { date: "2026-09-24", rate: 150, channel: "whatsapp", notes: "Diária extra WhatsApp" },
+    { date: "2026-09-25", rate: 150, channel: "whatsapp", notes: "Diária extra WhatsApp" }
+  ];
+  resThayla.payments = [
+    { id: "pay_177_airbnb", amount: 750, method: "airbnb", category: "diarias", date: "2026-09-21T19:16:54.190Z", notes: "3 diárias originais Airbnb" },
+    { id: "pay_177_whatsapp", amount: 300, method: "pix", category: "diarias", date: "2026-09-24T18:00:00.000Z", notes: "2 diárias extras WhatsApp (R$ 150 cada)" }
+  ];
   resThayla.notes = resThayla.notes
-    ? `${resThayla.notes}\n[2026-09-24 18:00] Estadia prorrogada até 2026-09-26 (sábado).`
-    : `[2026-09-24 18:00] Estadia prorrogada até 2026-09-26 (sábado).`;
+    ? `${resThayla.notes}\n[2026-09-24 18:00] Estadia prorrogada até 2026-09-26 (sábado). 3 diárias Airbnb (R$ 750) + 2 diárias extras WhatsApp (R$ 300).`
+    : `[2026-09-24 18:00] Estadia prorrogada até 2026-09-26 (sábado). 3 diárias Airbnb (R$ 750) + 2 diárias extras WhatsApp (R$ 300).`;
   resThayla.calendarSequence = (resThayla.calendarSequence || 0) + 1;
-  console.log(`[113 Extensão] Reserva Thayla (#${resThayla.id}) prorrogada para checkout: 2026-09-26`);
+  resThayla.updatedAt = new Date().toISOString();
+  console.log(`[113 Extensão] Reserva Thayla (#${resThayla.id}) prorrogada para checkout: 2026-09-26 (Multi-canal: Airbnb + WhatsApp R$ 1050)`);
 }
 
 const req113_24 = (db.cleaningRequests || []).find(r => r.id === 1250 || (String(r.flatNumber) === "113" && r.requestDate === "2026-09-24"));
