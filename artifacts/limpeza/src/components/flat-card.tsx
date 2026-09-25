@@ -363,8 +363,8 @@ export function FlatCard({
 
   const currentStatus: FlatStatus = (request?.status as FlatStatus) || "dirty"
   const isExtended = currentStatus === "extended" || Boolean(request?.isExtended)
-  const isAssignedToMe = request?.assignedUserId === currentUserId
-  const isAssignedToOther = request?.assignedUserId && request.assignedUserId !== currentUserId && !isAdmin
+  const isAssignedToMe = Boolean(request?.assignedUserId && currentUserId) && Number(request.assignedUserId) === Number(currentUserId)
+  const isAssignedToOther = Boolean(request?.assignedUserId) && Number(request.assignedUserId) !== Number(currentUserId) && !isAdmin
 
   // If the flat was extended and the maid is not the assigned one, hide it completely
   if (isExtended && !isAssignedToMe && !isAdmin) {
@@ -1163,7 +1163,7 @@ export function FlatCard({
               </div>
             ) : (
               <div className="space-y-2">
-                {currentStatus === "dirty" && (
+                {(currentStatus === "dirty" || currentStatus === "pending") && (
                   isAdmin ? (
                     <div className="flex gap-1.5">
                       <Button 

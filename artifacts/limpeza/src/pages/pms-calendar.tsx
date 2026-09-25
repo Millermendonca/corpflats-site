@@ -573,7 +573,8 @@ export default function PmsCalendar() {
     }
     if (resModalOpen && formCheckin && formCheckout) {
       fetchFairShare(formCheckin, formCheckout, selectedRes?.id).then((result) => {
-        if (!selectedRes && result?.bestFlatId && !isFlatManuallyChangedRef.current) {
+        // Only suggest flat if no flat has been selected yet
+        if (!selectedRes && result?.bestFlatId && !formFlatId && !isFlatManuallyChangedRef.current) {
           setFormFlatId(String(result.bestFlatId))
         }
       })

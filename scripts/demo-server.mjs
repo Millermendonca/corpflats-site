@@ -1377,6 +1377,38 @@ function reconcileUniversalIntegrity(incomingState = null) {
         }
       });
     }
+
+    // 1.6 Pagamentos de Camareiras e Conta Corrente (Não-Destrutivo)
+    if (Array.isArray(incomingState.maidPayments) && incomingState.maidPayments.length > 0) {
+      if (!db.maidPayments) db.maidPayments = [];
+      incomingState.maidPayments.forEach(incPay => {
+        if (!db.maidPayments.some(p => p.id === incPay.id)) {
+          db.maidPayments.push({ ...incPay });
+          changed = true;
+        }
+      });
+    }
+
+    if (Array.isArray(incomingState.maidStatementEntries) && incomingState.maidStatementEntries.length > 0) {
+      if (!db.maidStatementEntries) db.maidStatementEntries = [];
+      incomingState.maidStatementEntries.forEach(incEntry => {
+        if (!db.maidStatementEntries.some(e => e.id === incEntry.id)) {
+          db.maidStatementEntries.push({ ...incEntry });
+          changed = true;
+        }
+      });
+    }
+
+    // 1.7 Achados e Perdidos (Não-Destrutivo)
+    if (Array.isArray(incomingState.lostAndFound) && incomingState.lostAndFound.length > 0) {
+      if (!db.lostAndFound) db.lostAndFound = [];
+      incomingState.lostAndFound.forEach(incItem => {
+        if (!db.lostAndFound.some(i => i.id === incItem.id)) {
+          db.lostAndFound.push({ ...incItem });
+          changed = true;
+        }
+      });
+    }
   }
 
   // 2. Normalização Universal de Ativação de Flats (isActive)
@@ -1434,7 +1466,7 @@ function reconcileUniversalIntegrity(incomingState = null) {
           requestDate: checkoutDate,
           effectiveDate: checkoutDate,
           source: "checkout",
-          status: isPastCheckout ? "clean" : "pending",
+          status: isPastCheckout ? "clean" : "dirty",
           assignedUserId: null,
           assignedUsername: null,
           assignedUserName: null,
@@ -1454,6 +1486,14 @@ function reconcileUniversalIntegrity(incomingState = null) {
         changed = true;
         console.log(`[Universal Integrity] Limpeza de checkout criada automaticamente para o Flat ${r.flatNumber} na data ${checkoutDate}`);
       }
+    }
+  });
+
+  // Migração defensiva: Qualquer limpeza em "pending" que aguarda higienização deve ser "dirty"
+  (db.cleaningRequests || []).forEach(c => {
+    if (c.status === "pending") {
+      c.status = "dirty";
+      changed = true;
     }
   });
 
@@ -1915,6 +1955,11 @@ async function loadDatabase() {
           const localReservations = [...(db.reservations || [])];
           const localCleanings = [...(db.cleaningRequests || [])];
           const localGuests = [...(db.guests || [])];
+          const localBreakfastOrders = [...(db.breakfastOrders || [])];
+          const localMaidPayments = [...(db.maidPayments || [])];
+          const localMaidStatementEntries = [...(db.maidStatementEntries || [])];
+          const localLostAndFound = [...(db.lostAndFound || [])];
+
           Object.assign(db, pgLoaded);
           if (!Array.isArray(db.periodicTasks)) db.periodicTasks = [];
           if (!Array.isArray(db.periodicExecutions)) db.periodicExecutions = [];
@@ -1922,7 +1967,16 @@ async function loadDatabase() {
           sanitizeAndRecoverCleanings();
           sanitizeLostAndFound();
           sanitizeReservationFlags();
-          const didChange = reconcileUniversalIntegrity({ reservations: localReservations, cleaningRequests: localCleanings, guests: localGuests, flats: db.flats });
+          const didChange = reconcileUniversalIntegrity({ 
+            reservations: localReservations, 
+            cleaningRequests: localCleanings, 
+            guests: localGuests, 
+            flats: db.flats,
+            breakfastOrders: localBreakfastOrders,
+            maidPayments: localMaidPayments,
+            maidStatementEntries: localMaidStatementEntries,
+            lostAndFound: localLostAndFound
+          });
           if (didChange) {
             console.log("[PostgreSQL] Estado universal reconciliado sem perdas e sincronizado na nuvem!");
             saveDatabase();

@@ -8563,7 +8563,7 @@
       "effectiveDate": "2026-09-24",
       "executionDate": "2026-09-24",
       "source": "checkout",
-      "status": "pending",
+      "status": "dirty",
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
@@ -8591,7 +8591,7 @@
       "effectiveDate": "2026-09-24",
       "executionDate": "2026-09-24",
       "source": "checkout",
-      "status": "pending",
+      "status": "dirty",
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
@@ -8619,7 +8619,7 @@
       "effectiveDate": "2026-09-24",
       "executionDate": "2026-09-24",
       "source": "checkout",
-      "status": "pending",
+      "status": "dirty",
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
@@ -8647,7 +8647,7 @@
       "effectiveDate": "2026-09-24",
       "executionDate": "2026-09-24",
       "source": "checkout",
-      "status": "pending",
+      "status": "dirty",
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
@@ -8675,7 +8675,7 @@
       "effectiveDate": "2026-09-24",
       "executionDate": "2026-09-24",
       "source": "checkout",
-      "status": "pending",
+      "status": "dirty",
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
@@ -8703,7 +8703,7 @@
       "effectiveDate": "2026-09-24",
       "executionDate": "2026-09-24",
       "source": "checkout",
-      "status": "pending",
+      "status": "dirty",
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
@@ -8731,7 +8731,7 @@
       "effectiveDate": "2026-09-24",
       "executionDate": "2026-09-24",
       "source": "checkout",
-      "status": "pending",
+      "status": "dirty",
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
@@ -8759,7 +8759,7 @@
       "effectiveDate": "2026-09-24",
       "executionDate": "2026-09-24",
       "source": "checkout",
-      "status": "pending",
+      "status": "dirty",
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
@@ -8787,7 +8787,7 @@
       "effectiveDate": "2026-09-24",
       "executionDate": "2026-09-24",
       "source": "checkout",
-      "status": "pending",
+      "status": "dirty",
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
@@ -8815,7 +8815,7 @@
       "effectiveDate": "2026-09-24",
       "executionDate": "2026-09-24",
       "source": "checkout",
-      "status": "pending",
+      "status": "dirty",
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
@@ -8843,7 +8843,7 @@
       "effectiveDate": "2026-09-24",
       "executionDate": "2026-09-24",
       "source": "checkout",
-      "status": "pending",
+      "status": "dirty",
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
@@ -8871,7 +8871,7 @@
       "effectiveDate": "2026-09-25",
       "executionDate": "2026-09-25",
       "source": "checkout",
-      "status": "pending",
+      "status": "dirty",
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
@@ -8899,7 +8899,7 @@
       "effectiveDate": "2026-09-25",
       "executionDate": "2026-09-25",
       "source": "checkout",
-      "status": "pending",
+      "status": "dirty",
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
@@ -8927,7 +8927,7 @@
       "effectiveDate": "2026-09-25",
       "executionDate": "2026-09-25",
       "source": "checkout",
-      "status": "pending",
+      "status": "dirty",
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
@@ -8955,7 +8955,7 @@
       "effectiveDate": "2026-10-02",
       "executionDate": "2026-10-02",
       "source": "checkout",
-      "status": "pending",
+      "status": "dirty",
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
@@ -8983,7 +8983,7 @@
       "effectiveDate": "2026-09-25",
       "executionDate": "2026-09-25",
       "source": "checkout",
-      "status": "pending",
+      "status": "dirty",
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
@@ -9011,7 +9011,7 @@
       "effectiveDate": "2026-09-25",
       "executionDate": "2026-09-25",
       "source": "checkout",
-      "status": "pending",
+      "status": "dirty",
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
@@ -9039,7 +9039,7 @@
       "effectiveDate": "2026-09-25",
       "executionDate": "2026-09-25",
       "source": "checkout",
-      "status": "pending",
+      "status": "dirty",
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
@@ -9067,7 +9067,7 @@
       "effectiveDate": "2026-09-25",
       "executionDate": "2026-09-25",
       "source": "checkout",
-      "status": "pending",
+      "status": "dirty",
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
@@ -9095,7 +9095,7 @@
       "effectiveDate": "2026-09-29",
       "executionDate": "2026-09-29",
       "source": "checkout",
-      "status": "pending",
+      "status": "dirty",
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
@@ -22825,6 +22825,23 @@
   "invoices": [],
   "lostAndFound": [
     {
+      "id": 2,
+      "flatId": 21,
+      "flatNumber": "1304",
+      "description": "Encontrado hoje 06/07 apto 1304",
+      "locationInRoom": "Quarto / Banheiro",
+      "photoUrl": null,
+      "status": "guardado",
+      "foundBy": "Camareira",
+      "lastGuestName": "Pablo",
+      "lastGuestPhone": "3388004215",
+      "lastGuestEmail": "",
+      "lastCheckoutDate": "2026-09-06",
+      "notes": "Encontrado por Grazi na limpeza do Flat 1304.",
+      "createdAt": "2026-09-25T05:43:34.009Z",
+      "updatedAt": "2026-09-25T05:43:34.009Z"
+    },
+    {
       "id": 1,
       "flatId": 11,
       "flatNumber": "511",
@@ -25476,6 +25493,87 @@
       "originalCheckin": "2026-09-23",
       "reservationCode": "RES-116-0197",
       "originalCheckout": "2026-09-24"
+    },
+    {
+      "id": 35,
+      "date": "2026-09-25",
+      "items": [
+        {
+          "name": "Café",
+          "quantity": 1
+        },
+        {
+          "name": "Suco de laranja",
+          "quantity": 1
+        },
+        {
+          "name": "Pão de queijo",
+          "quantity": 2
+        },
+        {
+          "name": "Manteiga",
+          "quantity": 1
+        },
+        {
+          "name": "Torradas amanteigadas",
+          "quantity": 1
+        }
+      ],
+      "notes": "",
+      "phone": "",
+      "status": "pending",
+      "createdAt": "2026-09-24T15:20:07.593Z",
+      "orderMode": "unified",
+      "clientName": "Marco",
+      "guestCount": 1,
+      "isStandard": false,
+      "roomNumber": "1304",
+      "guestOrders": null,
+      "preferences": {
+        "fruit": "Nenhuma fruta",
+        "breads": [
+          "Pão de queijo"
+        ],
+        "coffee": "Café",
+        "sweets": [
+          "Torradas amanteigadas"
+        ],
+        "sweetener": "Nenhum",
+        "fruitHoney": false,
+        "complements": [
+          "Manteiga"
+        ],
+        "otherBeverage": "Suco de laranja",
+        "accompaniments": []
+      },
+      "deliveryTime": "08:02",
+      "guestChoices": [
+        {
+          "fruit": "Nenhuma fruta",
+          "breads": [
+            "Pão de queijo"
+          ],
+          "coffee": "Café",
+          "sweets": [
+            "Torradas amanteigadas"
+          ],
+          "guestName": "Marco",
+          "sweetener": "Nenhum",
+          "fruitHoney": false,
+          "guestIndex": 1,
+          "isStandard": false,
+          "complements": [
+            "Manteiga"
+          ],
+          "deliveryTime": "08:02",
+          "otherBeverage": "Suco de laranja",
+          "accompaniments": []
+        }
+      ],
+      "reservationId": 176,
+      "originalCheckin": "2026-09-22",
+      "reservationCode": "RES-512-0176",
+      "originalCheckout": "2026-09-25"
     }
   ],
   "breakfastMenu": {
