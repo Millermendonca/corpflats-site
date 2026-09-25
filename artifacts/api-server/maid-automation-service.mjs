@@ -388,7 +388,9 @@ export function initMaidAutomationEngine(app, getDb, saveDatabase) {
     // Dispara via Z-API (ou modo simulado se sem credenciais)
     const result = await sendZapiMessage(db.zapiConfig, {
       phone: cleanPh,
-      message: renderedMessage
+      message: renderedMessage,
+      recipientRole: "camareira",
+      bypassTestMode: true
     });
 
     const logEntry = {
@@ -445,7 +447,9 @@ export function initMaidAutomationEngine(app, getDb, saveDatabase) {
 
       const result = await sendZapiMessage(db.zapiConfig, {
         phone: cleanPh,
-        message: renderedMessage
+        message: renderedMessage,
+        recipientRole: "camareira",
+        bypassTestMode: true
       });
 
       const logEntry = {
@@ -518,7 +522,9 @@ export function initMaidAutomationEngine(app, getDb, saveDatabase) {
 
               const sendRes = await sendZapiMessage(db.zapiConfig, {
                 phone: cleanPh,
-                message: renderedMsg
+                message: renderedMsg,
+                recipientRole: "camareira",
+                bypassTestMode: true
               });
 
               reqItem.overtimeAlertSentAt = nowIso;
@@ -573,7 +579,9 @@ export function initMaidAutomationEngine(app, getDb, saveDatabase) {
 
             const sendRes = await sendZapiMessage(db.zapiConfig, {
               phone: cleanPh,
-              message: renderedMsg
+              message: renderedMsg,
+              recipientRole: "camareira",
+              bypassTestMode: true
             });
 
             config.history.unshift({
@@ -622,7 +630,9 @@ export function initMaidAutomationEngine(app, getDb, saveDatabase) {
 
             const sendRes = await sendZapiMessage(db.zapiConfig, {
               phone: cleanPh,
-              message: renderedMsg
+              message: renderedMsg,
+              recipientRole: "camareira",
+              bypassTestMode: true
             });
 
             config.history.unshift({

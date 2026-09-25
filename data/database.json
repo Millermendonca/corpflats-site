@@ -13922,8 +13922,8 @@
       "status": "confirmada",
       "paymentStatus": "pago_total",
       "channel": "airbnb",
-      "totalAmount": 750,
-      "paidAmount": 750,
+      "totalAmount": 1050,
+      "paidAmount": 1050,
       "includeBreakfast": false,
       "isMonthlyGuest": false,
       "clientType": "avulso",
@@ -13931,7 +13931,7 @@
       "children": 0,
       "twinBeds": false,
       "extraMattress": false,
-      "notes": "[2026-09-24 18:00] Estadia prorrogada até 2026-09-26 (sábado).",
+      "notes": "[2026-09-24 18:00] Estadia prorrogada até 2026-09-26 (sábado). 3 diárias Airbnb (R$ 750) + 2 diárias extras WhatsApp (R$ 300).",
       "specialRequests": "",
       "receptionNotes": "",
       "guests": [
@@ -13957,15 +13957,99 @@
           },
           "source": "PMS Calendário (Nova Reserva)",
           "description": "Reserva criada no PMS Calendário"
+        },
+        {
+          "id": "audit_177_extend_whatsapp_1790320194190",
+          "timestamp": "2026-09-25T07:09:54.190Z",
+          "action": "dates_changed",
+          "actor": {
+            "id": 1,
+            "name": "admin",
+            "role": "admin",
+            "type": "user"
+          },
+          "source": "PMS Calendário (Edição Manual)",
+          "description": "Extensão de estadia com 2 diárias extras via WhatsApp (+R$ 300)",
+          "changes": [
+            {
+              "field": "checkoutDate",
+              "label": "Data de Saída (Check-out)",
+              "oldValue": "2026-09-24",
+              "newValue": "2026-09-26"
+            },
+            {
+              "field": "totalAmount",
+              "label": "Valor Total",
+              "oldValue": "R$ 750.00",
+              "newValue": "R$ 1050.00"
+            },
+            {
+              "field": "dailyRates",
+              "label": "Detalhamento de Diárias",
+              "oldValue": "3 diárias Airbnb",
+              "newValue": "3 diárias Airbnb (R$ 250) + 2 diárias WhatsApp (R$ 150)"
+            }
+          ]
         }
       ],
       "createdAt": "2026-09-21T19:16:54.190Z",
-      "updatedAt": "2026-09-21T19:16:54.190Z",
+      "updatedAt": "2026-09-25T07:09:54.188Z",
       "paymentMethod": "airbnb",
       "flatId": 1,
       "guestId": 117,
       "guestCode": "HOSP-00117",
-      "calendarSequence": 1
+      "calendarSequence": 2,
+      "dailyRate": 210,
+      "dailyRates": [
+        {
+          "date": "2026-09-21",
+          "rate": 250,
+          "channel": "airbnb",
+          "notes": "Diária Airbnb"
+        },
+        {
+          "date": "2026-09-22",
+          "rate": 250,
+          "channel": "airbnb",
+          "notes": "Diária Airbnb"
+        },
+        {
+          "date": "2026-09-23",
+          "rate": 250,
+          "channel": "airbnb",
+          "notes": "Diária Airbnb"
+        },
+        {
+          "date": "2026-09-24",
+          "rate": 150,
+          "channel": "whatsapp",
+          "notes": "Diária extra WhatsApp"
+        },
+        {
+          "date": "2026-09-25",
+          "rate": 150,
+          "channel": "whatsapp",
+          "notes": "Diária extra WhatsApp"
+        }
+      ],
+      "payments": [
+        {
+          "id": "pay_177_airbnb",
+          "amount": 750,
+          "method": "airbnb",
+          "category": "diarias",
+          "date": "2026-09-21T19:16:54.190Z",
+          "notes": "3 diárias originais Airbnb"
+        },
+        {
+          "id": "pay_177_whatsapp",
+          "amount": 300,
+          "method": "pix",
+          "category": "diarias",
+          "date": "2026-09-24T18:00:00.000Z",
+          "notes": "2 diárias extras WhatsApp (R$ 150 cada)"
+        }
+      ]
     },
     {
       "id": 176,
@@ -23447,6 +23531,44 @@
         "markedByAdmin": false
       },
       "source": "cleaning_dashboard",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": 17,
+      "timestamp": "2026-09-25T07:09:54.190Z",
+      "level": "info",
+      "category": "reservation",
+      "action": "RESERVATION_STAY_EXTENDED",
+      "actor": {
+        "id": 1,
+        "name": "admin",
+        "role": "admin",
+        "type": "user"
+      },
+      "details": {
+        "reservationId": 177,
+        "reservationCode": "RES-113-0177",
+        "flatNumber": "113",
+        "guestName": "Thayla",
+        "description": "Extensão de estadia: +2 diárias via WhatsApp (R$ 300 acréscimo)",
+        "newCheckoutDate": "2026-09-26",
+        "changes": [
+          {
+            "field": "checkoutDate",
+            "label": "Data de Saída",
+            "oldValue": "2026-09-24",
+            "newValue": "2026-09-26"
+          },
+          {
+            "field": "totalAmount",
+            "label": "Valor Total",
+            "oldValue": "750",
+            "newValue": "1050"
+          }
+        ]
+      },
+      "source": "PMS Calendário (Edição Manual)",
       "ip": "",
       "userAgent": ""
     }

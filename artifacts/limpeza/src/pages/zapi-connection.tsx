@@ -75,6 +75,7 @@ interface ZapiConfig {
   conciergeRequireKeywords?: boolean
   testModeOnly?: boolean
   testAllowedPhones?: string
+  allowMaidsInTestMode?: boolean
 }
 
 export default function ZapiConnection() {
@@ -92,6 +93,7 @@ export default function ZapiConnection() {
     fallbackToText: true,
     testModeOnly: true,
     testAllowedPhones: "22998505276",
+    allowMaidsInTestMode: true,
     wifiNetwork: "CorpFlats-Hospedes",
     wifiPassword: "corpflats2026",
     googleReviewUrl: "https://share.google/LHu3541d5lhkdvbL2",
@@ -1565,6 +1567,24 @@ export default function ZapiConnection() {
                     Cancelar Fila de Hóspedes Reais
                   </Button>
                 </div>
+              </div>
+
+              <div className="flex items-center justify-between p-3 rounded-xl bg-background/60 border border-border/50 text-xs">
+                <div className="space-y-0.5 pr-2">
+                  <div className="font-semibold text-foreground flex items-center gap-1.5">
+                    <span>🧹 Automações de Camareiras & Governança Liberadas</span>
+                    <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-700 border-emerald-500/30">
+                      Operacional
+                    </Badge>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Mesmo com o modo de teste ativo para hóspedes, os resumos diários de produtividade (18:00), fechamentos de quinzena, alertas de limpeza e extratos para camareiras cadastradas continuam sendo enviados normalmente.
+                  </p>
+                </div>
+                <Switch 
+                  checked={config.allowMaidsInTestMode !== false}
+                  onCheckedChange={(val) => setConfig({ ...config, allowMaidsInTestMode: val })}
+                />
               </div>
             </div>
 

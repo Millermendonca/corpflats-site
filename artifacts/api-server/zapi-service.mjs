@@ -1015,8 +1015,14 @@ export function cleanWhatsAppPhone(rawPhone) {
   return digits;
 }
 
+// Referência global ao getter do banco de dados para checagens contextuais (ex: números de camareiras)
+let globalDbGetter = null;
+export function setZapiGlobalDbGetter(getter) {
+  globalDbGetter = typeof getter === "function" ? getter : () => getter;
+}
+
 // ── Verificação de Whitelist / Modo de Teste (Sandbox) ─────────────────────────
-export function isPhoneAllowedInTestMode(phone, config = {}) {
+export function isPhoneAllowedInTestMode(phone, config = {}, db = null) {
   // Se testModeOnly for false explicitamente, estamos em produção total (todos permitidos)
   if (config?.testModeOnly === false) {
     return true;
@@ -1037,13 +1043,43 @@ export function isPhoneAllowedInTestMode(phone, config = {}) {
 
   const allAllowed = [...defaultAllowed, ...userConfigured];
 
-  return allAllowed.some(allowed => {
+  // 1. Checagem direta na whitelist de telefones
+  const isDirectlyAllowed = allAllowed.some(allowed => {
     if (!allowed) return false;
     if (targetDigits === allowed) return true;
     if (targetDigits.endsWith(allowed) && allowed.length >= 8) return true;
     if (allowed.endsWith(targetDigits) && targetDigits.length >= 8) return true;
     return false;
   });
+
+  if (isDirectlyAllowed) {
+    return true;
+  }
+
+  // 2. Camareiras e equipe interna: permitidas por padrão mesmo em modo de teste
+  //    (para que seus resumos diários às 18:00 e alertas de limpeza continuem sendo disparados normalmente)
+  if (config?.allowMaidsInTestMode !== false) {
+    const activeDb = db || (typeof globalDbGetter === "function" ? globalDbGetter() : null);
+    if (activeDb && Array.isArray(activeDb.users)) {
+      const isStaffOrMaid = activeDb.users.some(u => {
+        if (u.active === false) return false;
+        const role = String(u.role || "").toLowerCase();
+        if (role !== "camareira" && role !== "cleaner" && role !== "admin") return false;
+        const rawUserPhone = u.whatsapp || u.phone;
+        if (!rawUserPhone) return false;
+        const userDigits = String(rawUserPhone).replace(/\D/g, "");
+        if (!userDigits) return false;
+        return userDigits === targetDigits || 
+               (userDigits.endsWith(targetDigits) && targetDigits.length >= 8) || 
+               (targetDigits.endsWith(userDigits) && userDigits.length >= 8);
+      });
+      if (isStaffOrMaid) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 // ── Cancelamento em Massa de Hóspedes Reais da Fila ────────────────────────────
@@ -1538,15 +1574,24 @@ export async function sendZapiDocument(config, {
   phone,
   document,
   fileName = "Manual_do_Hospede_CorpFlats.pdf",
-  caption = ""
+  caption = "",
+  bypassTestMode = false,
+  recipientRole = ""
 }) {
   const cleanPhone = cleanWhatsAppPhone(phone);
   if (!cleanPhone) {
     return { success: false, error: "Número de WhatsApp do destinatário inválido ou ausente." };
   }
 
+  const isStaffRecipient = Boolean(
+    bypassTestMode || 
+    recipientRole === "camareira" || 
+    recipientRole === "cleaner" || 
+    recipientRole === "staff"
+  );
+
   // Trava de Segurança: Modo de Teste / Sandbox
-  if (!isPhoneAllowedInTestMode(cleanPhone, config)) {
+  if (!isStaffRecipient && !isPhoneAllowedInTestMode(cleanPhone, config)) {
     console.warn(`[Z-API Sandbox] Documento para ${cleanPhone} BLOQUEADO pelo Modo de Teste. Permitido apenas para: ${config?.testAllowedPhones || "22998505276"}`);
     return {
       success: false,
@@ -1666,15 +1711,24 @@ export async function sendZapiMessage(config, {
   documentUrl = "",
   documentName = "",
   documentCaption = "",
-  fileBase64 = ""
+  fileBase64 = "",
+  bypassTestMode = false,
+  recipientRole = ""
 }) {
   const cleanPhone = cleanWhatsAppPhone(phone);
   if (!cleanPhone) {
     return { success: false, error: "Número de WhatsApp do destinatário inválido ou ausente." };
   }
 
+  const isStaffRecipient = Boolean(
+    bypassTestMode || 
+    recipientRole === "camareira" || 
+    recipientRole === "cleaner" || 
+    recipientRole === "staff"
+  );
+
   // Trava de Segurança: Modo de Teste / Sandbox
-  if (!isPhoneAllowedInTestMode(cleanPhone, config)) {
+  if (!isStaffRecipient && !isPhoneAllowedInTestMode(cleanPhone, config)) {
     console.warn(`[Z-API Sandbox] Disparo para ${cleanPhone} BLOQUEADO pelo Modo de Teste / Sandbox. Permitido apenas para: ${config?.testAllowedPhones || "22998505276"}`);
     return {
       success: false,
@@ -3377,6 +3431,7 @@ export function syncWhatsappConversationsStore(db) {
 // ── Gerenciador da Fila & Background Scheduler ────────────────────────────────
 export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotification, analyzeSentimentFn = null) {
   const getDb = typeof dbOrGetter === "function" ? dbOrGetter : () => dbOrGetter;
+  globalDbGetter = getDb;
 
   function ensureDbDefaults() {
     const db = getDb();
@@ -3412,7 +3467,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         conciergeGroupName: "",
         conciergeRequireKeywords: false,
         testModeOnly: true,
-        testAllowedPhones: "22998505276"
+        testAllowedPhones: "22998505276",
+        allowMaidsInTestMode: true
       };
     } else {
       if (!db.zapiConfig.googleReviewUrl || db.zapiConfig.googleReviewUrl.includes("maps.google.com/?q=") || db.zapiConfig.googleReviewUrl.includes("g.page/r/corpflats") || db.zapiConfig.googleReviewUrl.includes("maps.app.goo.gl")) {
@@ -3471,6 +3527,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       }
       if (db.zapiConfig.testAllowedPhones === undefined) {
         db.zapiConfig.testAllowedPhones = "22998505276";
+      }
+      if (db.zapiConfig.allowMaidsInTestMode === undefined) {
+        db.zapiConfig.allowMaidsInTestMode = true;
       }
     }
 

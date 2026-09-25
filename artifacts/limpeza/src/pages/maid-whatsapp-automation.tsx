@@ -733,6 +733,17 @@ export default function MaidWhatsappAutomation() {
           </div>
         </div>
 
+        {/* Status de Operação com Modo de Teste */}
+        <div className="flex items-center gap-3 p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-900 dark:text-emerald-200">
+          <ShieldCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+          <div className="space-y-0.5">
+            <span className="font-bold block">Envios de Governança & Camareiras Liberados</span>
+            <span className="text-[11px] text-emerald-800 dark:text-emerald-300 block">
+              Mesmo com a Trava de Segurança / Modo de Teste ativa para proteção contra disparos a hóspedes, os envios automáticos para camareiras cadastradas (resumo diário às 18:00, alertas de tempo e fechamentos quinzenais) continuam autorizados e operando normalmente.
+            </span>
+          </div>
+        </div>
+
         {/* Main Tabs */}
         <Tabs value={activeTab} onValueChange={(v) => { setActiveTab(v); if (v === "payments") fetchBalances(); }} className="space-y-6">
           <TabsList className="bg-muted/60 p-1 rounded-2xl border border-border/60">

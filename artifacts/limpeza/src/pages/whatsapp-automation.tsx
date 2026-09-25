@@ -1251,6 +1251,9 @@ export default function WhatsappAutomation() {
                 </div>
                 <p className="text-xs text-blue-800 dark:text-blue-300">
                   Nenhuma mensagem será enviada para hóspedes reais. Apenas o seu telefone (<strong>{config.testAllowedPhones || "22998505276"}</strong>) receberá disparos de teste e simulações.
+                  <span className="block mt-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-400">
+                    🧹 As automações de Camareiras & Governança (resumos diários às 18:00, alertas e quinzena) continuam operando normalmente.
+                  </span>
                 </p>
               </div>
             </div>

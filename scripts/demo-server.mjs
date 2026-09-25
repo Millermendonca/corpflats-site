@@ -22584,7 +22584,12 @@ app.post("/api/maids/:userId/pay", async (req, res) => {
     const msg = `${emoji} *${typeLabel} Realizado! • CorpFlats* 💰\n\nOlá, *${user.name || user.username}*! Informamos que seu ${isAdvance ? "vale" : "pagamento"} foi processado:\n\n💵 *Valor:* ${valorFormatado}\n📅 *Data:* ${dataHoje}\n📌 *Tipo:* ${typeLabel}\n${payment.description ? `📋 *Descrição:* ${payment.description}\n` : ""}${!isAdvance && payment.interTxId ? `🔖 *TxID:* ${payment.interTxId}\n` : ""}${!isAdvance && interResult?.simulated ? "⚠️ _Pagamento simulado (configure PIX para produção)_\n" : ""}\n💼 *Saldo Atual:* ${saldoFormatado}\n\n_Acesse seu app para ver o extrato completo._ 📊`;
 
     try {
-      const sendResult = await sendZapiMessage(db.zapiConfig, { phone: cleanPh, message: msg });
+      const sendResult = await sendZapiMessage(db.zapiConfig, { 
+        phone: cleanPh, 
+        message: msg,
+        recipientRole: "camareira",
+        bypassTestMode: true
+      });
       payment.whatsappSent = sendResult.success || false;
       payment.whatsappSentAt = new Date().toISOString();
       saveDatabase();
@@ -22648,7 +22653,12 @@ app.post("/api/maids/statement/send-whatsapp", async (req, res) => {
   const msg = `📊 *Extrato Financeiro • CorpFlats* 💼\n\nOlá, *${user.name || user.username}*!\n\n💰 *Saldo Atual:* ${balanceFormatted}\n\n📋 *Últimas movimentações:*\n\`\`\`\n${lines || "Nenhuma movimentação ainda."}\n\`\`\`\n\n_Legenda: (+) Crédito (diária), (-) Débito (pagamento/vale)_\n_Para extrato completo, acesse o app._ ✨`;
 
   try {
-    const sendResult = await sendZapiMessage(db.zapiConfig, { phone, message: msg });
+    const sendResult = await sendZapiMessage(db.zapiConfig, { 
+      phone, 
+      message: msg,
+      recipientRole: "camareira",
+      bypassTestMode: true
+    });
     res.json({
       success: sendResult.success,
       simulated: sendResult.simulated,
