@@ -8209,6 +8209,644 @@ app.post("/api/pms/reservations", async (req, res) => {
   res.status(201).json(newReservation);
 });
 
+
+// ── Exportação de Reservas em CSV ───────────────────────────────────────────
+app.get("/api/pms/reservations/export-csv", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "reception")) {
+    return res.status(403).json({ error: "Acesso negado. Apenas administradores e recepção podem exportar reservas." });
+  }
+
+  const { startDate, endDate, status, channel, flatNumber } = req.query;
+  let list = [...(db.reservations || [])];
+
+  if (startDate) {
+    list = list.filter(r => (r.checkoutDate || r.checkinDate) >= startDate);
+  }
+  if (endDate) {
+    list = list.filter(r => (r.checkinDate || r.checkoutDate) <= endDate);
+  }
+  if (status && status !== "all") {
+    list = list.filter(r => String(r.status || "").toLowerCase() === String(status).toLowerCase());
+  }
+  if (channel && channel !== "all") {
+    list = list.filter(r => String(r.channel || "").toLowerCase() === String(channel).toLowerCase());
+  }
+  if (flatNumber && flatNumber !== "all") {
+    list = list.filter(r => String(r.flatNumber || "") === String(flatNumber));
+  }
+
+  list.sort((a, b) => {
+    const da = a.checkinDate || "";
+    const db_ = b.checkinDate || "";
+    if (da !== db_) return da.localeCompare(db_);
+    return String(a.flatNumber || "").localeCompare(String(b.flatNumber || ""), undefined, { numeric: true });
+  });
+
+  const guestsMap = new Map((db.guests || []).map(g => [g.id, g]));
+
+  const escapeCsv = (val) => {
+    if (val === null || val === undefined) return '""';
+    const str = String(val).replace(/"/g, '""');
+    return `"${str}"`;
+  };
+
+  const headers = [
+    "codigo",
+    "apartamento",
+    "canal",
+    "nome_hospede",
+    "telefone",
+    "email",
+    "documento",
+    "data_checkin",
+    "data_checkout",
+    "noites",
+    "valor_total",
+    "valor_diaria",
+    "valor_pago",
+    "status",
+    "status_pagamento",
+    "forma_pagamento",
+    "inclui_cafe",
+    "mensalista",
+    "tipo_cliente",
+    "adultos",
+    "criancas",
+    "cama_solteiro_ou_casal",
+    "colchao_extra",
+    "empresa",
+    "observacoes",
+    "solicitacoes_especiais",
+    "data_criacao"
+  ];
+
+  const rows = list.map(r => {
+    const g = r.guestId ? guestsMap.get(r.guestId) : null;
+    const phone = r.guestPhone || g?.phone || r.guests?.[0]?.phone || "";
+    const email = r.guestEmail || g?.email || r.guests?.[0]?.email || "";
+    const doc = r.guestDocument || g?.document || g?.documentNumber || r.guests?.[0]?.cpf || r.guests?.[0]?.document || "";
+    
+    let nights = 1;
+    try {
+      if (r.checkinDate && r.checkoutDate) {
+        const d1 = new Date(r.checkinDate + "T00:00:00Z");
+        const d2 = new Date(r.checkoutDate + "T00:00:00Z");
+        nights = Math.max(1, Math.round((d2 - d1) / (1000 * 60 * 60 * 24)));
+      }
+    } catch {}
+
+    const totalAmt = Number(r.totalAmount || 0);
+    const dailyRate = Number(r.dailyRate || (totalAmt > 0 && nights > 0 ? (totalAmt / nights) : 0));
+    const paidAmt = Number(r.paidAmount || (r.paymentStatus === "pago_total" ? totalAmt : 0));
+
+    return [
+      escapeCsv(r.code || ""),
+      escapeCsv(r.flatNumber || ""),
+      escapeCsv(r.channel || "direta"),
+      escapeCsv(r.guestName || g?.name || ""),
+      escapeCsv(phone),
+      escapeCsv(email),
+      escapeCsv(doc),
+      escapeCsv(r.checkinDate || ""),
+      escapeCsv(r.checkoutDate || ""),
+      nights,
+      totalAmt.toFixed(2),
+      dailyRate.toFixed(2),
+      paidAmt.toFixed(2),
+      escapeCsv(r.status || "confirmada"),
+      escapeCsv(r.paymentStatus || "pendente"),
+      escapeCsv(r.paymentMethod || ""),
+      escapeCsv(r.includeBreakfast ? "Sim" : "Não"),
+      escapeCsv(r.isMonthlyGuest ? "Sim" : "Não"),
+      escapeCsv(r.clientType || (r.isMonthlyGuest ? "mensalista" : "avulso")),
+      Number(r.adults || r.guestCount || 1),
+      Number(r.children || 0),
+      escapeCsv(r.twinBeds ? "solteiro" : "casal"),
+      escapeCsv(r.extraMattress ? "Sim" : "Não"),
+      escapeCsv(r.companyName || g?.companyName || ""),
+      escapeCsv(r.notes || ""),
+      escapeCsv(r.specialRequests || ""),
+      escapeCsv(r.createdAt || "")
+    ].join(";");
+  });
+
+  const csvContent = "\uFEFF" + [headers.join(";"), ...rows].join("\r\n");
+  const filename = `reservas_corpflats_${startDate || "todas"}_${endDate || "todas"}.csv`;
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.send(csvContent);
+});
+
+// Helper de parsing de CSV resiliente para importação
+function parseCsvReservationLines(content) {
+  if (!content) return { headers: [], rows: [] };
+  if (content.charCodeAt(0) === 0xFEFF) content = content.slice(1);
+  const lines = content.split(/\r?\n/).filter(l => l.trim().length > 0);
+  if (lines.length < 2) return { headers: [], rows: [] };
+
+  const firstLine = lines[0];
+  const countSemi = (firstLine.match(/;/g) || []).length;
+  const countComma = (firstLine.match(/,/g) || []).length;
+  const delimiter = countSemi >= countComma ? ";" : ",";
+
+  const parseLine = (line) => {
+    const result = [];
+    let current = "";
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === delimiter && !inQuotes) {
+        result.push(current);
+        current = "";
+      } else {
+        current += char;
+      }
+    }
+    result.push(current);
+    return result.map(s => s.trim());
+  };
+
+  const rawHeaders = parseLine(lines[0]);
+  const normalizedHeaders = rawHeaders.map(h => 
+    h.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9_]/g, "")
+  );
+
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    const values = parseLine(lines[i]);
+    const obj = {};
+    normalizedHeaders.forEach((h, idx) => {
+      obj[h] = values[idx] !== undefined ? values[idx] : "";
+    });
+    rows.push(obj);
+  }
+  return { headers: normalizedHeaders, rows, delimiter };
+}
+
+function normalizeReservationDate(val) {
+  if (!val) return "";
+  const s = String(val).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) {
+    return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  }
+  return s;
+}
+
+function normalizeReservationAmount(val) {
+  if (val === null || val === undefined) return 0;
+  let s = String(val).replace(/R\$/gi, "").replace(/\s/g, "").trim();
+  if (!s) return 0;
+  if (s.includes(",") && s.includes(".")) {
+    s = s.replace(/\./g, "").replace(",", ".");
+  } else if (s.includes(",")) {
+    s = s.replace(",", ".");
+  }
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
+}
+
+function normalizeReservationBool(val) {
+  if (typeof val === "boolean") return val;
+  const s = String(val || "").toLowerCase().trim();
+  return s === "sim" || s === "true" || s === "1" || s === "s" || s === "yes" || s === "y";
+}
+
+function mapRowToReservationData(row) {
+  const getField = (aliases) => {
+    for (const a of aliases) {
+      if (row[a] !== undefined && row[a] !== "") return row[a];
+    }
+    return "";
+  };
+
+  const code = String(getField(["codigo", "code", "id_reserva", "reserva", "localizador"])).trim();
+  let flatNumber = String(getField(["apartamento", "flat", "quarto", "flatnumber", "uh", "apto", "numero_quarto"])).trim();
+  flatNumber = flatNumber.replace(/\D/g, "") || flatNumber;
+
+  const channel = String(getField(["canal", "channel", "origem", "plataforma"]) || "direta").toLowerCase().trim();
+  const guestName = String(getField(["nome_hospede", "hospede", "nome", "guestname", "guest", "titular"]) || "Hóspede").trim();
+  const guestPhone = String(getField(["telefone", "phone", "whatsapp", "celular", "contato"])).trim();
+  const guestEmail = String(getField(["email", "e-mail"])).trim();
+  const guestDocument = String(getField(["documento", "cpf", "document", "rg", "passaporte", "cnpj"])).trim();
+  
+  const checkinDate = normalizeReservationDate(getField(["data_checkin", "checkin", "checkindate", "entrada", "data_entrada", "data_de_checkin"]));
+  const checkoutDate = normalizeReservationDate(getField(["data_checkout", "checkout", "checkoutdate", "saida", "data_saida", "data_de_checkout"]));
+
+  const totalAmount = normalizeReservationAmount(getField(["valor_total", "valor", "totalamount", "total", "preco", "preco_total"]));
+  const dailyRate = normalizeReservationAmount(getField(["valor_diaria", "diaria", "dailyrate"]));
+  const paidAmount = normalizeReservationAmount(getField(["valor_pago", "pago", "paidamount"]));
+  
+  const status = String(getField(["status", "situacao"]) || "confirmada").toLowerCase().trim();
+  const paymentStatus = String(getField(["status_pagamento", "pagamento_status", "paymentstatus", "status_do_pagamento"]) || (paidAmount >= totalAmount && totalAmount > 0 ? "pago_total" : "pendente")).trim();
+  const paymentMethod = String(getField(["forma_pagamento", "metodo_pagamento", "paymentmethod", "forma_de_pagamento"]) || (channel.includes("airbnb") ? "airbnb" : channel.includes("booking") ? "booking" : "pix")).trim();
+
+  const includeBreakfast = normalizeReservationBool(getField(["inclui_cafe", "cafe", "breakfast", "cafedamanha", "cafe_da_manha"]));
+  const isMonthlyGuest = normalizeReservationBool(getField(["mensalista", "monthly", "ismonthlyguest"]));
+  const clientType = String(getField(["tipo_cliente", "clienttype", "tipo"]) || (isMonthlyGuest ? "mensalista" : "avulso")).trim();
+  const adults = parseInt(getField(["adultos", "adults", "hospedes", "guestcount"])) || 1;
+  const children = parseInt(getField(["criancas", "children"])) || 0;
+  const twinBeds = String(getField(["cama_solteiro_ou_casal", "twinbeds", "camas", "cama"])).toLowerCase().includes("solteir");
+  const extraMattress = normalizeReservationBool(getField(["colchao_extra", "extramattress", "colchao"]));
+  const companyName = String(getField(["empresa", "company", "companyname"])).trim();
+  const notes = String(getField(["observacoes", "notes", "obs", "observacao"])).trim();
+  const specialRequests = String(getField(["solicitacoes_especiais", "specialrequests", "pedidos_especiais"])).trim();
+  const createdAt = getField(["data_criacao", "createdat"]) || new Date().toISOString();
+
+  return {
+    code,
+    flatNumber,
+    channel,
+    guestName,
+    guestPhone,
+    guestEmail,
+    guestDocument,
+    checkinDate,
+    checkoutDate,
+    totalAmount,
+    dailyRate,
+    paidAmount,
+    status,
+    paymentStatus,
+    paymentMethod,
+    includeBreakfast,
+    isMonthlyGuest,
+    clientType,
+    adults,
+    children,
+    twinBeds,
+    extraMattress,
+    companyName,
+    notes,
+    specialRequests,
+    createdAt
+  };
+}
+
+// ── Preview de Importação de Reservas via CSV ───────────────────────────────
+app.post("/api/pms/reservations/preview-csv", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "reception")) {
+    return res.status(403).json({ error: "Acesso negado." });
+  }
+
+  const { csvContent } = req.body || {};
+  if (!csvContent || typeof csvContent !== "string") {
+    return res.status(400).json({ error: "Conteúdo do CSV não informado." });
+  }
+
+  const { headers, rows, delimiter } = parseCsvReservationLines(csvContent);
+  if (rows.length === 0) {
+    return res.status(400).json({ error: "Nenhuma linha de dados identificada no arquivo CSV." });
+  }
+
+  const flatsMap = new Map((db.flats || []).map(f => [String(f.number), f]));
+  const existingRes = db.reservations || [];
+
+  const preview = [];
+  let newCount = 0;
+  let updateCount = 0;
+  let errorCount = 0;
+  let conflictCount = 0;
+
+  rows.forEach((row, idx) => {
+    const item = mapRowToReservationData(row);
+    const errors = [];
+    const warnings = [];
+
+    // Validar Apartamento
+    const flat = flatsMap.get(item.flatNumber);
+    if (!flat) {
+      errors.push(`Apartamento ${item.flatNumber || 'não informado'} não cadastrado.`);
+    }
+
+    // Validar Datas
+    if (!item.checkinDate || !/^\d{4}-\d{2}-\d{2}$/.test(item.checkinDate)) {
+      errors.push("Data de check-in inválida.");
+    }
+    if (!item.checkoutDate || !/^\d{4}-\d{2}-\d{2}$/.test(item.checkoutDate)) {
+      errors.push("Data de check-out inválida.");
+    }
+    if (item.checkinDate && item.checkoutDate && item.checkoutDate <= item.checkinDate) {
+      errors.push("Data de check-out deve ser posterior ao check-in.");
+    }
+
+    // Validar Nome
+    if (!item.guestName || item.guestName === "Hóspede") {
+      warnings.push("Nome do hóspede não identificado.");
+    }
+
+    // Checar se já existe no sistema
+    let match = null;
+    if (item.code) {
+      match = existingRes.find(r => r.code === item.code);
+    }
+    if (!match && item.flatNumber && item.checkinDate && item.checkoutDate) {
+      match = existingRes.find(r => 
+        String(r.flatNumber) === item.flatNumber &&
+        r.checkinDate === item.checkinDate &&
+        r.checkoutDate === item.checkoutDate &&
+        r.status !== "cancelada" && r.status !== "cancelado"
+      );
+    }
+
+    // Checar conflitos com outras reservas ativas no mesmo apartamento
+    if (item.flatNumber && item.checkinDate && item.checkoutDate && errors.length === 0) {
+      const conflict = existingRes.find(r => {
+        if (match && r.id === match.id) return false;
+        if (String(r.flatNumber) !== item.flatNumber) return false;
+        if (r.status === "cancelada" || r.status === "cancelado") return false;
+        return (item.checkinDate < r.checkoutDate && item.checkoutDate > r.checkinDate);
+      });
+      if (conflict) {
+        conflictCount++;
+        warnings.push(`Conflito de datas com reserva existente #${conflict.code || conflict.id} (${conflict.guestName}: ${conflict.checkinDate} a ${conflict.checkoutDate})`);
+      }
+    }
+
+    let status = "new";
+    if (errors.length > 0) {
+      status = "error";
+      errorCount++;
+    } else if (match) {
+      status = "update";
+      updateCount++;
+    } else {
+      newCount++;
+    }
+
+    let nights = 1;
+    if (item.checkinDate && item.checkoutDate) {
+      try {
+        const d1 = new Date(item.checkinDate + "T00:00:00Z");
+        const d2 = new Date(item.checkoutDate + "T00:00:00Z");
+        nights = Math.max(1, Math.round((d2 - d1) / (1000 * 60 * 60 * 24)));
+      } catch {}
+    }
+
+    preview.push({
+      rowNumber: idx + 2,
+      ...item,
+      nights,
+      flatId: flat ? flat.id : null,
+      status,
+      isNew: !match,
+      isUpdate: Boolean(match),
+      existingId: match?.id || null,
+      existingCode: match?.code || null,
+      errors,
+      warnings
+    });
+  });
+
+  res.json({
+    delimiter,
+    totalRows: rows.length,
+    validCount: rows.length - errorCount,
+    newCount,
+    updateCount,
+    errorCount,
+    conflictCount,
+    preview
+  });
+});
+
+// ── Importação Definitiva de Reservas via CSV ────────────────────────────────
+app.post("/api/pms/reservations/import-csv", async (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || userAuth.role !== "admin") {
+    return res.status(403).json({ error: "Apenas administradores podem importar reservas via CSV." });
+  }
+
+  const { reservations: itemsToImport, mode = "upsert" } = req.body || {};
+  if (!Array.isArray(itemsToImport) || itemsToImport.length === 0) {
+    return res.status(400).json({ error: "Nenhuma reserva fornecida para importação." });
+  }
+
+  // 1. Snapshot de segurança antes da importação
+  saveDatabase("Backup pré-importação de reservas via CSV");
+
+  if (!db.reservations) db.reservations = [];
+  if (!db.guests) db.guests = [];
+
+  const flatsMap = new Map((db.flats || []).map(f => [String(f.number), f]));
+  let insertedCount = 0;
+  let updatedCount = 0;
+  let skippedCount = 0;
+
+  for (const item of itemsToImport) {
+    const flat = flatsMap.get(String(item.flatNumber));
+    if (!flat || !item.checkinDate || !item.checkoutDate || item.checkoutDate <= item.checkinDate) {
+      skippedCount++;
+      continue;
+    }
+
+    // Procura existente
+    let existingIndex = -1;
+    if (item.code) {
+      existingIndex = db.reservations.findIndex(r => r.code === item.code);
+    }
+    if (existingIndex === -1 && item.flatNumber && item.checkinDate && item.checkoutDate) {
+      existingIndex = db.reservations.findIndex(r => 
+        String(r.flatNumber) === String(item.flatNumber) &&
+        r.checkinDate === item.checkinDate &&
+        r.checkoutDate === item.checkoutDate &&
+        r.status !== "cancelada" && r.status !== "cancelado"
+      );
+    }
+
+    if (existingIndex >= 0 && mode === "insert_only") {
+      skippedCount++;
+      continue;
+    }
+
+    // Calcula noites e diárias normalizadas
+    const d1 = new Date(item.checkinDate + "T00:00:00Z");
+    const d2 = new Date(item.checkoutDate + "T00:00:00Z");
+    const nights = Math.max(1, Math.round((d2 - d1) / (1000 * 60 * 60 * 24)));
+    const totalAmt = Number(item.totalAmount || 0);
+    const dailyRate = Number(item.dailyRate || (totalAmt > 0 && nights > 0 ? (totalAmt / nights) : 250));
+
+    const dailyRates = [];
+    for (let i = 0; i < nights; i++) {
+      const cur = new Date(d1.getTime() + i * 86400000);
+      dailyRates.push({
+        date: cur.toISOString().substring(0, 10),
+        rate: dailyRate,
+        channel: item.channel || "whatsapp"
+      });
+    }
+
+    // Upsert no CRM de Hóspedes
+    const primaryName = (item.guestName || "Hóspede").trim();
+    const primaryPhone = (item.guestPhone || "").trim();
+    const primaryEmail = (item.guestEmail || "").trim();
+    const primaryDoc = (item.guestDocument || "").trim();
+
+    let guest = db.guests.find(g => 
+      (primaryPhone && g.phone === primaryPhone) ||
+      (primaryDoc && g.document === primaryDoc) ||
+      (g.name.toLowerCase() === primaryName.toLowerCase())
+    );
+
+    if (!guest) {
+      guest = {
+        id: db.guests.length > 0 ? Math.max(...db.guests.map(g => g.id)) + 1 : 1,
+        guestCode: `HOSP-${String(db.guests.length + 1).padStart(5, "0")}`,
+        name: primaryName,
+        fullName: primaryName,
+        phone: primaryPhone,
+        email: primaryEmail,
+        document: primaryDoc,
+        companyName: item.companyName || "",
+        city: "",
+        notes: "",
+        tags: ["Importado via CSV"],
+        isMonthlyGuest: Boolean(item.isMonthlyGuest),
+        clientType: item.clientType || (item.isMonthlyGuest ? "mensalista" : "avulso"),
+        createdAt: new Date().toISOString()
+      };
+      db.guests.push(guest);
+    } else {
+      if (primaryPhone && !guest.phone) guest.phone = primaryPhone;
+      if (primaryEmail && !guest.email) guest.email = primaryEmail;
+      if (primaryDoc && !guest.document) guest.document = primaryDoc;
+      if (item.companyName && !guest.companyName) guest.companyName = item.companyName;
+    }
+
+    const preparedGuests = [{
+      index: 1,
+      name: primaryName,
+      cpf: primaryDoc,
+      phone: primaryPhone,
+      email: primaryEmail,
+      hasCompletedCheckin: false,
+      checkinCompletedAt: null
+    }];
+
+    if (existingIndex >= 0) {
+      // Atualização
+      const existing = db.reservations[existingIndex];
+      db.reservations[existingIndex] = {
+        ...existing,
+        flatId: flat.id,
+        flatNumber: flat.number,
+        guestId: guest.id,
+        guestName: primaryName,
+        guestPhone: primaryPhone || existing.guestPhone,
+        guestEmail: primaryEmail || existing.guestEmail,
+        guestDocument: primaryDoc || existing.guestDocument,
+        channel: item.channel || existing.channel,
+        checkinDate: item.checkinDate,
+        checkoutDate: item.checkoutDate,
+        totalAmount: totalAmt > 0 ? totalAmt : existing.totalAmount,
+        dailyRate: dailyRate > 0 ? dailyRate : existing.dailyRate,
+        paidAmount: Number(item.paidAmount || (item.paymentStatus === "pago_total" ? totalAmt : existing.paidAmount || 0)),
+        status: item.status || existing.status,
+        paymentStatus: item.paymentStatus || existing.paymentStatus,
+        paymentMethod: item.paymentMethod || existing.paymentMethod,
+        includeBreakfast: item.includeBreakfast !== undefined ? item.includeBreakfast : existing.includeBreakfast,
+        isMonthlyGuest: item.isMonthlyGuest !== undefined ? item.isMonthlyGuest : existing.isMonthlyGuest,
+        clientType: item.clientType || existing.clientType,
+        notes: item.notes || existing.notes,
+        specialRequests: item.specialRequests || existing.specialRequests,
+        dailyRates: dailyRates.length > 0 ? dailyRates : existing.dailyRates,
+        updatedAt: new Date().toISOString()
+      };
+      updatedCount++;
+    } else {
+      // Inserção de Nova Reserva
+      const maxId = db.reservations.length > 0 ? Math.max(...db.reservations.map(r => r.id || 0)) : 0;
+      const resId = maxId + 1;
+      const resCode = item.code || `RES-${flat.number}-${String(resId).padStart(4, "0")}`;
+
+      const newRes = {
+        id: resId,
+        code: resCode,
+        flatId: flat.id,
+        flatNumber: flat.number,
+        guestId: guest.id,
+        guestName: primaryName,
+        guestPhone: primaryPhone,
+        guestEmail: primaryEmail,
+        guestDocument: primaryDoc,
+        guestCount: Number(item.adults || 1),
+        guests: preparedGuests,
+        checkinDate: item.checkinDate,
+        checkoutDate: item.checkoutDate,
+        checkinTime: "14:00",
+        checkoutTime: "12:00",
+        channel: item.channel || "direta",
+        status: item.status || "confirmada",
+        paymentStatus: item.paymentStatus || (Number(item.paidAmount) >= totalAmt && totalAmt > 0 ? "pago_total" : "pendente"),
+        paymentMethod: item.paymentMethod || (item.channel?.includes("airbnb") ? "airbnb" : item.channel?.includes("booking") ? "booking" : "pix"),
+        totalAmount: totalAmt,
+        paidAmount: Number(item.paidAmount || (item.paymentStatus === "pago_total" ? totalAmt : 0)),
+        dailyRate,
+        dailyRates,
+        payments: Number(item.paidAmount) > 0 ? [{
+          id: `pay_${Date.now()}_${resId}`,
+          amount: Number(item.paidAmount),
+          method: item.paymentMethod || "pix",
+          date: new Date().toISOString(),
+          notes: "Importado via CSV"
+        }] : [],
+        adults: Number(item.adults || 1),
+        children: Number(item.children || 0),
+        twinBeds: Boolean(item.twinBeds),
+        extraMattress: Boolean(item.extraMattress),
+        companyName: item.companyName || "",
+        notes: item.notes || "",
+        specialRequests: item.specialRequests || "",
+        includeBreakfast: Boolean(item.includeBreakfast),
+        isMonthlyGuest: Boolean(item.isMonthlyGuest),
+        clientType: item.clientType || (item.isMonthlyGuest ? "mensalista" : "avulso"),
+        breakfastToken: `bfk_${resId}_${crypto.randomBytes(4).toString("hex")}`,
+        createdAt: item.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      db.reservations.push(newRes);
+      insertedCount++;
+    }
+  }
+
+  // Sincroniza integridade universal (limpezas, checkouts, status de flats)
+  reconcileUniversalIntegrity();
+  saveDatabase("Reservas importadas via CSV com sucesso");
+
+  logAuditEvent({
+    level: "info",
+    category: "reservations",
+    action: "RESERVATIONS_IMPORTED_CSV",
+    actor: { name: userAuth.username || "admin", role: "admin" },
+    details: {
+      insertedCount,
+      updatedCount,
+      skippedCount,
+      totalActive: db.reservations.length
+    }
+  });
+
+  res.json({
+    success: true,
+    message: `${insertedCount} reserva(s) adicionada(s) e ${updatedCount} atualizada(s) no mapa de reservas.`,
+    insertedCount,
+    updatedCount,
+    skippedCount,
+    totalReservations: db.reservations.length
+  });
+});
+
+
 app.put("/api/pms/reservations/:id", (req, res) => {
   const id = Number(req.params.id);
   const r = (db.reservations || []).find(x => x.id === id);

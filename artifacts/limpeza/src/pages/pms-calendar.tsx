@@ -16,7 +16,8 @@ import {
   CalendarDays, Plus, Wand2, ChevronLeft, ChevronRight, Search, 
   Calendar as CalendarIcon, User, Users, Phone, Mail, ShieldAlert, CheckCircle2,
   Clock, DollarSign, BedDouble, AlertTriangle, Lock, Trash2, Edit3, MessageCircle, KeyRound, Sparkles, FileText, Tag, Coffee, Building2, Wind, Zap, Bed, Check, RotateCcw, AlertCircle, RefreshCw, SlidersHorizontal, Copy,
-  LogIn, LogOut, TrendingUp, Send, ChevronDown, ChevronUp, History, ArrowRight, CreditCard, ExternalLink, QrCode, Link2, DoorOpen, Car
+  LogIn, LogOut, TrendingUp, Send, ChevronDown, ChevronUp, History, ArrowRight, CreditCard, ExternalLink, QrCode, Link2, DoorOpen, Car,
+  Download, Upload, FileSpreadsheet
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { 
@@ -124,6 +125,7 @@ export default function PmsCalendar() {
   const [, setLocation] = useLocation()
   const { toast } = useToast()
   const { data: user, isLoading: loadingUser } = useGetMe()
+  const isAdmin = user?.role === "admin"
 
   const [currentDate, setCurrentDate] = useState(new Date())
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -150,6 +152,24 @@ export default function PmsCalendar() {
   const [selectedRes, setSelectedRes] = useState<any | null>(null)
   const [savingRes, setSavingRes] = useState(false)
   const [mobileCardResId, setMobileCardResId] = useState<number | string | null>(null)
+
+  // Export CSV States
+  const [csvExportModalOpen, setCsvExportModalOpen] = useState(false)
+  const [exportPreset, setExportPreset] = useState<"all" | "this_month" | "next_month" | "next_90" | "custom">("all")
+  const [exportStartDate, setExportStartDate] = useState("")
+  const [exportEndDate, setExportEndDate] = useState("")
+  const [exportStatus, setExportStatus] = useState("all")
+  const [exportChannel, setExportChannel] = useState("all")
+  const [exportFlat, setExportFlat] = useState("all")
+
+  // Import CSV States
+  const [csvImportModalOpen, setCsvImportModalOpen] = useState(false)
+  const [importFile, setImportFile] = useState<File | null>(null)
+  const [importMode, setImportMode] = useState<"upsert" | "insert_only">("upsert")
+  const [isPreviewing, setIsPreviewing] = useState(false)
+  const [previewResult, setPreviewResult] = useState<any | null>(null)
+  const [isImporting, setIsImporting] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Mensagens Rápidas (Manuais) do WhatsApp
   const { activeQuickMessages, dispatchQuickMessage } = useQuickMessages()
@@ -396,6 +416,137 @@ export default function PmsCalendar() {
       toast({ title: "Erro", description: err.message, variant: "destructive" })
     } finally {
       setResendingCommId(null)
+    }
+  }
+
+  // ── CSV Export & Import Handlers ──
+  const handleExportCsv = () => {
+    try {
+      const params = new URLSearchParams()
+      if (exportPreset === "this_month") {
+        params.set("startDate", format(startOfMonth(new Date()), "yyyy-MM-dd"))
+        params.set("endDate", format(endOfMonth(new Date()), "yyyy-MM-dd"))
+      } else if (exportPreset === "next_month") {
+        const nextMonthDate = addDays(endOfMonth(new Date()), 1)
+        params.set("startDate", format(startOfMonth(nextMonthDate), "yyyy-MM-dd"))
+        params.set("endDate", format(endOfMonth(nextMonthDate), "yyyy-MM-dd"))
+      } else if (exportPreset === "next_90") {
+        params.set("startDate", format(new Date(), "yyyy-MM-dd"))
+        params.set("endDate", format(addDays(new Date(), 90), "yyyy-MM-dd"))
+      } else if (exportPreset === "custom") {
+        if (exportStartDate) params.set("startDate", exportStartDate)
+        if (exportEndDate) params.set("endDate", exportEndDate)
+      }
+      if (exportStatus && exportStatus !== "all") params.set("status", exportStatus)
+      if (exportChannel && exportChannel !== "all") params.set("channel", exportChannel)
+      if (exportFlat && exportFlat !== "all") params.set("flatNumber", exportFlat)
+
+      const downloadUrl = `/api/pms/reservations/export-csv?${params.toString()}`
+      const link = document.createElement("a")
+      link.href = downloadUrl
+      link.setAttribute("download", `reservas_corpflats_${format(new Date(), "yyyy-MM-dd")}.csv`)
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+
+      setCsvExportModalOpen(false)
+      toast({
+        title: "Exportação Concluída",
+        description: "O arquivo CSV com as reservas foi gerado com sucesso.",
+      })
+    } catch (e: any) {
+      toast({
+        title: "Erro ao Exportar",
+        description: e.message || "Não foi possível gerar o arquivo CSV.",
+        variant: "destructive"
+      })
+    }
+  }
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setImportFile(file)
+    setIsPreviewing(true)
+    setPreviewResult(null)
+
+    try {
+      const text = await file.text()
+      const res = await fetch("/api/pms/reservations/preview-csv", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ csvContent: text }),
+        credentials: "include"
+      })
+      const json = await res.json()
+      if (res.ok) {
+        setPreviewResult(json)
+      } else {
+        toast({
+          title: "Erro ao processar CSV",
+          description: json.error || "Formato de arquivo inválido.",
+          variant: "destructive"
+        })
+      }
+    } catch (err: any) {
+      toast({
+        title: "Erro ao ler arquivo",
+        description: err.message,
+        variant: "destructive"
+      })
+    } finally {
+      setIsPreviewing(false)
+    }
+  }
+
+  const handleConfirmImport = async () => {
+    if (!previewResult || !previewResult.preview || previewResult.preview.length === 0) return
+    const validItems = previewResult.preview.filter((p: any) => p.status !== "error")
+    if (validItems.length === 0) {
+      toast({
+        title: "Nenhuma reserva válida para importar",
+        description: "Corrija os erros apontados na tabela de pré-visualização.",
+        variant: "destructive"
+      })
+      return
+    }
+
+    setIsImporting(true)
+    try {
+      const res = await fetch("/api/pms/reservations/import-csv", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reservations: validItems,
+          mode: importMode
+        }),
+        credentials: "include"
+      })
+      const data = await res.json()
+      if (res.ok) {
+        toast({
+          title: "✓ Importação Realizada com Sucesso!",
+          description: data.message || "As reservas foram importadas e o mapa foi atualizado.",
+        })
+        setCsvImportModalOpen(false)
+        setImportFile(null)
+        setPreviewResult(null)
+        fetchData(true)
+      } else {
+        toast({
+          title: "Erro ao importar",
+          description: data.error || "Ocorreu uma falha ao gravar as reservas.",
+          variant: "destructive"
+        })
+      }
+    } catch (err: any) {
+      toast({
+        title: "Erro de conexão",
+        description: err.message,
+        variant: "destructive"
+      })
+    } finally {
+      setIsImporting(false)
     }
   }
 
@@ -2581,11 +2732,35 @@ export default function PmsCalendar() {
               </span>
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
             </Button>
-            <Button onClick={() => setBlockModalOpen(true)} variant="outline" size="sm" className="font-semibold text-xs gap-1.5 shadow-2xs">
+            <Button 
+              onClick={() => setCsvExportModalOpen(true)} 
+              variant="outline" 
+              size="sm" 
+              className="font-semibold text-xs gap-1.5 shadow-2xs h-8 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800"
+              title="Exportar reservas em planilha CSV com filtros de período"
+            >
+              <Download className="w-3.5 h-3.5 text-sky-600" />
+              <span className="hidden md:inline">Exportar CSV</span>
+            </Button>
+            <Button 
+              onClick={() => {
+                setImportFile(null)
+                setPreviewResult(null)
+                setCsvImportModalOpen(true)
+              }} 
+              variant="outline" 
+              size="sm" 
+              className="font-semibold text-xs gap-1.5 shadow-2xs h-8 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800"
+              title="Importar planilha CSV de reservas para preencher o mapa"
+            >
+              <Upload className="w-3.5 h-3.5 text-emerald-600" />
+              <span className="hidden md:inline">Importar CSV</span>
+            </Button>
+            <Button onClick={() => setBlockModalOpen(true)} variant="outline" size="sm" className="font-semibold text-xs gap-1.5 shadow-2xs h-8">
               <Lock className="w-3.5 h-3.5" />
               <span>Bloquear Quarto</span>
             </Button>
-            <Button onClick={() => handleOpenNewRes()} size="sm" className="font-semibold text-xs gap-1.5 shadow-2xs">
+            <Button onClick={() => handleOpenNewRes()} size="sm" className="font-semibold text-xs gap-1.5 shadow-2xs h-8">
               <Plus className="w-3.5 h-3.5" />
               <span>Nova Reserva</span>
             </Button>
@@ -7227,6 +7402,393 @@ export default function PmsCalendar() {
           onSelectMethod={(newMethodId) => setFormPaymentMethod(newMethodId)}
           initialNewName={initialNewPaymentMethodName}
         />
+
+        {/* ══════════════════════════════════════════════════════════════════
+            MODAL DE EXPORTAÇÃO DE RESERVAS EM CSV
+           ══════════════════════════════════════════════════════════════════ */}
+        <Dialog open={csvExportModalOpen} onOpenChange={setCsvExportModalOpen}>
+          <DialogContent className="sm:max-w-lg bg-card border border-border rounded-3xl max-h-[92vh] overflow-y-auto shadow-2xl">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-base font-bold text-slate-900 dark:text-slate-100">
+                <FileSpreadsheet className="w-5 h-5 text-sky-600" />
+                <span>Exportar Reservas em Planilha CSV</span>
+              </DialogTitle>
+              <DialogDescription className="text-xs text-muted-foreground">
+                Gere um arquivo CSV completo com todas as informações de reservas, hóspedes, valores e estadias para backup ou conferência.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="py-3 space-y-4 text-xs">
+              {/* Seleção do Período */}
+              <div className="space-y-2">
+                <Label className="text-xs font-bold text-slate-800 dark:text-slate-200">Período de Exportação</Label>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  <Button
+                    type="button"
+                    variant={exportPreset === "all" ? "default" : "outline"}
+                    size="sm"
+                    className="text-xs font-bold h-8 rounded-xl"
+                    onClick={() => setExportPreset("all")}
+                  >
+                    Todo o Histórico
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={exportPreset === "this_month" ? "default" : "outline"}
+                    size="sm"
+                    className="text-xs font-bold h-8 rounded-xl"
+                    onClick={() => setExportPreset("this_month")}
+                  >
+                    Mês Atual
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={exportPreset === "next_month" ? "default" : "outline"}
+                    size="sm"
+                    className="text-xs font-bold h-8 rounded-xl"
+                    onClick={() => setExportPreset("next_month")}
+                  >
+                    Próximo Mês
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={exportPreset === "next_90" ? "default" : "outline"}
+                    size="sm"
+                    className="text-xs font-bold h-8 rounded-xl"
+                    onClick={() => setExportPreset("next_90")}
+                  >
+                    Próximos 90 Dias
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={exportPreset === "custom" ? "default" : "outline"}
+                    size="sm"
+                    className="text-xs font-bold h-8 rounded-xl col-span-2 sm:col-span-2"
+                    onClick={() => setExportPreset("custom")}
+                  >
+                    Período Personalizado
+                  </Button>
+                </div>
+              </div>
+
+              {/* Datas personalizadas */}
+              {exportPreset === "custom" && (
+                <div className="grid grid-cols-2 gap-3 p-3 bg-muted/40 rounded-2xl border border-border">
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-bold">Data Inicial</Label>
+                    <Input
+                      type="date"
+                      value={exportStartDate}
+                      onChange={e => setExportStartDate(e.target.value)}
+                      className="text-xs rounded-xl h-8"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-bold">Data Final</Label>
+                    <Input
+                      type="date"
+                      value={exportEndDate}
+                      onChange={e => setExportEndDate(e.target.value)}
+                      className="text-xs rounded-xl h-8"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Filtros Adicionais */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-[11px] font-bold">Canal de Origem</Label>
+                  <Select value={exportChannel} onValueChange={setExportChannel}>
+                    <SelectTrigger className="text-xs h-8 rounded-xl">
+                      <SelectValue placeholder="Todos os Canais" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos os Canais</SelectItem>
+                      <SelectItem value="whatsapp">WhatsApp / Direta</SelectItem>
+                      <SelectItem value="airbnb">Airbnb</SelectItem>
+                      <SelectItem value="booking">Booking.com</SelectItem>
+                      <SelectItem value="site">Site Próprio</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-[11px] font-bold">Status da Reserva</Label>
+                  <Select value={exportStatus} onValueChange={setExportStatus}>
+                    <SelectTrigger className="text-xs h-8 rounded-xl">
+                      <SelectValue placeholder="Todos os Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos os Status</SelectItem>
+                      <SelectItem value="confirmada">Confirmadas</SelectItem>
+                      <SelectItem value="pre_reserva">Pré-Reservas</SelectItem>
+                      <SelectItem value="cancelada">Canceladas</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {/* Card Resumo do Layout */}
+              <div className="p-3 bg-sky-50 dark:bg-sky-950/30 rounded-2xl border border-sky-200 dark:border-sky-800/60 text-[11px] text-sky-900 dark:text-sky-200 space-y-1">
+                <span className="font-bold block">✓ Compatibilidade Total com Planilhas & Importação:</span>
+                <p className="text-[10.5px] leading-relaxed text-sky-800 dark:text-sky-300">
+                  O arquivo gerado inclui 27 colunas com todos os dados cadastrais (Código, Flat, Hóspede, CPF, Telefone, Check-in, Check-out, Diária, Valor Total, Status, Forma de Pagamento, Camas, Observações e Notas).
+                </p>
+              </div>
+            </div>
+
+            <DialogFooter className="gap-2 pt-2 border-t border-border">
+              <Button type="button" variant="outline" size="sm" onClick={() => setCsvExportModalOpen(false)} className="rounded-xl">
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={handleExportCsv}
+                className="bg-sky-600 hover:bg-sky-700 text-white font-bold rounded-xl gap-1.5"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Baixar Planilha CSV</span>
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ══════════════════════════════════════════════════════════════════
+            MODAL DE IMPORTAÇÃO DE RESERVAS VIA CSV (PREENCHER MAPA)
+           ══════════════════════════════════════════════════════════════════ */}
+        <Dialog open={csvImportModalOpen} onOpenChange={setCsvImportModalOpen}>
+          <DialogContent className="w-[95vw] sm:max-w-4xl bg-card border border-border rounded-3xl max-h-[92vh] overflow-y-auto shadow-2xl">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-base font-bold text-slate-900 dark:text-slate-100">
+                <Upload className="w-5 h-5 text-emerald-600" />
+                <span>Importar Reservas via CSV (Preencher Mapa)</span>
+              </DialogTitle>
+              <DialogDescription className="text-xs text-muted-foreground">
+                Carregue uma planilha CSV para restaurar ou preencher as reservas do mapa. O sistema analisa automaticamente cada linha, valida apartamentos e identifica reservas existentes.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="py-3 space-y-4 text-xs">
+              {/* Input File / Dropzone */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,text/csv"
+                onChange={handleFileChange}
+                className="hidden"
+              />
+
+              {!importFile ? (
+                <div 
+                  onClick={() => fileInputRef.current?.click()}
+                  className="p-8 border-2 border-dashed border-emerald-300 dark:border-emerald-800 rounded-3xl bg-emerald-50/50 dark:bg-emerald-950/20 text-center cursor-pointer hover:bg-emerald-50 dark:hover:bg-emerald-950/40 transition-colors space-y-2"
+                >
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-100 dark:bg-emerald-900/60 text-emerald-600 dark:text-emerald-300 mx-auto flex items-center justify-center">
+                    <FileSpreadsheet className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <span className="font-bold text-sm text-slate-800 dark:text-slate-200 block">
+                      Clique para selecionar o arquivo CSV de reservas
+                    </span>
+                    <span className="text-[11px] text-muted-foreground">
+                      Formatos aceitos: CSV exportado pelo sistema ou planilhas do Excel com cabeçalhos de reservas.
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3.5 bg-muted/40 rounded-2xl border border-border flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <FileSpreadsheet className="w-5 h-5 text-emerald-600 shrink-0" />
+                    <div className="truncate">
+                      <span className="font-bold text-xs text-foreground block truncate">{importFile.name}</span>
+                      <span className="text-[10px] text-muted-foreground font-mono">{(importFile.size / 1024).toFixed(1)} KB</span>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setImportFile(null)
+                      setPreviewResult(null)
+                    }}
+                    className="text-xs h-7 rounded-xl"
+                  >
+                    Trocar Arquivo
+                  </Button>
+                </div>
+              )}
+
+              {/* Loading State durante parsing */}
+              {isPreviewing && (
+                <div className="py-8 text-center space-y-2">
+                  <RefreshCw className="w-6 h-6 text-emerald-600 animate-spin mx-auto" />
+                  <span className="text-xs font-semibold text-muted-foreground block">
+                    Lendo arquivo e validando integridade das reservas com os apartamentos...
+                  </span>
+                </div>
+              )}
+
+              {/* Resultados do Preview */}
+              {previewResult && (
+                <div className="space-y-3.5 animate-in fade-in">
+                  {/* Cards de Resumo */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                    <div className="p-2.5 bg-muted/40 rounded-2xl border border-border">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase block">Total Lidas</span>
+                      <span className="text-xl font-black text-foreground">{previewResult.totalRows}</span>
+                    </div>
+                    <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/40 rounded-2xl border border-emerald-200 dark:border-emerald-800">
+                      <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 uppercase block">Novas Reservas</span>
+                      <span className="text-xl font-black text-emerald-600 dark:text-emerald-400">{previewResult.newCount}</span>
+                    </div>
+                    <div className="p-2.5 bg-sky-50 dark:bg-sky-950/40 rounded-2xl border border-sky-200 dark:border-sky-800">
+                      <span className="text-[10px] font-bold text-sky-700 dark:text-sky-300 uppercase block">Atualizações</span>
+                      <span className="text-xl font-black text-sky-600 dark:text-sky-400">{previewResult.updateCount}</span>
+                    </div>
+                    <div className="p-2.5 bg-rose-50 dark:bg-rose-950/40 rounded-2xl border border-rose-200 dark:border-rose-800">
+                      <span className="text-[10px] font-bold text-rose-700 dark:text-rose-300 uppercase block">Erros / Inválidas</span>
+                      <span className="text-xl font-black text-rose-600 dark:text-rose-400">{previewResult.errorCount}</span>
+                    </div>
+                  </div>
+
+                  {/* Modo de Importação */}
+                  <div className="p-3 bg-muted/30 rounded-2xl border border-border space-y-2">
+                    <Label className="text-xs font-bold text-foreground">Como deseja aplicar ao mapa de reservas?</Label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div 
+                        onClick={() => setImportMode("upsert")}
+                        className={`p-2.5 rounded-xl border text-xs cursor-pointer transition-all ${
+                          importMode === "upsert" 
+                            ? "bg-primary/10 border-primary text-primary font-bold shadow-xs" 
+                            : "bg-card border-border/70 text-muted-foreground hover:border-border"
+                        }`}
+                      >
+                        <span className="block text-foreground font-bold">1. Mesclar / Atualizar (Recomendado)</span>
+                        <span className="text-[10px] font-normal text-muted-foreground">
+                          Atualiza reservas já existentes (pelo código ou quarto+data) e adiciona as novas.
+                        </span>
+                      </div>
+                      <div 
+                        onClick={() => setImportMode("insert_only")}
+                        className={`p-2.5 rounded-xl border text-xs cursor-pointer transition-all ${
+                          importMode === "insert_only" 
+                            ? "bg-primary/10 border-primary text-primary font-bold shadow-xs" 
+                            : "bg-card border-border/70 text-muted-foreground hover:border-border"
+                        }`}
+                      >
+                        <span className="block text-foreground font-bold">2. Inserir apenas novas</span>
+                        <span className="text-[10px] font-normal text-muted-foreground">
+                          Pula as reservas que já constarem no sistema e adiciona apenas as que faltam.
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Tabela de Preview com Scroll */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-slate-800 dark:text-slate-200">Pré-visualização das Linhas ({previewResult.preview.length})</span>
+                      {previewResult.conflictCount > 0 && (
+                        <span className="text-amber-600 dark:text-amber-400 font-bold text-[11px] flex items-center gap-1">
+                          <AlertTriangle className="w-3.5 h-3.5" /> {previewResult.conflictCount} aviso(s) de sobreposição
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="max-h-64 overflow-y-auto overflow-x-auto rounded-2xl border border-border bg-card">
+                      <table className="w-full text-[11px] text-left">
+                        <thead className="bg-muted/70 text-muted-foreground font-semibold sticky top-0 backdrop-blur-md">
+                          <tr>
+                            <th className="p-2.5">Status</th>
+                            <th className="p-2.5">Flat</th>
+                            <th className="p-2.5">Hóspede</th>
+                            <th className="p-2.5">Período</th>
+                            <th className="p-2.5">Canal</th>
+                            <th className="p-2.5 text-right">Valor Total</th>
+                            <th className="p-2.5">Avisos</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border">
+                          {previewResult.preview.map((item: any, idx: number) => (
+                            <tr key={idx} className={item.status === "error" ? "bg-rose-50/50 dark:bg-rose-950/20" : ""}>
+                              <td className="p-2.5">
+                                {item.status === "new" && (
+                                  <Badge className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-300 text-[10px]">
+                                    Nova
+                                  </Badge>
+                                )}
+                                {item.status === "update" && (
+                                  <Badge className="bg-sky-500/10 text-sky-700 dark:text-sky-300 border-sky-300 text-[10px]">
+                                    Atualização
+                                  </Badge>
+                                )}
+                                {item.status === "error" && (
+                                  <Badge variant="destructive" className="text-[10px]">
+                                    Erro
+                                  </Badge>
+                                )}
+                              </td>
+                              <td className="p-2.5 font-bold font-mono">
+                                Flat {item.flatNumber || "?"}
+                              </td>
+                              <td className="p-2.5 font-bold max-w-[140px] truncate" title={item.guestName}>
+                                {item.guestName}
+                              </td>
+                              <td className="p-2.5 font-mono text-[10px]">
+                                {item.checkinDate} → {item.checkoutDate} ({item.nights}d)
+                              </td>
+                              <td className="p-2.5 capitalize">{item.channel}</td>
+                              <td className="p-2.5 text-right font-black font-mono text-emerald-600">
+                                R$ {Number(item.totalAmount || 0).toFixed(2)}
+                              </td>
+                              <td className="p-2.5 text-[10px]">
+                                {item.errors?.length > 0 ? (
+                                  <span className="text-rose-600 font-bold">{item.errors.join(", ")}</span>
+                                ) : item.warnings?.length > 0 ? (
+                                  <span className="text-amber-600 font-medium">{item.warnings.join(", ")}</span>
+                                ) : (
+                                  <span className="text-emerald-600 font-bold">✓ Válida</span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <DialogFooter className="gap-2 pt-2 border-t border-border">
+              <Button type="button" variant="outline" size="sm" onClick={() => setCsvImportModalOpen(false)} className="rounded-xl">
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={!previewResult || previewResult.validCount === 0 || isImporting}
+                onClick={handleConfirmImport}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl gap-1.5 shadow-sm"
+              >
+                {isImporting ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Importando e Sincronizando...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Confirmar Importação de {previewResult ? previewResult.validCount : 0} Reservas</span>
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </Shell>
   )
