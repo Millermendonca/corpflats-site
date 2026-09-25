@@ -1085,7 +1085,17 @@ export default function PmsCalendar() {
       }
 
       try {
-        const payload = {
+        const updatedDailyRates = Array.isArray(current.res.dailyRates) && current.res.dailyRates.length > 0
+          ? buildReservationDailyRates(
+              current.currentCheckin,
+              current.currentCheckout,
+              Number(current.res.dailyRate) || 250,
+              current.res.channel || "whatsapp",
+              current.res.dailyRates
+            )
+          : undefined;
+
+        const payload: any = {
           flatId: current.currentFlatId,
           checkinDate: current.currentCheckin,
           checkoutDate: current.currentCheckout,
@@ -1093,6 +1103,11 @@ export default function PmsCalendar() {
           checkoutTime: current.res.checkoutTime || defaultCheckoutTime || "12:00",
           source: current.mode === "move" ? "PMS Calendário (Arrastar & Soltar)" : "PMS Calendário (Ajuste de Diárias)"
         };
+
+        if (updatedDailyRates) {
+          payload.dailyRates = updatedDailyRates;
+          payload.totalAmount = updatedDailyRates.reduce((acc: number, d: any) => acc + (Number(d.rate) || 0), 0);
+        }
 
         // Otimista
         setData(prev => ({
@@ -1106,7 +1121,11 @@ export default function PmsCalendar() {
                 checkinDate: current.currentCheckin,
                 checkoutDate: current.currentCheckout,
                 checkinTime: current.res.checkinTime || defaultCheckinTime || "14:00",
-                checkoutTime: current.res.checkoutTime || defaultCheckoutTime || "12:00"
+                checkoutTime: current.res.checkoutTime || defaultCheckoutTime || "12:00",
+                ...(updatedDailyRates ? {
+                  dailyRates: updatedDailyRates,
+                  totalAmount: updatedDailyRates.reduce((acc: number, d: any) => acc + (Number(d.rate) || 0), 0)
+                } : {})
               };
             }
             return r;
