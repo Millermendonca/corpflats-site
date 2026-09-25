@@ -4809,6 +4809,12 @@ app.post("/api/cleaning/requests/manual", (req, res) => {
     }
     if (assignedUser) {
       existing.assignedUserId = assignedUser.id;
+      existing.assignedUsername = assignedUser.username;
+      existing.assignedUserName = assignedUser.name || assignedUser.username;
+    } else if (!markAsClean && !assignedUserId) {
+      existing.assignedUserId = null;
+      existing.assignedUsername = null;
+      existing.assignedUserName = null;
     }
     existing.willCleanAt = markAsClean ? completedDateIso : null;
     existing.cleaningStartedAt = markAsClean ? completedDateIso : null;
@@ -4826,6 +4832,8 @@ app.post("/api/cleaning/requests/manual", (req, res) => {
     source: "manual",
     status: markAsClean ? "clean" : "dirty",
     assignedUserId: assignedUser ? assignedUser.id : null,
+    assignedUsername: assignedUser ? assignedUser.username : null,
+    assignedUserName: assignedUser ? (assignedUser.name || assignedUser.username) : null,
     isVacant: markAsClean ? true : !flat.isOccupied,
     isPriority: Boolean(isPriority),
     isExtended: false,
@@ -5526,6 +5534,8 @@ app.post("/api/cleaning/assignments/:requestId/release", (req, res) => {
   const now = new Date().toISOString();
   item.status = "dirty";
   item.assignedUserId = null;
+  item.assignedUsername = null;
+  item.assignedUserName = null;
   item.willCleanAt = null;
   item.cleaningStartedAt = null;
   item.completedAt = null;

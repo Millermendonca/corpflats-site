@@ -9029,7 +9029,7 @@
       "completedAt": null,
       "durationMinutes": null,
       "createdAt": "2026-09-25T08:00:00.000Z",
-      "updatedAt": "2026-09-25T08:00:00.000Z"
+      "updatedAt": "2026-09-25T11:35:09.244Z"
     },
     {
       "id": 1258,
@@ -9057,7 +9057,7 @@
       "completedAt": null,
       "durationMinutes": null,
       "createdAt": "2026-09-25T08:00:00.000Z",
-      "updatedAt": "2026-09-25T08:00:00.000Z"
+      "updatedAt": "2026-09-25T10:00:24.320Z"
     },
     {
       "id": 1259,
@@ -9085,7 +9085,7 @@
       "completedAt": null,
       "durationMinutes": null,
       "createdAt": "2026-09-25T08:00:00.000Z",
-      "updatedAt": "2026-09-25T08:00:00.000Z"
+      "updatedAt": "2026-09-25T10:04:56.902Z"
     },
     {
       "id": 1260,
@@ -9254,6 +9254,94 @@
       "durationMinutes": null,
       "createdAt": "2026-09-24T18:00:00.000Z",
       "updatedAt": "2026-09-24T18:00:00.000Z"
+    },
+    {
+      "id": 1283,
+      "flatId": 16,
+      "flatNumber": "904",
+      "requestDate": "2026-09-25",
+      "source": "whatsapp_concierge",
+      "status": "dirty",
+      "isPriority": false,
+      "isExtended": false,
+      "isPendingFromPreviousDay": false,
+      "originalRequestDate": null,
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "pendingObservation": "Check-out confirmado no grupo da portaria (Recepção Promenade Soho)",
+      "isVacant": true,
+      "willCleanAt": null,
+      "cleaningStartedAt": null,
+      "completedAt": null,
+      "durationMinutes": null,
+      "createdAt": "2026-09-25T07:30:03.589Z",
+      "updatedAt": "2026-09-25T07:30:03.589Z"
+    },
+    {
+      "id": 1284,
+      "flatId": 11,
+      "flatNumber": "511",
+      "requestDate": "2026-09-25",
+      "source": "whatsapp_concierge",
+      "status": "dirty",
+      "isPriority": false,
+      "isExtended": false,
+      "isPendingFromPreviousDay": false,
+      "originalRequestDate": null,
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "pendingObservation": "Check-out confirmado no grupo da portaria (Recepção Promenade Soho)",
+      "isVacant": true,
+      "willCleanAt": null,
+      "cleaningStartedAt": null,
+      "completedAt": null,
+      "durationMinutes": null,
+      "createdAt": "2026-09-25T09:19:08.808Z",
+      "updatedAt": "2026-09-25T09:19:08.808Z"
+    },
+    {
+      "id": 1285,
+      "flatId": 8,
+      "flatNumber": "408",
+      "requestDate": "2026-09-25",
+      "source": "whatsapp_concierge",
+      "status": "dirty",
+      "isPriority": false,
+      "isExtended": false,
+      "isPendingFromPreviousDay": false,
+      "originalRequestDate": null,
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "pendingObservation": "Check-out confirmado no grupo da portaria (Recepção Promenade Soho)",
+      "isVacant": true,
+      "willCleanAt": null,
+      "cleaningStartedAt": null,
+      "completedAt": null,
+      "durationMinutes": null,
+      "createdAt": "2026-09-25T11:35:40.180Z",
+      "updatedAt": "2026-09-25T11:35:40.180Z"
+    },
+    {
+      "id": 1286,
+      "flatId": 1,
+      "flatNumber": "113",
+      "requestDate": "2026-09-25",
+      "source": "manual",
+      "status": "dirty",
+      "isPriority": true,
+      "isExtended": false,
+      "isPendingFromPreviousDay": false,
+      "originalRequestDate": null,
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "pendingObservation": null,
+      "isVacant": false,
+      "willCleanAt": null,
+      "cleaningStartedAt": null,
+      "completedAt": null,
+      "durationMinutes": null,
+      "createdAt": "2026-09-25T13:14:55.011Z",
+      "updatedAt": "2026-09-25T13:25:24.183Z"
     }
   ],
   "periodicTasks": [

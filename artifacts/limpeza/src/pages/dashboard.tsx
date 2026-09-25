@@ -110,8 +110,7 @@ export default function Dashboard() {
     setManualDate(selectedDateStr || format(new Date(), "yyyy-MM-dd"))
     setManualFlatId("")
     setManualMarkAsClean(false)
-    const firstMaid = cleanersList.find(c => c.role === "camareira" || c.role === "cleaner") || cleanersList[0]
-    setManualCleanerId(firstMaid ? String(firstMaid.id) : "2")
+    setManualCleanerId("")
     setManualIsPriority(false)
     setManualTwinBeds(false)
     setManualObservation("")
@@ -133,7 +132,7 @@ export default function Dashboard() {
           isPriority: manualIsPriority,
           twinBeds: manualTwinBeds,
           markAsClean: manualMarkAsClean,
-          assignedUserId: manualCleanerId ? Number(manualCleanerId) : null,
+          assignedUserId: manualMarkAsClean && manualCleanerId ? Number(manualCleanerId) : null,
           observation: manualObservation.trim() || null
         })
       })
