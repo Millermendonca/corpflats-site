@@ -28324,7 +28324,7 @@
       "paymentId": "pay_agosto_user_2",
       "entryType": "debit",
       "amount": 1665,
-      "description": "Pagamento ? Fechamento Mensal Agosto/2026",
+      "description": "Pagamento — Fechamento Mensal Agosto/2026",
       "entryDate": "2026-08-31",
       "createdAt": "2026-08-31T18:00:00.000Z"
     },
@@ -28335,7 +28335,7 @@
       "paymentId": "pay_agosto_user_3",
       "entryType": "debit",
       "amount": 1418.25,
-      "description": "Pagamento ? Fechamento Mensal Agosto/2026",
+      "description": "Pagamento — Fechamento Mensal Agosto/2026",
       "entryDate": "2026-08-31",
       "createdAt": "2026-08-31T18:00:00.000Z"
     },
@@ -30150,7 +30150,7 @@
       "paymentId": "pay_set_q1_user_2",
       "entryType": "debit",
       "amount": 1012.5,
-      "description": "Pagamento ? 1? Quinzena Setembro (01 a 15/09)",
+      "description": "Pagamento — 1ª Quinzena Setembro (01 a 15/09)",
       "entryDate": "2026-09-16",
       "createdAt": "2026-09-16T14:00:00.000Z"
     },
@@ -30161,7 +30161,7 @@
       "paymentId": "pay_set_q1_user_3",
       "entryType": "debit",
       "amount": 1441.5,
-      "description": "Pagamento ? 1? Quinzena Setembro (01 a 15/09)",
+      "description": "Pagamento — 1ª Quinzena Setembro (01 a 15/09)",
       "entryDate": "2026-09-16",
       "createdAt": "2026-09-16T14:00:00.000Z"
     },
@@ -30945,6 +30945,17 @@
       "description": "Diária — Flat 907",
       "entryDate": "2026-09-24",
       "createdAt": "2026-09-24T17:15:00.000Z"
+    },
+    {
+      "id": "stmt_pay_vale_grazi_20260925",
+      "userId": 3,
+      "cleaningRequestId": null,
+      "paymentId": "pay_vale_grazi_20260925",
+      "entryType": "debit",
+      "amount": 500,
+      "description": "Vale (adiantamento) — Grazi",
+      "entryDate": "2026-09-25",
+      "createdAt": "2026-09-25T14:00:00.000Z"
     }
   ],
   "maidPayments": [
@@ -30953,7 +30964,7 @@
       "userId": 2,
       "type": "payment",
       "amount": 1665,
-      "description": "Pagamento ? Fechamento Mensal Agosto/2026",
+      "description": "Pagamento — Fechamento Mensal Agosto/2026",
       "referencePeriod": "2026-08-01_2026-08-31",
       "interTxId": "ACERTO_20260831",
       "interStatus": "CONCLUIDO",
@@ -30970,7 +30981,7 @@
       "userId": 3,
       "type": "payment",
       "amount": 1418.25,
-      "description": "Pagamento ? Fechamento Mensal Agosto/2026",
+      "description": "Pagamento — Fechamento Mensal Agosto/2026",
       "referencePeriod": "2026-08-01_2026-08-31",
       "interTxId": "ACERTO_20260831",
       "interStatus": "CONCLUIDO",
@@ -30987,7 +30998,7 @@
       "userId": 2,
       "type": "payment",
       "amount": 1012.5,
-      "description": "Pagamento ? 1? Quinzena Setembro (01 a 15/09)",
+      "description": "Pagamento — 1ª Quinzena Setembro (01 a 15/09)",
       "referencePeriod": "2026-09-01_2026-09-15",
       "interTxId": "ACERTO_20260916",
       "interStatus": "CONCLUIDO",
@@ -31004,7 +31015,7 @@
       "userId": 3,
       "type": "payment",
       "amount": 1441.5,
-      "description": "Pagamento ? 1? Quinzena Setembro (01 a 15/09)",
+      "description": "Pagamento — 1ª Quinzena Setembro (01 a 15/09)",
       "referencePeriod": "2026-09-01_2026-09-15",
       "interTxId": "ACERTO_20260916",
       "interStatus": "CONCLUIDO",
@@ -31015,6 +31026,23 @@
       "createdBy": 1,
       "createdAt": "2026-09-16T14:00:00.000Z",
       "paidAt": "2026-09-16T14:00:00.000Z"
+    },
+    {
+      "id": "pay_vale_grazi_20260925",
+      "userId": 3,
+      "type": "advance",
+      "amount": 500,
+      "description": "Vale (adiantamento) — Grazi",
+      "referencePeriod": "2026-09-16_2026-09-30",
+      "interTxId": null,
+      "interStatus": "VALE",
+      "interSimulated": false,
+      "interError": null,
+      "pixKey": null,
+      "whatsappSent": false,
+      "createdBy": 1,
+      "createdAt": "2026-09-25T14:00:00.000Z",
+      "paidAt": "2026-09-25T14:00:00.000Z"
     }
   ]
 }
