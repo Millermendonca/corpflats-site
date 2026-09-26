@@ -28318,6 +28318,28 @@
       "createdAt": "2026-08-30T16:36:51.779Z"
     },
     {
+      "id": "stmt_pay_agosto_user_2",
+      "userId": 2,
+      "cleaningRequestId": null,
+      "paymentId": "pay_agosto_user_2",
+      "entryType": "debit",
+      "amount": 1665,
+      "description": "Pagamento ? Fechamento Mensal Agosto/2026",
+      "entryDate": "2026-08-31",
+      "createdAt": "2026-08-31T18:00:00.000Z"
+    },
+    {
+      "id": "stmt_pay_agosto_user_3",
+      "userId": 3,
+      "cleaningRequestId": null,
+      "paymentId": "pay_agosto_user_3",
+      "entryType": "debit",
+      "amount": 1418.25,
+      "description": "Pagamento ? Fechamento Mensal Agosto/2026",
+      "entryDate": "2026-08-31",
+      "createdAt": "2026-08-31T18:00:00.000Z"
+    },
+    {
       "id": "stmt_2_488_33",
       "userId": 2,
       "cleaningRequestId": 488,
@@ -30122,6 +30144,28 @@
       "createdAt": "2026-09-15T17:46:45.765Z"
     },
     {
+      "id": "stmt_pay_set_q1_user_2",
+      "userId": 2,
+      "cleaningRequestId": null,
+      "paymentId": "pay_set_q1_user_2",
+      "entryType": "debit",
+      "amount": 1012.5,
+      "description": "Pagamento ? 1? Quinzena Setembro (01 a 15/09)",
+      "entryDate": "2026-09-16",
+      "createdAt": "2026-09-16T14:00:00.000Z"
+    },
+    {
+      "id": "stmt_pay_set_q1_user_3",
+      "userId": 3,
+      "cleaningRequestId": null,
+      "paymentId": "pay_set_q1_user_3",
+      "entryType": "debit",
+      "amount": 1441.5,
+      "description": "Pagamento ? 1? Quinzena Setembro (01 a 15/09)",
+      "entryDate": "2026-09-16",
+      "createdAt": "2026-09-16T14:00:00.000Z"
+    },
+    {
       "id": "stmt_2_1184_121",
       "userId": 2,
       "cleaningRequestId": 1184,
@@ -30903,5 +30947,74 @@
       "createdAt": "2026-09-24T17:15:00.000Z"
     }
   ],
-  "maidPayments": []
+  "maidPayments": [
+    {
+      "id": "pay_agosto_user_2",
+      "userId": 2,
+      "type": "payment",
+      "amount": 1665,
+      "description": "Pagamento ? Fechamento Mensal Agosto/2026",
+      "referencePeriod": "2026-08-01_2026-08-31",
+      "interTxId": "ACERTO_20260831",
+      "interStatus": "CONCLUIDO",
+      "interSimulated": true,
+      "interError": null,
+      "pixKey": null,
+      "whatsappSent": false,
+      "createdBy": 1,
+      "createdAt": "2026-08-31T18:00:00.000Z",
+      "paidAt": "2026-08-31T18:00:00.000Z"
+    },
+    {
+      "id": "pay_agosto_user_3",
+      "userId": 3,
+      "type": "payment",
+      "amount": 1418.25,
+      "description": "Pagamento ? Fechamento Mensal Agosto/2026",
+      "referencePeriod": "2026-08-01_2026-08-31",
+      "interTxId": "ACERTO_20260831",
+      "interStatus": "CONCLUIDO",
+      "interSimulated": true,
+      "interError": null,
+      "pixKey": null,
+      "whatsappSent": false,
+      "createdBy": 1,
+      "createdAt": "2026-08-31T18:00:00.000Z",
+      "paidAt": "2026-08-31T18:00:00.000Z"
+    },
+    {
+      "id": "pay_set_q1_user_2",
+      "userId": 2,
+      "type": "payment",
+      "amount": 1012.5,
+      "description": "Pagamento ? 1? Quinzena Setembro (01 a 15/09)",
+      "referencePeriod": "2026-09-01_2026-09-15",
+      "interTxId": "ACERTO_20260916",
+      "interStatus": "CONCLUIDO",
+      "interSimulated": true,
+      "interError": null,
+      "pixKey": null,
+      "whatsappSent": false,
+      "createdBy": 1,
+      "createdAt": "2026-09-16T14:00:00.000Z",
+      "paidAt": "2026-09-16T14:00:00.000Z"
+    },
+    {
+      "id": "pay_set_q1_user_3",
+      "userId": 3,
+      "type": "payment",
+      "amount": 1441.5,
+      "description": "Pagamento ? 1? Quinzena Setembro (01 a 15/09)",
+      "referencePeriod": "2026-09-01_2026-09-15",
+      "interTxId": "ACERTO_20260916",
+      "interStatus": "CONCLUIDO",
+      "interSimulated": true,
+      "interError": null,
+      "pixKey": null,
+      "whatsappSent": false,
+      "createdBy": 1,
+      "createdAt": "2026-09-16T14:00:00.000Z",
+      "paidAt": "2026-09-16T14:00:00.000Z"
+    }
+  ]
 }

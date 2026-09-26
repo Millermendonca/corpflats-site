@@ -6454,9 +6454,12 @@ app.get("/api/analytics/report", (req, res) => {
     // Vales / Adiantamentos concedidos no período [startDate, endDate]
     const userVales = (db.maidStatementEntries || []).filter(e => {
       if (e.userId !== u.id || e.entryType !== "debit") return false;
+      const payment = e.paymentId ? (db.maidPayments || []).find(p => p.id === e.paymentId) : null;
+      if (payment && payment.referencePeriod === `${startDate}_${endDate}`) {
+        return payment.type === "advance";
+      }
       const d = e.entryDate || (e.createdAt ? e.createdAt.substring(0, 10) : "");
       if (!d || d < startDate || d > endDate) return false;
-      const payment = e.paymentId ? (db.maidPayments || []).find(p => p.id === e.paymentId) : null;
       return payment ? payment.type === "advance" : true;
     });
     const advancesInPeriod = userVales.reduce((acc, v) => acc + Number(v.amount || 0), 0);
@@ -6464,9 +6467,12 @@ app.get("/api/analytics/report", (req, res) => {
     // Pagamentos PIX realizados no período [startDate, endDate]
     const userPayments = (db.maidStatementEntries || []).filter(e => {
       if (e.userId !== u.id || e.entryType !== "debit") return false;
+      const payment = e.paymentId ? (db.maidPayments || []).find(p => p.id === e.paymentId) : null;
+      if (payment && payment.referencePeriod === `${startDate}_${endDate}`) {
+        return payment.type === "payment";
+      }
       const d = e.entryDate || (e.createdAt ? e.createdAt.substring(0, 10) : "");
       if (!d || d < startDate || d > endDate) return false;
-      const payment = e.paymentId ? (db.maidPayments || []).find(p => p.id === e.paymentId) : null;
       return payment ? payment.type === "payment" : false;
     });
     const paymentsInPeriod = userPayments.reduce((acc, p) => acc + Number(p.amount || 0), 0);
