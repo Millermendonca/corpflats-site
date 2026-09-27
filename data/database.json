@@ -26197,6 +26197,20 @@
       "billingTerms": "Faturamento 15 dias após emissão da nota fiscal",
       "notes": "Hospedagem frequente de engenheiros e técnicos",
       "createdAt": "2026-02-15T14:30:00.000Z"
+    },
+    {
+      "id": 3,
+      "corporateName": "Goal",
+      "tradeName": "Goal",
+      "cnpj": "Isento / Não informado",
+      "stateRegistration": "",
+      "municipalRegistration": "",
+      "financialEmail": "",
+      "phone": "",
+      "contactPerson": "Ricardo Cruz",
+      "billingTerms": "30 dias",
+      "notes": "Empresa parceira CorpFlats",
+      "createdAt": "2026-09-27T23:49:00.237Z"
     }
   ],
   "auditLogs": [
