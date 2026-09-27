@@ -2059,7 +2059,30 @@ async function loadDatabase() {
           const localMaidStatementEntries = [...(db.maidStatementEntries || [])];
           const localLostAndFound = [...(db.lostAndFound || [])];
 
+          // Blindagem de Configurações de E-mail / SMTP contra perda em reinícios ou restores
+          const localEmailSettings = db.settings?.emailSettings;
+          const pgEmailSettings = pgLoaded.settings?.emailSettings;
+          const preservedEmailSettings = (pgEmailSettings?.pass && pgEmailSettings?.user)
+            ? pgEmailSettings
+            : ((localEmailSettings?.pass && localEmailSettings?.user) ? localEmailSettings : (pgEmailSettings || localEmailSettings));
+
+          const localReceptionEmail = db.settings?.receptionEmail;
+          const pgReceptionEmail = pgLoaded.settings?.receptionEmail;
+          const preservedReceptionEmail = pgReceptionEmail || localReceptionEmail || "millerpessanha@gmail.com";
+
+          const localGarageEmail = db.settings?.garageEmail;
+          const pgGarageEmail = pgLoaded.settings?.garageEmail;
+          const preservedGarageEmail = pgGarageEmail || localGarageEmail || "millerpessanha@gmail.com";
+
           Object.assign(db, pgLoaded);
+
+          if (!db.settings) db.settings = {};
+          if (preservedEmailSettings && (preservedEmailSettings.user || preservedEmailSettings.pass)) {
+            db.settings.emailSettings = preservedEmailSettings;
+          }
+          if (preservedReceptionEmail) db.settings.receptionEmail = preservedReceptionEmail;
+          if (preservedGarageEmail) db.settings.garageEmail = preservedGarageEmail;
+
           if (!Array.isArray(db.periodicTasks)) db.periodicTasks = [];
           if (!Array.isArray(db.periodicExecutions)) db.periodicExecutions = [];
           console.log("[PostgreSQL] Estado restaurado da nuvem com sucesso!");
