@@ -53,3 +53,9 @@ artifacts/api-server/secure_uploads/*
 !artifacts/api-server/secure_uploads/**/.gitkeep
 artifacts/api-server/uploads/fnrh_documents/*
 !artifacts/api-server/uploads/fnrh_documents/**/.gitkeep
+
+# Temporary scratch
+scratch/
+data/backups/database_backup_post_recovery_*.json
+
+

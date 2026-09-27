@@ -67,6 +67,7 @@ if (!fs.existsSync(LOST_ITEMS_DIR)) {
 }
 
 let pgPool = null;
+let pgHydratedSuccessfully = false;
 if (process.env.DATABASE_URL) {
   try {
     pgPool = new Pool({
@@ -1351,7 +1352,7 @@ function reconcileUniversalIntegrity(incomingState = null) {
       incomingState.cleaningRequests.forEach(incReq => {
         const existingIdx = db.cleaningRequests.findIndex(c => 
           (c.id && incReq.id && Number(c.id) === Number(incReq.id)) ||
-          (String(c.flatNumber) === String(incReq.flatNumber) && c.requestDate === incReq.requestDate && (c.source === incReq.source || c.status === incReq.status))
+          (String(c.flatNumber) === String(incReq.flatNumber) && c.requestDate === incReq.requestDate)
         );
         if (existingIdx === -1) {
           db.cleaningRequests.push({ ...incReq });
@@ -1504,6 +1505,20 @@ function reconcileUniversalIntegrity(incomingState = null) {
       changed = true;
     }
   });
+
+  // Deduplicação defensiva de créditos de diárias de camareiras (a partir de 25/09)
+  if (Array.isArray(db.maidStatementEntries)) {
+    const seenCredits = new Set();
+    const origLen = db.maidStatementEntries.length;
+    db.maidStatementEntries = db.maidStatementEntries.filter(e => {
+      if (e.entryType !== "credit" || !e.entryDate || e.entryDate < "2026-09-25") return true;
+      const key = `${e.userId}___${e.entryDate}___${e.description}`;
+      if (seenCredits.has(key)) return false;
+      seenCredits.add(key);
+      return true;
+    });
+    if (db.maidStatementEntries.length !== origLen) changed = true;
+  }
 
   return changed;
 }
@@ -1845,7 +1860,6 @@ async function reconcileFromAuditLogs(db, pgPool) {
       const maidName = d.assignedMaidName || d.assignedUsername;
       const userId = d.assignedUserId || (maidName === "Cris" ? 2 : (maidName === "Grazi" ? 3 : null));
       const date = l.timestamp.substring(0, 10);
-      if (date >= "2026-09-24") continue;
 
       const key = (maidName || "maid") + "___" + flat + "___" + date;
 
@@ -1869,7 +1883,7 @@ async function reconcileFromAuditLogs(db, pgPool) {
     }
 
     for (const c of (db.cleaningRequests || [])) {
-      if (!c.requestDate || c.requestDate >= "2026-09-24") continue;
+      if (!c.requestDate) continue;
       const keyCris = "Cris___" + c.flatNumber + "___" + c.requestDate;
       const keyGrazi = "Grazi___" + c.flatNumber + "___" + c.requestDate;
       const match = cleaningsMap.get(keyGrazi) || cleaningsMap.get(keyCris);
@@ -1893,6 +1907,12 @@ async function reconcileFromAuditLogs(db, pgPool) {
     let maxCleanId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(c => Number(c.id) || 0)) : 1000;
     for (const item of cleaningsMap.values()) {
       if (item.status !== "clean") continue;
+      const alreadyExists = (db.cleaningRequests || []).some(c => 
+        String(c.flatNumber) === String(item.flat) && 
+        (c.requestDate === item.date || c.effectiveDate === item.date) &&
+        (c.assignedUsername === item.maidName || c.assignedUserName === item.maidName)
+      );
+      if (alreadyExists) continue;
       const flatObj = activeFlatsMap.get(item.flat);
       maxCleanId++;
       db.cleaningRequests.push({
@@ -2000,8 +2020,24 @@ async function loadDatabase() {
           CREATE INDEX IF NOT EXISTS idx_fnrh_audit_timestamp ON fnrh_internal_audit_logs (timestamp DESC);
           CREATE INDEX IF NOT EXISTS idx_fnrh_audit_record_id ON fnrh_internal_audit_logs (record_id);
         `);
-        const res = await pgPool.query("SELECT value FROM system_store WHERE key = 'db_state'");
+        let res = null;
+        let attempts = 0;
+        const maxAttempts = 5;
+        while (attempts < maxAttempts) {
+          try {
+            res = await pgPool.query("SELECT value FROM system_store WHERE key = 'db_state'");
+            break;
+          } catch (qErr) {
+            attempts++;
+            console.warn(`[PostgreSQL] Tentativa ${attempts}/${maxAttempts} de carregar db_state falhou: ${qErr.message}`);
+            if (attempts < maxAttempts) {
+              await new Promise(r => setTimeout(r, 2000));
+            }
+          }
+        }
+
         if (res && res.rows && res.rows[0]) {
+          pgHydratedSuccessfully = true;
           const pgLoaded = res.rows[0].value;
           // Proteção mandatória: Se o PostgreSQL na nuvem estiver com periodicTasks vazias mas o arquivo local tiver as tarefas restauradas, preserva e sincroniza
           if ((!pgLoaded.periodicTasks || pgLoaded.periodicTasks.length === 0) && (db.periodicTasks && db.periodicTasks.length > 0)) {
@@ -2863,6 +2899,10 @@ function saveDatabase(reason = "auto_save") {
     const stateJson = JSON.stringify(db, null, 2);
     fs.writeFileSync(DB_FILE, stateJson, "utf-8");
     if (pgPool) {
+      if (!pgHydratedSuccessfully) {
+        console.warn("[PostgreSQL] BLINDAGEM ATIVA: Ignorando saveDatabase no PostgreSQL porque a hidratação inicial do banco ainda não foi concluída com sucesso. Evitando sobrescrita com dados locais obsoletos.");
+        return;
+      }
       pgPool.query(
         "INSERT INTO system_store (key, value, updated_at) VALUES ('db_state', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()",
         [stateJson]
@@ -22459,6 +22499,11 @@ function syncMaidCredits(userId) {
     const entryDate = cleaning.completedAt
       ? cleaning.completedAt.substring(0, 10)
       : cleaning.requestDate;
+
+    const alreadyCreditedForFlatAndDate = (db.maidStatementEntries || []).some(
+      e => e.userId === userId && e.entryType === "credit" && e.entryDate === entryDate && e.description === `Diária — Flat ${flatNum}`
+    );
+    if (alreadyCreditedForFlatAndDate) continue;
 
     newEntries.push({
       id: generatePaymentId(),
