@@ -1799,7 +1799,7 @@ export default function PmsCalendar() {
     };
   }, []);
 
-  const handleOpenNewResRange = (defaultFlatId: number, startDate: Date, endDate: Date) => {
+  const handleOpenNewResRange = (defaultFlatId: number, startDate: Date, endDate: Date, initialChannel: string = "whatsapp") => {
     const d1 = startDate <= endDate ? startDate : endDate
     const d2 = startDate <= endDate ? endDate : startDate
     setSelectedRes(null)
@@ -1835,27 +1835,41 @@ export default function PmsCalendar() {
     setFormGuest3Cpf("")
     setFormGuest3Phone("")
     setFormGuest3Email("")
-    setFormChannel("whatsapp")
-    setFormPaymentMethod("pix")
+    const isBooking = initialChannel === "booking"
+    setFormChannel(initialChannel)
+    setFormPaymentMethod(isBooking ? "booking" : (initialChannel === "airbnb" ? "airbnb" : "pix"))
     const rangeNights = Math.max(1, differenceInDays(parseISO(cout), parseISO(cin))) || 1
-    const initialTotal = rangeNights * 250
-    setFormDailyRate("250")
-    const initialRates = buildReservationDailyRates(cin, cout, 250, "whatsapp")
+    const baseDailyRate = 250
+    setFormDailyRate(String(baseDailyRate))
+    const initialRates = buildReservationDailyRates(cin, cout, baseDailyRate, initialChannel)
     setFormDailyRates(initialRates)
+    const initialCharges: ReservationChargeItem[] = isBooking
+      ? [{
+          id: `charge_${Date.now()}_clean`,
+          type: "cleaning",
+          title: "Taxa de Limpeza",
+          amount: 50,
+          notes: ""
+        }]
+      : []
+    setFormCharges(initialCharges)
+    const subNights = initialRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0)
+    const subCharges = initialCharges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
+    const initialTotal = subNights + subCharges
     setFormTotalAmount(String(initialTotal))
-    setFormPaidAmount(String(initialTotal)) // 100% pago como padrão!
+    setFormPaidAmount(String(initialTotal)) // Pré-preenchido com o mesmo total composto!
     setFormPayments([
       {
         id: `pay_${Date.now()}`,
         amount: initialTotal,
-        method: "pix",
+        method: isBooking ? "booking" : (initialChannel === "airbnb" ? "airbnb" : "pix"),
+        category: "quitacao",
         date: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
-        notes: "Pagamento integral"
+        notes: isBooking ? "Pagamento integral Booking.com" : "Pagamento integral"
       }
     ])
     setFormPaymentStatus("pago_total")
     setFormStatus("confirmada")
-    setFormCharges([])
     setPackageTotalInput(String(initialTotal))
     setShowGuestSuggestions(false)
     setFormNotes("")
@@ -1951,7 +1965,7 @@ export default function PmsCalendar() {
     return false
   }
 
-  const handleOpenNewRes = (defaultFlatId?: number, defaultDate?: Date) => {
+  const handleOpenNewRes = (defaultFlatId?: number, defaultDate?: Date, initialChannel: string = "whatsapp") => {
     setMobileRangeStart(null)
     setSelectedRes(null)
     const cin = defaultDate ? format(defaultDate, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd")
@@ -1991,26 +2005,42 @@ export default function PmsCalendar() {
     setFormGuest3Cpf("")
     setFormGuest3Phone("")
     setFormGuest3Email("")
-    setFormChannel("whatsapp")
-    setFormPaymentMethod("pix")
+    const isBooking = initialChannel === "booking"
+    setFormChannel(initialChannel)
+    setFormPaymentMethod(isBooking ? "booking" : (initialChannel === "airbnb" ? "airbnb" : "pix"))
     const initialNights = 1
-    const initialTotal = initialNights * 250
-    setFormDailyRate("250")
-    const initialRates = buildReservationDailyRates(cin, cout, 250, "whatsapp")
+    const baseDailyRate = 250
+    setFormDailyRate(String(baseDailyRate))
+    const initialRates = buildReservationDailyRates(cin, cout, baseDailyRate, initialChannel)
     setFormDailyRates(initialRates)
+    const initialCharges: ReservationChargeItem[] = isBooking
+      ? [{
+          id: `charge_${Date.now()}_clean`,
+          type: "cleaning",
+          title: "Taxa de Limpeza",
+          amount: 50,
+          notes: ""
+        }]
+      : []
+    setFormCharges(initialCharges)
+    const subNights = initialRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0)
+    const subCharges = initialCharges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0)
+    const initialTotal = subNights + subCharges
     setFormTotalAmount(String(initialTotal))
-    setFormPaidAmount(String(initialTotal)) // 100% pago como padrão!
+    setFormPaidAmount(String(initialTotal)) // Pré-preenchido com o mesmo total composto!
     setFormPayments([
       {
         id: `pay_${Date.now()}`,
         amount: initialTotal,
-        method: "pix",
+        method: isBooking ? "booking" : (initialChannel === "airbnb" ? "airbnb" : "pix"),
+        category: "quitacao",
         date: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
-        notes: "Pagamento integral"
+        notes: isBooking ? "Pagamento integral Booking.com" : "Pagamento integral"
       }
     ])
     setFormPaymentStatus("pago_total")
     setFormStatus("confirmada")
+    setPackageTotalInput(String(initialTotal))
     setShowGuestSuggestions(false)
     setFormNotes("")
     setFormEarlyCheckin(false)

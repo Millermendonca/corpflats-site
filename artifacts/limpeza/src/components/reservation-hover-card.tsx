@@ -146,12 +146,19 @@ export function ReservationHoverCard({
     }
   }, [isCardOpen])
 
-  // Fecha ao detectar scroll (em qualquer elemento, incluindo grade do calendário)
+  // Fecha ao detectar scroll externo (grade do calendário ou página principal)
   useEffect(() => {
-    const handleScroll = () => {
+    const handleScroll = (e: Event) => {
       // Ignora eventos de scroll nos primeiros 450ms após abrir para evitar que micro-ajustes
-      // de layout ou rolagem virtual no mobile/tablet fechem o card instantaneamente
+      // de layout ou rolagem virtual fechem o card instantaneamente
       if (Date.now() - openedAtRef.current < 450) return
+
+      const target = e.target as Node | null
+      // Se o scroll estiver acontecendo DENTRO do próprio card flutuante, NUNCA fecha o card!
+      if (cardContentRef.current && target && (cardContentRef.current === target || cardContentRef.current.contains(target))) {
+        return
+      }
+
       if (isCardOpen) handleClose()
     }
     window.addEventListener("scroll", handleScroll, true)
@@ -213,8 +220,8 @@ export function ReservationHoverCard({
           }
         }
       }}
-      openDelay={350} 
-      closeDelay={200}
+      openDelay={250} 
+      closeDelay={350}
     >
       <HoverCardTrigger asChild>
         {children}
@@ -233,6 +240,10 @@ export function ReservationHoverCard({
             e.preventDefault()
             return
           }
+          if (cardContentRef.current && target && (cardContentRef.current === target || cardContentRef.current.contains(target))) {
+            e.preventDefault()
+            return
+          }
           if (Date.now() - openedAtRef.current < 450) {
             e.preventDefault()
             return
@@ -245,12 +256,17 @@ export function ReservationHoverCard({
             e.preventDefault()
             return
           }
+          if (cardContentRef.current && target && (cardContentRef.current === target || cardContentRef.current.contains(target))) {
+            e.preventDefault()
+            return
+          }
           if (Date.now() - openedAtRef.current < 450) {
             e.preventDefault()
             return
           }
           handleClose()
         }}
+        onWheel={(e) => e.stopPropagation()}
         className="w-[335px] sm:w-[355px] max-w-[calc(100vw-20px)] max-h-[min(88dvh,540px)] overflow-y-auto overflow-x-hidden p-0 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-2xl z-50 text-xs relative overscroll-contain [scrollbar-width:thin]"
         onClick={(e) => e.stopPropagation()}
       >
@@ -292,7 +308,10 @@ export function ReservationHoverCard({
               </div>
             </div>
 
-            <div className="text-[11px] leading-relaxed text-slate-200 font-normal whitespace-pre-wrap max-h-52 overflow-y-auto pr-1">
+            <div 
+              onWheel={(e) => e.stopPropagation()} 
+              className="text-[11px] leading-relaxed text-slate-200 font-normal whitespace-pre-wrap max-h-52 overflow-y-auto pr-1 overscroll-contain [scrollbar-width:thin]"
+            >
               {renderQuickMessage(
                 hoveredQuickMsg.message, 
                 resItem, 
@@ -532,7 +551,10 @@ export function ReservationHoverCard({
                 <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">
                   Diárias Discriminadas ({resItem.dailyRates.length}):
                 </span>
-                <div className="space-y-1 max-h-24 overflow-y-auto pr-0.5">
+                <div 
+                  onWheel={(e) => e.stopPropagation()} 
+                  className="space-y-1 max-h-24 overflow-y-auto pr-0.5 overscroll-contain [scrollbar-width:thin]"
+                >
                   {resItem.dailyRates.map((d: any, dIdx: number) => {
                     const dChan = (d.channel || resItem.channel || "whatsapp").toLowerCase();
                     const dChanLabel = dChan.includes("booking") ? "Booking" : dChan.includes("airbnb") ? "Airbnb" : dChan.includes("site") ? "Site" : "WhatsApp";
