@@ -8041,8 +8041,11 @@ app.post("/api/pms/reservations", async (req, res) => {
   }
 
   let finalTotalAmount = Number(totalAmount) || 0;
+  const reqChargesSubtotal = Array.isArray(req.body.charges) 
+    ? req.body.charges.reduce((sum, c) => sum + (Number(c.amount) || 0), 0) 
+    : 0;
   if (finalTotalAmount === 0 && normalizedDailyRates.length > 0) {
-    finalTotalAmount = normalizedDailyRates.reduce((sum, d) => sum + (Number(d.rate) || 0), 0);
+    finalTotalAmount = normalizedDailyRates.reduce((sum, d) => sum + (Number(d.rate) || 0), 0) + reqChargesSubtotal;
   }
   let finalDailyRate = Number(dailyRate) || (normalizedDailyRates.length > 0 ? Math.round(finalTotalAmount / normalizedDailyRates.length) : 0);
 
@@ -8053,12 +8056,12 @@ app.post("/api/pms/reservations", async (req, res) => {
   const isOta = chanLower.includes("booking") || chanLower.includes("airbnb");
   let resolvedPaidAmount = Number(paidAmount) || 0;
   let resolvedPaymentStatus = paymentStatus || "pendente";
-  if (isOta && (resolvedPaymentStatus === "pendente" || !resolvedPaymentStatus)) {
+  if (isOta) {
     resolvedPaymentStatus = "pago_total";
   }
 
   let resolvedPaymentMethod = paymentMethod;
-  if (!resolvedPaymentMethod) {
+  if (!resolvedPaymentMethod || (chanLower.includes("booking") && resolvedPaymentMethod === "pix")) {
     if (chanLower.includes("booking")) resolvedPaymentMethod = "booking";
     else if (chanLower.includes("airbnb")) resolvedPaymentMethod = "airbnb";
     else if (chanLower.includes("site")) resolvedPaymentMethod = "pix";
@@ -8072,10 +8075,21 @@ app.post("/api/pms/reservations", async (req, res) => {
     normalizedPayments = payments.map(p => ({
       id: String(p.id || `pay_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`),
       amount: Number(p.amount) || 0,
-      method: String(p.method || resolvedPaymentMethod || "pix"),
+      method: String(
+        (chanLower.includes("booking") && (!p.method || p.method === "pix"))
+          ? "booking"
+          : (p.method || resolvedPaymentMethod || "pix")
+      ),
       date: String(p.date || new Date().toISOString()),
       notes: p.notes ? String(p.notes) : undefined
     })).filter(p => p.amount > 0 || p.method);
+  }
+
+  if (isOta && (resolvedPaidAmount < finalTotalAmount || resolvedPaidAmount === 0)) {
+    resolvedPaidAmount = finalTotalAmount;
+  }
+  if (isOta && normalizedPayments.length === 1 && normalizedPayments[0].amount < finalTotalAmount) {
+    normalizedPayments[0].amount = finalTotalAmount;
   }
 
   if (normalizedPayments.length > 0) {
@@ -9161,25 +9175,38 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   }
 
   // Normalização de payments na edição
+  const isBookingRes = String(r.channel || "").toLowerCase().includes("booking");
+  if (isBookingRes && (!r.paymentMethod || r.paymentMethod === "pix")) {
+    r.paymentMethod = "booking";
+  }
+
   if (Array.isArray(req.body.payments)) {
     r.payments = req.body.payments.map(p => ({
       id: String(p.id || `pay_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`),
       amount: Number(p.amount) || 0,
-      method: String(p.method || r.paymentMethod || "pix"),
+      method: String((isBookingRes && (!p.method || p.method === "pix")) ? "booking" : (p.method || r.paymentMethod || "pix")),
       date: String(p.date || new Date().toISOString()),
       notes: p.notes ? String(p.notes) : undefined
     })).filter(p => p.amount > 0 || p.method);
 
+    if (isBookingRes && r.payments.length === 1 && r.payments[0].amount < (Number(r.totalAmount) || 0)) {
+      r.payments[0].amount = Number(r.totalAmount) || 0;
+      r.payments[0].method = "booking";
+    }
+
     const sumPaid = r.payments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
-    r.paidAmount = sumPaid;
+    r.paidAmount = isBookingRes ? (Number(r.totalAmount) || sumPaid) : sumPaid;
     const currentTot = Number(r.totalAmount) || 0;
-    if (sumPaid >= currentTot && currentTot > 0) {
+    if (isBookingRes || (sumPaid >= currentTot && currentTot > 0)) {
       r.paymentStatus = "pago_total";
     } else if (sumPaid > 0) {
       r.paymentStatus = "sinal_pago";
     } else {
       r.paymentStatus = "pendente";
     }
+  } else if (isBookingRes) {
+    r.paidAmount = Number(r.totalAmount) || r.paidAmount || 0;
+    r.paymentStatus = "pago_total";
   }
 
   if (r.paymentMethod) {
