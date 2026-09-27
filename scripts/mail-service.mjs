@@ -7,35 +7,68 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Auto-carrega arquivo .env da raiz do projeto se existir
-try {
-  const rootEnvPath = path.resolve(__dirname, "../../.env");
-  if (fs.existsSync(rootEnvPath)) {
-    const envContent = fs.readFileSync(rootEnvPath, "utf-8");
-    for (const line of envContent.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const idx = trimmed.indexOf("=");
-      if (idx > 0) {
-        const key = trimmed.slice(0, idx).trim();
-        let val = trimmed.slice(idx + 1).trim();
-        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-          val = val.slice(1, -1);
+// Auto-carrega arquivo .env da raiz do projeto e do Render (/etc/secrets)
+export function loadEnvFiles() {
+  const potentialPaths = [
+    "/etc/secrets/.env",
+    "/etc/secrets/env",
+    path.resolve(process.cwd(), ".env"),
+    path.resolve(__dirname, "../../.env"),
+    path.resolve(__dirname, "../.env"),
+    path.resolve(__dirname, ".env")
+  ];
+
+  if (fs.existsSync("/etc/secrets")) {
+    try {
+      const files = fs.readdirSync("/etc/secrets");
+      for (const file of files) {
+        const full = path.join("/etc/secrets", file);
+        try {
+          if (fs.statSync(full).isFile() && !potentialPaths.includes(full)) {
+            potentialPaths.push(full);
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
+  for (const p of potentialPaths) {
+    try {
+      if (fs.existsSync(p)) {
+        const content = fs.readFileSync(p, "utf-8");
+        let count = 0;
+        for (const line of content.split("\n")) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith("#")) continue;
+          const idx = trimmed.indexOf("=");
+          if (idx > 0) {
+            const key = trimmed.slice(0, idx).trim();
+            let val = trimmed.slice(idx + 1).trim();
+            if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+              val = val.slice(1, -1);
+            }
+            if (!process.env[key] || process.env[key] === "") {
+              process.env[key] = val;
+              count++;
+            }
+          }
         }
-        if (!process.env[key]) {
-          process.env[key] = val;
+        if (count > 0) {
+          console.log(`[MailService EnvLoader] ${count} variáveis carregadas com sucesso de: ${p}`);
         }
       }
-    }
+    } catch (_) {}
   }
-} catch (e) {
-  console.warn("[MailService] Aviso ao carregar .env:", e.message);
 }
+loadEnvFiles();
 
 /**
  * Obtém as configurações SMTP consolidadas (Variáveis de Ambiente > Banco de Dados > Padrões Zoho)
  */
 export function getSmtpConfig(db, overrides = {}) {
+  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+    loadEnvFiles();
+  }
   const emailSettings = db?.settings?.emailSettings || {};
   let host = overrides.host || process.env.SMTP_HOST || emailSettings.host || "smtp.zoho.com";
   // Migra automaticamente hosts antigos que o Zoho bloqueou
