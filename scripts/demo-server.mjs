@@ -1422,6 +1422,30 @@ function reconcileUniversalIntegrity(incomingState = null) {
         }
       });
     }
+
+    // 1.8 Empresas Parceiras (PJ) (Não-Destrutivo)
+    if (Array.isArray(incomingState.companies) && incomingState.companies.length > 0) {
+      if (!db.companies) db.companies = [];
+      incomingState.companies.forEach(incComp => {
+        const cleanIncCnpj = (incComp.cnpj || "").replace(/\D/g, "");
+        const existing = db.companies.find(c => 
+          (c.id && incComp.id && Number(c.id) === Number(incComp.id)) ||
+          (cleanIncCnpj && cleanIncCnpj.length >= 8 && (c.cnpj || "").replace(/\D/g, "") === cleanIncCnpj) ||
+          (c.corporateName && incComp.corporateName && c.corporateName.trim().toLowerCase() === incComp.corporateName.trim().toLowerCase())
+        );
+        if (!existing) {
+          db.companies.push({ ...incComp });
+          changed = true;
+        } else {
+          const incDate = incComp.updatedAt || incComp.createdAt || "";
+          const curDate = existing.updatedAt || existing.createdAt || "";
+          if (incDate > curDate) {
+            Object.assign(existing, incComp);
+            changed = true;
+          }
+        }
+      });
+    }
   }
 
   // 2. Normalização Universal de Ativação de Flats (isActive)
@@ -2076,6 +2100,7 @@ async function loadDatabase() {
           const localMaidPayments = [...(db.maidPayments || [])];
           const localMaidStatementEntries = [...(db.maidStatementEntries || [])];
           const localLostAndFound = [...(db.lostAndFound || [])];
+          const localCompanies = [...(db.companies || [])];
 
           // Blindagem de Configurações de E-mail / SMTP contra perda em reinícios ou restores
           const localEmailSettings = db.settings?.emailSettings;
@@ -2116,7 +2141,8 @@ async function loadDatabase() {
             breakfastOrders: localBreakfastOrders,
             maidPayments: localMaidPayments,
             maidStatementEntries: localMaidStatementEntries,
-            lostAndFound: localLostAndFound
+            lostAndFound: localLostAndFound,
+            companies: localCompanies
           });
           syncMaidCredits(2);
           syncMaidCredits(3);
@@ -7787,6 +7813,88 @@ app.get("/api/system/snapshots", async (req, res) => {
     await ensureBackupsTable();
     const q = await pgPool.query("SELECT id, timestamp, reason, reservations_count, length(value::text) as size_bytes FROM system_store_backups ORDER BY timestamp DESC LIMIT 50");
     res.json({ success: true, count: q.rows.length, snapshots: q.rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/system/snapshots/companies", async (req, res) => {
+  if (!pgPool) return res.json({ error: "PostgreSQL não conectado", snapshots: [] });
+  try {
+    await ensureBackupsTable();
+    const q = await pgPool.query("SELECT id, timestamp, reason, value->'companies' as companies FROM system_store_backups ORDER BY id DESC LIMIT 150");
+    const results = [];
+    for (const row of q.rows) {
+      if (row.companies && Array.isArray(row.companies) && row.companies.length > 0) {
+        results.push({
+          id: row.id,
+          timestamp: row.timestamp,
+          reason: row.reason,
+          count: row.companies.length,
+          companies: row.companies
+        });
+      }
+    }
+    res.json({ success: true, count: results.length, snapshots: results });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/system/snapshots/search", async (req, res) => {
+  if (!pgPool) return res.json({ error: "PostgreSQL não conectado" });
+  const term = req.query.q || "goal";
+  try {
+    await ensureBackupsTable();
+    const q = await pgPool.query("SELECT id, timestamp, reason, value FROM system_store_backups WHERE value::text ILIKE $1 ORDER BY id DESC LIMIT 25", [`%${term}%`]);
+    const matches = [];
+    for (const row of q.rows) {
+      const val = row.value || {};
+      const foundIn = [];
+      const termLower = term.toLowerCase();
+      if (JSON.stringify(val.companies || []).toLowerCase().includes(termLower)) {
+        foundIn.push({ section: "companies", data: val.companies });
+      }
+      if (JSON.stringify(val.guests || []).toLowerCase().includes(termLower)) {
+        const matchingGuests = (val.guests || []).filter(g => JSON.stringify(g).toLowerCase().includes(termLower));
+        foundIn.push({ section: "guests", data: matchingGuests });
+      }
+      if (JSON.stringify(val.reservations || []).toLowerCase().includes(termLower)) {
+        const matchingRes = (val.reservations || []).filter(r => JSON.stringify(r).toLowerCase().includes(termLower));
+        foundIn.push({ section: "reservations", data: matchingRes });
+      }
+      matches.push({
+        id: row.id,
+        timestamp: row.timestamp,
+        reason: row.reason,
+        foundIn
+      });
+    }
+    res.json({ success: true, count: matches.length, term, matches });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/system/snapshots/restore-companies", async (req, res) => {
+  if (!pgPool) return res.status(400).json({ error: "PostgreSQL não conectado" });
+  const { snapshotId } = req.body || {};
+  try {
+    await ensureBackupsTable();
+    let compsToRestore = [];
+    if (snapshotId) {
+      const q = await pgPool.query("SELECT value->'companies' as companies FROM system_store_backups WHERE id = $1", [snapshotId]);
+      compsToRestore = q.rows?.[0]?.companies || [];
+    } else {
+      const q = await pgPool.query("SELECT id, value->'companies' as companies FROM system_store_backups WHERE jsonb_array_length(value->'companies') > 2 ORDER BY id DESC LIMIT 1");
+      compsToRestore = q.rows?.[0]?.companies || [];
+    }
+    if (compsToRestore.length === 0) {
+      return res.status(404).json({ error: "Nenhuma empresa extra encontrada para restaurar nos snapshots." });
+    }
+    reconcileUniversalIntegrity({ companies: compsToRestore });
+    saveDatabase("restore_companies_from_snapshot");
+    res.json({ success: true, restoredCount: compsToRestore.length, companies: db.companies });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -17284,7 +17392,15 @@ app.post("/api/companies", (req, res) => {
   };
 
   db.companies.push(newCompany);
-  saveDatabase();
+  saveDatabase("company_created_" + newCompany.id);
+  logAuditEvent({
+    level: "info",
+    category: "company",
+    action: "COMPANY_CREATED",
+    actor: req.user || { name: "Usuário", role: "admin" },
+    details: { companyId: newCompany.id, corporateName: newCompany.corporateName, tradeName: newCompany.tradeName, cnpj: newCompany.cnpj },
+    source: "CRM Empresas"
+  });
   res.status(201).json(newCompany);
 });
 
@@ -17295,15 +17411,33 @@ app.patch("/api/companies/:id", (req, res) => {
   if (!company) return res.status(404).json({ error: "Empresa não encontrada" });
 
   Object.assign(company, req.body, { updatedAt: new Date().toISOString() });
-  saveDatabase();
+  saveDatabase("company_updated_" + id);
+  logAuditEvent({
+    level: "info",
+    category: "company",
+    action: "COMPANY_UPDATED",
+    actor: req.user || { name: "Usuário", role: "admin" },
+    details: { companyId: id, corporateName: company.corporateName, changes: req.body },
+    source: "CRM Empresas"
+  });
   res.json(company);
 });
 
 app.delete("/api/companies/:id", (req, res) => {
   const id = Number(req.params.id);
   if (!db.companies) db.companies = [];
+  const company = db.companies.find(c => c.id === id);
+  const removed = company ? { ...company } : null;
   db.companies = db.companies.filter(c => c.id !== id);
-  saveDatabase();
+  saveDatabase("company_deleted_" + id);
+  logAuditEvent({
+    level: "warn",
+    category: "company",
+    action: "COMPANY_DELETED",
+    actor: req.user || { name: "Usuário", role: "admin" },
+    details: { companyId: id, removed },
+    source: "CRM Empresas"
+  });
   res.json({ success: true });
 });
 

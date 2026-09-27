@@ -1422,6 +1422,30 @@ function reconcileUniversalIntegrity(incomingState = null) {
         }
       });
     }
+
+    // 1.8 Empresas Parceiras (PJ) (Não-Destrutivo)
+    if (Array.isArray(incomingState.companies) && incomingState.companies.length > 0) {
+      if (!db.companies) db.companies = [];
+      incomingState.companies.forEach(incComp => {
+        const cleanIncCnpj = (incComp.cnpj || "").replace(/\D/g, "");
+        const existing = db.companies.find(c => 
+          (c.id && incComp.id && Number(c.id) === Number(incComp.id)) ||
+          (cleanIncCnpj && cleanIncCnpj.length >= 8 && (c.cnpj || "").replace(/\D/g, "") === cleanIncCnpj) ||
+          (c.corporateName && incComp.corporateName && c.corporateName.trim().toLowerCase() === incComp.corporateName.trim().toLowerCase())
+        );
+        if (!existing) {
+          db.companies.push({ ...incComp });
+          changed = true;
+        } else {
+          const incDate = incComp.updatedAt || incComp.createdAt || "";
+          const curDate = existing.updatedAt || existing.createdAt || "";
+          if (incDate > curDate) {
+            Object.assign(existing, incComp);
+            changed = true;
+          }
+        }
+      });
+    }
   }
 
   // 2. Normalização Universal de Ativação de Flats (isActive)
@@ -2076,6 +2100,7 @@ async function loadDatabase() {
           const localMaidPayments = [...(db.maidPayments || [])];
           const localMaidStatementEntries = [...(db.maidStatementEntries || [])];
           const localLostAndFound = [...(db.lostAndFound || [])];
+          const localCompanies = [...(db.companies || [])];
 
           // Blindagem de Configurações de E-mail / SMTP contra perda em reinícios ou restores
           const localEmailSettings = db.settings?.emailSettings;
@@ -2116,7 +2141,8 @@ async function loadDatabase() {
             breakfastOrders: localBreakfastOrders,
             maidPayments: localMaidPayments,
             maidStatementEntries: localMaidStatementEntries,
-            lostAndFound: localLostAndFound
+            lostAndFound: localLostAndFound,
+            companies: localCompanies
           });
           syncMaidCredits(2);
           syncMaidCredits(3);
@@ -7792,6 +7818,88 @@ app.get("/api/system/snapshots", async (req, res) => {
   }
 });
 
+app.get("/api/system/snapshots/companies", async (req, res) => {
+  if (!pgPool) return res.json({ error: "PostgreSQL não conectado", snapshots: [] });
+  try {
+    await ensureBackupsTable();
+    const q = await pgPool.query("SELECT id, timestamp, reason, value->'companies' as companies FROM system_store_backups ORDER BY id DESC LIMIT 150");
+    const results = [];
+    for (const row of q.rows) {
+      if (row.companies && Array.isArray(row.companies) && row.companies.length > 0) {
+        results.push({
+          id: row.id,
+          timestamp: row.timestamp,
+          reason: row.reason,
+          count: row.companies.length,
+          companies: row.companies
+        });
+      }
+    }
+    res.json({ success: true, count: results.length, snapshots: results });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/system/snapshots/search", async (req, res) => {
+  if (!pgPool) return res.json({ error: "PostgreSQL não conectado" });
+  const term = req.query.q || "goal";
+  try {
+    await ensureBackupsTable();
+    const q = await pgPool.query("SELECT id, timestamp, reason, value FROM system_store_backups WHERE value::text ILIKE $1 ORDER BY id DESC LIMIT 25", [`%${term}%`]);
+    const matches = [];
+    for (const row of q.rows) {
+      const val = row.value || {};
+      const foundIn = [];
+      const termLower = term.toLowerCase();
+      if (JSON.stringify(val.companies || []).toLowerCase().includes(termLower)) {
+        foundIn.push({ section: "companies", data: val.companies });
+      }
+      if (JSON.stringify(val.guests || []).toLowerCase().includes(termLower)) {
+        const matchingGuests = (val.guests || []).filter(g => JSON.stringify(g).toLowerCase().includes(termLower));
+        foundIn.push({ section: "guests", data: matchingGuests });
+      }
+      if (JSON.stringify(val.reservations || []).toLowerCase().includes(termLower)) {
+        const matchingRes = (val.reservations || []).filter(r => JSON.stringify(r).toLowerCase().includes(termLower));
+        foundIn.push({ section: "reservations", data: matchingRes });
+      }
+      matches.push({
+        id: row.id,
+        timestamp: row.timestamp,
+        reason: row.reason,
+        foundIn
+      });
+    }
+    res.json({ success: true, count: matches.length, term, matches });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/system/snapshots/restore-companies", async (req, res) => {
+  if (!pgPool) return res.status(400).json({ error: "PostgreSQL não conectado" });
+  const { snapshotId } = req.body || {};
+  try {
+    await ensureBackupsTable();
+    let compsToRestore = [];
+    if (snapshotId) {
+      const q = await pgPool.query("SELECT value->'companies' as companies FROM system_store_backups WHERE id = $1", [snapshotId]);
+      compsToRestore = q.rows?.[0]?.companies || [];
+    } else {
+      const q = await pgPool.query("SELECT id, value->'companies' as companies FROM system_store_backups WHERE jsonb_array_length(value->'companies') > 2 ORDER BY id DESC LIMIT 1");
+      compsToRestore = q.rows?.[0]?.companies || [];
+    }
+    if (compsToRestore.length === 0) {
+      return res.status(404).json({ error: "Nenhuma empresa extra encontrada para restaurar nos snapshots." });
+    }
+    reconcileUniversalIntegrity({ companies: compsToRestore });
+    saveDatabase("restore_companies_from_snapshot");
+    res.json({ success: true, restoredCount: compsToRestore.length, companies: db.companies });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get("/api/system/snapshots/breakfast", async (req, res) => {
   if (!pgPool) return res.json({ error: "PostgreSQL não conectado", snapshots: [] });
   const targetDate = req.query.date || "2026-09-24";
@@ -8088,7 +8196,7 @@ app.post("/api/pms/reservations", async (req, res) => {
   }
 
   let resolvedPaymentMethod = paymentMethod;
-  if (!resolvedPaymentMethod) {
+  if (!resolvedPaymentMethod || (isOta && resolvedPaymentMethod === "pix")) {
     if (chanLower.includes("booking")) resolvedPaymentMethod = "booking";
     else if (chanLower.includes("airbnb")) resolvedPaymentMethod = "airbnb";
     else if (chanLower.includes("site")) resolvedPaymentMethod = "pix";
@@ -8108,14 +8216,30 @@ app.post("/api/pms/reservations", async (req, res) => {
     })).filter(p => p.amount > 0 || p.method);
   }
 
+  if (isOta) {
+    resolvedPaymentStatus = "pago_total";
+    if (finalTotalAmount > 0) {
+      resolvedPaidAmount = finalTotalAmount;
+    }
+  }
+
   if (normalizedPayments.length > 0) {
-    resolvedPaidAmount = normalizedPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
-    if (resolvedPaidAmount >= finalTotalAmount && finalTotalAmount > 0) {
-      resolvedPaymentStatus = "pago_total";
-    } else if (resolvedPaidAmount > 0) {
-      resolvedPaymentStatus = "sinal_pago";
+    if (!isOta) {
+      resolvedPaidAmount = normalizedPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+      if (resolvedPaidAmount >= finalTotalAmount && finalTotalAmount > 0) {
+        resolvedPaymentStatus = "pago_total";
+      } else if (resolvedPaidAmount > 0) {
+        resolvedPaymentStatus = "sinal_pago";
+      } else {
+        resolvedPaymentStatus = "pendente";
+      }
     } else {
-      resolvedPaymentStatus = "pendente";
+      const otaMethod = chanLower.includes("booking") ? "booking" : "airbnb";
+      if (normalizedPayments.length === 1) {
+        normalizedPayments[0].amount = finalTotalAmount;
+        normalizedPayments[0].method = otaMethod;
+        normalizedPayments[0].notes = normalizedPayments[0].notes || (otaMethod === "booking" ? "Pagamento integral Booking.com" : "Pagamento integral Airbnb");
+      }
     }
   } else {
     if (resolvedPaymentStatus === "pago_total" && finalTotalAmount > 0 && resolvedPaidAmount === 0) {
@@ -8128,12 +8252,13 @@ app.post("/api/pms/reservations", async (req, res) => {
     }
 
     if (resolvedPaidAmount > 0) {
+      const otaLabel = chanLower.includes("booking") ? "Booking.com" : (chanLower.includes("airbnb") ? "Airbnb" : null);
       normalizedPayments = [{
         id: `pay_${Date.now()}_init`,
         amount: resolvedPaidAmount,
         method: resolvedPaymentMethod || "pix",
         date: new Date().toISOString(),
-        notes: resolvedPaymentStatus === "pago_total" ? "Pagamento integral" : "Pagamento inicial"
+        notes: otaLabel ? `Pagamento integral ${otaLabel}` : (resolvedPaymentStatus === "pago_total" ? "Pagamento integral" : "Pagamento inicial")
       }];
     }
   }
@@ -9232,11 +9357,30 @@ app.put("/api/pms/reservations/:id", (req, res) => {
 
   const putChanLower = String(r.channel || "").toLowerCase();
   const putIsOta = putChanLower.includes("booking") || putChanLower.includes("airbnb");
-  if (putIsOta && (!r.paymentStatus || r.paymentStatus === "pendente") && req.body.paymentStatus === undefined) {
-    r.paymentStatus = "pago_total";
-  }
-  if (r.paymentStatus === "pago_total" && Number(r.totalAmount) > 0) {
-    r.paidAmount = Number(r.totalAmount);
+  if (putIsOta) {
+    const otaMethod = putChanLower.includes("booking") ? "booking" : "airbnb";
+    if (!r.paymentMethod || r.paymentMethod === "pix") {
+      r.paymentMethod = otaMethod;
+    }
+    if (req.body.paymentStatus === undefined || !r.paymentStatus || r.paymentStatus === "pendente") {
+      r.paymentStatus = "pago_total";
+    }
+    if (Number(r.totalAmount) > 0) {
+      r.paidAmount = Number(r.totalAmount);
+    }
+    if (Array.isArray(r.payments) && (r.payments.length === 0 || (r.payments.length === 1 && (!r.payments[0].method || r.payments[0].method === "pix")))) {
+      r.payments = [{
+        id: r.payments?.[0]?.id || `pay_${Date.now()}_ota`,
+        amount: Number(r.totalAmount) || 0,
+        method: otaMethod,
+        date: r.payments?.[0]?.date || new Date().toISOString(),
+        notes: r.payments?.[0]?.notes || (otaMethod === "booking" ? "Pagamento integral Booking.com" : "Pagamento integral Airbnb")
+      }];
+    }
+  } else {
+    if (r.paymentStatus === "pago_total" && Number(r.totalAmount) > 0 && (!r.paidAmount || r.paidAmount < Number(r.totalAmount))) {
+      r.paidAmount = Number(r.totalAmount);
+    }
   }
 
   // Sincroniza com o hóspede no CRM se aplicável
@@ -17248,7 +17392,15 @@ app.post("/api/companies", (req, res) => {
   };
 
   db.companies.push(newCompany);
-  saveDatabase();
+  saveDatabase("company_created_" + newCompany.id);
+  logAuditEvent({
+    level: "info",
+    category: "company",
+    action: "COMPANY_CREATED",
+    actor: req.user || { name: "Usuário", role: "admin" },
+    details: { companyId: newCompany.id, corporateName: newCompany.corporateName, tradeName: newCompany.tradeName, cnpj: newCompany.cnpj },
+    source: "CRM Empresas"
+  });
   res.status(201).json(newCompany);
 });
 
@@ -17259,15 +17411,33 @@ app.patch("/api/companies/:id", (req, res) => {
   if (!company) return res.status(404).json({ error: "Empresa não encontrada" });
 
   Object.assign(company, req.body, { updatedAt: new Date().toISOString() });
-  saveDatabase();
+  saveDatabase("company_updated_" + id);
+  logAuditEvent({
+    level: "info",
+    category: "company",
+    action: "COMPANY_UPDATED",
+    actor: req.user || { name: "Usuário", role: "admin" },
+    details: { companyId: id, corporateName: company.corporateName, changes: req.body },
+    source: "CRM Empresas"
+  });
   res.json(company);
 });
 
 app.delete("/api/companies/:id", (req, res) => {
   const id = Number(req.params.id);
   if (!db.companies) db.companies = [];
+  const company = db.companies.find(c => c.id === id);
+  const removed = company ? { ...company } : null;
   db.companies = db.companies.filter(c => c.id !== id);
-  saveDatabase();
+  saveDatabase("company_deleted_" + id);
+  logAuditEvent({
+    level: "warn",
+    category: "company",
+    action: "COMPANY_DELETED",
+    actor: req.user || { name: "Usuário", role: "admin" },
+    details: { companyId: id, removed },
+    source: "CRM Empresas"
+  });
   res.json({ success: true });
 });
 
