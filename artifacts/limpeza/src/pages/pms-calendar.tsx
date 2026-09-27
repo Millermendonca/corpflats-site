@@ -2658,6 +2658,7 @@ export default function PmsCalendar() {
       let resolvedPaidAmount = sumPaidFromList
       let resolvedMethod = formPaymentMethod
       let normalizedPayments = formPayments
+      let resolvedPaymentStatus = "pendente"
 
       if (formChannel === "booking" || formChannel === "airbnb") {
         resolvedPaymentStatus = "pago_total"
