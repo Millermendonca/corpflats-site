@@ -22,7 +22,7 @@ import {
 import { useToast } from "@/hooks/use-toast"
 import { 
   format, addDays, subDays, startOfMonth, endOfMonth, eachDayOfInterval, 
-  isSameDay, isToday, isYesterday, parseISO, differenceInDays 
+  isSameDay, isToday, isYesterday, parseISO, differenceInDays, differenceInCalendarDays 
 } from "date-fns"
 import { ptBR } from "date-fns/locale"
 
@@ -93,6 +93,21 @@ export function buildReservationDailyRates(
       existingRates.forEach(r => {
         if (r && r.date) existingMap.set(r.date, r);
       });
+    }
+
+    // Se nenhuma data coincide com o mapa prévio, mas a quantidade de diárias é exatamente a mesma,
+    // significa que a reserva inteira foi deslocada no calendário.
+    // Preservamos a sequência relativa das diárias (ex: 3 Airbnb + 2 WhatsApp) sem resetar canais!
+    const matchingCount = Array.isArray(existingRates)
+      ? existingRates.filter(r => r && r.date && existingMap.has(r.date) && r.date >= checkinStr && r.date < checkoutStr).length
+      : 0;
+    if (matchingCount === 0 && Array.isArray(existingRates) && existingRates.length === nights) {
+      return existingRates.map((exist, i) => ({
+        date: format(addDays(d1, i), "yyyy-MM-dd"),
+        rate: Number(exist.rate) >= 0 ? Number(exist.rate) : defaultRate,
+        channel: exist.channel || defaultChannel,
+        notes: exist.notes
+      }));
     }
 
     const result: DailyRateItem[] = [];
@@ -711,6 +726,7 @@ export default function PmsCalendar() {
     pointerType: "mouse" | "touch" | "pen";
     hasMoved: boolean;
     isLongPressReady?: boolean;
+    initialGrabDayOffset: number;
     currentFlatId: number;
     currentFlatNumber: string;
     currentCheckin: string;
@@ -720,6 +736,25 @@ export default function PmsCalendar() {
   const [resDragState, setResDragState] = useState<ResDragState | null>(null);
   const resDragStateRef = useRef<ResDragState | null>(null);
   resDragStateRef.current = resDragState;
+
+  // Diálogo de confirmação seguro antes de aplicar movimentação ou redimensionamento
+  const [dragConfirmData, setDragConfirmData] = useState<{
+    isOpen: boolean;
+    res: any;
+    mode: "move" | "resize-left" | "resize-right";
+    originFlatNumber: string;
+    targetFlatNumber: string;
+    originCheckin: string;
+    targetCheckin: string;
+    originCheckout: string;
+    targetCheckout: string;
+    originNights: number;
+    targetNights: number;
+    originTotal: number;
+    targetTotal: number;
+    payload: any;
+    optimisticReservation: any;
+  } | null>(null);
 
   const [longPressActiveResId, setLongPressActiveResId] = useState<number | string | null>(null);
   const longPressTimerRef = useRef<any>(null);
@@ -779,6 +814,36 @@ export default function PmsCalendar() {
     const nights = differenceInDays(parseISO(resItem.checkoutDate), parseISO(resItem.checkinDate)) || 1;
     const isResize = mode === "resize-left" || mode === "resize-right";
 
+    // Calcula em qual dia da estadia o usuário clicou (offset de arraste relativo)
+    let initialGrabDayOffset = 0;
+    if (mode === "move") {
+      const cell = getCellFromPoint(e.clientX, e.clientY);
+      let clickedDayStr: string | null = cell ? cell.getAttribute("data-day-str") : null;
+      if (!clickedDayStr && scrollContainerRef.current) {
+        const container = scrollContainerRef.current;
+        const cRect = container.getBoundingClientRect();
+        const timelineX = e.clientX - cRect.left + container.scrollLeft;
+        for (let i = 0; i < daysInView.length; i++) {
+          const dStr = format(daysInView[i], "yyyy-MM-dd");
+          const layout = dayLayoutMap[dStr];
+          if (layout && timelineX >= layout.left && timelineX < layout.left + layout.width) {
+            clickedDayStr = dStr;
+            break;
+          }
+        }
+      }
+      if (clickedDayStr) {
+        try {
+          const checkinD = parseISO(resItem.checkinDate);
+          const clickedD = parseISO(clickedDayStr);
+          const rawOffset = differenceInCalendarDays(clickedD, checkinD);
+          initialGrabDayOffset = Math.max(0, Math.min(nights - 1, isNaN(rawOffset) ? 0 : rawOffset));
+        } catch (_) {
+          initialGrabDayOffset = 0;
+        }
+      }
+    }
+
     const initialDragState: ResDragState = {
       res: resItem,
       originFlatId: flat.id,
@@ -792,6 +857,7 @@ export default function PmsCalendar() {
       pointerType,
       hasMoved: false,
       isLongPressReady: !isTouch || isResize, // Na borda (esticar/encolher) ou mouse: pronto IMEDIATAMENTE!
+      initialGrabDayOffset,
       currentFlatId: flat.id,
       currentFlatNumber: flat.number,
       currentCheckin: resItem.checkinDate,
@@ -944,9 +1010,14 @@ export default function PmsCalendar() {
         return;
       }
 
-      // Já ativou o modo (borda imediata, long press 2s pronto ou desktop):
-      if (!current.hasMoved && (dx > 4 || dy > 4)) {
-        current.hasMoved = true;
+      // Limiar rigoroso para evitar que micro-tremores de clique (4-12px) virem arraste involuntário
+      const moveThreshold = current.pointerType === "touch" ? 18 : 12;
+      if (!current.hasMoved) {
+        if (dx > moveThreshold || dy > moveThreshold) {
+          current.hasMoved = true;
+        } else {
+          return;
+        }
       }
 
       // Auto-scroll horizontal suave SOMENTE se o dedo chegar bem perto dos extremos da tela
@@ -968,8 +1039,9 @@ export default function PmsCalendar() {
         let newCheckout = prev.currentCheckout;
 
         if (prev.mode === "move") {
-          newCheckin = target.dayStr;
-          newCheckout = format(addDays(parseISO(target.dayStr), prev.nightsCount), "yyyy-MM-dd");
+          const grabOffset = prev.initialGrabDayOffset || 0;
+          newCheckin = format(subDays(parseISO(target.dayStr), grabOffset), "yyyy-MM-dd");
+          newCheckout = format(addDays(parseISO(newCheckin), prev.nightsCount), "yyyy-MM-dd");
         } else if (prev.mode === "resize-left") {
           if (target.dayStr < prev.originCheckout) {
             newCheckin = target.dayStr;
@@ -1014,34 +1086,31 @@ export default function PmsCalendar() {
       const current = resDragStateRef.current;
       if (!current) return;
 
-      // Se não houve movimento:
+      // Se não houve movimento deliberado (foi apenas um clique):
       if (!current.hasMoved) {
-        if (current.mode === "move") {
-          // Se estava em long-press pronto e soltou sem mover, encerra sem abrir modal/card
-          if (current.isLongPressReady && current.pointerType === "touch") {
-            setResDragState(null);
-            return;
-          }
+        if (current.isLongPressReady && current.pointerType === "touch") {
+          setResDragState(null);
+          return;
+        }
 
-          const isTouch = 
-            current.pointerType === "touch" || 
-            Date.now() - lastTouchTimeRef.current < 600 ||
-            (typeof window !== "undefined" && (
-              window.matchMedia("(pointer: coarse)").matches || 
-              window.innerWidth < 1024
-            ));
+        const isTouch = 
+          current.pointerType === "touch" || 
+          Date.now() - lastTouchTimeRef.current < 600 ||
+          (typeof window !== "undefined" && (
+            window.matchMedia("(pointer: coarse)").matches || 
+            window.innerWidth < 1024
+          ));
 
-          if (isTouch) {
-            // Toque rápido no celular: abre/fecha o card flutuante de ações rápidas
-            const now = Date.now();
-            if (now - lastToggleCardTimeRef.current > 400) {
-              lastToggleCardTimeRef.current = now;
-              setMobileCardResId(prev => (prev === current.res.id ? null : current.res.id));
-            }
-          } else {
-            // Clique no desktop (mouse): abre o modal completo de edição
-            handleOpenEditRes(current.res);
+        if (isTouch) {
+          // Toque rápido no celular: abre/fecha o card flutuante de ações rápidas
+          const now = Date.now();
+          if (now - lastToggleCardTimeRef.current > 400) {
+            lastToggleCardTimeRef.current = now;
+            setMobileCardResId(prev => (prev === current.res.id ? null : current.res.id));
           }
+        } else {
+          // Clique no desktop (mouse): abre o modal completo de edição
+          handleOpenEditRes(current.res);
         }
         setResDragState(null);
         return;
@@ -1084,70 +1153,82 @@ export default function PmsCalendar() {
         return;
       }
 
-      try {
-        const updatedDailyRates = Array.isArray(current.res.dailyRates) && current.res.dailyRates.length > 0
-          ? buildReservationDailyRates(
-              current.currentCheckin,
-              current.currentCheckout,
-              Number(current.res.dailyRate) || 250,
-              current.res.channel || "whatsapp",
-              current.res.dailyRates
-            )
-          : undefined;
+      const originNights = differenceInDays(parseISO(current.originCheckout), parseISO(current.originCheckin)) || 1;
+      const targetNights = differenceInDays(parseISO(current.currentCheckout), parseISO(current.currentCheckin)) || 1;
 
-        const payload: any = {
-          flatId: current.currentFlatId,
-          checkinDate: current.currentCheckin,
-          checkoutDate: current.currentCheckout,
-          checkinTime: current.res.checkinTime || defaultCheckinTime || "14:00",
-          checkoutTime: current.res.checkoutTime || defaultCheckoutTime || "12:00",
-          source: current.mode === "move" ? "PMS Calendário (Arrastar & Soltar)" : "PMS Calendário (Ajuste de Diárias)"
-        };
-
-        if (updatedDailyRates) {
-          payload.dailyRates = updatedDailyRates;
-          payload.totalAmount = updatedDailyRates.reduce((acc: number, d: any) => acc + (Number(d.rate) || 0), 0);
+      let updatedDailyRates: any = undefined;
+      if (Array.isArray(current.res.dailyRates) && current.res.dailyRates.length > 0) {
+        if (current.mode === "move" && originNights === targetNights && current.res.dailyRates.length === targetNights) {
+          const d1 = parseISO(current.currentCheckin);
+          updatedDailyRates = current.res.dailyRates.map((d: any, idx: number) => ({
+            date: format(addDays(d1, idx), "yyyy-MM-dd"),
+            rate: Number(d.rate) >= 0 ? Number(d.rate) : (Number(current.res.dailyRate) || 250),
+            channel: d.channel || current.res.channel || "whatsapp",
+            notes: d.notes
+          }));
+        } else {
+          updatedDailyRates = buildReservationDailyRates(
+            current.currentCheckin,
+            current.currentCheckout,
+            Number(current.res.dailyRate) || 250,
+            current.res.channel || "whatsapp",
+            current.res.dailyRates
+          );
         }
-
-        // Otimista
-        setData(prev => ({
-          ...prev,
-          reservations: prev.reservations.map(r => {
-            if (r.id === current.res.id) {
-              return {
-                ...r,
-                flatId: current.currentFlatId,
-                flatNumber: current.currentFlatNumber,
-                checkinDate: current.currentCheckin,
-                checkoutDate: current.currentCheckout,
-                checkinTime: current.res.checkinTime || defaultCheckinTime || "14:00",
-                checkoutTime: current.res.checkoutTime || defaultCheckoutTime || "12:00",
-                ...(updatedDailyRates ? {
-                  dailyRates: updatedDailyRates,
-                  totalAmount: updatedDailyRates.reduce((acc: number, d: any) => acc + (Number(d.rate) || 0), 0)
-                } : {})
-              };
-            }
-            return r;
-          })
-        }));
-
-        await fetch(`/api/pms/reservations/${current.res.id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          credentials: "include"
-        });
-
-        // Atualização silenciosa em background sem tela de carregamento nem reset de scroll
-        fetchData(false);
-        notifyCalendarUpdated();
-      } catch (e) {
-        console.error("Erro ao salvar nova posição da reserva:", e);
-        fetchData(false);
-      } finally {
-        setResDragState(null);
       }
+
+      const calculatedTotal = updatedDailyRates
+        ? updatedDailyRates.reduce((acc: number, d: any) => acc + (Number(d.rate) || 0), 0)
+        : (Number(current.res.totalAmount) || 0);
+
+      const payload: any = {
+        flatId: current.currentFlatId,
+        checkinDate: current.currentCheckin,
+        checkoutDate: current.currentCheckout,
+        checkinTime: current.res.checkinTime || defaultCheckinTime || "14:00",
+        checkoutTime: current.res.checkoutTime || defaultCheckoutTime || "12:00",
+        source: current.mode === "move" ? "PMS Calendário (Arrastar & Soltar)" : "PMS Calendário (Ajuste de Diárias)"
+      };
+
+      if (updatedDailyRates) {
+        payload.dailyRates = updatedDailyRates;
+        payload.totalAmount = calculatedTotal;
+      }
+
+      const optimisticReservation = {
+        ...current.res,
+        flatId: current.currentFlatId,
+        flatNumber: current.currentFlatNumber,
+        checkinDate: current.currentCheckin,
+        checkoutDate: current.currentCheckout,
+        checkinTime: current.res.checkinTime || defaultCheckinTime || "14:00",
+        checkoutTime: current.res.checkoutTime || defaultCheckoutTime || "12:00",
+        ...(updatedDailyRates ? {
+          dailyRates: updatedDailyRates,
+          totalAmount: calculatedTotal
+        } : {})
+      };
+
+      // Abre diálogo de confirmação seguro antes de aplicar a alteração
+      setDragConfirmData({
+        isOpen: true,
+        res: current.res,
+        mode: current.mode,
+        originFlatNumber: current.originFlatNumber,
+        targetFlatNumber: current.currentFlatNumber,
+        originCheckin: current.originCheckin,
+        targetCheckin: current.currentCheckin,
+        originCheckout: current.originCheckout,
+        targetCheckout: current.currentCheckout,
+        originNights,
+        targetNights,
+        originTotal: Number(current.res.totalAmount) || 0,
+        targetTotal: calculatedTotal,
+        payload,
+        optimisticReservation
+      });
+
+      setResDragState(null);
     };
 
     const onPointerMove = (e: MouseEvent | PointerEvent) => {
@@ -1488,6 +1569,57 @@ export default function PmsCalendar() {
   useEffect(() => {
     fetchData(true);
   }, []);
+
+  const handleConfirmDragMove = async () => {
+    if (!dragConfirmData) return;
+    const { res, payload, optimisticReservation } = dragConfirmData;
+    setDragConfirmData(null);
+
+    try {
+      // Atualização otimista imediata na interface
+      setData(prev => ({
+        ...prev,
+        reservations: prev.reservations.map(r => r.id === res.id ? optimisticReservation : r)
+      }));
+
+      toast({
+        title: "Atualizando reserva...",
+        description: `Salvando alterações para ${res.guestName}...`
+      });
+
+      const resp = await fetch(`/api/pms/reservations/${res.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        credentials: "include"
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.error || "Falha ao salvar reserva.");
+      }
+
+      toast({
+        title: "Reserva atualizada com sucesso!",
+        description: `${res.guestName}: Flat ${optimisticReservation.flatNumber} (${format(parseISO(optimisticReservation.checkinDate), "dd/MM")} a ${format(parseISO(optimisticReservation.checkoutDate), "dd/MM")}).`
+      });
+
+      fetchData(false);
+      notifyCalendarUpdated();
+    } catch (err: any) {
+      console.error("Erro ao salvar alteração de arraste da reserva:", err);
+      toast({
+        title: "Erro ao atualizar reserva",
+        description: err.message || "Não foi possível salvar a alteração.",
+        variant: "destructive"
+      });
+      fetchData(false);
+    }
+  };
+
+  const handleCancelDragMove = () => {
+    setDragConfirmData(null);
+  };
 
   // Auto-scroll inicial para posicionar o dia de hoje na 3ª ou 4ª coluna à esquerda
 
@@ -3417,8 +3549,8 @@ export default function PmsCalendar() {
                               <div
                                 style={{ touchAction: "none" }}
                                 className={`absolute left-0 top-0 bottom-0 ${
-                                  isSingleNight ? 'w-3 max-w-[15%]' : 'w-5 max-w-[28%]'
-                                } sm:w-3.5 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-l touch-none select-none`}
+                                  isSingleNight ? 'w-2 max-w-[10%]' : 'w-3 max-w-[16%]'
+                                } sm:w-2.5 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-l touch-none select-none`}
                                 onPointerDown={(e) => handleStartResDrag(resItem, flat, "resize-left", e)}
                                 onPointerEnter={(e) => e.stopPropagation()}
                                 title="Arraste para alterar a data de Check-in"
@@ -3467,8 +3599,8 @@ export default function PmsCalendar() {
                               <div
                                 style={{ touchAction: "none" }}
                                 className={`absolute right-0 top-0 bottom-0 ${
-                                  isSingleNight ? 'w-3 max-w-[15%]' : 'w-5 max-w-[28%]'
-                                } sm:w-3.5 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-r touch-none select-none`}
+                                  isSingleNight ? 'w-2 max-w-[10%]' : 'w-3 max-w-[16%]'
+                                } sm:w-2.5 cursor-ew-resize hover:bg-white/40 active:bg-white/60 z-20 flex items-center justify-center transition-colors group/resize-r touch-none select-none`}
                                 onPointerDown={(e) => handleStartResDrag(resItem, flat, "resize-right", e)}
                                 onPointerEnter={(e) => e.stopPropagation()}
                                 title="Arraste para alterar a data de Check-out"
@@ -3637,6 +3769,104 @@ export default function PmsCalendar() {
             </div>
           </div>
         )}
+
+        {/* Modal de Confirmação Segura de Arraste / Redimensionamento */}
+        <Dialog open={!!dragConfirmData?.isOpen} onOpenChange={(open) => { if (!open) handleCancelDragMove(); }}>
+          <DialogContent className="w-full max-w-[95vw] sm:max-w-md p-4 sm:p-6">
+            <DialogHeader>
+              <div className="flex items-center gap-2 text-indigo-600 mb-1">
+                <CalendarDays className="w-5 h-5 text-indigo-600 shrink-0" />
+                <DialogTitle className="text-base sm:text-lg font-bold text-slate-900">
+                  {dragConfirmData?.mode === "move" 
+                    ? "Confirmar Mudança de Reserva?" 
+                    : "Confirmar Alteração de Período?"}
+                </DialogTitle>
+              </div>
+              <DialogDescription className="text-xs text-slate-500">
+                Verifique os novos dados antes de aplicar a alteração no calendário do hotel.
+              </DialogDescription>
+            </DialogHeader>
+
+            {dragConfirmData && (
+              <div className="space-y-3 py-2 text-sm">
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between text-xs text-slate-500">
+                    <span>Hóspede:</span>
+                    <span className="font-bold text-slate-900 text-sm">{dragConfirmData.res?.guestName}</span>
+                  </div>
+
+                  {dragConfirmData.originFlatNumber !== dragConfirmData.targetFlatNumber && (
+                    <div className="flex items-center justify-between text-xs border-t border-slate-200/80 pt-2">
+                      <span className="text-slate-500">Apartamento:</span>
+                      <div className="flex items-center gap-1.5 font-bold">
+                        <span className="text-rose-600">Apt {dragConfirmData.originFlatNumber}</span>
+                        <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+                        <span className="text-emerald-700">Apt {dragConfirmData.targetFlatNumber}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between text-xs border-t border-slate-200/80 pt-2">
+                    <span className="text-slate-500">Período:</span>
+                    <div className="flex items-center gap-1.5 font-semibold text-right">
+                      <span className="text-slate-600">
+                        {format(parseISO(dragConfirmData.originCheckin), "dd/MM")} - {format(parseISO(dragConfirmData.originCheckout), "dd/MM")}
+                      </span>
+                      <ArrowRight className="w-3.5 h-3.5 text-slate-400 inline" />
+                      <span className="text-indigo-700 font-bold">
+                        {format(parseISO(dragConfirmData.targetCheckin), "dd/MM")} - {format(parseISO(dragConfirmData.targetCheckout), "dd/MM")}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs border-t border-slate-200/80 pt-2">
+                    <span className="text-slate-500">Diárias:</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-slate-600">{dragConfirmData.originNights} {dragConfirmData.originNights === 1 ? 'diária' : 'diárias'}</span>
+                      {dragConfirmData.originNights !== dragConfirmData.targetNights && (
+                        <>
+                          <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+                          <span className="font-bold text-indigo-700">{dragConfirmData.targetNights} {dragConfirmData.targetNights === 1 ? 'diária' : 'diárias'}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {dragConfirmData.originTotal !== dragConfirmData.targetTotal && (
+                    <div className="flex items-center justify-between text-xs border-t border-slate-200/80 pt-2">
+                      <span className="text-slate-500">Valor Total:</span>
+                      <div className="flex items-center gap-1.5 font-bold">
+                        <span className="text-slate-500 line-through">R$ {dragConfirmData.originTotal.toFixed(2)}</span>
+                        <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+                        <span className="text-emerald-700">R$ {dragConfirmData.targetTotal.toFixed(2)}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <DialogFooter className="flex items-center justify-end gap-2 pt-2">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={handleCancelDragMove}
+                className="text-xs"
+              >
+                Cancelar
+              </Button>
+              <Button 
+                variant="default" 
+                size="sm" 
+                onClick={handleConfirmDragMove}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-1.5"
+              >
+                <Check className="w-4 h-4" />
+                Confirmar Alteração
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Modal: New / Edit Reservation */}
         <Dialog open={resModalOpen} onOpenChange={setResModalOpen}>
