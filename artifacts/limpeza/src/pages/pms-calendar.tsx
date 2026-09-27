@@ -2397,42 +2397,73 @@ export default function PmsCalendar() {
   }
 
   // ── Helpers de Gerenciamento de Diárias & Pagamentos ──────────────
+  // Sincroniza o Total Composto (diárias + taxas) e pré-preenche sempre o Valor Pago com o mesmo total composto
+  const syncCompositeTotalAndPaid = (
+    newDailyRates: DailyRateItem[] = formDailyRates,
+    newCharges: ReservationChargeItem[] = formCharges,
+    targetChannel: string = formChannel,
+    targetMethod?: string
+  ) => {
+    const subNights = newDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0);
+    const subCharges = newCharges.reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
+    const newTot = Math.max(0, subNights + subCharges);
+    setFormTotalAmount(String(newTot));
+    setPackageTotalInput(String(newTot));
+
+    const isBooking = targetChannel === "booking";
+    const resolvedMethod = targetMethod || (isBooking ? "booking" : (targetChannel === "airbnb" ? "airbnb" : formPaymentMethod));
+
+    if (isBooking) {
+      setFormPaymentMethod("booking");
+      setFormPaymentStatus("pago_total");
+    } else if (targetChannel === "airbnb") {
+      setFormPaymentMethod("airbnb");
+      setFormPaymentStatus("pago_total");
+    }
+
+    // O valor pago deve ser SEMPRE pré-preenchido com o mesmo valor total composto
+    setFormPaidAmount(String(newTot));
+
+    setFormPayments(prev => {
+      if (prev.length <= 1) {
+        return [{
+          id: prev[0]?.id || `pay_${Date.now()}`,
+          amount: newTot,
+          method: resolvedMethod || (isBooking ? "booking" : "pix"),
+          category: prev[0]?.category || "quitacao",
+          date: prev[0]?.date || format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+          notes: prev[0]?.notes || (isBooking ? "Pagamento integral Booking.com" : (targetChannel === "airbnb" ? "Pagamento integral Airbnb" : "Pagamento integral"))
+        }];
+      }
+      return prev;
+    });
+
+    return newTot;
+  };
+
   // ── Funções de Gestão de Taxas, Adicionais & Rateio Inteligente ──
   const handleAddCharge = (type: ReservationChargeItem["type"], defaultTitle: string, defaultAmount: number) => {
+    const amt = (type === "cleaning" && defaultAmount === 80) ? 50 : defaultAmount;
     const newCharge: ReservationChargeItem = {
       id: `charge_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       type,
       title: defaultTitle,
-      amount: defaultAmount,
+      amount: amt,
       notes: ""
     };
     const updated = [...formCharges, newCharge];
     setFormCharges(updated);
-    const subNights = formDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0);
-    const subCharges = updated.reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
-    const newTot = Math.max(0, subNights + subCharges);
-    setFormTotalAmount(String(newTot));
-    setPackageTotalInput(String(newTot));
-    if (formPaymentStatus === "pago_total") {
-      setFormPaidAmount(String(newTot));
-    }
+    syncCompositeTotalAndPaid(formDailyRates, updated, formChannel);
     toast({
       title: "Taxa Adicionada",
-      description: `${defaultTitle} (R$ ${defaultAmount > 0 ? defaultAmount.toFixed(2) : `-${Math.abs(defaultAmount).toFixed(2)}`}) incluída no custo da estadia.`
+      description: `${defaultTitle} (R$ ${amt > 0 ? amt.toFixed(2) : `-${Math.abs(amt).toFixed(2)}`}) incluída no custo da estadia.`
     });
   };
 
   const handleRemoveCharge = (chargeId: string) => {
     const updated = formCharges.filter(c => c.id !== chargeId);
     setFormCharges(updated);
-    const subNights = formDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0);
-    const subCharges = updated.reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
-    const newTot = Math.max(0, subNights + subCharges);
-    setFormTotalAmount(String(newTot));
-    setPackageTotalInput(String(newTot));
-    if (formPaymentStatus === "pago_total") {
-      setFormPaidAmount(String(newTot));
-    }
+    syncCompositeTotalAndPaid(formDailyRates, updated, formChannel);
   };
 
   const handleUpdateCharge = (chargeId: string, field: keyof ReservationChargeItem, value: any) => {
@@ -2443,14 +2474,7 @@ export default function PmsCalendar() {
       return c;
     });
     setFormCharges(updated);
-    const subNights = formDailyRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0);
-    const subCharges = updated.reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
-    const newTot = Math.max(0, subNights + subCharges);
-    setFormTotalAmount(String(newTot));
-    setPackageTotalInput(String(newTot));
-    if (formPaymentStatus === "pago_total") {
-      setFormPaidAmount(String(newTot));
-    }
+    syncCompositeTotalAndPaid(formDailyRates, updated, formChannel);
   };
 
   const handleDistributeTotalToNights = (targetTotal: number) => {
@@ -2475,11 +2499,7 @@ export default function PmsCalendar() {
     });
 
     setFormDailyRates(updatedDailyRates);
-    setFormTotalAmount(String(targetTotal));
-    setPackageTotalInput(String(targetTotal));
-    if (formPaymentStatus === "pago_total") {
-      setFormPaidAmount(String(targetTotal));
-    }
+    syncCompositeTotalAndPaid(updatedDailyRates, formCharges, formChannel);
     toast({
       title: "Rateio Realizado com Sucesso!",
       description: `R$ ${targetTotal.toFixed(2)} distribuído em ${nightsCount} diária(s)${totalCharges > 0 ? ` (descontando R$ ${totalCharges.toFixed(2)} de taxas/adicionais)` : ""}.`
@@ -2566,11 +2586,7 @@ export default function PmsCalendar() {
       const updatedRates = [...currentRates, newNightItem]
       setFormDailyRates(updatedRates)
       setFormCheckout(newCheckoutStr)
-      const newTotal = updatedRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0)
-      setFormTotalAmount(String(newTotal))
-      if (formPaymentStatus === "pago_total") {
-        setFormPaidAmount(String(newTotal))
-      }
+      syncCompositeTotalAndPaid(updatedRates, formCharges, formChannel)
       toast({ title: "Diária Adicionada", description: `Nova diária em ${format(parseISO(nextDateStr), "dd/MM")}. Check-out ajustado para ${format(parseISO(newCheckoutStr), "dd/MM")}.` })
     } catch (e: any) {
       console.error(e)
@@ -2587,8 +2603,7 @@ export default function PmsCalendar() {
     const newCheckoutStr = format(addDays(parseISO(lastRemaining.date), 1), "yyyy-MM-dd")
     setFormDailyRates(updatedRates)
     setFormCheckout(newCheckoutStr)
-    const newTotal = updatedRates.reduce((acc, d) => acc + (Number(d.rate) || 0), 0)
-    setFormTotalAmount(String(newTotal))
+    syncCompositeTotalAndPaid(updatedRates, formCharges, formChannel)
     toast({ title: "Diária Removida", description: `Check-out ajustado para ${format(parseISO(newCheckoutStr), "dd/MM")}.` })
   }
 
@@ -2605,10 +2620,35 @@ export default function PmsCalendar() {
         ? formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
         : (Number(formPaidAmount) || 0)
       let resolvedPaidAmount = sumPaidFromList
-      let resolvedPaymentStatus = formPaymentStatus
-      if (isOta) {
+      let resolvedMethod = formPaymentMethod
+      let normalizedPayments = formPayments
+      if (formChannel === "booking") {
         resolvedPaymentStatus = "pago_total"
         resolvedPaidAmount = totalAmount
+        resolvedMethod = "booking"
+        if (!normalizedPayments || normalizedPayments.length === 0) {
+          normalizedPayments = [{
+            id: `pay_${Date.now()}`,
+            amount: totalAmount,
+            method: "booking",
+            category: "quitacao",
+            date: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+            notes: "Pagamento integral Booking.com"
+          }]
+        } else if (normalizedPayments.length === 1) {
+          normalizedPayments = [{
+            ...normalizedPayments[0],
+            amount: totalAmount,
+            method: "booking",
+            category: "quitacao"
+          }]
+        }
+      } else if (isOta) {
+        resolvedPaymentStatus = "pago_total"
+        resolvedPaidAmount = totalAmount
+        if (formChannel === "airbnb" && (!resolvedMethod || resolvedMethod === "pix")) {
+          resolvedMethod = "airbnb"
+        }
       } else if (resolvedPaidAmount >= totalAmount && totalAmount > 0) {
         resolvedPaymentStatus = "pago_total"
       } else if (resolvedPaidAmount > 0) {
@@ -2666,13 +2706,13 @@ export default function PmsCalendar() {
         checkoutTime: formCheckoutTime || defaultCheckoutTime || "12:00",
         status: formStatus,
         channel: formDailyRates.length > 0 && formDailyRates[0].channel ? formDailyRates[0].channel : formChannel,
-        paymentMethod: formPaymentMethod,
+        paymentMethod: resolvedMethod,
         dailyRate: formDailyRates.length > 0 
           ? Math.round(totalAmount / formDailyRates.length) 
           : (Number(formDailyRate) || 0),
         dailyRates: formDailyRates,
         charges: formCharges,
-        payments: formPayments,
+        payments: normalizedPayments,
         totalAmount,
         paidAmount: resolvedPaidAmount,
         paymentStatus: resolvedPaymentStatus,
