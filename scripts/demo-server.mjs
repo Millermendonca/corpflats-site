@@ -1857,53 +1857,60 @@ async function reconcileFromAuditLogs(db, pgPool) {
 
     // 3. RECONCILIAR LIMPEZAS DAS CAMAREIRAS
     const cleaningsMap = new Map();
+    const cleaningsByReqId = new Map();
     for (const l of logs) {
       const d = l.details || {};
       const flat = String(d.flatNumber || "").replace(/\D/g, "");
       if (!flat) continue;
       const maidName = d.assignedMaidName || d.assignedUsername;
       const userId = d.assignedUserId || (maidName === "Cris" ? 2 : (maidName === "Grazi" ? 3 : null));
-      const date = l.timestamp.substring(0, 10);
+      const tsStr = l.timestamp instanceof Date ? l.timestamp.toISOString() : String(l.timestamp || "");
+      const date = tsStr.substring(0, 10);
+      const reqId = Number(d.requestId);
 
       const key = (maidName || "maid") + "___" + flat + "___" + date;
 
       if (l.action === "CLEANING_STATUS_WILL_CLEAN" || l.action === "CLEANING_STATUS_CLEANING_NOW") {
         if (!cleaningsMap.has(key)) {
-          cleaningsMap.set(key, { startedAt: l.timestamp, maidName, userId, flat, date });
+          cleaningsMap.set(key, { startedAt: tsStr, maidName, userId, flat, date, requestId: reqId });
         } else {
           const item = cleaningsMap.get(key);
-          if (!item.startedAt) item.startedAt = l.timestamp;
+          if (!item.startedAt) item.startedAt = tsStr;
+          if (reqId && !item.requestId) item.requestId = reqId;
         }
       }
 
       if (l.action === "CLEANING_STATUS_CLEAN" || l.action === "CLEANING_COMPLETED_BY_ADMIN_FOR_MAID") {
         const existing = cleaningsMap.get(key) || { flat, date };
-        existing.completedAt = l.timestamp;
+        existing.completedAt = tsStr;
         existing.maidName = maidName || existing.maidName;
         existing.userId = userId || existing.userId;
         existing.status = "clean";
+        if (reqId) existing.requestId = reqId;
         cleaningsMap.set(key, existing);
+        if (reqId) cleaningsByReqId.set(reqId, existing);
       }
     }
 
     for (const c of (db.cleaningRequests || [])) {
-      if (!c.requestDate) continue;
-      const keyCris = "Cris___" + c.flatNumber + "___" + c.requestDate;
-      const keyGrazi = "Grazi___" + c.flatNumber + "___" + c.requestDate;
-      const match = cleaningsMap.get(keyGrazi) || cleaningsMap.get(keyCris);
+      const fNum = String(c.flatNumber || "").replace(/\D/g, "");
+      const cDate = c.requestDate || (c.completedAt ? String(c.completedAt).substring(0, 10) : "");
+      const keyCris = "Cris___" + fNum + "___" + cDate;
+      const keyGrazi = "Grazi___" + fNum + "___" + cDate;
+      const match = (c.id && cleaningsByReqId.get(Number(c.id))) || cleaningsMap.get(keyGrazi) || cleaningsMap.get(keyCris);
       if (match && match.status === "clean") {
         c.status = "clean";
-        c.assignedUserId = match.userId;
-        c.assignedUsername = match.maidName;
-        c.assignedUserName = match.maidName;
-        c.completedAt = match.completedAt;
-        if (match.startedAt) c.cleaningStartedAt = match.startedAt;
+        c.assignedUserId = match.userId || c.assignedUserId || 2;
+        c.assignedUsername = match.maidName || c.assignedUsername || "Cris";
+        c.assignedUserName = match.maidName || c.assignedUserName || "Cris";
+        c.completedAt = match.completedAt || c.completedAt;
+        if (match.startedAt && !c.cleaningStartedAt) c.cleaningStartedAt = match.startedAt;
         if (!c.durationMinutes && match.startedAt && match.completedAt) {
           const diff = Math.round((new Date(match.completedAt) - new Date(match.startedAt)) / 60000);
           if (diff > 0 && diff <= 120) c.durationMinutes = diff;
         }
-        c.effectiveDate = match.date;
-        cleaningsMap.delete(match.maidName + "___" + match.flat + "___" + match.date);
+        if (!c.durationMinutes) c.durationMinutes = 35;
+        c.effectiveDate = match.date || c.requestDate;
         changed = true;
       }
     }
@@ -1912,15 +1919,16 @@ async function reconcileFromAuditLogs(db, pgPool) {
     for (const item of cleaningsMap.values()) {
       if (item.status !== "clean") continue;
       const alreadyExists = (db.cleaningRequests || []).some(c => 
-        String(c.flatNumber) === String(item.flat) && 
+        (item.requestId && Number(c.id) === Number(item.requestId)) ||
+        (String(c.flatNumber).replace(/\D/g, "") === String(item.flat) && 
         (c.requestDate === item.date || c.effectiveDate === item.date) &&
-        (c.assignedUsername === item.maidName || c.assignedUserName === item.maidName)
+        c.status === "clean")
       );
       if (alreadyExists) continue;
       const flatObj = activeFlatsMap.get(item.flat);
       maxCleanId++;
       db.cleaningRequests.push({
-        id: maxCleanId,
+        id: item.requestId || (maxCleanId + 1),
         flatId: flatObj ? flatObj.id : Number(item.flat),
         flatNumber: item.flat,
         requestDate: item.date,
@@ -1928,9 +1936,9 @@ async function reconcileFromAuditLogs(db, pgPool) {
         executionDate: item.date,
         source: "checkout",
         status: "clean",
-        assignedUserId: item.userId,
-        assignedUsername: item.maidName,
-        assignedUserName: item.maidName,
+        assignedUserId: item.userId || 2,
+        assignedUsername: item.maidName || "Cris",
+        assignedUserName: item.maidName || "Cris",
         isVacant: true,
         isPriority: false,
         isExtended: false,
@@ -2097,6 +2105,7 @@ async function loadDatabase() {
           if (!Array.isArray(db.periodicExecutions)) db.periodicExecutions = [];
           console.log("[PostgreSQL] Estado restaurado da nuvem com sucesso!");
           sanitizeAndRecoverCleanings();
+          await reconcileFromAuditLogs(db, pgPool);
           sanitizeLostAndFound();
           sanitizeReservationFlags();
           const didChange = reconcileUniversalIntegrity({ 
@@ -2109,6 +2118,8 @@ async function loadDatabase() {
             maidStatementEntries: localMaidStatementEntries,
             lostAndFound: localLostAndFound
           });
+          syncMaidCredits(2);
+          syncMaidCredits(3);
           if (didChange) {
             console.log("[PostgreSQL] Estado universal reconciliado sem perdas e sincronizado na nuvem!");
             saveDatabase();
@@ -2872,9 +2883,11 @@ function reconcileCleaningRequests() {
   if (!db.cleaningRequests) db.cleaningRequests = [];
   const byFlatAndDate = new Map();
   for (const req of db.cleaningRequests) {
-    if (!req || (!req.flatId && !req.flatNumber) || !req.requestDate) continue;
-    const fKey = String(req.flatNumber || req.flatId);
-    const key = `${fKey}_${req.requestDate}`;
+    if (!req || (!req.flatId && !req.flatNumber)) continue;
+    const fKey = String(req.flatNumber || req.flatId).replace(/\D/g, "") || String(req.flatNumber || req.flatId);
+    const rDate = req.requestDate || (req.completedAt ? String(req.completedAt).substring(0, 10) : "");
+    if (!rDate) continue;
+    const key = `${fKey}_${rDate}`;
     if (!byFlatAndDate.has(key)) {
       byFlatAndDate.set(key, []);
     }
@@ -2889,6 +2902,15 @@ function reconcileCleaningRequests() {
       // Prioridade absoluta: registro com status === "clean" ou "no_show"
       const cleanItem = items.find(i => i.status === "clean");
       if (cleanItem) {
+        // Enriquecer com detalhes de hóspedes se o item limpo não os tiver
+        for (const other of items) {
+          if (other === cleanItem) continue;
+          if (!cleanItem.leavingGuest && other.leavingGuest) cleanItem.leavingGuest = other.leavingGuest;
+          if (!cleanItem.arrivingGuest && other.arrivingGuest) cleanItem.arrivingGuest = other.arrivingGuest;
+          if (!cleanItem.adminNote && other.adminNote) cleanItem.adminNote = other.adminNote;
+          if (typeof cleanItem.twinBeds !== "boolean" && typeof other.twinBeds === "boolean") cleanItem.twinBeds = other.twinBeds;
+          if (typeof cleanItem.extraMattress !== "boolean" && typeof other.extraMattress === "boolean") cleanItem.extraMattress = other.extraMattress;
+        }
         reconciled.push(cleanItem);
       } else {
         const noShowItem = items.find(i => i.status === "no_show");
@@ -5086,11 +5108,19 @@ function getRequestsForDate(dateStr, isNested = false) {
       nextUpcomingRes = upcoming[0] || null;
     }
 
+    const flatNumClean = flatNumber.replace(/\D/g, "");
     const matchingCleanings = (db.cleaningRequests || []).filter(c => 
-      (String(c.flatNumber) === flatNumber || c.flatId === flat.id) && 
-      c.requestDate === dateStr
+      (String(c.flatNumber).replace(/\D/g, "") === flatNumClean || c.flatId === flat.id) && 
+      (c.requestDate === dateStr || (c.effectiveDate === dateStr && c.status === "clean"))
     );
     const existingCleaning = matchingCleanings.find(c => c.status === "clean") || matchingCleanings.find(c => c.status === "no_show") || matchingCleanings[0];
+
+    // Blindagem de Auditoria: Se o status ainda for dirty mas houver evento de auditoria clean hoje, respeita o clean
+    const auditCleanEvent = (!existingCleaning || existingCleaning.status !== "clean") ? (db.auditLogs || []).find(l =>
+      (l.action === "CLEANING_STATUS_CLEAN" || l.action === "CLEANING_COMPLETED_BY_ADMIN_FOR_MAID") &&
+      String(l.details?.flatNumber || "").replace(/\D/g, "") === flatNumClean &&
+      (String(l.timestamp || "").substring(0, 10) === dateStr)
+    ) : null;
 
     const nextResHasTwin = Boolean(nextUpcomingRes && (nextUpcomingRes.twinBeds || nextUpcomingRes.bedType === "2 Solteiro" || nextUpcomingRes.bedType === "twin"));
     const nextResHasExtraMattress = Boolean(nextUpcomingRes && nextUpcomingRes.extraMattress);
@@ -5102,16 +5132,20 @@ function getRequestsForDate(dateStr, isNested = false) {
       : nextResHasExtraMattress;
 
     const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
+    const resolvedStatus = existingCleaning ? existingCleaning.status : (auditCleanEvent ? "clean" : "dirty");
+    const resolvedMaidName = existingCleaning?.assignedUsername || existingCleaning?.assignedUserName || auditCleanEvent?.details?.assignedMaidName || (auditCleanEvent ? "Cris" : null);
+    const resolvedMaidId = existingCleaning?.assignedUserId || auditCleanEvent?.details?.assignedUserId || (auditCleanEvent ? 2 : null);
+
     const card = {
       id: existingCleaning ? existingCleaning.id : (maxId + 1),
       flatId: flat.id,
       flatNumber: flat.number,
       requestDate: dateStr,
       source: "checkout",
-      status: existingCleaning ? existingCleaning.status : "dirty",
-      assignedUserId: existingCleaning ? existingCleaning.assignedUserId : null,
-      assignedUsername: existingCleaning ? existingCleaning.assignedUsername : null,
-      assignedUserName: existingCleaning ? existingCleaning.assignedUserName : null,
+      status: resolvedStatus,
+      assignedUserId: resolvedMaidId,
+      assignedUsername: resolvedMaidName,
+      assignedUserName: resolvedMaidName,
       isVacant: existingCleaning ? Boolean(existingCleaning.isVacant) : false,
       isPriority: existingCleaning ? Boolean(existingCleaning.isPriority) : Boolean(pmsRes.isPriority),
       isExtended: false,
