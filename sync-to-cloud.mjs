@@ -1,20 +1,10 @@
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
+/**
+ * Sincronizador de planilha Excel DESCONTINUADO PERMANENTEMENTE.
+ * Todas as reservas são criadas e gerenciadas diretamente no PMS Web.
+ */
+console.log("[Aviso] A sincronização via planilha Excel foi descontinuada permanentemente. Operação 100% via PMS Web.");
+process.exit(0);
 
-const SPREADSHEET_PATH = "C:\\Users\\mille\\OneDrive\\Documentos\\Calendário de Reservas 23-11-2025.xlsx";
-const CLOUD_URL = "https://corpflats.onrender.com/api/sync/upload-sheet-json";
-
-let isSyncing = false;
-
-async function syncToCloud() {
-  if (isSyncing) return;
-  if (!fs.existsSync(SPREADSHEET_PATH)) return;
-
-  isSyncing = true;
-  try {
-    const buf = fs.readFileSync(SPREADSHEET_PATH);
-    const base64 = buf.toString("base64");
 
     const res = await fetch(CLOUD_URL, {
       method: "POST",

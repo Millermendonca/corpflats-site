@@ -1,26 +1,10 @@
 /**
- * Guest Flow Manager - Continuous OneDrive Auto-Sync Daemon
- * Monitora alterações no Excel continuamente (com suporte a Salvamento Automático do Excel / AutoSave)
- * e envia push instantâneo para a nuvem no Render sem necessidade de salvar manualmente.
+ * Sincronizador de planilha Excel DESCONTINUADO PERMANENTEMENTE.
+ * Todas as reservas são criadas e gerenciadas diretamente no PMS Web.
  */
+console.log("[Aviso] A sincronização via planilha Excel foi descontinuada permanentemente. Operação 100% via PMS Web.");
+process.exit(0);
 
-import fs from "fs";
-import crypto from "crypto";
-import path from "path";
-
-const LOCAL_EXCEL_PATH = "C:\\Users\\mille\\OneDrive\\Documentos\\Calendário de Reservas 23-11-2025.xlsx";
-const CLOUD_SYNC_ENDPOINT = "https://corpflats.onrender.com/api/sync/upload-sheet-json";
-const POLLING_INTERVAL_MS = 3000; // Checa a cada 3 segundos
-
-console.log("==================================================================");
-console.log(" 🚀 GUEST FLOW MANAGER - SINCRONIZADOR CONTÍNUO (AUTOSAVE ATIVO)");
-console.log(` 📁 Monitorando: ${LOCAL_EXCEL_PATH}`);
-console.log(` ☁️ Destino: ${CLOUD_SYNC_ENDPOINT}`);
-console.log(` ⏱️ Frequência de checagem: A cada 3 segundos (Instantâneo)`);
-console.log("==================================================================");
-
-let lastFileHash = "";
-let isSyncing = false;
 
 function getFileHashSafe(filePath) {
   try {

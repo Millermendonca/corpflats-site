@@ -68,6 +68,7 @@ if (!fs.existsSync(LOST_ITEMS_DIR)) {
 
 let pgPool = null;
 let pgHydratedSuccessfully = false;
+let lastPersistInfo = { status: "pending", timestamp: null, error: null };
 if (process.env.DATABASE_URL) {
   try {
     pgPool = new Pool({
@@ -123,8 +124,11 @@ app.get("/api/system/db-status", async (req, res) => {
     databaseType: pgPool ? "PostgreSQL Cloud (Blindado)" : "Local JSON (Efêmero)",
     pgStatus,
     pgError,
+    pgHydratedSuccessfully,
+    lastPersistInfo,
     lastSaved,
     dbStats: {
+      reservationsCount: db.reservations?.length || 0,
       cleaningRequestsCount: db.cleaningRequests?.length || 0,
       flatsCount: db.flats?.length || 0,
       usersCount: db.users?.length || 0,
@@ -1964,62 +1968,67 @@ async function loadDatabase() {
     }
     if (pgPool) {
       try {
-        await pgPool.query(`
-          CREATE TABLE IF NOT EXISTS system_store (
-            key TEXT PRIMARY KEY,
-            value JSONB NOT NULL,
-            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-          );
-          CREATE TABLE IF NOT EXISTS system_store_backups (
-            id BIGSERIAL PRIMARY KEY,
-            timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            reason TEXT NOT NULL,
-            reservations_count INT NOT NULL,
-            value JSONB NOT NULL
-          );
-          CREATE INDEX IF NOT EXISTS idx_backups_timestamp ON system_store_backups (timestamp DESC);
-          CREATE TABLE IF NOT EXISTS system_audit_logs (
-            id BIGSERIAL PRIMARY KEY,
-            timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-            level TEXT NOT NULL,
-            category TEXT NOT NULL,
-            action TEXT NOT NULL,
-            actor JSONB NOT NULL DEFAULT '{}',
-            details JSONB NOT NULL DEFAULT '{}',
-            source TEXT NOT NULL DEFAULT 'server'
-          );
-          CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON system_audit_logs (timestamp DESC);
-          CREATE INDEX IF NOT EXISTS idx_audit_category ON system_audit_logs (category);
-          CREATE INDEX IF NOT EXISTS idx_audit_level ON system_audit_logs (level);
-          CREATE TABLE IF NOT EXISTS reservation_communications (
-            id TEXT PRIMARY KEY,
-            reservation_id TEXT NOT NULL,
-            type TEXT NOT NULL DEFAULT 'email',
-            direction TEXT NOT NULL DEFAULT 'outbound',
-            recipient TEXT NOT NULL,
-            subject TEXT NOT NULL,
-            body TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'pending',
-            metadata JSONB DEFAULT '{}'::jsonb,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-          );
-          CREATE INDEX IF NOT EXISTS idx_res_comm_res_id ON reservation_communications(reservation_id);
-          CREATE TABLE IF NOT EXISTS fnrh_internal_audit_logs (
-            id BIGSERIAL PRIMARY KEY,
-            timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-            action TEXT NOT NULL,
-            auth_context TEXT NOT NULL,
-            user_id INT,
-            username TEXT,
-            client_ip TEXT NOT NULL,
-            hostname TEXT,
-            user_agent TEXT NOT NULL,
-            record_id TEXT,
-            details JSONB NOT NULL DEFAULT '{}'
-          );
-          CREATE INDEX IF NOT EXISTS idx_fnrh_audit_timestamp ON fnrh_internal_audit_logs (timestamp DESC);
-          CREATE INDEX IF NOT EXISTS idx_fnrh_audit_record_id ON fnrh_internal_audit_logs (record_id);
-        `);
+        try {
+          await pgPool.query(`
+            CREATE TABLE IF NOT EXISTS system_store (
+              key TEXT PRIMARY KEY,
+              value JSONB NOT NULL,
+              updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            );
+            CREATE TABLE IF NOT EXISTS system_store_backups (
+              id BIGSERIAL PRIMARY KEY,
+              timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              reason TEXT NOT NULL,
+              reservations_count INT NOT NULL,
+              value JSONB NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_backups_timestamp ON system_store_backups (timestamp DESC);
+            CREATE TABLE IF NOT EXISTS system_audit_logs (
+              id BIGSERIAL PRIMARY KEY,
+              timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+              level TEXT NOT NULL,
+              category TEXT NOT NULL,
+              action TEXT NOT NULL,
+              actor JSONB NOT NULL DEFAULT '{}'::jsonb,
+              details JSONB NOT NULL DEFAULT '{}'::jsonb,
+              source TEXT NOT NULL DEFAULT 'server'
+            );
+            CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON system_audit_logs (timestamp DESC);
+            CREATE INDEX IF NOT EXISTS idx_audit_category ON system_audit_logs (category);
+            CREATE INDEX IF NOT EXISTS idx_audit_level ON system_audit_logs (level);
+            CREATE TABLE IF NOT EXISTS reservation_communications (
+              id TEXT PRIMARY KEY,
+              reservation_id TEXT NOT NULL,
+              type TEXT NOT NULL DEFAULT 'email',
+              direction TEXT NOT NULL DEFAULT 'outbound',
+              recipient TEXT NOT NULL,
+              subject TEXT NOT NULL,
+              body TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'pending',
+              metadata JSONB DEFAULT '{}'::jsonb,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_res_comm_res_id ON reservation_communications(reservation_id);
+            CREATE TABLE IF NOT EXISTS fnrh_internal_audit_logs (
+              id BIGSERIAL PRIMARY KEY,
+              timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+              action TEXT NOT NULL,
+              auth_context TEXT NOT NULL,
+              user_id INT,
+              username TEXT,
+              client_ip TEXT NOT NULL,
+              hostname TEXT,
+              user_agent TEXT NOT NULL,
+              record_id TEXT,
+              details JSONB NOT NULL DEFAULT '{}'::jsonb
+            );
+            CREATE INDEX IF NOT EXISTS idx_fnrh_audit_timestamp ON fnrh_internal_audit_logs (timestamp DESC);
+            CREATE INDEX IF NOT EXISTS idx_fnrh_audit_record_id ON fnrh_internal_audit_logs (record_id);
+          `);
+        } catch (ddlErr) {
+          console.warn("[PostgreSQL] Aviso ao verificar tabelas DDL:", ddlErr.message);
+        }
+
         let res = null;
         let attempts = 0;
         const maxAttempts = 5;
@@ -2036,8 +2045,9 @@ async function loadDatabase() {
           }
         }
 
+        pgHydratedSuccessfully = true;
+
         if (res && res.rows && res.rows[0]) {
-          pgHydratedSuccessfully = true;
           const pgLoaded = res.rows[0].value;
           // Proteção mandatória: Se o PostgreSQL na nuvem estiver com periodicTasks vazias mas o arquivo local tiver as tarefas restauradas, preserva e sincroniza
           if ((!pgLoaded.periodicTasks || pgLoaded.periodicTasks.length === 0) && (db.periodicTasks && db.periodicTasks.length > 0)) {
@@ -2103,9 +2113,13 @@ async function loadDatabase() {
             console.log("[PostgreSQL] Estado universal reconciliado sem perdas e sincronizado na nuvem!");
             saveDatabase();
           }
+        } else {
+          pgHydratedSuccessfully = true;
+          console.log("[PostgreSQL] Primeira inicialização: db_state será persistido no próximo saveDatabase.");
         }
       } catch (err) {
         console.warn("[PostgreSQL] Falha ao sincronizar estado inicial:", err.message);
+        pgHydratedSuccessfully = true;
       }
     }
 
@@ -2922,20 +2936,25 @@ function saveDatabase(reason = "auto_save") {
     const stateJson = JSON.stringify(db, null, 2);
     fs.writeFileSync(DB_FILE, stateJson, "utf-8");
     if (pgPool) {
-      if (!pgHydratedSuccessfully) {
-        console.warn("[PostgreSQL] BLINDAGEM ATIVA: Ignorando saveDatabase no PostgreSQL porque a hidratação inicial do banco ainda não foi concluída com sucesso. Evitando sobrescrita com dados locais obsoletos.");
+      if (!pgHydratedSuccessfully && (!db.reservations || db.reservations.length === 0)) {
+        console.warn("[PostgreSQL] BLINDAGEM ATIVA: Ignorando saveDatabase temporariamente porque o banco ainda não hidratou e a memória está vazia.");
         return;
       }
       pgPool.query(
-        "INSERT INTO system_store (key, value, updated_at) VALUES ('db_state', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()",
+        "INSERT INTO system_store (key, value, updated_at) VALUES ('db_state', $1::jsonb, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1::jsonb, updated_at = NOW()",
         [stateJson]
-      ).catch(e => console.warn("[PostgreSQL] Erro ao persistir estado:", e.message));
+      ).then(() => {
+        lastPersistInfo = { status: "success", timestamp: new Date().toISOString(), error: null };
+      }).catch(e => {
+        lastPersistInfo = { status: "error", timestamp: new Date().toISOString(), error: e.message };
+        console.error("[PostgreSQL] Erro ao persistir estado:", e.message);
+      });
 
       const resCount = db.reservations ? db.reservations.length : 0;
       if (resCount > 0) {
         ensureBackupsTable().then(() => {
           return pgPool.query(
-            "INSERT INTO system_store_backups (timestamp, reason, reservations_count, value) VALUES (NOW(), $1, $2, $3)",
+            "INSERT INTO system_store_backups (timestamp, reason, reservations_count, value) VALUES (NOW(), $1, $2, $3::jsonb)",
             [reason, resCount, stateJson]
           );
         }).then(() => {
@@ -6886,32 +6905,9 @@ app.patch("/api/settings", (req, res) => {
   });
 });
 
-app.post("/api/sync/upload-sheet-json", (req, res) => {
-  const { base64 } = req.body || {};
-  if (!base64) {
-    return res.status(400).json({ error: "Nenhum dado recebido." });
-  }
-  try {
-    const buf = Buffer.from(base64, "base64");
-    const cloudCache = path.join(DATA_DIR, "latest_sheet.xlsx");
-    fs.writeFileSync(cloudCache, buf);
-    const success = parseSpreadsheetBuffer(buf);
-    res.json({ success, message: "Planilha atualizada na nuvem com sucesso!" });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post("/api/reservations/sync", async (req, res) => {
-  const success = await loadSpreadsheetData();
-  const todayStr = getTodayStr();
-  const todayCheckouts = db.cleaningRequests.filter(r => r.requestDate === todayStr).length;
-
-  res.json({
-    flatsFound: db.flats.length,
-    reservationsUpserted: db.cleaningRequests.length,
-    checkoutsDetected: todayCheckouts,
-    message: success ? `Sincronizado instantaneamente! ${todayCheckouts} check-outs detectados para hoje.` : "Não foi possível recarregar a planilha.",
+app.all(["/api/sync/upload-sheet-json", "/api/reservations/sync"], (req, res) => {
+  return res.status(410).json({
+    error: "Sincronização com planilhas externas descontinuada permanentemente. O Guest Flow Manager opera 100% via PMS Web diretamente no sistema."
   });
 });
 

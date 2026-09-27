@@ -1,28 +1,10 @@
-// Auto-Sync Watcher: Envia alterações da planilha do seu computador diretamente para a nuvem no Render
-import fs from "fs";
-import path from "path";
+/**
+ * Sincronizador de planilha Excel DESCONTINUADO PERMANENTEMENTE.
+ * Todas as reservas são criadas e gerenciadas diretamente no PMS Web.
+ */
+console.log("[Aviso] A sincronização via planilha Excel foi descontinuada permanentemente. Operação 100% via PMS Web.");
+process.exit(0);
 
-const LOCAL_SPREADSHEET_PATHS = [
-  "C:\\Users\\mille\\OneDrive\\Documentos\\Calendário de Reservas 23-11-2025.xlsx",
-  "C:\\Users\\mille\\OneDrive\\Hotel\\Calendário de Reservas 23-11-2025.xlsx",
-  "C:\\Users\\mille\\OneDrive\\Documentos\\Hotel\\Calendário de reservas 2024.xlsx",
-];
-
-function findFile() {
-  for (const p of LOCAL_SPREADSHEET_PATHS) {
-    if (fs.existsSync(p)) return p;
-  }
-  return null;
-}
-
-const targetFile = findFile();
-
-if (!targetFile) {
-  console.error("Arquivo da planilha Excel não encontrado nos caminhos padrões.");
-  process.exit(1);
-}
-
-console.log(`[Auto-Sync Watcher] Monitorando planilha local: ${targetFile}`);
 
 async function uploadToCloud() {
   try {
