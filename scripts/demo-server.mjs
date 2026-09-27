@@ -8054,7 +8054,7 @@ app.post("/api/pms/reservations", async (req, res) => {
   }
 
   let resolvedPaymentMethod = paymentMethod;
-  if (!resolvedPaymentMethod) {
+  if (!resolvedPaymentMethod || (isOta && resolvedPaymentMethod === "pix")) {
     if (chanLower.includes("booking")) resolvedPaymentMethod = "booking";
     else if (chanLower.includes("airbnb")) resolvedPaymentMethod = "airbnb";
     else if (chanLower.includes("site")) resolvedPaymentMethod = "pix";
@@ -8074,14 +8074,30 @@ app.post("/api/pms/reservations", async (req, res) => {
     })).filter(p => p.amount > 0 || p.method);
   }
 
+  if (isOta) {
+    resolvedPaymentStatus = "pago_total";
+    if (finalTotalAmount > 0) {
+      resolvedPaidAmount = finalTotalAmount;
+    }
+  }
+
   if (normalizedPayments.length > 0) {
-    resolvedPaidAmount = normalizedPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
-    if (resolvedPaidAmount >= finalTotalAmount && finalTotalAmount > 0) {
-      resolvedPaymentStatus = "pago_total";
-    } else if (resolvedPaidAmount > 0) {
-      resolvedPaymentStatus = "sinal_pago";
+    if (!isOta) {
+      resolvedPaidAmount = normalizedPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+      if (resolvedPaidAmount >= finalTotalAmount && finalTotalAmount > 0) {
+        resolvedPaymentStatus = "pago_total";
+      } else if (resolvedPaidAmount > 0) {
+        resolvedPaymentStatus = "sinal_pago";
+      } else {
+        resolvedPaymentStatus = "pendente";
+      }
     } else {
-      resolvedPaymentStatus = "pendente";
+      const otaMethod = chanLower.includes("booking") ? "booking" : "airbnb";
+      if (normalizedPayments.length === 1) {
+        normalizedPayments[0].amount = finalTotalAmount;
+        normalizedPayments[0].method = otaMethod;
+        normalizedPayments[0].notes = normalizedPayments[0].notes || (otaMethod === "booking" ? "Pagamento integral Booking.com" : "Pagamento integral Airbnb");
+      }
     }
   } else {
     if (resolvedPaymentStatus === "pago_total" && finalTotalAmount > 0 && resolvedPaidAmount === 0) {
@@ -8094,12 +8110,13 @@ app.post("/api/pms/reservations", async (req, res) => {
     }
 
     if (resolvedPaidAmount > 0) {
+      const otaLabel = chanLower.includes("booking") ? "Booking.com" : (chanLower.includes("airbnb") ? "Airbnb" : null);
       normalizedPayments = [{
         id: `pay_${Date.now()}_init`,
         amount: resolvedPaidAmount,
         method: resolvedPaymentMethod || "pix",
         date: new Date().toISOString(),
-        notes: resolvedPaymentStatus === "pago_total" ? "Pagamento integral" : "Pagamento inicial"
+        notes: otaLabel ? `Pagamento integral ${otaLabel}` : (resolvedPaymentStatus === "pago_total" ? "Pagamento integral" : "Pagamento inicial")
       }];
     }
   }
@@ -9198,11 +9215,30 @@ app.put("/api/pms/reservations/:id", (req, res) => {
 
   const putChanLower = String(r.channel || "").toLowerCase();
   const putIsOta = putChanLower.includes("booking") || putChanLower.includes("airbnb");
-  if (putIsOta && (!r.paymentStatus || r.paymentStatus === "pendente") && req.body.paymentStatus === undefined) {
-    r.paymentStatus = "pago_total";
-  }
-  if (r.paymentStatus === "pago_total" && Number(r.totalAmount) > 0) {
-    r.paidAmount = Number(r.totalAmount);
+  if (putIsOta) {
+    const otaMethod = putChanLower.includes("booking") ? "booking" : "airbnb";
+    if (!r.paymentMethod || r.paymentMethod === "pix") {
+      r.paymentMethod = otaMethod;
+    }
+    if (req.body.paymentStatus === undefined || !r.paymentStatus || r.paymentStatus === "pendente") {
+      r.paymentStatus = "pago_total";
+    }
+    if (Number(r.totalAmount) > 0) {
+      r.paidAmount = Number(r.totalAmount);
+    }
+    if (Array.isArray(r.payments) && (r.payments.length === 0 || (r.payments.length === 1 && (!r.payments[0].method || r.payments[0].method === "pix")))) {
+      r.payments = [{
+        id: r.payments?.[0]?.id || `pay_${Date.now()}_ota`,
+        amount: Number(r.totalAmount) || 0,
+        method: otaMethod,
+        date: r.payments?.[0]?.date || new Date().toISOString(),
+        notes: r.payments?.[0]?.notes || (otaMethod === "booking" ? "Pagamento integral Booking.com" : "Pagamento integral Airbnb")
+      }];
+    }
+  } else {
+    if (r.paymentStatus === "pago_total" && Number(r.totalAmount) > 0 && (!r.paidAmount || r.paidAmount < Number(r.totalAmount))) {
+      r.paidAmount = Number(r.totalAmount);
+    }
   }
 
   // Sincroniza com o hóspede no CRM se aplicável

@@ -1836,14 +1836,16 @@ export default function PmsCalendar() {
     setFormGuest3Phone("")
     setFormGuest3Email("")
     const isBooking = initialChannel === "booking"
+    const isAirbnb = initialChannel === "airbnb"
+    const isOtaChannel = isBooking || isAirbnb
     setFormChannel(initialChannel)
-    setFormPaymentMethod(isBooking ? "booking" : (initialChannel === "airbnb" ? "airbnb" : "pix"))
+    setFormPaymentMethod(isBooking ? "booking" : (isAirbnb ? "airbnb" : "pix"))
     const rangeNights = Math.max(1, differenceInDays(parseISO(cout), parseISO(cin))) || 1
     const baseDailyRate = 250
     setFormDailyRate(String(baseDailyRate))
     const initialRates = buildReservationDailyRates(cin, cout, baseDailyRate, initialChannel)
     setFormDailyRates(initialRates)
-    const initialCharges: ReservationChargeItem[] = isBooking
+    const initialCharges: ReservationChargeItem[] = isOtaChannel
       ? [{
           id: `charge_${Date.now()}_clean`,
           type: "cleaning",
@@ -1862,10 +1864,10 @@ export default function PmsCalendar() {
       {
         id: `pay_${Date.now()}`,
         amount: initialTotal,
-        method: isBooking ? "booking" : (initialChannel === "airbnb" ? "airbnb" : "pix"),
+        method: isBooking ? "booking" : (isAirbnb ? "airbnb" : "pix"),
         category: "quitacao",
         date: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
-        notes: isBooking ? "Pagamento integral Booking.com" : "Pagamento integral"
+        notes: isBooking ? "Pagamento integral Booking.com" : (isAirbnb ? "Pagamento integral Airbnb" : "Pagamento integral")
       }
     ])
     setFormPaymentStatus("pago_total")
@@ -2006,14 +2008,16 @@ export default function PmsCalendar() {
     setFormGuest3Phone("")
     setFormGuest3Email("")
     const isBooking = initialChannel === "booking"
+    const isAirbnb = initialChannel === "airbnb"
+    const isOtaChannel = isBooking || isAirbnb
     setFormChannel(initialChannel)
-    setFormPaymentMethod(isBooking ? "booking" : (initialChannel === "airbnb" ? "airbnb" : "pix"))
+    setFormPaymentMethod(isBooking ? "booking" : (isAirbnb ? "airbnb" : "pix"))
     const initialNights = 1
     const baseDailyRate = 250
     setFormDailyRate(String(baseDailyRate))
     const initialRates = buildReservationDailyRates(cin, cout, baseDailyRate, initialChannel)
     setFormDailyRates(initialRates)
-    const initialCharges: ReservationChargeItem[] = isBooking
+    const initialCharges: ReservationChargeItem[] = isOtaChannel
       ? [{
           id: `charge_${Date.now()}_clean`,
           type: "cleaning",
@@ -2032,10 +2036,10 @@ export default function PmsCalendar() {
       {
         id: `pay_${Date.now()}`,
         amount: initialTotal,
-        method: isBooking ? "booking" : (initialChannel === "airbnb" ? "airbnb" : "pix"),
+        method: isBooking ? "booking" : (isAirbnb ? "airbnb" : "pix"),
         category: "quitacao",
         date: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
-        notes: isBooking ? "Pagamento integral Booking.com" : "Pagamento integral"
+        notes: isBooking ? "Pagamento integral Booking.com" : (isAirbnb ? "Pagamento integral Airbnb" : "Pagamento integral")
       }
     ])
     setFormPaymentStatus("pago_total")
@@ -2609,7 +2613,39 @@ export default function PmsCalendar() {
 
   const handleSaveRes = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!formFlatId || !formGuestName.trim() || !formCheckin || !formCheckout) return
+
+    if (!formFlatId) {
+      toast({
+        title: "Apartamento obrigatório",
+        description: "Por favor, selecione o apartamento (Flat) da reserva.",
+        variant: "destructive"
+      })
+      return
+    }
+    if (!formGuestName.trim()) {
+      toast({
+        title: "Nome do Hóspede obrigatório",
+        description: "Por favor, preencha o nome do hóspede titular.",
+        variant: "destructive"
+      })
+      return
+    }
+    if (!formCheckin || !formCheckout) {
+      toast({
+        title: "Datas obrigatórias",
+        description: "Por favor, preencha as datas de check-in e check-out.",
+        variant: "destructive"
+      })
+      return
+    }
+    if (formCheckout <= formCheckin) {
+      toast({
+        title: "Período inválido",
+        description: "A data de check-out deve ser posterior à data de check-in.",
+        variant: "destructive"
+      })
+      return
+    }
 
     setSavingRes(true)
     try {
@@ -2622,32 +2658,29 @@ export default function PmsCalendar() {
       let resolvedPaidAmount = sumPaidFromList
       let resolvedMethod = formPaymentMethod
       let normalizedPayments = formPayments
-      if (formChannel === "booking") {
+
+      if (formChannel === "booking" || formChannel === "airbnb") {
         resolvedPaymentStatus = "pago_total"
         resolvedPaidAmount = totalAmount
-        resolvedMethod = "booking"
+        resolvedMethod = formChannel
+        const otaLabel = formChannel === "booking" ? "Booking.com" : "Airbnb"
         if (!normalizedPayments || normalizedPayments.length === 0) {
           normalizedPayments = [{
             id: `pay_${Date.now()}`,
             amount: totalAmount,
-            method: "booking",
+            method: formChannel,
             category: "quitacao",
             date: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
-            notes: "Pagamento integral Booking.com"
+            notes: `Pagamento integral ${otaLabel}`
           }]
         } else if (normalizedPayments.length === 1) {
           normalizedPayments = [{
             ...normalizedPayments[0],
             amount: totalAmount,
-            method: "booking",
-            category: "quitacao"
+            method: formChannel,
+            category: "quitacao",
+            notes: normalizedPayments[0].notes || `Pagamento integral ${otaLabel}`
           }]
-        }
-      } else if (isOta) {
-        resolvedPaymentStatus = "pago_total"
-        resolvedPaidAmount = totalAmount
-        if (formChannel === "airbnb" && (!resolvedMethod || resolvedMethod === "pix")) {
-          resolvedMethod = "airbnb"
         }
       } else if (resolvedPaidAmount >= totalAmount && totalAmount > 0) {
         resolvedPaymentStatus = "pago_total"
@@ -2705,7 +2738,7 @@ export default function PmsCalendar() {
         checkinTime: formCheckinTime || defaultCheckinTime || "14:00",
         checkoutTime: formCheckoutTime || defaultCheckoutTime || "12:00",
         status: formStatus,
-        channel: formDailyRates.length > 0 && formDailyRates[0].channel ? formDailyRates[0].channel : formChannel,
+        channel: formChannel || (formDailyRates.length > 0 && formDailyRates[0].channel) || "whatsapp",
         paymentMethod: resolvedMethod,
         dailyRate: formDailyRates.length > 0 
           ? Math.round(totalAmount / formDailyRates.length) 
@@ -2736,24 +2769,47 @@ export default function PmsCalendar() {
         } : null
       }
 
+      let resp: Response
       if (selectedRes) {
-        await fetch(`/api/pms/reservations/${selectedRes.id}`, {
+        resp = await fetch(`/api/pms/reservations/${selectedRes.id}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
           credentials: "include"
         })
       } else {
-        await fetch("/api/pms/reservations", {
+        resp = await fetch("/api/pms/reservations", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
           credentials: "include"
         })
       }
+
+      if (!resp.ok) {
+        const errJson = await resp.json().catch(() => ({}))
+        toast({
+          title: "Não foi possível salvar a reserva",
+          description: errJson.error || `Erro no servidor (Código ${resp.status}). Tente novamente.`,
+          variant: "destructive"
+        })
+        return
+      }
+
+      toast({
+        title: selectedRes ? "Reserva Atualizada" : "Reserva Criada com Sucesso",
+        description: `${payload.guestName} • Flat ${data.flats.find(f => f.id === Number(formFlatId))?.number || formFlatId}`
+      })
       setResModalOpen(false)
       fetchData()
       notifyCalendarUpdated()
+    } catch (err: any) {
+      console.error("[PMS Calendar] Erro ao salvar reserva:", err)
+      toast({
+        title: "Erro de Conexão",
+        description: err?.message || "Não foi possível comunicar com o servidor. Verifique sua conexão.",
+        variant: "destructive"
+      })
     } finally {
       setSavingRes(false)
     }
@@ -4018,7 +4074,7 @@ export default function PmsCalendar() {
             </Tabs>
 
             {(resModalTab === "reservation" || resModalTab === "details" || resModalTab === "payments") && (
-              <form onSubmit={handleSaveRes}>
+              <form noValidate onSubmit={handleSaveRes}>
                 {(resModalTab === "reservation" || resModalTab === "details") && (
 
               <div className="py-2.5 space-y-3">
@@ -4181,18 +4237,13 @@ export default function PmsCalendar() {
                       value={formChannel} 
                       onValueChange={val => {
                         setFormChannel(val);
-                        let updatedDailyRates = formDailyRates;
-                        setFormDailyRates(prev => {
-                          const allSame = prev.length <= 1 || prev.every(d => (d.channel || "whatsapp") === formChannel);
-                          if (allSame) {
-                            const mapped = prev.map(d => ({ ...d, channel: val }));
-                            updatedDailyRates = mapped;
-                            return mapped;
-                          }
-                          return prev;
-                        });
+                        const allSame = formDailyRates.length <= 1 || formDailyRates.every(d => (d.channel || "whatsapp") === formChannel);
+                        const updatedDailyRates = allSame 
+                          ? formDailyRates.map(d => ({ ...d, channel: val })) 
+                          : formDailyRates;
+                        setFormDailyRates(updatedDailyRates);
 
-                        if (val === "booking") {
+                        if (val === "booking" || val === "airbnb") {
                           let updatedCharges = [...formCharges];
                           const cleanIdx = updatedCharges.findIndex(c => c.type === "cleaning");
                           if (cleanIdx === -1) {
@@ -4207,9 +4258,7 @@ export default function PmsCalendar() {
                             updatedCharges[cleanIdx] = { ...updatedCharges[cleanIdx], amount: 50 };
                           }
                           setFormCharges(updatedCharges);
-                          syncCompositeTotalAndPaid(updatedDailyRates, updatedCharges, "booking", "booking");
-                        } else if (val === "airbnb") {
-                          syncCompositeTotalAndPaid(updatedDailyRates, formCharges, "airbnb", "airbnb");
+                          syncCompositeTotalAndPaid(updatedDailyRates, updatedCharges, val, val);
                         } else if (val === "site") {
                           setFormPaymentMethod("pix");
                           syncCompositeTotalAndPaid(updatedDailyRates, formCharges, val, "pix");
@@ -5988,7 +6037,7 @@ export default function PmsCalendar() {
                 ) : <div />}
 
                 <div className="flex items-center gap-2">
-                  <Button type="button" variant="outline" size="sm" onClick={() => setEditingRes(null)} className="font-semibold text-xs">
+                  <Button type="button" variant="outline" size="sm" onClick={() => setResModalOpen(false)} className="font-semibold text-xs">
                     Cancelar
                   </Button>
                   <Button type="submit" size="sm" disabled={savingRes} className="font-bold text-xs bg-primary hover:bg-primary/90 text-primary-foreground min-w-[100px] shadow-sm">
