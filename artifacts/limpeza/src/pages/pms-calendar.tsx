@@ -4181,25 +4181,40 @@ export default function PmsCalendar() {
                       value={formChannel} 
                       onValueChange={val => {
                         setFormChannel(val);
+                        let updatedDailyRates = formDailyRates;
                         setFormDailyRates(prev => {
                           const allSame = prev.length <= 1 || prev.every(d => (d.channel || "whatsapp") === formChannel);
                           if (allSame) {
-                            return prev.map(d => ({ ...d, channel: val }));
+                            const mapped = prev.map(d => ({ ...d, channel: val }));
+                            updatedDailyRates = mapped;
+                            return mapped;
                           }
                           return prev;
                         });
+
                         if (val === "booking") {
-                          setFormPaymentStatus("pago_total");
-                          setFormPaymentMethod("booking");
-                          const tot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
-                          if (tot > 0) setFormPaidAmount(String(tot));
+                          let updatedCharges = [...formCharges];
+                          const cleanIdx = updatedCharges.findIndex(c => c.type === "cleaning");
+                          if (cleanIdx === -1) {
+                            updatedCharges.push({
+                              id: `charge_${Date.now()}_clean`,
+                              type: "cleaning",
+                              title: "Taxa de Limpeza",
+                              amount: 50,
+                              notes: ""
+                            });
+                          } else if (updatedCharges[cleanIdx].amount === 80) {
+                            updatedCharges[cleanIdx] = { ...updatedCharges[cleanIdx], amount: 50 };
+                          }
+                          setFormCharges(updatedCharges);
+                          syncCompositeTotalAndPaid(updatedDailyRates, updatedCharges, "booking", "booking");
                         } else if (val === "airbnb") {
-                          setFormPaymentStatus("pago_total");
-                          setFormPaymentMethod("airbnb");
-                          const tot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal();
-                          if (tot > 0) setFormPaidAmount(String(tot));
+                          syncCompositeTotalAndPaid(updatedDailyRates, formCharges, "airbnb", "airbnb");
                         } else if (val === "site") {
                           setFormPaymentMethod("pix");
+                          syncCompositeTotalAndPaid(updatedDailyRates, formCharges, val, "pix");
+                        } else {
+                          syncCompositeTotalAndPaid(updatedDailyRates, formCharges, val);
                         }
                       }}
                     >
@@ -4268,9 +4283,7 @@ export default function PmsCalendar() {
                             if (val && formCheckout && val < formCheckout) {
                               const updated = buildReservationDailyRates(val, formCheckout, Number(formDailyRate) || 250, formChannel, formDailyRates);
                               setFormDailyRates(updated);
-                              const newTot = updated.reduce((s, d) => s + (Number(d.rate) || 0), 0);
-                              setFormTotalAmount(String(newTot));
-                              if (formPaymentStatus === "pago_total") setFormPaidAmount(String(newTot));
+                              syncCompositeTotalAndPaid(updated, formCharges, formChannel);
                             }
                           }} 
                           required 
@@ -4312,9 +4325,7 @@ export default function PmsCalendar() {
                             if (val && formCheckin && formCheckin < val) {
                               const updated = buildReservationDailyRates(formCheckin, val, Number(formDailyRate) || 250, formChannel, formDailyRates);
                               setFormDailyRates(updated);
-                              const newTot = updated.reduce((s, d) => s + (Number(d.rate) || 0), 0);
-                              setFormTotalAmount(String(newTot));
-                              if (formPaymentStatus === "pago_total") setFormPaidAmount(String(newTot));
+                              syncCompositeTotalAndPaid(updated, formCharges, formChannel);
                             }
                           }} 
                           required 
@@ -5555,7 +5566,7 @@ export default function PmsCalendar() {
                             <Plus className="w-3.5 h-3.5 mr-1" /> Diária Extra
                           </Button>
 
-                          {formDailyRates.length > 1 && (
+                              {formDailyRates.length > 1 && (
                             <Button
                               type="button"
                               variant="ghost"
@@ -5564,12 +5575,9 @@ export default function PmsCalendar() {
                                 if (formDailyRates.length > 0) {
                                   const firstRate = Number(formDailyRates[0].rate) || 250;
                                   const firstChan = formDailyRates[0].channel || formChannel;
-                                  setFormDailyRates(prev => prev.map(d => ({ ...d, rate: firstRate, channel: firstChan })));
-                                  const subNights = formDailyRates.length * firstRate;
-                                  const subCharges = formCharges.reduce((s, c) => s + (Number(c.amount) || 0), 0);
-                                  const newTot = subNights + subCharges;
-                                  setFormTotalAmount(String(newTot));
-                                  setPackageTotalInput(String(newTot));
+                                  const nextRates = formDailyRates.map(d => ({ ...d, rate: firstRate, channel: firstChan }));
+                                  setFormDailyRates(nextRates);
+                                  syncCompositeTotalAndPaid(nextRates, formCharges, formChannel);
                                   toast({ title: "Diárias Equalizadas", description: `Todas as diárias ajustadas para R$ ${firstRate}.` });
                                 }
                               }}
@@ -5635,14 +5643,7 @@ export default function PmsCalendar() {
                                     const val = Number(e.target.value) || 0;
                                     setFormDailyRates(prev => {
                                       const nextRates = prev.map((item, i) => i === idx ? { ...item, rate: val } : item);
-                                      const subNights = nextRates.reduce((s, it) => s + (Number(it.rate) || 0), 0);
-                                      const subCharges = formCharges.reduce((s, c) => s + (Number(c.amount) || 0), 0);
-                                      const newTot = subNights + subCharges;
-                                      setFormTotalAmount(String(newTot));
-                                      setPackageTotalInput(String(newTot));
-                                      if (formPaymentStatus === "pago_total") {
-                                        setFormPaidAmount(String(newTot));
-                                      }
+                                      syncCompositeTotalAndPaid(nextRates, formCharges, formChannel);
                                       return nextRates;
                                     });
                                   }}
@@ -5664,14 +5665,7 @@ export default function PmsCalendar() {
                                       setFormDailyRates(updatedRates);
                                       setFormCheckin(firstDate);
                                       setFormCheckout(newCheckout);
-                                      const subNights = updatedRates.reduce((s, it) => s + (Number(it.rate) || 0), 0);
-                                      const subCharges = formCharges.reduce((s, c) => s + (Number(c.amount) || 0), 0);
-                                      const newTot = subNights + subCharges;
-                                      setFormTotalAmount(String(newTot));
-                                      setPackageTotalInput(String(newTot));
-                                      if (formPaymentStatus === "pago_total") {
-                                        setFormPaidAmount(String(newTot));
-                                      }
+                                      syncCompositeTotalAndPaid(updatedRates, formCharges, formChannel);
                                     }
                                   }}
                                   className="h-7 w-7 p-0 text-muted-foreground hover:text-rose-600 shrink-0 cursor-pointer"
@@ -5700,7 +5694,7 @@ export default function PmsCalendar() {
                             type="button"
                             variant="outline"
                             size="sm"
-                            onClick={() => handleAddCharge("cleaning", "Taxa de Limpeza", 80)}
+                            onClick={() => handleAddCharge("cleaning", "Taxa de Limpeza", 50)}
                             className="h-6 px-1.5 text-[10.5px] font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
                           >
                             🧹 + Limpeza
