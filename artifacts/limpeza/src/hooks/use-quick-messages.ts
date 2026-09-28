@@ -432,7 +432,23 @@ export function buildFullWhatsAppTextMessage(
   let full = renderedBody.trim()
 
   if (buttons && buttons.length > 0) {
-    const linkItems = buttons
+    const lowerBody = full.toLowerCase()
+    const isCheckoutOrEndStay = lowerBody.includes("check-out") || 
+                                lowerBody.includes("checkout") || 
+                                lowerBody.includes("encerramento da sua estadia") || 
+                                lowerBody.includes("horário limite de saída")
+    const isCancellation = lowerBody.includes("cancelamento") || 
+                           lowerBody.includes("cancelada") || 
+                           lowerBody.includes("cancelado")
+    const isReview = lowerBody.includes("avaliação") || 
+                     lowerBody.includes("satisfação")
+
+    let safeButtons = buttons
+    if (isCheckoutOrEndStay || isCancellation || isReview) {
+      safeButtons = buttons.filter(b => b.id !== "btn_cafe" && (!b.url || (!b.url.includes("link_cafe") && !b.url.includes("/cafe/"))))
+    }
+
+    const linkItems = safeButtons
       .filter(b => b.url || b.phone)
       .map(b => {
         const resolvedUrl = b.url ? renderQuickMessage(b.url, resItem, originUrl) : ""

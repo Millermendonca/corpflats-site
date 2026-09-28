@@ -1585,7 +1585,25 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
 // ── Formatador de Mensagem com Links Clicáveis (100% compatível com qualquer WhatsApp) ──
 export function formatMessageWithLinks(message, footer = "", buttons = []) {
   let text = (message || "").trim();
-  const validButtons = (buttons || []).filter(b => b && b.label && (b.url || b.phone || b.copyCode || b.type === "REPLY" || b.type === "COPY"));
+  let validButtons = (buttons || []).filter(b => b && b.label && (b.url || b.phone || b.copyCode || b.type === "REPLY" || b.type === "COPY"));
+
+  // Blindagem de segurança: Se a mensagem contiver termos claros de check-out, cancelamento ou pós-estadia,
+  // nunca incluir links ou botões de café da manhã (/cafe/ ou btn_cafe) no Acesso Rápido!
+  const lowerMsg = text.toLowerCase();
+  const isCheckoutOrEndStay = lowerMsg.includes("check-out") || 
+                              lowerMsg.includes("checkout") || 
+                              lowerMsg.includes("encerramento da sua estadia") || 
+                              lowerMsg.includes("horário limite de saída");
+  const isCancellation = lowerMsg.includes("cancelamento") || 
+                         lowerMsg.includes("cancelada") || 
+                         lowerMsg.includes("cancelado");
+  const isReviewOnly = lowerMsg.includes("avaliação") || 
+                       lowerMsg.includes("satisfação") || 
+                       lowerMsg.includes("como foi sua experiência");
+
+  if (isCheckoutOrEndStay || isCancellation || isReviewOnly) {
+    validButtons = validButtons.filter(b => b.id !== "btn_cafe" && (!b.url || !String(b.url).includes("/cafe/")));
+  }
 
   if (validButtons.length > 0) {
     const linkItems = validButtons
@@ -1630,8 +1648,12 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     }
   }
 
-  const templateId = String(templateObj?.id || (typeof templateOrEvent === "string" && templateOrEvent.startsWith("tpl_") ? templateOrEvent : "")).trim();
-  const triggerEvent = String(templateObj?.triggerEvent || (typeof templateOrEvent === "string" && !templateOrEvent.startsWith("tpl_") ? templateOrEvent : "")).trim();
+  const templateId = String(templateObj?.id || (typeof templateOrEvent === "string" ? templateOrEvent : "")).trim();
+  const triggerEvent = String(templateObj?.triggerEvent || (typeof templateOrEvent === "string" && !templateOrEvent.startsWith("tpl_") && !templateOrEvent.startsWith("qm_") ? templateOrEvent : "")).trim();
+  const templateTitle = String(templateObj?.title || templateObj?.name || templateObj?.shortLabel || "").toLowerCase().trim();
+
+  const idLower = templateId.toLowerCase();
+  const eventLower = triggerEvent.toLowerCase();
 
   const resStatus = String(reservation?.status || "").toLowerCase().trim();
   const isCancelled = resStatus === "cancelada" || resStatus === "cancelled" || resStatus === "cancelado";
@@ -1640,27 +1662,40 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
   // 1. Cancelamento de reserva
   // 2. Checkout / Pós-checkout / Pesquisa de satisfação
   // 3. Cobranças financeiras pendentes
-  const isCancellationContext = isCancelled || templateId === "tpl_reservation_cancelled" || triggerEvent === "reservation_cancelled";
-  const isCheckoutOrReviewContext = [
-    "tpl_checkout_completed",
-    "tpl_checkout_reminder",
-    "tpl_nps_satisfaction_check",
-    "tpl_post_checkout_review"
-  ].includes(templateId) || [
-    "checkout_completed",
-    "on_checkout",
-    "checkout_reminder",
-    "post_checkout_review",
-    "nps_approved"
-  ].includes(triggerEvent);
+  const isCancellationContext = 
+    isCancelled || 
+    idLower.includes("cancel") || 
+    eventLower.includes("cancel") || 
+    templateTitle.includes("cancel");
 
-  const isFinancialReminderOnly = [
-    "tpl_payment_pending",
-    "tpl_additional_daily_pending"
-  ].includes(templateId) || [
-    "payment_pending",
-    "additional_daily_pending"
-  ].includes(triggerEvent);
+  const isCheckoutOrReviewContext = 
+    idLower.includes("checkout") || 
+    idLower.includes("check_out") || 
+    idLower.includes("check-out") || 
+    idLower.includes("review") || 
+    idLower.includes("nps") || 
+    idLower.includes("saida") || 
+    idLower.includes("saída") ||
+    eventLower.includes("checkout") || 
+    eventLower.includes("check_out") || 
+    eventLower.includes("check-out") || 
+    eventLower.includes("review") || 
+    eventLower.includes("nps") || 
+    eventLower.includes("on_checkout") ||
+    templateTitle.includes("checkout") || 
+    templateTitle.includes("check-out") || 
+    templateTitle.includes("saída") || 
+    templateTitle.includes("saida") || 
+    templateTitle.includes("avaliação") || 
+    templateTitle.includes("satisfação");
+
+  const isFinancialReminderOnly = 
+    idLower.includes("payment_pending") || 
+    idLower.includes("additional_daily_pending") || 
+    idLower.includes("cobranca") || 
+    idLower.includes("cobrança") || 
+    eventLower.includes("payment_pending") || 
+    eventLower.includes("additional_daily_pending");
 
   const hasBreakfast = Boolean(reservation?.includeBreakfast || reservation?.ratePlan === "with_breakfast");
   const appOrigin = baseUrl || "https://corpflats.onrender.com";
@@ -1758,28 +1793,44 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     }
   }
 
-  // Se o contexto for cancelamento, pós-checkout, cobrança ou sem café:
+  // Templates e eventos permitidos para inclusão do botão de café (apenas no fluxo de entrada e estadia inicial)
+  const ALLOWED_TEMPLATES_FOR_CAFE = [
+    "tpl_new_reservation_direct",
+    "tpl_new_reservation",
+    "tpl_pre_reserva",
+    "tpl_payment_confirmed",
+    "tpl_sameday_reservation_instructions",
+    "tpl_room_ready_direct",
+    "tpl_room_ready_regular",
+    "tpl_checkin_day_instructions",
+    "tpl_checkin_completed",
+    "tpl_breakfast_reminder",
+    "qm_breakfast",
+    "qm_payment_confirmed",
+    "qm_summary_checkin"
+  ];
+  const ALLOWED_EVENTS_FOR_CAFE = [
+    "new_reservation",
+    "new_reservation_direct",
+    "payment_confirmed",
+    "sameday_reservation",
+    "room_ready",
+    "room_ready_direct",
+    "room_ready_regular",
+    "checkin_day_instructions",
+    "checkin_completed",
+    "breakfast_reminder"
+  ];
+
+  const isAllowedTemplate = ALLOWED_TEMPLATES_FOR_CAFE.includes(templateId) || ALLOWED_EVENTS_FOR_CAFE.includes(triggerEvent);
+
+  // Se o contexto for cancelamento, pós-checkout, checkout, cobrança, sem café ou template não autorizado:
   // Remove QUALQUER botão de café existente ou acidental.
-  if (isCancellationContext || isCheckoutOrReviewContext || isFinancialReminderOnly || !hasBreakfast) {
+  if (isCancellationContext || isCheckoutOrReviewContext || isFinancialReminderOnly || !hasBreakfast || !isAllowedTemplate) {
     list = list.filter(b => b.id !== "btn_cafe" && (!b.url || !String(b.url).includes("/cafe/")));
   } else {
-    // Para reservas ativas com café, injeta o botão se for um template permitido
-    const ALLOWED_TEMPLATES_FOR_CAFE = [
-      "tpl_new_reservation_direct",
-      "tpl_new_reservation",
-      "tpl_pre_reserva",
-      "tpl_payment_confirmed",
-      "tpl_sameday_reservation_instructions",
-      "tpl_room_ready_direct",
-      "tpl_room_ready_regular",
-      "tpl_checkin_day_instructions",
-      "tpl_checkin_completed",
-      "tpl_breakfast_reminder"
-    ];
-
-    const isAllowedTemplate = !templateId || ALLOWED_TEMPLATES_FOR_CAFE.includes(templateId);
-
-    if (isAllowedTemplate && !list.some(b => b.id === "btn_cafe" || (b.url && String(b.url).includes("/cafe/")))) {
+    // Para reservas ativas com café E em templates permitidos, injeta o botão se ainda não presente
+    if (!list.some(b => b.id === "btn_cafe" || (b.url && String(b.url).includes("/cafe/")))) {
       const cafeBtn = {
         id: "btn_cafe",
         type: "URL",
@@ -2028,7 +2079,24 @@ export async function sendZapiMessage(config, {
     headers["Client-Token"] = clientToken;
   }
 
-  const validButtons = (buttons || []).filter(b => b && b.label && (b.url || b.phone || b.type === "REPLY"));
+  // Sanitização de segurança de botões em mensagens de check-out, pós-estadia ou cancelamento
+  const msgContext = `${title || ""} ${message || ""}`.toLowerCase();
+  const isCheckoutOrEndMessage = msgContext.includes("check-out") || 
+                                 msgContext.includes("checkout") || 
+                                 msgContext.includes("encerramento da sua estadia") || 
+                                 msgContext.includes("horário limite de saída");
+  const isCancelMessage = msgContext.includes("cancelamento") || 
+                          msgContext.includes("cancelada") || 
+                          msgContext.includes("cancelado");
+  const isReviewMessage = msgContext.includes("avaliação") || 
+                          msgContext.includes("satisfação");
+
+  let safeButtons = buttons || [];
+  if (isCheckoutOrEndMessage || isCancelMessage || isReviewMessage) {
+    safeButtons = safeButtons.filter(b => b && b.id !== "btn_cafe" && (!b.url || !String(b.url).includes("/cafe/")));
+  }
+
+  const validButtons = safeButtons.filter(b => b && b.label && (b.url || b.phone || b.type === "REPLY"));
 
   // Determina se deve enviar direto por texto com links (garantido) ou tentar botões
   const shouldSendText = sendMode === "text" || 
@@ -3986,7 +4054,25 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       const nowIso = now.toISOString();
 
       let cleanedOldCount = 0;
+      let sanitizedQueueCafeCount = 0;
       for (const item of db.whatsappQueue) {
+        if (item) {
+          const qContext = `${item.triggerEvent || ""} ${item.templateId || ""} ${item.title || ""} ${item.renderedMessage || ""}`.toLowerCase();
+          const isCheckoutOrCancel = qContext.includes("checkout") || 
+                                     qContext.includes("check-out") || 
+                                     qContext.includes("cancel") || 
+                                     qContext.includes("review") || 
+                                     qContext.includes("saida") || 
+                                     qContext.includes("saída") || 
+                                     qContext.includes("avaliação");
+          if (isCheckoutOrCancel && Array.isArray(item.renderedButtons)) {
+            const beforeLen = item.renderedButtons.length;
+            item.renderedButtons = item.renderedButtons.filter(b => b && b.id !== "btn_cafe" && (!b.url || !String(b.url).includes("/cafe/")));
+            if (item.renderedButtons.length < beforeLen) {
+              sanitizedQueueCafeCount++;
+            }
+          }
+        }
         if (item.status === "scheduled") {
           const resv = (db.reservations || []).find(r => r.id === item.reservationId || r.code === item.reservationCode);
           const isOldResv = resv && resv.checkoutDate && resv.checkoutDate < threeDaysAgoStr;
@@ -4004,6 +4090,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       }
       if (cleanedOldCount > 0) {
         console.log(`[Z-API Init] Cancelados ${cleanedOldCount} agendamentos antigos ou bloqueados pelo Modo de Teste.`);
+      }
+      if (sanitizedQueueCafeCount > 0) {
+        console.log(`[Z-API Init] Sanitizados ${sanitizedQueueCafeCount} agendamentos na fila removendo botões/links indevidos de café.`);
       }
     }
 
@@ -4244,12 +4333,19 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
     console.log(`[WhatsApp] Disparo manual solicitado para fila ${id} (${item.guestName})...`);
 
+    let queueButtons = item.renderedButtons || [];
+    const queueContext = `${item.triggerEvent || ""} ${item.templateId || ""} ${item.title || ""} ${item.renderedMessage || ""}`.toLowerCase();
+    if (queueContext.includes("checkout") || queueContext.includes("check-out") || queueContext.includes("cancel") || queueContext.includes("review") || queueContext.includes("saida") || queueContext.includes("saída") || queueContext.includes("avaliação")) {
+      queueButtons = queueButtons.filter(b => b && b.id !== "btn_cafe" && (!b.url || !String(b.url).includes("/cafe/")));
+      item.renderedButtons = queueButtons;
+    }
+
     const result = await sendZapiMessage(db.zapiConfig, {
       phone: item.guestPhone,
       message: item.renderedMessage,
       title: item.title,
       footer: item.footer,
-      buttons: item.renderedButtons,
+      buttons: queueButtons,
       documentUrl: item.documentUrl,
       documentName: item.documentName
     });
@@ -5727,13 +5823,20 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           continue;
         }
 
+        let queueButtons = item.renderedButtons || [];
+        const queueContext = `${item.triggerEvent || ""} ${item.templateId || ""} ${item.title || ""} ${item.renderedMessage || ""}`.toLowerCase();
+        if (queueContext.includes("checkout") || queueContext.includes("check-out") || queueContext.includes("cancel") || queueContext.includes("review") || queueContext.includes("saida") || queueContext.includes("saída") || queueContext.includes("avaliação")) {
+          queueButtons = queueButtons.filter(b => b && b.id !== "btn_cafe" && (!b.url || !String(b.url).includes("/cafe/")));
+          item.renderedButtons = queueButtons;
+        }
+
         console.log(`[Auto-WhatsApp] Disparando agendamento automático para ${item.recipientName || item.guestName} (${item.recipientType === 'requester' ? 'Solicitante' : 'Hóspede'} / ${item.triggerEvent} / Canal: ${itemChannel || 'Padrão'})...`);
         const result = await sendZapiMessage(db.zapiConfig, {
           phone: item.guestPhone,
           message: item.renderedMessage,
           title: item.title,
           footer: item.footer,
-          buttons: item.renderedButtons
+          buttons: queueButtons
         });
 
         item.status = result.success ? "sent" : "failed";
