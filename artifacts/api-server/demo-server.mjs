@@ -56,6 +56,86 @@ const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// ── Universal Date Helpers (Top Level) ──────────────────────────────────────
+const BRAZIL_DATE_FORMATTER = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Sao_Paulo",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit"
+});
+
+function getTodayStr() {
+  return BRAZIL_DATE_FORMATTER.format(new Date());
+}
+
+function getExecutionDateStr(isoString) {
+  if (!isoString) return getTodayStr();
+  try {
+    return BRAZIL_DATE_FORMATTER.format(new Date(isoString));
+  } catch {
+    return String(isoString).substring(0, 10);
+  }
+}
+
+function addDaysToDateStr(dateStr, days) {
+  const parts = String(dateStr).substring(0, 10).split("-").map(Number);
+  if (parts.length < 3 || isNaN(parts[0])) return String(dateStr).substring(0, 10);
+  const d = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], 12, 0, 0));
+  d.setUTCDate(d.getUTCDate() + Number(days));
+  return d.toISOString().substring(0, 10);
+}
+
+function calcDaysDiff(todayStr, targetDateStr) {
+  const tParts = String(todayStr).substring(0, 10).split("-").map(Number);
+  const dParts = String(targetDateStr).substring(0, 10).split("-").map(Number);
+  const tTime = Date.UTC(tParts[0], tParts[1] - 1, tParts[2], 12, 0, 0);
+  const dTime = Date.UTC(dParts[0], dParts[1] - 1, dParts[2], 12, 0, 0);
+  return Math.round((tTime - dTime) / 86400000);
+}
+
+function getBrasiliaNow() {
+  const now = new Date();
+  const dateStr = BRAZIL_DATE_FORMATTER.format(now);
+  const timeParts = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  }).formatToParts(now);
+  const hour = Number(timeParts.find(p => p.type === "hour")?.value || "0");
+  const minute = Number(timeParts.find(p => p.type === "minute")?.value || "0");
+  const second = Number(timeParts.find(p => p.type === "second")?.value || "0");
+  return {
+    date: dateStr,
+    hour,
+    minute,
+    second,
+    timeStr: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+  };
+}
+
+function isTimeBefore(t1, t2) {
+  if (!t1 || !t2) return false;
+  const [h1, m1] = String(t1).split(":").map(Number);
+  const [h2, m2] = String(t2).split(":").map(Number);
+  return (h1 * 60 + m1) < (h2 * 60 + m2);
+}
+
+function getOffsetDateStr(offsetDays = 0) {
+  if (offsetDays === 0) return getTodayStr();
+  const todayStr = getTodayStr();
+  const [y, m, d] = todayStr.split("-").map(Number);
+  const target = new Date(Date.UTC(y, m - 1, d + offsetDays, 12, 0, 0));
+  return target.toISOString().substring(0, 10);
+}
+
+function getPrevDay(dateStr) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const prev = new Date(Date.UTC(y, m - 1, d - 1, 12, 0, 0));
+  return prev.toISOString().substring(0, 10);
+}
+
 // Ensure local uploads directory exists
 const UPLOADS_DIR = path.join(__dirname, "uploads");
 const LOST_ITEMS_DIR = path.join(UPLOADS_DIR, "lost_items");
@@ -3856,85 +3936,6 @@ function isSameGuest(g1, g2) {
   }
 
   return false;
-}
-
-const BRAZIL_DATE_FORMATTER = new Intl.DateTimeFormat("en-CA", {
-  timeZone: "America/Sao_Paulo",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit"
-});
-
-function getTodayStr() {
-  return BRAZIL_DATE_FORMATTER.format(new Date());
-}
-
-function getExecutionDateStr(isoString) {
-  if (!isoString) return getTodayStr();
-  try {
-    return BRAZIL_DATE_FORMATTER.format(new Date(isoString));
-  } catch {
-    return String(isoString).substring(0, 10);
-  }
-}
-
-function addDaysToDateStr(dateStr, days) {
-  const parts = String(dateStr).substring(0, 10).split("-").map(Number);
-  if (parts.length < 3 || isNaN(parts[0])) return String(dateStr).substring(0, 10);
-  const d = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], 12, 0, 0));
-  d.setUTCDate(d.getUTCDate() + Number(days));
-  return d.toISOString().substring(0, 10);
-}
-
-function calcDaysDiff(todayStr, targetDateStr) {
-  const tParts = String(todayStr).substring(0, 10).split("-").map(Number);
-  const dParts = String(targetDateStr).substring(0, 10).split("-").map(Number);
-  const tTime = Date.UTC(tParts[0], tParts[1] - 1, tParts[2], 12, 0, 0);
-  const dTime = Date.UTC(dParts[0], dParts[1] - 1, dParts[2], 12, 0, 0);
-  return Math.round((tTime - dTime) / 86400000);
-}
-
-function getBrasiliaNow() {
-  const now = new Date();
-  const dateStr = BRAZIL_DATE_FORMATTER.format(now);
-  const timeParts = new Intl.DateTimeFormat("pt-BR", {
-    timeZone: "America/Sao_Paulo",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false
-  }).formatToParts(now);
-  const hour = Number(timeParts.find(p => p.type === "hour")?.value || "0");
-  const minute = Number(timeParts.find(p => p.type === "minute")?.value || "0");
-  const second = Number(timeParts.find(p => p.type === "second")?.value || "0");
-  return {
-    date: dateStr,
-    hour,
-    minute,
-    second,
-    timeStr: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
-  };
-}
-
-function isTimeBefore(t1, t2) {
-  if (!t1 || !t2) return false;
-  const [h1, m1] = String(t1).split(":").map(Number);
-  const [h2, m2] = String(t2).split(":").map(Number);
-  return (h1 * 60 + m1) < (h2 * 60 + m2);
-}
-
-function getOffsetDateStr(offsetDays = 0) {
-  if (offsetDays === 0) return getTodayStr();
-  const todayStr = getTodayStr();
-  const [y, m, d] = todayStr.split("-").map(Number);
-  const target = new Date(Date.UTC(y, m - 1, d + offsetDays, 12, 0, 0));
-  return target.toISOString().substring(0, 10);
-}
-
-function getPrevDay(dateStr) {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  const prev = new Date(Date.UTC(y, m - 1, d - 1, 12, 0, 0));
-  return prev.toISOString().substring(0, 10);
 }
 
 // ── Ultra-Fast Spreadsheet Parser ──────────────────────────────────────────
