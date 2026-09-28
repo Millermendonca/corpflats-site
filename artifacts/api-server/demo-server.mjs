@@ -5802,8 +5802,8 @@ app.get("/api/reservations/checkouts", (req, res) => {
     const hasExtraMattress = Boolean(req_.extraMattress || (nextResForSetup && nextResForSetup.extraMattress));
     const hasPrefersHighFloor = Boolean(nextResForSetup && nextResForSetup.prefersHighFloor);
 
-    // Nota da camareira da reserva que chega
-    const resNoteForMaid = (nextResForSetup && ((nextResForSetup.specialRequests || "").trim() || (nextResForSetup.notes || "").trim() || (nextResForSetup.receptionNotes || "").trim())) || null;
+    // Nota da camareira da reserva que chega (apenas Pedidos Especiais e Obs de governança)
+    const resNoteForMaid = (nextResForSetup && ((nextResForSetup.specialRequests || "").trim() || (nextResForSetup.notes || "").trim())) || null;
     let cleanAdminNote = req_.adminNote;
     if (cleanAdminNote && (cleanAdminNote.includes("Pagamento integral") || cleanAdminNote.includes("Quitação de saldo") || cleanAdminNote.includes("Limpeza de check-out gerada automaticamente"))) {
       cleanAdminNote = null;
@@ -13154,7 +13154,7 @@ app.get("/api/reception/today", (req, res) => {
           entryMessage,
           entryBadgeType,
           earlyCheckinAuthorized: isEarlyAuthorizedManual,
-          receptionNotes: r.receptionNotes || guest.notes || "",
+          receptionNotes: r.receptionNotes || "",
           guestPhoto: r.selfieUrl || guest.photoUrl || null,
           docPhoto: r.docPhotoUrl || guest.docPhotoUrl || null,
           signatureUrl: r.signatureUrl || guest.signatureUrl || null,
@@ -13191,7 +13191,7 @@ app.get("/api/reception/today", (req, res) => {
           flatNumber: flat.number,
           guestCount: count,
           guests: r.guests || [{ index: 1, name: r.guestName, hasCompletedCheckin: true, entryAuthorized: true }],
-          receptionNotes: r.receptionNotes || guest.notes || "",
+          receptionNotes: r.receptionNotes || "",
           isCheckoutToday: r.checkoutDate === today,
           isPartialCheckin: Boolean(r.isPartialCheckin)
         };

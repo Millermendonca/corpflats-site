@@ -285,12 +285,10 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings }) {
     </table>
   ` : `<div style="font-size: 13px; color: #64748b;">Nenhum veículo cadastrado para esta estadia.</div>`;
 
-  // Observações e Notas de Recepção
-  const receptionNotes = [
-    reservation?.receptionNotes ? `Nota de Recepção: ${reservation.receptionNotes}` : null,
-    reservation?.specialRequests ? `Pedido Especial: ${reservation.specialRequests}` : null,
-    reservation?.notes ? `Obs: ${reservation.notes}` : null
-  ].filter(Boolean).join(" • ");
+  // Observações e Notas de Recepção (apenas nota destinada à portaria/recepção)
+  const rawReceptionNotes = (reservation?.receptionNotes || "").trim();
+  const cleanReceptionNotes = rawReceptionNotes.replace(/^nota\s+(de\s+)?recep[cç][aã]o:\s*/i, "").trim();
+  const receptionNotes = cleanReceptionNotes ? `Nota de Recepção: ${cleanReceptionNotes}` : "";
 
   const expectedGuests = Number(reservation?.guestCount || reservation?.adults || guests.length || 1);
   const completedGuests = guests.filter(g => g.hasCompletedCheckin || g.cpf || g.document).length;
@@ -314,7 +312,7 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings }) {
       <div style="background: #fffbeb; border: 1px solid #fde68a; border-left: 4px solid #f59e0b; border-radius: 8px; padding: 12px 14px; margin-bottom: 16px;">
         <strong style="color: #92400e; font-size: 13px;">⚠️ ATENÇÃO PORTARIA: RESERVA PARA ${expectedGuests} HÓSPEDES</strong>
         <p style="color: #78350f; font-size: 12px; margin: 4px 0 0 0; line-height: 1.4;">
-          Dados do 1º hóspede recebidos. Os dados do segundo hóspede ainda estão pendentes e serão enviados assim que o formulário digital for submetido.
+          <strong>Apenas o 1º hóspede (${guestName}) que preencheu a ficha digital está LIBERADO para check-in.</strong> O segundo hóspede AINDA NÃO ESTÁ LIBERADO; estamos aguardando o preenchimento digital de sua ficha para autorização de acesso ao flat.
         </p>
       </div>
     ` : ""}
@@ -550,11 +548,11 @@ export function renderGarageAuthorizationEmail({ reservation, flat, vehicle, set
       </table>
     </div>
 
-    ${reservation?.receptionNotes || reservation?.specialRequests || reservation?.notes ? `
+    ${reservation?.receptionNotes && reservation.receptionNotes.trim() ? `
       <div class="section-title">⚠️ Observações Adicionais</div>
       <div class="info-card" style="background: #fffbeb; border-color: #fde68a;">
         <div style="font-size: 13px; color: #92400e; font-weight: 600;">
-          ${[reservation?.receptionNotes, reservation?.specialRequests, reservation?.notes].filter(Boolean).join(" • ")}
+          Nota de Recepção: ${reservation.receptionNotes.trim().replace(/^nota\s+(de\s+)?recep[cç][aã]o:\s*/i, "").trim()}
         </div>
       </div>
     ` : ""}
