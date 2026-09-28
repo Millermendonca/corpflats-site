@@ -631,12 +631,16 @@ export function useQuickMessages() {
         body: JSON.stringify({
           templateId: qm.id,
           reservationCode: resCode,
-          reservationId: resItem.id,
-          recipientTarget: targetMode
+          reservationId: resItem?.id,
+          recipientTarget: targetMode,
+          reservation: resItem,
+          template: qm,
+          phone: effectiveTargetPhone,
+          bypassTestMode: true
         })
       })
 
-      const data = await res.json()
+      const data = await res.json().catch(() => ({}))
       if (res.ok && data.success) {
         let recipientSummary = recipients.guest.name
         if (targetMode === "both") {
@@ -651,38 +655,24 @@ export function useQuickMessages() {
 
         toast({
           title: "✓ WhatsApp enviado com sucesso!",
-          description: `"${qm.title}" entregue para ${recipientSummary} (${data.method === "buttons" ? "com botões" : "texto formatado"}).`
+          description: `"${qm.title}" entregue via Z-API para ${recipientSummary} (${data.method === "buttons" ? "com botões" : "texto formatado"}).`
         })
         return { success: true, method: "zapi" }
       } else {
-        if (waWebUrl) {
-          window.open(waWebUrl, "_blank", "noopener,noreferrer")
-          toast({
-            title: "Abrindo WhatsApp Web 🚀",
-            description: `Z-API indisponível. A mensagem para ${targetMode === "requester" ? recipients.requester.name : recipients.guest.name} foi aberta no WhatsApp com o texto preenchido!`,
-          })
-          return { success: true, method: "wa_web", fallback: true }
-        } else {
-          toast({
-            title: "Falha no envio",
-            description: data.error || "Destinatário sem telefone WhatsApp cadastrado.",
-            variant: "destructive"
-          })
-          return { success: false, method: "zapi" }
-        }
+        const errorDetail = data.error || (data.results && data.results[0]?.error) || "Falha ao enviar mensagem pela Z-API."
+        console.warn("[dispatchQuickMessage] Falha no disparo Z-API:", errorDetail)
+        toast({
+          title: "Falha no envio via Z-API",
+          description: errorDetail,
+          variant: "destructive"
+        })
+        return { success: false, method: "zapi" }
       }
     } catch (err: any) {
-      if (waWebUrl) {
-        window.open(waWebUrl, "_blank", "noopener,noreferrer")
-        toast({
-          title: "Abrindo WhatsApp Web 🚀",
-          description: `Erro na central Z-API. Abrindo conversa com ${targetMode === "requester" ? recipients.requester.name : recipients.guest.name} com a mensagem preenchida.`,
-        })
-        return { success: true, method: "wa_web", fallback: true }
-      }
+      console.error("[dispatchQuickMessage] Erro na requisição Z-API:", err)
       toast({
-        title: "Erro de disparo",
-        description: err.message,
+        title: "Erro de disparo Z-API",
+        description: err.message || "Erro de conexão ao comunicar com a central Z-API.",
         variant: "destructive"
       })
       return { success: false, method: "zapi" }

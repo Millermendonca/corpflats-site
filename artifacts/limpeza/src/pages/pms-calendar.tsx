@@ -5282,7 +5282,16 @@ export default function PmsCalendar() {
                       </span>
                       <div className="flex items-center gap-2">
                         {selectedRes.guestPhone && (
-                          <span className="text-[10px] text-muted-foreground font-mono">Destino: {selectedRes.guestPhone}</span>
+                          <a
+                            href={`https://wa.me/55${String(selectedRes.guestPhone).replace(/\D/g, "")}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-[10px] text-muted-foreground hover:text-emerald-700 dark:hover:text-emerald-400 font-mono hover:underline flex items-center gap-0.5"
+                            title="Abrir WhatsApp Web manualmente para este número"
+                          >
+                            <span>Destino: {selectedRes.guestPhone}</span>
+                            <ExternalLink className="w-2.5 h-2.5 opacity-60" />
+                          </a>
                         )}
                         <a 
                           href="/whatsapp?tab=quick_messages" 

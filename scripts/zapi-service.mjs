@@ -4595,7 +4595,15 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         template = (db?.whatsappQuickMessages || []).find(t => t.id === "qm_access_wifi") || (db?.whatsappTemplates || []).find(t => t.id === "tpl_checkin_day_instructions");
       } else if (templateId === "tpl_checkout_reminder" || templateId === "qm_checkout_reminder") {
         template = (db?.whatsappQuickMessages || []).find(t => t.id === "qm_checkout_reminder") || (db?.whatsappTemplates || []).find(t => t.id === "tpl_checkout_reminder");
+      } else if (templateId === "tpl_post_checkout_review" || templateId === "qm_review_request" || templateId === "qm_review") {
+        template = (db?.whatsappQuickMessages || []).find(t => t.id === "qm_review_request" || t.id === "qm_review") || (db?.whatsappTemplates || []).find(t => t.id === "tpl_post_checkout_review");
+      } else if (templateId === "qm_guest_manual") {
+        template = (db?.whatsappQuickMessages || []).find(t => t.id === "qm_guest_manual");
       }
+    }
+    // Fallback caso o cliente envie o objeto template diretamente
+    if (!template && req.body.template) {
+      template = req.body.template;
     }
     if (!template) {
       return res.status(404).json({ error: "Modelo de mensagem não encontrado." });
@@ -4604,7 +4612,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     const searchTarget = String(reservationCode || reservationId || req.body.code || req.body.id || "").trim();
     const cleanSearchDigits = searchTarget.replace(/\D/g, "");
 
-    const reservation = (db?.reservations || []).find(r => {
+    let reservation = (db?.reservations || []).find(r => {
       if (!r) return false;
       const rCode = String(r.code || "").trim();
       const rResCode = String(r.reservationCode || "").trim();
@@ -4621,12 +4629,17 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     });
 
     if (!reservation) {
-      return res.status(404).json({ error: "Reserva não encontrada." });
+      if (req.body.reservation) {
+        reservation = req.body.reservation;
+      } else {
+        return res.status(404).json({ error: "Reserva não encontrada." });
+      }
     }
 
     const baseUrl = `${req.protocol}://${req.get("host")}`;
     const recipients = getReservationRecipients(reservation, db);
     const targetMode = req.body.recipientTarget || template.recipientTarget || "guest"; // "guest" | "requester" | "both"
+    const fallbackPhone = req.body.phone || reservation.guestPhone || reservation.phone || "";
 
     const dispatches = [];
 
@@ -4634,7 +4647,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       dispatches.push({
         type: "guest",
         name: recipients.guest.name,
-        phone: recipients.guest.phone
+        phone: recipients.guest.phone || fallbackPhone
       });
     }
 
@@ -4650,7 +4663,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           dispatches.push({
             type: "guest",
             name: recipients.guest.name,
-            phone: recipients.guest.phone
+            phone: recipients.guest.phone || fallbackPhone
           });
         }
       }
@@ -4660,7 +4673,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       dispatches.push({
         type: "guest",
         name: recipients.guest.name,
-        phone: recipients.guest.phone
+        phone: recipients.guest.phone || fallbackPhone
       });
     }
 
@@ -4675,6 +4688,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       const renderedMessage = resolveWhatsAppTags(template.message, reservation, db, baseUrl, d.type);
       const renderedButtons = renderTemplateButtons(template.buttons, reservation, db, baseUrl, d.type, template);
 
+      // Disparo manual intencional pelo operador (PMS ou CRM): sempre bypassTestMode para enviar via Z-API
       const sendRes = await sendZapiMessage(db?.zapiConfig, {
         phone: d.phone,
         message: renderedMessage,
@@ -4682,7 +4696,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         footer: template.footer,
         buttons: renderedButtons,
         documentUrl: docUrl,
-        documentName: docName
+        documentName: docName,
+        bypassTestMode: req.body.bypassTestMode !== false
       });
 
       results.push({
@@ -4736,6 +4751,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
     const anySuccess = results.some(r => r.success);
     const allSuccess = results.every(r => r.success);
+    const firstError = results.find(r => !r.success && r.error)?.error || null;
 
     res.json({
       success: anySuccess,
@@ -4743,7 +4759,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       method: results[0]?.method || "manual",
       dispatchesCount: results.length,
       recipients: results.map(r => ({ type: r.recipientType, name: r.recipientName, phone: r.phone, success: r.success })),
-      results
+      results,
+      error: !anySuccess ? (firstError || "Não foi possível disparar mensagem via Z-API.") : null
     });
   });
 
