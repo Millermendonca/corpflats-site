@@ -351,7 +351,7 @@ Para que a portaria libere sua entrada imediatamente na chegada sem filas, acess
     channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
     hasAttachment: true,
     attachmentName: "FNRH_Assinada_Com_Auditoria.pdf",
-    description: "Disparado às 07:00 da manhã para cada check-in do dia, enviado conjuntamente para a Recepção e Garagem. Anexa o PDF da FNRH assinada digitalmente com auditoria e QR Code, foto, veículo, alerta destacado se apenas 1 de 2 hóspedes preencheu, e link chamativo para o Terminal da Portaria (/portaria). Se o pré-checkin for preenchido após as 07:00, é enviado imediatamente.",
+    description: "Disparado às 07:00 da manhã para cada check-in do dia, enviado conjuntamente para a Recepção e Garagem. Anexa o PDF da FNRH assinada digitalmente com auditoria e QR Code, foto, veículo, alerta destacado informando que apenas o 1º hóspede está liberado e que o 2º acompanhante está bloqueado até preenchimento da ficha, e link chamativo para o Terminal da Portaria (/portaria). Se o pré-checkin for preenchido após as 07:00, é enviado imediatamente.",
     messagePreview: `Assunto: Flat {{quarto}} - {{nome_hospede}} ({{data_checkin}} a {{data_checkout}})
 
 🖥️ Painel da Recepção & Portaria 24h:
@@ -551,15 +551,17 @@ Se puder nos informar por aqui ou pelo portal, podemos priorizar a finalização
     timingLabel: "Imediato à confirmação de entrada",
     condition: "Hóspede clica em 'Já cheguei' ou portaria confirma entrada no tablet",
     channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
-    description: "Mensagem calorosa de acolhimento ao quarto com link da central digital do hóspede e orientações de comodidade.",
+    description: "Mensagem calorosa de acolhimento ao quarto com verificação de conforto e expectativas, além do link da central digital do hóspede.",
     messagePreview: `Olá, *{{primeiro_nome}}*! Seja muito bem-vindo(a) ao *Flat {{quarto}}*! 🏡✨
 
-Esperamos que encontre tudo limpo, fresco e perfeito para o seu conforto.
+Desejamos que você tenha uma estadia incrível e revigorante conosco!
 
-📱 *Central do Hóspede:*
-No portal abaixo você confere senhas, instruções dos aparelhos e regras de convivência do condomínio.
+🌿 *Como está tudo por aí?* O flat está fresquinho, limpo e conforme todas as suas expectativas?
 
-Tenha uma estadia incrível!`,
+Se você notar qualquer detalhe que precise de atenção, desejar solicitar travesseiro extra ou precisar de qualquer auxílio no flat, estamos à sua total disposição por aqui no WhatsApp a qualquer momento!
+
+📱 *Central do Hóspede & Manual:* No link abaixo você confere senhas de acesso, comodidades e regras do condomínio:
+{{link_portal_hospede}}`,
     buttons: [
       { label: "🌐 Abrir Portal do Flat", type: "URL", url: "{{link_portal_hospede}}" },
       { label: "📞 Ligar Administração", type: "CALL", url: "{{telefone_hotel}}" }
@@ -678,10 +680,10 @@ Notamos que o *Flat {{quarto}}* já está em limpeza há *{{tempo_limpeza}} minu
     triggerEvent: "post_checkout_review",
     channelType: "whatsapp",
     recipients: ["hospede"],
-    timingLabel: "24 horas após o check-out",
-    condition: "Check-out concluído há 24 horas",
+    timingLabel: "24 horas após o horário de check-out (12:00)",
+    condition: "24 horas decorridas a partir das 12:00 da data de saída (independente de baixa manual)",
     channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
-    description: "Enviado 24 horas após a saída (em vez de 2h). Solicita uma nota de 1 a 5 no WhatsApp. Apenas notas 5 recebem o link de avaliação 5 estrelas do Google Maps!",
+    description: "Enviado pontualmente 24 horas após o horário de check-out previsto das 12:00 (dia seguinte às 12:00). Não depende de baixa manual de checkout no sistema, garantindo envio infalível para 100% dos hóspedes. Apenas quem responder nota 5 recebe o convite 5 estrelas do Google!",
     messagePreview: `Olá, *{{primeiro_nome}}*! 😊
 
 Sua estadia no *{{nome_hotel}}* chegou ao fim e adoraríamos saber como foi!
@@ -829,7 +831,7 @@ const SIMULATION_SCENARIOS: Scenario[] = [
       "node_post_checkout_review",
       "node_nps_approved"
     ],
-    description: "Jornada direta perfeita: Confirmação de pagamento exclusiva para canais diretos + Early Check-in a partir das 10h + FNRH digital + Rotina 07h para Recepção e Garagem com PDF + Auto check-in + Café 18h + Pesquisa NPS +24h + Google Review 5 estrelas."
+    description: "Jornada direta perfeita: Confirmação com Manual em anexo e link do café + Early Check-in a partir das 10h + FNRH digital + Rotina 07h para Recepção e Garagem com PDF + Reforço de pré-checkin às 07h se pendente + Acolhimento caloroso + Lembrete de café às 18h apenas se ainda não pediu + Pesquisa NPS 24h pós 12:00 de checkout + Google Review 5 estrelas."
   },
   {
     id: "booking_standard",
@@ -853,7 +855,7 @@ const SIMULATION_SCENARIOS: Scenario[] = [
       "node_post_checkout_review",
       "node_nps_approved"
     ],
-    description: "Nunca menciona valores ou pagamento. Oculta o número do flat até a liberação no dia (às 12:00 se limpo ou 14:00 padrão), envia FNRH às 07:00 para portaria/garagem e promove Early Check-in às 10h para reserva direta futura."
+    description: "Nunca menciona valores ou pagamento. Oculta o número do flat até a liberação no dia (às 12:00 se limpo ou 14:00 padrão). Regra Estrita da Garagem: caso o hóspede chegue sem ter cadastrado a placa, a entrada na garagem não é autorizada até que ele preencha a ficha digital no próprio celular, disparando na hora o e-mail de autorização para a guarita."
   },
   {
     id: "sameday_reservation",
@@ -902,7 +904,7 @@ const SIMULATION_SCENARIOS: Scenario[] = [
       "node_pre_checkin_reminder",
       "node_morning_checkin_email"
     ],
-    description: "Se a reserva for para 2 hóspedes e apenas o 1º preencheu, o lembrete de 24h esclarece que o 1º já concluiu e envia link para o 2º, com botão de auto-declaração caso o hóspede viaje sozinho (ajustando a reserva para 1 pessoa). O e-mail das 07:00 também alerta a portaria com faixa destacada."
+    description: "Se a reserva for para 2 hóspedes e apenas o 1º preencheu, o lembrete de 24h esclarece que o 1º já concluiu e envia link para o 2º, com botão de auto-declaração caso viaje sozinho. Na rotina das 07:00, o e-mail alerta explicitamente a portaria que APENAS o Hóspede 1 está liberado, e que o 2º hóspede continua bloqueado até que preencha a ficha digital."
   },
   {
     id: "checkout_nps_flow",
@@ -920,7 +922,7 @@ const SIMULATION_SCENARIOS: Scenario[] = [
       "node_post_checkout_review",
       "node_nps_approved"
     ],
-    description: "24h após o check-out, envia pesquisa rápida de 1 a 5. Se o hóspede responder com nota 5, o sistema dispara imediatamente o convite com link oficial do Google Maps para avaliação 5 estrelas. Se a nota for inferior a 5, preserva a reputação pública."
+    description: "Disparado pontualmente 24h após as 12:00 da data de check-out, independente de baixa manual no sistema. Solicita nota de 1 a 5. Se o hóspede responder com nota 5, o sistema dispara imediatamente o convite com link oficial do Google Maps para avaliação 5 estrelas. Se a nota for inferior a 5, preserva a reputação pública."
   }
 ]
 

@@ -491,25 +491,16 @@ export default function GuestBreakfast() {
           <div className="space-y-1.5">
             <h2 className="text-xl font-black text-slate-900 tracking-tight">Café da Manhã não incluso</h2>
             <p className="text-xs text-slate-500 leading-relaxed pt-1">
-              A reserva do <strong>Apt {reservationData.flatNumber}</strong> em nome de <strong>{reservationData.guestName}</strong> foi contratada sem a inclusão da tarifa de café da manhã.
+              A reserva do <strong>Apt {reservationData.flatNumber}</strong> em nome de <strong>{reservationData.guestName}</strong> não possui o serviço de café da manhã contratado nesta estadia.
             </p>
           </div>
-          <div className="pt-2 space-y-2">
+          <div className="pt-2">
             <Button
               onClick={() => setLocation(`/minha-reserva/${reservationData.code}`)}
               className="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs h-11 rounded-xl shadow-md shadow-sky-600/20"
             >
               Voltar aos Detalhes da Reserva
             </Button>
-            <a
-              href={whatsappUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="w-full inline-flex items-center justify-center gap-1.5 h-10 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-xs border border-slate-200 transition-colors"
-            >
-              <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Solicitar Inclusão pelo WhatsApp</span>
-            </a>
           </div>
         </Card>
       </div>

@@ -215,6 +215,10 @@ Para agilizar sua entrada na portaria sem filas, realize com antecedência o seu
     offsetValue: 0,
     offsetUnit: "minutes",
     fixedTime: "",
+    hasAttachment: true,
+    documentUrl: "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
+    documentName: "Manual_do_Hospede_CorpFlats.pdf",
+    documentCaption: "Segue em anexo o Manual do Hóspede em PDF com todas as orientações da sua acomodação! 📖",
     message: `Olá, *{{nome_hospede}}*! 🌟✨
 Sua reserva no *{{nome_hotel}}* está *Confirmada*!
 
@@ -231,6 +235,8 @@ Sua reserva no *{{nome_hotel}}* está *Confirmada*!
 • Saldo a Quitar: *{{quanto_falta}}*
 
 {{instrucao_saldo}}
+
+{{mensagem_cafe_incluso}}
 
 🎁 *Benefício Exclusivo — Early Check-in a partir das 10:00:*
 Como você reservou diretamente pelo nosso site ou WhatsApp, a sua entrada está liberada a partir das *10:00 da manhã* mediante disponibilidade de limpeza! Assim que o flat estiver higienizado e inspecionado, você receberá a notificação de quarto liberado.
@@ -503,12 +509,14 @@ Desejamos uma ótima viagem até aqui! Se precisar de suporte, estamos à dispos
     fixedTime: "",
     message: `Olá, *{{primeiro_nome}}*! Seja muito bem-vindo(a) ao *Flat {{quarto}}*! 🏡✨
 
-Esperamos que encontre tudo limpo, fresco e perfeito para o seu conforto.
+Desejamos que você tenha uma estadia incrível e revigorante conosco!
 
-📱 *Central do Hóspede:*
-No portal abaixo você confere senhas, instruções dos aparelhos e regras de convivência do condomínio.
+🌿 *Como está tudo por aí?* O flat está fresquinho, limpo e conforme todas as suas expectativas?
 
-Tenha uma estadia incrível!`,
+Se você notar qualquer detalhe que precise de atenção, desejar solicitar travesseiro extra ou precisar de qualquer auxílio no flat, estamos à sua total disposição por aqui no WhatsApp a qualquer momento!
+
+📱 *Central do Hóspede & Manual:* No link abaixo você confere senhas de acesso, comodidades e regras do condomínio:
+{{link_portal_hospede}}`,
     footer: "CorpFlats • Soho Residence Service",
     hasAttachment: false,
     documentUrl: "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
@@ -1456,7 +1464,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   // Tag: {{mensagem_cafe_incluso}}
   const hasBreakfast = Boolean(reservation.includeBreakfast || reservation.ratePlan === "with_breakfast");
   const mensagemCafeIncluso = hasBreakfast
-    ? `🥐 *Café da Manhã Incluso:*\nSua diária inclui nosso café da manhã artesanal servido exclusivamente no seu flat! Monte a sua bandeja até às 22h pelo link:\n👉 ${linkCafeManha}`
+    ? `🥐 *Café da Manhã Incluso:*\nSua diária inclui nosso café da manhã artesanal servido exclusivamente no seu flat! Você já pode agendar sua bandeja pelo link:\n👉 ${linkCafeManha}`
     : "";
 
   // Tag: {{mensagem_pendencia_hospedes}} (Lógica de 1 vs 2 hóspedes)
@@ -1470,7 +1478,12 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   // Tag: {{aviso_checkin_pendente}}
   const allCheckedIn = Boolean(reservation.checkedInAt || (reservation.guests && reservation.guests.length > 0 && reservation.guests.every(g => g.hasCompletedCheckin)));
   const avisoCheckinPendente = !allCheckedIn
-    ? `⚠️ *Atenção:* Sua ficha de Pré-Check-in Digital ainda está pendente. Para evitar filas e atrasos na portaria 24h, preencha antecipadamente:\n👉 ${linkCheckinDigital}`
+    ? `⚠️ *Atenção:* Notamos que sua ficha de Pré-Check-in Digital ainda está pendente. Para que a portaria libere sua entrada sem filas e seu veículo seja autorizado com antecedência, preencha agora pelo link:\n👉 ${linkCheckinDigital}`
+    : "";
+
+  // Tag: {{aviso_pendencia_segundo_hospede}} (Portaria e Informativos)
+  const avisoPendenciaSegundoHospede = (isMultiGuest && firstGuestDone && !allCheckedIn)
+    ? `⚠️ *Atenção Portaria:* Apenas o *Hóspede 1 (${guest.firstName || guest.name})* realizou o pré-check-in digital e está *LIBERADO* para check-in. O *2º hóspede AINDA NÃO ESTÁ LIBERADO* para entrada; estamos aguardando o preenchimento digital de sua ficha para autorização de acesso ao flat.`
     : "";
 
   const tagsMap = {
@@ -1520,6 +1533,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{mensagem_cafe_incluso}}": mensagemCafeIncluso,
     "{{mensagem_pendencia_hospedes}}": mensagemPendenciaHospedes,
     "{{aviso_checkin_pendente}}": avisoCheckinPendente,
+    "{{aviso_pendencia_segundo_hospede}}": avisoPendenciaSegundoHospede,
     "{{link_guia_hospede}}": zapiCfg.guestGuidePdfUrl || `${appOrigin}/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf`,
     "{{link_manual_hospede}}": zapiCfg.guestGuidePdfUrl || `${appOrigin}/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf`,
     "{{early_checkin_beneficio}}": earlyCheckinBeneficio,
@@ -3632,11 +3646,23 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           tpl.title = "Pós Check-out (24h) • Pesquisa de Satisfação (Filtro NPS)";
         }
         if (tpl.id === "tpl_new_reservation_direct") {
-          if (!tpl.message.includes("10:00 da manhã")) {
-            const defDir = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_new_reservation_direct");
-            if (defDir) {
+          const defDir = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_new_reservation_direct");
+          if (defDir) {
+            tpl.hasAttachment = defDir.hasAttachment;
+            tpl.documentUrl = defDir.documentUrl;
+            tpl.documentName = defDir.documentName;
+            tpl.documentCaption = defDir.documentCaption;
+            if (!tpl.message.includes("mensagem_cafe_incluso")) {
               tpl.message = defDir.message;
               tpl.description = defDir.description;
+            }
+          }
+        }
+        if (tpl.id === "tpl_checkin_completed") {
+          if (!tpl.message.includes("Como está tudo por aí")) {
+            const defChk = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_checkin_completed");
+            if (defChk) {
+              tpl.message = defChk.message;
             }
           }
         }
@@ -5521,14 +5547,19 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
   const activeTemplates = db.whatsappTemplates.filter(t => t.enabled && t.triggerTiming !== "immediate");
   if (activeTemplates.length === 0) return;
 
-  // Processar reservas ativas/futuras (confirmadas e pré-reservas pendentes)
+  // Data limite para considerar reservas recentes para NPS (+24h pós-checkout)
+  const twoDaysAgo = new Date(brDate);
+  twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+  const twoDaysAgoStr = twoDaysAgo.toISOString().substring(0, 10);
+
+  // Processar reservas ativas/futuras e recentes (para NPS)
   const reservationsToProcess = (db.reservations || []).filter(r => 
     r.status !== "cancelada" && 
     r.status !== "cancelled" && 
     r.status !== "CANCELLED" && 
     r.guestPhone &&
     r.checkoutDate && 
-    r.checkoutDate >= todayStr
+    r.checkoutDate >= twoDaysAgoStr
   );
 
   let hasChanges = false;
@@ -5539,6 +5570,11 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
     const recipients = getReservationRecipients(resv, db);
 
     for (const tpl of activeTemplates) {
+      // Se a data de checkout já passou, APENAS processar post_checkout_review
+      if (resv.checkoutDate < todayStr && tpl.triggerEvent !== "post_checkout_review") {
+        continue;
+      }
+
       // Se a reserva já realizou check-out/concluída, NUNCA agendar mensagens pré-estadia ou lembretes de estadia
       if (isCompletedOrCheckedOut && tpl.triggerEvent !== "post_checkout_review") {
         continue;
@@ -5655,11 +5691,11 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
           let scheduledTime = calculateScheduledTime(tpl, resv, db);
           let scheduledDate = new Date(scheduledTime);
 
-          // Se a data de checkout é hoje e o horário padrão já passou recentemente (dentro de 6h),
-          // agenda para envio em 1 minuto para não perder a solicitação de avaliação no Google
-          if (scheduledDate <= now && resv.checkoutDate === todayStr && tpl.triggerEvent === "post_checkout_review") {
+          // Se o horário do NPS (+24h pós 12:00 de checkout) já chegou ou passou nas últimas 24h,
+          // agenda para envio em 1 minuto para não perder a pesquisa de satisfação
+          if (scheduledDate <= now && tpl.triggerEvent === "post_checkout_review") {
             const diffHours = (now.getTime() - scheduledDate.getTime()) / (3600 * 1000);
-            if (diffHours >= 0 && diffHours <= 6) {
+            if (diffHours >= 0 && diffHours <= 24) {
               scheduledDate = new Date(now.getTime() + 60 * 1000);
               scheduledTime = scheduledDate.toISOString();
             }
