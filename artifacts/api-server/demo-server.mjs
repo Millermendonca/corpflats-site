@@ -1828,13 +1828,13 @@ async function reconcileFromAuditLogs(db, pgPool) {
     }
 
     const validRes = Array.from(distinctRes.values()).filter(r => r.checkinDate && r.checkoutDate);
-    const usedResIds = new Set();
-    let nextResId = 250;
+    const usedResIds = new Set((db.reservations || []).map(r => Number(r.id)).filter(id => !isNaN(id) && id > 0));
+    let nextResId = usedResIds.size > 0 ? Math.max(...usedResIds) + 1 : 300;
 
     for (const r of validRes) {
-      if (r.id && !usedResIds.has(r.id)) {
-        usedResIds.add(r.id);
-      } else {
+      if (r.id && !usedResIds.has(Number(r.id))) {
+        usedResIds.add(Number(r.id));
+      } else if (!r.id) {
         while (usedResIds.has(nextResId)) nextResId++;
         r.id = nextResId;
         usedResIds.add(nextResId);
@@ -1847,7 +1847,39 @@ async function reconcileFromAuditLogs(db, pgPool) {
       }
     }
 
-    db.reservations = validRes.sort((a,b) => (b.id || 0) - (a.id || 0));
+    if (!Array.isArray(db.reservations)) db.reservations = [];
+
+    // Merge aditivo e estritamente não-destrutivo:
+    // Nunca sobrescreve ou descarta reservas já existentes na memória / base PostgreSQL!
+    for (const r of validRes) {
+      const existingIdx = db.reservations.findIndex(ex => 
+        (ex.id && r.id && Number(ex.id) === Number(r.id)) ||
+        (ex.code && r.code && ex.code.toUpperCase() === r.code.toUpperCase()) ||
+        (String(ex.flatNumber) === String(r.flatNumber) && ex.checkinDate === r.checkinDate && ex.checkoutDate === r.checkoutDate)
+      );
+
+      if (existingIdx === -1) {
+        db.reservations.push(r);
+        changed = true;
+      } else {
+        const existing = db.reservations[existingIdx];
+        const logDate = r.updatedAt || r.createdAt || "";
+        const curDate = existing.updatedAt || existing.createdAt || "";
+        if (logDate && logDate >= curDate) {
+          db.reservations[existingIdx] = {
+            ...r,
+            ...existing,
+            updatedAt: logDate,
+            status: r.status || existing.status,
+            checkinDate: r.checkinDate || existing.checkinDate,
+            checkoutDate: r.checkoutDate || existing.checkoutDate
+          };
+          changed = true;
+        }
+      }
+    }
+
+    db.reservations.sort((a, b) => (b.id || 0) - (a.id || 0));
 
     // 2. RECONCILIAR PEDIDOS DE CAFÉ DA MANHÃ
     if (!db.breakfastOrders) db.breakfastOrders = [];
