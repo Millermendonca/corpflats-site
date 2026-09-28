@@ -123,14 +123,6 @@
       "isActive": true
     },
     {
-      "id": 9,
-      "number": "502",
-      "colName": "502",
-      "isActive": false,
-      "isOccupied": false,
-      "updatedAt": "2026-09-23T18:59:41.707Z"
-    },
-    {
       "id": 10,
       "number": "509",
       "colIndex": 11,

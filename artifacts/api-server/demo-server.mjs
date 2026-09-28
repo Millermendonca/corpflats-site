@@ -1593,14 +1593,17 @@ function reconcileUniversalIntegrity(incomingState = null) {
     }
   }
 
-  // 2. Normalização Universal de Ativação de Flats (isActive)
+  // 2. Normalização Universal e Purga Definitiva de Flats Inválidos (Flat 502)
+  const flatsBeforeCount = db.flats.length;
+  db.flats = (db.flats || []).filter(flat => String(flat.number) !== "502" && flat.id !== 9);
+  if (db.flats.length !== flatsBeforeCount) changed = true;
+  
+  const cleanReqsBefore = (db.cleaningRequests || []).length;
+  db.cleaningRequests = (db.cleaningRequests || []).filter(c => String(c.flatNumber) !== "502" && c.flatId !== 9);
+  if (db.cleaningRequests.length !== cleanReqsBefore) changed = true;
+
   db.flats.forEach(flat => {
-    if (String(flat.number) === "502" || flat.id === 9) {
-      if (flat.isActive !== false) {
-        flat.isActive = false;
-        changed = true;
-      }
-    } else if (flat.isActive === undefined) {
+    if (flat.isActive === undefined) {
       flat.isActive = true;
       changed = true;
     }
@@ -4131,7 +4134,7 @@ function isSameGuest(g1, g2) {
 }
 
 // ── Ultra-Fast Spreadsheet Parser ──────────────────────────────────────────
-const ALLOWED_COLUMN_LETTERS = ["C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "W"];
+const ALLOWED_COLUMN_LETTERS = ["C", "D", "E", "F", "G", "H", "I", "J", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "W"];
 const ALLOWED_COLUMN_INDICES = ALLOWED_COLUMN_LETTERS.map(l => XLSX.utils.decode_col(l));
 
 function parseSpreadsheetBuffer(buf) {
@@ -5346,8 +5349,8 @@ function getRequestsForDate(dateStr, isNested = false) {
     getRequestsForDate(getTodayStr(), true);
   }
 
-  // Garante que cleaningRequests existe e não possui registros nulos
-  db.cleaningRequests = (db.cleaningRequests || []).filter(r => r && (r.flatId || r.flatNumber));
+  // Garante que cleaningRequests existe e não possui registros nulos ou do flat 502
+  db.cleaningRequests = (db.cleaningRequests || []).filter(r => r && (r.flatId || r.flatNumber) && String(r.flatNumber) !== "502" && r.flatId !== 9);
   const requestsForDate = [];
   const existingFlatNumbersForDate = new Set();
   let shouldSaveDb = false;
@@ -6919,7 +6922,7 @@ app.post("/api/periodic-tasks", (req, res) => {
     firstDueDate: firstDueDate ? String(firstDueDate).substring(0, 10) : todayStr,
     assignToHousekeeping: Boolean(assignToHousekeeping),
     isActive: true,
-    flatIds: Array.isArray(flatIds) && flatIds.length > 0 ? flatIds : db.flats.map(f => f.id),
+    flatIds: Array.isArray(flatIds) && flatIds.length > 0 ? flatIds.filter(id => id !== 9) : (db.flats || []).filter(f => f.isActive !== false && String(f.number) !== "502" && f.id !== 9).map(f => f.id),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -7000,10 +7003,10 @@ app.get("/api/periodic-tasks/pending", (req, res) => {
   const result = [];
 
   for (const task of (db.periodicTasks || []).filter(t => t.isActive)) {
-    const targetFlats = Array.isArray(task.flatIds) && task.flatIds.length > 0 ? task.flatIds.map(Number) : db.flats.map(f => Number(f.id));
+    const targetFlats = Array.isArray(task.flatIds) && task.flatIds.length > 0 ? task.flatIds.map(Number).filter(id => id !== 9) : (db.flats || []).filter(f => f.isActive !== false && String(f.number) !== "502" && f.id !== 9).map(f => Number(f.id));
     for (const flatId of targetFlats) {
       const flat = db.flats.find(f => Number(f.id) === Number(flatId));
-      if (!flat) continue;
+      if (!flat || flat.isActive === false || String(flat.number) === "502" || flat.id === 9) continue;
 
       const executions = (db.periodicExecutions || []).filter(e => Number(e.periodicTaskId) === Number(task.id) && Number(e.flatId) === Number(flatId));
       executions.sort((a, b) => new Date(b.executedAt).getTime() - new Date(a.executedAt).getTime());
