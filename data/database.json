@@ -47016,16 +47016,9 @@
       "description": "Cardápio e montagem da bandeja de café no quarto.",
       "category": "Serviços",
       "enabled": true,
-      "message": "Olá, *{{primeiro_nome}}*! ☕🥐\nPara agendar o café da manhã no *Flat {{quarto}}*, você pode montar a sua bandeja escolhendo seus itens favoritos e o horário desejado:\n\n_(Lembrando: nosso café da manhã é servido exclusivamente com entrega no seu flat, não servido no restaurante do condomínio)._",
+      "message": "Olá, *{{primeiro_nome}}*! ☕🥐\nPara agendar o café da manhã no *Flat {{quarto}}*, você pode montar a sua bandeja diretamente pelo link abaixo:\n\n{{link_cafe_manha}}\n\n_(Lembrando: nosso café da manhã é servido exclusivamente com entrega no seu flat, não servido no restaurante do condomínio)._\n\nEscolha seus itens favoritos e o horário desejado!",
       "footer": "CorpFlats • Café no Flat",
-      "buttons": [
-        {
-          "id": "btn_cafe",
-          "type": "URL",
-          "label": "🥐 Montar Café da Manhã",
-          "url": "{{link_cafe_manha}}"
-        }
-      ],
+      "buttons": [],
       "recipientTarget": "guest"
     },
     {

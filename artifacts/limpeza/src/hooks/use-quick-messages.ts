@@ -174,13 +174,15 @@ Para agilizar sua entrada na portaria sem filas, preencha o *Pré-Check-in Digit
     recipientTarget: "guest",
     enabled: true,
     message: `Olá, *{{primeiro_nome}}*! ☕🥐
-Para agendar o café da manhã no *Flat {{quarto}}*, você pode montar a sua bandeja escolhendo seus itens favoritos e o horário desejado:
+Para agendar o café da manhã no *Flat {{quarto}}*, você pode montar a sua bandeja diretamente pelo link abaixo:
 
-_(Lembrando: nosso café da manhã é servido exclusivamente com entrega no seu flat, não servido no restaurante do condomínio)._`,
+{{link_cafe_manha}}
+
+_(Lembrando: nosso café da manhã é servido exclusivamente com entrega no seu flat, não servido no restaurante do condomínio)._
+
+Escolha seus itens favoritos e o horário desejado!`,
     footer: "CorpFlats • Café no Flat",
-    buttons: [
-      { id: "btn_cafe", type: "URL", label: "🥐 Montar Café da Manhã", url: "{{link_cafe_manha}}" }
-    ]
+    buttons: []
   },
   {
     id: "qm_access_wifi",
