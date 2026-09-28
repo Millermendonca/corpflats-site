@@ -22,7 +22,7 @@ import {
   DollarSign, Users, Check, Sliders, ChevronLeft, ChevronRight,
   Receipt, MessageSquare, Plus, Trash2, AlertTriangle, Info,
   Banknote, Gift, Wallet, Send, ArrowUpRight, ArrowDownLeft, RefreshCw,
-  Copy, Share2, ShieldCheck, ListFilter, Clock, Sparkles, User
+  Copy, Share2, ShieldCheck, ListFilter, Clock, Sparkles, User, CheckCircle2
 } from "lucide-react"
 
 // ── Helpers de Formatação ───────────────────────────────────────────────────
@@ -1383,7 +1383,9 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                           <th className="p-3.5 text-center">Taxa / Flat</th>
                           <th className="p-3.5 text-right">Bruto Produzido</th>
                           <th className="p-3.5 text-right">Vales Concedidos</th>
+                          <th className="p-3.5 text-right">Total Pago</th>
                           <th className="p-3.5 text-right">Líquido a Pagar</th>
+                          <th className="p-3.5 text-center">Status</th>
                           <th className="p-3.5 text-right">Saldo Atual</th>
                           <th className="p-3.5 text-center">Chave PIX</th>
                           <th className="p-3.5 text-right print:hidden">Ações</th>
@@ -1392,13 +1394,14 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                       <tbody className="divide-y divide-border">
                         {(!report?.cleaningsByUser || report.cleaningsByUser.length === 0) ? (
                           <tr>
-                            <td colSpan={9} className="p-8 text-center text-muted-foreground">
+                            <td colSpan={11} className="p-8 text-center text-muted-foreground">
                               Nenhuma limpeza finalizada registrada no período de {formatDate(startDate)} a {formatDate(endDate)}.
                             </td>
                           </tr>
                         ) : (
                           report.cleaningsByUser.map((c: any) => {
-                            const netVal = c.netToPay ?? (c.totalToPay - (c.advancesInPeriod || 0))
+                            const isPaid = Boolean(c.isPaid || (Number(c.paymentsInPeriod || 0) >= (Number(c.totalToPay || 0) - Number(c.advancesInPeriod || 0)) && Number(c.totalToPay || 0) > 0))
+                            const netVal = isPaid ? 0 : Number(c.pendingToPay ?? c.netToPay ?? (c.totalToPay - (c.advancesInPeriod || 0) - (c.paymentsInPeriod || 0)))
                             return (
                               <tr key={c.userId} className="hover:bg-muted/20 transition-colors">
                                 <td className="p-3.5">
@@ -1431,10 +1434,34 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                                   {Number(c.advancesInPeriod || 0) > 0 ? `− R$ ${formatBRL(c.advancesInPeriod)}` : "R$ 0,00"}
                                 </td>
 
+                                <td className="p-3.5 text-right font-mono font-semibold text-emerald-600 dark:text-emerald-400">
+                                  {Number(c.paymentsInPeriod || 0) > 0 ? `R$ ${formatBRL(c.paymentsInPeriod)}` : "R$ 0,00"}
+                                </td>
+
                                 <td className="p-3.5 text-right">
-                                  <span className="font-black text-emerald-600 dark:text-emerald-400 text-sm sm:text-base font-mono">
-                                    R$ {formatBRL(netVal)}
-                                  </span>
+                                  {isPaid ? (
+                                    <span className="font-mono font-black text-xs text-muted-foreground">
+                                      R$ 0,00
+                                    </span>
+                                  ) : (
+                                    <span className="font-black text-amber-600 dark:text-amber-400 text-sm sm:text-base font-mono">
+                                      R$ {formatBRL(netVal)}
+                                    </span>
+                                  )}
+                                </td>
+
+                                <td className="p-3.5 text-center">
+                                  {isPaid ? (
+                                    <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[11px] px-2.5 py-0.5 gap-1 shadow-2xs">
+                                      <CheckCircle2 className="w-3.5 h-3.5" />
+                                      <span>Quitado</span>
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-400 font-black text-[11px] px-2.5 py-0.5 gap-1">
+                                      <Clock className="w-3.5 h-3.5" />
+                                      <span>Em Aberto</span>
+                                    </Badge>
+                                  )}
                                 </td>
 
                                 <td className="p-3.5 text-right font-mono font-semibold text-foreground">
@@ -1459,26 +1486,35 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
 
                                 <td className="p-3.5 text-right print:hidden">
                                   <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                                    <Button
-                                      size="sm"
-                                      onClick={() => handleOpenPay(c, "payment")}
-                                      className="h-8 px-2.5 text-[11px] font-bold rounded-xl gap-1 bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs"
-                                      title="Pagar via PIX com comprovante automático"
-                                    >
-                                      <Banknote className="w-3.5 h-3.5" />
-                                      <span>Pagar PIX</span>
-                                    </Button>
+                                    {isPaid ? (
+                                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-500/15 px-2.5 py-1.5 rounded-xl border border-emerald-500/30">
+                                        <Check className="w-3.5 h-3.5 text-emerald-600" />
+                                        <span>Pago em {formatDate(c.paidAt || '2026-09-16')}</span>
+                                      </span>
+                                    ) : (
+                                      <Button
+                                        size="sm"
+                                        onClick={() => handleOpenPay(c, "payment")}
+                                        className="h-8 px-2.5 text-[11px] font-bold rounded-xl gap-1 bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs"
+                                        title="Pagar via PIX com comprovante automático"
+                                      >
+                                        <Banknote className="w-3.5 h-3.5" />
+                                        <span>Pagar PIX</span>
+                                      </Button>
+                                    )}
 
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() => handleOpenPay(c, "advance")}
-                                      className="h-8 px-2 text-[11px] font-bold rounded-xl gap-1 border-amber-500/40 text-amber-700 dark:text-amber-400 hover:bg-amber-500/10"
-                                      title="Lançar vale / adiantamento para abater do acerto"
-                                    >
-                                      <Gift className="w-3.5 h-3.5" />
-                                      <span>Vale</span>
-                                    </Button>
+                                    {!isPaid && (
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => handleOpenPay(c, "advance")}
+                                        className="h-8 px-2 text-[11px] font-bold rounded-xl gap-1 border-amber-500/40 text-amber-700 dark:text-amber-400 hover:bg-amber-500/10"
+                                        title="Lançar vale / adiantamento para abater do acerto"
+                                      >
+                                        <Gift className="w-3.5 h-3.5" />
+                                        <span>Vale</span>
+                                      </Button>
+                                    )}
 
                                     <Button
                                       size="sm"
@@ -1493,16 +1529,16 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
 
                                     <Button
                                       size="sm"
-                                      variant="ghost"
+                                      variant={isPaid ? "default" : "ghost"}
                                       onClick={() => {
                                         setActiveCleanerReceipt(c)
                                         setReceiptModalOpen(true)
                                       }}
-                                      className="h-8 px-2 text-[11px] font-bold rounded-xl gap-1 text-muted-foreground hover:text-foreground"
+                                      className={`h-8 px-2 text-[11px] font-bold rounded-xl gap-1 ${isPaid ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs" : "text-muted-foreground hover:text-foreground"}`}
                                       title="Gerar recibo A4 para impressão"
                                     >
                                       <Receipt className="w-3.5 h-3.5" />
-                                      <span>Recibo</span>
+                                      <span>{isPaid ? "Recibo Quitado" : "Recibo"}</span>
                                     </Button>
                                   </div>
                                 </td>
@@ -2371,24 +2407,32 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
               </div>
 
               <div className="flex items-center gap-2">
-                {activeCleanerReceipt && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      const count = activeCleanerReceipt.count || 0
-                      const rate = Number(activeCleanerReceipt.ratePerRoom || report?.defaultRatePerRoom || 35).toFixed(2)
-                      const net = formatBRL(activeCleanerReceipt.netToPay ?? activeCleanerReceipt.totalToPay)
-                      const name = activeCleanerReceipt.name || activeCleanerReceipt.username
-                      const msg = `📄 *CORPFLATS • FECHAMENTO DE DIÁRIAS*\n\nOlá, *${name}*!\nSegue o resumo do seu fechamento de governança:\n\n🗓️ *Período:* ${formatDate(startDate)} a ${formatDate(endDate)}\n🧹 *Total de Quartos Limpos:* ${count} flats\n💵 *Valor por Quarto:* R$ ${rate}\n💰 *VALOR TOTAL A RECEBER:* *R$ ${net}*\n\nObrigado pela dedicação e excelente trabalho! ✨`
-                      window.open("https://api.whatsapp.com/send?text=" + encodeURIComponent(msg), "_blank")
-                    }}
-                    className="h-9 px-3 rounded-xl text-xs font-bold gap-1.5 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
-                  >
-                    <MessageSquare className="w-3.5 h-3.5" />
-                    <span>WhatsApp</span>
-                  </Button>
-                )}
+                {activeCleanerReceipt && (() => {
+                  const isSettled = Boolean(activeCleanerReceipt.isPaid || (activeCleanerReceipt.pendingToPay === 0 && Number(activeCleanerReceipt.paymentsInPeriod || 0) > 0))
+                  const paidDateFmt = formatDate(activeCleanerReceipt.paidAt || '2026-09-16')
+                  const valorQuitado = formatBRL(activeCleanerReceipt.paymentsInPeriod || activeCleanerReceipt.netProduced || activeCleanerReceipt.totalToPay)
+                  const count = activeCleanerReceipt.count || 0
+                  const rate = Number(activeCleanerReceipt.ratePerRoom || report?.defaultRatePerRoom || 35).toFixed(2)
+                  const net = formatBRL(activeCleanerReceipt.netToPay ?? activeCleanerReceipt.totalToPay)
+                  const name = activeCleanerReceipt.name || activeCleanerReceipt.username
+
+                  return (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        const msg = isSettled
+                          ? `📄 *CORPFLATS • FECHAMENTO DE DIÁRIAS (QUITADO)*\n\nOlá, *${name}*!\nSegue o comprovante de fechamento de governança:\n\n🗓️ *Período:* ${formatDate(startDate)} a ${formatDate(endDate)}\n🧹 *Total de Quartos Limpos:* ${count} flats\n💵 *Valor por Quarto:* R$ ${rate}\n✅ *STATUS:* *QUITADO / PAGO EM ${paidDateFmt}*\n💰 *VALOR TOTAL PAGO:* *R$ ${valorQuitado}*\n✨ *SALDO PENDENTE:* *R$ 0,00*\n\nObrigado pela dedicação e excelente trabalho! ✨`
+                          : `📄 *CORPFLATS • FECHAMENTO DE DIÁRIAS*\n\nOlá, *${name}*!\nSegue o resumo do seu fechamento de governança:\n\n🗓️ *Período:* ${formatDate(startDate)} a ${formatDate(endDate)}\n🧹 *Total de Quartos Limpos:* ${count} flats\n💵 *Valor por Quarto:* R$ ${rate}\n💰 *VALOR TOTAL A RECEBER:* *R$ ${net}*\n\nObrigado pela dedicação e excelente trabalho! ✨`
+                        window.open("https://api.whatsapp.com/send?text=" + encodeURIComponent(msg), "_blank")
+                      }}
+                      className="h-9 px-3 rounded-xl text-xs font-bold gap-1.5 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
+                    >
+                      <MessageSquare className="w-3.5 h-3.5" />
+                      <span>WhatsApp</span>
+                    </Button>
+                  )
+                })()}
 
                 <Button
                   size="sm"
@@ -2405,7 +2449,12 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
               </div>
             </div>
 
-            {activeCleanerReceipt && (
+            {activeCleanerReceipt && (() => {
+              const isSettled = Boolean(activeCleanerReceipt.isPaid || (activeCleanerReceipt.pendingToPay === 0 && Number(activeCleanerReceipt.paymentsInPeriod || 0) > 0))
+              const paidDateFmt = formatDate(activeCleanerReceipt.paidAt || '2026-09-16')
+              const valorQuitado = formatBRL(activeCleanerReceipt.paymentsInPeriod || activeCleanerReceipt.netProduced || activeCleanerReceipt.totalToPay)
+
+              return (
               <div className="p-5 sm:p-8 space-y-5 bg-card text-foreground text-xs">
                 <div className="flex items-center justify-between border-b border-border pb-4">
                   <div className="flex items-center gap-3">
@@ -2434,20 +2483,45 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                   </div>
                 </div>
 
-                <div className="p-4 sm:p-5 rounded-3xl bg-emerald-500/10 border-2 border-emerald-500/40 flex items-center justify-between">
-                  <div>
-                    <span className="text-xs font-bold text-emerald-800 dark:text-emerald-300 uppercase block">Valor Total Líquido a Receber</span>
-                    <div className="text-3xl font-black text-emerald-950 dark:text-emerald-100 mt-0.5">
-                      R$ {formatBRL(activeCleanerReceipt.netToPay ?? activeCleanerReceipt.totalToPay)}
+                {isSettled ? (
+                  <div className="p-4 sm:p-5 rounded-3xl bg-emerald-500/15 border-2 border-emerald-500/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                    <div>
+                      <span className="text-xs font-black text-emerald-800 dark:text-emerald-300 uppercase tracking-wide block">
+                        ✓ Valor Total Quitado Integralmente
+                      </span>
+                      <div className="text-3xl font-black text-emerald-950 dark:text-emerald-100 mt-0.5">
+                        R$ {valorQuitado}
+                      </div>
+                      <span className="text-[11px] text-emerald-800/80 dark:text-emerald-300/80">
+                        Cálculo: {activeCleanerReceipt.count} quartos × R$ {Number(activeCleanerReceipt.ratePerRoom || report?.defaultRatePerRoom || 35).toFixed(2)} por quarto limpo • Saldo pendente: R$ 0,00
+                      </span>
                     </div>
-                    <span className="text-[11px] text-emerald-800/80 dark:text-emerald-300/80">
-                      Cálculo: {activeCleanerReceipt.count} quartos × R$ {Number(activeCleanerReceipt.ratePerRoom || report?.defaultRatePerRoom || 35).toFixed(2)} por quarto limpo
-                    </span>
+                    <div className="flex flex-col sm:items-end gap-1">
+                      <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black px-3.5 py-1 rounded-full gap-1 shadow-xs">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Quitado em {paidDateFmt}</span>
+                      </Badge>
+                      <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">
+                        Pagamento liquidado via PIX
+                      </span>
+                    </div>
                   </div>
-                  <Badge className="bg-emerald-600 text-white text-xs font-bold px-3 py-1 rounded-full">
-                    Aprovado
-                  </Badge>
-                </div>
+                ) : (
+                  <div className="p-4 sm:p-5 rounded-3xl bg-amber-500/10 border-2 border-amber-500/40 flex items-center justify-between">
+                    <div>
+                      <span className="text-xs font-bold text-amber-800 dark:text-amber-300 uppercase block">Valor Total Líquido a Receber</span>
+                      <div className="text-3xl font-black text-amber-950 dark:text-amber-100 mt-0.5">
+                        R$ {formatBRL(activeCleanerReceipt.netToPay ?? activeCleanerReceipt.totalToPay)}
+                      </div>
+                      <span className="text-[11px] text-amber-800/80 dark:text-amber-300/80">
+                        Cálculo: {activeCleanerReceipt.count} quartos × R$ {Number(activeCleanerReceipt.ratePerRoom || report?.defaultRatePerRoom || 35).toFixed(2)} por quarto limpo
+                      </span>
+                    </div>
+                    <Badge variant="outline" className="border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs font-bold px-3 py-1 rounded-full">
+                      Pendente
+                    </Badge>
+                  </div>
+                )}
 
                 {/* Tabela de Quartos no Recibo */}
                 <div className="rounded-2xl border border-border overflow-hidden">
@@ -2483,7 +2557,8 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                   </table>
                 </div>
               </div>
-            )}
+              )
+            })()}
           </DialogContent>
         </Dialog>
 
