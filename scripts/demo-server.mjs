@@ -1280,6 +1280,64 @@ function sanitizeAndRecoverCleanings() {
       durationMinutes: 40,
       createdAt: "2026-09-22T08:00:00.000Z",
       updatedAt: "2026-09-22T15:40:00.000Z"
+    },
+    // 24/09/2026 - Cris (Flat 512 - Márcio Alexandre)
+    {
+      id: 1241,
+      flatId: 12,
+      flatNumber: "512",
+      requestDate: "2026-09-24",
+      effectiveDate: "2026-09-24",
+      executionDate: "2026-09-24",
+      source: "checkout",
+      status: "clean",
+      assignedUserId: 2,
+      assignedUsername: "Cris",
+      assignedUserName: "Cris",
+      isVacant: true,
+      isPriority: false,
+      isExtended: false,
+      twinBeds: false,
+      extraMattress: false,
+      adminNote: null,
+      leavingGuest: "Márcio Alexandre",
+      arrivingGuest: null,
+      pendingObservation: null,
+      willCleanAt: "2026-09-24T15:40:00.000Z",
+      cleaningStartedAt: "2026-09-24T15:40:00.000Z",
+      completedAt: "2026-09-24T16:20:00.000Z",
+      durationMinutes: 35,
+      createdAt: "2026-09-24T08:00:00.000Z",
+      updatedAt: "2026-09-24T16:20:00.000Z"
+    },
+    // 27/09/2026 - Cris (Flat 212 - Guilherme)
+    {
+      id: 1330,
+      flatId: 5,
+      flatNumber: "212",
+      requestDate: "2026-09-27",
+      effectiveDate: "2026-09-27",
+      executionDate: "2026-09-27",
+      source: "checkout",
+      status: "clean",
+      assignedUserId: 2,
+      assignedUsername: "Cris",
+      assignedUserName: "Cris",
+      isVacant: true,
+      isPriority: false,
+      isExtended: false,
+      twinBeds: false,
+      extraMattress: false,
+      adminNote: null,
+      leavingGuest: "Guilherme",
+      arrivingGuest: null,
+      pendingObservation: null,
+      willCleanAt: "2026-09-27T13:00:00.000Z",
+      cleaningStartedAt: "2026-09-27T20:11:00.000Z",
+      completedAt: "2026-09-27T20:24:07.071Z",
+      durationMinutes: 13,
+      createdAt: "2026-09-27T08:00:00.000Z",
+      updatedAt: "2026-09-27T20:24:07.071Z"
     }
   ];
 
@@ -10886,7 +10944,12 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       vehicle: r.vehicle || null,
       estimatedArrivalTime: r.estimatedArrivalTime || null,
       guestArrivalResponse: r.guestArrivalResponse || null,
-      isCleaningPriority: Boolean(cleanReq?.isPriority)
+      isCleaningPriority: Boolean(cleanReq?.isPriority),
+      fnhrCompleted: Boolean(r.fnhrCompleted),
+      preCheckinCompleted: Boolean(r.preCheckinCompleted || r.fnhrCompleted || (Array.isArray(r.guests) && r.guests.some(g => g.hasCompletedCheckin))),
+      hasPreCheckin: Boolean(r.hasPreCheckin || r.preCheckinCompleted || r.fnhrCompleted || (Array.isArray(r.guests) && r.guests.some(g => g.hasCompletedCheckin))),
+      checkedInAt: r.checkedInAt || null,
+      guestSelfCheckin: Boolean(r.guestSelfCheckin)
     },
     hasBreakfast,
     breakfastLink,
@@ -10913,7 +10976,14 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     preCheckinStatus: {
       totalGuests,
       completedCheckins,
-      isFullyCompleted: completedCheckins >= totalGuests
+      isFullyCompleted: completedCheckins >= totalGuests,
+      completed: Boolean(
+        r.fnhrCompleted || 
+        r.preCheckinCompleted || 
+        r.hasPreCheckin ||
+        (completedCheckins >= totalGuests && totalGuests > 0) ||
+        (Array.isArray(r.guests) && r.guests.length > 0 && r.guests.some(g => g.hasCompletedCheckin))
+      )
     },
     termsAndRules: db.settings.termsAndRules || DEFAULT_TERMS_AND_RULES,
     houseRules: db.settings.houseRules || DEFAULT_HOUSE_RULES,
@@ -14915,6 +14985,10 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   }
 
   // Atualiza flags agregadas da reserva
+  if (Number(guestIndex) === 1 || (Array.isArray(r.guests) && r.guests.some(g => g.hasCompletedCheckin))) {
+    r.hasPreCheckin = true;
+    r.preCheckinCompleted = true;
+  }
   r.fnhrCompleted = r.guests.every(g => g.hasCompletedCheckin);
   r.hasMinor = r.guests.some(g => g.isMinor);
   r.riskAttentionAlert = r.guests.some(g => g.riskAttentionAlert);
