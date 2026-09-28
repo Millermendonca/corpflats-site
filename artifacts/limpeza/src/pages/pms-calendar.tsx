@@ -2212,7 +2212,7 @@ export default function PmsCalendar() {
     setFormTwinBeds(Boolean(resItem.twinBeds))
     setFormExtraMattress(Boolean(resItem.extraMattress))
     setFormIncludeBreakfast(Boolean(resItem.includeBreakfast || resItem.hasBreakfast))
-    setFormSpecialRequests(resItem.specialRequests || "")
+    setFormSpecialRequests(resItem.specialRequests || resItem.notes || "")
     setFormIsMonthlyGuest(Boolean(resItem.isMonthlyGuest || resItem.clientType === "mensalista" || matchedGuest?.isMonthlyGuest || matchedGuest?.clientType === "mensalista"))
     setResModalTab("reservation")
     setAuditLogs(Array.isArray(resItem.auditLogs) ? resItem.auditLogs : [])
@@ -2750,7 +2750,7 @@ export default function PmsCalendar() {
         totalAmount,
         paidAmount: resolvedPaidAmount,
         paymentStatus: resolvedPaymentStatus,
-        notes: formNotes,
+        notes: formNotes.trim() || formSpecialRequests.trim() || "",
         earlyCheckinAuthorized: formEarlyCheckin,
         receptionNotes: formReceptionNotes,
         autoEmitInvoice: formAutoInvoice,
@@ -2758,7 +2758,7 @@ export default function PmsCalendar() {
         twinBeds: formTwinBeds,
         extraMattress: formExtraMattress,
         includeBreakfast: formIncludeBreakfast,
-        specialRequests: formSpecialRequests,
+        specialRequests: formSpecialRequests.trim() || formNotes.trim() || "",
         isMonthlyGuest: Boolean(formIsMonthlyGuest),
         clientType: formIsMonthlyGuest ? "mensalista" : "avulso",
         source: selectedRes ? "PMS Calendário (Edição Manual)" : "PMS Calendário (Nova Reserva)",
@@ -4575,12 +4575,12 @@ export default function PmsCalendar() {
 
                   <div className="space-y-1">
                     <Label className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
-                      Observação / Pedido Especial para o Quarto (Ex: Decoração de Casal, Kit Bebê...)
+                      Nota / Recado para a Camareira (Exibida no Card de Limpeza no Check-in)
                     </Label>
                     <Input 
                       value={formSpecialRequests}
                       onChange={e => setFormSpecialRequests(e.target.value)}
-                      placeholder="Ex: Decoração de casal, montar berço desmontável, travesseiro extra..."
+                      placeholder="Ex: Montar berço, kit bebê, toalhas extras, atenção especial ao ar-condicionado..."
                       className="text-xs"
                     />
                   </div>

@@ -307,14 +307,16 @@ export function FlatCard({
 
   // Admin Custom Instructions Modal (Twin Beds & Maid Notes)
   const [instructionsModalOpen, setInstructionsModalOpen] = useState(false)
-  const [twinBedsSetting, setTwinBedsSetting] = useState<boolean>(Boolean(flat?.setupInfo?.twinBeds))
-  const [adminNoteText, setAdminNoteText] = useState<string>(flat?.setupInfo?.specialRequests || "")
+  const [twinBedsSetting, setTwinBedsSetting] = useState<boolean>(Boolean(flat?.setupInfo?.twinBeds || request?.twinBeds))
+  const [extraMattressSetting, setExtraMattressSetting] = useState<boolean>(Boolean(flat?.setupInfo?.extraMattress || request?.extraMattress))
+  const [adminNoteText, setAdminNoteText] = useState<string>(flat?.setupInfo?.specialRequests || request?.adminNote || flat?.setupInfo?.adminNote || request?.pendingObservation || "")
   const [isSavingInstructions, setIsSavingInstructions] = useState(false)
 
   useEffect(() => {
-    setTwinBedsSetting(typeof request?.twinBeds === "boolean" ? request.twinBeds : Boolean(flat?.setupInfo?.twinBeds))
-    setAdminNoteText(flat?.setupInfo?.specialRequests || "")
-  }, [request?.twinBeds, flat?.setupInfo?.twinBeds, flat?.setupInfo?.specialRequests])
+    setTwinBedsSetting(Boolean(request?.twinBeds || flat?.setupInfo?.twinBeds))
+    setExtraMattressSetting(Boolean(request?.extraMattress || flat?.setupInfo?.extraMattress))
+    setAdminNoteText(flat?.setupInfo?.specialRequests || request?.adminNote || flat?.setupInfo?.adminNote || request?.pendingObservation || "")
+  }, [request?.twinBeds, flat?.setupInfo?.twinBeds, request?.extraMattress, flat?.setupInfo?.extraMattress, flat?.setupInfo?.specialRequests, request?.adminNote, flat?.setupInfo?.adminNote, request?.pendingObservation])
 
   const handleSaveInstructions = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -328,6 +330,7 @@ export function FlatCard({
           flatNumber: flat.flatNumber,
           requestDate: date,
           twinBeds: twinBedsSetting,
+          extraMattress: extraMattressSetting,
           adminNote: adminNoteText.trim() || null,
         })
       })
@@ -397,7 +400,9 @@ export function FlatCard({
 
   const Icon = conf.icon
   const isPriority = typeof request?.isPriority === "boolean" ? request.isPriority : (typeof flat?.isPriority === "boolean" ? flat.isPriority : false)
-  const isTwinBeds = typeof request?.twinBeds === "boolean" ? request.twinBeds : Boolean(flat?.setupInfo?.twinBeds)
+  const isTwinBeds = Boolean(request?.twinBeds || flat?.setupInfo?.twinBeds)
+  const hasExtraMattress = Boolean(request?.extraMattress || flat?.setupInfo?.extraMattress)
+  const maidNoteText = flat?.setupInfo?.specialRequests || request?.adminNote || flat?.setupInfo?.adminNote || request?.pendingObservation || ""
   const pendingPeriodicTasks = flat?.pendingPeriodicTasks || []
   const pendingSurveys = flat?.pendingSurveys || []
 
@@ -405,7 +410,7 @@ export function FlatCard({
     ? request.isPaidCleaning
     : (typeof flat?.isPaidCleaning === "boolean" ? flat.isPaidCleaning : !isInstruction)
 
-  const instructionText = flat?.instructionText || request?.instructionText || flat?.setupInfo?.specialRequests || request?.pendingObservation || request?.adminNote || (isTwinBeds ? "Separar as camas, colocar como 2 solteiras" : "")
+  const instructionText = flat?.instructionText || request?.instructionText || maidNoteText || (isTwinBeds ? "Separar as camas, colocar como 2 solteiras" : "")
 
   const handleDeleteInstruction = async () => {
     if (!confirm("Deseja realmente excluir esta instrução avulsa do flat?")) return
@@ -1153,8 +1158,8 @@ export function FlatCard({
               </div>
             )}
 
-            {/* Instruções para a Camareira (Limpeza Padrão) */}
-            {!isInstruction && (isTwinBeds || flat?.setupInfo?.extraMattress || flat?.setupInfo?.prefersHighFloor || flat?.setupInfo?.specialRequests) && (
+            {/* Instruções para a Camareira (Limpeza Padrão / Preparação de Check-in) */}
+            {!isInstruction && (isTwinBeds || hasExtraMattress || flat?.setupInfo?.prefersHighFloor || maidNoteText) && (
               <div 
                 className={cn(
                   "bg-amber-500/10 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-700/60 rounded-xl p-2.5 text-xs space-y-2",
@@ -1166,7 +1171,7 @@ export function FlatCard({
                 <div className="font-bold text-amber-950 dark:text-amber-200 flex items-center justify-between gap-1.5">
                   <div className="flex items-center gap-1.5">
                     <BedDouble className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
-                    <span>Instruções da Governança:</span>
+                    <span>Instruções da Governança / Preparação:</span>
                   </div>
                   {isAdmin && (
                     <span className="text-[10px] text-amber-800 dark:text-amber-300 font-semibold underline flex items-center gap-0.5">
@@ -1181,24 +1186,24 @@ export function FlatCard({
                       <span>🛏️ Montar 2 Camas de Solteiro</span>
                     </Badge>
                   )}
-                  {flat.setupInfo?.extraMattress && (
+                  {hasExtraMattress && (
                     <Badge className="bg-purple-600 hover:bg-purple-700 text-white font-bold text-[10px] px-2 py-0.5 shadow-2xs flex items-center gap-1 rounded-lg">
                       <span>➕ Colocar Colchão Extra</span>
                     </Badge>
                   )}
-                  {flat.setupInfo?.prefersHighFloor && (
+                  {flat?.setupInfo?.prefersHighFloor && (
                     <Badge className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] px-2 py-0.5 shadow-2xs flex items-center gap-1 rounded-lg">
                       <span>🏢 Prefere Andar Alto</span>
                     </Badge>
                   )}
                 </div>
 
-                {flat.setupInfo?.specialRequests && (
+                {maidNoteText && (
                   <div className="bg-background/90 p-2 rounded-lg border border-amber-300/80 dark:border-amber-700/60 text-[11px] text-foreground leading-snug">
                     <span className="font-bold text-amber-800 dark:text-amber-300 flex items-center gap-1 mb-0.5 text-[10px]">
-                      📝 Nota / Recado da Administração:
+                      📝 Nota / Recado para a Camareira:
                     </span>
-                    <p className="whitespace-pre-wrap font-medium">{flat.setupInfo.specialRequests}</p>
+                    <p className="whitespace-pre-wrap font-medium">{maidNoteText}</p>
                   </div>
                 )}
               </div>
@@ -2019,6 +2024,31 @@ export function FlatCard({
                       </Label>
                       <p className="text-[11px] text-muted-foreground leading-relaxed">
                         A camareira verá um aviso destacado informando que as camas devem ser preparadas separadas como solteiro.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Opção Colchão Extra */}
+                <div className={`p-3.5 rounded-xl border transition-all ${
+                  extraMattressSetting
+                    ? "bg-purple-50/80 dark:bg-purple-950/30 border-purple-300 dark:border-purple-800"
+                    : "bg-muted/40 border-border/80"
+                }`}>
+                  <div className="flex items-start gap-2.5">
+                    <Checkbox
+                      id={`extraMattress-${flat.flatId}`}
+                      checked={extraMattressSetting}
+                      onCheckedChange={(checked) => setExtraMattressSetting(Boolean(checked))}
+                      className="mt-0.5 data-[state=checked]:bg-purple-600 data-[state=checked]:border-purple-600"
+                    />
+                    <div className="space-y-0.5">
+                      <Label htmlFor={`extraMattress-${flat.flatId}`} className="font-bold text-xs text-foreground cursor-pointer flex items-center gap-1.5">
+                        <Sparkles className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                        Colocar Colchão Extra
+                      </Label>
+                      <p className="text-[11px] text-muted-foreground leading-relaxed">
+                        A camareira verá um aviso destacado informando para providenciar e colocar colchão extra no apartamento.
                       </p>
                     </div>
                   </div>
