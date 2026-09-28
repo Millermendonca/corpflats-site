@@ -47823,7 +47823,7 @@
     "fallbackToText": true,
     "guestGuidePdfUrl": "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
     "guestGuidePdfName": "Manual_do_Hospede_CorpFlats.pdf",
-    "deliveryMode": "text_links",
+    "deliveryMode": "buttons",
     "conciergeGroupId": "120363404293089756-group",
     "conciergeGroupName": "Checkout Flats",
     "conciergeMonitoringEnabled": true,
@@ -47915,7 +47915,7 @@
       "offsetValue": 0,
       "offsetUnit": "minutes",
       "fixedTime": "",
-      "message": "Olá, *{{primeiro_nome}}*! 🔄\nSua reserva (*{{numero_reserva}}*) no *{{nome_hotel}}* foi alterada.\n\nConfira o que foi atualizado:\n{{resumo_alteracoes}}\n\nOs demais dados da sua reserva permanecem inalterados. Você pode consultar todos os detalhes atualizados pelo seu portal do hóspede:",
+      "message": "Olá, *{{primeiro_nome}}*! 🔄\nSua reserva (*{{numero_reserva}}*) no *{{nome_hotel}}* foi alterada.\n\nConfira o que foi atualizado:\n{{resumo_alteracoes}}",
       "footer": "CorpFlats • Central de Atendimento",
       "buttons": [
         {

@@ -371,6 +371,15 @@ export default function GuestPortal() {
     reservation?.guestSelfCheckin
   )
 
+  const isPreCheckinDone = Boolean(
+    data?.preCheckinStatus?.completed ||
+    data?.preCheckinStatus?.isFullyCompleted ||
+    reservation?.fnhrCompleted ||
+    reservation?.preCheckinCompleted ||
+    reservation?.hasPreCheckin ||
+    (Array.isArray(reservation?.guests) && reservation.guests.length > 0 && reservation.guests.some((g: any) => g.hasCompletedCheckin))
+  )
+
   // Polling automático de status de pagamento a cada 6 segundos quando pendente
   useEffect(() => {
     if (!reservation?.code || isPaid || isCancelled) return
@@ -1269,16 +1278,50 @@ export default function GuestPortal() {
 
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {/* Atalhos para Tablet e Desktop (>= md) */}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setLocation(`/pre-checkin/${code || reservation.code}`)}
-              className="hidden md:inline-flex h-9 px-3 rounded-xl border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs items-center gap-2 shadow-2xs"
-            >
-              <FileText className="w-4 h-4 text-indigo-600 shrink-0" />
-              <span>Pré-Check-in</span>
-            </Button>
+            {/* Atalhos para Tablet e Desktop (>= md) */}
+            {!hasEnteredFlat && !isPreCheckinDone && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setLocation(`/pre-checkin/${code || reservation.code}`)}
+                className="hidden md:inline-flex h-9 px-3 rounded-xl border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs items-center gap-2 shadow-2xs"
+              >
+                <FileText className="w-4 h-4 text-indigo-600 shrink-0" />
+                <span>Pré-Check-in</span>
+              </Button>
+            )}
+            {!hasEnteredFlat && isPreCheckinDone && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={confirmingSelfCheckin}
+                onClick={async () => {
+                  try {
+                    setConfirmingSelfCheckin(true)
+                    const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(code || reservation.code)}/self-checkin`, { method: "POST" })
+                    if (res.ok) {
+                      setSelfCheckinNotice(true)
+                      await fetchPortalData(code || reservation.code)
+                    }
+                  } catch {}
+                  finally {
+                    setConfirmingSelfCheckin(false)
+                  }
+                }}
+                className="hidden md:inline-flex h-9 px-3 rounded-xl border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs items-center gap-2 shadow-2xs"
+              >
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{confirmingSelfCheckin ? "Confirmando..." : "📍 Já Cheguei"}</span>
+              </Button>
+            )}
+            {hasEnteredFlat && (
+              <div className="hidden md:inline-flex h-9 px-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 font-bold text-xs items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>✓ Entrada Confirmada</span>
+              </div>
+            )}
             <Button
               type="button"
               variant="outline"
@@ -1315,13 +1358,45 @@ export default function GuestPortal() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-52 bg-white border-slate-200 rounded-2xl shadow-xl p-1.5 text-slate-800">
-                  <DropdownMenuItem
-                    onClick={() => setLocation(`/pre-checkin/${code || reservation.code}`)}
-                    className="flex items-center gap-2.5 px-3 py-2.5 text-xs font-bold rounded-xl cursor-pointer hover:bg-slate-100"
-                  >
-                    <FileText className="w-4 h-4 text-indigo-600 shrink-0" />
-                    <span>Pré-Check-in Digital</span>
-                  </DropdownMenuItem>
+                  {!hasEnteredFlat && !isPreCheckinDone && (
+                    <DropdownMenuItem
+                      onClick={() => setLocation(`/pre-checkin/${code || reservation.code}`)}
+                      className="flex items-center gap-2.5 px-3 py-2.5 text-xs font-bold rounded-xl cursor-pointer hover:bg-slate-100 text-indigo-700"
+                    >
+                      <FileText className="w-4 h-4 text-indigo-600 shrink-0" />
+                      <span>Pré-Check-in Digital</span>
+                    </DropdownMenuItem>
+                  )}
+                  {!hasEnteredFlat && isPreCheckinDone && (
+                    <DropdownMenuItem
+                      onClick={async () => {
+                        try {
+                          setConfirmingSelfCheckin(true)
+                          const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(code || reservation.code)}/self-checkin`, { method: "POST" })
+                          if (res.ok) {
+                            setSelfCheckinNotice(true)
+                            await fetchPortalData(code || reservation.code)
+                          }
+                        } catch {}
+                        finally {
+                          setConfirmingSelfCheckin(false)
+                        }
+                      }}
+                      className="flex items-center gap-2.5 px-3 py-2.5 text-xs font-bold rounded-xl cursor-pointer hover:bg-emerald-50 text-emerald-800"
+                    >
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>📍 Já Cheguei no Flat</span>
+                    </DropdownMenuItem>
+                  )}
+                  {isPreCheckinDone && (
+                    <DropdownMenuItem
+                      onClick={() => setLocation(`/pre-checkin/${code || reservation.code}`)}
+                      className="flex items-center gap-2.5 px-3 py-2.5 text-xs font-medium rounded-xl cursor-pointer hover:bg-slate-100 text-slate-600"
+                    >
+                      <FileText className="w-4 h-4 text-slate-500 shrink-0" />
+                      <span>Ver Ficha do Check-in</span>
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem
                     onClick={() => setLocation(`/checkout/${code || reservation.code}`)}
                     className="flex items-center gap-2.5 px-3 py-2.5 text-xs font-bold rounded-xl cursor-pointer hover:bg-slate-100"
@@ -1507,7 +1582,7 @@ export default function GuestPortal() {
                     <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-300 font-bold text-[10px]">
                       ✓ Entrada Confirmada
                     </Badge>
-                  ) : preCheckinStatus?.completed ? (
+                  ) : isPreCheckinDone ? (
                     <Badge variant="outline" className="bg-sky-50 text-sky-700 border-sky-300 font-bold text-[10px]">
                       ✓ Dados Enviados
                     </Badge>
@@ -1540,7 +1615,7 @@ export default function GuestPortal() {
                     Ver Dados do Check-in
                   </button>
                 </div>
-              ) : preCheckinStatus?.completed ? (
+              ) : isPreCheckinDone ? (
                 <div className="space-y-1.5 mt-2">
                   <Button
                     type="button"

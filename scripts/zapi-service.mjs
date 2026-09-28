@@ -423,9 +423,7 @@ Qualquer dúvida ou necessidade, estamos à sua total disposição por aqui.`,
 Sua reserva (*{{numero_reserva}}*) no *{{nome_hotel}}* foi alterada.
 
 Confira o que foi atualizado:
-{{resumo_alteracoes}}
-
-Os demais dados da sua reserva permanecem inalterados. Você pode consultar todos os detalhes atualizados pelo seu portal do hóspede:`,
+{{resumo_alteracoes}}`,
     footer: "CorpFlats • Central de Atendimento",
     buttons: [
       { id: "btn_portal", type: "URL", label: "🏨 Ver Detalhes da Reserva", url: "{{link_portal_hospede}}" },
@@ -2047,7 +2045,7 @@ export async function sendZapiMessage(config, {
   const token = config?.token?.trim();
   const clientToken = config?.clientToken?.trim();
   const fallbackToText = config?.fallbackToText !== false;
-  const configuredDeliveryMode = config?.deliveryMode || "text_links"; // "text_links" (padrão 100% seguro contra bloqueios de botões da Meta), "buttons", "auto"
+  const configuredDeliveryMode = config?.deliveryMode || "buttons"; // "buttons" (padrão oficial), "text_links", "auto"
 
   // Se não configurado, simula sucesso em ambiente de desenvolvimento/teste sem travar
   if (!instanceId || !token) {
@@ -3753,7 +3751,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         token: "",
         clientToken: "",
         enabled: false,
-        deliveryMode: "text_links",
+        deliveryMode: "buttons",
         fallbackToText: true,
         wifiNetwork: "CorpFlats-Hospedes",
         wifiPassword: "corpflats2026",
@@ -3785,8 +3783,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       if (!db.zapiConfig.googleReviewUrl || db.zapiConfig.googleReviewUrl.includes("maps.google.com/?q=") || db.zapiConfig.googleReviewUrl.includes("g.page/r/corpflats") || db.zapiConfig.googleReviewUrl.includes("maps.app.goo.gl")) {
         db.zapiConfig.googleReviewUrl = "https://share.google/LHu3541d5lhkdvbL2";
       }
-      if (!db.zapiConfig.deliveryMode) {
-        db.zapiConfig.deliveryMode = "text_links";
+      if (!db.zapiConfig.deliveryMode || db.zapiConfig.deliveryMode === "text_links") {
+        db.zapiConfig.deliveryMode = "buttons";
       }
       if (!db.zapiConfig.guestGuidePdfName) {
         db.zapiConfig.guestGuidePdfName = "Manual_do_Hospede_CorpFlats.pdf";
@@ -4025,6 +4023,13 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           tpl.triggerEvent = "checkin_cleaning_delay";
           tpl.recipientTarget = "guest";
           tpl.fixedTime = "14:00";
+        }
+        if (tpl.id === "tpl_reservation_updated") {
+          const defUpdated = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_reservation_updated");
+          if (defUpdated && tpl.message.includes("permanecem inalterados")) {
+            tpl.message = defUpdated.message;
+            tpl.buttons = defUpdated.buttons;
+          }
         }
       }
     }
@@ -4456,7 +4461,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       footer = "", 
       buttons = [], 
       reservationId = null,
-      sendMode = "text",
+      sendMode = "buttons",
       sendDocument = false,
       documentUrl = "",
       documentName = "",

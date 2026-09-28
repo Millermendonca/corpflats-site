@@ -10886,7 +10886,12 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       vehicle: r.vehicle || null,
       estimatedArrivalTime: r.estimatedArrivalTime || null,
       guestArrivalResponse: r.guestArrivalResponse || null,
-      isCleaningPriority: Boolean(cleanReq?.isPriority)
+      isCleaningPriority: Boolean(cleanReq?.isPriority),
+      fnhrCompleted: Boolean(r.fnhrCompleted),
+      preCheckinCompleted: Boolean(r.preCheckinCompleted || r.fnhrCompleted || (Array.isArray(r.guests) && r.guests.some(g => g.hasCompletedCheckin))),
+      hasPreCheckin: Boolean(r.hasPreCheckin || r.preCheckinCompleted || r.fnhrCompleted || (Array.isArray(r.guests) && r.guests.some(g => g.hasCompletedCheckin))),
+      checkedInAt: r.checkedInAt || null,
+      guestSelfCheckin: Boolean(r.guestSelfCheckin)
     },
     hasBreakfast,
     breakfastLink,
@@ -10913,7 +10918,14 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     preCheckinStatus: {
       totalGuests,
       completedCheckins,
-      isFullyCompleted: completedCheckins >= totalGuests
+      isFullyCompleted: completedCheckins >= totalGuests,
+      completed: Boolean(
+        r.fnhrCompleted || 
+        r.preCheckinCompleted || 
+        r.hasPreCheckin ||
+        (completedCheckins >= totalGuests && totalGuests > 0) ||
+        (Array.isArray(r.guests) && r.guests.length > 0 && r.guests.some(g => g.hasCompletedCheckin))
+      )
     },
     termsAndRules: db.settings.termsAndRules || DEFAULT_TERMS_AND_RULES,
     houseRules: db.settings.houseRules || DEFAULT_HOUSE_RULES,
@@ -14915,6 +14927,10 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   }
 
   // Atualiza flags agregadas da reserva
+  if (Number(guestIndex) === 1 || (Array.isArray(r.guests) && r.guests.some(g => g.hasCompletedCheckin))) {
+    r.hasPreCheckin = true;
+    r.preCheckinCompleted = true;
+  }
   r.fnhrCompleted = r.guests.every(g => g.hasCompletedCheckin);
   r.hasMinor = r.guests.some(g => g.isMinor);
   r.riskAttentionAlert = r.guests.some(g => g.riskAttentionAlert);

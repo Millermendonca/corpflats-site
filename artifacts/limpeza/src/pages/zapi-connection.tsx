@@ -90,7 +90,7 @@ export default function ZapiConnection() {
     token: "",
     clientToken: "",
     enabled: false,
-    deliveryMode: "text_links",
+    deliveryMode: "buttons",
     fallbackToText: true,
     testModeOnly: true,
     testAllowedPhones: "22998505276",
