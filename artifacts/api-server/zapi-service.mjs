@@ -460,7 +460,7 @@ Para que a portaria libere sua entrada com agilidade na chegada, acesse o link s
     id: "tpl_checkin_day_instructions",
     triggerEvent: "checkin_day_instructions",
     title: "Dia do Check-in (07:00) • Instruções de Chegada & Acesso",
-    description: "Enviado no dia do check-in pontualmente às 07:00 (para reservas feitas antes das 07:00). Inclui endereço, portaria, Wi-Fi, café (se incluso) e botão 'Já cheguei / Estou no Flat'.",
+    description: "Enviado no dia do check-in pontualmente às 07:00 (para reservas feitas antes das 07:00). Inclui endereço, portaria, Wi-Fi, café (se incluso) e botão dinâmico de pré-check-in ou chegada.",
     enabled: true,
     channels: ["site", "whatsapp", "booking", "airbnb", "outros"],
     recipientTarget: "guest",
@@ -474,6 +474,7 @@ Hoje é o dia da sua chegada ao *{{nome_hotel}}*!
 🔑 *Seu Flat:* {{quarto}}
 ⏰ *Horário de Check-in:* A partir das {{horario_checkin}}
 📍 *Endereço:* {{endereco_hotel}}
+🗺️ *Localização no Maps:* {{link_maps}}
 
 Ao chegar, dirija-se à portaria 24h e informe seu nome e o número do seu flat (*{{quarto}}*).
 
@@ -483,17 +484,14 @@ Ao chegar, dirija-se à portaria 24h e informe seu nome e o número do seu flat 
 
 {{mensagem_cafe_incluso}}
 
-{{aviso_checkin_pendente}}
-
-👉 *Já chegou ao hotel?* Clique no link para confirmar sua chegada:
-{{link_autocheckin}}
+{{instrucao_checkin_ou_chegada}}
 
 Desejamos uma ótima viagem até aqui! Se precisar de suporte, estamos à disposição.`,
     footer: "CorpFlats • Boas-vindas!",
     buttons: [
+      { id: "btn_chk", type: "URL", label: "📝 Fazer Check-in Online", url: "{{link_checkin_digital}}" },
       { id: "btn_cheguei", type: "URL", label: "📍 Já Cheguei no Flat", url: "{{link_autocheckin}}" },
-      { id: "btn_maps", type: "URL", label: "📍 Abrir no Google Maps", url: "{{link_maps}}" },
-      { id: "btn_portal", type: "URL", label: "🏨 Portal do Hóspede", url: "{{link_portal_hospede}}" }
+      { id: "btn_portal", type: "URL", label: "🏨 Portal da Reserva", url: "{{link_portal_hospede}}" }
     ]
   },
   {
@@ -796,6 +794,7 @@ Sua reserva no *{{nome_hotel}}* para *HOJE* está *Confirmada*!
 • Acomodação: *Flat {{quarto}}*
 • Entrada (Check-in): *Hoje a partir das {{horario_checkin}}*
 • Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*
+• Café da Manhã: *{{status_cafe}}*
 
 📍 *Endereço:* {{endereco_hotel}}
 🗺️ *Localização no Maps:* {{link_maps}}
@@ -807,11 +806,7 @@ Sua reserva no *{{nome_hotel}}* para *HOJE* está *Confirmada*!
 
 {{mensagem_cafe_incluso}}
 
-👉 *Pré-Check-in Digital Obrigatório:*
-Para liberação imediata na portaria do condomínio, preencha sua ficha rápida agora mesmo:
-{{link_checkin_digital}}
-
-Ao chegar no condomínio, clique no botão abaixo para autodeclarar sua entrada:`,
+{{instrucao_checkin_ou_chegada}}`,
     footer: "CorpFlats • Entrada Imediata",
     buttons: [
       { id: "btn_chk", type: "URL", label: "📝 Fazer Check-in Online", url: "{{link_checkin_digital}}" },
@@ -1466,13 +1461,39 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   }
 
   // Tag de link de autodeclaração de checkin ("Já cheguei / Estou no Flat")
-  const linkAutocheckin = `${appOrigin}/minha-reserva/${resCode}?action=self_checkin`;
+  const linkAutocheckin = `${appOrigin}/api/pms/guest-portal/${resCode}/self-checkin`;
 
   // Tag: {{status_cafe}} e {{mensagem_cafe_incluso}}
   const statusCafe = isCancelled ? "Cancelado" : (hasBreakfast ? "Incluso" : "Não incluso");
   const mensagemCafeIncluso = (hasBreakfast && !isCancelled)
-    ? `🥐 *Café da Manhã Incluso:*\nSua diária inclui nosso café da manhã artesanal servido exclusivamente no seu flat! Você já pode agendar sua bandeja pelo link:\n👉 ${linkCafeManha}`
+    ? `🥐 *Café da Manhã Incluso:*\nSua diária inclui nosso café da manhã artesanal servido exclusivamente no seu flat! Você já pode agendar sua bandeja pelo botão abaixo.`
     : "";
+
+  // Determina status de pré-checkin e entrada no flat
+  const allCheckedIn = Boolean(
+    reservation.checkedInAt ||
+    reservation.fnhrCompleted ||
+    reservation.preCheckinCompleted ||
+    (Array.isArray(reservation.guests) && reservation.guests.length > 0 && reservation.guests.every(g => g.hasCompletedCheckin || g.status === "CHECKED_IN"))
+  );
+  const hasEnteredFlat = Boolean(
+    reservation.status === "checkin" ||
+    reservation.status === "checked_in" ||
+    reservation.status === "in_house" ||
+    reservation.checkedInAt ||
+    reservation.guestSelfCheckin
+  );
+  const isPreCheckinDone = allCheckedIn;
+
+  // Tag: {{instrucao_checkin_ou_chegada}}
+  let instrucaoCheckinOuChegada = "";
+  if (hasEnteredFlat) {
+    instrucaoCheckinOuChegada = `🏡 *Check-in Concluído:* Sua entrada já foi confirmada! Acesse todos os detalhes da sua estadia pelo botão abaixo:`;
+  } else if (isPreCheckinDone) {
+    instrucaoCheckinOuChegada = `✅ *Pré-Check-in Concluído:* Seus dados já foram enviados à portaria! Ao chegar no condomínio, clique no botão abaixo para autodeclarar sua entrada no flat:`;
+  } else {
+    instrucaoCheckinOuChegada = `👉 *Pré-Check-in Digital Obrigatório:*\nPara liberação imediata na portaria do condomínio, preencha sua ficha rápida pelo botão abaixo:`;
+  }
 
   // Tag: {{mensagem_pendencia_hospedes}} (Lógica de 1 vs 2 hóspedes)
   const isMultiGuest = (reservation.guestCount > 1 || reservation.adults > 1);
@@ -1483,9 +1504,8 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   }
 
   // Tag: {{aviso_checkin_pendente}}
-  const allCheckedIn = Boolean(reservation.checkedInAt || (reservation.guests && reservation.guests.length > 0 && reservation.guests.every(g => g.hasCompletedCheckin)));
   const avisoCheckinPendente = !allCheckedIn
-    ? `⚠️ *Atenção:* Notamos que sua ficha de Pré-Check-in Digital ainda está pendente. Para que a portaria libere sua entrada com agilidade e seu veículo seja autorizado com antecedência, preencha agora pelo link:\n👉 ${linkCheckinDigital}`
+    ? `⚠️ *Atenção:* Notamos que sua ficha de Pré-Check-in Digital ainda está pendente. Para liberação imediata na portaria do condomínio, preencha agora pelo botão abaixo.`
     : "";
 
   // Tag: {{aviso_pendencia_segundo_hospede}} (Portaria e Informativos)
@@ -1539,6 +1559,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{link_autocheckin}}": linkAutocheckin,
     "{{status_cafe}}": statusCafe,
     "{{mensagem_cafe_incluso}}": mensagemCafeIncluso,
+    "{{instrucao_checkin_ou_chegada}}": instrucaoCheckinOuChegada,
     "{{mensagem_pendencia_hospedes}}": mensagemPendenciaHospedes,
     "{{aviso_checkin_pendente}}": avisoCheckinPendente,
     "{{aviso_pendencia_segundo_hospede}}": avisoPendenciaSegundoHospede,
@@ -1646,6 +1667,97 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
   const resCode = reservation?.code || reservation?.reservationCode || `RES-${reservation?.flatNumber || "000"}-${reservation?.id || "0000"}`;
   const linkCafeManha = `${appOrigin}/cafe/${resCode}`;
 
+  const isPreCheckinDone = Boolean(
+    reservation?.checkedInAt ||
+    reservation?.fnhrCompleted ||
+    reservation?.preCheckinCompleted ||
+    (Array.isArray(reservation?.guests) && reservation.guests.length > 0 && reservation.guests.every(g => g.hasCompletedCheckin || g.status === "CHECKED_IN"))
+  );
+
+  const hasEnteredFlat = Boolean(
+    reservation?.status === "checkin" ||
+    reservation?.status === "checked_in" ||
+    reservation?.status === "in_house" ||
+    reservation?.checkedInAt ||
+    reservation?.guestSelfCheckin
+  );
+
+  const linkPortalHospede = `${appOrigin}/minha-reserva/${resCode}`;
+  const linkCheckinDigital = `${appOrigin}/pre-checkin/${resCode}`;
+  const linkAutocheckin = `${appOrigin}/api/pms/guest-portal/${resCode}/self-checkin`;
+
+  // ── Lógica Dinâmica de Botões de Check-in e Chegada ────────────────────────
+  // Se o hóspede já entrou no flat:
+  if (hasEnteredFlat) {
+    // Remove botões de pré-checkin e de auto-declaração de chegada
+    list = list.filter(b => 
+      b.id !== "btn_chk" && 
+      b.id !== "btn_cheguei" && 
+      (!b.url || (!String(b.url).includes("/pre-checkin") && !String(b.url).includes("/self-checkin")))
+    );
+    // Garante que o Portal do Hóspede está presente
+    if (!list.some(b => b.id === "btn_portal" || (b.url && String(b.url).includes("/minha-reserva")))) {
+      list.push({
+        id: "btn_portal",
+        type: "URL",
+        label: "🏨 Portal da Reserva",
+        url: linkPortalHospede
+      });
+    }
+  } else if (isPreCheckinDone) {
+    // Pré-check-in já preenchido, mas ainda NÃO entrou no flat:
+    // Remove botão de pré-checkin (btn_chk) e assegura "Já Cheguei no Flat" (btn_cheguei)
+    list = list.filter(b => b.id !== "btn_chk" && (!b.url || !String(b.url).includes("/pre-checkin")));
+
+    const existingChegueiIdx = list.findIndex(b => b.id === "btn_cheguei" || (b.url && String(b.url).includes("/self-checkin")));
+    const chegueiBtn = {
+      id: "btn_cheguei",
+      type: "URL",
+      label: "📍 Já Cheguei no Flat",
+      url: linkAutocheckin
+    };
+    if (existingChegueiIdx >= 0) {
+      list[existingChegueiIdx] = chegueiBtn;
+    } else {
+      list.unshift(chegueiBtn);
+    }
+  } else {
+    // Pré-check-in PENDENTE:
+    // NUNCA exibe "Já Cheguei no Flat" antes do pré-check-in estar preenchido!
+    list = list.filter(b => b.id !== "btn_cheguei" && (!b.url || !String(b.url).includes("/self-checkin")));
+
+    const isArrivalOrCheckinTemplate = [
+      "tpl_sameday_reservation_instructions",
+      "tpl_checkin_day_instructions",
+      "tpl_new_reservation",
+      "tpl_new_reservation_direct",
+      "tpl_pre_checkin_reminder",
+      "tpl_pre_checkin_missing_docs",
+      "tpl_second_guest_reminder"
+    ].includes(templateId) || [
+      "sameday_reservation",
+      "checkin_day_instructions",
+      "pre_checkin_reminder",
+      "pre_checkin_missing_docs",
+      "second_guest_reminder"
+    ].includes(triggerEvent);
+
+    if (isArrivalOrCheckinTemplate) {
+      const existingChkIdx = list.findIndex(b => b.id === "btn_chk" || (b.url && String(b.url).includes("/pre-checkin")));
+      const chkBtn = {
+        id: "btn_chk",
+        type: "URL",
+        label: "📝 Fazer Check-in Online",
+        url: linkCheckinDigital
+      };
+      if (existingChkIdx >= 0) {
+        list[existingChkIdx] = chkBtn;
+      } else {
+        list.unshift(chkBtn);
+      }
+    }
+  }
+
   // Se o contexto for cancelamento, pós-checkout, cobrança ou sem café:
   // Remove QUALQUER botão de café existente ou acidental.
   if (isCancellationContext || isCheckoutOrReviewContext || isFinancialReminderOnly || !hasBreakfast) {
@@ -1668,14 +1780,29 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     const isAllowedTemplate = !templateId || ALLOWED_TEMPLATES_FOR_CAFE.includes(templateId);
 
     if (isAllowedTemplate && !list.some(b => b.id === "btn_cafe" || (b.url && String(b.url).includes("/cafe/")))) {
-      list.push({
+      const cafeBtn = {
         id: "btn_cafe",
         type: "URL",
         label: "🥐 Escolher Itens do Café",
         url: linkCafeManha
-      });
+      };
+      const portalIdx = list.findIndex(b => b.id === "btn_portal" || (b.url && String(b.url).includes("/minha-reserva")));
+      if (portalIdx >= 0) {
+        list.splice(portalIdx, 0, cafeBtn);
+      } else {
+        list.push(cafeBtn);
+      }
     }
   }
+
+  // Deduplicação de botões por id/url
+  const seenButtonKeys = new Set();
+  list = list.filter(b => {
+    const key = b.id || b.url || b.label;
+    if (seenButtonKeys.has(key)) return false;
+    seenButtonKeys.add(key);
+    return true;
+  });
 
   return list.map(b => ({
     ...b,
@@ -3730,7 +3857,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         }
         if (tpl.id === "tpl_checkin_day_instructions") {
           tpl.fixedTime = "07:00";
-          if (!tpl.message.includes("link_autocheckin")) {
+          if (!tpl.message.includes("instrucao_checkin_ou_chegada")) {
             const defChk = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_checkin_day_instructions");
             if (defChk) {
               tpl.title = defChk.title;
@@ -3815,10 +3942,13 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           tpl.recipientTarget = "guest";
         }
         if (tpl.id === "tpl_sameday_reservation_instructions") {
-          if (tpl.message.includes("Como sua reserva foi confirmada no próprio dia da chegada")) {
+          if (!tpl.message.includes("instrucao_checkin_ou_chegada") || tpl.message.includes("Como sua reserva foi confirmada")) {
             const defSame = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_sameday_reservation_instructions");
             if (defSame) {
+              tpl.title = defSame.title;
+              tpl.description = defSame.description;
               tpl.message = defSame.message;
+              tpl.buttons = defSame.buttons;
             }
           }
         }

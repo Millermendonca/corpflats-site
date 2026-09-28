@@ -300,22 +300,31 @@ O número do seu flat e instruções de acesso serão enviados no dia da sua che
     condition: "Reserva criada na própria data de check-in a partir das 07:01",
     channelsAllowed: ["site", "whatsapp", "booking", "airbnb", "outros"],
     description: "Para reservas criadas no próprio dia do check-in após as 07:01, o sistema unifica a confirmação e as instruções de chegada numa única mensagem consolidada para evitar spam no WhatsApp do hóspede.",
-    messagePreview: `Olá, *{{primeiro_nome}}*! 🌟✨
-Confirmamos a sua chegada para *HOJE* no *{{nome_hotel}}*!
+    messagePreview: `Olá, *{{primeiro_nome}}*! 🌟🔑
+Sua reserva no *{{nome_hotel}}* para *HOJE* está *Confirmada*!
 
-📋 *Resumo da sua Hospedagem:*
+📋 *Sua Hospedagem:*
 • Código da Reserva: *{{numero_reserva}}*
 • Acomodação: *Flat {{quarto}}*
-• Endereço: {{endereco_hotel}}
-• Wi-Fi: {{wifi_rede}} | Senha: {{wifi_senha}}
+• Entrada (Check-in): *Hoje a partir das {{horario_checkin}}*
+• Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*
+• Café da Manhã: *{{status_cafe}}*
+
+📍 *Endereço:* {{endereco_hotel}}
+🗺️ *Localização no Maps:* {{link_maps}}
+🚪 *Portaria:* 24 horas (basta se identificar com seu nome e o número do Flat *{{quarto}}*)
+
+📶 *Wi-Fi do Flat:*
+• Rede: *{{wifi_rede}}*
+• Senha: *{{wifi_senha}}*
 
 {{mensagem_cafe_incluso}}
 
-👉 *Já está no hotel?* Confirme sua entrada pelo botão de auto check-in abaixo:`,
+{{instrucao_checkin_ou_chegada}}`,
     buttons: [
+      { label: "📝 Fazer Check-in Online", type: "URL", url: "{{link_checkin_digital}}" },
       { label: "📍 Já Cheguei no Flat", type: "URL", url: "{{link_autocheckin}}" },
-      { label: "📝 Ficha de Check-in", type: "URL", url: "{{link_checkin_digital}}" },
-      { label: "📍 Abrir no Google Maps", type: "URL", url: "{{link_maps}}" }
+      { label: "🏨 Portal da Reserva", type: "URL", url: "{{link_portal_hospede}}" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_sameday_reservation_instructions",
     category: "reserva"
@@ -423,20 +432,23 @@ Hoje é o dia da sua chegada ao *{{nome_hotel}}*!
 🔑 *Seu Flat:* {{quarto}}
 ⏰ *Horário de Check-in:* A partir das {{horario_checkin}}
 📍 *Endereço:* {{endereco_hotel}}
+🗺️ *Localização no Maps:* {{link_maps}}
 
 Ao chegar, dirija-se à portaria 24h e informe seu nome e o número do seu flat (*{{quarto}}*).
 
 📶 *Wi-Fi do Flat:*
-• Rede: *{{wifi_rede}}* • Senha: *{{wifi_senha}}*
+• Rede: *{{wifi_rede}}*
+• Senha: *{{wifi_senha}}*
 
 {{mensagem_cafe_incluso}}
 
-👉 *Já chegou ao hotel?* Clique no link para confirmar sua chegada:
-{{link_autocheckin}}`,
+{{instrucao_checkin_ou_chegada}}
+
+Desejamos uma ótima viagem até aqui! Se precisar de suporte, estamos à disposição.`,
     buttons: [
+      { label: "📝 Fazer Check-in Online", type: "URL", url: "{{link_checkin_digital}}" },
       { label: "📍 Já Cheguei no Flat", type: "URL", url: "{{link_autocheckin}}" },
-      { label: "📍 Abrir no Google Maps", type: "URL", url: "{{link_maps}}" },
-      { label: "🏨 Portal do Hóspede", type: "URL", url: "{{link_portal_hospede}}" }
+      { label: "🏨 Portal da Reserva", type: "URL", url: "{{link_portal_hospede}}" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_checkin_day_instructions",
     category: "checkin"

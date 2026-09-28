@@ -116,6 +116,8 @@ export default function GuestPortal() {
   const [savingArrival, setSavingArrival] = useState(false)
   const [editingArrival, setEditingArrival] = useState(false)
   const [arrivalSuccessNotice, setArrivalSuccessNotice] = useState(false)
+  const [selfCheckinNotice, setSelfCheckinNotice] = useState(false)
+  const [confirmingSelfCheckin, setConfirmingSelfCheckin] = useState(false)
 
   const handleSaveEstimatedArrival = async () => {
     const timeVal = selectedArrivalTime || customArrivalTime.trim()
@@ -220,6 +222,20 @@ export default function GuestPortal() {
       setCode(rawCode)
       setSearchQuery(rawCode)
       fetchPortalData(rawCode)
+
+      if (typeof window !== "undefined") {
+        const sp = new URLSearchParams(window.location.search)
+        if (sp.get("self_checkin") === "success" || sp.get("action") === "self_checkin") {
+          setSelfCheckinNotice(true)
+          if (sp.get("action") === "self_checkin") {
+            fetch(`/api/pms/guest-portal/${encodeURIComponent(rawCode)}/self-checkin`, { method: "POST" })
+              .then(res => res.json())
+              .then(() => fetchPortalData(rawCode))
+              .catch(() => {})
+          }
+          setTimeout(() => setSelfCheckinNotice(false), 10000)
+        }
+      }
     } else {
       const savedCode = localStorage.getItem("corpflats_guest_session")
       if (savedCode) {
@@ -345,6 +361,14 @@ export default function GuestPortal() {
     reservation?.paymentStatus === "pago_total" || 
     reservation?.paymentStatus === "pago" || 
     (Number(reservation?.paidAmount) >= Number(reservation?.totalAmount) && Number(reservation?.totalAmount) > 0)
+  )
+
+  const hasEnteredFlat = Boolean(
+    reservation?.status === "checkin" ||
+    reservation?.status === "checked_in" ||
+    reservation?.status === "in_house" ||
+    reservation?.checkedInAt ||
+    reservation?.guestSelfCheckin
   )
 
   // Polling automático de status de pagamento a cada 6 segundos quando pendente
@@ -1408,6 +1432,31 @@ export default function GuestPortal() {
           </div>
         )}
 
+        {/* Banner de Boas-vindas / Entrada Confirmada */}
+        {selfCheckinNotice && (
+          <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 text-white shadow-lg flex items-center justify-between gap-4 animate-in fade-in slide-in-from-top-2">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-white/20 flex items-center justify-center shrink-0">
+                <CheckCircle2 className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <h3 className="text-base sm:text-lg font-black tracking-tight">
+                  🎉 Entrada no Flat Confirmada com Sucesso!
+                </h3>
+                <p className="text-xs sm:text-sm text-emerald-50 leading-relaxed mt-0.5">
+                  Seja muito bem-vindo(a) ao Flat {reservation?.flatNumber}! A portaria e nossa equipe de atendimento já foram notificadas da sua chegada.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setSelfCheckinNotice(false)}
+              className="text-white/80 hover:text-white text-xs font-bold px-2 py-1 rounded-lg bg-black/10 hover:bg-black/20 shrink-0"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {/* ── 1. Hero / Saudação e Resumo da Estadia ─────────────────────── */}
         <Card className="bg-white rounded-3xl border border-slate-200/80 shadow-md p-6 sm:p-8 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
@@ -1454,8 +1503,12 @@ export default function GuestPortal() {
                   <span className="text-slate-400 font-bold uppercase text-[10px] tracking-wider block">
                     Check-in (Entrada)
                   </span>
-                  {preCheckinStatus?.completed ? (
+                  {hasEnteredFlat ? (
                     <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-300 font-bold text-[10px]">
+                      ✓ Entrada Confirmada
+                    </Badge>
+                  ) : preCheckinStatus?.completed ? (
+                    <Badge variant="outline" className="bg-sky-50 text-sky-700 border-sky-300 font-bold text-[10px]">
                       ✓ Dados Enviados
                     </Badge>
                   ) : (
@@ -1473,14 +1526,61 @@ export default function GuestPortal() {
                 </span>
               </div>
 
-              <Button
-                type="button"
-                onClick={() => setLocation(`/pre-checkin/${code || reservation.code}`)}
-                className="w-full h-10 text-xs sm:text-sm font-bold rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs transition-all active:scale-95 flex items-center justify-center gap-2 mt-2"
-              >
-                <FileText className="w-4.5 h-4.5 shrink-0" />
-                <span>{preCheckinStatus?.completed ? "Ver Dados do Check-in" : "Pré-Check-in Digital"}</span>
-              </Button>
+              {hasEnteredFlat ? (
+                <div className="space-y-1.5 mt-2">
+                  <div className="w-full h-10 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs sm:text-sm font-bold flex items-center justify-center gap-2">
+                    <CheckCircle2 className="w-4.5 h-4.5 text-emerald-600 shrink-0" />
+                    <span>Entrada Realizada no Flat</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setLocation(`/pre-checkin/${code || reservation.code}`)}
+                    className="text-[11px] text-slate-500 hover:text-slate-700 text-center w-full underline"
+                  >
+                    Ver Dados do Check-in
+                  </button>
+                </div>
+              ) : preCheckinStatus?.completed ? (
+                <div className="space-y-1.5 mt-2">
+                  <Button
+                    type="button"
+                    disabled={confirmingSelfCheckin}
+                    onClick={async () => {
+                      try {
+                        setConfirmingSelfCheckin(true)
+                        const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(code || reservation.code)}/self-checkin`, { method: "POST" })
+                        if (res.ok) {
+                          setSelfCheckinNotice(true)
+                          await fetchPortalData(code || reservation.code)
+                        }
+                      } catch {}
+                      finally {
+                        setConfirmingSelfCheckin(false)
+                      }
+                    }}
+                    className="w-full h-10 text-xs sm:text-sm font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-all active:scale-95 flex items-center justify-center gap-2"
+                  >
+                    <CheckCircle2 className="w-4.5 h-4.5 shrink-0" />
+                    <span>{confirmingSelfCheckin ? "Confirmando..." : "📍 Já Cheguei no Flat (Confirmar Entrada)"}</span>
+                  </Button>
+                  <button
+                    type="button"
+                    onClick={() => setLocation(`/pre-checkin/${code || reservation.code}`)}
+                    className="text-[11px] text-slate-500 hover:text-slate-700 text-center w-full underline"
+                  >
+                    Ver Dados do Check-in
+                  </button>
+                </div>
+              ) : (
+                <Button
+                  type="button"
+                  onClick={() => setLocation(`/pre-checkin/${code || reservation.code}`)}
+                  className="w-full h-10 text-xs sm:text-sm font-bold rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs transition-all active:scale-95 flex items-center justify-center gap-2 mt-2"
+                >
+                  <FileText className="w-4.5 h-4.5 shrink-0" />
+                  <span>Pré-Check-in Digital</span>
+                </Button>
+              )}
             </div>
 
             <div className="p-4 rounded-2xl bg-slate-50/80 border border-slate-100 space-y-1.5 flex flex-col justify-between">

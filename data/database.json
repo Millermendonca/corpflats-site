@@ -47980,26 +47980,73 @@
     {
       "id": "tpl_checkin_day_instructions",
       "triggerEvent": "checkin_day_instructions",
-      "title": "Dia do Check-in • Instruções de Chegada",
-      "description": "Enviado no dia do check-in às 09:00 com localização, regras e senha de Wi-Fi.",
+      "title": "Dia do Check-in (07:00) • Instruções de Chegada & Acesso",
+      "description": "Enviado no dia do check-in pontualmente às 07:00 (para reservas feitas antes das 07:00). Inclui endereço, portaria, Wi-Fi, café (se incluso) e botão dinâmico de pré-check-in ou chegada.",
       "enabled": true,
       "triggerTiming": "fixed_time_day_of",
       "offsetValue": 0,
       "offsetUnit": "hours",
-      "fixedTime": "09:00",
-      "message": "Bom dia, *{{primeiro_nome}}*! ☀️\nHoje é o dia da sua chegada ao *{{nome_hotel}}*!\n\n🔑 *Seu Flat:* {{quarto}}\n⏰ *Horário de Check-in:* A partir das {{horario_checkin}}\n📍 *Endereço:* {{endereco_hotel}}\n\nAo chegar, dirija-se à portaria 24h e informe seu nome e o número do seu flat.\n\n📶 *Wi-Fi do Flat:*\n• Rede: *{{wifi_rede}}*\n• Senha: *{{wifi_senha}}*\n\nDesejamos uma ótima viagem até aqui! Se precisar de suporte, estamos à disposição.",
+      "fixedTime": "07:00",
+      "message": "Bom dia, *{{primeiro_nome}}*! ☀️\nHoje é o dia da sua chegada ao *{{nome_hotel}}*!\n\n🔑 *Seu Flat:* {{quarto}}\n⏰ *Horário de Check-in:* A partir das {{horario_checkin}}\n📍 *Endereço:* {{endereco_hotel}}\n🗺️ *Localização no Maps:* {{link_maps}}\n\nAo chegar, dirija-se à portaria 24h e informe seu nome e o número do seu flat (*{{quarto}}*).\n\n📶 *Wi-Fi do Flat:*\n• Rede: *{{wifi_rede}}*\n• Senha: *{{wifi_senha}}*\n\n{{mensagem_cafe_incluso}}\n\n{{instrucao_checkin_ou_chegada}}\n\nDesejamos uma ótima viagem até aqui! Se precisar de suporte, estamos à disposição.",
       "footer": "CorpFlats • Boas-vindas!",
       "buttons": [
         {
-          "id": "btn_maps",
+          "id": "btn_chk",
           "type": "URL",
-          "label": "📍 Abrir no Google Maps",
-          "url": "{{link_maps}}"
+          "label": "📝 Fazer Check-in Online",
+          "url": "{{link_checkin_digital}}"
+        },
+        {
+          "id": "btn_cheguei",
+          "type": "URL",
+          "label": "📍 Já Cheguei no Flat",
+          "url": "{{link_autocheckin}}"
         },
         {
           "id": "btn_portal",
           "type": "URL",
-          "label": "🏨 Portal do Hóspede",
+          "label": "🏨 Portal da Reserva",
+          "url": "{{link_portal_hospede}}"
+        }
+      ],
+      "channels": [
+        "site",
+        "whatsapp",
+        "booking",
+        "airbnb",
+        "outros"
+      ],
+      "recipientTarget": "guest"
+    },
+    {
+      "id": "tpl_sameday_reservation_instructions",
+      "triggerEvent": "sameday_reservation",
+      "title": "Reserva de Hoje (07:01+) • Confirmação & Instruções Imediatas",
+      "description": "Disparado imediatamente para reservas confirmadas no próprio dia do check-in a partir das 07:01, consolidando confirmação e orientações de entrada sem envios duplicados.",
+      "enabled": true,
+      "triggerTiming": "immediate",
+      "offsetValue": 0,
+      "offsetUnit": "minutes",
+      "fixedTime": "",
+      "message": "Olá, *{{primeiro_nome}}*! 🌟🔑\nSua reserva no *{{nome_hotel}}* para *HOJE* está *Confirmada*!\n\n📋 *Sua Hospedagem:*\n• Código da Reserva: *{{numero_reserva}}*\n• Acomodação: *Flat {{quarto}}*\n• Entrada (Check-in): *Hoje a partir das {{horario_checkin}}*\n• Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*\n• Café da Manhã: *{{status_cafe}}*\n\n📍 *Endereço:* {{endereco_hotel}}\n🗺️ *Localização no Maps:* {{link_maps}}\n🚪 *Portaria:* 24 horas (basta se identificar com seu nome e o número do Flat *{{quarto}}*)\n\n📶 *Wi-Fi do Flat:*\n• Rede: *{{wifi_rede}}*\n• Senha: *{{wifi_senha}}*\n\n{{mensagem_cafe_incluso}}\n\n{{instrucao_checkin_ou_chegada}}",
+      "footer": "CorpFlats • Entrada Imediata",
+      "buttons": [
+        {
+          "id": "btn_chk",
+          "type": "URL",
+          "label": "📝 Fazer Check-in Online",
+          "url": "{{link_checkin_digital}}"
+        },
+        {
+          "id": "btn_cheguei",
+          "type": "URL",
+          "label": "📍 Já Cheguei no Flat",
+          "url": "{{link_autocheckin}}"
+        },
+        {
+          "id": "btn_portal",
+          "type": "URL",
+          "label": "🏨 Portal da Reserva",
           "url": "{{link_portal_hospede}}"
         }
       ],
