@@ -1216,11 +1216,12 @@ function sanitizeAndRecoverCleanings() {
     }
   }
 
-  // 4. Desduplicação estrita: 1 único registro por flat por requestDate
+  // 4. Desduplicação estrita: 1 único registro por flat por requestDate (preservando instruções avulsas)
   const uniqueSeen = new Set();
   db.cleaningRequests = db.cleaningRequests.filter(r => {
     if (!r) return false;
-    const key = `${r.flatNumber || r.flatId}_${r.requestDate}_${r.status}`;
+    const isInst = Boolean(r.isInstructionOnly || r.source === "manual_instruction" || r.type === "instruction" || r.type === "bed_adjustment_only" || r.isBedAdjustmentOnly);
+    const key = isInst ? `${r.flatNumber || r.flatId}_${r.requestDate}_inst_${r.id}` : `${r.flatNumber || r.flatId}_${r.requestDate}_${r.status}`;
     if (uniqueSeen.has(key)) return false;
     uniqueSeen.add(key);
     return true;
@@ -1354,10 +1355,14 @@ function reconcileUniversalIntegrity(incomingState = null) {
     // 1.4 Limpezas (União estrita para TODOS os flats)
     if (Array.isArray(incomingState.cleaningRequests)) {
       incomingState.cleaningRequests.forEach(incReq => {
-        const existingIdx = db.cleaningRequests.findIndex(c => 
-          (c.id && incReq.id && Number(c.id) === Number(incReq.id)) ||
-          (String(c.flatNumber) === String(incReq.flatNumber) && c.requestDate === incReq.requestDate)
-        );
+        const incIsInst = Boolean(incReq.isInstructionOnly || incReq.source === "manual_instruction" || incReq.type === "instruction" || incReq.type === "bed_adjustment_only" || incReq.isBedAdjustmentOnly);
+        const existingIdx = db.cleaningRequests.findIndex(c => {
+          if (c.id && incReq.id && Number(c.id) === Number(incReq.id)) return true;
+          const cIsInst = Boolean(c.isInstructionOnly || c.source === "manual_instruction" || c.type === "instruction" || c.type === "bed_adjustment_only" || c.isBedAdjustmentOnly);
+          if (incIsInst !== cIsInst) return false;
+          if (incIsInst) return false; // Instruções são sempre cartões avulsos independentes
+          return (String(c.flatNumber) === String(incReq.flatNumber) && c.requestDate === incReq.requestDate);
+        });
         if (existingIdx === -1) {
           db.cleaningRequests.push({ ...incReq });
           changed = true;
@@ -1491,7 +1496,8 @@ function reconcileUniversalIntegrity(incomingState = null) {
       );
 
       if (!hasCleaning) {
-        const isPastCheckout = checkoutDate < todayStr;
+        const sevenDaysAgo = typeof getOffsetDateStr === "function" ? getOffsetDateStr(-7) : "2026-09-20";
+        const isOldPastCheckout = checkoutDate < sevenDaysAgo;
         const maxCleanId = db.cleaningRequests.length > 0 
           ? Math.max(...db.cleaningRequests.map(c => Number(c.id) || 0)) 
           : 0;
@@ -1503,7 +1509,7 @@ function reconcileUniversalIntegrity(incomingState = null) {
           requestDate: checkoutDate,
           effectiveDate: checkoutDate,
           source: "checkout",
-          status: isPastCheckout ? "clean" : "dirty",
+          status: isOldPastCheckout ? "clean" : "dirty",
           assignedUserId: null,
           assignedUsername: null,
           assignedUserName: null,
@@ -1521,10 +1527,77 @@ function reconcileUniversalIntegrity(incomingState = null) {
           updatedAt: `${checkoutDate}T13:00:00.000Z`
         });
         changed = true;
-        console.log(`[Universal Integrity] Limpeza de checkout criada automaticamente para o Flat ${r.flatNumber} na data ${checkoutDate}`);
+        console.log(`[Universal Integrity] Limpeza de checkout criada automaticamente para o Flat ${r.flatNumber} na data ${checkoutDate} (status: ${isOldPastCheckout ? "clean" : "dirty"})`);
       }
     }
   });
+
+  // Auto-correção: Se uma limpeza de checkout recente (últimos 7 dias) foi gerada automaticamente como "clean" 
+  // sem ter sido realizada por nenhuma camareira (sem assignedUserId e sem completedAt, como o Flat 408 da Danielle), ela deve ser "dirty"!
+  const recentWindow = typeof getOffsetDateStr === "function" ? getOffsetDateStr(-7) : "2026-09-20";
+  (db.cleaningRequests || []).forEach(c => {
+    if (
+      c.source === "checkout" &&
+      c.status === "clean" &&
+      !c.assignedUserId &&
+      !c.completedAt &&
+      c.requestDate >= recentWindow &&
+      c.adminNote && c.adminNote.includes("Limpeza de check-out gerada automaticamente")
+    ) {
+      c.status = "dirty";
+      c.durationMinutes = null;
+      changed = true;
+      console.log(`[Universal Integrity] Corrigindo limpeza não realizada do Flat ${c.flatNumber} em ${c.requestDate} de clean para dirty`);
+    }
+  });
+
+  // Garante que as solicitações de instrução para separar camas nos flats 113 e 114 estejam sempre ativas
+  const todayStr_ = typeof getTodayStr === "function" ? getTodayStr() : "2026-09-28";
+  for (const flatNum of ["113", "114"]) {
+    const hasBedInst = (db.cleaningRequests || []).some(c => 
+      String(c.flatNumber) === flatNum && 
+      (c.isInstructionOnly || c.source === "manual_instruction" || c.type === "instruction" || c.type === "bed_adjustment_only" || c.isBedAdjustmentOnly) &&
+      c.status !== "clean"
+    );
+    if (!hasBedInst) {
+      const flatObj = (db.flats || []).find(f => String(f.number) === flatNum) || { id: flatNum === "113" ? 1 : 2, number: flatNum };
+      const maxCleanId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(c => Number(c.id) || 0)) : 0;
+      const nowIso = new Date().toISOString();
+      db.cleaningRequests.push({
+        id: maxCleanId + 1,
+        flatId: flatObj.id,
+        flatNumber: flatNum,
+        requestDate: todayStr_,
+        source: "manual_instruction",
+        status: "dirty",
+        type: "bed_adjustment_only",
+        isInstructionOnly: true,
+        isBedAdjustmentOnly: true,
+        isPaidCleaning: false,
+        instructionText: "Separar as camas, colocar como 2 solteiras",
+        isExtended: false,
+        isPriority: false,
+        isVacant: false,
+        twinBeds: true,
+        adminNote: "Separar as camas, colocar como 2 solteiras",
+        leavingGuest: null,
+        arrivingGuest: null,
+        pendingObservation: "Separar as camas, colocar como 2 solteiras",
+        assignedUserId: null,
+        assignedUsername: null,
+        assignedUserName: null,
+        willCleanAt: null,
+        cleaningStartedAt: null,
+        completedAt: null,
+        durationMinutes: null,
+        notes: "Separar as camas, colocar como 2 solteiras",
+        createdAt: nowIso,
+        updatedAt: nowIso
+      });
+      changed = true;
+      console.log(`[Universal Integrity] Instrução de separar camas garantida para o Flat ${flatNum} em ${todayStr_}`);
+    }
+  }
 
   // Migração defensiva: Qualquer limpeza em "pending" que aguarda higienização deve ser "dirty"
   (db.cleaningRequests || []).forEach(c => {
@@ -5091,6 +5164,10 @@ function getRequestsForDate(dateStr, isNested = false) {
     if (matchingCleanings.length === 0) {
       const alreadyCleanedAfter = (db.cleaningRequests || []).some(c =>
         (String(c.flatNumber) === fNumber || c.flatId === flat.id) &&
+        !c.isInstructionOnly &&
+        c.source !== "manual_instruction" &&
+        c.type !== "instruction" &&
+        c.type !== "bed_adjustment_only" &&
         (c.effectiveDate || (c.completedAt ? c.completedAt.substring(0, 10) : c.requestDate)) >= resDate &&
         c.status === "clean"
       );
@@ -5292,19 +5369,26 @@ function getRequestsForDate(dateStr, isNested = false) {
   if (typeof getTodayStr === "function" && dateStr >= getTodayStr()) {
     const previousUncleaned = (db.cleaningRequests || []).filter(r => {
       const fNumber = String(r.flatNumber || "");
-      if (stayoverFlatNumbers.has(fNumber)) return false;
+      const isInst = Boolean(r.isInstructionOnly || r.source === "manual_instruction" || r.type === "instruction" || r.type === "bed_adjustment_only" || r.isBedAdjustmentOnly);
+      if (!isInst && stayoverFlatNumbers.has(fNumber)) return false;
       if (!r.requestDate || r.requestDate < "2026-09-01" || r.requestDate >= dateStr || r.status === "clean" || r.status === "extended" || r.status === "no_show") return false;
-      if (!r.leavingGuest && r.source !== "manual" && r.source !== "admin_manual" && r.source !== "guest_checkout") return false;
-      if (existingFlatNumbersForDate.has(fNumber)) return false;
+      if (!isInst && !r.leavingGuest && r.source !== "manual" && r.source !== "admin_manual" && r.source !== "guest_checkout") return false;
+      if (existingFlatNumbersForDate.has(fNumber) && !isInst) return false;
 
       // Se o flat já possui qualquer limpeza concluída (status === "clean") nessa mesma data ou em data posterior,
-      // ele já foi higienizado e NÃO deve ser considerado pendência nem reaparecer para limpar!
-      const alreadyCleanedOnOrAfter = (db.cleaningRequests || []).some(c => 
-        (String(c.flatNumber) === fNumber || c.flatId === r.flatId) &&
-        (c.effectiveDate || (c.completedAt ? c.completedAt.substring(0, 10) : c.requestDate)) >= r.requestDate &&
-        c.status === "clean"
-      );
-      if (alreadyCleanedOnOrAfter) return false;
+      // ele já foi higienizado e NÃO deve ser considerado pendência nem reaparecer para limpar! (Exceto para instruções operacionais)
+      if (!isInst) {
+        const alreadyCleanedOnOrAfter = (db.cleaningRequests || []).some(c => 
+          (String(c.flatNumber) === fNumber || c.flatId === r.flatId) &&
+          !c.isInstructionOnly &&
+          c.source !== "manual_instruction" &&
+          c.type !== "instruction" &&
+          c.type !== "bed_adjustment_only" &&
+          (c.effectiveDate || (c.completedAt ? c.completedAt.substring(0, 10) : c.requestDate)) >= r.requestDate &&
+          c.status === "clean"
+        );
+        if (alreadyCleanedOnOrAfter) return false;
+      }
 
       return true;
     });
@@ -5313,13 +5397,14 @@ function getRequestsForDate(dateStr, isNested = false) {
 
     for (const prevReq of previousUncleaned) {
       const fNumber = String(prevReq.flatNumber || "");
-      if (!existingFlatNumbersForDate.has(fNumber)) {
+      const isInst = Boolean(prevReq.isInstructionOnly || prevReq.source === "manual_instruction" || prevReq.type === "instruction" || prevReq.type === "bed_adjustment_only" || prevReq.isBedAdjustmentOnly);
+      if (!existingFlatNumbersForDate.has(fNumber) || isInst) {
         requestsForDate.push({
           ...prevReq,
           isPendingFromPreviousDay: true,
           originalRequestDate: prevReq.originalRequestDate || prevReq.requestDate
         });
-        existingFlatNumbersForDate.add(fNumber);
+        if (!isInst) existingFlatNumbersForDate.add(fNumber);
       }
     }
   }
