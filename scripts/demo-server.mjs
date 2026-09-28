@@ -2063,16 +2063,30 @@ async function reconcileFromAuditLogs(db, pgPool) {
         distinctRes.set(key, {
           id: Number(d.reservationId) || undefined,
           code: d.reservationCode || undefined,
+          flatId: d.flatId ? Number(d.flatId) : undefined,
           flatNumber: d.flatNumber ? String(d.flatNumber).replace(/\D/g, "") : undefined,
+          guestId: d.guestId ? Number(d.guestId) : undefined,
           guestName: d.guestName || undefined,
-          status: "confirmada",
-          paymentStatus: "pendente",
-          channel: "direta",
-          totalAmount: 0,
-          paidAmount: 0,
-          includeBreakfast: false,
-          isMonthlyGuest: false,
-          clientType: "avulso",
+          guestPhone: d.guestPhone || undefined,
+          guestEmail: d.guestEmail || undefined,
+          guestDocument: d.guestDocument || undefined,
+          guestCount: d.guestCount || (Array.isArray(d.guests) ? d.guests.length : 1),
+          guests: Array.isArray(d.guests) && d.guests.length > 0 ? d.guests : undefined,
+          requesterType: d.requesterType || (d.companyName || d.companyId ? "company" : (d.requesterInfo ? "other_person" : "guest")),
+          requesterInfo: d.requesterInfo || undefined,
+          companyId: d.companyId ? Number(d.companyId) : undefined,
+          companyName: d.companyName || undefined,
+          checkinDate: d.checkinDate || undefined,
+          checkoutDate: d.checkoutDate || undefined,
+          status: d.status || "confirmada",
+          paymentStatus: d.paymentStatus || "pendente",
+          paymentMethod: d.paymentMethod || undefined,
+          channel: d.channel || "direta",
+          totalAmount: d.totalAmount || 0,
+          paidAmount: d.paidAmount || 0,
+          includeBreakfast: Boolean(d.includeBreakfast),
+          isMonthlyGuest: Boolean(d.isMonthlyGuest),
+          clientType: d.clientType || "avulso",
           createdAt: log.timestamp,
           updatedAt: log.timestamp
         });
@@ -2083,6 +2097,17 @@ async function reconcileFromAuditLogs(db, pgPool) {
       r.updatedAt = log.timestamp;
       if (d.guestName && !r.guestName) r.guestName = d.guestName;
       if (d.flatNumber && !r.flatNumber) r.flatNumber = String(d.flatNumber).replace(/\D/g, "");
+      if (d.flatId && !r.flatId) r.flatId = Number(d.flatId);
+      if (d.checkinDate && !r.checkinDate) r.checkinDate = d.checkinDate;
+      if (d.checkoutDate && !r.checkoutDate) r.checkoutDate = d.checkoutDate;
+      if (d.guestPhone && !r.guestPhone) r.guestPhone = d.guestPhone;
+      if (d.guestEmail && !r.guestEmail) r.guestEmail = d.guestEmail;
+      if (d.guestDocument && !r.guestDocument) r.guestDocument = d.guestDocument;
+      if (d.requesterType && (!r.requesterType || r.requesterType === "guest")) r.requesterType = d.requesterType;
+      if (d.companyId && !r.companyId) r.companyId = Number(d.companyId);
+      if (d.companyName && !r.companyName) r.companyName = d.companyName;
+      if (d.requesterInfo && !r.requesterInfo) r.requesterInfo = d.requesterInfo;
+      if (Array.isArray(d.guests) && d.guests.length > 0 && (!r.guests || r.guests.length === 0)) r.guests = d.guests;
 
       const changes = d.changes || [];
       for (const ch of changes) {
@@ -2104,6 +2129,12 @@ async function reconcileFromAuditLogs(db, pgPool) {
         if (ch.field === "checkinDate") r.checkinDate = ch.newValue;
         if (ch.field === "checkoutDate") r.checkoutDate = ch.newValue;
         if (ch.field === "guestName") r.guestName = ch.newValue;
+        if (ch.field === "guestPhone") r.guestPhone = ch.newValue;
+        if (ch.field === "guestEmail") r.guestEmail = ch.newValue;
+        if (ch.field === "guestDocument") r.guestDocument = ch.newValue;
+        if (ch.field === "requesterType") r.requesterType = ch.newValue;
+        if (ch.field === "companyName") r.companyName = ch.newValue;
+        if (ch.field === "companyId") r.companyId = Number(ch.newValue);
         if (ch.field === "channel") r.channel = ch.newValue;
         if (ch.field === "paymentMethod") r.paymentMethod = ch.newValue;
         if (ch.field === "status") {
@@ -2214,14 +2245,20 @@ async function reconcileFromAuditLogs(db, pgPool) {
         const logDate = r.updatedAt || r.createdAt || "";
         const curDate = existing.updatedAt || existing.createdAt || "";
         if (logDate && logDate >= curDate) {
-          db.reservations[existingIdx] = {
-            ...r,
-            ...existing,
-            updatedAt: logDate,
-            status: r.status || existing.status,
-            checkinDate: r.checkinDate || existing.checkinDate,
-            checkoutDate: r.checkoutDate || existing.checkoutDate
-          };
+          const merged = { ...r, ...existing };
+          if (!merged.companyName && r.companyName) merged.companyName = r.companyName;
+          if (!merged.companyId && r.companyId) merged.companyId = r.companyId;
+          if ((!merged.requesterType || merged.requesterType === "guest") && r.requesterType && r.requesterType !== "guest") merged.requesterType = r.requesterType;
+          if (!merged.requesterInfo && r.requesterInfo) merged.requesterInfo = r.requesterInfo;
+          if (!merged.guestPhone && r.guestPhone) merged.guestPhone = r.guestPhone;
+          if (!merged.guestDocument && r.guestDocument) merged.guestDocument = r.guestDocument;
+          if (!merged.guestEmail && r.guestEmail) merged.guestEmail = r.guestEmail;
+          if ((!merged.guests || merged.guests.length === 0) && r.guests && r.guests.length > 0) merged.guests = r.guests;
+          merged.updatedAt = logDate;
+          merged.status = r.status || existing.status;
+          merged.checkinDate = r.checkinDate || existing.checkinDate;
+          merged.checkoutDate = r.checkoutDate || existing.checkoutDate;
+          db.reservations[existingIdx] = merged;
           changed = true;
         }
       }
@@ -2362,6 +2399,51 @@ async function reconcileFromAuditLogs(db, pgPool) {
       changed = true;
     }
 
+    // 4. RECONCILIAR EMPRESAS PARCEIRAS (PJ)
+    if (!db.companies) db.companies = [];
+    const companyLogs = logs.filter(l => l.action && l.action.startsWith("COMPANY_"));
+    for (const cl of companyLogs) {
+      const cd = cl.details || {};
+      const cId = Number(cd.companyId || cd.id);
+      if (cl.action === "COMPANY_CREATED") {
+        const cleanCnpj = (cd.cnpj || "").replace(/\D/g, "");
+        const existing = db.companies.find(c => 
+          (cId && c.id === cId) ||
+          (cleanCnpj && cleanCnpj.length >= 8 && (c.cnpj || "").replace(/\D/g, "") === cleanCnpj) ||
+          (c.corporateName && cd.corporateName && c.corporateName.trim().toLowerCase() === cd.corporateName.trim().toLowerCase())
+        );
+        if (!existing) {
+          db.companies.push(cd.fullCompany || {
+            id: cId || (db.companies.length > 0 ? Math.max(...db.companies.map(c => c.id)) + 1 : 1),
+            corporateName: cd.corporateName || "Empresa Parceira",
+            tradeName: cd.tradeName || cd.corporateName || "Empresa Parceira",
+            cnpj: cd.cnpj || "Isento / Não informado",
+            stateRegistration: cd.stateRegistration || "",
+            municipalRegistration: cd.municipalRegistration || "",
+            financialEmail: cd.financialEmail || "",
+            phone: cd.phone || "",
+            contactPerson: cd.contactPerson || "",
+            billingTerms: cd.billingTerms || "30 dias",
+            notes: cd.notes || "",
+            createdAt: cl.timestamp
+          });
+          changed = true;
+        }
+      } else if (cl.action === "COMPANY_UPDATED") {
+        const existing = db.companies.find(c => c.id === cId);
+        if (existing && cd.changes) {
+          Object.assign(existing, cd.changes);
+          changed = true;
+        }
+      } else if (cl.action === "COMPANY_DELETED") {
+        const idx = db.companies.findIndex(c => c.id === cId);
+        if (idx !== -1) {
+          db.companies.splice(idx, 1);
+          changed = true;
+        }
+      }
+    }
+
     return changed;
   } catch (err) {
     console.warn("[AuditLog Recovery Error]", err.message);
@@ -2457,8 +2539,6 @@ async function loadDatabase() {
           }
         }
 
-        pgHydratedSuccessfully = true;
-
         if (res && res.rows && res.rows[0]) {
           const pgLoaded = res.rows[0].value;
           // Proteção mandatória: Se o PostgreSQL na nuvem estiver com periodicTasks vazias mas o arquivo local tiver as tarefas restauradas, preserva e sincroniza
@@ -2532,6 +2612,8 @@ async function loadDatabase() {
           });
           syncMaidCredits(2);
           syncMaidCredits(3);
+          pgHydratedSuccessfully = true;
+          console.log("[PostgreSQL] Hidratação e reconciliação concluídas com sucesso!");
           if (didChange) {
             console.log("[PostgreSQL] Estado universal reconciliado sem perdas e sincronizado na nuvem!");
             saveDatabase();
@@ -2541,8 +2623,8 @@ async function loadDatabase() {
           console.log("[PostgreSQL] Primeira inicialização: db_state será persistido no próximo saveDatabase.");
         }
       } catch (err) {
-        console.warn("[PostgreSQL] Falha ao sincronizar estado inicial:", err.message);
-        pgHydratedSuccessfully = true;
+        console.warn("[PostgreSQL] Falha crítica ao sincronizar estado inicial:", err.message);
+        // Não marcar pgHydratedSuccessfully = true em caso de erro para não sobrescrever dados na nuvem!
       }
     }
 
@@ -3423,8 +3505,8 @@ function saveDatabase(reason = "auto_save") {
     const stateJson = JSON.stringify(db, null, 2);
     fs.writeFileSync(DB_FILE, stateJson, "utf-8");
     if (pgPool) {
-      if (!pgHydratedSuccessfully && (!db.reservations || db.reservations.length === 0)) {
-        console.warn("[PostgreSQL] BLINDAGEM ATIVA: Ignorando saveDatabase temporariamente porque o banco ainda não hidratou e a memória está vazia.");
+      if (!pgHydratedSuccessfully) {
+        console.warn("[PostgreSQL] BLINDAGEM ATIVA: Ignorando saveDatabase temporariamente porque o banco ainda não hidratou na inicialização.");
         return;
       }
       pgPool.query(
@@ -3658,8 +3740,33 @@ function addReservationAuditLog(reservation, {
       details: {
         reservationId: reservation.id,
         reservationCode: reservation.code,
+        flatId: reservation.flatId,
         flatNumber: reservation.flatNumber,
+        guestId: reservation.guestId,
         guestName: reservation.guestName,
+        guestPhone: reservation.guestPhone || reservation.guests?.[0]?.phone || null,
+        guestEmail: reservation.guestEmail || reservation.guests?.[0]?.email || null,
+        guestDocument: reservation.guestDocument || reservation.guests?.[0]?.cpf || null,
+        guestCount: reservation.guestCount || (Array.isArray(reservation.guests) ? reservation.guests.length : 1),
+        guests: reservation.guests || null,
+        requesterType: reservation.requesterType || (reservation.companyName || reservation.companyId ? "company" : (reservation.requesterInfo ? "other_person" : "guest")),
+        requesterInfo: reservation.requesterInfo || null,
+        companyId: reservation.companyId || null,
+        companyName: reservation.companyName || null,
+        checkinDate: reservation.checkinDate,
+        checkoutDate: reservation.checkoutDate,
+        checkinTime: reservation.checkinTime,
+        checkoutTime: reservation.checkoutTime,
+        status: reservation.status,
+        channel: reservation.channel,
+        paymentMethod: reservation.paymentMethod,
+        dailyRate: reservation.dailyRate,
+        totalAmount: reservation.totalAmount,
+        paidAmount: reservation.paidAmount,
+        paymentStatus: reservation.paymentStatus,
+        includeBreakfast: reservation.includeBreakfast,
+        isMonthlyGuest: reservation.isMonthlyGuest,
+        clientType: reservation.clientType,
         description: entry.description,
         changes: entry.changes
       }
@@ -3822,7 +3929,12 @@ function diffReservationFields(oldRes, newBody, flatsList = []) {
     extraMattress: "Configuração: Colchão Extra",
     includeBreakfast: "Café da Manhã Incluso",
     specialRequests: "Pedidos Especiais",
-    isMonthlyGuest: "Cliente Mensalista"
+    isMonthlyGuest: "Cliente Mensalista",
+    requesterType: "Tipo de Solicitante",
+    companyName: "Empresa Solicitante",
+    companyId: "ID da Empresa",
+    guestDocument: "CPF / Documento do Hóspede",
+    clientType: "Perfil do Cliente"
   };
 
   // Transferência de Apartamento
@@ -9982,7 +10094,7 @@ app.put("/api/pms/reservations/:id", (req, res) => {
     "adults", "children", "notes", "prefersHighFloor", "twinBeds", 
     "extraMattress", "specialRequests", "isMonthlyGuest", "clientType", "includeBreakfast",
     "autoEmitInvoice", "earlyCheckinAuthorized", "receptionNotes",
-    "guestCount", "guests", "guestDocument", "requesterType", "requesterInfo",
+    "guestCount", "guests", "guestDocument", "guestPhone", "guestEmail", "requesterType", "requesterInfo",
     "companyId", "companyName"
   ];
   for (const f of fields) {
@@ -10152,14 +10264,45 @@ app.put("/api/pms/reservations/:id", (req, res) => {
     r.guestEmail = matchedGuest.email;
   }
 
-  if (Array.isArray(r.guests) && r.guests.length > 0 && r.guestPhone) {
-    if (!r.guests[0].phone) r.guests[0].phone = r.guestPhone;
+  if (req.body.guestDocument !== undefined && String(req.body.guestDocument).trim()) {
+    r.guestDocument = String(req.body.guestDocument).trim();
+  } else if (!r.guestDocument && req.body.guests?.[0]?.cpf && String(req.body.guests[0].cpf).trim()) {
+    r.guestDocument = String(req.body.guests[0].cpf).trim();
+  } else if (!r.guestDocument && matchedGuest?.document && String(matchedGuest.document).trim()) {
+    r.guestDocument = String(matchedGuest.document).trim();
+  }
+
+  if (Array.isArray(r.guests) && r.guests.length > 0) {
+    if (r.guestPhone && !r.guests[0].phone) r.guests[0].phone = r.guestPhone;
+    if (r.guestDocument && !r.guests[0].cpf) r.guests[0].cpf = r.guestDocument;
+    if (r.guestEmail && !r.guests[0].email) r.guests[0].email = r.guestEmail;
   }
 
   if (matchedGuest) {
-    if (r.guestPhone && !matchedGuest.phone) matchedGuest.phone = r.guestPhone;
-    if (r.guestEmail && !matchedGuest.email) matchedGuest.email = r.guestEmail;
-    if (r.guestDocument && !matchedGuest.document) matchedGuest.document = r.guestDocument;
+    if (r.guestPhone) matchedGuest.phone = r.guestPhone;
+    if (r.guestEmail) matchedGuest.email = r.guestEmail;
+    if (r.guestDocument) matchedGuest.document = r.guestDocument;
+    if (r.companyName) matchedGuest.companyName = r.companyName;
+    if (r.companyId) matchedGuest.companyId = r.companyId;
+  } else if (r.guestName) {
+    if (!db.guests) db.guests = [];
+    db.guests.push({
+      id: db.guests.length > 0 ? Math.max(...db.guests.map(g => g.id)) + 1 : 1,
+      guestCode: `HOSP-${String(db.guests.length + 1).padStart(5, "0")}`,
+      name: r.guestName,
+      fullName: r.guestName,
+      phone: r.guestPhone || "",
+      email: r.guestEmail || "",
+      document: r.guestDocument || "",
+      companyName: r.companyName || "",
+      companyId: r.companyId || null,
+      city: "",
+      notes: "",
+      tags: [],
+      isMonthlyGuest: Boolean(r.isMonthlyGuest),
+      clientType: r.clientType || "avulso",
+      createdAt: new Date().toISOString()
+    });
   }
 
   // RFC 5546: Incrementa SEQUENCE ao remarcar datas ou alterar flat/status
@@ -18392,7 +18535,7 @@ app.post("/api/companies", (req, res) => {
     category: "company",
     action: "COMPANY_CREATED",
     actor: req.user || { name: "Usuário", role: "admin" },
-    details: { companyId: newCompany.id, corporateName: newCompany.corporateName, tradeName: newCompany.tradeName, cnpj: newCompany.cnpj },
+    details: { companyId: newCompany.id, corporateName: newCompany.corporateName, tradeName: newCompany.tradeName, cnpj: newCompany.cnpj, fullCompany: newCompany },
     source: "CRM Empresas"
   });
   res.status(201).json(newCompany);

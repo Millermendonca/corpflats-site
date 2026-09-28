@@ -2075,7 +2075,8 @@ export default function PmsCalendar() {
     setFormCheckinTime(resItem.checkinTime || defaultCheckinTime || "14:00")
     setFormCheckoutTime(resItem.checkoutTime || defaultCheckoutTime || "12:00")
     setFormGuestCount(String(resItem.guestCount || resItem.adults || (resItem.guests?.length || 1)) as any)
-    setFormRequesterType(resItem.requesterType || "guest")
+    const resolvedReqType = (resItem.requesterType as any) || (resItem.companyId || resItem.companyName ? "company" : (resItem.requesterInfo?.name ? "other_person" : "guest"))
+    setFormRequesterType(resolvedReqType)
     setFormRequesterName(resItem.requesterInfo?.name || "")
     setFormRequesterPhone(resItem.requesterInfo?.phone || "")
     setFormRequesterEmail(resItem.requesterInfo?.email || "")
@@ -2366,6 +2367,7 @@ export default function PmsCalendar() {
         fetchCompanies()
         setFormCompanyId(String(createdComp.id))
         setFormCompanyName(createdComp.tradeName || createdComp.corporateName)
+        setFormRequesterType("company")
         setNewCompanyModalOpen(false)
         toast({
           title: "Empresa Cadastrada com Sucesso!",
@@ -2715,6 +2717,8 @@ export default function PmsCalendar() {
       }
 
       const selectedComp = companies.find(c => String(c.id) === formCompanyId)
+      const resolvedReqType = formRequesterType || (formCompanyId || formCompanyName ? "company" : "guest")
+      const resolvedCompName = (selectedComp ? (selectedComp.tradeName || selectedComp.corporateName) : formCompanyName) || ""
 
       const payload = {
         flatId: Number(formFlatId),
@@ -2725,15 +2729,15 @@ export default function PmsCalendar() {
         guestDocument: formGuest1Cpf.trim(),
         guestCount: numG,
         guests: guestsPayload,
-        requesterType: formRequesterType,
-        requesterInfo: formRequesterType === "other_person" ? {
+        requesterType: resolvedReqType,
+        requesterInfo: resolvedReqType === "other_person" ? {
           name: formRequesterName.trim(),
           cpf: formRequesterCpf.trim(),
           phone: formRequesterPhone.trim(),
           email: formRequesterEmail.trim()
         } : null,
-        companyId: formRequesterType === "company" && formCompanyId ? Number(formCompanyId) : null,
-        companyName: formRequesterType === "company" ? (selectedComp ? selectedComp.tradeName || selectedComp.corporateName : formCompanyName) : "",
+        companyId: resolvedReqType === "company" && formCompanyId ? Number(formCompanyId) : null,
+        companyName: resolvedReqType === "company" ? resolvedCompName : "",
         checkinDate: formCheckin,
         checkoutDate: formCheckout,
         checkinTime: formCheckinTime || defaultCheckinTime || "14:00",
