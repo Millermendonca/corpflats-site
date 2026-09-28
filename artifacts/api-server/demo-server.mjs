@@ -2913,7 +2913,8 @@ function reconcileCleaningRequests() {
     const fKey = String(req.flatNumber || req.flatId).replace(/\D/g, "") || String(req.flatNumber || req.flatId);
     const rDate = req.requestDate || (req.completedAt ? String(req.completedAt).substring(0, 10) : "");
     if (!rDate) continue;
-    const key = `${fKey}_${rDate}`;
+    const isInst = Boolean(req.isInstructionOnly || req.source === "manual_instruction" || req.type === "instruction" || req.type === "bed_adjustment_only" || req.isBedAdjustmentOnly);
+    const key = isInst ? `${fKey}_${rDate}_inst_${req.id}` : `${fKey}_${rDate}`;
     if (!byFlatAndDate.has(key)) {
       byFlatAndDate.set(key, []);
     }
@@ -4914,28 +4915,48 @@ app.post("/api/cleaning/requests/manual", (req, res) => {
     assignedUserId = null,
     observation = null,
     twinBeds = false,
-    adminNote = null
+    adminNote = null,
+    requestType = "cleaning", // "cleaning" | "instruction"
+    instructionText = null,
+    isPaidCleaning = null, // for instruction: default false, for cleaning: default true
+    isBedAdjustmentOnly = false
   } = req.body;
 
   const flat = db.flats.find(f => f.id === Number(flatId) || String(f.number) === String(flatId));
   if (!flat) return res.status(404).json({ error: "Apartamento não encontrado" });
 
+  const isInstruction = requestType === "instruction" || isBedAdjustmentOnly;
+  const isPaid = typeof isPaidCleaning === "boolean" ? isPaidCleaning : (isInstruction ? false : true);
+  const resolvedTwinBeds = Boolean(twinBeds || (isInstruction && isBedAdjustmentOnly));
+  const noteText = (instructionText || adminNote || observation || "").trim() || (resolvedTwinBeds ? "Separar as camas, colocar como 2 solteiras" : null);
+
   const assignedUser = assignedUserId ? db.users.find(u => u.id === Number(assignedUserId)) : null;
   const nowIso = new Date().toISOString();
   const completedDateIso = requestDate ? new Date(`${requestDate}T12:00:00.000Z`).toISOString() : nowIso;
-  const noteText = (adminNote || observation || "").trim() || null;
 
-  let existing = db.cleaningRequests.find(r => (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) && r.requestDate === requestDate);
+  let existing = db.cleaningRequests.find(r => {
+    const isSameFlat = (r.flatId === flat.id || String(r.flatNumber) === String(flat.number));
+    if (!isSameFlat || r.requestDate !== requestDate) return false;
+    const rIsInst = Boolean(r.isInstructionOnly || r.source === "manual_instruction" || r.type === "instruction" || r.type === "bed_adjustment_only");
+    return isInstruction ? rIsInst : !rIsInst;
+  });
+
   if (existing) {
-    existing.source = "manual";
+    existing.source = isInstruction ? "manual_instruction" : "manual";
+    existing.type = isInstruction ? (resolvedTwinBeds ? "bed_adjustment_only" : "instruction") : "cleaning";
+    existing.isInstructionOnly = isInstruction;
+    existing.isBedAdjustmentOnly = isInstruction && resolvedTwinBeds;
+    existing.isPaidCleaning = isPaid;
+    existing.instructionText = isInstruction ? noteText : null;
     existing.isExtended = false;
     existing.isPriority = Boolean(isPriority);
     existing.status = markAsClean ? "clean" : "dirty";
     existing.isVacant = markAsClean ? true : !flat.isOccupied;
-    existing.twinBeds = Boolean(twinBeds);
+    existing.twinBeds = resolvedTwinBeds;
     if (noteText) {
       existing.adminNote = noteText;
       existing.pendingObservation = noteText;
+      existing.notes = noteText;
     }
     if (assignedUser) {
       existing.assignedUserId = assignedUser.id;
@@ -4959,7 +4980,12 @@ app.post("/api/cleaning/requests/manual", (req, res) => {
     flatId: flat.id,
     flatNumber: flat.number,
     requestDate,
-    source: "manual",
+    source: isInstruction ? "manual_instruction" : "manual",
+    type: isInstruction ? (resolvedTwinBeds ? "bed_adjustment_only" : "instruction") : "cleaning",
+    isInstructionOnly: isInstruction,
+    isBedAdjustmentOnly: isInstruction && resolvedTwinBeds,
+    isPaidCleaning: isPaid,
+    instructionText: isInstruction ? noteText : null,
     status: markAsClean ? "clean" : "dirty",
     assignedUserId: assignedUser ? assignedUser.id : null,
     assignedUsername: assignedUser ? assignedUser.username : null,
@@ -4967,8 +4993,9 @@ app.post("/api/cleaning/requests/manual", (req, res) => {
     isVacant: markAsClean ? true : !flat.isOccupied,
     isPriority: Boolean(isPriority),
     isExtended: false,
-    twinBeds: Boolean(twinBeds),
+    twinBeds: resolvedTwinBeds,
     adminNote: noteText,
+    notes: noteText,
     leavingGuest: null,
     arrivingGuest: null,
     pendingObservation: noteText,
@@ -5201,10 +5228,11 @@ function getRequestsForDate(dateStr, isNested = false) {
   // 4. Garante que qualquer solicitação existente no banco de dados para a data apareça na listagem
   for (const r of (db.cleaningRequests || [])) {
     const fNumber = String(r.flatNumber || "");
-    if (r.requestDate === dateStr && !existingFlatNumbersForDate.has(fNumber)) {
+    const isInst = Boolean(r.isInstructionOnly || r.source === "manual_instruction" || r.type === "instruction" || r.type === "bed_adjustment_only" || r.isBedAdjustmentOnly);
+    if (r.requestDate === dateStr && (!existingFlatNumbersForDate.has(fNumber) || isInst)) {
       if (stayoverFlatNumbers.has(fNumber) && r.source === "checkout") continue;
       requestsForDate.push(r);
-      existingFlatNumbersForDate.add(fNumber);
+      if (!isInst) existingFlatNumbersForDate.add(fNumber);
     }
   }
 
@@ -5367,25 +5395,36 @@ app.get("/api/reservations/checkouts", (req, res) => {
     const hasPrefersHighFloor = Boolean(nextResForSetup && nextResForSetup.prefersHighFloor);
     const specialRequests = req_.adminNote || (nextResForSetup && (nextResForSetup.specialRequests || nextResForSetup.notes)) || null;
 
-    const setupInfo = (hasTwinBeds || hasExtraMattress || hasPrefersHighFloor || specialRequests) ? {
+    const isInst = Boolean(req_.isInstructionOnly || req_.source === "manual_instruction" || req_.type === "instruction" || req_.type === "bed_adjustment_only" || req_.isBedAdjustmentOnly);
+    const isPaid = typeof req_.isPaidCleaning === "boolean" ? req_.isPaidCleaning : (isInst ? false : true);
+    const instText = req_.instructionText || req_.notes || req_.adminNote || req_.pendingObservation || (req_.twinBeds ? "Separar as camas, colocar como 2 solteiras" : null);
+
+    const setupInfo = isInst ? {
+      twinBeds: Boolean(req_.twinBeds),
+      extraMattress: false,
+      prefersHighFloor: false,
+      specialRequests: instText,
+      adminNote: instText,
+      guestName: null
+    } : ((hasTwinBeds || hasExtraMattress || hasPrefersHighFloor || specialRequests) ? {
       twinBeds: hasTwinBeds,
       extraMattress: hasExtraMattress,
       prefersHighFloor: hasPrefersHighFloor,
       specialRequests: specialRequests,
       adminNote: req_.adminNote || null,
       guestName: nextResForSetup?.guestName || null
-    } : null;
+    } : null);
 
     // Check if flat is currently occupied with a checkout on the next day or future
-    const activeResToday = (db.reservations || []).find(r => 
+    const activeResToday = isInst ? null : (db.reservations || []).find(r => 
       (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
       r.status !== "cancelada" && r.status !== "cancelado" &&
       r.checkinDate < dateStr && r.checkoutDate > dateStr
     );
-    const hasFutureCheckoutOnly = Boolean(activeResToday && activeResToday.checkoutDate > dateStr && !req_.leavingGuest && req_.source !== "guest_checkout" && !req_.isVacant);
+    const hasFutureCheckoutOnly = !isInst && Boolean(activeResToday && activeResToday.checkoutDate > dateStr && !req_.leavingGuest && req_.source !== "guest_checkout" && !req_.isVacant);
 
     // Identifica a reserva do hóspede saindo hoje ou ativa no flat
-    const checkoutRes = (db.reservations || []).find(r => 
+    const checkoutRes = isInst ? null : ((db.reservations || []).find(r => 
       (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
       r.status !== "cancelada" && r.status !== "cancelado" &&
       r.checkoutDate === (req_.originalRequestDate || req_.requestDate || dateStr)
@@ -5393,21 +5432,21 @@ app.get("/api/reservations/checkouts", (req, res) => {
       (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
       r.status !== "cancelada" && r.status !== "cancelado" &&
       (r.guestName?.toLowerCase() === req_.leavingGuest?.toLowerCase() || (r.guestName && req_.leavingGuest && req_.leavingGuest.toLowerCase().includes(r.guestName.toLowerCase())))
-    ) : null) || activeResToday;
+    ) : null) || activeResToday);
 
     return {
       flatId: flat.id,
       flatNumber: flat.number,
       checkoutDate: req_.requestDate,
-      hasCheckinToday,
-      isOccupied,
-      isVacant,
+      hasCheckinToday: isInst ? false : hasCheckinToday,
+      isOccupied: isInst ? false : isOccupied,
+      isVacant: isInst ? true : isVacant,
       isPriority: req_.isPriority || false,
-      isExtended: req_.isExtended || req_.status === "extended",
+      isExtended: isInst ? false : (req_.isExtended || req_.status === "extended"),
       isPendingFromPreviousDay: Boolean(req_.isPendingFromPreviousDay),
       originalRequestDate: req_.originalRequestDate || null,
-      leavingGuest: req_.leavingGuest || null,
-      arrivingGuest: resolvedArrivingGuest || null,
+      leavingGuest: isInst ? null : (req_.leavingGuest || null),
+      arrivingGuest: isInst ? null : (resolvedArrivingGuest || null),
       activeReservation: activeResToday ? {
         guestName: activeResToday.guestName,
         checkinDate: activeResToday.checkinDate,
@@ -5427,8 +5466,12 @@ app.get("/api/reservations/checkouts", (req, res) => {
       } : null,
       hasFutureCheckoutOnly,
       setupInfo,
-      pendingPeriodicTasks: pendingTasks,
-      pendingSurveys,
+      pendingPeriodicTasks: isInst ? [] : pendingTasks,
+      pendingSurveys: isInst ? [] : pendingSurveys,
+      isInstructionOnly: isInst,
+      isBedAdjustmentOnly: Boolean(req_.isBedAdjustmentOnly || req_.type === "bed_adjustment_only"),
+      isPaidCleaning: isPaid,
+      instructionText: instText,
       cleaningRequest: {
         id: req_.id,
         flatId: req_.flatId,
@@ -5436,6 +5479,12 @@ app.get("/api/reservations/checkouts", (req, res) => {
         requestDate: req_.requestDate,
         source: req_.source,
         status: req_.status,
+        type: req_.type || (isInst ? "instruction" : "cleaning"),
+        isInstructionOnly: isInst,
+        isBedAdjustmentOnly: Boolean(req_.isBedAdjustmentOnly || req_.type === "bed_adjustment_only"),
+        isPaidCleaning: isPaid,
+        instructionText: instText,
+        twinBeds: Boolean(req_.twinBeds),
         isPriority: req_.isPriority || false,
         isExtended: req_.isExtended || req_.status === "extended",
         isPendingFromPreviousDay: Boolean(req_.isPendingFromPreviousDay),
@@ -5728,23 +5777,22 @@ function findOrUpsertCleaningRequest(reqId, flatNumber, flatId, dateStr = null) 
   let item = null;
 
   // 1. Se informou flatNumber ou flatId, prioriza encontrar por quarto e data para evitar colisão de IDs virtuais
-  if (flatNumber) {
+  // 1. Procura por ID numérico direto (para identificar perfeitamente cards reais e instruções)
+  if (reqId) {
+    const candidate = db.cleaningRequests.find(r => Number(r.id) === Number(reqId));
+    if (candidate) {
+      item = candidate;
+    }
+  }
+
+  // 2. Se ainda não achou e informou flatNumber ou flatId, procura por quarto e data
+  if (!item && flatNumber) {
     const matching = db.cleaningRequests.filter(r => String(r.flatNumber) === String(flatNumber) && r.requestDate === targetDate);
     item = matching.find(r => r.status === "clean") || matching[0];
   }
   if (!item && flatId) {
     const matching = db.cleaningRequests.filter(r => Number(r.flatId) === Number(flatId) && r.requestDate === targetDate);
     item = matching.find(r => r.status === "clean") || matching[0];
-  }
-
-  // 2. Procura por ID numérico direto (apenas se bater com o flat informado, ou se não informou flat)
-  if (!item && reqId) {
-    const candidate = db.cleaningRequests.find(r => Number(r.id) === Number(reqId));
-    if (candidate) {
-      if ((!flatNumber || String(candidate.flatNumber) === String(flatNumber)) && (!flatId || Number(candidate.flatId) === Number(flatId))) {
-        item = candidate;
-      }
-    }
   }
 
   // 3. Se ainda não achou, procura nos cards dinâmicos gerados para a data
@@ -5826,8 +5874,9 @@ app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
     item.isVacant = isVacant;
   }
 
-  // Minimum time enforcement: 10 minutes minimum from cleaningStartedAt
-  if (status === "clean" && item.cleaningStartedAt && !customCompletedAt) {
+  // Minimum time enforcement: 10 minutes minimum from cleaningStartedAt (bypassed for instructions / adjustments)
+  const isInstructionRequest = Boolean(item.isInstructionOnly || item.isBedAdjustmentOnly || item.type === "instruction" || item.type === "bed_adjustment_only" || item.source === "manual_instruction");
+  if (status === "clean" && item.cleaningStartedAt && !customCompletedAt && !isInstructionRequest) {
     const started = new Date(item.cleaningStartedAt).getTime();
     const elapsedMinutes = (Date.now() - started) / 60000;
     if (elapsedMinutes < 10 && userAuth?.role !== "admin") {
@@ -5925,7 +5974,7 @@ app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
       }
 
       let tasksToExecute = Array.isArray(executedPeriodicTaskIds) ? [...executedPeriodicTaskIds] : [];
-      if (status === "clean" && tasksToExecute.length === 0) {
+      if (status === "clean" && tasksToExecute.length === 0 && !isInstructionRequest) {
         // Auto-conclui tarefas preventivas pendentes deste quarto para governança caso não passadas explicitamente
         const flatTargetId = Number(item.flatId);
         const pendingForFlat = (db.periodicTasks || []).filter(t => 
@@ -6213,6 +6262,25 @@ app.delete("/api/cleaning/admin/record/:id", (req, res) => {
   });
 
   res.json({ success: true, message: `Diária do Flat ${removed.flatNumber} em ${removed.requestDate} removida com sucesso.` });
+});
+
+app.delete("/api/cleaning/requests/:id", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (userAuth?.role !== "admin") {
+    return res.status(403).json({ error: "Apenas administradores podem excluir solicitações." });
+  }
+
+  const id = Number(req.params.id);
+  const targetIndex = (db.cleaningRequests || []).findIndex(r => r.id === id);
+  if (targetIndex === -1) {
+    return res.status(404).json({ error: "Solicitação não encontrada." });
+  }
+
+  const removed = db.cleaningRequests[targetIndex];
+  db.cleaningRequests.splice(targetIndex, 1);
+  saveDatabase();
+
+  res.json({ success: true, message: `Solicitação do Flat ${removed.flatNumber} excluída com sucesso.` });
 });
 
 app.patch("/api/cleaning/admin/record/:id", (req, res) => {
@@ -9422,14 +9490,22 @@ app.put("/api/pms/reservations/:id", (req, res) => {
     const existingCleanOnTarget = db.cleaningRequests.find(c => 
       (c.flatId === r.flatId || String(c.flatNumber) === String(flatNum)) && 
       c.requestDate === r.checkoutDate && 
-      c.status === "clean"
+      c.status === "clean" &&
+      !c.isInstructionOnly &&
+      c.source !== "manual_instruction" &&
+      c.type !== "bed_adjustment_only" &&
+      c.type !== "instruction"
     );
 
     // 2. Procura solicitação não-concluída na data antiga para este flat
     const oldReq = db.cleaningRequests.find(c => 
       (c.flatId === oldFlatId || String(c.flatNumber) === String(flatNum)) && 
       c.requestDate === oldCheckout && 
-      c.status !== "clean"
+      c.status !== "clean" &&
+      !c.isInstructionOnly &&
+      c.source !== "manual_instruction" &&
+      c.type !== "bed_adjustment_only" &&
+      c.type !== "instruction"
     );
 
     if (existingCleanOnTarget) {
@@ -9442,7 +9518,11 @@ app.put("/api/pms/reservations/:id", (req, res) => {
       // Verifica se já existe outra solicitação na data de destino
       const existingOnTarget = db.cleaningRequests.find(c => 
         (c.flatId === r.flatId || String(c.flatNumber) === String(flatNum)) && 
-        c.requestDate === r.checkoutDate
+        c.requestDate === r.checkoutDate &&
+        !c.isInstructionOnly &&
+        c.source !== "manual_instruction" &&
+        c.type !== "bed_adjustment_only" &&
+        c.type !== "instruction"
       );
       if (existingOnTarget) {
         // Já existe um card na nova data; descarta o card obsoleto da data antiga
@@ -9459,7 +9539,11 @@ app.put("/api/pms/reservations/:id", (req, res) => {
       // 3. Se não havia pendência na data antiga e não existe na nova data, garante criação se não cancelada
       const hasAnyReq = db.cleaningRequests.some(c => 
         (c.flatId === r.flatId || String(c.flatNumber) === String(flatNum)) && 
-        c.requestDate === r.checkoutDate
+        c.requestDate === r.checkoutDate &&
+        !c.isInstructionOnly &&
+        c.source !== "manual_instruction" &&
+        c.type !== "bed_adjustment_only" &&
+        c.type !== "instruction"
       );
       if (!hasAnyReq && r.status !== "cancelada") {
         const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(x => Number(x.id) || 0)) : 0;

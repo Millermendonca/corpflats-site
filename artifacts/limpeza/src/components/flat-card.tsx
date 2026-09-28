@@ -25,7 +25,7 @@ import {
   User, CheckCircle2, AlertCircle, Clock, PlayCircle, Sparkles, 
   Flame, Wrench, ClipboardCheck, DoorOpen, RotateCcw, AlertTriangle, Check, CalendarX,
   PackageOpen, Camera, BedDouble, Image as ImageIcon, UserX, Calendar, CloudOff, Loader2,
-  DollarSign, CalendarDays
+  DollarSign, CalendarDays, Trash2, Coins
 } from "lucide-react"
 import { compressImage } from "@/lib/image-compression"
 import { cn } from "@/lib/utils"
@@ -377,6 +377,49 @@ export function FlatCard({
   const isTwinBeds = typeof request?.twinBeds === "boolean" ? request.twinBeds : Boolean(flat?.setupInfo?.twinBeds)
   const pendingPeriodicTasks = flat?.pendingPeriodicTasks || []
   const pendingSurveys = flat?.pendingSurveys || []
+
+  const isInstruction = Boolean(
+    flat?.isInstructionOnly ||
+    request?.isInstructionOnly ||
+    request?.type === "instruction" ||
+    request?.source === "manual_instruction" ||
+    flat?.isBedAdjustmentOnly ||
+    request?.isBedAdjustmentOnly ||
+    request?.type === "bed_adjustment_only"
+  )
+  const isPaidCleaning = typeof request?.isPaidCleaning === "boolean"
+    ? request.isPaidCleaning
+    : (typeof flat?.isPaidCleaning === "boolean" ? flat.isPaidCleaning : !isInstruction)
+
+  const instructionText = flat?.instructionText || request?.instructionText || flat?.setupInfo?.specialRequests || request?.pendingObservation || request?.adminNote || (isTwinBeds ? "Separar as camas, colocar como 2 solteiras" : "")
+
+  const handleDeleteInstruction = async () => {
+    if (!confirm("Deseja realmente excluir esta instrução avulsa do flat?")) return
+    setIsProcessing(true)
+    try {
+      const activeReqId = request?.id || flat?.cleaningRequest?.id || flat?.id
+      const res = await fetch(`/api/cleaning/requests/${activeReqId}`, {
+        method: "DELETE"
+      })
+      if (!res.ok) {
+        throw new Error("Erro ao excluir solicitação.")
+      }
+      toast({
+        title: "Instrução excluída",
+        description: "A instrução avulsa foi removida com sucesso."
+      })
+      queryClient.invalidateQueries({ queryKey: getListCheckoutsQueryKey({ date }) })
+      queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey({ date }) })
+    } catch (err: any) {
+      toast({
+        title: "Erro ao excluir",
+        description: err.message || "Não foi possível excluir a instrução.",
+        variant: "destructive"
+      })
+    } finally {
+      setIsProcessing(false)
+    }
+  }
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -986,10 +1029,23 @@ export function FlatCard({
                 {conf.label}
               </Badge>
 
-              {(flat.isBedAdjustmentOnly || request?.isBedAdjustmentOnly || request?.type === "bed_adjustment_only") && (
+              {isInstruction && (
                 <Badge className="bg-purple-700 hover:bg-purple-800 text-white font-bold text-[10px] shadow-2xs px-2.5 py-0.5 flex items-center gap-1 rounded-lg">
                   <BedDouble className="w-3 h-3 shrink-0" />
-                  <span>🛏️ Apenas Alterar para 2 Camas (Não é Limpeza)</span>
+                  <span>🛏️ {isTwinBeds ? "Apenas Separar 2 Camas (Sem Limpeza)" : "Instrução no Flat (Sem Limpeza)"}</span>
+                </Badge>
+              )}
+
+              {/* Tag de Remuneração: Exibida SOMENTE para Administradores */}
+              {isAdmin && isInstruction && (
+                <Badge variant="outline" className={cn(
+                  "font-bold text-[10px] px-2 py-0.5 rounded-lg border flex items-center gap-1",
+                  isPaidCleaning 
+                    ? "bg-emerald-50 text-emerald-800 border-emerald-300 dark:bg-emerald-950/30 dark:border-emerald-800" 
+                    : "bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-800 dark:border-slate-700"
+                )}>
+                  <Coins className="w-3 h-3" />
+                  <span>{isPaidCleaning ? "Remunerado" : "Favor / Não Remunerado"}</span>
                 </Badge>
               )}
 
@@ -1055,8 +1111,44 @@ export function FlatCard({
               </div>
             )}
 
-            {/* Instruções para a Camareira (2 Camas de Solteiro e Nota da Administração) */}
-            {(isTwinBeds || flat?.setupInfo?.extraMattress || flat?.setupInfo?.prefersHighFloor || flat?.setupInfo?.specialRequests) && (
+            {/* Box de Instrução no Flat (Sem Limpeza) */}
+            {isInstruction && instructionText && (
+              <div 
+                className={cn(
+                  "bg-purple-500/10 dark:bg-purple-950/30 border border-purple-300 dark:border-purple-700/60 rounded-xl p-3 text-xs space-y-2",
+                  isAdmin && "cursor-pointer hover:border-purple-400 hover:bg-purple-500/15 transition-all"
+                )}
+                onClick={isAdmin ? () => setInstructionsModalOpen(true) : undefined}
+                title={isAdmin ? "Clique para editar instruções deste quarto" : undefined}
+              >
+                <div className="font-bold text-purple-950 dark:text-purple-200 flex items-center justify-between gap-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <BedDouble className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0" />
+                    <span>Instrução da Governança / Tarefa:</span>
+                  </div>
+                  {isAdmin && (
+                    <span className="text-[10px] text-purple-800 dark:text-purple-300 font-semibold underline flex items-center gap-0.5">
+                      ✏️ Editar Instrução
+                    </span>
+                  )}
+                </div>
+
+                {isTwinBeds && (
+                  <div className="flex flex-wrap gap-1.5">
+                    <Badge className="bg-purple-700 hover:bg-purple-800 text-white font-bold text-[10px] px-2 py-0.5 shadow-2xs flex items-center gap-1 rounded-lg">
+                      <span>🛏️ Montar 2 Camas de Solteiro (Separadas)</span>
+                    </Badge>
+                  </div>
+                )}
+
+                <div className="bg-background/90 p-2.5 rounded-lg border border-purple-200 dark:border-purple-800/60 text-[11px] text-foreground leading-relaxed">
+                  <p className="whitespace-pre-wrap font-medium">{instructionText}</p>
+                </div>
+              </div>
+            )}
+
+            {/* Instruções para a Camareira (Limpeza Padrão) */}
+            {!isInstruction && (isTwinBeds || flat?.setupInfo?.extraMattress || flat?.setupInfo?.prefersHighFloor || flat?.setupInfo?.specialRequests) && (
               <div 
                 className={cn(
                   "bg-amber-500/10 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-700/60 rounded-xl p-2.5 text-xs space-y-2",
@@ -1083,19 +1175,19 @@ export function FlatCard({
                       <span>🛏️ Montar 2 Camas de Solteiro</span>
                     </Badge>
                   )}
-                  {flat.setupInfo.extraMattress && (
+                  {flat.setupInfo?.extraMattress && (
                     <Badge className="bg-purple-600 hover:bg-purple-700 text-white font-bold text-[10px] px-2 py-0.5 shadow-2xs flex items-center gap-1 rounded-lg">
                       <span>➕ Colocar Colchão Extra</span>
                     </Badge>
                   )}
-                  {flat.setupInfo.prefersHighFloor && (
+                  {flat.setupInfo?.prefersHighFloor && (
                     <Badge className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] px-2 py-0.5 shadow-2xs flex items-center gap-1 rounded-lg">
                       <span>🏢 Prefere Andar Alto</span>
                     </Badge>
                   )}
                 </div>
 
-                {flat.setupInfo.specialRequests && (
+                {flat.setupInfo?.specialRequests && (
                   <div className="bg-background/90 p-2 rounded-lg border border-amber-300/80 dark:border-amber-700/60 text-[11px] text-foreground leading-snug">
                     <span className="font-bold text-amber-800 dark:text-amber-300 flex items-center gap-1 mb-0.5 text-[10px]">
                       📝 Nota / Recado da Administração:
@@ -1172,17 +1264,24 @@ export function FlatCard({
                         onClick={() => handleStatusChange("will_clean")}
                         disabled={isProcessing}
                       >
-                        Vou Limpar
+                        {isInstruction ? (
+                          <>
+                            <BedDouble className="w-3.5 h-3.5 mr-1" />
+                            <span>Vou Fazer</span>
+                          </>
+                        ) : (
+                          "Vou Limpar"
+                        )}
                       </Button>
                       <Button 
                         size="sm" 
                         className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-2xs text-xs gap-1" 
                         onClick={() => setAdminCleanModalOpen(true)}
                         disabled={isProcessing}
-                        title="Marcar como limpo escolhendo a camareira responsável"
+                        title={isInstruction ? "Marcar instrução como concluída" : "Marcar como limpo escolhendo a camareira responsável"}
                       >
                         <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>Marcar Limpo</span>
+                        <span>{isInstruction ? "Concluir" : "Marcar Limpo"}</span>
                       </Button>
                     </div>
                   ) : (
@@ -1192,7 +1291,14 @@ export function FlatCard({
                       onClick={() => handleStatusChange("will_clean")}
                       disabled={isProcessing}
                     >
-                      Vou Limpar
+                      {isInstruction ? (
+                        <>
+                          <BedDouble className="w-3.5 h-3.5 mr-1" />
+                          <span>Vou Fazer</span>
+                        </>
+                      ) : (
+                        "Vou Limpar"
+                      )}
                     </Button>
                   )
                 )}
@@ -1205,7 +1311,7 @@ export function FlatCard({
                       onClick={() => handleStatusChange("cleaning_now")}
                       disabled={isProcessing}
                     >
-                      <Sparkles className="w-4 h-4 mr-1" /> Iniciar
+                      <Sparkles className="w-4 h-4 mr-1" /> {isInstruction ? "Iniciar Tarefa" : "Iniciar"}
                     </Button>
                     {isAdmin && (
                       <Button 
@@ -1214,7 +1320,7 @@ export function FlatCard({
                         onClick={() => setAdminCleanModalOpen(true)}
                         disabled={isProcessing}
                       >
-                        <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Limpo
+                        <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> {isInstruction ? "Concluir" : "Limpo"}
                       </Button>
                     )}
                     {(isAssignedToMe || isAdmin) && (
@@ -1250,7 +1356,7 @@ export function FlatCard({
                         onClick={() => handleStatusChange("clean")}
                         disabled={isProcessing}
                       >
-                        <CheckCircle2 className="w-4 h-4 mr-1" /> Concluir
+                        <CheckCircle2 className="w-4 h-4 mr-1" /> {isInstruction ? "Concluir Tarefa" : "Concluir"}
                       </Button>
                     </div>
                     {(isAssignedToMe || isAdmin) && (
@@ -1265,6 +1371,19 @@ export function FlatCard({
                       </Button>
                     )}
                   </div>
+                )}
+
+                {/* Opção para Administrador Excluir Instrução Avulsa */}
+                {isAdmin && isInstruction && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="w-full text-xs text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30 h-7"
+                    onClick={handleDeleteInstruction}
+                    disabled={isProcessing}
+                  >
+                    <Trash2 className="w-3.5 h-3.5 mr-1" /> Excluir Instrução
+                  </Button>
                 )}
 
                 {currentStatus === "pending_issue" && (

@@ -88,6 +88,18 @@ export default function FlatCard({ request, currentUserId, onStatusChange, onMar
 
         {/* Indicator pills */}
         <View style={s.indicators}>
+          {Boolean((request as any).isBedAdjustmentOnly || (request as any).twinBeds) && (
+            <View style={[s.checkinPill, { backgroundColor: '#f3e8ff' }]}>
+              <Ionicons name="bed-outline" size={11} color="#6b21a8" />
+              <Text style={[s.checkinText, { color: '#6b21a8' }]}>2 Camas Solteiro</Text>
+            </View>
+          )}
+          {Boolean((request as any).isInstructionOnly && !(request as any).isBedAdjustmentOnly) && (
+            <View style={[s.checkinPill, { backgroundColor: '#f3e8ff' }]}>
+              <Ionicons name="information-circle-outline" size={11} color="#6b21a8" />
+              <Text style={[s.checkinText, { color: '#6b21a8' }]}>Instrução</Text>
+            </View>
+          )}
           {request.hasCheckinToday && (
             <View style={s.checkinPill}>
               <Ionicons name="person-add" size={11} color="#92400e" />
@@ -113,6 +125,14 @@ export default function FlatCard({ request, currentUserId, onStatusChange, onMar
         <View style={s.assigneeRow}>
           <Ionicons name="person-outline" size={13} color={colors.mutedForeground} />
           <Text style={s.assigneeText}>{request.assignedUsername}</Text>
+        </View>
+      ) : null}
+
+      {/* Instruction text (e.g. bed adjustment or special tasks) */}
+      {(request as any).instructionText ? (
+        <View style={[s.obsBox, { backgroundColor: '#faf5ff', borderColor: '#e9d5ff' }]}>
+          <Ionicons name="information-circle-outline" size={14} color="#7c3aed" />
+          <Text style={[s.obsText, { color: '#6b21a8' }]}>{(request as any).instructionText}</Text>
         </View>
       ) : null}
 
