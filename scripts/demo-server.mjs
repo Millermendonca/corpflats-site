@@ -12946,275 +12946,299 @@ app.delete("/api/pms/blocks/:id", (req, res) => {
 
 // ── Reception Tablet & Portaria Endpoints ────────────────────────────────────
 app.get("/api/reception/today", (req, res) => {
-  triggerBackgroundSync();
-  const now = new Date();
-  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
-  const brDate = new Date(utc - (3 * 3600000));
-  const today = brDate.toISOString().substring(0, 10);
-  const currentHour = brDate.getHours();
+  try {
+    triggerBackgroundSync();
+    const now = new Date();
+    const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+    const brDate = new Date(utc - (3 * 3600000));
+    const today = brDate.toISOString().substring(0, 10);
+    const currentHour = brDate.getHours();
 
-  // 1. Chegadas Previstas para Hoje (Aguardando Check-in ou com Entrada Parcial Ativa)
-  const arrivals = (db.reservations || [])
-    .filter(r => {
-      const resDate = r.checkinDate ? r.checkinDate.substring(0, 10) : "";
-      if (r.status === "cancelada" || r.status === "cancelado" || r.status === "completed" || r.status === "checked_out") {
+    // 1. Chegadas Previstas para Hoje (Aguardando Check-in ou com Entrada Parcial Ativa)
+    const arrivals = (db.reservations || [])
+      .filter(r => {
+        const resDate = r.checkinDate ? r.checkinDate.substring(0, 10) : "";
+        if (r.status === "cancelada" || r.status === "cancelado" || r.status === "completed" || r.status === "checked_out") {
+          return false;
+        }
+        if (resDate === today && r.status !== "in_house") {
+          return true;
+        }
+        if (r.isPartialCheckin && Array.isArray(r.guests) && r.guests.some(g => !g.entryAuthorized)) {
+          return true;
+        }
         return false;
-      }
-      if (resDate === today && r.status !== "in_house") {
-        return true;
-      }
-      if (r.isPartialCheckin && Array.isArray(r.guests) && r.guests.some(g => !g.entryAuthorized)) {
-        return true;
-      }
-      return false;
-    })
-    .map(r => {
-      const flat = db.flats.find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber)) || { id: r.flatId, number: r.flatNumber || String(r.flatId) };
-      const cleanReq = (db.cleaningRequests || []).find(c => 
-        (c.flatId === flat.id || String(c.flatNumber) === String(flat.number)) && 
-        c.requestDate === today &&
-        !c.isInstructionOnly &&
-        c.source !== "manual_instruction" &&
-        c.type !== "bed_adjustment_only" &&
-        c.type !== "instruction"
-      );
-      
-      const hasPendingCheckoutToday = (db.reservations || []).some(res => 
-        (res.flatId === flat.id || String(res.flatNumber) === String(flat.number)) &&
-        res.checkoutDate === today && res.id !== r.id && res.status !== "cancelada" && res.status !== "completed"
-      );
-      let cleaningStatus = "clean";
-      let cleaningLabel = "✨ Limpo";
-      let cleaningMinutes = 0;
+      })
+      .map(r => {
+        const flat = db.flats.find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber)) || { id: r.flatId, number: r.flatNumber || String(r.flatId) };
+        const guest = (db.guests || []).find(g => 
+          (r.guestId && g.id === r.guestId) ||
+          (r.guestDocument && g.document && r.guestDocument.replace(/\D/g, "") === g.document.replace(/\D/g, "")) ||
+          (r.guestEmail && g.email && r.guestEmail.trim().toLowerCase() === g.email.trim().toLowerCase()) ||
+          (r.guestPhone && g.phone && r.guestPhone.replace(/\D/g, "") === g.phone.replace(/\D/g, ""))
+        ) || {};
+        const cleanReq = (db.cleaningRequests || []).find(c => 
+          (c.flatId === flat.id || String(c.flatNumber) === String(flat.number)) && 
+          c.requestDate === today &&
+          !c.isInstructionOnly &&
+          c.source !== "manual_instruction" &&
+          c.type !== "bed_adjustment_only" &&
+          c.type !== "instruction"
+        );
+        
+        const hasPendingCheckoutToday = (db.reservations || []).some(res => 
+          (res.flatId === flat.id || String(res.flatNumber) === String(flat.number)) &&
+          res.checkoutDate === today && res.id !== r.id && res.status !== "cancelada" && res.status !== "completed"
+        );
+        let cleaningStatus = "clean";
+        let cleaningLabel = "✨ Limpo";
+        let cleaningMinutes = 0;
 
-      if (cleanReq) {
-        if (cleanReq.status === "cleaning_now" || cleanReq.status === "in_progress") {
-          cleaningStatus = "cleaning_now";
-          const startedAt = cleanReq.startedAt || cleanReq.assignedAt || cleanReq.updatedAt || new Date().toISOString();
-          const diffMins = Math.max(0, Math.floor((now.getTime() - new Date(startedAt).getTime()) / 60000));
-          cleaningMinutes = diffMins;
-          cleaningLabel = `🧹 Limpando (há ${diffMins} min)`;
-        } else if (cleanReq.status === "dirty" || cleanReq.status === "pending") {
-          cleaningStatus = "dirty";
-          cleaningLabel = "⚠️ Sujo (aguardando limpeza)";
-        } else if (cleanReq.status === "clean") {
-          cleaningStatus = "clean";
-          cleaningLabel = "✨ Limpo";
-        }
-      } else {
-        if (hasPendingCheckoutToday) {
-          cleaningStatus = "dirty";
-          cleaningLabel = "⚠️ Sujo (aguardando limpeza)";
+        if (cleanReq) {
+          if (cleanReq.status === "cleaning_now" || cleanReq.status === "in_progress") {
+            cleaningStatus = "cleaning_now";
+            const startedAt = cleanReq.startedAt || cleanReq.assignedAt || cleanReq.updatedAt || new Date().toISOString();
+            const diffMins = Math.max(0, Math.floor((now.getTime() - new Date(startedAt).getTime()) / 60000));
+            cleaningMinutes = diffMins;
+            cleaningLabel = `🧹 Limpando (há ${diffMins} min)`;
+          } else if (cleanReq.status === "dirty" || cleanReq.status === "pending") {
+            cleaningStatus = "dirty";
+            cleaningLabel = "⚠️ Sujo (aguardando limpeza)";
+          } else if (cleanReq.status === "clean") {
+            cleaningStatus = "clean";
+            cleaningLabel = "✨ Limpo";
+          }
         } else {
-          cleaningStatus = "clean";
-          cleaningLabel = "✨ Limpo";
+          if (hasPendingCheckoutToday) {
+            cleaningStatus = "dirty";
+            cleaningLabel = "⚠️ Sujo (aguardando limpeza)";
+          } else {
+            cleaningStatus = "clean";
+            cleaningLabel = "✨ Limpo";
+          }
         }
-      }
 
-      const isRoomReady = cleaningStatus === "clean";
+        const isRoomReady = cleaningStatus === "clean";
 
-      // Quantidade de hóspedes autorizados (1, 2 ou 3)
-      const count = Math.min(Math.max(Number(r.guestCount) || Number(r.adults) || 1, 1), 3);
-      let guestList = Array.isArray(r.guests) && r.guests.length > 0 ? [...r.guests] : [];
+        // Quantidade de hóspedes autorizados (1, 2 ou 3)
+        const count = Math.min(Math.max(Number(r.guestCount) || Number(r.adults) || 1, 1), 3);
+        let guestList = Array.isArray(r.guests) && r.guests.length > 0 ? [...r.guests] : [];
 
-      if (guestList.length === 0) {
-        guestList.push({
-          index: 1,
-          name: r.guestName || guest.name || "Hóspede 1",
-          cpf: guest.document || "",
-          phone: r.guestPhone || guest.phone || "",
-          email: r.guestEmail || guest.email || "",
-          hasCompletedCheckin: Boolean(r.fnhrCompleted || guest.fnhrCompleted),
-          checkinCompletedAt: r.fnhrCompleted ? r.updatedAt : null
-        });
-        for (let i = 2; i <= count; i++) {
+        if (guestList.length === 0) {
           guestList.push({
-            index: i,
-            name: `Hóspede ${i}`,
-            cpf: "",
-            phone: "",
-            email: "",
-            hasCompletedCheckin: false,
-            checkinCompletedAt: null
+            index: 1,
+            name: r.guestName || guest.name || "Hóspede 1",
+            cpf: guest.document || "",
+            phone: r.guestPhone || guest.phone || "",
+            email: r.guestEmail || guest.email || "",
+            hasCompletedCheckin: Boolean(r.fnhrCompleted || guest.fnhrCompleted),
+            checkinCompletedAt: r.fnhrCompleted ? r.updatedAt : null
           });
+          for (let i = 2; i <= count; i++) {
+            guestList.push({
+              index: i,
+              name: `Hóspede ${i}`,
+              cpf: "",
+              phone: "",
+              email: "",
+              hasCompletedCheckin: false,
+              checkinCompletedAt: null
+            });
+          }
         }
-      }
 
-      const allCheckinDone = guestList.every(g => g.hasCompletedCheckin);
-      const someCheckinDone = guestList.some(g => g.hasCompletedCheckin);
+        const allCheckinDone = guestList.every(g => g.hasCompletedCheckin);
+        const someCheckinDone = guestList.some(g => g.hasCompletedCheckin);
 
-      // Histórico de reservas anteriores do hóspede para checar se é 1ª vez ou recorrente
-      const priorReservations = (db.reservations || []).filter(prev => {
-        if (prev.id === r.id || prev.code === r.code) return false;
-        if (prev.status === "cancelada" || prev.status === "cancelado") return false;
-        const sameDoc = r.guestDocument && prev.guestDocument && r.guestDocument.replace(/\D/g, "") === prev.guestDocument.replace(/\D/g, "");
-        const sameEmail = r.guestEmail && prev.guestEmail && r.guestEmail.trim().toLowerCase() === prev.guestEmail.trim().toLowerCase();
-        const samePhone = r.guestPhone && prev.guestPhone && r.guestPhone.replace(/\D/g, "") === prev.guestPhone.replace(/\D/g, "");
-        const sameGuestId = r.guestId && prev.guestId && r.guestId === prev.guestId;
-        return Boolean(sameDoc || sameEmail || samePhone || sameGuestId);
-      });
-      const priorStayCount = priorReservations.length;
-      const isFirstTimeGuest = priorStayCount === 0;
+        // Histórico de reservas anteriores do hóspede para checar se é 1ª vez ou recorrente
+        const priorReservations = (db.reservations || []).filter(prev => {
+          if (prev.id === r.id || prev.code === r.code) return false;
+          if (prev.status === "cancelada" || prev.status === "cancelado") return false;
+          const sameDoc = r.guestDocument && prev.guestDocument && r.guestDocument.replace(/\D/g, "") === prev.guestDocument.replace(/\D/g, "");
+          const sameEmail = r.guestEmail && prev.guestEmail && r.guestEmail.trim().toLowerCase() === prev.guestEmail.trim().toLowerCase();
+          const samePhone = r.guestPhone && prev.guestPhone && r.guestPhone.replace(/\D/g, "") === prev.guestPhone.replace(/\D/g, "");
+          const sameGuestId = r.guestId && prev.guestId && r.guestId === prev.guestId;
+          return Boolean(sameDoc || sameEmail || samePhone || sameGuestId);
+        });
+        const priorStayCount = priorReservations.length;
+        const isFirstTimeGuest = priorStayCount === 0;
 
-      // Lógica de Liberação de Check-in Antecipado e Entrada na Portaria
-      const isSiteBooking = r.channel === "site";
-      const isOtaBooking = r.channel === "airbnb" || r.channel === "booking" || r.channel === "decolar" || r.channel === "expedia";
-      const isEarlyAuthorizedManual = Boolean(r.earlyCheckinAuthorized);
-      const isPastOrExact14h = currentHour >= 14;
+        // Lógica de Liberação de Check-in Antecipado e Entrada na Portaria
+        const isSiteBooking = r.channel === "site";
+        const isOtaBooking = r.channel === "airbnb" || r.channel === "booking" || r.channel === "decolar" || r.channel === "expedia";
+        const isEarlyAuthorizedManual = Boolean(r.earlyCheckinAuthorized);
+        const isPastOrExact14h = currentHour >= 14;
 
-      // Early check-in só é liberado se o quarto estiver limpo E:
-      // 1) Reserva Direta no Site, OU
-      // 2) Liberação Manual do Admin, OU
-      // 3) Cortesia de 1ª Hospedagem de cliente OTA (Airbnb / Booking)
-      let earlyCheckinStatus = "Não liberado";
-      let earlyCheckinReason = "";
-      let isFirstStayCourtesy = false;
+        // Early check-in só é liberado se o quarto estiver limpo E:
+        // 1) Reserva Direta no Site, OU
+        // 2) Liberação Manual do Admin, OU
+        // 3) Cortesia de 1ª Hospedagem de cliente OTA (Airbnb / Booking)
+        let earlyCheckinStatus = "Não liberado";
+        let earlyCheckinReason = "";
+        let isFirstStayCourtesy = false;
 
-      if (!isRoomReady) {
-        earlyCheckinStatus = "Não liberado";
-        earlyCheckinReason = "Quarto não está limpo";
-      } else {
-        if (isSiteBooking) {
-          earlyCheckinStatus = "Liberado";
-          earlyCheckinReason = "Reserva Direta no Site";
-        } else if (isEarlyAuthorizedManual) {
-          earlyCheckinStatus = "Liberado";
-          earlyCheckinReason = "Autorizado manualmente";
-        } else if (isOtaBooking && isFirstTimeGuest) {
-          earlyCheckinStatus = "Liberado";
-          isFirstStayCourtesy = true;
-          earlyCheckinReason = "Cortesia 1ª Reserva";
-        } else {
+        if (!isRoomReady) {
           earlyCheckinStatus = "Não liberado";
-          earlyCheckinReason = `Hóspede recorrente (${priorStayCount + 1}ª reserva) via ${r.channel}`;
+          earlyCheckinReason = "Quarto não está limpo";
+        } else {
+          if (isSiteBooking) {
+            earlyCheckinStatus = "Liberado";
+            earlyCheckinReason = "Reserva Direta no Site";
+          } else if (isEarlyAuthorizedManual) {
+            earlyCheckinStatus = "Liberado";
+            earlyCheckinReason = "Autorizado manualmente";
+          } else if (isOtaBooking && isFirstTimeGuest) {
+            earlyCheckinStatus = "Liberado";
+            isFirstStayCourtesy = true;
+            earlyCheckinReason = "Cortesia 1ª Reserva";
+          } else {
+            earlyCheckinStatus = "Não liberado";
+            earlyCheckinReason = `Hóspede recorrente (${priorStayCount + 1}ª reserva) via ${r.channel}`;
+          }
         }
-      }
 
-      // Pode liberar entrada física na portaria se:
-      // Quarto está limpo E (Já passou das 14h OU Early Check-in Liberado)
-      let canAuthorizeEntry = false;
-      let entryMessage = "";
-      let entryBadgeType = "neutral";
+        // Pode liberar entrada física na portaria se:
+        // Quarto está limpo E (Já passou das 14h OU Early Check-in Liberado)
+        let canAuthorizeEntry = false;
+        let entryMessage = "";
+        let entryBadgeType = "neutral";
 
-      const completedCount = guestList.filter(g => g.hasCompletedCheckin).length;
-      const totalCount = guestList.length;
+        const completedCount = guestList.filter(g => g.hasCompletedCheckin).length;
+        const totalCount = guestList.length;
 
-      if (!allCheckinDone) {
-        if (completedCount > 0) {
-          canAuthorizeEntry = isRoomReady && (isPastOrExact14h || earlyCheckinStatus === "Liberado");
-          entryMessage = `Entrada Parcial Liberada (${completedCount}/${totalCount} prontos)`;
-          entryBadgeType = "warning";
+        if (!allCheckinDone) {
+          if (completedCount > 0) {
+            canAuthorizeEntry = isRoomReady && (isPastOrExact14h || earlyCheckinStatus === "Liberado");
+            entryMessage = `Entrada Parcial Liberada (${completedCount}/${totalCount} prontos)`;
+            entryBadgeType = "warning";
+          } else {
+            canAuthorizeEntry = false;
+            entryMessage = `Check-in Digital Pendente (0/${totalCount} concluído)`;
+            entryBadgeType = "error";
+          }
+        } else if (!isRoomReady) {
+          canAuthorizeEntry = false;
+          entryMessage = `Quarto não está pronto (${cleaningLabel})`;
+          entryBadgeType = "error";
+        } else if (isPastOrExact14h) {
+          canAuthorizeEntry = true;
+          entryMessage = "Check-in Regular (14:00)";
+          entryBadgeType = "success";
+        } else if (earlyCheckinStatus === "Liberado") {
+          canAuthorizeEntry = true;
+          entryMessage = isFirstStayCourtesy ? "🎁 Cortesia 1ª Reserva" : "⚡ Check-in Antecipado";
+          entryBadgeType = "success";
         } else {
           canAuthorizeEntry = false;
-          entryMessage = `Check-in Digital Pendente (0/${totalCount} concluído)`;
-          entryBadgeType = "error";
+          entryMessage = "Horário regular às 14:00 (Check-in antecipado não liberado)";
+          entryBadgeType = "warning";
         }
-      } else if (!isRoomReady) {
-        canAuthorizeEntry = false;
-        entryMessage = `Quarto não está pronto (${cleaningLabel})`;
-        entryBadgeType = "error";
-      } else if (isPastOrExact14h) {
-        canAuthorizeEntry = true;
-        entryMessage = "Check-in Regular (14:00)";
-        entryBadgeType = "success";
-      } else if (earlyCheckinStatus === "Liberado") {
-        canAuthorizeEntry = true;
-        entryMessage = isFirstStayCourtesy ? "🎁 Cortesia 1ª Reserva" : "⚡ Check-in Antecipado";
-        entryBadgeType = "success";
-      } else {
-        canAuthorizeEntry = false;
-        entryMessage = "Horário regular às 14:00 (Check-in antecipado não liberado)";
-        entryBadgeType = "warning";
-      }
 
-      return {
-        ...r,
-        flatNumber: flat.number,
-        cleaningStatus,
-        cleaningLabel,
-        cleaningMinutes,
-        isRoomReady,
-        priorStayCount,
-        isFirstTimeGuest,
-        earlyCheckinStatus,
-        earlyCheckinReason,
-        isFirstStayCourtesy,
-        guestCount: count,
-        guests: guestList,
-        allCheckinDone,
-        someCheckinDone,
-        canAuthorizeEntry,
-        entryMessage,
-        entryBadgeType,
-        earlyCheckinAuthorized: isEarlyAuthorizedManual,
-        receptionNotes: r.receptionNotes || guest.notes || "",
-        guestPhoto: r.selfieUrl || guest.photoUrl || null,
-        docPhoto: r.docPhotoUrl || guest.docPhotoUrl || null,
-        signatureUrl: r.signatureUrl || guest.signatureUrl || null,
-        hasPreCheckin: Boolean(r.fnhrCompleted || guest.fnhrCompleted || someCheckinDone)
-      };
-    });
+        return {
+          ...r,
+          flatNumber: flat.number,
+          cleaningStatus,
+          cleaningLabel,
+          cleaningMinutes,
+          isRoomReady,
+          priorStayCount,
+          isFirstTimeGuest,
+          earlyCheckinStatus,
+          earlyCheckinReason,
+          isFirstStayCourtesy,
+          guestCount: count,
+          guests: guestList,
+          allCheckinDone,
+          someCheckinDone,
+          canAuthorizeEntry,
+          entryMessage,
+          entryBadgeType,
+          earlyCheckinAuthorized: isEarlyAuthorizedManual,
+          receptionNotes: r.receptionNotes || guest.notes || "",
+          guestPhoto: r.selfieUrl || guest.photoUrl || null,
+          docPhoto: r.docPhotoUrl || guest.docPhotoUrl || null,
+          signatureUrl: r.signatureUrl || guest.signatureUrl || null,
+          hasPreCheckin: Boolean(r.fnhrCompleted || guest.fnhrCompleted || someCheckinDone)
+        };
+      });
 
-  // 2. Hóspedes Atualmente Hospedados (In House)
-  // Devem ser apenas reservas com checkin confirmado (in_house) OU estadias anteriores ainda em andamento (checkinDate < today)
-  const inHouse = (db.reservations || [])
-    .filter(r => {
-      if (r.status === "cancelada" || r.status === "cancelado" || r.status === "completed" || r.status === "checked_out") {
+    // 2. Hóspedes Atualmente Hospedados (In House)
+    // Devem ser apenas reservas com checkin confirmado (in_house) OU estadias anteriores ainda em andamento (checkinDate < today)
+    const inHouse = (db.reservations || [])
+      .filter(r => {
+        if (r.status === "cancelada" || r.status === "cancelado" || r.status === "completed" || r.status === "checked_out") {
+          return false;
+        }
+        if (r.status === "in_house") {
+          return true;
+        }
+        if (r.checkinDate < today && r.checkoutDate >= today && r.status !== "pendente") {
+          return true;
+        }
         return false;
-      }
-      if (r.status === "in_house") {
-        return true;
-      }
-      if (r.checkinDate < today && r.checkoutDate >= today && r.status !== "pendente") {
-        return true;
-      }
-      return false;
-    })
-    .map(r => {
-      const flat = db.flats.find(f => f.id === r.flatId) || { id: r.flatId, number: r.flatNumber || String(r.flatId) };
-      const guest = (db.guests || []).find(g => g.id === r.guestId) || {};
-      const count = Math.min(Math.max(Number(r.guestCount) || Number(r.adults) || 1, 1), 3);
-      return {
-        ...r,
-        flatNumber: flat.number,
-        guestCount: count,
-        guests: r.guests || [{ index: 1, name: r.guestName, hasCompletedCheckin: true, entryAuthorized: true }],
-        receptionNotes: r.receptionNotes || guest.notes || "",
-        isCheckoutToday: r.checkoutDate === today,
-        isPartialCheckin: Boolean(r.isPartialCheckin)
-      };
-    });
+      })
+      .map(r => {
+        const flat = db.flats.find(f => f.id === r.flatId) || { id: r.flatId, number: r.flatNumber || String(r.flatId) };
+        const guest = (db.guests || []).find(g => 
+          (r.guestId && g.id === r.guestId) ||
+          (r.guestDocument && g.document && r.guestDocument.replace(/\D/g, "") === g.document.replace(/\D/g, "")) ||
+          (r.guestEmail && g.email && r.guestEmail.trim().toLowerCase() === g.email.trim().toLowerCase()) ||
+          (r.guestPhone && g.phone && r.guestPhone.replace(/\D/g, "") === g.phone.replace(/\D/g, ""))
+        ) || {};
+        const count = Math.min(Math.max(Number(r.guestCount) || Number(r.adults) || 1, 1), 3);
+        return {
+          ...r,
+          flatNumber: flat.number,
+          guestCount: count,
+          guests: r.guests || [{ index: 1, name: r.guestName, hasCompletedCheckin: true, entryAuthorized: true }],
+          receptionNotes: r.receptionNotes || guest.notes || "",
+          isCheckoutToday: r.checkoutDate === today,
+          isPartialCheckin: Boolean(r.isPartialCheckin)
+        };
+      });
 
-  // 3. Checkouts Realizados Hoje (com opção de desfazer permanente)
-  const completedToday = (db.reservations || [])
-    .filter(r => r.status === "completed" && (r.actualCheckoutAt?.startsWith(today) || r.checkoutDate === today))
-    .map(r => {
-      const flat = db.flats.find(f => f.id === r.flatId) || { id: r.flatId, number: r.flatNumber || String(r.flatId) };
-      return {
-        ...r,
-        flatNumber: flat.number
-      };
-    });
+    // 3. Checkouts Realizados Hoje (com opção de desfazer permanente)
+    const completedToday = (db.reservations || [])
+      .filter(r => r.status === "completed" && (r.actualCheckoutAt?.startsWith(today) || r.checkoutDate === today))
+      .map(r => {
+        const flat = db.flats.find(f => f.id === r.flatId) || { id: r.flatId, number: r.flatNumber || String(r.flatId) };
+        return {
+          ...r,
+          flatNumber: flat.number
+        };
+      });
 
-  // 4. Todas as Saídas Previstas para Hoje
-  const departures = (db.reservations || [])
-    .filter(r => r.checkoutDate === today && r.status !== "cancelada")
-    .map(r => {
-      const flat = db.flats.find(f => f.id === r.flatId) || { id: r.flatId, number: r.flatNumber || String(r.flatId) };
-      return {
-        ...r,
-        flatNumber: flat.number
-      };
-    });
+    // 4. Todas as Saídas Previstas para Hoje
+    const departures = (db.reservations || [])
+      .filter(r => r.checkoutDate === today && r.status !== "cancelada")
+      .map(r => {
+        const flat = db.flats.find(f => f.id === r.flatId) || { id: r.flatId, number: r.flatNumber || String(r.flatId) };
+        return {
+          ...r,
+          flatNumber: flat.number
+        };
+      });
 
-  res.json({
-    today,
-    arrivals,
-    inHouse,
-    completedToday,
-    departures,
-    totalFlats: db.flats.length
-  });
+    res.json({
+      today,
+      arrivals,
+      inHouse,
+      completedToday,
+      departures,
+      totalFlats: (db.flats || []).length
+    });
+  } catch (err) {
+    console.error("[RECEPTION_TODAY_ERROR]", err);
+    res.status(500).json({
+      error: "Erro ao processar dados de recepção",
+      today: new Date().toISOString().substring(0, 10),
+      arrivals: [],
+      inHouse: [],
+      completedToday: [],
+      departures: [],
+      totalFlats: (db.flats || []).length
+    });
+  }
 });
 
 app.patch("/api/pms/reservations/:id/early-checkin", (req, res) => {

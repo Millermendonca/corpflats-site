@@ -162,8 +162,23 @@ export default function ReceptionTablet() {
     setLoading(true)
     try {
       const res = await fetch("/api/reception/today", { credentials: "include" })
+      if (!res.ok) {
+        console.error("Falha ao buscar dados da recepção: status", res.status)
+        return
+      }
       const json = await res.json()
-      setData(json)
+      if (json && typeof json === "object") {
+        setData({
+          today: json.today || format(new Date(), "yyyy-MM-dd"),
+          arrivals: Array.isArray(json.arrivals) ? json.arrivals : [],
+          inHouse: Array.isArray(json.inHouse) ? json.inHouse : [],
+          completedToday: Array.isArray(json.completedToday) ? json.completedToday : [],
+          departures: Array.isArray(json.departures) ? json.departures : [],
+          totalFlats: typeof json.totalFlats === "number" ? json.totalFlats : 0
+        })
+      }
+    } catch (err) {
+      console.error("Erro ao carregar dados da recepção:", err)
     } finally {
       setLoading(false)
     }
@@ -321,7 +336,7 @@ export default function ReceptionTablet() {
             }`}
           >
             <UserCheck className="w-4 h-4" />
-            <span>Chegadas Hoje ({data.arrivals.length})</span>
+            <span>Chegadas Hoje ({(data?.arrivals || []).length})</span>
           </button>
 
           <button
@@ -333,7 +348,7 @@ export default function ReceptionTablet() {
             }`}
           >
             <BedDouble className="w-4 h-4" />
-            <span>No Hotel ({data.inHouse.length})</span>
+            <span>No Hotel ({(data?.inHouse || []).length})</span>
           </button>
 
           <button
@@ -345,7 +360,7 @@ export default function ReceptionTablet() {
             }`}
           >
             <Undo2 className="w-4 h-4" />
-            <span>Saídas Realizadas ({data.completedToday?.length || 0})</span>
+            <span>Saídas Realizadas ({(data?.completedToday || []).length})</span>
           </button>
         </div>
 
@@ -360,7 +375,7 @@ export default function ReceptionTablet() {
               <span className="text-xs text-slate-400 font-medium">Toque no card para ver detalhes da FNHR e fotos</span>
             </div>
 
-            {data.arrivals.length === 0 ? (
+            {(data?.arrivals || []).length === 0 ? (
               <div className="bg-slate-800/50 border border-slate-800 rounded-2xl p-12 text-center text-slate-400 space-y-2">
                 <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto" />
                 <div className="text-base font-bold text-white">Nenhum check-in pendente para hoje!</div>
@@ -368,7 +383,7 @@ export default function ReceptionTablet() {
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {data.arrivals.map((item) => {
+                {(data?.arrivals || []).map((item) => {
                   const isClean = item.isRoomReady
                   const canCheckin = Boolean(item.canAuthorizeEntry)
 
@@ -655,19 +670,19 @@ export default function ReceptionTablet() {
             <div className="flex items-center justify-between">
               <h2 className="text-base font-bold text-slate-200 flex items-center gap-2">
                 <BedDouble className="w-4 h-4 text-primary" />
-                Hóspedes Atualmente Hospedados ({data.inHouse.length})
+                Hóspedes Atualmente Hospedados ({(data?.inHouse || []).length})
               </h2>
               <span className="text-xs text-slate-400 font-medium">Toque em Check-out para registrar a saída</span>
             </div>
 
-            {data.inHouse.length === 0 ? (
+            {(data?.inHouse || []).length === 0 ? (
               <div className="bg-slate-800/50 border border-slate-800 rounded-2xl p-12 text-center text-slate-400 space-y-2">
                 <BedDouble className="w-10 h-10 text-slate-600 mx-auto" />
                 <div className="text-base font-bold text-white">Nenhum hóspede hospedado no momento.</div>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {data.inHouse.map((item) => {
+                {(data?.inHouse || []).map((item) => {
                   return (
                     <div 
                       key={item.id}
@@ -822,19 +837,19 @@ export default function ReceptionTablet() {
             <div className="flex items-center justify-between">
               <h2 className="text-base font-bold text-slate-200 flex items-center gap-2">
                 <Undo2 className="w-4 h-4 text-primary" />
-                Check-outs Realizados Hoje ({data.completedToday?.length || 0})
+                Check-outs Realizados Hoje ({(data?.completedToday || []).length})
               </h2>
               <span className="text-xs text-slate-400 font-medium">O botão de desfazer fica disponível o tempo todo</span>
             </div>
 
-            {!data.completedToday || data.completedToday.length === 0 ? (
+            {(data?.completedToday || []).length === 0 ? (
               <div className="bg-slate-800/50 border border-slate-800 rounded-2xl p-12 text-center text-slate-400 space-y-2">
                 <CheckCircle2 className="w-10 h-10 text-slate-600 mx-auto" />
                 <div className="text-base font-bold text-white">Nenhum check-out realizado hoje ainda.</div>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {data.completedToday.map((item) => {
+                {(data?.completedToday || []).map((item) => {
                   return (
                     <div 
                       key={item.id}

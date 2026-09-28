@@ -1366,11 +1366,15 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   // URL Base pública do sistema (prioriza domínio de produção ou host)
   const appOrigin = baseUrl || "https://corpflats.onrender.com";
 
+  const resStatus = String(reservation.status || "").toLowerCase().trim();
+  const isCancelled = resStatus === "cancelada" || resStatus === "cancelled" || resStatus === "cancelado";
+  const hasBreakfast = Boolean(reservation.includeBreakfast || reservation.ratePlan === "with_breakfast");
+
   // Links inteligentes com autenticação por código de reserva
   const linkCheckinDigital = `${appOrigin}/pre-checkin/${resCode}`;
   const linkPortalHospede = `${appOrigin}/minha-reserva/${resCode}`;
   const linkPagamento = `${appOrigin}/minha-reserva/${resCode}`;
-  const linkCafeManha = `${appOrigin}/cafe/${resCode}`;
+  const linkCafeManha = hasBreakfast && !isCancelled ? `${appOrigin}/cafe/${resCode}` : "";
   const linkCheckout = `${appOrigin}/checkout/${resCode}`;
 
   let instrucaoPagamento = "";
@@ -1465,9 +1469,8 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const linkAutocheckin = `${appOrigin}/minha-reserva/${resCode}?action=self_checkin`;
 
   // Tag: {{status_cafe}} e {{mensagem_cafe_incluso}}
-  const hasBreakfast = Boolean(reservation.includeBreakfast || reservation.ratePlan === "with_breakfast");
-  const statusCafe = hasBreakfast ? "Incluso" : "Não incluso";
-  const mensagemCafeIncluso = hasBreakfast
+  const statusCafe = isCancelled ? "Cancelado" : (hasBreakfast ? "Incluso" : "Não incluso");
+  const mensagemCafeIncluso = (hasBreakfast && !isCancelled)
     ? `🥐 *Café da Manhã Incluso:*\nSua diária inclui nosso café da manhã artesanal servido exclusivamente no seu flat! Você já pode agendar sua bandeja pelo link:\n👉 ${linkCafeManha}`
     : "";
 
@@ -1592,16 +1595,79 @@ export function formatMessageWithLinks(message, footer = "", buttons = []) {
 }
 
 // ── Formatador e Injetor Inteligente de Botões de Template ───────────────────
-export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, baseUrl = "", targetRecipient = "guest") {
+export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, baseUrl = "", targetRecipient = "guest", templateOrEvent = null) {
+  let templateObj = null;
+  let list = [];
+
+  if (rawButtons && typeof rawButtons === "object" && !Array.isArray(rawButtons)) {
+    templateObj = rawButtons;
+    list = Array.isArray(rawButtons.buttons) ? [...rawButtons.buttons] : [];
+  } else {
+    list = Array.isArray(rawButtons) ? [...rawButtons] : [];
+    if (templateOrEvent && typeof templateOrEvent === "object") {
+      templateObj = templateOrEvent;
+    }
+  }
+
+  const templateId = String(templateObj?.id || (typeof templateOrEvent === "string" && templateOrEvent.startsWith("tpl_") ? templateOrEvent : "")).trim();
+  const triggerEvent = String(templateObj?.triggerEvent || (typeof templateOrEvent === "string" && !templateOrEvent.startsWith("tpl_") ? templateOrEvent : "")).trim();
+
+  const resStatus = String(reservation?.status || "").toLowerCase().trim();
+  const isCancelled = resStatus === "cancelada" || resStatus === "cancelled" || resStatus === "cancelado";
+
+  // Identificação de contextos onde link/botão de café NUNCA deve ser enviado:
+  // 1. Cancelamento de reserva
+  // 2. Checkout / Pós-checkout / Pesquisa de satisfação
+  // 3. Cobranças financeiras pendentes
+  const isCancellationContext = isCancelled || templateId === "tpl_reservation_cancelled" || triggerEvent === "reservation_cancelled";
+  const isCheckoutOrReviewContext = [
+    "tpl_checkout_completed",
+    "tpl_checkout_reminder",
+    "tpl_nps_satisfaction_check",
+    "tpl_post_checkout_review"
+  ].includes(templateId) || [
+    "checkout_completed",
+    "on_checkout",
+    "checkout_reminder",
+    "post_checkout_review",
+    "nps_approved"
+  ].includes(triggerEvent);
+
+  const isFinancialReminderOnly = [
+    "tpl_payment_pending",
+    "tpl_additional_daily_pending"
+  ].includes(templateId) || [
+    "payment_pending",
+    "additional_daily_pending"
+  ].includes(triggerEvent);
+
   const hasBreakfast = Boolean(reservation?.includeBreakfast || reservation?.ratePlan === "with_breakfast");
   const appOrigin = baseUrl || "https://corpflats.onrender.com";
   const resCode = reservation?.code || reservation?.reservationCode || `RES-${reservation?.flatNumber || "000"}-${reservation?.id || "0000"}`;
   const linkCafeManha = `${appOrigin}/cafe/${resCode}`;
 
-  let list = Array.isArray(rawButtons) ? [...rawButtons] : [];
+  // Se o contexto for cancelamento, pós-checkout, cobrança ou sem café:
+  // Remove QUALQUER botão de café existente ou acidental.
+  if (isCancellationContext || isCheckoutOrReviewContext || isFinancialReminderOnly || !hasBreakfast) {
+    list = list.filter(b => b.id !== "btn_cafe" && (!b.url || !String(b.url).includes("/cafe/")));
+  } else {
+    // Para reservas ativas com café, injeta o botão se for um template permitido
+    const ALLOWED_TEMPLATES_FOR_CAFE = [
+      "tpl_new_reservation_direct",
+      "tpl_new_reservation",
+      "tpl_pre_reserva",
+      "tpl_payment_confirmed",
+      "tpl_sameday_reservation_instructions",
+      "tpl_room_ready_direct",
+      "tpl_room_ready_regular",
+      "tpl_checkin_day_instructions",
+      "tpl_checkin_completed",
+      "tpl_breakfast_reminder"
+    ];
 
-  if (hasBreakfast) {
-    if (!list.some(b => b.id === "btn_cafe" || (b.url && b.url.includes("/cafe/")))) {
+    const isAllowedTemplate = !templateId || ALLOWED_TEMPLATES_FOR_CAFE.includes(templateId);
+
+    if (isAllowedTemplate && !list.some(b => b.id === "btn_cafe" || (b.url && String(b.url).includes("/cafe/")))) {
       list.push({
         id: "btn_cafe",
         type: "URL",
@@ -1609,8 +1675,6 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
         url: linkCafeManha
       });
     }
-  } else {
-    list = list.filter(b => b.id !== "btn_cafe" && (!b.url || !b.url.includes("/cafe/")));
   }
 
   return list.map(b => ({
@@ -4378,7 +4442,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
     for (const d of dispatches) {
       const renderedMessage = resolveWhatsAppTags(template.message, reservation, db, baseUrl, d.type);
-      const renderedButtons = renderTemplateButtons(template.buttons, reservation, db, baseUrl, d.type);
+      const renderedButtons = renderTemplateButtons(template.buttons, reservation, db, baseUrl, d.type, template);
 
       const sendRes = await sendZapiMessage(db?.zapiConfig, {
         phone: d.phone,
@@ -5457,6 +5521,17 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           saveDatabase();
           continue;
         }
+
+        // Se a reserva estiver cancelada no sistema, descarta qualquer disparo pendente na fila
+        if (resv && (resv.status === "cancelada" || resv.status === "cancelled" || resv.status === "cancelado")) {
+          console.log(`[Auto-WhatsApp] Descartando disparo para ${item.guestName} (${item.triggerEvent}): reserva cancelada no sistema.`);
+          item.status = "cancelled";
+          item.error = "Cancelado: reserva cancelada no sistema";
+          item.updatedAt = nowIso;
+          saveDatabase();
+          continue;
+        }
+
         // Checagem dinâmica: se for lembrete de pagamento pendente (+1h) e a reserva já foi paga ou confirmada
         if (item.triggerEvent === "payment_pending") {
           const isPaidOrConfirmed = resv && (
@@ -5760,7 +5835,7 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
           if (scheduledDate > now) {
             const baseUrl = "https://corpflats.onrender.com";
             const renderedMessage = resolveWhatsAppTags(tpl.message, resv, db, baseUrl, targetItem.type);
-            const renderedButtons = renderTemplateButtons(tpl.buttons, resv, db, baseUrl, targetItem.type);
+            const renderedButtons = renderTemplateButtons(tpl.buttons, resv, db, baseUrl, targetItem.type, tpl);
 
             db.whatsappQueue.push({
               id: `q_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
@@ -5866,6 +5941,28 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
       if (defCheckout) templates = [defCheckout];
     }
 
+    // Se o evento for cancelamento de reserva, descarta automaticamente disparos pendentes na fila
+    if (eventName === "reservation_cancelled" && Array.isArray(db?.whatsappQueue)) {
+      let queueCancelledCount = 0;
+      const nowIso = new Date().toISOString();
+      for (const qItem of db.whatsappQueue) {
+        if (qItem.status === "pending" || qItem.status === "scheduled") {
+          const isSameRes = (reservation.code && qItem.reservationCode === reservation.code) ||
+                            (reservation.id && qItem.reservationId === reservation.id);
+          if (isSameRes) {
+            qItem.status = "cancelled";
+            qItem.error = "Cancelado: reserva cancelada no sistema";
+            qItem.updatedAt = nowIso;
+            queueCancelledCount++;
+          }
+        }
+      }
+      if (queueCancelledCount > 0 && typeof saveDatabase === "function") {
+        console.log(`[Auto-WhatsApp] Cancelados ${queueCancelledCount} agendamentos na fila para reserva cancelada ${reservation.code || reservation.id}.`);
+        saveDatabase();
+      }
+    }
+
     const recipients = getReservationRecipients(reservation, db);
 
     for (const tpl of templates) {
@@ -5932,7 +6029,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
         }
 
         const renderedMessage = resolveWhatsAppTags(tpl.message, reservation, db, baseUrl, d.type);
-        const renderedButtons = renderTemplateButtons(tpl.buttons, reservation, db, baseUrl, d.type);
+        const renderedButtons = renderTemplateButtons(tpl.buttons, reservation, db, baseUrl, d.type, tpl);
 
         const hasAttachment = Boolean(tpl.hasAttachment || tpl.documentUrl);
         const docUrl = hasAttachment ? (tpl.documentUrl || db?.zapiConfig?.guestGuidePdfUrl) : undefined;
@@ -6111,7 +6208,7 @@ export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId,
             );
             if (!alreadyQueued && defTpl) {
               const renderedMessage = resolveWhatsAppTags(defTpl.message, resv, db, baseUrl, "guest");
-              const renderedButtons = renderTemplateButtons(defTpl.buttons, resv, db, baseUrl, "guest");
+              const renderedButtons = renderTemplateButtons(defTpl.buttons, resv, db, baseUrl, "guest", defTpl);
               db.whatsappQueue.push({
                 id: `q_ota_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
                 reservationId: resv.id,
@@ -6155,7 +6252,7 @@ export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId,
             );
             if (!alreadyQueued && defTpl) {
               const renderedMessage = resolveWhatsAppTags(defTpl.message, resv, db, baseUrl, "guest");
-              const renderedButtons = renderTemplateButtons(defTpl.buttons, resv, db, baseUrl, "guest");
+              const renderedButtons = renderTemplateButtons(defTpl.buttons, resv, db, baseUrl, "guest", defTpl);
               db.whatsappQueue.push({
                 id: `q_direct_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
                 reservationId: resv.id,
