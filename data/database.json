@@ -10,13 +10,23 @@
       "id": 2,
       "username": "Cris",
       "role": "camareira",
-      "passwordHash": "79ae1f7f7d21635a2f5d67eefc8af043:3d73d3708fbca10aa5bd429dec3f29caf369bceb6a6d4ec6a5d7fbf461bf2840"
+      "passwordHash": "79ae1f7f7d21635a2f5d67eefc8af043:3d73d3708fbca10aa5bd429dec3f29caf369bceb6a6d4ec6a5d7fbf461bf2840",
+      "name": "Cris",
+      "phone": "22988486446",
+      "whatsapp": "5522988486446",
+      "pixKey": "22988486446",
+      "active": true
     },
     {
       "id": 3,
       "username": "Grazi",
       "role": "camareira",
-      "passwordHash": "907d057f92c79f11f48dbd5efca14bb9:bf8afefacfe0c714e86c8a999084812b6abb325b266e7246dbb596a985aee04e"
+      "passwordHash": "907d057f92c79f11f48dbd5efca14bb9:bf8afefacfe0c714e86c8a999084812b6abb325b266e7246dbb596a985aee04e",
+      "name": "Grazi",
+      "phone": "22999106204",
+      "whatsapp": "5522999106204",
+      "pixKey": "12977795766",
+      "active": true
     },
     {
       "id": 4,

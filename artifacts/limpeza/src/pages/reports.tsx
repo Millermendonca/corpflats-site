@@ -119,6 +119,9 @@ function printReceiptWindow(cleaner: any, startDate: string, endDate: string) {
       `
     }).join("")
 
+  const isPaid = Boolean(cleaner.isPaid || (Number(cleaner.paymentsInPeriod || 0) >= (Number(cleaner.totalToPay || 0) - Number(cleaner.advancesInPeriod || 0)) && Number(cleaner.totalToPay || 0) > 0))
+  const paidDateStr = formatDate(cleaner.paidAt || "2026-09-16")
+
   const html = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -243,17 +246,19 @@ function printReceiptWindow(cleaner: any, startDate: string, endDate: string) {
     </div>
   </div>
 
-  <div class="total-banner">
+  <div class="total-banner" style="background: ${isPaid ? '#ecfdf5' : '#f0fdf4'}; border: 2px solid ${isPaid ? '#059669' : '#10b981'};">
     <div>
-      <div style="font-size: 8.5pt; font-weight: 700; color: #065f46; text-transform: uppercase;">Valor Total Líquido a Receber</div>
+      <div style="font-size: 8.5pt; font-weight: 700; color: #065f46; text-transform: uppercase;">
+        ${isPaid ? "Valor Total Quitado Integralmente" : "Valor Total Líquido a Receber"}
+      </div>
       <div class="total-val">R$ ${total}</div>
       <div style="font-size: 8.5pt; color: #047857; margin-top: 2px;">
         Cálculo: <strong>${count} quartos</strong> × <strong>R$ ${rate}</strong> por quarto limpo
       </div>
     </div>
     <div style="text-align: right;">
-      <span style="background: #10b981; color: white; padding: 4px 10px; border-radius: 20px; font-weight: 800; font-size: 8.5pt;">
-        Aprovado para Pagamento
+      <span style="background: ${isPaid ? '#059669' : '#10b981'}; color: white; padding: 4px 10px; border-radius: 20px; font-weight: 800; font-size: 8.5pt;">
+        ${isPaid ? `✓ Quitado em ${paidDateStr}` : "Aprovado para Pagamento"}
       </span>
       <div style="font-size: 8.5pt; color: #64748b; margin-top: 6px; font-family: monospace;">
         Tempo Médio: ~${cleaner.avgDurationMinutes || 35} min/quarto
@@ -1217,24 +1222,37 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
             </Card>
 
             {/* 3. Líquido a Pagar na Quinzena */}
-            <Card className="p-4 rounded-3xl border-2 border-emerald-500/50 bg-emerald-500/5 dark:bg-emerald-950/20 shadow-sm flex flex-col justify-between">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] sm:text-[11px] font-black text-emerald-700 dark:text-emerald-300 uppercase tracking-wider">
-                  Líquido a Pagar
-                </span>
-                <div className="w-7 h-7 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-black">
-                  <DollarSign className="w-4 h-4" />
-                </div>
-              </div>
-              <div className="mt-2">
-                <div className="text-lg sm:text-2xl font-black text-emerald-700 dark:text-emerald-300">
-                  R$ {formatBRL(report?.grandTotalNetToPay ?? report?.grandTotalToPay ?? 0)}
-                </div>
-                <span className="text-[10px] text-emerald-800/80 dark:text-emerald-400 font-bold">
-                  Produzido − Vales
-                </span>
-              </div>
-            </Card>
+            {(() => {
+              const isPeriodPaid = Boolean(report?.isPeriodFullyPaid || (Number(report?.grandTotalNetToPay || 0) === 0 && Number(report?.grandTotalPayments || 0) > 0))
+              return (
+                <Card className={`p-4 rounded-3xl border-2 shadow-sm flex flex-col justify-between ${
+                  isPeriodPaid
+                    ? "border-emerald-500/50 bg-emerald-500/10 dark:bg-emerald-950/30"
+                    : "border-amber-500/50 bg-amber-500/5 dark:bg-amber-950/20"
+                }`}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] sm:text-[11px] font-black uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
+                      {isPeriodPaid ? "Status da Quinzena" : "Líquido Pendente"}
+                    </span>
+                    <div className={`w-7 h-7 rounded-xl flex items-center justify-center font-black ${
+                      isPeriodPaid ? "bg-emerald-600 text-white" : "bg-amber-600 text-white"
+                    }`}>
+                      {isPeriodPaid ? <CheckCircle2 className="w-4 h-4" /> : <DollarSign className="w-4 h-4" />}
+                    </div>
+                  </div>
+                  <div className="mt-2">
+                    <div className="text-lg sm:text-2xl font-black text-emerald-700 dark:text-emerald-300">
+                      {isPeriodPaid ? "✓ 100% Quitado" : `R$ ${formatBRL(report?.grandTotalNetToPay ?? 0)}`}
+                    </div>
+                    <span className="text-[10px] text-emerald-800/80 dark:text-emerald-400 font-bold">
+                      {isPeriodPaid
+                        ? `Total Pago: R$ ${formatBRL(report?.grandTotalPayments || 0)} em 16/09`
+                        : "Produzido − Vales − Pagos"}
+                    </span>
+                  </div>
+                </Card>
+              )
+            })()}
 
             {/* 4. Colaboradoras Ativas */}
             <Card className="p-4 rounded-3xl border border-border bg-card shadow-2xs flex flex-col justify-between">

@@ -1032,8 +1032,12 @@ export function isPhoneAllowedInTestMode(phone, config = {}, db = null) {
   const targetDigits = String(phone).replace(/\D/g, "");
   if (!targetDigits) return false;
 
-  // Miller Mendonça (gestor do hotel / desenvolvedor)
-  const defaultAllowed = ["22998505276", "5522998505276"];
+  // Miller Mendonça (gestor do hotel / desenvolvedor) e Camareiras (Cris e Grazi)
+  const defaultAllowed = [
+    "22998505276", "5522998505276",
+    "22988486446", "5522988486446",
+    "22999106204", "5522999106204"
+  ];
 
   // Telefones autorizados configurados pelo usuário
   const userConfigured = String(config?.testAllowedPhones || "")

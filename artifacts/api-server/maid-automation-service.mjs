@@ -291,16 +291,23 @@ export function initMaidAutomationEngine(app, getDb, saveDatabase) {
 
     const cleaners = (db.users || [])
       .filter(u => u.role === "camareira" || u.role === "cleaner" || u.role === "admin")
-      .map(u => ({
-        id: u.id,
-        username: u.username,
-        name: u.name || u.username,
-        role: u.role === "admin" ? "admin" : "camareira",
-        whatsapp: u.whatsapp || u.phone || "",
-        phone: u.phone || u.whatsapp || "",
-        pixKey: u.pixKey || "",
-        active: u.active !== false
-      }));
+      .map(u => {
+        const isCris = u.id === 2 || (u.username && u.username.toLowerCase() === "cris");
+        const isGrazi = u.id === 3 || (u.username && u.username.toLowerCase() === "grazi");
+        const rawWpp = u.whatsapp || u.phone || (isCris ? "5522988486446" : (isGrazi ? "5522999106204" : ""));
+        const rawPhone = u.phone || u.whatsapp || (isCris ? "22988486446" : (isGrazi ? "22999106204" : ""));
+        const pixKey = u.pixKey || (isCris ? "22988486446" : (isGrazi ? "12977795766" : ""));
+        return {
+          id: u.id,
+          username: u.username,
+          name: u.name || u.username,
+          role: u.role === "admin" ? "admin" : "camareira",
+          whatsapp: rawWpp,
+          phone: rawPhone,
+          pixKey,
+          active: u.active !== false
+        };
+      });
 
     res.json({
       config,
@@ -361,9 +368,9 @@ export function initMaidAutomationEngine(app, getDb, saveDatabase) {
     const trigger = config.triggers.find(t => t.id === triggerId) || config.triggers[0];
     const maidUser = (db.users || []).find(u => u.id === Number(maidUserId)) || 
                      (db.users || []).find(u => u.role === "camareira") ||
-                     { id: 2, username: "Cris", name: "Cris Camareira", whatsapp: "22997124021", pixKey: "22997124021" };
+                     { id: 2, username: "Cris", name: "Cris", whatsapp: "22988486446", pixKey: "22988486446" };
 
-    const targetPhone = customPhone || maidUser.whatsapp || maidUser.phone || "5522997124021";
+    const targetPhone = customPhone || maidUser.whatsapp || maidUser.phone || "5522988486446";
     const cleanPh = cleanWhatsAppPhone(targetPhone);
 
     const stats = getMaidStats(db, maidUser.id);
@@ -560,7 +567,10 @@ export function initMaidAutomationEngine(app, getDb, saveDatabase) {
       const isClosingDay = (currD === 15 || currD === lastDayOfMonth);
 
       const targetClosingTime = closingTrigger?.scheduledTime || "18:00";
-      if (closingTrigger && closingTrigger.enabled && isClosingDay && bNow.timeStr === targetClosingTime && closingTrigger.lastExecutedDate !== bNow.date) {
+      const [tClosingHour, tClosingMin] = targetClosingTime.split(":").map(Number);
+      const isPastOrAtClosingTime = (bNow.hour > tClosingHour) || (bNow.hour === tClosingHour && bNow.minute >= tClosingMin);
+
+      if (closingTrigger && closingTrigger.enabled && isClosingDay && isPastOrAtClosingTime && closingTrigger.lastExecutedDate !== bNow.date) {
         closingTrigger.lastExecutedDate = bNow.date;
         console.log(`[Auto-Limpeza WhatsApp] Executando FECHAMENTO DE QUINZENA para camareiras (${bNow.date} às ${bNow.timeStr})...`);
 
@@ -611,8 +621,10 @@ export function initMaidAutomationEngine(app, getDb, saveDatabase) {
       // ────────────────────────────────────────────────────────────────────────
       const dailyTrigger = config.triggers.find(t => t.id === "trigger_daily_summary");
       const targetDailyTime = dailyTrigger?.scheduledTime || "18:00";
+      const [tDailyHour, tDailyMin] = targetDailyTime.split(":").map(Number);
+      const isPastOrAtDailyTime = (bNow.hour > tDailyHour) || (bNow.hour === tDailyHour && bNow.minute >= tDailyMin);
 
-      if (dailyTrigger && dailyTrigger.enabled && bNow.timeStr === targetDailyTime && dailyTrigger.lastExecutedDate !== bNow.date) {
+      if (dailyTrigger && dailyTrigger.enabled && isPastOrAtDailyTime && dailyTrigger.lastExecutedDate !== bNow.date) {
         dailyTrigger.lastExecutedDate = bNow.date;
         console.log(`[Auto-Limpeza WhatsApp] Executando RESUMO DIÁRIO para camareiras (${bNow.date} às ${bNow.timeStr})...`);
 
