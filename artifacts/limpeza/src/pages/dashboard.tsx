@@ -32,6 +32,7 @@ import {
   ChevronLeft, ChevronRight, CheckSquare, PlusCircle, Sparkles, Filter, X, RefreshCw, Upload, FileSpreadsheet,
   Calendar as CalendarIcon, UserCheck, CheckCircle2, BedDouble, Coins, MessageSquare
 } from "lucide-react"
+import { cn } from "@/lib/utils"
 
 function getDefaultDate(userRole?: string) {
   const now = new Date()
