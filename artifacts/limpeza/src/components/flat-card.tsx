@@ -307,36 +307,60 @@ export function FlatCard({
 
   // Admin Custom Instructions Modal (Twin Beds & Maid Notes)
   const [instructionsModalOpen, setInstructionsModalOpen] = useState(false)
-  const [twinBedsSetting, setTwinBedsSetting] = useState<boolean>(Boolean(flat?.setupInfo?.twinBeds || request?.twinBeds))
-  const [extraMattressSetting, setExtraMattressSetting] = useState<boolean>(Boolean(flat?.setupInfo?.extraMattress || request?.extraMattress))
-  const [adminNoteText, setAdminNoteText] = useState<string>(flat?.setupInfo?.specialRequests || request?.adminNote || flat?.setupInfo?.adminNote || request?.pendingObservation || "")
+  const [twinBedsSetting, setTwinBedsSetting] = useState<boolean>(
+    typeof request?.twinBeds === "boolean" ? request.twinBeds : Boolean(flat?.setupInfo?.twinBeds)
+  )
+  const [extraMattressSetting, setExtraMattressSetting] = useState<boolean>(
+    typeof request?.extraMattress === "boolean" ? request.extraMattress : Boolean(flat?.setupInfo?.extraMattress)
+  )
+  const [adminNoteText, setAdminNoteText] = useState<string>(
+    (typeof request?.adminNote === "string" ? request.adminNote : (typeof flat?.setupInfo?.specialRequests === "string" ? flat.setupInfo.specialRequests : (request?.pendingObservation || ""))).trim()
+  )
   const [isSavingInstructions, setIsSavingInstructions] = useState(false)
 
   useEffect(() => {
-    setTwinBedsSetting(Boolean(request?.twinBeds || flat?.setupInfo?.twinBeds))
-    setExtraMattressSetting(Boolean(request?.extraMattress || flat?.setupInfo?.extraMattress))
-    setAdminNoteText(flat?.setupInfo?.specialRequests || request?.adminNote || flat?.setupInfo?.adminNote || request?.pendingObservation || "")
-  }, [request?.twinBeds, flat?.setupInfo?.twinBeds, request?.extraMattress, flat?.setupInfo?.extraMattress, flat?.setupInfo?.specialRequests, request?.adminNote, flat?.setupInfo?.adminNote, request?.pendingObservation])
+    const twin = typeof request?.twinBeds === "boolean" ? request.twinBeds : Boolean(flat?.setupInfo?.twinBeds)
+    const mattress = typeof request?.extraMattress === "boolean" ? request.extraMattress : Boolean(flat?.setupInfo?.extraMattress)
+    const note = (typeof request?.adminNote === "string" ? request.adminNote : (typeof flat?.setupInfo?.specialRequests === "string" ? flat.setupInfo.specialRequests : (request?.pendingObservation || ""))).trim()
+
+    setTwinBedsSetting(twin)
+    setExtraMattressSetting(mattress)
+    setAdminNoteText(note)
+  }, [request?.twinBeds, flat?.setupInfo?.twinBeds, request?.extraMattress, flat?.setupInfo?.extraMattress, flat?.setupInfo?.specialRequests, request?.adminNote, request?.pendingObservation])
 
   const handleSaveInstructions = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsSavingInstructions(true)
     try {
-      await fetch(`/api/cleaning/requests/${request?.id || 0}/admin-instructions`, {
+      const activeReqId = request?.id || flat?.cleaningRequest?.id || 0
+      const res = await fetch(`/api/cleaning/requests/${activeReqId}/admin-instructions`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          flatId: flat.flatId,
-          flatNumber: flat.flatNumber,
+          flatId: flat.flatId || flat.id,
+          flatNumber: flat.flatNumber || flat.number,
           requestDate: date,
           twinBeds: twinBedsSetting,
           extraMattress: extraMattressSetting,
-          adminNote: adminNoteText.trim() || null,
+          adminNote: adminNoteText.trim() ? adminNoteText.trim() : null,
         })
       })
+      if (!res.ok) {
+        throw new Error("Erro ao salvar instruções no servidor.")
+      }
       setInstructionsModalOpen(false)
+      toast({
+        title: "Instruções salvas",
+        description: "As configurações de quarto e recado para a camareira foram atualizadas com sucesso."
+      })
       queryClient.invalidateQueries({ queryKey: getListCheckoutsQueryKey({ date }) })
       queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey({ date }) })
+    } catch (err: any) {
+      toast({
+        title: "Erro ao salvar",
+        description: err.message || "Não foi possível salvar as instruções.",
+        variant: "destructive"
+      })
     } finally {
       setIsSavingInstructions(false)
     }
@@ -400,9 +424,16 @@ export function FlatCard({
 
   const Icon = conf.icon
   const isPriority = typeof request?.isPriority === "boolean" ? request.isPriority : (typeof flat?.isPriority === "boolean" ? flat.isPriority : false)
-  const isTwinBeds = Boolean(request?.twinBeds || flat?.setupInfo?.twinBeds)
-  const hasExtraMattress = Boolean(request?.extraMattress || flat?.setupInfo?.extraMattress)
-  const maidNoteText = flat?.setupInfo?.specialRequests || request?.adminNote || flat?.setupInfo?.adminNote || request?.pendingObservation || ""
+  const isTwinBeds = typeof request?.twinBeds === "boolean" 
+    ? request.twinBeds 
+    : Boolean(flat?.setupInfo?.twinBeds)
+  const hasExtraMattress = typeof request?.extraMattress === "boolean" 
+    ? request.extraMattress 
+    : Boolean(flat?.setupInfo?.extraMattress)
+  const maidNoteText = (typeof request?.adminNote === "string" 
+    ? request.adminNote 
+    : (typeof flat?.setupInfo?.specialRequests === "string" ? flat.setupInfo.specialRequests : (request?.pendingObservation || ""))
+  ).trim()
   const pendingPeriodicTasks = flat?.pendingPeriodicTasks || []
   const pendingSurveys = flat?.pendingSurveys || []
 
@@ -1001,12 +1032,12 @@ export function FlatCard({
                   title="Configurar recado / nota para a camareira"
                   className={cn(
                     "px-2 py-1 rounded-lg border transition-colors text-[11px] flex items-center gap-1 font-bold shadow-2xs cursor-pointer",
-                    flat?.setupInfo?.specialRequests
+                    Boolean(maidNoteText)
                       ? "bg-amber-100/90 border-amber-300 text-amber-950 hover:bg-amber-200 dark:bg-amber-950/50 dark:border-amber-800 dark:text-amber-200"
                       : "bg-background border-border text-muted-foreground hover:bg-muted"
                   )}
                 >
-                  <span>📝 {flat?.setupInfo?.specialRequests ? "Recado ✓" : "Recado"}</span>
+                  <span>📝 {Boolean(maidNoteText) ? "Recado ✓" : "Recado"}</span>
                 </button>
               </div>
             )}
