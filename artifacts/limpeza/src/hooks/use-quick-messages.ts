@@ -174,14 +174,10 @@ Para agilizar sua entrada na portaria sem filas, preencha o *Pré-Check-in Digit
     recipientTarget: "guest",
     enabled: true,
     message: `Olá, *{{primeiro_nome}}*! ☕🥐
-Para agendar o café da manhã no *Flat {{quarto}}*, você pode montar a sua bandeja diretamente pelo link abaixo:
+Para agendar o café da manhã no *Flat {{quarto}}*, você pode montar a sua bandeja escolhendo seus itens favoritos e o horário desejado:
 
-{{link_cafe_manha}}
-
-_(Lembrando: nosso café da manhã é servido exclusivamente com entrega no seu flat, não servido no restaurante do condomínio)._
-
-Escolha seus itens favoritos e o horário desejado!`,
-    footer: "CorpFlats • Café Artesanal",
+_(Lembrando: nosso café da manhã é servido exclusivamente com entrega no seu flat, não servido no restaurante do condomínio)._`,
+    footer: "CorpFlats • Café no Flat",
     buttons: [
       { id: "btn_cafe", type: "URL", label: "🥐 Montar Café da Manhã", url: "{{link_cafe_manha}}" }
     ]
@@ -451,10 +447,18 @@ export function buildFullWhatsAppTextMessage(
     const linkItems = safeButtons
       .filter(b => b.url || b.phone)
       .map(b => {
-        const resolvedUrl = b.url ? renderQuickMessage(b.url, resItem, originUrl) : ""
-        const resolvedPhone = b.phone ? renderQuickMessage(b.phone, resItem, originUrl) : ""
-        if (resolvedUrl) return `👉 *${b.label}:* ${resolvedUrl}`
-        if (resolvedPhone) return `📞 *${b.label}:* tel:+${resolvedPhone.replace(/\D/g, "")}`
+        const resolvedUrl = b.url ? renderQuickMessage(b.url, resItem, originUrl).trim() : ""
+        const resolvedPhone = b.phone ? renderQuickMessage(b.phone, resItem, originUrl).trim() : ""
+        if (resolvedUrl) {
+          const normUrl = resolvedUrl.replace(/\/+$/, "")
+          if (full.includes(resolvedUrl) || (normUrl && full.includes(normUrl))) return ""
+          return `👉 *${b.label}:* ${resolvedUrl}`
+        }
+        if (resolvedPhone) {
+          const cleanPhone = resolvedPhone.replace(/\D/g, "")
+          if (full.includes(resolvedPhone) || (cleanPhone && full.includes(cleanPhone))) return ""
+          return `📞 *${b.label}:* tel:+${cleanPhone}`
+        }
         return ""
       })
       .filter(Boolean)

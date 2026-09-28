@@ -542,7 +542,7 @@ Está na hora de agendar a sua bandeja de café da manhã para amanhã no *Flat 
 Preparamos tudo fresquinho e entregamos diretamente no seu flat (o serviço é exclusivo no quarto, não servido no restaurante do condomínio).
 
 Escolha seus itens favoritos clicando no botão abaixo:`,
-    footer: "CorpFlats • Café Artesanal no Quarto",
+    footer: "CorpFlats • Café no Flat",
     buttons: [
       { id: "btn_cafe", type: "URL", label: "🥐 Montar Café da Manhã", url: "{{link_cafe_manha}}" }
     ]
@@ -896,14 +896,10 @@ Para agilizar sua entrada na portaria, preencha o *Pré-Check-in Digital*:
     recipientTarget: "guest",
     enabled: true,
     message: `Olá, *{{primeiro_nome}}*! ☕🥐
-Para agendar o café da manhã no *Flat {{quarto}}*, você pode montar a sua bandeja diretamente pelo link abaixo:
+Para agendar o café da manhã no *Flat {{quarto}}*, você pode montar a sua bandeja escolhendo seus itens favoritos e o horário desejado:
 
-{{link_cafe_manha}}
-
-_(Lembrando: nosso café da manhã é servido exclusivamente com entrega no seu flat, não servido no restaurante do condomínio)._
-
-Escolha seus itens favoritos e o horário desejado!`,
-    footer: "CorpFlats • Café Artesanal",
+_(Lembrando: nosso café da manhã é servido exclusivamente com entrega no seu flat, não servido no restaurante do condomínio)._`,
+    footer: "CorpFlats • Café no Flat",
     buttons: [
       { id: "btn_cafe", type: "URL", label: "🥐 Montar Café da Manhã", url: "{{link_cafe_manha}}" }
     ]
@@ -1464,7 +1460,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   // Tag: {{status_cafe}} e {{mensagem_cafe_incluso}}
   const statusCafe = isCancelled ? "Cancelado" : (hasBreakfast ? "Incluso" : "Não incluso");
   const mensagemCafeIncluso = (hasBreakfast && !isCancelled)
-    ? `🥐 *Café da Manhã Incluso:*\nSua diária inclui nosso café da manhã artesanal servido exclusivamente no seu flat! Você já pode agendar sua bandeja pelo botão abaixo.`
+    ? `🥐 *Café da Manhã Incluso:*\nSua diária inclui nosso café da manhã servido exclusivamente no seu flat! Você já pode agendar sua bandeja pelo botão abaixo.`
     : "";
 
   // Determina status de pré-checkin e entrada no flat
@@ -1605,19 +1601,28 @@ export function formatMessageWithLinks(message, footer = "", buttons = []) {
 
   if (validButtons.length > 0) {
     const linkItems = validButtons
-      .filter(b => b.url || b.phone || b.copyCode || b.type === "COPY")
+      .filter(b => b && (b.url || b.phone || b.copyCode || b.type === "COPY"))
       .map(b => {
         if (b.type === "CALL" || b.phone) {
+          const phoneStr = String(b.phone).trim();
+          if (phoneStr && text.includes(phoneStr)) return null;
           return `📞 *${b.label}:* ${b.phone}`;
         }
         if (b.type === "COPY" || b.copyCode) {
           const code = b.copyCode || b.code || (b.url && b.url.startsWith("000201") ? b.url : "");
           if (code) {
+            if (text.includes(code)) return null;
             return `📋 *${b.label} (PIX Copia e Cola):*\n\`${code}\``;
           }
         }
+        const urlStr = String(b.url || "").trim();
+        const normUrl = urlStr.replace(/\/+$/, "");
+        if (urlStr && (text.includes(urlStr) || (normUrl && text.includes(normUrl)))) {
+          return null;
+        }
         return `👉 *${b.label}:*\n${b.url}`;
-      });
+      })
+      .filter(Boolean);
 
     if (linkItems.length > 0) {
       text += `\n\n🔗 *Acesso Rápido:*\n` + linkItems.join("\n\n");
@@ -4024,6 +4029,14 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           tpl.recipientTarget = "guest";
           tpl.fixedTime = "14:00";
         }
+        if (tpl.id === "tpl_breakfast_reminder") {
+          if (tpl.footer?.includes("Artesanal") || tpl.footer?.includes("artesanal")) {
+            const defBf = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_breakfast_reminder");
+            if (defBf) {
+              tpl.footer = defBf.footer;
+            }
+          }
+        }
         if (tpl.id === "tpl_reservation_updated") {
           const defUpdated = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_reservation_updated");
           if (defUpdated && tpl.message.includes("permanecem inalterados")) {
@@ -4045,6 +4058,16 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       for (const qm of db.whatsappQuickMessages) {
         if (!qm.recipientTarget) {
           qm.recipientTarget = "guest";
+        }
+        if (qm.id === "qm_breakfast") {
+          const defBreakfast = DEFAULT_WHATSAPP_QUICK_MESSAGES.find(q => q.id === "qm_breakfast");
+          if (defBreakfast) {
+            if (qm.footer?.includes("Artesanal") || qm.footer?.includes("artesanal") || qm.message.includes("{{link_cafe_manha}}")) {
+              qm.message = defBreakfast.message;
+              qm.footer = defBreakfast.footer;
+              qm.buttons = defBreakfast.buttons;
+            }
+          }
         }
       }
     }

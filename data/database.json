@@ -26939,7 +26939,7 @@
         "id": "breakfast",
         "icon": "Coffee",
         "title": "Café da Manhã Servido no Flat",
-        "description": "Cestas gourmet artesanais montadas com frutas, pães e sucos selecionados.",
+        "description": "Cestas gourmet montadas com frutas, pães e sucos selecionados.",
         "badge": "Opcional"
       },
       {
@@ -46449,7 +46449,7 @@
       "offsetUnit": "hours",
       "fixedTime": "18:00",
       "message": "Olá, *{{primeiro_nome}}*! ☕🥐\nEstá na hora de agendar a sua bandeja de café da manhã para amanhã no *Flat {{quarto}}*!\n\nPreparamos tudo fresquinho e entregamos diretamente no seu flat (o serviço é exclusivo no quarto, não servido no restaurante do condomínio).\n\nEscolha seus itens favoritos clicando no botão abaixo:",
-      "footer": "CorpFlats • Café Artesanal no Quarto",
+      "footer": "CorpFlats • Café no Flat",
       "buttons": [
         {
           "id": "btn_cafe",
@@ -47016,8 +47016,8 @@
       "description": "Cardápio e montagem da bandeja de café no quarto.",
       "category": "Serviços",
       "enabled": true,
-      "message": "Olá, *{{primeiro_nome}}*! ☕🥐\nPara agendar o café da manhã no *Flat {{quarto}}*, você pode montar a sua bandeja diretamente pelo link abaixo:\n\n{{link_cafe_manha}}\n\n_(Lembrando: nosso café da manhã é servido exclusivamente com entrega no seu flat, não servido no restaurante do condomínio).\n\nEscolha seus itens favoritos e o horário desejado!",
-      "footer": "CorpFlats • Café Artesanal",
+      "message": "Olá, *{{primeiro_nome}}*! ☕🥐\nPara agendar o café da manhã no *Flat {{quarto}}*, você pode montar a sua bandeja escolhendo seus itens favoritos e o horário desejado:\n\n_(Lembrando: nosso café da manhã é servido exclusivamente com entrega no seu flat, não servido no restaurante do condomínio)._",
+      "footer": "CorpFlats • Café no Flat",
       "buttons": [
         {
           "id": "btn_cafe",

@@ -624,7 +624,7 @@ const DEFAULT_SITE_CONFIG = {
       id: "breakfast",
       icon: "Coffee",
       title: "Café da Manhã Servido no Flat",
-      description: "Cestas gourmet artesanais montadas com frutas, pães e sucos selecionados.",
+      description: "Cestas gourmet montadas com frutas, pães e sucos selecionados.",
       badge: "Opcional"
     },
     {
@@ -23405,8 +23405,8 @@ function serveSpaWithMetadata(distFolder, req, res) {
         ? `☕ Café da Manhã • Flat ${flatNumber} • CorpFlats`
         : "☕ Pedido de Café da Manhã • CorpFlats";
       desc = guestFirstName 
-        ? `Olá ${guestFirstName}! Personalize o seu café da manhã artesanal e escolha o horário de entrega no seu flat.`
-        : "Personalize o seu cardápio de café da manhã artesanal servido com todo o carinho diretamente no seu flat.";
+        ? `Olá ${guestFirstName}! Personalize o seu café da manhã e escolha o horário de entrega no seu flat.`
+        : "Personalize o seu cardápio de café da manhã servido com todo o carinho diretamente no seu flat.";
       image = "https://corpflats.onrender.com/breakfast-preview.jpg";
       imageAlt = "Café da Manhã CorpFlats";
       imageWidth = "800";

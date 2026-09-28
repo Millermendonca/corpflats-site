@@ -778,7 +778,7 @@ export default function BookingEngine() {
     { icon: "Wind", title: "Ar-Condicionado Climatizado", description: "Ambientes frescos e arejados com splits modernos e silenciosos.", badge: "Conforto" },
     { icon: "Car", title: "Garagem Coberta Privativa", description: "Vaga demarcada e portão eletrônico automático com segurança 24h.", badge: "Incluso" },
     { icon: "Utensils", title: "Cozinha Compacta Equipada", description: "Cooktop, micro-ondas, frigobar/geladeira, cafeteira e utensílios completos.", badge: "Praticidade" },
-    { icon: "Coffee", title: "Café da Manhã Servido no Flat", description: "Pedido gourmet artesanal montado com frutas, pães e sucos selecionados.", badge: "Opcional" },
+    { icon: "Coffee", title: "Café da Manhã Servido no Flat", description: "Bandejas montadas com frutas, pães e sucos selecionados.", badge: "Opcional" },
     { icon: "Tv", title: "Smart TV 55\" 4K", description: "Acesso a Netflix, YouTube, canais digitais e streaming para relaxar.", badge: "Entretenimento" },
     { icon: "Dumbbell", title: "Espaço Fitness", description: "Academia equipada no condomínio para manter seus treinos e saúde em dia.", badge: "Fitness" }
   ]
@@ -799,7 +799,7 @@ export default function BookingEngine() {
   ]
 
   const faqList = siteConfig?.faq || [
-    { q: "Qual a diferença entre a Tarifa com Café e a Tarifa sem Café?", a: "A Tarifa com Café da Manhã já embute na diária o seu pedido gourmet artesanal servido exclusivamente no seu flat no horário de sua escolha. A Tarifa sem Café contempla exclusivamente a hospedagem e a estrutura completa do flat." },
+    { q: "Qual a diferença entre a Tarifa com Café e a Tarifa sem Café?", a: "A Tarifa com Café da Manhã já embute na diária o seu pedido servido exclusivamente no seu flat no horário de sua escolha. A Tarifa sem Café contempla exclusivamente a hospedagem e a estrutura completa do flat." },
     { q: "Qual o horário de check-in e check-out?", a: "O check-in inicia a partir das 14:00 e o check-out é até as 12:00. Caso precise de early check-in ou late check-out, solicite diretamente pelo WhatsApp com nossa equipe." },
     { q: "Como funciona o estacionamento / garagem?", a: "Dispomos de vagas privativas cobertas no condomínio com portão eletrônico e monitoramento 24h, inclusas gratuitamente na sua diária em qualquer tarifa." },
     { q: "Como é servido o café da manhã?", a: "O café da manhã é servido sob pedido personalizado diretamente no seu flat, no horário de sua preferência entre 05:00 e 09:30." },
