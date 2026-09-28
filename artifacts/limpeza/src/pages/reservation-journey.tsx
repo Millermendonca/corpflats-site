@@ -223,7 +223,7 @@ Realize agora seu pré-checkin digital para liberação rápida na portaria:`,
     timingLabel: "Imediato (feita até 23:59 da véspera)",
     condition: "Origem Site ou WhatsApp confirmada",
     channelsAllowed: ["site", "whatsapp"],
-    description: "Confirma a reserva com número do flat e benefício exclusivo de Early Check-in a partir das 10:00 da manhã mediante liberação de limpeza (se o flat for higienizado antes das 10h, o disparo é segurado e enviado pontualmente às 10:00).",
+    description: "Confirma a reserva com número do flat, status do café da manhã e benefício exclusivo de Early Check-in a partir das 10:00 estritamente mediante disponibilidade.",
     messagePreview: `Olá, *{{nome_hospede}}*! 🌟✨
 Sua reserva no *{{nome_hotel}}* está *Confirmada*!
 
@@ -232,12 +232,25 @@ Sua reserva no *{{nome_hotel}}* está *Confirmada*!
 • Acomodação: *Flat {{quarto}}*
 • Entrada (Check-in): *{{data_checkin}} a partir das 14:00*
 • Saída (Check-out): *{{data_checkout}} até às 12:00*
+• Total de Hóspedes: *{{num_hospedes}}*
+• Café da Manhã: *{{status_cafe}}*
+
+💰 *Situação Financeira:*
+• Valor Total: *{{valor_total}}*
+• Quanto foi Pago: *{{valor_pago}}*
+• Saldo a Quitar: *{{quanto_falta}}*
 
 🎁 *Benefício Exclusivo — Early Check-in a partir das 10:00:*
-Como você reservou diretamente pelo nosso canal, sua entrada está autorizada a partir das *10:00 da manhã* mediante liberação da limpeza! Assim que inspecionado, você receberá o aviso de quarto pronto.`,
+Como você reservou diretamente conosco, você tem direito à entrada antecipada a partir das 10:00, *ESTRITAMENTE MEDIANTE DISPONIBILIDADE* (depende da desocupação do hóspede anterior e da conclusão da limpeza). Assim que o flat estiver pronto pela governança, você receberá a notificação por aqui!
+
+📍 *Endereço:*
+Edifício Soho Residence Service, Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ
+
+Para agilizar sua entrada na portaria, realize com antecedência o seu *Pré-Check-in Digital* pelo botão abaixo:`,
     buttons: [
       { label: "📝 Fazer Check-in Online", type: "URL", url: "{{link_checkin_digital}}" },
-      { label: "🏨 Portal do Hóspede", type: "URL", url: "{{link_portal_hospede}}" }
+      { label: "🏨 Ver Detalhes da Reserva", type: "URL", url: "{{link_portal_hospede}}" },
+      { label: "🥐 Escolher Itens do Café", type: "URL", url: "{{link_cafe_manha}}" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_new_reservation_direct",
     category: "reserva"

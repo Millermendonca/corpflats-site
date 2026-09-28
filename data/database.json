@@ -47859,7 +47859,7 @@
       "offsetValue": 0,
       "offsetUnit": "minutes",
       "fixedTime": "",
-      "message": "Olá, *{{nome_destinatario}}*! ⏳\nRecebemos o pedido de *Pré-Reserva* no *{{nome_hotel}}*!\n\n⚠️ *Importante:* Esta reserva está *Aguardando Pagamento para Confirmação Definitiva*.\n\n📋 *Resumo da Estadia:*\n• Código da Reserva: *{{numero_reserva}}*\n• Acomodação: *Flat {{quarto}}*\n• Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*\n• Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*\n• Total de Hóspedes: *{{num_hospedes}}*\n\n💰 *Situação Financeira:*\n• Valor Total: *{{valor_total}}*\n• Quanto foi Pago: *{{valor_pago}}*\n• Quanto Falta Pagar: *{{quanto_falta}}*\n\n⚡ *Pagamento com Confirmação Automática (Banco Inter):*\nPara que seu pagamento seja identificado e sua reserva confirmada na hora pelo sistema (sem precisar enviar comprovante), acesse o link seguro abaixo para gerar o PIX oficial ou parcelar no cartão em até 12x:\n👉 {{link_portal_hospede}}",
+      "message": "Olá, *{{nome_destinatario}}*! ⏳\nRecebemos o pedido de *Pré-Reserva* no *{{nome_hotel}}*!\n\n⚠️ *Importante:* Esta reserva está *Aguardando Pagamento para Confirmação Definitiva*.\n\n📋 *Resumo da Estadia:*\n• Código da Reserva: *{{numero_reserva}}*\n• Acomodação: *Flat {{quarto}}*\n• Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*\n• Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*\n• Total de Hóspedes: *{{num_hospedes}}*\n• Café da Manhã: *{{status_cafe}}*\n\n💰 *Situação Financeira:*\n• Valor Total: *{{valor_total}}*\n• Quanto foi Pago: *{{valor_pago}}*\n• Quanto Falta Pagar: *{{quanto_falta}}*\n\n⚡ *Pagamento com Confirmação Automática (Banco Inter):*\nPara que seu pagamento seja identificado e sua reserva confirmada na hora pelo sistema (sem precisar enviar comprovante), acesse o link seguro abaixo para gerar o PIX oficial ou parcelar no cartão em até 12x:\n👉 {{link_portal_hospede}}",
       "footer": "CorpFlats • Hospedagem Contemporânea",
       "buttons": [
         {
@@ -47892,7 +47892,7 @@
       "offsetValue": 0,
       "offsetUnit": "minutes",
       "fixedTime": "",
-      "message": "Olá, *{{nome_hospede}}*! 🌟\nSua reserva no *{{nome_hotel}}* está *Confirmada*!\n\n📋 *Resumo da sua Estadia:*\n• Código da Reserva: *{{numero_reserva}}*\n• Acomodação: *Flat {{quarto}}*\n• Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*\n• Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*\n• Total de Hóspedes: *{{num_hospedes}}*\n\n💰 *Situação Financeira:*\n• Valor Total: *{{valor_total}}*\n• Quanto foi Pago: *{{valor_pago}}*\n• Saldo a Quitar: *{{quanto_falta}}*\n\n{{instrucao_saldo}}\n\n📍 *Endereço:*\n{{endereco_hotel}}\n\nPara agilizar sua entrada na portaria sem filas, realize com antecedência o seu *Pré-Check-in Digital* pelo botão abaixo:",
+      "message": "Olá, *{{nome_hospede}}*! 🌟\nSua reserva no *{{nome_hotel}}* está *Confirmada*!\n\n📋 *Resumo da sua Estadia:*\n• Código da Reserva: *{{numero_reserva}}*\n• Acomodação: *Flat {{quarto}}*\n• Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*\n• Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*\n• Total de Hóspedes: *{{num_hospedes}}*\n• Café da Manhã: *{{status_cafe}}*\n\n💰 *Situação Financeira:*\n• Valor Total: *{{valor_total}}*\n• Quanto foi Pago: *{{valor_pago}}*\n• Saldo a Quitar: *{{quanto_falta}}*\n\n{{instrucao_saldo}}\n\n📍 *Endereço:*\n{{endereco_hotel}}\n\nPara agilizar sua entrada na portaria realize com antecedência o seu *Pré-Check-in Digital* pelo botão abaixo:",
       "footer": "CorpFlats • Hospedagem Contemporânea",
       "buttons": [
         {
@@ -48178,7 +48178,7 @@
       "offsetValue": 0,
       "offsetUnit": "minutes",
       "fixedTime": "",
-      "message": "Olá, *{{nome_hospede}}*! 🌟✨\nSua reserva no *{{nome_hotel}}* está *Confirmada*!\n\n📋 *Resumo da sua Estadia:*\n• Código da Reserva: *{{numero_reserva}}*\n• Acomodação: *Flat {{quarto}}*\n• Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*\n• Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*\n• Total de Hóspedes: *{{num_hospedes}}*\n\n💰 *Situação Financeira:*\n• Valor Total: *{{valor_total}}*\n• Quanto foi Pago: *{{valor_pago}}*\n• Saldo a Quitar: *{{quanto_falta}}*\n\n{{instrucao_saldo}}\n\n{{early_checkin_beneficio}}\n\n📍 *Endereço:*\n{{endereco_hotel}}\n\nPara agilizar sua entrada na portaria sem filas, realize com antecedência o seu *Pré-Check-in Digital* pelo botão abaixo:",
+      "message": "Olá, *{{nome_hospede}}*! 🌟✨\nSua reserva no *{{nome_hotel}}* está *Confirmada*!\n\n📋 *Resumo da sua Estadia:*\n• Código da Reserva: *{{numero_reserva}}*\n• Acomodação: *Flat {{quarto}}*\n• Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*\n• Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*\n• Total de Hóspedes: *{{num_hospedes}}*\n• Café da Manhã: *{{status_cafe}}*\n\n💰 *Situação Financeira:*\n• Valor Total: *{{valor_total}}*\n• Quanto foi Pago: *{{valor_pago}}*\n• Saldo a Quitar: *{{quanto_falta}}*\n\n{{instrucao_saldo}}\n\n🎁 *Benefício Exclusivo — Early Check-in a partir das 10:00:*\nComo você reservou diretamente conosco, você tem direito à entrada antecipada a partir das 10:00, *ESTRITAMENTE MEDIANTE DISPONIBILIDADE* (depende da desocupação do hóspede anterior e da conclusão da limpeza). Assim que o flat estiver pronto pela governança, você receberá a notificação por aqui!\n\n📍 *Endereço:*\n{{endereco_hotel}}\n\nPara agilizar sua entrada na portaria, realize com antecedência o seu *Pré-Check-in Digital* pelo botão abaixo:",
       "footer": "CorpFlats • Hospedagem Contemporânea",
       "buttons": [
         {
@@ -48192,6 +48192,12 @@
           "type": "URL",
           "label": "🏨 Ver Detalhes da Reserva",
           "url": "{{link_portal_hospede}}"
+        },
+        {
+          "id": "btn_cafe",
+          "type": "URL",
+          "label": "🥐 Escolher Itens do Café",
+          "url": "{{link_cafe_manha}}"
         }
       ],
       "recipientTarget": "guest"
@@ -48396,7 +48402,7 @@
       "offsetValue": 0,
       "offsetUnit": "minutes",
       "fixedTime": "",
-      "message": "Olá, *{{primeiro_nome}}*! 💚🎉\nConfirmamos o recebimento do seu pagamento de *{{valor_pago}}* via *{{forma_pagamento}}*!\n\nSua reserva no *{{nome_hotel}}* está *Garantida & Confirmada*!\n\n📋 *Resumo da Estadia:*\n• Código da Reserva: *{{numero_reserva}}*\n• Acomodação: *Flat {{quarto}}*\n• Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*\n• Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*\n• Total de Hóspedes: *{{num_hospedes}}*\n\n💰 *Situação Financeira:*\n• Valor Total: *{{valor_total}}*\n• Quanto foi Pago: *{{valor_pago}}*\n• Saldo a Quitar: *{{quanto_falta}}*\n\n{{instrucao_saldo}}\n\n{{early_checkin_beneficio}}\n\n📍 *Endereço:*\n{{endereco_hotel}}\n\nPara agilizar sua entrada na portaria sem filas na chegada, realize com antecedência o seu *Pré-Check-in Digital*:",
+      "message": "Olá, *{{primeiro_nome}}*! 💚🎉\nConfirmamos o recebimento do seu pagamento de *{{valor_pago}}* via *{{forma_pagamento}}*!\n\nSua reserva no *{{nome_hotel}}* está *Garantida & Confirmada*!\n\n📋 *Resumo da Estadia:*\n• Código da Reserva: *{{numero_reserva}}*\n• Acomodação: *Flat {{quarto}}*\n• Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*\n• Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*\n• Total de Hóspedes: *{{num_hospedes}}*\n• Café da Manhã: *{{status_cafe}}*\n\n💰 *Situação Financeira:*\n• Valor Total: *{{valor_total}}*\n• Quanto foi Pago: *{{valor_pago}}*\n• Saldo a Quitar: *{{quanto_falta}}*\n\n{{instrucao_saldo}}\n\n{{early_checkin_beneficio}}\n\n📍 *Endereço:*\n{{endereco_hotel}}\n\nPara agilizar sua entrada na portaria na chegada, realize com antecedência o seu *Pré-Check-in Digital*:",
       "footer": "CorpFlats • Pagamento Aprovado",
       "buttons": [
         {
@@ -48410,6 +48416,12 @@
           "type": "URL",
           "label": "🏨 Ver Detalhes da Reserva",
           "url": "{{link_portal_hospede}}"
+        },
+        {
+          "id": "btn_cafe",
+          "type": "URL",
+          "label": "🥐 Escolher Itens do Café",
+          "url": "{{link_cafe_manha}}"
         }
       ]
     }

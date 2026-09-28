@@ -185,6 +185,7 @@ Sua reserva no *{{nome_hotel}}* está *Confirmada*!
 • Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*
 • Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*
 • Total de Hóspedes: *{{num_hospedes}}*
+• Café da Manhã: *{{status_cafe}}*
 
 💰 *Situação Financeira:*
 • Valor Total: *{{valor_total}}*
@@ -196,7 +197,7 @@ Sua reserva no *{{nome_hotel}}* está *Confirmada*!
 📍 *Endereço:*
 {{endereco_hotel}}
 
-Para agilizar sua entrada na portaria sem filas, realize com antecedência o seu *Pré-Check-in Digital* pelo botão abaixo:`,
+Para agilizar sua entrada na portaria, realize com antecedência o seu *Pré-Check-in Digital* pelo botão abaixo:`,
     footer: "CorpFlats • Hospedagem Contemporânea",
     buttons: [
       { id: "btn_chk", type: "URL", label: "📝 Fazer Check-in Online", url: "{{link_checkin_digital}}" },
@@ -215,6 +216,10 @@ Para agilizar sua entrada na portaria sem filas, realize com antecedência o seu
     offsetValue: 0,
     offsetUnit: "minutes",
     fixedTime: "",
+    hasAttachment: true,
+    documentUrl: "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
+    documentName: "Manual_do_Hospede_CorpFlats.pdf",
+    documentCaption: "Segue em anexo o Manual do Hóspede em PDF com todas as orientações da sua acomodação! 📖",
     message: `Olá, *{{nome_hospede}}*! 🌟✨
 Sua reserva no *{{nome_hotel}}* está *Confirmada*!
 
@@ -224,6 +229,7 @@ Sua reserva no *{{nome_hotel}}* está *Confirmada*!
 • Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*
 • Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*
 • Total de Hóspedes: *{{num_hospedes}}*
+• Café da Manhã: *{{status_cafe}}*
 
 💰 *Situação Financeira:*
 • Valor Total: *{{valor_total}}*
@@ -233,16 +239,17 @@ Sua reserva no *{{nome_hotel}}* está *Confirmada*!
 {{instrucao_saldo}}
 
 🎁 *Benefício Exclusivo — Early Check-in a partir das 10:00:*
-Como você reservou diretamente pelo nosso site ou WhatsApp, a sua entrada está liberada a partir das *10:00 da manhã* mediante disponibilidade de limpeza! Assim que o flat estiver higienizado e inspecionado, você receberá a notificação de quarto liberado.
+Como você reservou diretamente conosco, você tem direito à entrada antecipada a partir das 10:00, *ESTRITAMENTE MEDIANTE DISPONIBILIDADE* (depende da desocupação do hóspede anterior e da conclusão da limpeza). Assim que o flat estiver pronto pela governança, você receberá a notificação por aqui!
 
 📍 *Endereço:*
 {{endereco_hotel}}
 
-Para agilizar sua entrada na portaria sem filas, realize com antecedência o seu *Pré-Check-in Digital* pelo botão abaixo:`,
+Para agilizar sua entrada na portaria, realize com antecedência o seu *Pré-Check-in Digital* pelo botão abaixo:`,
     footer: "CorpFlats • Hospedagem Contemporânea",
     buttons: [
       { id: "btn_chk", type: "URL", label: "📝 Fazer Check-in Online", url: "{{link_checkin_digital}}" },
-      { id: "btn_portal", type: "URL", label: "🏨 Ver Detalhes da Reserva", url: "{{link_portal_hospede}}" }
+      { id: "btn_portal", type: "URL", label: "🏨 Ver Detalhes da Reserva", url: "{{link_portal_hospede}}" },
+      { id: "btn_cafe", type: "URL", label: "🥐 Escolher Itens do Café", url: "{{link_cafe_manha}}" }
     ]
   },
   {
@@ -442,7 +449,7 @@ Sua chegada ao *{{nome_hotel}}* está próxima (*{{data_checkin}}*)!
 
 {{mensagem_pendencia_hospedes}}
 
-Para que a portaria libere sua entrada imediatamente na chegada sem filas, acesse o link seguro:`,
+Para que a portaria libere sua entrada com agilidade na chegada, acesse o link seguro:`,
     footer: "CorpFlats • Entrada Rápida & Segura",
     buttons: [
       { id: "btn_pre", type: "URL", label: "📝 Ficha Digital de Check-in", url: "{{link_checkin_digital}}" },
@@ -503,12 +510,14 @@ Desejamos uma ótima viagem até aqui! Se precisar de suporte, estamos à dispos
     fixedTime: "",
     message: `Olá, *{{primeiro_nome}}*! Seja muito bem-vindo(a) ao *Flat {{quarto}}*! 🏡✨
 
-Esperamos que encontre tudo limpo, fresco e perfeito para o seu conforto.
+Desejamos que você tenha uma estadia incrível e revigorante conosco!
 
-📱 *Central do Hóspede:*
-No portal abaixo você confere senhas, instruções dos aparelhos e regras de convivência do condomínio.
+🌿 *Como está tudo por aí?* O flat está fresquinho, limpo e conforme todas as suas expectativas?
 
-Tenha uma estadia incrível!`,
+Se você notar qualquer detalhe que precise de atenção, desejar solicitar travesseiro extra ou precisar de qualquer auxílio no flat, estamos à sua total disposição por aqui no WhatsApp a qualquer momento!
+
+📱 *Central do Hóspede & Manual:* No link abaixo você confere senhas de acesso, comodidades e regras do condomínio:
+{{link_portal_hospede}}`,
     footer: "CorpFlats • Soho Residence Service",
     hasAttachment: false,
     documentUrl: "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
@@ -745,6 +754,7 @@ Sua reserva no *{{nome_hotel}}* está *Garantida & Confirmada*!
 • Entrada (Check-in): *{{data_checkin}} a partir das {{horario_checkin}}*
 • Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*
 • Total de Hóspedes: *{{num_hospedes}}*
+• Café da Manhã: *{{status_cafe}}*
 
 💰 *Situação Financeira:*
 • Valor Total: *{{valor_total}}*
@@ -758,11 +768,12 @@ Sua reserva no *{{nome_hotel}}* está *Garantida & Confirmada*!
 📍 *Endereço:*
 {{endereco_hotel}}
 
-Para agilizar sua entrada na portaria sem filas na chegada, realize com antecedência o seu *Pré-Check-in Digital*:`,
+Para agilizar sua entrada na portaria na chegada, realize com antecedência o seu *Pré-Check-in Digital*:`,
     footer: "CorpFlats • Pagamento Aprovado",
     buttons: [
       { id: "btn_chk", type: "URL", label: "📝 Fazer Check-in Online", url: "{{link_checkin_digital}}" },
-      { id: "btn_portal", type: "URL", label: "🏨 Ver Detalhes da Reserva", url: "{{link_portal_hospede}}" }
+      { id: "btn_portal", type: "URL", label: "🏨 Ver Detalhes da Reserva", url: "{{link_portal_hospede}}" },
+      { id: "btn_cafe", type: "URL", label: "🥐 Escolher Itens do Café", url: "{{link_cafe_manha}}" }
     ]
   },
   {
@@ -874,7 +885,7 @@ Aqui está o resumo da sua estadia confirmada no *{{nome_hotel}}*:
 📅 Saída: *{{data_checkout}}* até às *{{horario_checkout}}*
 👥 Hóspedes: *{{num_hospedes}}*
 
-Para agilizar sua entrada na portaria sem filas, preencha o *Pré-Check-in Digital*:
+Para agilizar sua entrada na portaria, preencha o *Pré-Check-in Digital*:
 {{link_checkin_digital}}`,
     footer: "CorpFlats • Soho Residence",
     buttons: [
@@ -1032,12 +1043,8 @@ export function isPhoneAllowedInTestMode(phone, config = {}, db = null) {
   const targetDigits = String(phone).replace(/\D/g, "");
   if (!targetDigits) return false;
 
-  // Miller Mendonça (gestor do hotel / desenvolvedor) e Camareiras (Cris e Grazi)
-  const defaultAllowed = [
-    "22998505276", "5522998505276",
-    "22988486446", "5522988486446",
-    "22999106204", "5522999106204"
-  ];
+  // Miller Mendonça (gestor do hotel / desenvolvedor)
+  const defaultAllowed = ["22998505276", "5522998505276"];
 
   // Telefones autorizados configurados pelo usuário
   const userConfigured = String(config?.testAllowedPhones || "")
@@ -1379,7 +1386,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   if (pendingAmount > 0) {
     instrucaoSaldo = `ℹ️ *Aviso de Pagamento:* Resta o saldo de *${formatCurrency(pendingAmount)}*, que poderá ser quitado pelo link seguro do seu portal:\n👉 ${linkPortalHospede}`;
   } else {
-    instrucaoSaldo = "✅ *Pagamento 100% Concluído:* Sua hospedagem está totalmente quitada.";
+    instrucaoSaldo = "";
   }
 
   // Código PIX Copia e Cola da transação integrada (Inter ou payload oficial)
@@ -1428,17 +1435,17 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     const isSameDayCheckin = checkinDate === todayStr;
     const isFutureCheckin = checkinDate > todayStr;
 
+    const earlyCheckinText = `🎁 *Benefício Exclusivo — Early Check-in a partir das 10:00:*\nComo você reservou diretamente conosco, você tem direito à entrada antecipada a partir das 10:00, *ESTRITAMENTE MEDIANTE DISPONIBILIDADE* (depende da desocupação do hóspede anterior e da conclusão da limpeza). Assim que o flat estiver pronto pela governança, você receberá a notificação por aqui!`;
+
     if (isFutureCheckin) {
-      // Reserva para data futura: sempre exibir benefício
-      earlyCheckinBeneficio = `🎁 *Benefício Exclusivo — Early Check-in Gratuito:*\nPor ter reservado diretamente pelo nosso site/WhatsApp, seu flat será liberado assim que estiver limpo e pronto no dia da chegada, *sem precisar aguardar as ${checkinTime}*! Conforme disponibilidade.`;
+      earlyCheckinBeneficio = earlyCheckinText;
     } else if (isSameDayCheckin) {
-      // Reserva para hoje: só exibir se faltam pelo menos 30 minutos para o check-in
       const now = new Date();
       const [ciHour, ciMin] = checkinTime.split(":").map(Number);
       const checkinDeadline = new Date();
       checkinDeadline.setHours(ciHour, ciMin - 30, 0, 0); // 30 min antes do check-in
       if (now < checkinDeadline) {
-        earlyCheckinBeneficio = `🎁 *Benefício Exclusivo — Early Check-in Gratuito:*\nPor ter reservado diretamente pelo nosso site/WhatsApp, seu flat será liberado assim que estiver limpo e pronto, *sem precisar aguardar as ${checkinTime}*! Conforme disponibilidade.`;
+        earlyCheckinBeneficio = earlyCheckinText;
       }
     }
   }
@@ -1457,10 +1464,11 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   // Tag de link de autodeclaração de checkin ("Já cheguei / Estou no Flat")
   const linkAutocheckin = `${appOrigin}/minha-reserva/${resCode}?action=self_checkin`;
 
-  // Tag: {{mensagem_cafe_incluso}}
+  // Tag: {{status_cafe}} e {{mensagem_cafe_incluso}}
   const hasBreakfast = Boolean(reservation.includeBreakfast || reservation.ratePlan === "with_breakfast");
+  const statusCafe = hasBreakfast ? "Incluso" : "Não incluso";
   const mensagemCafeIncluso = hasBreakfast
-    ? `🥐 *Café da Manhã Incluso:*\nSua diária inclui nosso café da manhã artesanal servido exclusivamente no seu flat! Monte a sua bandeja até às 22h pelo link:\n👉 ${linkCafeManha}`
+    ? `🥐 *Café da Manhã Incluso:*\nSua diária inclui nosso café da manhã artesanal servido exclusivamente no seu flat! Você já pode agendar sua bandeja pelo link:\n👉 ${linkCafeManha}`
     : "";
 
   // Tag: {{mensagem_pendencia_hospedes}} (Lógica de 1 vs 2 hóspedes)
@@ -1474,7 +1482,12 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   // Tag: {{aviso_checkin_pendente}}
   const allCheckedIn = Boolean(reservation.checkedInAt || (reservation.guests && reservation.guests.length > 0 && reservation.guests.every(g => g.hasCompletedCheckin)));
   const avisoCheckinPendente = !allCheckedIn
-    ? `⚠️ *Atenção:* Sua ficha de Pré-Check-in Digital ainda está pendente. Para evitar filas e atrasos na portaria 24h, preencha antecipadamente:\n👉 ${linkCheckinDigital}`
+    ? `⚠️ *Atenção:* Notamos que sua ficha de Pré-Check-in Digital ainda está pendente. Para que a portaria libere sua entrada com agilidade e seu veículo seja autorizado com antecedência, preencha agora pelo link:\n👉 ${linkCheckinDigital}`
+    : "";
+
+  // Tag: {{aviso_pendencia_segundo_hospede}} (Portaria e Informativos)
+  const avisoPendenciaSegundoHospede = (isMultiGuest && firstGuestDone && !allCheckedIn)
+    ? `⚠️ *Atenção Portaria:* Apenas o *Hóspede 1 (${guest.firstName || guest.name})* realizou o pré-check-in digital e está *LIBERADO* para check-in. O *2º hóspede AINDA NÃO ESTÁ LIBERADO* para entrada; estamos aguardando o preenchimento digital de sua ficha para autorização de acesso ao flat.`
     : "";
 
   const tagsMap = {
@@ -1521,9 +1534,11 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{link_checkout}}": linkCheckout,
     "{{link_avaliacao_google}}": googleReviewUrl,
     "{{link_autocheckin}}": linkAutocheckin,
+    "{{status_cafe}}": statusCafe,
     "{{mensagem_cafe_incluso}}": mensagemCafeIncluso,
     "{{mensagem_pendencia_hospedes}}": mensagemPendenciaHospedes,
     "{{aviso_checkin_pendente}}": avisoCheckinPendente,
+    "{{aviso_pendencia_segundo_hospede}}": avisoPendenciaSegundoHospede,
     "{{link_guia_hospede}}": zapiCfg.guestGuidePdfUrl || `${appOrigin}/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf`,
     "{{link_manual_hospede}}": zapiCfg.guestGuidePdfUrl || `${appOrigin}/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf`,
     "{{early_checkin_beneficio}}": earlyCheckinBeneficio,
@@ -1534,8 +1549,11 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
 
   let rendered = text;
   for (const [tag, val] of Object.entries(tagsMap)) {
-    rendered = rendered.split(tag).join(val);
+    rendered = rendered.split(tag).join(val !== undefined && val !== null ? String(val) : "");
   }
+
+  // Remove excesso de quebras de linha decorrentes de tags opcionais vazias
+  rendered = rendered.replace(/\n{3,}/g, "\n\n").trim();
 
   return rendered;
 }
@@ -1571,6 +1589,36 @@ export function formatMessageWithLinks(message, footer = "", buttons = []) {
   }
 
   return text;
+}
+
+// ── Formatador e Injetor Inteligente de Botões de Template ───────────────────
+export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, baseUrl = "", targetRecipient = "guest") {
+  const hasBreakfast = Boolean(reservation?.includeBreakfast || reservation?.ratePlan === "with_breakfast");
+  const appOrigin = baseUrl || "https://corpflats.onrender.com";
+  const resCode = reservation?.code || reservation?.reservationCode || `RES-${reservation?.flatNumber || "000"}-${reservation?.id || "0000"}`;
+  const linkCafeManha = `${appOrigin}/cafe/${resCode}`;
+
+  let list = Array.isArray(rawButtons) ? [...rawButtons] : [];
+
+  if (hasBreakfast) {
+    if (!list.some(b => b.id === "btn_cafe" || (b.url && b.url.includes("/cafe/")))) {
+      list.push({
+        id: "btn_cafe",
+        type: "URL",
+        label: "🥐 Escolher Itens do Café",
+        url: linkCafeManha
+      });
+    }
+  } else {
+    list = list.filter(b => b.id !== "btn_cafe" && (!b.url || !b.url.includes("/cafe/")));
+  }
+
+  return list.map(b => ({
+    ...b,
+    url: b.url ? resolveWhatsAppTags(b.url, reservation, db, baseUrl, targetRecipient) : undefined,
+    phone: b.phone ? resolveWhatsAppTags(b.phone, reservation, db, baseUrl, targetRecipient) : undefined,
+    copyCode: b.copyCode ? resolveWhatsAppTags(b.copyCode, reservation, db, baseUrl, targetRecipient) : undefined
+  }));
 }
 
 // ── Disparo Oficial de Documento / PDF via Z-API (/send-document/{extension}) ─
@@ -3568,7 +3616,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         if (tpl.id === "tpl_pre_reserva") {
           tpl.recipientTarget = "requester";
           tpl.channels = ["site", "whatsapp", "outros"];
-          if (tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.message.includes("Para agilizar sua estadia")) {
+          if (tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.message.includes("Para agilizar sua estadia") || tpl.message.includes("sem filas") || !tpl.message.includes("status_cafe")) {
             const defPre = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_reserva");
             if (defPre) {
               tpl.title = defPre.title;
@@ -3608,6 +3656,13 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         if (tpl.id === "tpl_payment_confirmed") {
           tpl.channels = ["site", "whatsapp"];
           tpl.recipientTarget = "both";
+          if (!tpl.message.includes("status_cafe") || tpl.message.includes("sem filas")) {
+            const defPay = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_payment_confirmed");
+            if (defPay) {
+              tpl.message = defPay.message;
+              tpl.buttons = defPay.buttons;
+            }
+          }
         }
         if (tpl.id === "tpl_checkin_day_instructions") {
           tpl.fixedTime = "07:00";
@@ -3622,11 +3677,19 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           }
         }
         if (tpl.id === "tpl_pre_checkin_reminder") {
-          if (!tpl.message.includes("mensagem_pendencia_hospedes")) {
+          if (!tpl.message.includes("mensagem_pendencia_hospedes") || tpl.message.includes("sem filas")) {
             const defRem = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_checkin_reminder");
             if (defRem) {
               tpl.message = defRem.message;
               tpl.description = defRem.description;
+            }
+          }
+        }
+        if (tpl.id === "tpl_express_checkin_summary") {
+          if (tpl.message.includes("sem filas")) {
+            const defExp = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_express_checkin_summary");
+            if (defExp) {
+              tpl.message = defExp.message;
             }
           }
         }
@@ -3636,11 +3699,24 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           tpl.title = "Pós Check-out (24h) • Pesquisa de Satisfação (Filtro NPS)";
         }
         if (tpl.id === "tpl_new_reservation_direct") {
-          if (!tpl.message.includes("10:00 da manhã")) {
-            const defDir = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_new_reservation_direct");
-            if (defDir) {
+          const defDir = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_new_reservation_direct");
+          if (defDir) {
+            tpl.hasAttachment = defDir.hasAttachment;
+            tpl.documentUrl = defDir.documentUrl;
+            tpl.documentName = defDir.documentName;
+            tpl.documentCaption = defDir.documentCaption;
+            if (!tpl.message.includes("status_cafe") || tpl.message.includes("sem filas") || !tpl.message.includes("ESTRITAMENTE MEDIANTE DISPONIBILIDADE")) {
               tpl.message = defDir.message;
               tpl.description = defDir.description;
+              tpl.buttons = defDir.buttons;
+            }
+          }
+        }
+        if (tpl.id === "tpl_checkin_completed") {
+          if (!tpl.message.includes("Como está tudo por aí")) {
+            const defChk = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_checkin_completed");
+            if (defChk) {
+              tpl.message = defChk.message;
             }
           }
         }
@@ -4300,12 +4376,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
     for (const d of dispatches) {
       const renderedMessage = resolveWhatsAppTags(template.message, reservation, db, baseUrl, d.type);
-      const renderedButtons = (template.buttons || []).map(b => ({
-        ...b,
-        url: b.url ? resolveWhatsAppTags(b.url, reservation, db, baseUrl, d.type) : undefined,
-        phone: b.phone ? resolveWhatsAppTags(b.phone, reservation, db, baseUrl, d.type) : undefined,
-        copyCode: b.copyCode ? resolveWhatsAppTags(b.copyCode, reservation, db, baseUrl, d.type) : undefined
-      }));
+      const renderedButtons = renderTemplateButtons(template.buttons, reservation, db, baseUrl, d.type);
 
       const sendRes = await sendZapiMessage(db?.zapiConfig, {
         phone: d.phone,
@@ -5525,14 +5596,19 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
   const activeTemplates = db.whatsappTemplates.filter(t => t.enabled && t.triggerTiming !== "immediate");
   if (activeTemplates.length === 0) return;
 
-  // Processar reservas ativas/futuras (confirmadas e pré-reservas pendentes)
+  // Data limite para considerar reservas recentes para NPS (+24h pós-checkout)
+  const twoDaysAgo = new Date(brDate);
+  twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+  const twoDaysAgoStr = twoDaysAgo.toISOString().substring(0, 10);
+
+  // Processar reservas ativas/futuras e recentes (para NPS)
   const reservationsToProcess = (db.reservations || []).filter(r => 
     r.status !== "cancelada" && 
     r.status !== "cancelled" && 
     r.status !== "CANCELLED" && 
     r.guestPhone &&
     r.checkoutDate && 
-    r.checkoutDate >= todayStr
+    r.checkoutDate >= twoDaysAgoStr
   );
 
   let hasChanges = false;
@@ -5543,6 +5619,11 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
     const recipients = getReservationRecipients(resv, db);
 
     for (const tpl of activeTemplates) {
+      // Se a data de checkout já passou, APENAS processar post_checkout_review
+      if (resv.checkoutDate < todayStr && tpl.triggerEvent !== "post_checkout_review") {
+        continue;
+      }
+
       // Se a reserva já realizou check-out/concluída, NUNCA agendar mensagens pré-estadia ou lembretes de estadia
       if (isCompletedOrCheckedOut && tpl.triggerEvent !== "post_checkout_review") {
         continue;
@@ -5659,11 +5740,11 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
           let scheduledTime = calculateScheduledTime(tpl, resv, db);
           let scheduledDate = new Date(scheduledTime);
 
-          // Se a data de checkout é hoje e o horário padrão já passou recentemente (dentro de 6h),
-          // agenda para envio em 1 minuto para não perder a solicitação de avaliação no Google
-          if (scheduledDate <= now && resv.checkoutDate === todayStr && tpl.triggerEvent === "post_checkout_review") {
+          // Se o horário do NPS (+24h pós 12:00 de checkout) já chegou ou passou nas últimas 24h,
+          // agenda para envio em 1 minuto para não perder a pesquisa de satisfação
+          if (scheduledDate <= now && tpl.triggerEvent === "post_checkout_review") {
             const diffHours = (now.getTime() - scheduledDate.getTime()) / (3600 * 1000);
-            if (diffHours >= 0 && diffHours <= 6) {
+            if (diffHours >= 0 && diffHours <= 24) {
               scheduledDate = new Date(now.getTime() + 60 * 1000);
               scheduledTime = scheduledDate.toISOString();
             }
@@ -5673,12 +5754,7 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
           if (scheduledDate > now) {
             const baseUrl = "https://corpflats.onrender.com";
             const renderedMessage = resolveWhatsAppTags(tpl.message, resv, db, baseUrl, targetItem.type);
-            const renderedButtons = (tpl.buttons || []).map(b => ({
-              ...b,
-              url: b.url ? resolveWhatsAppTags(b.url, resv, db, baseUrl, targetItem.type) : undefined,
-              phone: b.phone ? resolveWhatsAppTags(b.phone, resv, db, baseUrl, targetItem.type) : undefined,
-              copyCode: b.copyCode ? resolveWhatsAppTags(b.copyCode, resv, db, baseUrl, targetItem.type) : undefined
-            }));
+            const renderedButtons = renderTemplateButtons(tpl.buttons, resv, db, baseUrl, targetItem.type);
 
             db.whatsappQueue.push({
               id: `q_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
@@ -5850,12 +5926,7 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
         }
 
         const renderedMessage = resolveWhatsAppTags(tpl.message, reservation, db, baseUrl, d.type);
-        const renderedButtons = (tpl.buttons || []).map(b => ({
-          ...b,
-          url: b.url ? resolveWhatsAppTags(b.url, reservation, db, baseUrl, d.type) : undefined,
-          phone: b.phone ? resolveWhatsAppTags(b.phone, reservation, db, baseUrl, d.type) : undefined,
-          copyCode: b.copyCode ? resolveWhatsAppTags(b.copyCode, reservation, db, baseUrl, d.type) : undefined
-        }));
+        const renderedButtons = renderTemplateButtons(tpl.buttons, reservation, db, baseUrl, d.type);
 
         const hasAttachment = Boolean(tpl.hasAttachment || tpl.documentUrl);
         const docUrl = hasAttachment ? (tpl.documentUrl || db?.zapiConfig?.guestGuidePdfUrl) : undefined;
@@ -6032,10 +6103,7 @@ export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId,
             );
             if (!alreadyQueued && defTpl) {
               const renderedMessage = resolveWhatsAppTags(defTpl.message, resv, db, baseUrl, "guest");
-              const renderedButtons = (defTpl.buttons || []).map(b => ({
-                ...b,
-                url: b.url ? resolveWhatsAppTags(b.url, resv, db, baseUrl, "guest") : undefined
-              }));
+              const renderedButtons = renderTemplateButtons(defTpl.buttons, resv, db, baseUrl, "guest");
               db.whatsappQueue.push({
                 id: `q_ota_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
                 reservationId: resv.id,
@@ -6079,10 +6147,7 @@ export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId,
             );
             if (!alreadyQueued && defTpl) {
               const renderedMessage = resolveWhatsAppTags(defTpl.message, resv, db, baseUrl, "guest");
-              const renderedButtons = (defTpl.buttons || []).map(b => ({
-                ...b,
-                url: b.url ? resolveWhatsAppTags(b.url, resv, db, baseUrl, "guest") : undefined
-              }));
+              const renderedButtons = renderTemplateButtons(defTpl.buttons, resv, db, baseUrl, "guest");
               db.whatsappQueue.push({
                 id: `q_direct_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
                 reservationId: resv.id,

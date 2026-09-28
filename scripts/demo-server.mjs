@@ -7510,6 +7510,7 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       children: 0,
       channel: "site_direto",
       ratePlan,
+      includeBreakfast: ratePlan === "with_breakfast" || Boolean(req.body.includeBreakfast),
       bedType: roomsList.some(r => r.bedType === "twin") ? "twin" : "queen",
       twinBeds: roomsList.some(r => r.bedType === "twin"),
       dailyRate: Number(dailyRate) || 0,
@@ -10343,7 +10344,7 @@ app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reser
   } else {
     const firstName = guestName.split(" ")[0];
     const flatNum = reservation.flatNumber || (db.flats.find(f => f.id === reservation.flatId)?.number || "");
-    msgText = `Olá, *${firstName}*! Tudo bem? ⏳\n\nIdentificamos que seu *Check-in Digital* para o *Flat ${flatNum}* no CorpFlats ainda está pendente.\n\nPara agilizar a liberação da sua entrada na portaria do Edifício Soho sem filas, por favor preencha seus dados pelo link:\n${preCheckinUrl}\n\nAguardamos você e desejamos uma excelente estadia!`;
+    msgText = `Olá, *${firstName}*! Tudo bem? ⏳\n\nIdentificamos que seu *Check-in Digital* para o *Flat ${flatNum}* no CorpFlats ainda está pendente.\n\nPara agilizar a liberação da sua entrada na portaria do Edifício Soho, por favor preencha seus dados pelo link:\n${preCheckinUrl}\n\nAguardamos você e desejamos uma excelente estadia!`;
   }
 
   try {
