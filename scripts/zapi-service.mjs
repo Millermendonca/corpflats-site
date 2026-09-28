@@ -4070,6 +4070,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     db.whatsappHistory.push({
       id: `hist_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       reservationCode: item.reservationCode,
+      reservationId: item.reservationId || null,
+      title: item.title || null,
       guestName: item.guestName,
       guestPhone: item.guestPhone,
       triggerEvent: item.triggerEvent,
@@ -4398,6 +4400,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       db.whatsappHistory.push({
         id: `manual_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
         reservationCode: reservation.code || reservation.reservationCode || String(reservation.id),
+        reservationId: reservation.id || null,
+        title: template.title || template.name || null,
         guestName: reservation.guestName,
         guestPhone: d.phone,
         recipientType: d.type,
@@ -5536,6 +5540,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         db.whatsappHistory.push({
           id: `cron_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
           reservationCode: item.reservationCode,
+          reservationId: item.reservationId || null,
+          title: item.title || null,
           guestName: item.guestName,
           guestPhone: item.guestPhone,
           recipientType: item.recipientType || "guest",
@@ -5948,7 +5954,9 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
         if (!db.whatsappHistory) db.whatsappHistory = [];
         db.whatsappHistory.push({
           id: `auto_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-          reservationCode: reservation.code,
+          reservationCode: reservation.code || reservation.reservationCode || (reservation.id ? `RES-${reservation.flatNumber || ''}-${String(reservation.id).padStart(4, '0')}` : null),
+          reservationId: reservation.id || null,
+          title: tpl.title || null,
           guestName: reservation.guestName,
           guestPhone: d.phone,
           recipientType: d.type,
