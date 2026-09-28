@@ -10172,6 +10172,9 @@ app.put("/api/pms/reservations/:id", (req, res) => {
       } else {
         console.log(`[WhatsApp Trigger] Edição da reserva ${r.code} (${r.guestName}) não teve alterações de itens voltados ao hóspede. Disparo ao WhatsApp suprimido.`);
       }
+    }
+  }
+
   // Sincroniza governança e card de camareira para o check-in desta reserva na edição
   if (r.checkinDate) {
     try {
