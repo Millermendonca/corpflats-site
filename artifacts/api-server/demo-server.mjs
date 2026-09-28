@@ -5772,11 +5772,17 @@ app.get("/api/dashboard/summary", (req, res) => {
 
   let totalClean = 0, totalPending = 0, totalCleaning = 0, totalWillClean = 0, totalDirty = 0;
   for (const r of requestsForDate) {
-    if (r.status === "clean") totalClean++;
-    else if (r.status === "pending_issue") totalPending++;
-    else if (r.status === "cleaning_now") totalCleaning++;
-    else if (r.status === "will_clean") totalWillClean++;
-    else if (r.status === "no_show" || r.status === "extended") {
+    const isInst = Boolean(r.isInstructionOnly || r.cleaningRequest?.isInstructionOnly || r.source === "manual_instruction" || r.type === "instruction" || r.type === "bed_adjustment_only" || r.cleaningRequest?.type === "bed_adjustment_only");
+    if (isInst) {
+      // Instruções avulsas / favores operacionais não poluem contagem de quartos sujos/faxinas
+      continue;
+    }
+    const status = r.cleaningRequest?.status || r.status;
+    if (status === "clean") totalClean++;
+    else if (status === "pending_issue") totalPending++;
+    else if (status === "cleaning_now") totalCleaning++;
+    else if (status === "will_clean") totalWillClean++;
+    else if (status === "no_show" || status === "extended") {
       // No Show e Estendeu não contam como sujos/pendentes de faxina
     }
     else totalDirty++;
@@ -5784,21 +5790,30 @@ app.get("/api/dashboard/summary", (req, res) => {
 
   const byUserMap = {};
   for (const r of requestsForDate) {
-    if (!r.assignedUserId) continue;
-    const u = db.users.find(x => x.id === r.assignedUserId);
-    if (!byUserMap[r.assignedUserId]) {
-      byUserMap[r.assignedUserId] = {
-        userId: r.assignedUserId,
+    const isInst = Boolean(r.isInstructionOnly || r.cleaningRequest?.isInstructionOnly || r.source === "manual_instruction" || r.type === "instruction" || r.type === "bed_adjustment_only" || r.cleaningRequest?.type === "bed_adjustment_only");
+    if (isInst && r.isPaidCleaning === false) continue;
+    const assignedId = r.cleaningRequest?.assignedUserId || r.assignedUserId;
+    if (!assignedId) continue;
+    const u = db.users.find(x => x.id === assignedId);
+    if (!byUserMap[assignedId]) {
+      byUserMap[assignedId] = {
+        userId: assignedId,
         username: u ? u.username : "Desconhecido",
         count: 0
       };
     }
-    byUserMap[r.assignedUserId].count++;
+    byUserMap[assignedId].count++;
   }
+
+  const regularTurnovers = requestsForDate.filter(r => {
+    const isInst = Boolean(r.isInstructionOnly || r.cleaningRequest?.isInstructionOnly || r.source === "manual_instruction" || r.type === "instruction" || r.type === "bed_adjustment_only" || r.cleaningRequest?.type === "bed_adjustment_only");
+    const st = r.cleaningRequest?.status || r.status;
+    return !isInst && st !== "no_show";
+  });
 
   res.json({
     date: dateStr,
-    totalCheckouts: requestsForDate.filter(r => r.status !== "no_show").length,
+    totalCheckouts: regularTurnovers.length,
     totalClean,
     totalPending,
     totalCleaning,
@@ -6762,7 +6777,7 @@ app.get("/api/analytics/report", (req, res) => {
 
   // Filtra limpezas concluídas no período [startDate, endDate]
   const completedCleanings = (db.cleaningRequests || []).filter(r => {
-    if (r.status !== "clean" || r.isBedAdjustmentOnly || r.isPaidCleaning === false) return false;
+    if (r.status !== "clean" || r.isBedAdjustmentOnly || r.isInstructionOnly || r.type === "instruction" || r.source === "manual_instruction" || r.isPaidCleaning === false) return false;
     const effectiveDate = r.effectiveDate || (r.completedAt ? getExecutionDateStr(r.completedAt) : r.requestDate);
     if (effectiveDate < "2026-09-01") return false;
     return effectiveDate >= startDate && effectiveDate <= endDate;
@@ -8196,17 +8211,28 @@ app.get("/api/pms/calendar", (req, res) => {
 
   const flats = (db.flats || []).filter(f => f.isActive !== false).sort((a, b) => String(a.number).localeCompare(String(b.number), undefined, { numeric: true })).map(f => {
     const fNum = String(f.number);
-    const req = cleaningRequestsToday.find(r => String(r.flatNumber) === fNum || r.flatId === f.id);
+    const req = cleaningRequestsToday.find(r => 
+      (String(r.flatNumber) === fNum || r.flatId === f.id) &&
+      !r.isInstructionOnly &&
+      !r.cleaningRequest?.isInstructionOnly &&
+      r.source !== "manual_instruction" &&
+      r.cleaningRequest?.source !== "manual_instruction" &&
+      r.type !== "bed_adjustment_only" &&
+      r.type !== "instruction" &&
+      r.cleaningRequest?.type !== "bed_adjustment_only" &&
+      r.cleaningRequest?.type !== "instruction"
+    );
     let cleaningStatus = "clean";
     let cleaningLabel = "Limpo";
     if (req) {
-      if (req.status === "cleaning_now" || req.status === "in_progress") {
+      const st = req.cleaningRequest?.status || req.status;
+      if (st === "cleaning_now" || st === "in_progress") {
         cleaningStatus = "cleaning_now";
         cleaningLabel = "Limpando";
-      } else if (req.status === "dirty" || req.status === "pending") {
+      } else if (st === "dirty" || st === "pending") {
         cleaningStatus = "dirty";
         cleaningLabel = "Sujo";
-      } else if (req.status === "clean") {
+      } else if (st === "clean") {
         cleaningStatus = "clean";
         cleaningLabel = "Limpo";
       }
@@ -10128,9 +10154,18 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
 
   const cleanReq = (db.cleaningRequests || []).find(c => 
     (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) && 
-    c.requestDate === todayStr
+    c.requestDate === todayStr &&
+    !c.isInstructionOnly &&
+    c.source !== "manual_instruction" &&
+    c.type !== "bed_adjustment_only" &&
+    c.type !== "instruction"
   ) || dailyRequests.find(c => 
-    (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber))
+    (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) &&
+    !c.isInstructionOnly &&
+    !c.cleaningRequest?.isInstructionOnly &&
+    c.source !== "manual_instruction" &&
+    c.type !== "bed_adjustment_only" &&
+    c.type !== "instruction"
   );
 
   const hasPendingCheckoutToday = (db.reservations || []).some(res => 
@@ -12466,8 +12501,14 @@ app.get("/api/reception/today", (req, res) => {
     })
     .map(r => {
       const flat = db.flats.find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber)) || { id: r.flatId, number: r.flatNumber || String(r.flatId) };
-      const guest = (db.guests || []).find(g => g.id === r.guestId) || {};
-      const cleanReq = (db.cleaningRequests || []).find(c => (c.flatId === flat.id || String(c.flatNumber) === String(flat.number)) && c.requestDate === today);
+      const cleanReq = (db.cleaningRequests || []).find(c => 
+        (c.flatId === flat.id || String(c.flatNumber) === String(flat.number)) && 
+        c.requestDate === today &&
+        !c.isInstructionOnly &&
+        c.source !== "manual_instruction" &&
+        c.type !== "bed_adjustment_only" &&
+        c.type !== "instruction"
+      );
       
       const hasPendingCheckoutToday = (db.reservations || []).some(res => 
         (res.flatId === flat.id || String(res.flatNumber) === String(flat.number)) &&
@@ -22905,7 +22946,7 @@ function syncMaidCredits(userId) {
     : defaultRate;
 
   const cleanings = (db.cleaningRequests || []).filter(r => {
-    if (r.status !== "clean" || r.isBedAdjustmentOnly || r.isPaidCleaning === false) return false;
+    if (r.status !== "clean" || r.isBedAdjustmentOnly || r.isInstructionOnly || r.type === "instruction" || r.source === "manual_instruction" || r.isPaidCleaning === false) return false;
     return r.assignedUserId === userId;
   });
 

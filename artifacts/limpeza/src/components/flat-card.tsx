@@ -371,13 +371,6 @@ export function FlatCard({
     return null
   }
 
-  const conf = statusStyles[currentStatus] || statusStyles.dirty
-  const Icon = conf.icon
-  const isPriority = typeof request?.isPriority === "boolean" ? request.isPriority : (typeof flat?.isPriority === "boolean" ? flat.isPriority : false)
-  const isTwinBeds = typeof request?.twinBeds === "boolean" ? request.twinBeds : Boolean(flat?.setupInfo?.twinBeds)
-  const pendingPeriodicTasks = flat?.pendingPeriodicTasks || []
-  const pendingSurveys = flat?.pendingSurveys || []
-
   const isInstruction = Boolean(
     flat?.isInstructionOnly ||
     request?.isInstructionOnly ||
@@ -387,6 +380,27 @@ export function FlatCard({
     request?.isBedAdjustmentOnly ||
     request?.type === "bed_adjustment_only"
   )
+
+  const rawConf = statusStyles[currentStatus] || statusStyles.dirty
+  const conf = isInstruction ? {
+    label: currentStatus === "clean" 
+      ? "Instrução Concluída" 
+      : (currentStatus === "cleaning_now" ? "Em Execução" : (currentStatus === "will_clean" ? "A Fazer" : "Instrução Pendente")),
+    cardBg: currentStatus === "clean"
+      ? "bg-slate-50/70 border-slate-200 text-slate-800 dark:bg-slate-900/30 dark:border-slate-800"
+      : "bg-purple-50/50 border-purple-200/90 text-purple-950 dark:bg-purple-950/20 dark:border-purple-900/40",
+    badgeClass: currentStatus === "clean"
+      ? "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-300 font-bold"
+      : "bg-purple-100 text-purple-900 border-purple-300 font-bold dark:bg-purple-950/50 dark:text-purple-200",
+    icon: currentStatus === "clean" ? CheckCircle2 : Wrench
+  } : rawConf
+
+  const Icon = conf.icon
+  const isPriority = typeof request?.isPriority === "boolean" ? request.isPriority : (typeof flat?.isPriority === "boolean" ? flat.isPriority : false)
+  const isTwinBeds = typeof request?.twinBeds === "boolean" ? request.twinBeds : Boolean(flat?.setupInfo?.twinBeds)
+  const pendingPeriodicTasks = flat?.pendingPeriodicTasks || []
+  const pendingSurveys = flat?.pendingSurveys || []
+
   const isPaidCleaning = typeof request?.isPaidCleaning === "boolean"
     ? request.isPaidCleaning
     : (typeof flat?.isPaidCleaning === "boolean" ? flat.isPaidCleaning : !isInstruction)
@@ -867,14 +881,14 @@ export function FlatCard({
         "overflow-hidden transition-all duration-200 border rounded-2xl shadow-xs hover:shadow-md flex flex-col justify-between h-full bg-card",
         conf.cardBg,
         isSelected && "ring-2 ring-primary ring-offset-1 shadow-md",
-        isPriority && "border-rose-400 dark:border-rose-800 shadow-rose-100/50 dark:shadow-none"
+        isPriority && !isInstruction && "border-rose-400 dark:border-rose-800 shadow-rose-100/50 dark:shadow-none"
       )}>
         <CardContent className="p-4 flex flex-col justify-between h-full space-y-3">
           <div className="space-y-2.5">
             {/* Top Bar - Linha 1: Identificação do Flat (Sem corte) e Ocupação */}
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 shrink-0">
-                {selectable && currentStatus === "dirty" && !isAssignedToOther && (
+                {selectable && currentStatus === "dirty" && !isAssignedToOther && !isInstruction && (
                   <input
                     type="checkbox"
                     checked={isSelected}
@@ -893,7 +907,7 @@ export function FlatCard({
                   <h3 className="text-lg font-black tracking-tight text-foreground whitespace-nowrap shrink-0">
                     Apt {flat.flatNumber}
                   </h3>
-                  {isPriority && (
+                  {isPriority && !isInstruction && (
                     <Badge 
                       variant="destructive" 
                       onClick={isAdmin ? togglePriority : undefined}
@@ -936,8 +950,8 @@ export function FlatCard({
               </button>
             </div>
 
-            {/* Top Bar - Linha 2 (Exclusiva para Administrador: Ações Rápidas de Camas e Prioridade) */}
-            {isAdmin && (
+            {/* Top Bar - Linha 2 (Exclusiva para Administrador: Ações Rápidas de Camas e Prioridade em Limpezas Normais) */}
+            {isAdmin && !isInstruction && (
               <div className="flex items-center gap-1.5 pt-0.5 flex-wrap">
                 {/* Botão de Alternância de Camas: 1 Cama Casal (padrão) <-> 2 Camas Solteiro */}
                 <button
@@ -992,22 +1006,24 @@ export function FlatCard({
               </div>
             )}
 
-            {/* Top Bar - Linha 3 DEDICADA: Identificação Completa de Quem Limpou / Camareira (Linha Inteira sem cortes) */}
+            {/* Top Bar - Linha 3 DEDICADA: Identificação Completa de Quem Limpou / Responsável (Linha Inteira sem cortes) */}
             <div className="w-full pt-1 pb-0.5">
               {(request?.assignedUserName || request?.assignedUsername) ? (
                 <div 
-                  title={`${currentStatus === "clean" ? "Limpo por:" : "Camareira:"} ${request.assignedUserName || request.assignedUsername}`}
+                  title={`${currentStatus === "clean" ? (isInstruction ? "Executado por:" : "Limpo por:") : (isInstruction ? "Responsável:" : "Camareira:")} ${request.assignedUserName || request.assignedUsername}`}
                   className={cn(
                     "w-full text-xs font-bold px-2.5 py-1.5 rounded-xl shadow-2xs flex items-center gap-1.5 border whitespace-normal break-words leading-relaxed cursor-help",
                     currentStatus === "clean" 
                       ? "bg-emerald-50 text-emerald-950 border-emerald-300 dark:bg-emerald-950/50 dark:text-emerald-200 dark:border-emerald-700"
-                      : "bg-sky-50 text-sky-950 border-sky-300 dark:bg-sky-950/50 dark:text-sky-200 dark:border-sky-700"
+                      : isInstruction
+                        ? "bg-purple-50 text-purple-950 border-purple-300 dark:bg-purple-950/50 dark:text-purple-200 dark:border-purple-700"
+                        : "bg-sky-50 text-sky-950 border-sky-300 dark:bg-sky-950/50 dark:text-sky-200 dark:border-sky-700"
                   )}
                 >
                   <User className="w-3.5 h-3.5 text-current shrink-0" />
                   <div className="flex-1 min-w-0 break-words">
                     <span className="font-semibold text-muted-foreground mr-1 text-[11px]">
-                      {currentStatus === "clean" ? "Limpo por:" : "Camareira:"}
+                      {currentStatus === "clean" ? (isInstruction ? "Executado por:" : "Limpo por:") : (isInstruction ? "Responsável:" : "Camareira:")}
                     </span>
                     <strong className="capitalize font-black text-foreground text-xs">
                       {request.assignedUserName || request.assignedUsername}
@@ -1029,13 +1045,6 @@ export function FlatCard({
                 {conf.label}
               </Badge>
 
-              {isInstruction && (
-                <Badge className="bg-purple-700 hover:bg-purple-800 text-white font-bold text-[10px] shadow-2xs px-2.5 py-0.5 flex items-center gap-1 rounded-lg">
-                  <BedDouble className="w-3 h-3 shrink-0" />
-                  <span>🛏️ {isTwinBeds ? "Apenas Separar 2 Camas (Sem Limpeza)" : "Instrução no Flat (Sem Limpeza)"}</span>
-                </Badge>
-              )}
-
               {/* Tag de Remuneração: Exibida SOMENTE para Administradores */}
               {isAdmin && isInstruction && (
                 <Badge variant="outline" className={cn(
@@ -1049,14 +1058,14 @@ export function FlatCard({
                 </Badge>
               )}
 
-              {(flat.isPendingFromPreviousDay || request?.isPendingFromPreviousDay) && (
+              {(flat.isPendingFromPreviousDay || request?.isPendingFromPreviousDay) && !isInstruction && (
                 <Badge className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] shadow-2xs px-2 py-0.5 flex items-center gap-1 rounded-lg">
                   <AlertTriangle className="w-3 h-3 shrink-0" />
                   <span>Não limpo em {(flat.originalRequestDate || request?.originalRequestDate) ? format(new Date((flat.originalRequestDate || request?.originalRequestDate) + "T12:00:00"), "dd/MM") : "dia anterior"}</span>
                 </Badge>
               )}
 
-              {hasCheckin && (
+              {hasCheckin && !isInstruction && (
                 <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] shadow-2xs px-2 py-0.5 flex items-center gap-1 rounded-lg">
                   <span>🟢 Entra Hoje</span>
                 </Badge>
@@ -1076,7 +1085,7 @@ export function FlatCard({
             </div>
 
             {/* Guest Info - Admin View (Nomes dos hóspedes em box limpo) */}
-            {isAdmin && (flat?.leavingGuest || flat?.arrivingGuest || flat?.activeReservation?.guestName) && (
+            {isAdmin && !isInstruction && (flat?.leavingGuest || flat?.arrivingGuest || flat?.activeReservation?.guestName) && (
               <div className="text-[11px] bg-muted/40 rounded-xl p-2.5 border border-border/70 space-y-1">
                 {flat.leavingGuest && (
                   <div className="flex items-start gap-1.5 text-slate-700 dark:text-slate-300">
@@ -1100,49 +1109,46 @@ export function FlatCard({
             )}
 
             {/* Aviso Anônimo para a Camareira */}
-            {!isAdmin && hasCheckin && (
+            {!isAdmin && hasCheckin && !isInstruction && (
               <div className="text-[11px] text-emerald-900 dark:text-emerald-200 bg-emerald-50/90 dark:bg-emerald-950/40 rounded-xl px-2.5 py-1.5 border border-emerald-200 dark:border-emerald-800/50 font-semibold flex items-center gap-1.5">
                 <span>🟢 Há novo check-in previsto para este flat hoje.</span>
               </div>
             )}
-            {!isAdmin && flat?.activeReservation?.guestName && (
+            {!isAdmin && flat?.activeReservation?.guestName && !isInstruction && (
               <div className="text-[11px] text-amber-900 dark:text-amber-200 bg-amber-50/90 dark:bg-amber-950/40 rounded-xl px-2.5 py-1.5 border border-amber-200 dark:border-amber-800/50 font-semibold flex items-center gap-1.5">
                 <span>⚠️ Quarto atualmente ocupado por hóspede em estadia.</span>
               </div>
             )}
 
             {/* Box de Instrução no Flat (Sem Limpeza) */}
-            {isInstruction && instructionText && (
+            {isInstruction && (
               <div 
                 className={cn(
-                  "bg-purple-500/10 dark:bg-purple-950/30 border border-purple-300 dark:border-purple-700/60 rounded-xl p-3 text-xs space-y-2",
+                  "bg-purple-500/10 dark:bg-purple-950/30 border-2 border-purple-300 dark:border-purple-700/60 rounded-xl p-3 text-xs space-y-2.5 shadow-2xs",
                   isAdmin && "cursor-pointer hover:border-purple-400 hover:bg-purple-500/15 transition-all"
                 )}
                 onClick={isAdmin ? () => setInstructionsModalOpen(true) : undefined}
                 title={isAdmin ? "Clique para editar instruções deste quarto" : undefined}
               >
-                <div className="font-bold text-purple-950 dark:text-purple-200 flex items-center justify-between gap-1.5">
+                <div className="flex items-center justify-between gap-1.5 bg-amber-500/15 dark:bg-amber-950/40 border border-amber-300/80 dark:border-amber-700/60 text-amber-950 dark:text-amber-200 px-2.5 py-1.5 rounded-lg font-black text-[11px]">
                   <div className="flex items-center gap-1.5">
-                    <BedDouble className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0" />
-                    <span>Instrução da Governança / Tarefa:</span>
+                    <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                    <span>NÃO É LIMPEZA DE QUARTO</span>
                   </div>
                   {isAdmin && (
                     <span className="text-[10px] text-purple-800 dark:text-purple-300 font-semibold underline flex items-center gap-0.5">
-                      ✏️ Editar Instrução
+                      ✏️ Editar
                     </span>
                   )}
                 </div>
 
-                {isTwinBeds && (
-                  <div className="flex flex-wrap gap-1.5">
-                    <Badge className="bg-purple-700 hover:bg-purple-800 text-white font-bold text-[10px] px-2 py-0.5 shadow-2xs flex items-center gap-1 rounded-lg">
-                      <span>🛏️ Montar 2 Camas de Solteiro (Separadas)</span>
-                    </Badge>
-                  </div>
-                )}
-
-                <div className="bg-background/90 p-2.5 rounded-lg border border-purple-200 dark:border-purple-800/60 text-[11px] text-foreground leading-relaxed">
-                  <p className="whitespace-pre-wrap font-medium">{instructionText}</p>
+                <div className="bg-background/95 p-3 rounded-lg border border-purple-200 dark:border-purple-800/60 text-[12px] text-foreground leading-relaxed shadow-2xs">
+                  <span className="font-bold text-purple-950 dark:text-purple-300 block text-[11px] mb-1">
+                    🛠️ O que fazer no quarto:
+                  </span>
+                  <p className="whitespace-pre-wrap font-semibold text-slate-800 dark:text-slate-100">
+                    {instructionText || "Separar as camas, colocar como 2 solteiras."}
+                  </p>
                 </div>
               </div>
             )}
@@ -1452,19 +1458,21 @@ export function FlatCard({
                 )}
 
                 {/* Lost Item button for maids & admin */}
-                <Button 
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setLostItemModalOpen(true)}
-                  className="w-full text-[11px] font-semibold h-8 gap-1.5 border-dashed border-amber-400/90 dark:border-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/40 text-amber-900 dark:text-amber-200 mt-1 shadow-2xs"
-                >
-                  <PackageOpen className="w-3.5 h-3.5 text-amber-600" />
-                  <span>Item Encontrado no Quarto</span>
-                </Button>
+                {!isInstruction && (
+                  <Button 
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setLostItemModalOpen(true)}
+                    className="w-full text-[11px] font-semibold h-8 gap-1.5 border-dashed border-amber-400/90 dark:border-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/40 text-amber-900 dark:text-amber-200 mt-1 shadow-2xs"
+                  >
+                    <PackageOpen className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Item Encontrado no Quarto</span>
+                  </Button>
+                )}
 
                 {/* Extend Stay Button (Admin Only, when not clean) */}
-                {isAdmin && currentStatus !== "clean" && currentStatus !== "no_show" && (
+                {isAdmin && !isInstruction && currentStatus !== "clean" && currentStatus !== "no_show" && (
                   <Button 
                     type="button"
                     variant="ghost"
@@ -1480,7 +1488,7 @@ export function FlatCard({
                 )}
 
                 {/* No Show Button (Admin Only, available when room not clean) */}
-                {isAdmin && currentStatus !== "clean" && currentStatus !== "no_show" && (
+                {isAdmin && !isInstruction && currentStatus !== "clean" && currentStatus !== "no_show" && (
                   <Button 
                     type="button"
                     variant="ghost"
@@ -1500,16 +1508,20 @@ export function FlatCard({
         </CardContent>
       </Card>
 
-      {/* Reverter Quarto Limpo para Sujo Confirmation Dialog */}
+      {/* Reverter Quarto Limpo para Sujo / Reabrir Tarefa Confirmation Dialog */}
       <Dialog open={revertDirtyModalOpen} onOpenChange={setRevertDirtyModalOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-amber-600">
               <RotateCcw className="w-5 h-5" />
-              Devolver Quarto {flat.flatNumber} para Sujo?
+              {isInstruction 
+                ? `Reabrir Instrução no Apt ${flat.flatNumber}?` 
+                : `Devolver Quarto ${flat.flatNumber} para Sujo?`}
             </DialogTitle>
             <DialogDescription>
-              Tem certeza que deseja devolver este apartamento para o estado <strong>Sujo</strong>? Isso cancelará a conclusão da limpeza registrada e recolocará o quarto na lista de pendências para ser limpo novamente.
+              {isInstruction 
+                ? "Deseja reabrir esta instrução como pendente na lista de tarefas operacionais?" 
+                : <>Tem certeza que deseja devolver este apartamento para o estado <strong>Sujo</strong>? Isso cancelará a conclusão da limpeza registrada e recolocará o quarto na lista de pendências para ser limpo novamente.</>}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:gap-0 mt-4">
@@ -1524,7 +1536,7 @@ export function FlatCard({
               }}
               disabled={isProcessing}
             >
-              Sim, Devolver Quarto
+              {isInstruction ? "Sim, Reabrir Tarefa" : "Sim, Devolver Quarto"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2056,23 +2068,27 @@ export function FlatCard({
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2 text-base font-black text-emerald-600 dark:text-emerald-400">
                   <CheckCircle2 className="w-5 h-5" />
-                  Marcar Quarto como Limpo • Flat {flat.flatNumber}
+                  {isInstruction 
+                    ? `Concluir Instrução • Apt ${flat.flatNumber}` 
+                    : `Marcar Quarto como Limpo • Flat ${flat.flatNumber}`}
                 </DialogTitle>
                 <DialogDescription className="text-xs text-muted-foreground">
-                  Selecione a camareira responsável por esta higienização para registrar a produtividade e remuneração corretamente no sistema.
+                  {isInstruction 
+                    ? "Selecione quem executou esta tarefa/instrução no apartamento para registrar a conclusão." 
+                    : "Selecione a camareira responsável por esta higienização para registrar a produtividade e remuneração corretamente no sistema."}
                 </DialogDescription>
               </DialogHeader>
 
               <div className="py-4 space-y-4 text-xs">
-                {/* Seletor de Camareira */}
+                {/* Seletor de Colaborador */}
                 <div className="space-y-2">
                   <Label className="font-bold text-xs text-foreground flex items-center gap-1.5">
                     <User className="w-4 h-4 text-emerald-600" />
-                    Quem realizou a limpeza deste quarto? *
+                    {isInstruction ? "Quem executou a tarefa no flat? *" : "Quem realizou a limpeza deste quarto? *"}
                   </Label>
                   <Select value={selectedMaidId} onValueChange={setSelectedMaidId}>
                     <SelectTrigger className="w-full h-10 text-xs rounded-xl bg-background font-semibold">
-                      <SelectValue placeholder="Selecione a camareira" />
+                      <SelectValue placeholder={isInstruction ? "Selecione o responsável" : "Selecione a camareira"} />
                     </SelectTrigger>
                     <SelectContent>
                       {staffList.map(s => (
@@ -2087,17 +2103,32 @@ export function FlatCard({
                   </Select>
                 </div>
 
-                <div className="p-3.5 rounded-2xl bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 space-y-1 text-xs">
-                  <span className="font-bold text-emerald-900 dark:text-emerald-200 flex items-center gap-1">
-                    <Sparkles className="w-3.5 h-3.5" />
-                    Contabilização Automática
+                <div className={cn(
+                  "p-3.5 rounded-2xl border space-y-1 text-xs",
+                  isInstruction 
+                    ? "bg-purple-50/80 dark:bg-purple-950/30 border-purple-200 dark:border-purple-800/60"
+                    : "bg-emerald-50/80 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60"
+                )}>
+                  <span className={cn(
+                    "font-bold flex items-center gap-1",
+                    isInstruction ? "text-purple-900 dark:text-purple-200" : "text-emerald-900 dark:text-emerald-200"
+                  )}>
+                    {isInstruction ? <Wrench className="w-3.5 h-3.5" /> : <Sparkles className="w-3.5 h-3.5" />}
+                    {isInstruction ? "Serviço Operacional / Instrução" : "Contabilização Automática"}
                   </span>
-                  <p className="text-[11px] text-emerald-800 dark:text-emerald-300 leading-relaxed">
-                    Esta limpeza será creditada integralmente na contagem e nos relatórios de produtividade da colaboradora selecionada.
+                  <p className={cn(
+                    "text-[11px] leading-relaxed",
+                    isInstruction ? "text-purple-800 dark:text-purple-300" : "text-emerald-800 dark:text-emerald-300"
+                  )}>
+                    {isInstruction
+                      ? (isPaidCleaning 
+                          ? "Esta instrução foi configurada como remunerada e será creditada na produtividade da colaboradora." 
+                          : "Esta instrução foi registrada como favor operacional (não remunerada) e não gera crédito financeiro de faxina.")
+                      : "Esta limpeza será creditada integralmente na contagem e nos relatórios de produtividade da colaboradora selecionada."}
                   </p>
                 </div>
 
-                {pendingPeriodicTasks.length > 0 && (
+                {pendingPeriodicTasks.length > 0 && !isInstruction && (
                   <div className="p-3.5 rounded-2xl bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60 space-y-1 text-xs">
                     <span className="font-bold text-amber-900 dark:text-amber-200 flex items-center gap-1">
                       <ClipboardCheck className="w-3.5 h-3.5 text-amber-600" />
@@ -2117,10 +2148,13 @@ export function FlatCard({
                 <Button 
                   type="submit" 
                   disabled={adminCleanSubmitting || !selectedMaidId} 
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl h-9 gap-1.5 shadow-sm"
+                  className={cn(
+                    "text-white text-xs font-bold rounded-xl h-9 gap-1.5 shadow-sm",
+                    isInstruction ? "bg-purple-700 hover:bg-purple-800" : "bg-emerald-600 hover:bg-emerald-700"
+                  )}
                 >
                   <CheckCircle2 className="w-4 h-4" />
-                  {adminCleanSubmitting ? "Salvando..." : "Confirmar Limpeza"}
+                  {adminCleanSubmitting ? "Salvando..." : (isInstruction ? "Confirmar Conclusão" : "Confirmar Limpeza")}
                 </Button>
               </DialogFooter>
             </form>

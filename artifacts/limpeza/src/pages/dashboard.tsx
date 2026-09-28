@@ -234,8 +234,18 @@ export default function Dashboard() {
     if (statusFilter === "all") return baseFlats
     if (statusFilter === "cleaning_now") {
       return baseFlats.filter((f: any) => {
+        const isInst = Boolean(f?.isInstructionOnly || f?.cleaningRequest?.isInstructionOnly || f?.type === "instruction" || f?.source === "manual_instruction" || f?.isBedAdjustmentOnly || f?.cleaningRequest?.isBedAdjustmentOnly)
+        if (isInst) return false
         const st = f?.cleaningRequest?.status || "dirty"
         return st === "cleaning_now" || st === "will_clean"
+      })
+    }
+    if (statusFilter === "dirty") {
+      return baseFlats.filter((f: any) => {
+        const isInst = Boolean(f?.isInstructionOnly || f?.cleaningRequest?.isInstructionOnly || f?.type === "instruction" || f?.source === "manual_instruction" || f?.isBedAdjustmentOnly || f?.cleaningRequest?.isBedAdjustmentOnly)
+        if (isInst) return false
+        const st = f?.cleaningRequest?.status || "dirty"
+        return st === "dirty"
       })
     }
     return baseFlats.filter((f: any) => {
