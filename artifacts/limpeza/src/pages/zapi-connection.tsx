@@ -41,7 +41,8 @@ import {
   Activity,
   Webhook,
   Building,
-  DoorOpen
+  DoorOpen,
+  Trash2
 } from "lucide-react"
 import { AccessDenied } from "@/components/access-denied"
 
@@ -305,7 +306,7 @@ export default function ZapiConnection() {
       const res = await fetch("/api/whatsapp/test-disconnection-alert", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user: user?.name || user?.username || "admin" })
+        body: JSON.stringify({ user: (user as any)?.name || user?.username || "admin" })
       })
       const data = await res.json()
 
