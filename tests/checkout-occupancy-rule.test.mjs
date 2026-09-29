@@ -150,4 +150,80 @@ describe('Regra de Ocupação Padrão em Check-outs', () => {
     assert.strictEqual(req1004.assignedUserId, null, 'Flat 1004 não deve estar atribuído a Cris');
     assert.strictEqual(req1004.completedAt, null, 'Flat 1004 não deve ter completedAt');
   });
+
+  it('16. getRequestsForDate em 29/09 NÃO deve conter Flat 408 como pendência de 30/09 ("Não limpo em 30/09")', () => {
+    const serverCode = fs.readFileSync(serverPath, 'utf8');
+    function extractFunction(code, fnName) {
+      const startIdx = code.indexOf('function ' + fnName + '(');
+      if (startIdx === -1) throw new Error('Function ' + fnName + ' not found');
+      let openBraces = 0, started = false, endIdx = -1;
+      for (let i = startIdx; i < code.length; i++) {
+        if (code[i] === '{') { openBraces++; started = true; }
+        else if (code[i] === '}') {
+          openBraces--;
+          if (started && openBraces === 0) { endIdx = i + 1; break; }
+        }
+      }
+      return code.substring(startIdx, endIdx);
+    }
+    const grfdCode = extractFunction(serverCode, 'getRequestsForDate');
+    const ruiCode = extractFunction(serverCode, 'reconcileUniversalIntegrity');
+    const db = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+    const fn = new Function('db', 'getTodayStr', 'getOffsetDateStr', 'saveDatabase', grfdCode + '\n' + ruiCode + '\n return { getRequestsForDate, reconcileUniversalIntegrity };');
+    const scope = fn(db, () => '2026-09-29', (d, off) => '2026-09-29', () => {});
+    scope.reconcileUniversalIntegrity();
+
+    const reqs29 = scope.getRequestsForDate('2026-09-29');
+    const card408 = reqs29.find(r => String(r.flatNumber) === '408');
+    assert.strictEqual(card408, undefined, 'Flat 408 não deve constar na listagem de 29/09, pois o hóspede Felipe só sai em 30/09');
+  });
+
+  it('17. Flat 509 em 29/09 deve conter twinBeds: true, extraMattress: true e instruções completas para a camareira', () => {
+    const serverCode = fs.readFileSync(serverPath, 'utf8');
+    function extractFunction(code, fnName) {
+      const startIdx = code.indexOf('function ' + fnName + '(');
+      if (startIdx === -1) throw new Error('Function ' + fnName + ' not found');
+      let openBraces = 0, started = false, endIdx = -1;
+      for (let i = startIdx; i < code.length; i++) {
+        if (code[i] === '{') { openBraces++; started = true; }
+        else if (code[i] === '}') {
+          openBraces--;
+          if (started && openBraces === 0) { endIdx = i + 1; break; }
+        }
+      }
+      return code.substring(startIdx, endIdx);
+    }
+    const grfdCode = extractFunction(serverCode, 'getRequestsForDate');
+    const ruiCode = extractFunction(serverCode, 'reconcileUniversalIntegrity');
+    const db = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+    const fn = new Function('db', 'getTodayStr', 'getOffsetDateStr', 'saveDatabase', grfdCode + '\n' + ruiCode + '\n return { getRequestsForDate, reconcileUniversalIntegrity };');
+    const scope = fn(db, () => '2026-09-29', (d, off) => '2026-09-29', () => {});
+    scope.reconcileUniversalIntegrity();
+
+    const reqs29 = scope.getRequestsForDate('2026-09-29');
+    const card509 = reqs29.find(r => String(r.flatNumber) === '509');
+    assert.ok(card509, 'Flat 509 deve existir na listagem de 29/09');
+    assert.strictEqual(card509.twinBeds, true, 'Flat 509 deve ter twinBeds: true');
+    assert.strictEqual(card509.extraMattress, true, 'Flat 509 deve ter extraMattress: true');
+    assert.ok(
+      card509.adminNote && card509.adminNote.includes('2 solteiras') && card509.adminNote.includes('colchão extra'),
+      'Flat 509 deve ter a nota completa de camas e colchão extra'
+    );
+  });
+
+  it('18. Step 4.5 em getRequestsForDate deve restringir execDate === dateStr && r.requestDate < dateStr', () => {
+    const serverCode = fs.readFileSync(serverPath, 'utf8');
+    assert.ok(
+      serverCode.includes('if (execDate === dateStr && r.requestDate < dateStr)'),
+      'Step 4.5 deve estritamente exigir r.requestDate < dateStr para impedir carryover fantasma de datas futuras'
+    );
+  });
+
+  it('19. Edição de reserva em app.put deve sincronizar preferências de cama/colchão/recado em tempo real com a governança', () => {
+    const serverCode = fs.readFileSync(serverPath, 'utf8');
+    assert.ok(
+      serverCode.includes('Sincronização em tempo real das preferências de quarto (camas/colchão/recado) com o card de governança na data de check-in'),
+      'app.put deve propagar alterações de twinBeds e extraMattress para a governança em tempo real'
+    );
+  });
 });
