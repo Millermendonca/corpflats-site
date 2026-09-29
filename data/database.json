@@ -4957,7 +4957,7 @@
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
-      "isVacant": true,
+      "isVacant": false,
       "isPriority": false,
       "isExtended": false,
       "twinBeds": false,
@@ -4968,7 +4968,8 @@
       "pendingObservation": null,
       "willCleanAt": "2026-10-02T13:00:00.000Z",
       "createdAt": "2026-10-02T08:00:00.000Z",
-      "updatedAt": "2026-10-02T13:00:00.000Z"
+      "updatedAt": "2026-10-02T13:00:00.000Z",
+      "isVacantExplicitlySet": false
     },
     {
       "id": 1342,
@@ -4981,7 +4982,7 @@
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
-      "isVacant": true,
+      "isVacant": false,
       "isPriority": false,
       "isExtended": false,
       "twinBeds": false,
@@ -4992,7 +4993,8 @@
       "pendingObservation": null,
       "willCleanAt": "2026-10-03T13:00:00.000Z",
       "createdAt": "2026-10-03T08:00:00.000Z",
-      "updatedAt": "2026-10-03T13:00:00.000Z"
+      "updatedAt": "2026-10-03T13:00:00.000Z",
+      "isVacantExplicitlySet": false
     },
     {
       "id": 1343,
@@ -5005,7 +5007,7 @@
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
-      "isVacant": true,
+      "isVacant": false,
       "isPriority": false,
       "isExtended": false,
       "twinBeds": false,
@@ -5016,7 +5018,8 @@
       "pendingObservation": null,
       "willCleanAt": "2026-09-29T13:00:00.000Z",
       "createdAt": "2026-09-29T08:00:00.000Z",
-      "updatedAt": "2026-09-29T13:00:00.000Z"
+      "updatedAt": "2026-09-29T13:00:00.000Z",
+      "isVacantExplicitlySet": false
     },
     {
       "id": 1344,
@@ -5029,7 +5032,7 @@
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
-      "isVacant": true,
+      "isVacant": false,
       "isPriority": false,
       "isExtended": false,
       "twinBeds": false,
@@ -5040,7 +5043,8 @@
       "pendingObservation": null,
       "willCleanAt": "2026-09-29T13:00:00.000Z",
       "createdAt": "2026-09-29T08:00:00.000Z",
-      "updatedAt": "2026-09-29T13:00:00.000Z"
+      "updatedAt": "2026-09-29T13:00:00.000Z",
+      "isVacantExplicitlySet": false
     },
     {
       "id": 1345,
@@ -5053,7 +5057,7 @@
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
-      "isVacant": true,
+      "isVacant": false,
       "isPriority": false,
       "isExtended": false,
       "twinBeds": false,
@@ -5064,7 +5068,8 @@
       "pendingObservation": null,
       "willCleanAt": "2026-09-29T13:00:00.000Z",
       "createdAt": "2026-09-29T08:00:00.000Z",
-      "updatedAt": "2026-09-29T13:00:00.000Z"
+      "updatedAt": "2026-09-29T13:00:00.000Z",
+      "isVacantExplicitlySet": false
     },
     {
       "id": 1346,
@@ -5077,7 +5082,7 @@
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
-      "isVacant": true,
+      "isVacant": false,
       "isPriority": false,
       "isExtended": false,
       "twinBeds": false,
@@ -5088,7 +5093,8 @@
       "pendingObservation": null,
       "willCleanAt": "2026-10-09T13:00:00.000Z",
       "createdAt": "2026-10-09T08:00:00.000Z",
-      "updatedAt": "2026-10-09T13:00:00.000Z"
+      "updatedAt": "2026-10-09T13:00:00.000Z",
+      "isVacantExplicitlySet": false
     },
     {
       "id": 1347,
@@ -5101,7 +5107,7 @@
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
-      "isVacant": true,
+      "isVacant": false,
       "isPriority": false,
       "isExtended": false,
       "twinBeds": false,
@@ -5112,7 +5118,8 @@
       "pendingObservation": null,
       "willCleanAt": "2026-10-01T13:00:00.000Z",
       "createdAt": "2026-10-01T08:00:00.000Z",
-      "updatedAt": "2026-10-01T13:00:00.000Z"
+      "updatedAt": "2026-10-01T13:00:00.000Z",
+      "isVacantExplicitlySet": false
     },
     {
       "id": 1348,
@@ -5125,7 +5132,7 @@
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
-      "isVacant": true,
+      "isVacant": false,
       "isPriority": false,
       "isExtended": false,
       "twinBeds": false,
@@ -5136,7 +5143,8 @@
       "pendingObservation": null,
       "willCleanAt": "2026-09-29T13:00:00.000Z",
       "createdAt": "2026-09-29T08:00:00.000Z",
-      "updatedAt": "2026-09-29T13:00:00.000Z"
+      "updatedAt": "2026-09-29T13:00:00.000Z",
+      "isVacantExplicitlySet": false
     },
     {
       "id": 1349,
@@ -5149,7 +5157,7 @@
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
-      "isVacant": true,
+      "isVacant": false,
       "isPriority": false,
       "isExtended": false,
       "twinBeds": false,
@@ -5160,7 +5168,8 @@
       "pendingObservation": null,
       "willCleanAt": "2026-09-30T13:00:00.000Z",
       "createdAt": "2026-09-30T08:00:00.000Z",
-      "updatedAt": "2026-09-30T13:00:00.000Z"
+      "updatedAt": "2026-09-30T13:00:00.000Z",
+      "isVacantExplicitlySet": false
     },
     {
       "id": 1350,
@@ -5173,7 +5182,7 @@
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
-      "isVacant": true,
+      "isVacant": false,
       "isPriority": false,
       "isExtended": false,
       "twinBeds": false,
@@ -5184,7 +5193,8 @@
       "pendingObservation": null,
       "willCleanAt": "2026-09-29T13:00:00.000Z",
       "createdAt": "2026-09-29T08:00:00.000Z",
-      "updatedAt": "2026-09-29T13:00:00.000Z"
+      "updatedAt": "2026-09-29T13:00:00.000Z",
+      "isVacantExplicitlySet": false
     },
     {
       "id": 1351,
@@ -5197,7 +5207,7 @@
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
-      "isVacant": true,
+      "isVacant": false,
       "isPriority": false,
       "isExtended": false,
       "twinBeds": false,
@@ -5208,7 +5218,8 @@
       "pendingObservation": null,
       "willCleanAt": "2026-10-13T13:00:00.000Z",
       "createdAt": "2026-10-13T08:00:00.000Z",
-      "updatedAt": "2026-10-13T13:00:00.000Z"
+      "updatedAt": "2026-10-13T13:00:00.000Z",
+      "isVacantExplicitlySet": false
     },
     {
       "id": 1352,
@@ -5221,7 +5232,7 @@
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
-      "isVacant": true,
+      "isVacant": false,
       "isPriority": false,
       "isExtended": false,
       "twinBeds": false,
@@ -5232,7 +5243,8 @@
       "pendingObservation": null,
       "willCleanAt": "2026-09-28T13:00:00.000Z",
       "createdAt": "2026-09-28T08:00:00.000Z",
-      "updatedAt": "2026-09-28T13:00:00.000Z"
+      "updatedAt": "2026-09-28T13:00:00.000Z",
+      "isVacantExplicitlySet": false
     },
     {
       "id": 1353,
@@ -5245,7 +5257,7 @@
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
-      "isVacant": true,
+      "isVacant": false,
       "isPriority": false,
       "isExtended": false,
       "twinBeds": false,
@@ -5256,7 +5268,8 @@
       "pendingObservation": null,
       "willCleanAt": "2026-09-28T13:00:00.000Z",
       "createdAt": "2026-09-28T08:00:00.000Z",
-      "updatedAt": "2026-09-28T13:00:00.000Z"
+      "updatedAt": "2026-09-28T13:00:00.000Z",
+      "isVacantExplicitlySet": false
     },
     {
       "id": 1354,
@@ -5269,7 +5282,7 @@
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
-      "isVacant": true,
+      "isVacant": false,
       "isPriority": false,
       "isExtended": false,
       "twinBeds": false,
@@ -5280,7 +5293,8 @@
       "pendingObservation": null,
       "willCleanAt": "2026-09-27T13:00:00.000Z",
       "createdAt": "2026-09-27T08:00:00.000Z",
-      "updatedAt": "2026-09-27T13:00:00.000Z"
+      "updatedAt": "2026-09-27T13:00:00.000Z",
+      "isVacantExplicitlySet": false
     },
     {
       "id": 1355,
@@ -5293,7 +5307,7 @@
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
-      "isVacant": true,
+      "isVacant": false,
       "isPriority": false,
       "isExtended": false,
       "twinBeds": false,
@@ -5304,7 +5318,8 @@
       "pendingObservation": null,
       "willCleanAt": "2026-10-02T13:00:00.000Z",
       "createdAt": "2026-10-02T08:00:00.000Z",
-      "updatedAt": "2026-10-02T13:00:00.000Z"
+      "updatedAt": "2026-10-02T13:00:00.000Z",
+      "isVacantExplicitlySet": false
     },
     {
       "id": 1356,
@@ -5317,7 +5332,7 @@
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
-      "isVacant": true,
+      "isVacant": false,
       "isPriority": false,
       "isExtended": false,
       "twinBeds": false,
@@ -5328,7 +5343,8 @@
       "pendingObservation": null,
       "willCleanAt": "2026-10-02T13:00:00.000Z",
       "createdAt": "2026-10-02T08:00:00.000Z",
-      "updatedAt": "2026-10-02T13:00:00.000Z"
+      "updatedAt": "2026-10-02T13:00:00.000Z",
+      "isVacantExplicitlySet": false
     },
     {
       "id": 1357,
@@ -5341,7 +5357,7 @@
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
-      "isVacant": true,
+      "isVacant": false,
       "isPriority": false,
       "isExtended": false,
       "twinBeds": false,
@@ -5352,7 +5368,8 @@
       "pendingObservation": null,
       "willCleanAt": "2026-09-29T13:00:00.000Z",
       "createdAt": "2026-09-29T08:00:00.000Z",
-      "updatedAt": "2026-09-29T13:00:00.000Z"
+      "updatedAt": "2026-09-29T13:00:00.000Z",
+      "isVacantExplicitlySet": false
     },
     {
       "id": 1359,
@@ -5365,7 +5382,7 @@
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
-      "isVacant": true,
+      "isVacant": false,
       "isPriority": false,
       "isExtended": false,
       "twinBeds": false,
@@ -5376,7 +5393,8 @@
       "pendingObservation": null,
       "willCleanAt": "2026-10-01T13:00:00.000Z",
       "createdAt": "2026-10-01T08:00:00.000Z",
-      "updatedAt": "2026-10-01T13:00:00.000Z"
+      "updatedAt": "2026-10-01T13:00:00.000Z",
+      "isVacantExplicitlySet": false
     },
     {
       "id": 1360,
@@ -5389,7 +5407,7 @@
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
-      "isVacant": true,
+      "isVacant": false,
       "isPriority": false,
       "isExtended": false,
       "twinBeds": false,
@@ -5400,7 +5418,8 @@
       "pendingObservation": null,
       "willCleanAt": "2026-09-28T13:00:00.000Z",
       "createdAt": "2026-09-28T08:00:00.000Z",
-      "updatedAt": "2026-09-28T13:00:00.000Z"
+      "updatedAt": "2026-09-28T13:00:00.000Z",
+      "isVacantExplicitlySet": false
     },
     {
       "id": 1361,
@@ -5438,7 +5457,7 @@
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
-      "isVacant": true,
+      "isVacant": false,
       "isPriority": false,
       "isExtended": false,
       "twinBeds": false,
@@ -5449,7 +5468,8 @@
       "pendingObservation": null,
       "willCleanAt": "2026-10-02T13:00:00.000Z",
       "createdAt": "2026-10-02T08:00:00.000Z",
-      "updatedAt": "2026-10-02T13:00:00.000Z"
+      "updatedAt": "2026-10-02T13:00:00.000Z",
+      "isVacantExplicitlySet": false
     },
     {
       "id": 1365,
@@ -5462,7 +5482,7 @@
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
-      "isVacant": true,
+      "isVacant": false,
       "isPriority": false,
       "isExtended": false,
       "twinBeds": false,
@@ -5473,7 +5493,8 @@
       "pendingObservation": null,
       "willCleanAt": "2026-09-29T13:00:00.000Z",
       "createdAt": "2026-09-29T08:00:00.000Z",
-      "updatedAt": "2026-09-29T13:00:00.000Z"
+      "updatedAt": "2026-09-29T13:00:00.000Z",
+      "isVacantExplicitlySet": false
     }
   ],
   "periodicTasks": [

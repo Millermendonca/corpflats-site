@@ -1742,7 +1742,8 @@ function reconcileUniversalIntegrity(incomingState = null) {
           assignedUserId: null,
           assignedUsername: null,
           assignedUserName: null,
-          isVacant: true,
+          isVacant: false,
+          isVacantExplicitlySet: false,
           isPriority: false,
           isExtended: false,
           twinBeds: Boolean(r.twinBeds),
@@ -4917,7 +4918,10 @@ app.post("/api/public/checkout", async (req, res) => {
   const guestDisplayName = foundRes?.guestName || "Hóspede";
   const now = new Date().toISOString();
   if (existing) {
-    existing.isVacant = true; // Confirma quarto desocupado
+    existing.isVacant = true; // Confirma quarto desocupado via link
+    existing.isVacantExplicitlySet = true;
+    existing.vacantSource = "guest_checkout";
+    existing.vacantSetAt = now;
     existing.leavingGuest = existing.leavingGuest || guestDisplayName;
     if (!existing.pendingObservation) {
       existing.pendingObservation = `Check-out expresso confirmado (${guestDisplayName})`;
@@ -4934,7 +4938,10 @@ app.post("/api/public/checkout", async (req, res) => {
       source: "guest_checkout",
       status: "dirty",
       assignedUserId: null,
-      isVacant: true, // Já saiu
+      isVacant: true, // Já saiu via link
+      isVacantExplicitlySet: true,
+      vacantSource: "guest_checkout",
+      vacantSetAt: now,
       isPriority: false, // Prioridade manual exclusiva do admin
       leavingGuest: guestDisplayName,
       arrivingGuest: null,
@@ -5065,6 +5072,19 @@ app.patch("/api/flats/:id", (req, res) => {
   if (typeof req.body.isOccupied === "boolean") {
     f.isOccupied = req.body.isOccupied;
     f.updatedAt = new Date().toISOString();
+
+    const todayStr = getTodayStr ? getTodayStr() : new Date().toISOString().substring(0, 10);
+    const cleanReq = (db.cleaningRequests || []).find(c => 
+      (c.flatId === f.id || String(c.flatNumber) === String(f.number)) && 
+      (c.requestDate === todayStr || c.effectiveDate === todayStr)
+    );
+    if (cleanReq) {
+      cleanReq.isVacant = !req.body.isOccupied;
+      cleanReq.isVacantExplicitlySet = true;
+      cleanReq.vacantSource = "manual_card";
+      cleanReq.vacantSetAt = new Date().toISOString();
+      cleanReq.updatedAt = new Date().toISOString();
+    }
   }
   saveDatabase();
   res.json(f);
@@ -5710,6 +5730,17 @@ function getRequestsForDate(dateStr, isNested = false) {
     const resolvedMaidName = existingCleaning?.assignedUsername || existingCleaning?.assignedUserName || auditCleanEvent?.details?.assignedMaidName || (auditCleanEvent ? "Cris" : null);
     const resolvedMaidId = existingCleaning?.assignedUserId || auditCleanEvent?.details?.assignedUserId || (auditCleanEvent ? 2 : null);
 
+    // Regra de Negócio: Check-outs entram como padrão com status OCUPADO (isVacant = false).
+    // "Desocupado" apenas quando explicitamente confirmado manualmente via card ou via link (hóspede ou recepção).
+    const isExplicitlyVacantCheckout = Boolean(existingCleaning && existingCleaning.isVacant && (
+      existingCleaning.isVacantExplicitlySet ||
+      existingCleaning.vacantSource === "guest_checkout" ||
+      existingCleaning.vacantSource === "reception_checkout" ||
+      existingCleaning.vacantSource === "manual_card" ||
+      existingCleaning.vacantSource === "admin" ||
+      existingCleaning.source === "guest_checkout"
+    ));
+
     const card = {
       id: existingCleaning ? existingCleaning.id : (maxId + 1),
       flatId: flat.id,
@@ -5720,7 +5751,9 @@ function getRequestsForDate(dateStr, isNested = false) {
       assignedUserId: resolvedMaidId,
       assignedUsername: resolvedMaidName,
       assignedUserName: resolvedMaidName,
-      isVacant: existingCleaning ? Boolean(existingCleaning.isVacant) : false,
+      isVacant: isExplicitlyVacantCheckout,
+      isVacantExplicitlySet: Boolean(existingCleaning?.isVacantExplicitlySet),
+      vacantSource: existingCleaning?.vacantSource || null,
       isPriority: existingCleaning ? Boolean(existingCleaning.isPriority) : Boolean(pmsRes.isPriority),
       isExtended: false,
       twinBeds: resolvedTwinBeds,
@@ -5757,7 +5790,7 @@ function getRequestsForDate(dateStr, isNested = false) {
   // 3.5. Busca reservas ativas com CHECK-IN na data consultada (checkinDate === dateStr) que ainda não possuem card hoje
   const pmsCheckins = (db.reservations || []).filter(r => 
     r.status !== "cancelada" && 
-    r.status !== "cancelado" &&
+    r.status !== "cancelado" && 
     r.status !== "no_show" &&
     r.checkinDate === dateStr
   );
@@ -5800,6 +5833,14 @@ function getRequestsForDate(dateStr, isNested = false) {
       resolvedStatus = "dirty";
     }
 
+    const isExplicitlyVacantCheckin = Boolean(existingCleaning && existingCleaning.isVacant && (
+      existingCleaning.isVacantExplicitlySet ||
+      existingCleaning.vacantSource === "guest_checkout" ||
+      existingCleaning.vacantSource === "reception_checkout" ||
+      existingCleaning.vacantSource === "manual_card" ||
+      existingCleaning.vacantSource === "admin"
+    ));
+
     const card = {
       id: existingCleaning ? existingCleaning.id : (maxId + 1),
       flatId: flat.id,
@@ -5810,7 +5851,9 @@ function getRequestsForDate(dateStr, isNested = false) {
       assignedUserId: existingCleaning?.assignedUserId || null,
       assignedUsername: existingCleaning?.assignedUsername || null,
       assignedUserName: existingCleaning?.assignedUserName || null,
-      isVacant: existingCleaning ? Boolean(existingCleaning.isVacant) : true,
+      isVacant: isExplicitlyVacantCheckin,
+      isVacantExplicitlySet: Boolean(existingCleaning?.isVacantExplicitlySet),
+      vacantSource: existingCleaning?.vacantSource || null,
       isPriority: Boolean(checkinRes.isPriority || checkinRes.earlyCheckinAuthorized || existingCleaning?.isPriority),
       isExtended: false,
       twinBeds: hasTwin,
@@ -6001,8 +6044,18 @@ app.get("/api/reservations/checkouts", (req, res) => {
       }
     }
 
-    const isFuture = dateStr > getTodayStr();
-    const isVacant = isFuture ? Boolean(req_.isVacantExplicitlySet) : Boolean(req_.isVacant);
+    // Regra de Negócio: Check-outs entram como padrão com status OCUPADO (isOccupied = true, isVacant = false).
+    // "Desocupado" apenas quando explicitamente confirmado manualmente via card ou via link (hóspede ou recepção).
+    const isExplicitlyVacant = Boolean(
+      req_.isVacantExplicitlySet || 
+      req_.vacantSource === "guest_checkout" || 
+      req_.vacantSource === "reception_checkout" || 
+      req_.vacantSource === "manual_card" || 
+      req_.vacantSource === "admin" ||
+      req_.source === "guest_checkout"
+    ) && Boolean(req_.isVacant);
+
+    const isVacant = isExplicitlyVacant;
     const isOccupied = !isVacant;
 
     // Check for arriving reservation setup preferences or admin custom instructions
@@ -6142,7 +6195,9 @@ app.get("/api/reservations/checkouts", (req, res) => {
         originalRequestDate: req_.originalRequestDate || null,
         assignedUserId: req_.assignedUserId,
         assignedUsername: assignedUser ? assignedUser.username : null,
-        isVacant: req_.isVacant,
+        isVacant: isInst ? true : isVacant,
+        isVacantExplicitlySet: Boolean(req_.isVacantExplicitlySet),
+        vacantSource: req_.vacantSource || null,
         willCleanAt: req_.willCleanAt,
         cleaningStartedAt: req_.cleaningStartedAt,
         completedAt: req_.completedAt,
@@ -6557,6 +6612,16 @@ app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
   const now = new Date().toISOString();
   if (typeof isVacant === "boolean") {
     item.isVacant = isVacant;
+    item.isVacantExplicitlySet = true;
+    item.vacantSource = userAuth?.role === "admin" ? "admin" : "manual_card";
+    item.vacantSetAt = now;
+    item.vacantSetBy = userAuth?.username || "card";
+
+    const relatedFlat = db.flats.find(f => f.id === item.flatId || String(f.number) === String(item.flatNumber));
+    if (relatedFlat) {
+      relatedFlat.isOccupied = !isVacant;
+      relatedFlat.updatedAt = now;
+    }
   }
 
   // Minimum time enforcement: 10 minutes minimum from cleaningStartedAt (bypassed for instructions / adjustments)
@@ -9342,7 +9407,8 @@ app.post("/api/pms/reservations", async (req, res) => {
           assignedUserId: null,
           assignedUsername: null,
           assignedUserName: null,
-          isVacant: true,
+          isVacant: false,
+          isVacantExplicitlySet: false,
           isPriority: Boolean(newReservation.isPriority || newReservation.earlyCheckinAuthorized),
           isExtended: false,
           twinBeds: isTwin,
@@ -10654,7 +10720,8 @@ app.put("/api/pms/reservations/:id", (req, res) => {
           assignedUserId: null,
           assignedUsername: null,
           assignedUserName: null,
-          isVacant: true,
+          isVacant: false,
+          isVacantExplicitlySet: false,
           isPriority: Boolean(r.isPriority || r.earlyCheckinAuthorized),
           isExtended: false,
           twinBeds: isTwin,
@@ -13823,9 +13890,15 @@ app.post("/api/reception/checkout/:reservationId", async (req, res) => {
 
   // Notifica ou agenda limpeza na governança
   const today = getTodayStr();
-  let cleanReq = (db.cleaningRequests || []).find(c => c.flatId === r.flatId && c.requestDate === today);
+  let cleanReq = (db.cleaningRequests || []).find(c => 
+    (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) && 
+    (c.requestDate === today || c.requestDate === r.checkoutDate)
+  );
   if (cleanReq) {
     cleanReq.isVacant = true;
+    cleanReq.isVacantExplicitlySet = true;
+    cleanReq.vacantSource = "reception_checkout";
+    cleanReq.vacantSetAt = new Date().toISOString();
   }
 
   // Automatic NFS-e Check with Channel Matrix Rules
