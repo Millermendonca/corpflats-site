@@ -1359,13 +1359,14 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
 
   const resStatus = String(reservation.status || "").toLowerCase().trim();
   const isCancelled = resStatus === "cancelada" || resStatus === "cancelled" || resStatus === "cancelado";
-  const hasBreakfast = Boolean(reservation.includeBreakfast || reservation.ratePlan === "with_breakfast");
+  const isBreakfastExplicitTemplate = templateId === "qm_breakfast" || templateId === "tpl_breakfast_reminder" || triggerEvent === "breakfast_reminder";
+  const hasBreakfast = Boolean(reservation.includeBreakfast || reservation.hasBreakfast || reservation.ratePlan === "with_breakfast" || isBreakfastExplicitTemplate);
 
   // Links inteligentes com autenticação por código de reserva
   const linkCheckinDigital = `${appOrigin}/pre-checkin/${resCode}`;
   const linkPortalHospede = `${appOrigin}/minha-reserva/${resCode}`;
   const linkPagamento = `${appOrigin}/minha-reserva/${resCode}`;
-  const linkCafeManha = hasBreakfast && !isCancelled ? `${appOrigin}/cafe/${resCode}` : "";
+  const linkCafeManha = (hasBreakfast || isBreakfastExplicitTemplate) && !isCancelled ? `${appOrigin}/cafe/${resCode}` : "";
   const linkCheckout = `${appOrigin}/checkout/${resCode}`;
 
   let instrucaoPagamento = "";
@@ -1828,20 +1829,25 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
   ];
 
   const isAllowedTemplate = ALLOWED_TEMPLATES_FOR_CAFE.includes(templateId) || ALLOWED_EVENTS_FOR_CAFE.includes(triggerEvent);
+  const isBreakfastExplicitTemplate = templateId === "qm_breakfast" || templateId === "tpl_breakfast_reminder" || triggerEvent === "breakfast_reminder";
 
   // Se o contexto for cancelamento, pós-checkout, checkout, cobrança, sem café ou template não autorizado:
-  // Remove QUALQUER botão de café existente ou acidental.
-  if (isCancellationContext || isCheckoutOrReviewContext || isFinancialReminderOnly || !hasBreakfast || !isAllowedTemplate) {
+  // Remove QUALQUER botão de café existente ou acidental (a menos que seja template explícito de café).
+  if (!isBreakfastExplicitTemplate && (isCancellationContext || isCheckoutOrReviewContext || isFinancialReminderOnly || !hasBreakfast || !isAllowedTemplate)) {
     list = list.filter(b => b.id !== "btn_cafe" && (!b.url || !String(b.url).includes("/cafe/")));
   } else {
-    // Para reservas ativas com café E em templates permitidos, injeta o botão se ainda não presente
-    if (!list.some(b => b.id === "btn_cafe" || (b.url && String(b.url).includes("/cafe/")))) {
-      const cafeBtn = {
-        id: "btn_cafe",
-        type: "URL",
-        label: "🥐 Escolher Itens do Café",
-        url: linkCafeManha
-      };
+    // Para reservas ativas com café OU disparo explícito de café:
+    const safeCafeUrl = linkCafeManha || `${baseUrl || "https://corpflats.onrender.com"}/cafe/${resCode}`;
+    const existingCafeIdx = list.findIndex(b => b.id === "btn_cafe" || (b.url && String(b.url).includes("/cafe/")));
+    const cafeBtn = {
+      id: "btn_cafe",
+      type: "URL",
+      label: "🥐 Escolher Itens do Café",
+      url: safeCafeUrl
+    };
+    if (existingCafeIdx >= 0) {
+      list[existingCafeIdx] = cafeBtn;
+    } else {
       const portalIdx = list.findIndex(b => b.id === "btn_portal" || (b.url && String(b.url).includes("/minha-reserva")));
       if (portalIdx >= 0) {
         list.splice(portalIdx, 0, cafeBtn);
@@ -2014,7 +2020,7 @@ export async function sendZapiMessage(config, {
   bypassTestMode = false,
   recipientRole = ""
 }) {
-  const cleanPhone = cleanWhatsAppPhone(phone);
+  let cleanPhone = cleanWhatsAppPhone(phone);
   if (!cleanPhone) {
     return { success: false, error: "Número de WhatsApp do destinatário inválido ou ausente." };
   }
@@ -2082,6 +2088,30 @@ export async function sendZapiMessage(config, {
   };
   if (clientToken) {
     headers["Client-Token"] = clientToken;
+  }
+
+  // Pré-validação com a Z-API: verifica se o número possui WhatsApp ativo para evitar falsos positivos
+  if (instanceId && token && !cleanPhone.includes("@g.us")) {
+    try {
+      const existsUrl = `${baseUrl}/instances/${instanceId}/token/${token}/phone-exists/${cleanPhone}`;
+      const existsRes = await fetch(existsUrl, { headers });
+      if (existsRes.ok) {
+        const existsData = await existsRes.json().catch(() => ({}));
+        if (existsData && existsData.exists === false) {
+          console.warn(`[Z-API ⚠️] O número ${cleanPhone} NÃO possui WhatsApp ativo (phone-exists: false). Abortando envio.`);
+          return {
+            success: false,
+            phoneNotExists: true,
+            error: `O número ${cleanPhone} não possui WhatsApp cadastrado (erro de digitação ou número fixo). Verifique o cadastro do hóspede.`
+          };
+        }
+        if (existsData && existsData.phone) {
+          cleanPhone = cleanWhatsAppPhone(existsData.phone);
+        }
+      }
+    } catch (chkErr) {
+      console.warn(`[Z-API] Falha ao verificar /phone-exists/${cleanPhone}:`, chkErr.message);
+    }
   }
 
   // Sanitização de segurança de botões em mensagens de check-out, pós-estadia ou cancelamento
@@ -4659,12 +4689,19 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       } else {
         return res.status(404).json({ error: "Reserva não encontrada." });
       }
+    } else if (req.body.reservation && typeof req.body.reservation === "object") {
+      reservation = { ...reservation, ...req.body.reservation };
     }
 
     const baseUrl = `${req.protocol}://${req.get("host")}`;
     const recipients = getReservationRecipients(reservation, db);
     const targetMode = req.body.recipientTarget || template.recipientTarget || "guest"; // "guest" | "requester" | "both"
-    const fallbackPhone = req.body.phone || reservation.guestPhone || reservation.phone || "";
+    const requestedPhone = req.body.phone ? String(req.body.phone).trim() : null;
+    if (requestedPhone && recipients.guest) {
+      recipients.guest.phone = requestedPhone;
+      recipients.guest.cleanDigits = requestedPhone.replace(/\D/g, "");
+    }
+    const fallbackPhone = requestedPhone || reservation.guestPhone || reservation.phone || "";
 
     const dispatches = [];
 
@@ -4672,7 +4709,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       dispatches.push({
         type: "guest",
         name: recipients.guest.name,
-        phone: recipients.guest.phone || fallbackPhone
+        phone: requestedPhone || recipients.guest.phone || fallbackPhone
       });
     }
 
@@ -4688,7 +4725,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           dispatches.push({
             type: "guest",
             name: recipients.guest.name,
-            phone: recipients.guest.phone || fallbackPhone
+            phone: requestedPhone || recipients.guest.phone || fallbackPhone
           });
         }
       }

@@ -2801,6 +2801,15 @@ export default function PmsCalendar() {
         return
       }
 
+      const savedRes = await resp.json().catch(() => null)
+      if (savedRes && savedRes.id) {
+        setData(prev => ({
+          ...prev,
+          reservations: prev.reservations.map(r => r.id === savedRes.id ? { ...r, ...savedRes } : r)
+        }))
+        setSelectedRes(savedRes)
+      }
+
       toast({
         title: selectedRes ? "Reserva Atualizada" : "Reserva Criada com Sucesso",
         description: `${payload.guestName} • Flat ${data.flats.find(f => f.id === Number(formFlatId))?.number || formFlatId}`
@@ -5285,15 +5294,15 @@ export default function PmsCalendar() {
                         Disparar WhatsApp (Z-API com Botões)
                       </span>
                       <div className="flex items-center gap-2">
-                        {selectedRes.guestPhone && (
+                        {(formGuestPhone || selectedRes.guestPhone) && (
                           <a
-                            href={`https://wa.me/55${String(selectedRes.guestPhone).replace(/\D/g, "")}`}
+                            href={`https://wa.me/55${String(formGuestPhone || selectedRes.guestPhone).replace(/\D/g, "")}`}
                             target="_blank"
                             rel="noreferrer"
                             className="text-[10px] text-muted-foreground hover:text-emerald-700 dark:hover:text-emerald-400 font-mono hover:underline flex items-center gap-0.5"
                             title="Abrir WhatsApp Web manualmente para este número"
                           >
-                            <span>Destino: {selectedRes.guestPhone}</span>
+                            <span>Destino: {formGuestPhone || selectedRes.guestPhone}</span>
                             <ExternalLink className="w-2.5 h-2.5 opacity-60" />
                           </a>
                         )}
@@ -5333,7 +5342,21 @@ export default function PmsCalendar() {
                             onClick={async () => {
                               setModalSendingMsgId(qm.id);
                               try {
-                                await dispatchQuickMessage(qm, selectedRes);
+                                const effectiveRes = {
+                                  ...selectedRes,
+                                  flatId: formFlatId ? Number(formFlatId) : selectedRes?.flatId,
+                                  flatNumber: formFlatId ? ((data.flats || []).find((f: any) => f.id === Number(formFlatId))?.number || selectedRes?.flatNumber) : selectedRes?.flatNumber,
+                                  guestName: formGuestName.trim() || selectedRes?.guestName,
+                                  guestPhone: formGuestPhone.trim() || selectedRes?.guestPhone,
+                                  guestEmail: formGuestEmail.trim() || selectedRes?.guestEmail,
+                                  checkinDate: formCheckin || selectedRes?.checkinDate,
+                                  checkoutDate: formCheckout || selectedRes?.checkoutDate,
+                                  checkinTime: formCheckinTime || selectedRes?.checkinTime,
+                                  checkoutTime: formCheckoutTime || selectedRes?.checkoutTime,
+                                  includeBreakfast: formIncludeBreakfast,
+                                  hasBreakfast: formIncludeBreakfast
+                                };
+                                await dispatchQuickMessage(qm, effectiveRes);
                               } finally {
                                 setModalSendingMsgId(null);
                               }

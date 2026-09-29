@@ -53,8 +53,10 @@ export default function Dashboard() {
   // Interactive Status Filter: "all" | "dirty" | "cleaning_now" | "pending_issue" | "clean"
   const [statusFilter, setStatusFilter] = useState<string>("all")
   
+  const initialDateSetRef = useRef(false)
   useEffect(() => {
-    if (user?.role) {
+    if (user?.role && !initialDateSetRef.current) {
+      initialDateSetRef.current = true
       setSelectedDateStr(getDefaultDate(user.role))
     }
   }, [user?.role])
@@ -226,10 +228,15 @@ export default function Dashboard() {
   // Filtered flats according to active status filter
   const filteredFlats = useMemo(() => {
     if (!sortedFlats || !Array.isArray(sortedFlats)) return []
+    // Instruções operacionais: concluiu, sumiu! Não exibe no painel de quartos quando concluídas
     // Para camareiras, quartos com No Show não entram na fila de quartos para higienização
-    const baseFlats = !isAdmin 
-      ? sortedFlats.filter((f: any) => (f?.cleaningRequest?.status || f?.status) !== "no_show")
-      : sortedFlats
+    const baseFlats = sortedFlats.filter((f: any) => {
+      const isInst = Boolean(f?.isInstructionOnly || f?.cleaningRequest?.isInstructionOnly || f?.type === "instruction" || f?.source === "manual_instruction" || f?.isBedAdjustmentOnly || f?.cleaningRequest?.isBedAdjustmentOnly)
+      const st = f?.cleaningRequest?.status || f?.status || "dirty"
+      if (isInst && st === "clean") return false
+      if (!isAdmin && st === "no_show") return false
+      return true
+    })
 
     if (statusFilter === "all") return baseFlats
     if (statusFilter === "cleaning_now") {
@@ -246,6 +253,14 @@ export default function Dashboard() {
         if (isInst) return false
         const st = f?.cleaningRequest?.status || "dirty"
         return st === "dirty"
+      })
+    }
+    if (statusFilter === "clean") {
+      return baseFlats.filter((f: any) => {
+        const isInst = Boolean(f?.isInstructionOnly || f?.cleaningRequest?.isInstructionOnly || f?.type === "instruction" || f?.source === "manual_instruction" || f?.isBedAdjustmentOnly || f?.cleaningRequest?.isBedAdjustmentOnly)
+        if (isInst) return false // Instrução não é quarto limpo
+        const st = f?.cleaningRequest?.status || "dirty"
+        return st === "clean"
       })
     }
     return baseFlats.filter((f: any) => {

@@ -182,7 +182,10 @@ _(Lembrando: nosso café da manhã é servido exclusivamente com entrega no seu 
 
 Escolha seus itens favoritos e o horário desejado!`,
     footer: "CorpFlats • Café no Flat",
-    buttons: []
+    buttons: [
+      { id: "btn_cafe", type: "URL", label: "🥐 Escolher Itens do Café", url: "{{link_cafe_manha}}" },
+      { id: "btn_portal", type: "URL", label: "🏨 Ver Reserva", url: "{{link_portal_hospede}}" }
+    ]
   },
   {
     id: "qm_access_wifi",
@@ -479,12 +482,27 @@ export function buildFullWhatsAppTextMessage(
 
 export function useQuickMessages() {
   const { toast } = useToast()
+  const normalizeMessages = (list: any[]) => {
+    return list.map(m => {
+      if (m.id === "qm_breakfast" && (!m.buttons || m.buttons.length === 0)) {
+        return {
+          ...m,
+          buttons: [
+            { id: "btn_cafe", type: "URL", label: "🥐 Escolher Itens do Café", url: "{{link_cafe_manha}}" },
+            { id: "btn_portal", type: "URL", label: "🏨 Ver Reserva", url: "{{link_portal_hospede}}" }
+          ]
+        };
+      }
+      return m;
+    });
+  };
+
   const [quickMessages, setQuickMessages] = useState<WhatsAppQuickMessage[]>(() => {
     try {
       const local = localStorage.getItem(STORAGE_KEY)
       if (local) {
         const parsed = JSON.parse(local)
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed
+        if (Array.isArray(parsed) && parsed.length > 0) return normalizeMessages(parsed)
       }
     } catch {}
     return DEFAULT_QUICK_MESSAGES
@@ -498,9 +516,10 @@ export function useQuickMessages() {
       if (res.ok) {
         const data = await res.json()
         if (Array.isArray(data) && data.length > 0) {
-          setQuickMessages(data)
+          const normalized = normalizeMessages(data)
+          setQuickMessages(normalized)
           try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized))
           } catch {}
           return
         }

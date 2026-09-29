@@ -410,16 +410,10 @@ export function FlatCard({
 
   const rawConf = statusStyles[currentStatus] || statusStyles.dirty
   const conf = isInstruction ? {
-    label: currentStatus === "clean" 
-      ? "Instrução Concluída" 
-      : (currentStatus === "cleaning_now" ? "Em Execução" : (currentStatus === "will_clean" ? "A Fazer" : "Instrução Pendente")),
-    cardBg: currentStatus === "clean"
-      ? "bg-slate-50/70 border-slate-200 text-slate-800 dark:bg-slate-900/30 dark:border-slate-800"
-      : "bg-purple-50/50 border-purple-200/90 text-purple-950 dark:bg-purple-950/20 dark:border-purple-900/40",
-    badgeClass: currentStatus === "clean"
-      ? "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-300 font-bold"
-      : "bg-purple-100 text-purple-900 border-purple-300 font-bold dark:bg-purple-950/50 dark:text-purple-200",
-    icon: currentStatus === "clean" ? CheckCircle2 : Wrench
+    label: "Instrução",
+    cardBg: "bg-purple-50/50 border-purple-200/90 text-purple-950 dark:bg-purple-950/20 dark:border-purple-900/40",
+    badgeClass: "bg-purple-100 text-purple-900 border-purple-300 font-bold dark:bg-purple-950/50 dark:text-purple-200",
+    icon: Wrench
   } : rawConf
 
   const Icon = conf.icon
