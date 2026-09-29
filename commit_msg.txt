@@ -1,0 +1,10 @@
+style(flat-card): remove bed toggle and Recado buttons from top bar
+
+- Remove bed toggle (1 Cama Casal / 2 Camas Solteiro) from admin top bar.
+  Casal is default and camareiras already know it. Twin bed badge only
+  appears in Instrucoes da Governanca box when applicable.
+- Remove Recado quick-action button from admin top bar. Note is already
+  shown and editable via the Instrucoes da Governanca box (click on it).
+- Top bar now shows only Ocupado/Desocupado + Prioridade toggle.
+- toggleBedSetup and instructionsModal still work; editable via governance box.
+- Build: dist/public/assets/index-DMlkLhDL.js (0 errors, 3342 modules)

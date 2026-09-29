@@ -1003,28 +1003,9 @@ export function FlatCard({
               </button>
             </div>
 
-            {/* Top Bar - Linha 2 (Exclusiva para Administrador: Ações Rápidas de Camas e Prioridade em Limpezas Normais) */}
+            {/* Top Bar - Linha 2 (Exclusiva para Administrador: Ação Rápida de Prioridade em Limpezas Normais) */}
             {isAdmin && !isInstruction && (
               <div className="flex items-center gap-1.5 pt-0.5 flex-wrap">
-                {/* Botão de Alternância de Camas: 1 Cama Casal (padrão) <-> 2 Camas Solteiro */}
-                <button
-                  type="button"
-                  onClick={toggleBedSetup}
-                  disabled={isTogglingBeds}
-                  title={isTwinBeds 
-                    ? "Configuração: 2 Camas de Solteiro (Clique para mudar para 1 Cama Casal)" 
-                    : "Configuração: 1 Cama Casal Padrão (Clique para mudar para 2 Camas Solteiro)"}
-                  className={cn(
-                    "px-2.5 py-1 rounded-lg border transition-all text-[11px] flex items-center gap-1 font-bold shadow-2xs cursor-pointer select-none",
-                    isTwinBeds
-                      ? "bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700 shadow-xs"
-                      : "bg-background border-border text-foreground hover:bg-muted"
-                  )}
-                >
-                  <BedDouble className={cn("w-3.5 h-3.5 shrink-0", isTwinBeds ? "text-white" : "text-muted-foreground")} />
-                  <span>{isTwinBeds ? "2 Camas Solteiro" : "1 Cama Casal"}</span>
-                </button>
-
                 {/* Botão / Ícone de Prioridade: Desativado por padrão, 1 clique para ativar */}
                 <button
                   type="button"
@@ -1040,21 +1021,6 @@ export function FlatCard({
                 >
                   <Flame className={cn("w-3.5 h-3.5 shrink-0", isPriority ? "fill-current text-white" : "text-muted-foreground")} />
                   <span>Prioridade</span>
-                </button>
-
-                {/* Recado / Nota para a Camareira (Opcional) */}
-                <button
-                  type="button"
-                  onClick={() => setInstructionsModalOpen(true)}
-                  title="Configurar recado / nota para a camareira"
-                  className={cn(
-                    "px-2 py-1 rounded-lg border transition-colors text-[11px] flex items-center gap-1 font-bold shadow-2xs cursor-pointer",
-                    Boolean(maidNoteText)
-                      ? "bg-amber-100/90 border-amber-300 text-amber-950 hover:bg-amber-200 dark:bg-amber-950/50 dark:border-amber-800 dark:text-amber-200"
-                      : "bg-background border-border text-muted-foreground hover:bg-muted"
-                  )}
-                >
-                  <span>📝 {Boolean(maidNoteText) ? "Recado ✓" : "Recado"}</span>
                 </button>
               </div>
             )}
