@@ -5159,8 +5159,11 @@
       "pendingObservation": null,
       "willCleanAt": "2026-09-29T13:00:00.000Z",
       "createdAt": "2026-09-29T08:00:00.000Z",
-      "updatedAt": "2026-09-29T13:00:00.000Z",
-      "isVacantExplicitlySet": false
+      "updatedAt": "2026-09-29T11:21:46.013Z",
+      "isVacantExplicitlySet": false,
+      "completedAt": null,
+      "cleaningStartedAt": null,
+      "durationMinutes": null
     },
     {
       "id": 1344,
@@ -5266,8 +5269,8 @@
       "id": 1348,
       "flatId": 8,
       "flatNumber": "408",
-      "requestDate": "2026-09-29",
-      "effectiveDate": "2026-09-29",
+      "requestDate": "2026-09-30",
+      "effectiveDate": "2026-09-30",
       "source": "checkout",
       "status": "dirty",
       "assignedUserId": null,
@@ -5421,7 +5424,7 @@
       "requestDate": "2026-09-27",
       "effectiveDate": "2026-09-27",
       "source": "checkout",
-      "status": "dirty",
+      "status": "clean",
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
@@ -5437,7 +5440,8 @@
       "willCleanAt": "2026-09-27T13:00:00.000Z",
       "createdAt": "2026-09-27T08:00:00.000Z",
       "updatedAt": "2026-09-27T13:00:00.000Z",
-      "isVacantExplicitlySet": false
+      "isVacantExplicitlySet": false,
+      "completedAt": "2026-09-27T14:00:00.000Z"
     },
     {
       "id": 1355,
@@ -5546,7 +5550,7 @@
       "requestDate": "2026-09-28",
       "effectiveDate": "2026-09-28",
       "source": "checkout",
-      "status": "dirty",
+      "status": "clean",
       "assignedUserId": null,
       "assignedUsername": null,
       "assignedUserName": null,
@@ -5562,7 +5566,8 @@
       "willCleanAt": "2026-09-28T13:00:00.000Z",
       "createdAt": "2026-09-28T08:00:00.000Z",
       "updatedAt": "2026-09-28T13:00:00.000Z",
-      "isVacantExplicitlySet": false
+      "isVacantExplicitlySet": false,
+      "completedAt": "2026-09-28T14:00:00.000Z"
     },
     {
       "id": 1361,
@@ -5636,8 +5641,11 @@
       "pendingObservation": null,
       "willCleanAt": "2026-09-29T13:00:00.000Z",
       "createdAt": "2026-09-29T08:00:00.000Z",
-      "updatedAt": "2026-09-29T13:00:00.000Z",
-      "isVacantExplicitlySet": false
+      "updatedAt": "2026-09-29T11:21:46.013Z",
+      "isVacantExplicitlySet": false,
+      "completedAt": null,
+      "cleaningStartedAt": null,
+      "durationMinutes": null
     },
     {
       "id": 5,
@@ -12875,10 +12883,10 @@
       "isMonthlyGuest": false,
       "clientType": "avulso",
       "createdAt": "2026-09-28T19:02:05.868Z",
-      "updatedAt": "2026-09-28T19:02:05.868Z",
+      "updatedAt": "2026-09-29T11:21:46.008Z",
       "flatId": 8,
       "checkinDate": "2026-09-28",
-      "checkoutDate": "2026-09-29",
+      "checkoutDate": "2026-09-30",
       "paymentMethod": "booking",
       "guestId": 150,
       "guestCode": "HOSP-00150",
@@ -51695,19 +51703,6 @@
       "payment": null
     },
     {
-      "id": "pay_1790528959693_wqst1p",
-      "userId": 2,
-      "cleaningRequestId": 1340,
-      "paymentId": null,
-      "entryType": "credit",
-      "amount": 22.5,
-      "description": "Diária — Flat 1004",
-      "entryDate": "2026-09-26",
-      "createdAt": "2026-09-27T17:09:19.693Z",
-      "balanceAfter": 877.5,
-      "payment": null
-    },
-    {
       "id": "pay_1790528959693_pt1nsb",
       "userId": 2,
       "cleaningRequestId": 1339,
@@ -51822,6 +51817,19 @@
       "entryDate": "2026-09-27",
       "createdAt": "2026-09-27T23:04:27.623Z",
       "balanceAfter": 900,
+      "payment": null
+    },
+    {
+      "id": "pay_1790528959693_wqst1p",
+      "userId": 2,
+      "cleaningRequestId": 1340,
+      "paymentId": null,
+      "entryType": "credit",
+      "amount": 22.5,
+      "description": "Diária — Flat 1004",
+      "entryDate": "2026-09-26",
+      "createdAt": "2026-09-27T17:09:19.693Z",
+      "balanceAfter": 877.5,
       "payment": null
     }
   ],

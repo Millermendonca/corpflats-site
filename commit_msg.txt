@@ -1,10 +1,13 @@
-style(flat-card): remove bed toggle and Recado buttons from top bar
+fix(governance): correcoes criticas nos flats 408, 509 e 1004
 
-- Remove bed toggle (1 Cama Casal / 2 Camas Solteiro) from admin top bar.
-  Casal is default and camareiras already know it. Twin bed badge only
-  appears in Instrucoes da Governanca box when applicable.
-- Remove Recado quick-action button from admin top bar. Note is already
-  shown and editable via the Instrucoes da Governanca box (click on it).
-- Top bar now shows only Ocupado/Desocupado + Prioridade toggle.
-- toggleBedSetup and instructionsModal still work; editable via governance box.
-- Build: dist/public/assets/index-DMlkLhDL.js (0 errors, 3342 modules)
+- Flat 408: atualizada reserva de Felipe Junqueira (RES-408-0294) para checkout em 30/09,
+  classificando-o como Stayover em 29/09 (sem gerar faxina de saida hoje).
+  Request 1348 transferido para 30/09 e residuo de 27/09 saneado.
+- Flat 509: revertido card de checkout de hoje (Heverton Martins, ID 1365) para 'dirty'
+  e sem atribuicao de admin, aguardando camareira assumir.
+- Flat 1004: revertido card de checkout de hoje (Roselene, ID 1343) para 'dirty' e sem
+  atribuicao indevida de Cris. Quarto mantido na fila de saida real de hoje.
+- getRequestsForDate: blindada selecao de existingCleaning para priorizar requestDate exato
+  de hoje e impedir que limpezas de dias anteriores (ex: 26/09) mascarem checkouts de hoje como limpos.
+- reconcileUniversalIntegrity: sincronizacao automatica das regras para flats 408, 509 e 1004.
+- Testes: 105 testes passando com 100% de sucesso (0 falhas).

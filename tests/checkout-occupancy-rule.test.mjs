@@ -121,4 +121,33 @@ describe('Regra de Ocupação Padrão em Check-outs', () => {
     assert.ok(flatObj, 'Flat 511 deve existir em db.flats');
     assert.strictEqual(flatObj.isOccupied, false, 'Flat 511 deve ter isOccupied: false');
   });
+
+  it('13. Flat 408 (Felipe Junqueira) tem checkout em 30/09 e não deve aparecer como checkout em 29/09', () => {
+    const db = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+    const res408 = (db.reservations || []).find(r => r.code === 'RES-408-0294' || (r.flatNumber == '408' && r.guestName && r.guestName.includes('Felipe')));
+    assert.ok(res408, 'Reserva do Felipe Junqueira no 408 deve existir');
+    assert.strictEqual(res408.checkoutDate, '2026-09-30', 'Checkout do Felipe deve ser 30/09');
+    
+    // Verifica que não há cleaning dirty em 29/09 para o 408
+    const dirty408Today = (db.cleaningRequests || []).filter(c => (c.flatNumber == '408' || c.flatId == 8) && c.requestDate === '2026-09-29' && c.status === 'dirty');
+    assert.strictEqual(dirty408Today.length, 0, 'Flat 408 não deve ter cleaningRequest dirty em 29/09');
+  });
+
+  it('14. Flat 509 (Heverton Martins) deve estar como dirty para o checkout de hoje sem atribuição de admin', () => {
+    const db = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+    const req509 = (db.cleaningRequests || []).find(c => (c.flatNumber == '509' || c.flatId == 10) && c.requestDate === '2026-09-29');
+    assert.ok(req509, 'CleaningRequest do Flat 509 em 2026-09-29 deve existir');
+    assert.strictEqual(req509.status, 'dirty', 'Flat 509 deve estar dirty');
+    assert.strictEqual(req509.assignedUserId, null, 'Flat 509 não deve ter camareira/admin atribuído');
+    assert.strictEqual(req509.completedAt, null, 'Flat 509 não deve ter completedAt');
+  });
+
+  it('15. Flat 1004 (Roselene) deve estar como dirty para o checkout de hoje sem atribuição de Cris', () => {
+    const db = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+    const req1004 = (db.cleaningRequests || []).find(c => (c.flatNumber == '1004' || c.flatId == 19) && c.requestDate === '2026-09-29');
+    assert.ok(req1004, 'CleaningRequest do Flat 1004 em 2026-09-29 deve existir');
+    assert.strictEqual(req1004.status, 'dirty', 'Flat 1004 deve estar dirty');
+    assert.strictEqual(req1004.assignedUserId, null, 'Flat 1004 não deve estar atribuído a Cris');
+    assert.strictEqual(req1004.completedAt, null, 'Flat 1004 não deve ter completedAt');
+  });
 });

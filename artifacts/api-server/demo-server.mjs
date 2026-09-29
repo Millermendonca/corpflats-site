@@ -1705,6 +1705,14 @@ function reconcileUniversalIntegrity(incomingState = null) {
       }
     }
 
+    // Flat 408: Felipe Junqueira checkout oficial é 2026-09-30 (stayover em 29/09)
+    if (r.code === "RES-408-0294" || (String(r.flatNumber) === "408" && r.guestName && r.guestName.toLowerCase().includes("felipe junqueira"))) {
+      if (r.checkoutDate !== "2026-09-30") {
+        r.checkoutDate = "2026-09-30";
+        changed = true;
+      }
+    }
+
     // 4. Garantir que para TODO checkout de QUALQUER flat, exista a solicitação de limpeza correspondente
     if (r.status !== "cancelada" && r.status !== "cancelled" && r.checkoutDate && r.flatNumber) {
       const checkoutDate = r.checkoutDate;
@@ -1843,6 +1851,52 @@ function reconcileUniversalIntegrity(incomingState = null) {
     });
     if (db.maidStatementEntries.length !== origLen) changed = true;
   }
+
+  // Saneamento e Correção de Integridade dos Check-outs (Flats 408, 509 e 1004)
+  (db.cleaningRequests || []).forEach(c => {
+    // Flat 408: Felipe Junqueira checkout é 30/09, não deve ter limpeza de checkout no dia 29/09
+    if (String(c.flatNumber) === "408") {
+      if (c.requestDate === "2026-09-29" && c.leavingGuest && c.leavingGuest.toLowerCase().includes("felipe")) {
+        c.requestDate = "2026-09-30";
+        c.effectiveDate = "2026-09-30";
+        changed = true;
+      }
+      // Danielle (27/09): quarto entregue limpo para Felipe entrar dia 28/09
+      if (c.requestDate === "2026-09-27" && c.status === "dirty") {
+        c.status = "clean";
+        c.completedAt = c.completedAt || "2026-09-27T15:00:00.000Z";
+        changed = true;
+      }
+    }
+
+    // Flat 509: Check-out de 29/09 (Heverton Martins) não foi limpo por admin; é dirty aguardando camareira
+    if (String(c.flatNumber) === "509" && c.requestDate === "2026-09-29") {
+      if (c.status === "clean" && (c.assignedUsername === "admin" || !c.assignedUserId || c.assignedUserId === 1)) {
+        c.status = "dirty";
+        c.assignedUserId = null;
+        c.assignedUsername = null;
+        c.assignedUserName = null;
+        c.completedAt = null;
+        c.cleaningStartedAt = null;
+        c.durationMinutes = null;
+        changed = true;
+      }
+    }
+
+    // Flat 1004: Check-out de 29/09 (Roselene) não foi limpo por Cris; é dirty aguardando camareira
+    if (String(c.flatNumber) === "1004" && c.requestDate === "2026-09-29") {
+      if (c.status === "clean" && (c.assignedUsername === "Cris" || c.assignedUserId === 2 || !c.completedAt || (c.completedAt && c.completedAt.startsWith("2026-09-28")))) {
+        c.status = "dirty";
+        c.assignedUserId = null;
+        c.assignedUsername = null;
+        c.assignedUserName = null;
+        c.completedAt = null;
+        c.cleaningStartedAt = null;
+        c.durationMinutes = null;
+        changed = true;
+      }
+    }
+  });
 
   return changed;
 }
@@ -5722,11 +5776,24 @@ function getRequestsForDate(dateStr, isNested = false) {
     }
 
     const flatNumClean = flatNumber.replace(/\D/g, "");
-    const matchingCleanings = (db.cleaningRequests || []).filter(c => 
+    // Prioriza o cleaningRequest específico da data consultada (checkout atual)
+    const exactDateCleanings = (db.cleaningRequests || []).filter(c => 
       (String(c.flatNumber).replace(/\D/g, "") === flatNumClean || c.flatId === flat.id) && 
-      (c.requestDate === dateStr || (c.effectiveDate === dateStr && c.status === "clean"))
+      c.requestDate === dateStr
     );
-    const existingCleaning = matchingCleanings.find(c => c.status === "clean") || matchingCleanings.find(c => c.status === "no_show") || matchingCleanings[0];
+    let existingCleaning = exactDateCleanings.find(c => c.leavingGuest && pmsRes.guestName && c.leavingGuest.toLowerCase().includes(pmsRes.guestName.toLowerCase())) ||
+      exactDateCleanings.find(c => c.status === "clean") || 
+      exactDateCleanings.find(c => c.status === "no_show") || 
+      exactDateCleanings[0];
+
+    // Só busca em effectiveDate se não houver NENHUM cleaningRequest criado para a data de hoje
+    if (!existingCleaning) {
+      const matchingCleanings = (db.cleaningRequests || []).filter(c => 
+        (String(c.flatNumber).replace(/\D/g, "") === flatNumClean || c.flatId === flat.id) && 
+        c.effectiveDate === dateStr && c.status === "clean"
+      );
+      existingCleaning = matchingCleanings[0];
+    }
 
     // Blindagem de Auditoria: Se o status ainda for dirty mas houver evento de auditoria clean hoje, respeita o clean
     const auditCleanEvent = (!existingCleaning || existingCleaning.status !== "clean") ? (db.auditLogs || []).find(l =>
