@@ -424,10 +424,21 @@ export function FlatCard({
   const hasExtraMattress = typeof request?.extraMattress === "boolean" 
     ? request.extraMattress 
     : Boolean(flat?.setupInfo?.extraMattress)
-  const maidNoteText = (typeof request?.adminNote === "string" 
-    ? request.adminNote 
-    : (typeof flat?.setupInfo?.specialRequests === "string" ? flat.setupInfo.specialRequests : (request?.pendingObservation || ""))
-  ).trim()
+  const maidNoteText = (() => {
+    const raw = (typeof request?.adminNote === "string" 
+      ? request.adminNote 
+      : (typeof flat?.setupInfo?.specialRequests === "string" ? flat.setupInfo.specialRequests : (request?.pendingObservation || ""))
+    ).trim()
+    if (!raw) return ""
+    return raw
+      .replace(/(?:•\s*)?Check-out\s+confirmado[^\n•]*/gi, "")
+      .replace(/(?:•\s*)?Check-out\s+expresso[^\n•]*/gi, "")
+      .replace(/(?:•\s*)?Confirmado\s+na\s+Portaria[^\n•]*/gi, "")
+      .replace(/(?:•\s*)?Limpeza\s+de\s+check-out\s+gerada\s+automaticamente[^\n•]*/gi, "")
+      .replace(/(?:•\s*)?Quarto\s+desocupado[^\n•]*/gi, "")
+      .replace(/^[•\s\-,|]+|[•\s\-,|]+$/g, "")
+      .trim()
+  })()
   const pendingPeriodicTasks = flat?.pendingPeriodicTasks || []
   const pendingSurveys = flat?.pendingSurveys || []
 

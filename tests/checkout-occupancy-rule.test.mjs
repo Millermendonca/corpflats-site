@@ -77,4 +77,48 @@ describe('Regra de Ocupação Padrão em Check-outs', () => {
       assert.strictEqual(c.isVacant, false, `Flat ${c.flatNumber} em ${c.requestDate} deve ser isVacant: false`);
     }
   });
+
+  it('9. Deve ter paridade estrita entre zapi-service.mjs em artifacts e scripts', () => {
+    const zapiArtifacts = fs.readFileSync(path.resolve('artifacts/api-server/zapi-service.mjs'), 'utf8');
+    const zapiScripts = fs.readFileSync(path.resolve('scripts/zapi-service.mjs'), 'utf8');
+    assert.strictEqual(zapiArtifacts, zapiScripts, 'zapi-service.mjs deve ser idêntico em artifacts/api-server e scripts/');
+  });
+
+  it('10. zapi-service.mjs deve configurar isVacantExplicitlySet: true e vacantSource: "reception_checkout" sem notas de checkout redundantes', () => {
+    const zapiCode = fs.readFileSync(path.resolve('artifacts/api-server/zapi-service.mjs'), 'utf8');
+    const idx = zapiCode.indexOf('for (const flat of matchedFlats)');
+    assert.ok(idx !== -1, 'Loop de matchedFlats deve existir em handleConciergeGroupWebhook');
+    const snippet = zapiCode.substring(idx, idx + 2500);
+    assert.ok(snippet.includes('cleanReq.isVacant = true'), 'Deve marcar isVacant = true');
+    assert.ok(snippet.includes('cleanReq.isVacantExplicitlySet = true'), 'Deve marcar isVacantExplicitlySet = true');
+    assert.ok(snippet.includes('cleanReq.vacantSource = "reception_checkout"'), 'Deve marcar vacantSource = "reception_checkout"');
+    assert.ok(!snippet.includes('cleanReq.pendingObservation = `Check-out confirmado'), 'Não deve criar notas de check-out em pendingObservation');
+    assert.ok(snippet.includes('pendingObservation: null'), 'Nova solicitação deve ter pendingObservation: null');
+  });
+
+  it('11. sanitizeCardNote deve purificar mensagens redundantes de check-out e preservar instruções operacionais', async () => {
+    const { sanitizeCardNote } = await import('../artifacts/api-server/zapi-service.mjs');
+    assert.strictEqual(typeof sanitizeCardNote, 'function');
+    assert.strictEqual(sanitizeCardNote('Check-out confirmado no grupo da portaria (Recepção)'), null);
+    assert.strictEqual(sanitizeCardNote('Check-out expresso confirmado (Rodrigo)'), null);
+    assert.strictEqual(sanitizeCardNote('Confirmado na Portaria (Portaria)'), null);
+    assert.strictEqual(sanitizeCardNote('Limpeza de check-out gerada automaticamente para o Flat 511 (Reserva RES-511-0292)'), null);
+    assert.strictEqual(sanitizeCardNote('Quarto desocupado'), null);
+    assert.strictEqual(sanitizeCardNote('Montar 2 camas solteiro • Check-out confirmado no grupo da portaria'), 'Montar 2 camas solteiro');
+    assert.strictEqual(sanitizeCardNote('Berço solicitado pelo hóspede'), 'Berço solicitado pelo hóspede');
+  });
+
+  it('12. Flat 511 deve estar desocupado sem recado redundante no banco de dados', () => {
+    const db = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+    const req511 = (db.cleaningRequests || []).find(r => (r.flatNumber == 511 || r.flatId == 11) && r.requestDate === '2026-09-29');
+    assert.ok(req511, 'Solicitação para 511 em 2026-09-29 deve existir');
+    assert.strictEqual(req511.isVacant, true, 'Flat 511 deve ter isVacant: true');
+    assert.strictEqual(req511.isVacantExplicitlySet, true, 'Flat 511 deve ter isVacantExplicitlySet: true');
+    assert.strictEqual(req511.vacantSource, 'reception_checkout', 'vacantSource do 511 deve ser reception_checkout');
+    assert.strictEqual(req511.pendingObservation, null, 'pendingObservation do 511 não deve ter nota de checkout');
+    
+    const flatObj = (db.flats || []).find(f => f.number == 511 || f.id == 11);
+    assert.ok(flatObj, 'Flat 511 deve existir em db.flats');
+    assert.strictEqual(flatObj.isOccupied, false, 'Flat 511 deve ter isOccupied: false');
+  });
 });

@@ -115,6 +115,23 @@ function getBrasiliaNow() {
   };
 }
 
+/**
+ * Sanitiza notas do card de governança para remover mensagens redundantes de check-out,
+ * mantendo apenas instruções operacionais autênticas (ex.: camas, berço, avisos especiais).
+ */
+export function sanitizeCardNote(note) {
+  if (!note || typeof note !== "string") return null;
+  let cleaned = note
+    .replace(/(?:•\s*)?Check-out\s+confirmado[^\n•]*/gi, "")
+    .replace(/(?:•\s*)?Check-out\s+expresso[^\n•]*/gi, "")
+    .replace(/(?:•\s*)?Confirmado\s+na\s+Portaria[^\n•]*/gi, "")
+    .replace(/(?:•\s*)?Limpeza\s+de\s+check-out\s+gerada\s+automaticamente[^\n•]*/gi, "")
+    .replace(/(?:•\s*)?Quarto\s+desocupado[^\n•]*/gi, "")
+    .trim();
+  cleaned = cleaned.replace(/^[•\s\-,|]+|[•\s\-,|]+$/g, "").trim();
+  return cleaned.length > 0 ? cleaned : null;
+}
+
 function isTimeBefore(t1, t2) {
   if (!t1 || !t2) return false;
   const [h1, m1] = String(t1).split(":").map(Number);
@@ -4923,10 +4940,8 @@ app.post("/api/public/checkout", async (req, res) => {
     existing.vacantSource = "guest_checkout";
     existing.vacantSetAt = now;
     existing.leavingGuest = existing.leavingGuest || guestDisplayName;
-    if (!existing.pendingObservation) {
-      existing.pendingObservation = `Check-out expresso confirmado (${guestDisplayName})`;
-    } else if (!existing.pendingObservation.includes("expresso") && !existing.pendingObservation.includes("Hóspede")) {
-      existing.pendingObservation = `${existing.pendingObservation} • Check-out expresso (${guestDisplayName})`;
+    if (existing.pendingObservation) {
+      existing.pendingObservation = sanitizeCardNote(existing.pendingObservation);
     }
     existing.updatedAt = now;
   } else {
@@ -4945,7 +4960,7 @@ app.post("/api/public/checkout", async (req, res) => {
       isPriority: false, // Prioridade manual exclusiva do admin
       leavingGuest: guestDisplayName,
       arrivingGuest: null,
-      pendingObservation: `Check-out expresso confirmado (${guestDisplayName})`,
+      pendingObservation: null, // Sem nota redundante; status "Desocupado" é exibido no badge visual
       willCleanAt: null,
       cleaningStartedAt: null,
       completedAt: null,
@@ -5540,6 +5555,19 @@ app.post("/api/cleaning/requests/manual", (req, res) => {
 });
 
 function getRequestsForDate(dateStr, isNested = false) {
+  const sanitizeCardNote = (note) => {
+    if (!note || typeof note !== "string") return null;
+    let cleaned = note
+      .replace(/(?:•\s*)?Check-out\s+confirmado[^\n•]*/gi, "")
+      .replace(/(?:•\s*)?Check-out\s+expresso[^\n•]*/gi, "")
+      .replace(/(?:•\s*)?Confirmado\s+na\s+Portaria[^\n•]*/gi, "")
+      .replace(/(?:•\s*)?Limpeza\s+de\s+check-out\s+gerada\s+automaticamente[^\n•]*/gi, "")
+      .replace(/(?:•\s*)?Quarto\s+desocupado[^\n•]*/gi, "")
+      .trim();
+    cleaned = cleaned.replace(/^[•\s\-,|]+|[•\s\-,|]+$/g, "").trim();
+    return cleaned.length > 0 ? cleaned : null;
+  };
+
   // Se a consulta for para uma data futura (ex: amanhã), garante que as solicitações de hoje já estão geradas e sincronizadas
   if (!isNested && typeof getTodayStr === "function" && dateStr > getTodayStr()) {
     getRequestsForDate(getTodayStr(), true);
@@ -5736,10 +5764,15 @@ function getRequestsForDate(dateStr, isNested = false) {
       existingCleaning.isVacantExplicitlySet ||
       existingCleaning.vacantSource === "guest_checkout" ||
       existingCleaning.vacantSource === "reception_checkout" ||
+      existingCleaning.vacantSource === "whatsapp_concierge" ||
       existingCleaning.vacantSource === "manual_card" ||
       existingCleaning.vacantSource === "admin" ||
-      existingCleaning.source === "guest_checkout"
+      existingCleaning.source === "guest_checkout" ||
+      existingCleaning.source === "whatsapp_concierge"
     ));
+
+    const cleanExistingAdmin = sanitizeCardNote(resolvedAdminNote);
+    const cleanExistingPendingObs = existingCleaning ? sanitizeCardNote(existingCleaning.pendingObservation) : cleanExistingAdmin;
 
     const card = {
       id: existingCleaning ? existingCleaning.id : (maxId + 1),
@@ -5758,10 +5791,10 @@ function getRequestsForDate(dateStr, isNested = false) {
       isExtended: false,
       twinBeds: resolvedTwinBeds,
       extraMattress: resolvedExtraMattress,
-      adminNote: resolvedAdminNote,
+      adminNote: cleanExistingAdmin,
       leavingGuest: pmsRes.guestName || pmsRes.title || "Hóspede",
       arrivingGuest: arrivingRes ? (arrivingRes.guestName || arrivingRes.title) : (nextUpcomingRes ? nextUpcomingRes.guestName : null),
-      pendingObservation: existingCleaning ? existingCleaning.pendingObservation : resolvedAdminNote,
+      pendingObservation: cleanExistingPendingObs,
       willCleanAt: existingCleaning ? existingCleaning.willCleanAt : null,
       cleaningStartedAt: existingCleaning ? existingCleaning.cleaningStartedAt : null,
       completedAt: existingCleaning ? existingCleaning.completedAt : null,
@@ -5771,11 +5804,11 @@ function getRequestsForDate(dateStr, isNested = false) {
     };
 
     if (existingCleaning) {
-      if (existingCleaning.twinBeds !== resolvedTwinBeds || existingCleaning.extraMattress !== resolvedExtraMattress || existingCleaning.adminNote !== resolvedAdminNote) {
+      if (existingCleaning.twinBeds !== resolvedTwinBeds || existingCleaning.extraMattress !== resolvedExtraMattress || existingCleaning.adminNote !== cleanExistingAdmin) {
         existingCleaning.twinBeds = resolvedTwinBeds;
         existingCleaning.extraMattress = resolvedExtraMattress;
-        existingCleaning.adminNote = resolvedAdminNote;
-        existingCleaning.pendingObservation = resolvedAdminNote;
+        existingCleaning.adminNote = cleanExistingAdmin;
+        existingCleaning.pendingObservation = cleanExistingAdmin;
         shouldSaveDb = true;
       }
     } else if (dateStr >= "2026-09-01") {
@@ -5837,8 +5870,11 @@ function getRequestsForDate(dateStr, isNested = false) {
       existingCleaning.isVacantExplicitlySet ||
       existingCleaning.vacantSource === "guest_checkout" ||
       existingCleaning.vacantSource === "reception_checkout" ||
+      existingCleaning.vacantSource === "whatsapp_concierge" ||
       existingCleaning.vacantSource === "manual_card" ||
-      existingCleaning.vacantSource === "admin"
+      existingCleaning.vacantSource === "admin" ||
+      existingCleaning.source === "guest_checkout" ||
+      existingCleaning.source === "whatsapp_concierge"
     ));
 
     const card = {
@@ -6050,9 +6086,11 @@ app.get("/api/reservations/checkouts", (req, res) => {
       req_.isVacantExplicitlySet || 
       req_.vacantSource === "guest_checkout" || 
       req_.vacantSource === "reception_checkout" || 
+      req_.vacantSource === "whatsapp_concierge" || 
       req_.vacantSource === "manual_card" || 
       req_.vacantSource === "admin" ||
-      req_.source === "guest_checkout"
+      req_.source === "guest_checkout" ||
+      req_.source === "whatsapp_concierge"
     ) && Boolean(req_.isVacant);
 
     const isVacant = isExplicitlyVacant;
@@ -6088,16 +6126,17 @@ app.get("/api/reservations/checkouts", (req, res) => {
       if (cleanAdminNote.includes("Pagamento integral") || cleanAdminNote.includes("Quitação de saldo") || cleanAdminNote.includes("Limpeza de check-out gerada automaticamente")) {
         cleanAdminNote = "";
       }
-      resolvedSpecialRequests = cleanAdminNote || null;
+      resolvedSpecialRequests = sanitizeCardNote(cleanAdminNote);
     } else if (req_.adminNote === null) {
       resolvedSpecialRequests = null;
     } else {
-      resolvedSpecialRequests = resNoteForMaid;
+      resolvedSpecialRequests = sanitizeCardNote(resNoteForMaid);
     }
 
+    const cleanPendingObs = sanitizeCardNote(req_.pendingObservation);
     const isInst = Boolean(req_.isInstructionOnly || req_.source === "manual_instruction" || req_.type === "instruction" || req_.type === "bed_adjustment_only" || req_.isBedAdjustmentOnly);
     const isPaid = typeof req_.isPaidCleaning === "boolean" ? req_.isPaidCleaning : (isInst ? false : true);
-    const instText = req_.instructionText || req_.notes || req_.adminNote || req_.pendingObservation || (req_.twinBeds ? "Separar as camas, colocar como 2 solteiras" : null);
+    const instText = req_.instructionText || req_.notes || sanitizeCardNote(req_.adminNote) || cleanPendingObs || (req_.twinBeds ? "Separar as camas, colocar como 2 solteiras" : null);
 
     const setupInfo = isInst ? {
       twinBeds: Boolean(req_.twinBeds),
@@ -6187,7 +6226,7 @@ app.get("/api/reservations/checkouts", (req, res) => {
         twinBeds: hasTwinBeds,
         extraMattress: hasExtraMattress,
         adminNote: resolvedSpecialRequests,
-        pendingObservation: req_.pendingObservation || resolvedSpecialRequests,
+        pendingObservation: cleanPendingObs || resolvedSpecialRequests,
         arrivingGuest: nextResForSetup?.guestName || req_.arrivingGuest || null,
         isPriority: req_.isPriority || false,
         isExtended: req_.isExtended || req_.status === "extended",

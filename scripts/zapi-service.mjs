@@ -56,7 +56,23 @@ export function isTemplateAllowedForChannel(template, rawChannel) {
   }
   const norm = normalizeReservationChannel(rawChannel);
   const rawLower = String(rawChannel || "").toLowerCase().trim();
-  return template.channels.includes(norm) || template.channels.includes(rawLower);
+}
+
+/**
+ * Sanitiza notas do card de governança para remover mensagens redundantes de check-out,
+ * mantendo apenas instruções operacionais autênticas (ex.: camas, berço, avisos especiais).
+ */
+export function sanitizeCardNote(note) {
+  if (!note || typeof note !== "string") return null;
+  let cleaned = note
+    .replace(/(?:•\s*)?Check-out\s+confirmado[^\n•]*/gi, "")
+    .replace(/(?:•\s*)?Check-out\s+expresso[^\n•]*/gi, "")
+    .replace(/(?:•\s*)?Confirmado\s+na\s+Portaria[^\n•]*/gi, "")
+    .replace(/(?:•\s*)?Limpeza\s+de\s+check-out\s+gerada\s+automaticamente[^\n•]*/gi, "")
+    .replace(/(?:•\s*)?Quarto\s+desocupado[^\n•]*/gi, "")
+    .trim();
+  cleaned = cleaned.replace(/^[•\s\-,|]+|[•\s\-,|]+$/g, "").trim();
+  return cleaned.length > 0 ? cleaned : null;
 }
 
 function crc16(data) {
@@ -3348,12 +3364,14 @@ export async function handleConciergeGroupMessage({
     let cleanReq = db.cleaningRequests.find(r => r.flatId === flat.id && r.requestDate === todayStr);
 
     if (cleanReq) {
-      cleanReq.isVacant = true; // Quarto desocupado
+      cleanReq.isVacant = true; // Quarto desocupado informado pela portaria
+      cleanReq.isVacantExplicitlySet = true;
+      cleanReq.vacantSource = "reception_checkout";
+      cleanReq.vacantSetAt = now;
       cleanReq.leavingGuest = cleanReq.leavingGuest || senderLabel;
-      if (!cleanReq.pendingObservation) {
-        cleanReq.pendingObservation = `Check-out confirmado no grupo da portaria (${senderLabel})`;
-      } else if (!cleanReq.pendingObservation.includes("portaria") && !cleanReq.pendingObservation.includes("Portaria")) {
-        cleanReq.pendingObservation = `${cleanReq.pendingObservation} • Confirmado na Portaria (${senderLabel})`;
+      // Notas do card são reservadas estritamente para itens sem indicador dedicado na interface
+      if (cleanReq.pendingObservation) {
+        cleanReq.pendingObservation = sanitizeCardNote(cleanReq.pendingObservation);
       }
       cleanReq.updatedAt = now;
     } else {
@@ -3366,10 +3384,13 @@ export async function handleConciergeGroupMessage({
         status: "dirty",
         assignedUserId: null,
         isVacant: true, // Já desocupado
+        isVacantExplicitlySet: true,
+        vacantSource: "reception_checkout",
+        vacantSetAt: now,
         isPriority: false,
         leavingGuest: senderLabel,
         arrivingGuest: null,
-        pendingObservation: `Check-out confirmado no grupo da portaria (${senderLabel})`,
+        pendingObservation: null, // Sem nota redundante; o indicador visual do card já exibe "Desocupado"
         willCleanAt: null,
         cleaningStartedAt: null,
         completedAt: null,
