@@ -196,6 +196,46 @@ export default function PmsCalendar() {
   const isFlatManuallyChangedRef = useRef(false)
   const [formGuestName, setFormGuestName] = useState("")
   const [formGuestPhone, setFormGuestPhone] = useState("")
+  const [phoneVerification, setPhoneVerification] = useState<{
+    phone: string;
+    checking: boolean;
+    exists?: boolean;
+    checked?: boolean;
+    canonicalPhone?: string;
+  } | null>(null);
+
+  const verifyGuestPhoneWhatsApp = async (phoneToVerify: string) => {
+    const cleanDigits = phoneToVerify.replace(/\D/g, "");
+    if (cleanDigits.length < 10) {
+      setPhoneVerification(null);
+      return null;
+    }
+    if (phoneVerification && phoneVerification.phone === cleanDigits && !phoneVerification.checking) {
+      return phoneVerification;
+    }
+    setPhoneVerification({ phone: cleanDigits, checking: true });
+    try {
+      const res = await fetch(`/api/whatsapp/phone-exists/${cleanDigits}`);
+      if (res.ok) {
+        const data = await res.json();
+        const verResult = {
+          phone: cleanDigits,
+          checking: false,
+          exists: data.exists !== false,
+          checked: Boolean(data.checked),
+          canonicalPhone: data.phone
+        };
+        setPhoneVerification(verResult);
+        return verResult;
+      }
+    } catch (e: any) {
+      console.warn("Erro ao validar telefone:", e);
+    }
+    const fallbackResult = { phone: cleanDigits, checking: false, exists: true, checked: false };
+    setPhoneVerification(fallbackResult);
+    return fallbackResult;
+  };
+
   const [formGuestEmail, setFormGuestEmail] = useState("")
   const [formCheckin, setFormCheckin] = useState(format(new Date(), "yyyy-MM-dd"))
   const [formCheckout, setFormCheckout] = useState(format(addDays(new Date(), 1), "yyyy-MM-dd"))
@@ -2060,6 +2100,7 @@ export default function PmsCalendar() {
     setFormIncludeBreakfast(false)
     setFormSpecialRequests("")
     setFormIsMonthlyGuest(false)
+    setPhoneVerification(null)
     setAuditLogs([])
     setCommunications([])
     setResModalTab("reservation")
@@ -2068,6 +2109,7 @@ export default function PmsCalendar() {
 
   const handleOpenEditRes = (resItem: any) => {
     setSelectedRes(resItem)
+    setPhoneVerification(null)
     isFlatManuallyChangedRef.current = true
     setFormFlatId(String(resItem.flatId))
     setFormCheckin(resItem.checkinDate)
@@ -2647,6 +2689,24 @@ export default function PmsCalendar() {
         variant: "destructive"
       })
       return
+    }
+
+    if (formGuestPhone.trim().replace(/\D/g, "").length >= 10) {
+      const cleanDigits = formGuestPhone.trim().replace(/\D/g, "");
+      let ver = phoneVerification && phoneVerification.phone === cleanDigits && phoneVerification.checked !== undefined ? phoneVerification : null;
+      if (!ver) {
+        setSavingRes(true);
+        ver = await verifyGuestPhoneWhatsApp(formGuestPhone);
+        setSavingRes(false);
+      }
+      if (ver && ver.checked && ver.exists === false) {
+        const proceed = confirm(
+          `⚠️ Atenção: O telefone informado (${formGuestPhone}) NÃO possui conta ativa no WhatsApp (possível erro de digitação no DDD ou no 9º dígito).\n\nDeseja salvar a reserva mesmo assim?`
+        );
+        if (!proceed) {
+          return;
+        }
+      }
     }
 
     setSavingRes(true)
@@ -5050,7 +5110,43 @@ export default function PmsCalendar() {
                       <Input value={formGuest1Cpf} onChange={e => setFormGuest1Cpf(e.target.value)} placeholder="CPF / Documento" className="text-xs h-8" />
                     </div>
                     <div className="grid grid-cols-2 gap-2">
-                      <Input value={formGuestPhone} onChange={e => setFormGuestPhone(e.target.value)} placeholder="WhatsApp / Celular" className="text-xs h-8" />
+                      <div className="space-y-1">
+                        <div className="relative">
+                          <Input 
+                            value={formGuestPhone} 
+                            onChange={e => {
+                              setFormGuestPhone(e.target.value)
+                              if (phoneVerification && phoneVerification.phone !== e.target.value.replace(/\D/g, "")) {
+                                setPhoneVerification(null)
+                              }
+                            }} 
+                            onBlur={() => {
+                              if (formGuestPhone.trim().replace(/\D/g, "").length >= 10) {
+                                verifyGuestPhoneWhatsApp(formGuestPhone)
+                              }
+                            }}
+                            placeholder="WhatsApp / Celular" 
+                            className={`text-xs h-8 ${phoneVerification && phoneVerification.checked && phoneVerification.exists === false ? "border-amber-500 bg-amber-500/5 focus-visible:ring-amber-500" : (phoneVerification && phoneVerification.checked && phoneVerification.exists ? "border-emerald-500/80 bg-emerald-500/5" : "")}`} 
+                          />
+                          {phoneVerification?.checking && (
+                            <span className="absolute right-2 top-2 text-[10px] text-muted-foreground flex items-center gap-1">
+                              <RefreshCw className="w-2.5 h-2.5 animate-spin text-muted-foreground" />
+                            </span>
+                          )}
+                        </div>
+                        {phoneVerification && phoneVerification.checked && phoneVerification.exists === false && (
+                          <div className="text-[10px] text-amber-700 dark:text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded flex items-center gap-1 animate-in fade-in leading-tight">
+                            <span>⚠️</span>
+                            <span>Número sem WhatsApp ativo (verifique digitação).</span>
+                          </div>
+                        )}
+                        {phoneVerification && phoneVerification.checked && phoneVerification.exists === true && (
+                          <div className="text-[10px] text-emerald-700 dark:text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded flex items-center gap-1 animate-in fade-in leading-tight">
+                            <span>✓</span>
+                            <span>WhatsApp verificado e ativo.</span>
+                          </div>
+                        )}
+                      </div>
                       <Input type="email" value={formGuestEmail} onChange={e => setFormGuestEmail(e.target.value)} placeholder="E-mail" className="text-xs h-8" />
                     </div>
                   </div>

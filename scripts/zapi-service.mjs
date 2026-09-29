@@ -2090,30 +2090,6 @@ export async function sendZapiMessage(config, {
     headers["Client-Token"] = clientToken;
   }
 
-  // Pré-validação com a Z-API: verifica se o número possui WhatsApp ativo para evitar falsos positivos
-  if (instanceId && token && !cleanPhone.includes("@g.us")) {
-    try {
-      const existsUrl = `${baseUrl}/instances/${instanceId}/token/${token}/phone-exists/${cleanPhone}`;
-      const existsRes = await fetch(existsUrl, { headers });
-      if (existsRes.ok) {
-        const existsData = await existsRes.json().catch(() => ({}));
-        if (existsData && existsData.exists === false) {
-          console.warn(`[Z-API ⚠️] O número ${cleanPhone} NÃO possui WhatsApp ativo (phone-exists: false). Abortando envio.`);
-          return {
-            success: false,
-            phoneNotExists: true,
-            error: `O número ${cleanPhone} não possui WhatsApp cadastrado (erro de digitação ou número fixo). Verifique o cadastro do hóspede.`
-          };
-        }
-        if (existsData && existsData.phone) {
-          cleanPhone = cleanWhatsAppPhone(existsData.phone);
-        }
-      }
-    } catch (chkErr) {
-      console.warn(`[Z-API] Falha ao verificar /phone-exists/${cleanPhone}:`, chkErr.message);
-    }
-  }
-
   // Sanitização de segurança de botões em mensagens de check-out, pós-estadia ou cancelamento
   const msgContext = `${title || ""} ${message || ""}`.toLowerCase();
   const isCheckoutOrEndMessage = msgContext.includes("check-out") || 
@@ -2519,6 +2495,42 @@ export async function getZapiQrCode(config) {
     return { success: true, qrImage: data.link || data.value || null, data };
   } catch (err) {
     return { success: false, error: err.message };
+  }
+}
+
+// ── Consulta Existência de Conta no WhatsApp via Z-API ────────────────────────
+export async function checkZapiPhoneExists(phone, config) {
+  const cleanPhone = cleanWhatsAppPhone(phone);
+  if (!cleanPhone) {
+    return { exists: false, error: "Número inválido ou vazio", checked: false };
+  }
+  const instanceId = config?.instanceId?.trim();
+  const token = config?.token?.trim();
+  const clientToken = config?.clientToken?.trim();
+
+  if (!instanceId || !token) {
+    return { exists: true, phone: cleanPhone, checked: false, note: "Z-API não configurada" };
+  }
+
+  const baseUrl = config.baseUrl?.replace(/\/+$/, "") || "https://api.z-api.io";
+  const url = `${baseUrl}/instances/${instanceId}/token/${token}/phone-exists/${cleanPhone}`;
+  const headers = {};
+  if (clientToken) headers["Client-Token"] = clientToken;
+
+  try {
+    const res = await fetch(url, { headers });
+    if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      return {
+        exists: data.exists !== false,
+        phone: data.phone ? cleanWhatsAppPhone(data.phone) : cleanPhone,
+        checked: true,
+        data
+      };
+    }
+    return { exists: true, phone: cleanPhone, checked: false };
+  } catch (err) {
+    return { exists: true, phone: cleanPhone, checked: false, error: err.message };
   }
 }
 
@@ -4206,6 +4218,14 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     ensureDbDefaults();
     const qr = await getZapiQrCode(db?.zapiConfig);
     res.json(qr);
+  });
+
+  // 4.1 Consulta Existência de Conta no WhatsApp (Validação no Cadastro/Edição)
+  app.get("/api/whatsapp/phone-exists/:phone", async (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const result = await checkZapiPhoneExists(req.params.phone, db?.zapiConfig);
+    res.json(result);
   });
 
   // 5. Listar Templates
