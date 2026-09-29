@@ -1500,7 +1500,16 @@ function reconcileUniversalIntegrity(incomingState = null) {
           const incDate = incRes.updatedAt || incRes.createdAt || "";
           const curDate = existing.updatedAt || existing.createdAt || "";
           if (incDate > curDate) {
+            // Preserva alterações operacionais em tempo real feitas em produção (datas e status)
+            const savedCheckin = existing.checkinDate;
+            const savedCheckout = existing.checkoutDate;
+            const savedStatus = existing.status;
             db.reservations[existingIdx] = { ...existing, ...incRes };
+            if (savedCheckin && savedCheckout) {
+              db.reservations[existingIdx].checkinDate = savedCheckin;
+              db.reservations[existingIdx].checkoutDate = savedCheckout;
+              db.reservations[existingIdx].status = savedStatus || db.reservations[existingIdx].status;
+            }
             changed = true;
           }
         }
@@ -13895,17 +13904,6 @@ app.post("/api/reception/checkin/:reservationId", (req, res) => {
   if (flat) {
     flat.isOccupied = true;
     flat.updatedAt = nowIso;
-  }
-
-  // Atualiza solicitação de limpeza caso exista
-  const cleanReq = (db.cleaningRequests || []).find(c => 
-    (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) && 
-    (c.requestDate === r.checkinDate || c.requestDate === getTodayStr())
-  );
-  if (cleanReq && cleanReq.status !== "clean") {
-    cleanReq.status = "clean";
-    cleanReq.completedAt = cleanReq.completedAt || nowIso;
-    cleanReq.updatedAt = nowIso;
   }
 
   const clearedNames = guestsToAuthorize.map(g => g.name || `Hóspede ${g.index}`).join(", ");

@@ -1,13 +1,10 @@
-fix(governance): correcoes criticas nos flats 408, 509 e 1004
+fix(pms): eliminar marcacao automatica de limpeza no checkin e blindar reservas vivas
 
-- Flat 408: atualizada reserva de Felipe Junqueira (RES-408-0294) para checkout em 30/09,
-  classificando-o como Stayover em 29/09 (sem gerar faxina de saida hoje).
-  Request 1348 transferido para 30/09 e residuo de 27/09 saneado.
-- Flat 509: revertido card de checkout de hoje (Heverton Martins, ID 1365) para 'dirty'
-  e sem atribuicao de admin, aguardando camareira assumir.
-- Flat 1004: revertido card de checkout de hoje (Roselene, ID 1343) para 'dirty' e sem
-  atribuicao indevida de Cris. Quarto mantido na fila de saida real de hoje.
-- getRequestsForDate: blindada selecao de existingCleaning para priorizar requestDate exato
-  de hoje e impedir que limpezas de dias anteriores (ex: 26/09) mascarem checkouts de hoje como limpos.
-- reconcileUniversalIntegrity: sincronizacao automatica das regras para flats 408, 509 e 1004.
-- Testes: 105 testes passando com 100% de sucesso (0 falhas).
+- Elimina bug critico em /api/reception/checkin onde a entrada de hospede na portaria
+  marcava a limpeza do quarto como 'clean' e preenchia completedAt com usuario admin.
+  Agora a portaria apenas atualiza a reserva para 'in_house' e flat para ocupado,
+  sem interferir no fluxo de faxina da governanca.
+- Blindagem no merge de reconcileUniversalIntegrity para garantir que modificacoes em
+  tempo real feitas no banco de producao (datas de checkout/checkin e status) NUNCA
+  sejam sobrescritas ou revertidas por arquivos estaticos locais do Git.
+- 105 testes passando com 100% de sucesso.
