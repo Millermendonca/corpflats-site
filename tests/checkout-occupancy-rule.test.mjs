@@ -226,4 +226,51 @@ describe('Regra de Ocupação Padrão em Check-outs', () => {
       'app.put deve propagar alterações de twinBeds e extraMattress para a governança em tempo real'
     );
   });
+
+  it('20. Check-ins sem check-out NUNCA devem gerar solicitação de limpeza suja (source === "checkin")', () => {
+    const serverCode = fs.readFileSync(serverPath, 'utf8');
+    assert.ok(
+      !serverCode.includes('source: "checkin"'),
+      'O sistema nunca deve criar solicitações de limpeza com source: "checkin"'
+    );
+    assert.ok(
+      serverCode.includes('c.source !== "checkin"'),
+      'reconcileUniversalIntegrity deve purgar universalmente qualquer solicitação artificial com source === "checkin"'
+    );
+  });
+
+  it('21. Flats 116 e 211 (check-in sem check-out em 29/09) não devem aparecer na governança em 29/09', () => {
+    const serverCode = fs.readFileSync(serverPath, 'utf8');
+    function extractFunction(code, fnName) {
+      const match = code.match(new RegExp('(?:export\\s+)?(?:async\\s+)?function\\s+' + fnName + '\\s*\\('));
+      if (!match) throw new Error('Function not found: ' + fnName);
+      const startIdx = match.index;
+      let openBraces = 0;
+      let started = false;
+      let endIdx = startIdx;
+      for (let i = startIdx; i < code.length; i++) {
+        if (code[i] === '{') {
+          openBraces++;
+          started = true;
+        } else if (code[i] === '}') {
+          openBraces--;
+          if (started && openBraces === 0) { endIdx = i + 1; break; }
+        }
+      }
+      return code.substring(startIdx, endIdx);
+    }
+    const grfdCode = extractFunction(serverCode, 'getRequestsForDate');
+    const ruiCode = extractFunction(serverCode, 'reconcileUniversalIntegrity');
+    const db = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+    const fn = new Function('db', 'getTodayStr', 'getOffsetDateStr', 'saveDatabase', 'isTimeBefore', 'getBrasiliaNow', grfdCode + '\n' + ruiCode + '\n return { getRequestsForDate, reconcileUniversalIntegrity };');
+    const scope = fn(db, () => '2026-09-29', (d, off) => '2026-09-29', () => {}, () => false, () => ({ timeStr: '10:00' }));
+    scope.reconcileUniversalIntegrity();
+
+    const reqs29 = scope.getRequestsForDate('2026-09-29');
+    const flat116 = reqs29.find(r => String(r.flatNumber) === '116');
+    const flat211 = reqs29.find(r => String(r.flatNumber) === '211');
+
+    assert.strictEqual(flat116, undefined, 'Flat 116 não deve ter card de limpeza em 29/09');
+    assert.strictEqual(flat211, undefined, 'Flat 211 não deve ter card de limpeza em 29/09');
+  });
 });

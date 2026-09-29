@@ -1683,7 +1683,7 @@ function reconcileUniversalIntegrity(incomingState = null) {
   if (db.flats.length !== flatsBeforeCount) changed = true;
   
   const cleanReqsBefore = (db.cleaningRequests || []).length;
-  db.cleaningRequests = (db.cleaningRequests || []).filter(c => String(c.flatNumber) !== "502" && c.flatId !== 9);
+  db.cleaningRequests = (db.cleaningRequests || []).filter(c => String(c.flatNumber) !== "502" && c.flatId !== 9 && c.source !== "checkin");
   if (db.cleaningRequests.length !== cleanReqsBefore) changed = true;
 
   db.flats.forEach(flat => {
@@ -5951,113 +5951,6 @@ function getRequestsForDate(dateStr, isNested = false) {
     existingFlatNumbersForDate.add(flatNumber);
   }
 
-  // 3.5. Busca reservas ativas com CHECK-IN na data consultada (checkinDate === dateStr) que ainda não possuem card hoje
-  const pmsCheckins = (db.reservations || []).filter(r => 
-    r.status !== "cancelada" && 
-    r.status !== "cancelado" && 
-    r.status !== "no_show" &&
-    r.checkinDate === dateStr
-  );
-
-  for (const checkinRes of pmsCheckins) {
-    const fNumber = String(checkinRes.flatNumber || (db.flats.find(f => f.id === checkinRes.flatId)?.number || ""));
-    if (!fNumber) continue;
-    if (existingFlatNumbersForDate.has(fNumber)) continue;
-    if (stayoverFlatNumbers.has(fNumber)) continue;
-
-    const flat = db.flats.find(f => String(f.number) === fNumber) || { id: checkinRes.flatId, number: fNumber, isOccupied: false };
-    const flatNumClean = fNumber.replace(/\D/g, "");
-
-    const matchingCleanings = (db.cleaningRequests || []).filter(c => 
-      (String(c.flatNumber).replace(/\D/g, "") === flatNumClean || c.flatId === flat.id) && 
-      (c.requestDate === dateStr || (c.effectiveDate === dateStr && c.status === "clean"))
-    );
-    const existingCleaning = matchingCleanings.find(c => c.status === "clean") || matchingCleanings.find(c => c.status === "no_show") || matchingCleanings[0];
-
-    const hasTwin = typeof existingCleaning?.twinBeds === "boolean"
-      ? existingCleaning.twinBeds
-      : Boolean(checkinRes.twinBeds || checkinRes.bedType === "2 Solteiro" || checkinRes.bedType === "twin");
-    const hasMattress = typeof existingCleaning?.extraMattress === "boolean"
-      ? existingCleaning.extraMattress
-      : Boolean(checkinRes.extraMattress);
-    let maidNote = null;
-    if (existingCleaning && existingCleaning.adminNote !== undefined) {
-      maidNote = existingCleaning.adminNote;
-    } else {
-      maidNote = (checkinRes.specialRequests || "").trim() || (checkinRes.notes || "").trim() || null;
-    }
-
-    const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
-    
-    // Status do quarto para o check-in:
-    // Se o quarto já foi higienizado hoje e não há pendência de camas/colchão/recado que precise ser feita, mantém clean.
-    // Caso contrário, precisa de atenção da camareira
-    let resolvedStatus = existingCleaning ? existingCleaning.status : "dirty";
-    if (!existingCleaning) {
-      resolvedStatus = "dirty";
-    }
-
-    const isExplicitlyVacantCheckin = Boolean(existingCleaning && existingCleaning.isVacant && (
-      existingCleaning.isVacantExplicitlySet ||
-      existingCleaning.vacantSource === "guest_checkout" ||
-      existingCleaning.vacantSource === "reception_checkout" ||
-      existingCleaning.vacantSource === "whatsapp_concierge" ||
-      existingCleaning.vacantSource === "manual_card" ||
-      existingCleaning.vacantSource === "admin" ||
-      existingCleaning.source === "guest_checkout" ||
-      existingCleaning.source === "whatsapp_concierge"
-    ));
-
-    const card = {
-      id: existingCleaning ? existingCleaning.id : (maxId + 1),
-      flatId: flat.id,
-      flatNumber: flat.number,
-      requestDate: dateStr,
-      source: "checkin",
-      status: resolvedStatus,
-      assignedUserId: existingCleaning?.assignedUserId || null,
-      assignedUsername: existingCleaning?.assignedUsername || null,
-      assignedUserName: existingCleaning?.assignedUserName || null,
-      isVacant: isExplicitlyVacantCheckin,
-      isVacantExplicitlySet: Boolean(existingCleaning?.isVacantExplicitlySet),
-      vacantSource: existingCleaning?.vacantSource || null,
-      isPriority: Boolean(checkinRes.isPriority || checkinRes.earlyCheckinAuthorized || existingCleaning?.isPriority),
-      isExtended: false,
-      twinBeds: hasTwin,
-      extraMattress: hasMattress,
-      adminNote: maidNote,
-      leavingGuest: null,
-      arrivingGuest: checkinRes.guestName || checkinRes.title || "Hóspede",
-      pendingObservation: existingCleaning?.pendingObservation || maidNote || (hasTwin ? "Montar 2 camas solteiro" : null),
-      willCleanAt: existingCleaning ? existingCleaning.willCleanAt : null,
-      cleaningStartedAt: existingCleaning ? existingCleaning.cleaningStartedAt : null,
-      completedAt: existingCleaning ? existingCleaning.completedAt : null,
-      durationMinutes: existingCleaning ? existingCleaning.durationMinutes : null,
-      createdAt: existingCleaning ? existingCleaning.createdAt : `${dateStr}T08:00:00.000Z`,
-      updatedAt: existingCleaning ? existingCleaning.updatedAt : `${dateStr}T08:00:00.000Z`
-    };
-
-    if (!existingCleaning && dateStr >= "2026-09-01") {
-      db.cleaningRequests.push(card);
-      shouldSaveDb = true;
-    } else if (existingCleaning) {
-      if (existingCleaning.twinBeds !== hasTwin || existingCleaning.extraMattress !== hasMattress || existingCleaning.adminNote !== maidNote) {
-        existingCleaning.twinBeds = hasTwin;
-        existingCleaning.extraMattress = hasMattress;
-        existingCleaning.adminNote = maidNote;
-        existingCleaning.pendingObservation = maidNote;
-        shouldSaveDb = true;
-      }
-      if (!existingCleaning.arrivingGuest) {
-        existingCleaning.arrivingGuest = checkinRes.guestName;
-        shouldSaveDb = true;
-      }
-    }
-
-    requestsForDate.push(card);
-    existingFlatNumbersForDate.add(fNumber);
-  }
-
   // 4. Garante que qualquer solicitação existente no banco de dados para a data apareça na listagem
   for (const r of (db.cleaningRequests || [])) {
     const fNumber = String(r.flatNumber || "");
@@ -9576,35 +9469,6 @@ app.post("/api/pms/reservations", async (req, res) => {
         }
         cleaningReq.arrivingGuest = newReservation.guestName;
         cleaningReq.updatedAt = new Date().toISOString();
-      } else if (isTwin || isMattress || maidNote) {
-        const maxCleanId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(c => Number(c.id) || 0)) : 0;
-        db.cleaningRequests.push({
-          id: maxCleanId + 1,
-          flatId: flat.id,
-          flatNumber: fNum,
-          requestDate: targetDate,
-          source: "checkin",
-          status: "dirty",
-          assignedUserId: null,
-          assignedUsername: null,
-          assignedUserName: null,
-          isVacant: false,
-          isVacantExplicitlySet: false,
-          isPriority: Boolean(newReservation.isPriority || newReservation.earlyCheckinAuthorized),
-          isExtended: false,
-          twinBeds: isTwin,
-          extraMattress: isMattress,
-          adminNote: maidNote,
-          leavingGuest: null,
-          arrivingGuest: newReservation.guestName,
-          pendingObservation: maidNote || (isTwin ? "Montar 2 camas solteiro" : null),
-          willCleanAt: null,
-          cleaningStartedAt: null,
-          completedAt: null,
-          durationMinutes: null,
-          createdAt: `${targetDate}T08:00:00.000Z`,
-          updatedAt: new Date().toISOString()
-        });
       }
     } catch (cleanSyncErr) {
       console.warn("[PMS] Erro ao sincronizar limpeza no checkin:", cleanSyncErr.message);
@@ -10915,35 +10779,6 @@ app.put("/api/pms/reservations/:id", (req, res) => {
         }
         cleaningReq.arrivingGuest = r.guestName;
         cleaningReq.updatedAt = new Date().toISOString();
-      } else if (isTwin || isMattress || maidNote) {
-        const maxCleanId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(c => Number(c.id) || 0)) : 0;
-        db.cleaningRequests.push({
-          id: maxCleanId + 1,
-          flatId: r.flatId,
-          flatNumber: fNum,
-          requestDate: targetDate,
-          source: "checkin",
-          status: "dirty",
-          assignedUserId: null,
-          assignedUsername: null,
-          assignedUserName: null,
-          isVacant: false,
-          isVacantExplicitlySet: false,
-          isPriority: Boolean(r.isPriority || r.earlyCheckinAuthorized),
-          isExtended: false,
-          twinBeds: isTwin,
-          extraMattress: isMattress,
-          adminNote: maidNote,
-          leavingGuest: null,
-          arrivingGuest: r.guestName,
-          pendingObservation: maidNote || (isTwin ? "Montar 2 camas solteiro" : null),
-          willCleanAt: null,
-          cleaningStartedAt: null,
-          completedAt: null,
-          durationMinutes: null,
-          createdAt: `${targetDate}T08:00:00.000Z`,
-          updatedAt: new Date().toISOString()
-        });
       }
       saveDatabase();
     } catch (cleanSyncErr) {
