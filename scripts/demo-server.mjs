@@ -39,16 +39,16 @@ import { MicrosoftGraphService } from "./microsoft-graph-service.mjs";
 import { initWhatsAppEngine, triggerImmediateWhatsApp, triggerRoomReadyWhatsApp, cleanWhatsAppPhone, sendZapiMessage, scheduleUpcomingReservationTriggers, triggerCheckoutWhatsApp, resolveWhatsAppTags } from "./zapi-service.mjs";
 import { initMaidAutomationEngine } from "./maid-automation-service.mjs";
 import { sendInterPix, isInterConfigured, INTER_ENV } from "./inter-pix-service.mjs";
-import { 
-  getSmtpConfig, 
-  verifySmtpConnection, 
-  sendEmailAsync, 
-  resendEmailAsync, 
-  renderCheckinConfirmedEmail, 
-  renderReservationUpdateEmail, 
+import {
+  getSmtpConfig,
+  verifySmtpConnection,
+  sendEmailAsync,
+  resendEmailAsync,
+  renderCheckinConfirmedEmail,
+  renderReservationUpdateEmail,
   renderGarageAuthorizationEmail,
   hasReceptionReceivedReservation,
-  renderManualEmail 
+  renderManualEmail
 } from "./mail-service.mjs";
 import { generateFnrhPdf, formatToBrasiliaDateTime, SECURE_FNRH_DIR, LEGACY_FNRH_DIR } from "./fnrh-pdf-service.mjs";
 
@@ -292,7 +292,7 @@ app.post("/api/cleaning/assignments/:requestId/no-show", (req, res) => {
   item.updatedAt = now;
 
   // Atualiza também a reserva no PMS para status no_show para não gerar pendência de limpeza
-  const resMatches = (db.reservations || []).filter(r => 
+  const resMatches = (db.reservations || []).filter(r =>
     (r.flatId === item.flatId || String(r.flatNumber) === String(fNum)) &&
     (r.checkoutDate === item.requestDate || r.checkinDate === item.requestDate || (r.checkinDate <= item.requestDate && r.checkoutDate >= item.requestDate)) &&
     r.status !== "cancelada"
@@ -1360,8 +1360,8 @@ function sanitizeAndRecoverCleanings() {
 
   // 3. Atualiza ou insere os registros canônicos garantindo integridade
   for (const canon of canonicalCleanings) {
-    const existingIdx = db.cleaningRequests.findIndex(r => 
-      (r.id === canon.id) || 
+    const existingIdx = db.cleaningRequests.findIndex(r =>
+      (r.id === canon.id) ||
       (String(r.flatNumber) === String(canon.flatNumber) && r.requestDate === canon.requestDate)
     );
     if (existingIdx >= 0) {
@@ -1410,7 +1410,7 @@ function sanitizeLostAndFound() {
     // Corrige item do Flat 1304 que foi erroneamente associado à Thaiza em vez do Pablo
     if (String(item.flatNumber) === "1304" && item.lastGuestName === "Thaiza") {
       const itemDate = item.createdAt ? item.createdAt.substring(0, 10) : "2026-09-06";
-      const checkoutRes = (db.reservations || []).find(r => 
+      const checkoutRes = (db.reservations || []).find(r =>
         (String(r.flatNumber) === "1304" || r.allocatedFlatNumbers?.includes("1304")) &&
         r.checkoutDate === itemDate &&
         r.status !== "cancelada" &&
@@ -1423,9 +1423,9 @@ function sanitizeLostAndFound() {
         item.lastGuestEmail = checkoutRes.guestEmail || item.lastGuestEmail;
         item.lastCheckoutDate = checkoutRes.checkoutDate;
       } else {
-        const checkoutClean = (db.cleaningRequests || []).find(c => 
-          String(c.flatNumber) === "1304" && 
-          (c.requestDate === itemDate || c.effectiveDate === itemDate) && 
+        const checkoutClean = (db.cleaningRequests || []).find(c =>
+          String(c.flatNumber) === "1304" &&
+          (c.requestDate === itemDate || c.effectiveDate === itemDate) &&
           c.leavingGuest && c.leavingGuest !== "Thaiza"
         );
         if (checkoutClean) {
@@ -1472,8 +1472,8 @@ function reconcileUniversalIntegrity(incomingState = null) {
     // 1.2 Hóspedes
     if (Array.isArray(incomingState.guests)) {
       incomingState.guests.forEach(incGuest => {
-        const existing = db.guests.find(g => 
-          g.id === incGuest.id || 
+        const existing = db.guests.find(g =>
+          g.id === incGuest.id ||
           (g.guestCode && incGuest.guestCode && g.guestCode === incGuest.guestCode) ||
           (g.document && incGuest.document && g.document.replace(/\D/g, '') === incGuest.document.replace(/\D/g, ''))
         );
@@ -1487,7 +1487,7 @@ function reconcileUniversalIntegrity(incomingState = null) {
     // 1.3 Reservas (União estrita para TODOS os flats)
     if (Array.isArray(incomingState.reservations)) {
       incomingState.reservations.forEach(incRes => {
-        const existingIdx = db.reservations.findIndex(r => 
+        const existingIdx = db.reservations.findIndex(r =>
           (r.id && incRes.id && Number(r.id) === Number(incRes.id)) ||
           (r.code && incRes.code && r.code.toUpperCase() === incRes.code.toUpperCase()) ||
           (String(r.flatNumber) === String(incRes.flatNumber) && r.checkinDate === incRes.checkinDate && r.checkoutDate === incRes.checkoutDate && r.checkinDate && r.checkoutDate)
@@ -1597,7 +1597,7 @@ function reconcileUniversalIntegrity(incomingState = null) {
       if (!db.companies) db.companies = [];
       incomingState.companies.forEach(incComp => {
         const cleanIncCnpj = (incComp.cnpj || "").replace(/\D/g, "");
-        const existing = db.companies.find(c => 
+        const existing = db.companies.find(c =>
           (c.id && incComp.id && Number(c.id) === Number(incComp.id)) ||
           (cleanIncCnpj && cleanIncCnpj.length >= 8 && (c.cnpj || "").replace(/\D/g, "") === cleanIncCnpj) ||
           (c.corporateName && incComp.corporateName && c.corporateName.trim().toLowerCase() === incComp.corporateName.trim().toLowerCase())
@@ -1620,7 +1620,7 @@ function reconcileUniversalIntegrity(incomingState = null) {
     if (Array.isArray(incomingState.whatsappHistory) && incomingState.whatsappHistory.length > 0) {
       if (!db.whatsappHistory) db.whatsappHistory = [];
       incomingState.whatsappHistory.forEach(incItem => {
-        const exists = db.whatsappHistory.some(h => 
+        const exists = db.whatsappHistory.some(h =>
           (h.id && incItem.id && h.id === incItem.id) ||
           (h.reservationCode && incItem.reservationCode && h.reservationCode === incItem.reservationCode && h.triggerEvent === incItem.triggerEvent && h.sentAt === incItem.sentAt) ||
           (h.message && incItem.message && h.message === incItem.message && h.sentAt === incItem.sentAt)
@@ -1636,7 +1636,7 @@ function reconcileUniversalIntegrity(incomingState = null) {
     if (Array.isArray(incomingState.whatsappQueue) && incomingState.whatsappQueue.length > 0) {
       if (!db.whatsappQueue) db.whatsappQueue = [];
       incomingState.whatsappQueue.forEach(incQ => {
-        const exists = db.whatsappQueue.some(q => 
+        const exists = db.whatsappQueue.some(q =>
           (q.id && incQ.id && q.id === incQ.id) ||
           (q.reservationCode && incQ.reservationCode && q.reservationCode === incQ.reservationCode && q.triggerEvent === incQ.triggerEvent)
         );
@@ -1662,7 +1662,7 @@ function reconcileUniversalIntegrity(incomingState = null) {
         } else if (Array.isArray(incConv.messages) && incConv.messages.length > 0) {
           if (!Array.isArray(existingConv.messages)) existingConv.messages = [];
           incConv.messages.forEach(incMsg => {
-            const msgExists = existingConv.messages.some(m => 
+            const msgExists = existingConv.messages.some(m =>
               (m.id && incMsg.id && m.id === incMsg.id) ||
               (m.messageId && incMsg.messageId && m.messageId === incMsg.messageId) ||
               (m.timestamp === incMsg.timestamp && m.text === incMsg.text)
@@ -1681,7 +1681,7 @@ function reconcileUniversalIntegrity(incomingState = null) {
   const flatsBeforeCount = db.flats.length;
   db.flats = (db.flats || []).filter(flat => String(flat.number) !== "502" && flat.id !== 9);
   if (db.flats.length !== flatsBeforeCount) changed = true;
-  
+
   const cleanReqsBefore = (db.cleaningRequests || []).length;
   db.cleaningRequests = (db.cleaningRequests || []).filter(c => String(c.flatNumber) !== "502" && c.flatId !== 9 && c.source !== "checkin");
   if (db.cleaningRequests.length !== cleanReqsBefore) changed = true;
@@ -1742,7 +1742,7 @@ function reconcileUniversalIntegrity(incomingState = null) {
       const validNote = (note && !note.includes("Limpeza de check-out gerada automaticamente") && note.toLowerCase() !== "teste") ? note : null;
 
       if (isTwin || isMattress || validNote) {
-        const cleanReq = (db.cleaningRequests || []).find(c => 
+        const cleanReq = (db.cleaningRequests || []).find(c =>
           (String(c.flatNumber) === String(r.flatNumber) || (r.flatId && c.flatId === r.flatId)) &&
           c.requestDate === r.checkinDate &&
           !c.isInstructionOnly &&
@@ -1763,7 +1763,7 @@ function reconcileUniversalIntegrity(incomingState = null) {
     // 4. Garantir que para TODO checkout de QUALQUER flat, exista a solicitação de limpeza correspondente
     if (r.status !== "cancelada" && r.status !== "cancelled" && r.checkoutDate && r.flatNumber) {
       const checkoutDate = r.checkoutDate;
-      const hasCleaning = db.cleaningRequests.some(c => 
+      const hasCleaning = db.cleaningRequests.some(c =>
         (String(c.flatNumber) === String(r.flatNumber) || c.flatId === r.flatId) &&
         (c.requestDate === checkoutDate || c.effectiveDate === checkoutDate)
       );
@@ -1772,7 +1772,7 @@ function reconcileUniversalIntegrity(incomingState = null) {
         // Se o checkout é no passado e o flat já possui uma limpeza "clean" entre a data de checkout e hoje (ou próximo check-in), NÃO criar limpeza dirty retroativa duplicada
         if (checkoutDate < todayStr) {
           const nextReservation = (db.reservations || [])
-            .filter(otherR => 
+            .filter(otherR =>
               (String(otherR.flatNumber) === String(r.flatNumber) || (r.flatId && otherR.flatId === r.flatId)) &&
               otherR.status !== "cancelada" && otherR.status !== "cancelled" &&
               otherR.checkinDate && otherR.checkinDate >= checkoutDate &&
@@ -1799,10 +1799,10 @@ function reconcileUniversalIntegrity(incomingState = null) {
 
         const sevenDaysAgo = typeof getOffsetDateStr === "function" ? getOffsetDateStr(-7) : "2026-09-20";
         const isOldPastCheckout = checkoutDate < sevenDaysAgo;
-        const maxCleanId = db.cleaningRequests.length > 0 
-          ? Math.max(...db.cleaningRequests.map(c => Number(c.id) || 0)) 
+        const maxCleanId = db.cleaningRequests.length > 0
+          ? Math.max(...db.cleaningRequests.map(c => Number(c.id) || 0))
           : 0;
-        
+
         db.cleaningRequests.push({
           id: maxCleanId + 1,
           flatId: r.flatId || (flat ? flat.id : null),
@@ -1834,7 +1834,7 @@ function reconcileUniversalIntegrity(incomingState = null) {
     }
   });
 
-  // Auto-correção: Se uma limpeza de checkout recente (últimos 7 dias) foi gerada automaticamente como "clean" 
+  // Auto-correção: Se uma limpeza de checkout recente (últimos 7 dias) foi gerada automaticamente como "clean"
   // sem ter sido realizada por nenhuma camareira (sem assignedUserId e sem completedAt, como o Flat 408 da Danielle), ela deve ser "dirty"!
   const recentWindow = typeof getOffsetDateStr === "function" ? getOffsetDateStr(-7) : "2026-09-20";
   (db.cleaningRequests || []).forEach(c => {
@@ -1863,6 +1863,34 @@ function reconcileUniversalIntegrity(incomingState = null) {
       c.durationMinutes = null;
       changed = true;
       console.log(`[Universal Integrity] Corrigindo limpeza não realizada do Flat ${c.flatNumber} em ${c.requestDate} de clean para dirty`);
+    }
+  });
+
+  // Regra Universal de Integridade Temporal (Todos os 19 flats):
+  // Uma limpeza de check-out com data futura (requestDate > todayStr) ou cuja data de conclusão
+  // seja anterior à data da solicitação (completedAt.substring(0, 10) < requestDate)
+  // é uma anomalia cronológica impossível (o hóspede ainda está hospedado e não fez checkout).
+  (db.cleaningRequests || []).forEach(c => {
+    const isInst = Boolean(c.isInstructionOnly || c.source === "manual_instruction" || c.type === "instruction" || c.type === "bed_adjustment_only" || c.isBedAdjustmentOnly);
+    if (isInst) return;
+    if (c.source === "admin_manual" || c.source === "manual" || c.markedByAdmin === true) return;
+
+    const completedDate = c.completedAt ? String(c.completedAt).substring(0, 10) : null;
+    const isFutureCheckoutCleaning = Boolean(c.requestDate && c.requestDate > todayStr);
+    const isCompletedBeforeRequest = Boolean(completedDate && c.requestDate && completedDate < c.requestDate);
+
+    if (c.status === "clean" && (isFutureCheckoutCleaning || isCompletedBeforeRequest)) {
+      c.status = "dirty";
+      c.assignedUserId = null;
+      c.assignedUsername = null;
+      c.assignedUserName = null;
+      c.completedAt = null;
+      c.cleaningStartedAt = null;
+      c.durationMinutes = null;
+      c.effectiveDate = c.requestDate;
+      c.executionDate = c.requestDate;
+      changed = true;
+      console.log(`[Universal Integrity] Corrigindo limpeza anômala futura/retroativa do Flat ${c.flatNumber} em ${c.requestDate} para dirty`);
     }
   });
 
@@ -2047,8 +2075,8 @@ function sanitizeReservationFlags() {
   sanitizeMaidUsers();
   if (!db.reservations) return;
   // Auto-recuperação/correção para a reserva RES-905-0067
-  const res905 = (db.reservations || []).find(r => 
-    (r.code && r.code.toUpperCase() === "RES-905-0067") || 
+  const res905 = (db.reservations || []).find(r =>
+    (r.code && r.code.toUpperCase() === "RES-905-0067") ||
     (String(r.id) === "67" && String(r.flatNumber) === "905") ||
     (r.code && r.code.toUpperCase().includes("905-0067"))
   );
@@ -2063,7 +2091,7 @@ function sanitizeReservationFlags() {
       res905.autoEmitInvoice = true;
       changed = true;
     }
-    const matchedGuest = (db.guests || []).find(g => 
+    const matchedGuest = (db.guests || []).find(g =>
       (g.id && g.id === res905.guestId) ||
       (g.document && res905.guestDocument && g.document.replace(/\D/g, '') === res905.guestDocument.replace(/\D/g, '')) ||
       (g.name && res905.guestName && g.name.toLowerCase().trim() === res905.guestName.toLowerCase().trim())
@@ -2086,8 +2114,8 @@ function sanitizeReservationFlags() {
   }
 
   // Auto-recuperação/correção para a reserva CORP-212-0066 (PIX Banco Inter Oficial)
-  const res212 = (db.reservations || []).find(r => 
-    (r.code && r.code.toUpperCase() === "CORP-212-0066") || 
+  const res212 = (db.reservations || []).find(r =>
+    (r.code && r.code.toUpperCase() === "CORP-212-0066") ||
     (r.code && r.code.toUpperCase().includes("212-0066"))
   );
   if (res212 && (!res212.pixTxId || res212.pixTxId.startsWith("INTER_") || !res212.pixCopiaECola || res212.pixCopiaECola.includes("cobv/"))) {
@@ -2100,8 +2128,8 @@ function sanitizeReservationFlags() {
   }
 
   // Auto-recuperação e blindagem de integridade para a reserva RES-113-0177 (Thayla - 3d Airbnb + 2d WhatsApp)
-  const res113 = (db.reservations || []).find(r => 
-    (r.code && r.code.toUpperCase() === "RES-113-0177") || 
+  const res113 = (db.reservations || []).find(r =>
+    (r.code && r.code.toUpperCase() === "RES-113-0177") ||
     (String(r.id) === "177" && String(r.flatNumber) === "113") ||
     (String(r.flatNumber) === "113" && r.guestName && r.guestName.toLowerCase().includes("thayla"))
   );
@@ -2127,8 +2155,8 @@ function sanitizeReservationFlags() {
       res113.dailyRate = 210;
       changed = true;
     }
-    const hasCorrectRates = Array.isArray(res113.dailyRates) && 
-      res113.dailyRates.length === 5 && 
+    const hasCorrectRates = Array.isArray(res113.dailyRates) &&
+      res113.dailyRates.length === 5 &&
       res113.dailyRates.some(d => d.channel === "whatsapp" && Number(d.rate) === 150) &&
       res113.dailyRates.some(d => d.channel === "airbnb" && Number(d.rate) === 250);
     if (!hasCorrectRates) {
@@ -2371,7 +2399,7 @@ async function reconcileFromAuditLogs(db, pgPool) {
     // Merge aditivo e estritamente não-destrutivo:
     // Nunca sobrescreve ou descarta reservas já existentes na memória / base PostgreSQL!
     for (const r of validRes) {
-      const existingIdx = db.reservations.findIndex(ex => 
+      const existingIdx = db.reservations.findIndex(ex =>
         (ex.id && r.id && Number(ex.id) === Number(r.id)) ||
         (ex.code && r.code && ex.code.toUpperCase() === r.code.toUpperCase()) ||
         (String(ex.flatNumber) === String(r.flatNumber) && ex.checkinDate === r.checkinDate && ex.checkoutDate === r.checkoutDate)
@@ -2473,12 +2501,21 @@ async function reconcileFromAuditLogs(db, pgPool) {
       }
     }
 
+    const todayStr_ = typeof getTodayStr === "function" ? getTodayStr() : new Date().toISOString().substring(0, 10);
     for (const c of (db.cleaningRequests || [])) {
+      // Check-outs futuros nunca podem ser marcados como limpos por logs históricos passados
+      if (c.requestDate && c.requestDate > todayStr_) continue;
+
       const fNum = String(c.flatNumber || "").replace(/\D/g, "");
       const cDate = c.requestDate || (c.completedAt ? String(c.completedAt).substring(0, 10) : "");
       const keyCris = "Cris___" + fNum + "___" + cDate;
       const keyGrazi = "Grazi___" + fNum + "___" + cDate;
-      const match = (c.id && cleaningsByReqId.get(Number(c.id))) || cleaningsMap.get(keyGrazi) || cleaningsMap.get(keyCris);
+
+      const reqMatch = c.id ? cleaningsByReqId.get(Number(c.id)) : null;
+      // Validação estrita: O requestId só é válido se pertencer ao MESMO apartamento e MESMA data
+      const validReqMatch = (reqMatch && String(reqMatch.flat) === fNum && reqMatch.date === cDate) ? reqMatch : null;
+
+      const match = validReqMatch || cleaningsMap.get(keyGrazi) || cleaningsMap.get(keyCris);
       if (match && match.status === "clean") {
         c.status = "clean";
         c.assignedUserId = match.userId || c.assignedUserId || 2;
@@ -2499,11 +2536,10 @@ async function reconcileFromAuditLogs(db, pgPool) {
     let maxCleanId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(c => Number(c.id) || 0)) : 1000;
     for (const item of cleaningsMap.values()) {
       if (item.status !== "clean") continue;
-      const alreadyExists = (db.cleaningRequests || []).some(c => 
-        (item.requestId && Number(c.id) === Number(item.requestId)) ||
-        (String(c.flatNumber).replace(/\D/g, "") === String(item.flat) && 
+      const alreadyExists = (db.cleaningRequests || []).some(c =>
+        String(c.flatNumber).replace(/\D/g, "") === String(item.flat) &&
         (c.requestDate === item.date || c.effectiveDate === item.date) &&
-        c.status === "clean")
+        c.status === "clean"
       );
       if (alreadyExists) continue;
       const flatObj = activeFlatsMap.get(item.flat);
@@ -2547,7 +2583,7 @@ async function reconcileFromAuditLogs(db, pgPool) {
       const cId = Number(cd.companyId || cd.id);
       if (cl.action === "COMPANY_CREATED") {
         const cleanCnpj = (cd.cnpj || "").replace(/\D/g, "");
-        const existing = db.companies.find(c => 
+        const existing = db.companies.find(c =>
           (cId && c.id === cId) ||
           (cleanCnpj && cleanCnpj.length >= 8 && (c.cnpj || "").replace(/\D/g, "") === cleanCnpj) ||
           (c.corporateName && cd.corporateName && c.corporateName.trim().toLowerCase() === cd.corporateName.trim().toLowerCase())
@@ -2736,10 +2772,10 @@ async function loadDatabase() {
           await reconcileFromAuditLogs(db, pgPool);
           sanitizeLostAndFound();
           sanitizeReservationFlags();
-          const didChange = reconcileUniversalIntegrity({ 
-            reservations: localReservations, 
-            cleaningRequests: localCleanings, 
-            guests: localGuests, 
+          const didChange = reconcileUniversalIntegrity({
+            reservations: localReservations,
+            cleaningRequests: localCleanings,
+            guests: localGuests,
             flats: db.flats,
             breakfastOrders: localBreakfastOrders,
             maidPayments: localMaidPayments,
@@ -2906,8 +2942,8 @@ async function loadDatabase() {
 
     // Blindagem e Persistência do Perfil e Contato de Miller Mendonça (Gestor e Hóspede)
     if (!Array.isArray(db.guests)) db.guests = [];
-    let millerGuest = db.guests.find(g => 
-      g.id === 33 || 
+    let millerGuest = db.guests.find(g =>
+      g.id === 33 ||
       (g.name && g.name.toLowerCase().includes("miller mendonca")) ||
       (g.fullName && g.fullName.toLowerCase().includes("miller mendonca")) ||
       (g.document && g.document.replace(/\D/g, "") === "12585736792")
@@ -2952,7 +2988,7 @@ async function loadDatabase() {
       if (!res290.guestDocument) res290.guestDocument = "12585736792";
 
       if (!db.whatsappHistory) db.whatsappHistory = [];
-      const hasRes290Msg = db.whatsappHistory.some(h => 
+      const hasRes290Msg = db.whatsappHistory.some(h =>
         (h.reservationCode === "RES-712-0290" || String(h.reservationId) === "290") &&
         (h.triggerEvent === "reservation_created" || h.triggerEvent === "sameday_reservation")
       );
@@ -4386,9 +4422,9 @@ function getLocalSpreadsheetPath() {
     if (fs.existsSync(d)) {
       try {
         const files = fs.readdirSync(d);
-        const xlsxFile = files.find(f => 
-          f.toLowerCase().includes("calend") && 
-          f.toLowerCase().endsWith(".xlsx") && 
+        const xlsxFile = files.find(f =>
+          f.toLowerCase().includes("calend") &&
+          f.toLowerCase().endsWith(".xlsx") &&
           !f.startsWith("~$")
         );
         if (xlsxFile) {
@@ -4689,8 +4725,8 @@ function parseSpreadsheetBuffer(buf) {
 
         // Marca como no_show/resolvido qualquer request do mesmo flat anterior à entrada do hóspede atual
         for (const req of deduplicatedRequests) {
-          if ((req.flatId === flat.id || req.flatNumber === flat.number || String(req.flatNumber) === String(flat.number)) && 
-              req.requestDate < currentStayCheckinDate && 
+          if ((req.flatId === flat.id || req.flatNumber === flat.number || String(req.flatNumber) === String(flat.number)) &&
+              req.requestDate < currentStayCheckinDate &&
               req.status === "dirty") {
             req.status = "no_show";
             req.isVacant = false;
@@ -4702,15 +4738,15 @@ function parseSpreadsheetBuffer(buf) {
     }
 
     // Preserva requisições manuais/administrativas e limpezas concluídas adicionadas pelos usuários
-    const manualRequests = (db.cleaningRequests || []).filter(r => 
-      r.source === "manual" || 
-      r.source === "admin_manual" || 
-      r.status === "clean" || 
+    const manualRequests = (db.cleaningRequests || []).filter(r =>
+      r.source === "manual" ||
+      r.source === "admin_manual" ||
+      r.status === "clean" ||
       Boolean(r.addedBy)
     );
     for (const mReq of manualRequests) {
-      const alreadyInDeduplicated = deduplicatedRequests.some(r => 
-        (r.flatId === mReq.flatId || String(r.flatNumber) === String(mReq.flatNumber)) && 
+      const alreadyInDeduplicated = deduplicatedRequests.some(r =>
+        (r.flatId === mReq.flatId || String(r.flatNumber) === String(mReq.flatNumber)) &&
         r.requestDate === mReq.requestDate
       );
       if (!alreadyInDeduplicated) {
@@ -4888,10 +4924,10 @@ app.post("/api/admin/users", (req, res) => {
 
   db.users.push(newUser);
   saveDatabase();
-  res.status(201).json({ 
-    id: newUser.id, 
-    username: newUser.username, 
-    name: newUser.name, 
+  res.status(201).json({
+    id: newUser.id,
+    username: newUser.username,
+    name: newUser.name,
     role: newUser.role,
     whatsapp: newUser.whatsapp,
     pixKey: newUser.pixKey,
@@ -4992,8 +5028,8 @@ app.get("/api/public/checkout/context", (req, res) => {
   const todayStr = nowBrl.date;
 
   const isAlreadyCheckedOut = Boolean(
-    r.actualCheckoutAt || 
-    r.status === "completed" || 
+    r.actualCheckoutAt ||
+    r.status === "completed" ||
     r.status === "checked_out" ||
     (flat && !flat.isOccupied && (db.cleaningRequests || []).some(c => c.flatId === flat.id && c.requestDate === todayStr && c.isVacant))
   );
@@ -5038,7 +5074,7 @@ app.post("/api/public/checkout", async (req, res) => {
     return res.status(400).json({ error: "Por favor, informe o código da reserva ou o número do apartamento." });
   }
 
-  const flat = (db.flats || []).find(f => 
+  const flat = (db.flats || []).find(f =>
     (rawNum && (f.number === rawNum || f.number.replace(/\D/g, "") === rawNum)) ||
     (foundRes && (f.id === foundRes.flatId || (foundRes.flatNumber && f.number === String(foundRes.flatNumber))))
   );
@@ -5095,7 +5131,7 @@ app.post("/api/public/checkout", async (req, res) => {
   const timeStr = nowBrl.timeStr;
 
   // Atualizar a reserva ativa deste flat ou a reserva identificada por código
-  const matchingResList = (db.reservations || []).filter(r => 
+  const matchingResList = (db.reservations || []).filter(r =>
     (foundRes && (r.id === foundRes.id || r.code === foundRes.code)) ||
     ((r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
     r.status !== "cancelada" && r.status !== "cancelado" &&
@@ -5207,8 +5243,8 @@ app.patch("/api/flats/:id", (req, res) => {
     f.updatedAt = new Date().toISOString();
 
     const todayStr = getTodayStr ? getTodayStr() : new Date().toISOString().substring(0, 10);
-    const cleanReq = (db.cleaningRequests || []).find(c => 
-      (c.flatId === f.id || String(c.flatNumber) === String(f.number)) && 
+    const cleanReq = (db.cleaningRequests || []).find(c =>
+      (c.flatId === f.id || String(c.flatNumber) === String(f.number)) &&
       (c.requestDate === todayStr || c.effectiveDate === todayStr)
     );
     if (cleanReq) {
@@ -5230,7 +5266,7 @@ app.put("/api/flats/:id/tags", (req, res) => {
   if (!flat) return res.status(404).json({ error: "Flat não encontrado" });
 
   const { tags = [], airConditionerType, bedType, hasMicrowave, features = [], notes = "" } = req.body;
-  
+
   flat.tags = Array.isArray(tags) ? tags : [];
   if (airConditionerType !== undefined) flat.airConditionerType = airConditionerType;
   if (bedType !== undefined) flat.bedType = bedType;
@@ -5282,7 +5318,7 @@ app.post("/api/cleaning/assignments/:requestId/mark-extended", (req, res) => {
     targetRes = (db.reservations || []).find(r => (r.id === Number(reservationId) || r.code === reservationId) && r.status !== "cancelada" && r.status !== "cancelado");
   }
   if (!targetRes && targetFlatNumber) {
-    targetRes = (db.reservations || []).find(r => 
+    targetRes = (db.reservations || []).find(r =>
       (String(r.flatNumber) === String(targetFlatNumber) || (targetFlatId && r.flatId === targetFlatId)) &&
       r.status !== "cancelada" && r.status !== "cancelado" &&
       r.checkoutDate === requestDate
@@ -5290,7 +5326,7 @@ app.post("/api/cleaning/assignments/:requestId/mark-extended", (req, res) => {
   }
   if (!targetRes && item?.leavingGuest) {
     const lg = String(item.leavingGuest).toLowerCase().trim();
-    targetRes = (db.reservations || []).find(r => 
+    targetRes = (db.reservations || []).find(r =>
       (String(r.flatNumber) === String(targetFlatNumber) || (targetFlatId && r.flatId === targetFlatId)) &&
       r.status !== "cancelada" && r.status !== "cancelado" &&
       r.guestName && (r.guestName.toLowerCase().trim() === lg || r.guestName.toLowerCase().includes(lg) || lg.includes(r.guestName.toLowerCase().trim()))
@@ -5298,7 +5334,7 @@ app.post("/api/cleaning/assignments/:requestId/mark-extended", (req, res) => {
   }
   if (!targetRes && targetFlatNumber) {
     const today = getTodayStr();
-    targetRes = (db.reservations || []).find(r => 
+    targetRes = (db.reservations || []).find(r =>
       (String(r.flatNumber) === String(targetFlatNumber) || (targetFlatId && r.flatId === targetFlatId)) &&
       r.status !== "cancelada" && r.status !== "cancelado" &&
       r.checkinDate <= today && r.checkoutDate >= today
@@ -5316,8 +5352,8 @@ app.post("/api/cleaning/assignments/:requestId/mark-extended", (req, res) => {
 
   if (targetRes && newCheckoutDate) {
     if (newCheckoutDate <= targetRes.checkinDate) {
-      return res.status(400).json({ 
-        error: `A nova data de check-out (${newCheckoutDate}) deve ser posterior à data de check-in (${targetRes.checkinDate}).` 
+      return res.status(400).json({
+        error: `A nova data de check-out (${newCheckoutDate}) deve ser posterior à data de check-in (${targetRes.checkinDate}).`
       });
     }
 
@@ -5362,7 +5398,7 @@ app.post("/api/cleaning/assignments/:requestId/mark-extended", (req, res) => {
 
     // Histórico e anotações
     const extLogText = `Extensão de estadia para ${newCheckoutDate}${addAmount > 0 ? ` (+R$ ${addAmount.toFixed(2)})` : ""}${notes ? ` - Obs: ${notes}` : ""}`;
-    targetRes.notes = targetRes.notes 
+    targetRes.notes = targetRes.notes
       ? `${targetRes.notes}\n[${now.substring(0, 10)} ${now.substring(11, 16)}] ${extLogText}`
       : `[${now.substring(0, 10)} ${now.substring(11, 16)}] ${extLogText}`;
 
@@ -5396,7 +5432,7 @@ app.post("/api/cleaning/assignments/:requestId/mark-extended", (req, res) => {
 
     // Assegurar solicitação de limpeza na nova data de check-out
     if (!db.cleaningRequests) db.cleaningRequests = [];
-    const hasFutureCleaning = db.cleaningRequests.some(c => 
+    const hasFutureCleaning = db.cleaningRequests.some(c =>
       (String(c.flatNumber) === String(targetFlatNumber) || (targetFlatId && c.flatId === targetFlatId)) &&
       c.requestDate === newCheckoutDate
     );
@@ -5423,7 +5459,7 @@ app.post("/api/cleaning/assignments/:requestId/mark-extended", (req, res) => {
   }
 
   // 3. Atualizar as solicitações de limpeza pendentes da data consultada para status "extended"
-  const extendedNote = newCheckoutDate 
+  const extendedNote = newCheckoutDate
     ? `Hóspede estendeu até ${newCheckoutDate}${addAmount > 0 ? ` (+R$ ${addAmount.toFixed(2)})` : ""}${notes ? ` - ${notes}` : ""}`
     : (notes || "Hóspede estendeu a estadia");
 
@@ -5468,20 +5504,20 @@ app.post("/api/cleaning/assignments/:requestId/mark-extended", (req, res) => {
     category: "cleaning",
     action: "STAY_EXTENDED",
     actor: { name: userAuth ? (userAuth.name || userAuth.username) : "Sistema", role: userAuth?.role || "admin" },
-    details: { 
-      flatNumber: targetFlatNumber, 
-      newCheckoutDate: newCheckoutDate || null, 
-      additionalAmount: addAmount, 
-      reservationId: targetRes?.id || null, 
+    details: {
+      flatNumber: targetFlatNumber,
+      newCheckoutDate: newCheckoutDate || null,
+      additionalAmount: addAmount,
+      reservationId: targetRes?.id || null,
       guestName: targetRes?.guestName || null,
-      notes: extendedNote 
+      notes: extendedNote
     },
     source: "cleaning_dashboard"
   });
 
-  res.json({ 
-    success: true, 
-    message: targetRes 
+  res.json({
+    success: true,
+    message: targetRes
       ? `Flat ${targetFlatNumber} estendido até ${newCheckoutDate || 'nova data'} com sucesso. Reserva de ${targetRes.guestName} atualizada (+R$ ${addAmount.toFixed(2)}).`
       : `Flat ${targetFlatNumber} marcado como estadia estendida com sucesso.`,
     reservation: targetRes,
@@ -5512,7 +5548,7 @@ app.patch("/api/cleaning/requests/:requestId/admin-instructions", (req, res) => 
 
   // Sincroniza a reserva correspondente no flat para a data de check-in / estadia
   const targetDate = requestDate || item.requestDate || getTodayStr();
-  const relatedRes = (db.reservations || []).find(r => 
+  const relatedRes = (db.reservations || []).find(r =>
     (Number(r.flatId) === Number(item.flatId) || String(r.flatNumber) === String(item.flatNumber)) &&
     r.status !== "cancelada" && r.status !== "cancelado" &&
     (r.checkinDate === targetDate || (r.checkinDate <= targetDate && r.checkoutDate >= targetDate))
@@ -5549,9 +5585,9 @@ app.get("/api/cleaners", (req, res) => {
   sanitizeMaidUsers();
   const cleaners = (db.users || [])
     .filter(u => u.role === "camareira" || u.role === "cleaner" || u.role === "admin")
-    .map(u => ({ 
-      id: u.id, 
-      username: u.username, 
+    .map(u => ({
+      id: u.id,
+      username: u.username,
       name: u.name || u.username,
       role: u.role === "camareira" || u.role === "cleaner" ? "camareira" : u.role,
       whatsapp: u.whatsapp || u.phone || "",
@@ -5568,9 +5604,9 @@ app.post("/api/cleaning/requests/manual", (req, res) => {
   if (!userAuth || userAuth.role !== "admin") {
     return res.status(403).json({ error: "Apenas administradores podem lançar solicitações manuais de limpeza." });
   }
-  const { 
-    flatId, 
-    requestDate = getTodayStr(), 
+  const {
+    flatId,
+    requestDate = getTodayStr(),
     isPriority = false,
     markAsClean = false,
     assignedUserId = null,
@@ -5800,8 +5836,8 @@ function getRequestsForDate(dateStr, isNested = false) {
   }
 
   // 2. Busca todas as reservas ativas que possuem CHECKOUT na data consultada (checkoutDate === dateStr)
-  const pmsCheckouts = (db.reservations || []).filter(r => 
-    r.status !== "cancelada" && 
+  const pmsCheckouts = (db.reservations || []).filter(r =>
+    r.status !== "cancelada" &&
     r.status !== "no_show" &&
     r.checkoutDate === dateStr
   );
@@ -5818,10 +5854,10 @@ function getRequestsForDate(dateStr, isNested = false) {
   for (const [flatNumber, pmsRes] of pmsCheckoutsByFlat.entries()) {
     const flat = db.flats.find(f => String(f.number) === flatNumber) || { id: pmsRes.flatId, number: flatNumber, isOccupied: true };
 
-    const arrivingRes = (db.reservations || []).find(r => 
-      r.status !== "cancelada" && 
+    const arrivingRes = (db.reservations || []).find(r =>
+      r.status !== "cancelada" &&
       r.status !== "cancelado" &&
-      String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || "")) === flatNumber && 
+      String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || "")) === flatNumber &&
       r.checkinDate === dateStr
     );
 
@@ -5829,10 +5865,10 @@ function getRequestsForDate(dateStr, isNested = false) {
     let nextUpcomingRes = arrivingRes;
     if (!nextUpcomingRes) {
       const upcoming = (db.reservations || [])
-        .filter(r => 
-          r.status !== "cancelada" && 
+        .filter(r =>
+          r.status !== "cancelada" &&
           r.status !== "cancelado" &&
-          String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || "")) === flatNumber && 
+          String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || "")) === flatNumber &&
           r.checkinDate >= dateStr
         )
         .sort((a, b) => a.checkinDate.localeCompare(b.checkinDate));
@@ -5841,19 +5877,19 @@ function getRequestsForDate(dateStr, isNested = false) {
 
     const flatNumClean = flatNumber.replace(/\D/g, "");
     // Prioriza o cleaningRequest específico da data consultada (checkout atual)
-    const exactDateCleanings = (db.cleaningRequests || []).filter(c => 
-      (String(c.flatNumber).replace(/\D/g, "") === flatNumClean || c.flatId === flat.id) && 
+    const exactDateCleanings = (db.cleaningRequests || []).filter(c =>
+      (String(c.flatNumber).replace(/\D/g, "") === flatNumClean || c.flatId === flat.id) &&
       c.requestDate === dateStr
     );
     let existingCleaning = exactDateCleanings.find(c => c.leavingGuest && pmsRes.guestName && c.leavingGuest.toLowerCase().includes(pmsRes.guestName.toLowerCase())) ||
-      exactDateCleanings.find(c => c.status === "clean") || 
-      exactDateCleanings.find(c => c.status === "no_show") || 
+      exactDateCleanings.find(c => c.status === "clean") ||
+      exactDateCleanings.find(c => c.status === "no_show") ||
       exactDateCleanings[0];
 
     // Só busca em effectiveDate se não houver NENHUM cleaningRequest criado para a data de hoje
     if (!existingCleaning) {
-      const matchingCleanings = (db.cleaningRequests || []).filter(c => 
-        (String(c.flatNumber).replace(/\D/g, "") === flatNumClean || c.flatId === flat.id) && 
+      const matchingCleanings = (db.cleaningRequests || []).filter(c =>
+        (String(c.flatNumber).replace(/\D/g, "") === flatNumClean || c.flatId === flat.id) &&
         c.effectiveDate === dateStr && c.status === "clean"
       );
       existingCleaning = matchingCleanings[0];
@@ -5885,9 +5921,17 @@ function getRequestsForDate(dateStr, isNested = false) {
     }
 
     const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
-    const resolvedStatus = existingCleaning ? existingCleaning.status : (auditCleanEvent ? "clean" : "dirty");
-    const resolvedMaidName = existingCleaning?.assignedUsername || existingCleaning?.assignedUserName || auditCleanEvent?.details?.assignedMaidName || (auditCleanEvent ? "Cris" : null);
-    const resolvedMaidId = existingCleaning?.assignedUserId || auditCleanEvent?.details?.assignedUserId || (auditCleanEvent ? 2 : null);
+    const isFutureDate = typeof getTodayStr === "function" && dateStr > getTodayStr();
+    let resolvedStatus = existingCleaning ? existingCleaning.status : (auditCleanEvent ? "clean" : "dirty");
+    if (isFutureDate && resolvedStatus === "clean" && (!existingCleaning?.completedAt || existingCleaning.completedAt.substring(0, 10) < dateStr)) {
+      resolvedStatus = "dirty";
+    }
+    const resolvedMaidName = resolvedStatus === "clean"
+      ? (existingCleaning?.assignedUsername || existingCleaning?.assignedUserName || auditCleanEvent?.details?.assignedMaidName || (auditCleanEvent ? "Cris" : null))
+      : (isFutureDate ? null : (existingCleaning?.assignedUsername || existingCleaning?.assignedUserName || null));
+    const resolvedMaidId = resolvedStatus === "clean"
+      ? (existingCleaning?.assignedUserId || auditCleanEvent?.details?.assignedUserId || (auditCleanEvent ? 2 : null))
+      : (isFutureDate ? null : (existingCleaning?.assignedUserId || null));
 
     // Regra de Negócio: Check-outs entram como padrão com status OCUPADO (isVacant = false).
     // "Desocupado" apenas quando explicitamente confirmado manualmente via card ou via link (hóspede ou recepção).
@@ -5927,14 +5971,24 @@ function getRequestsForDate(dateStr, isNested = false) {
       arrivingGuest: arrivingRes ? (arrivingRes.guestName || arrivingRes.title) : (nextUpcomingRes ? nextUpcomingRes.guestName : null),
       pendingObservation: cleanExistingPendingObs,
       willCleanAt: existingCleaning ? existingCleaning.willCleanAt : null,
-      cleaningStartedAt: existingCleaning ? existingCleaning.cleaningStartedAt : null,
-      completedAt: existingCleaning ? existingCleaning.completedAt : null,
-      durationMinutes: existingCleaning ? existingCleaning.durationMinutes : null,
+      cleaningStartedAt: (isFutureDate && resolvedStatus === "dirty") ? null : (existingCleaning ? existingCleaning.cleaningStartedAt : null),
+      completedAt: (isFutureDate && resolvedStatus === "dirty") ? null : (existingCleaning ? existingCleaning.completedAt : null),
+      durationMinutes: (isFutureDate && resolvedStatus === "dirty") ? null : (existingCleaning ? existingCleaning.durationMinutes : null),
       createdAt: existingCleaning ? existingCleaning.createdAt : `${dateStr}T08:00:00.000Z`,
       updatedAt: existingCleaning ? existingCleaning.updatedAt : `${dateStr}T08:00:00.000Z`
     };
 
     if (existingCleaning) {
+      if (isFutureDate && existingCleaning.status === "clean" && (!existingCleaning.completedAt || existingCleaning.completedAt.substring(0, 10) < dateStr)) {
+        existingCleaning.status = "dirty";
+        existingCleaning.assignedUserId = null;
+        existingCleaning.assignedUsername = null;
+        existingCleaning.assignedUserName = null;
+        existingCleaning.completedAt = null;
+        existingCleaning.cleaningStartedAt = null;
+        existingCleaning.durationMinutes = null;
+        shouldSaveDb = true;
+      }
       if (existingCleaning.twinBeds !== resolvedTwinBeds || existingCleaning.extraMattress !== resolvedExtraMattress || existingCleaning.adminNote !== cleanExistingAdmin) {
         existingCleaning.twinBeds = resolvedTwinBeds;
         existingCleaning.extraMattress = resolvedExtraMattress;
@@ -5970,8 +6024,8 @@ function getRequestsForDate(dateStr, isNested = false) {
     const isInst = Boolean(r.isInstructionOnly || r.source === "manual_instruction" || r.type === "instruction" || r.type === "bed_adjustment_only" || r.isBedAdjustmentOnly);
     if (isInst) continue; // Instruções nunca são transferidas para outra data
     if (!existingFlatNumbersForDate.has(fNumber)) {
-      const execDate = r.effectiveDate || 
-        (r.completedAt ? r.completedAt.substring(0, 10) : null) || 
+      const execDate = r.effectiveDate ||
+        (r.completedAt ? r.completedAt.substring(0, 10) : null) ||
         (r.cleaningStartedAt ? r.cleaningStartedAt.substring(0, 10) : null) ||
         (r.willCleanAt ? r.willCleanAt.substring(0, 10) : null);
 
@@ -5999,7 +6053,7 @@ function getRequestsForDate(dateStr, isNested = false) {
 
       // Se o flat já possui qualquer limpeza concluída (status === "clean") nessa mesma data ou em data posterior,
       // ele já foi higienizado e NÃO deve ser considerado pendência nem reaparecer para limpar!
-      const alreadyCleanedOnOrAfter = (db.cleaningRequests || []).some(c => 
+      const alreadyCleanedOnOrAfter = (db.cleaningRequests || []).some(c =>
         (String(c.flatNumber) === fNumber || c.flatId === r.flatId) &&
         !c.isInstructionOnly &&
         c.source !== "manual_instruction" &&
@@ -6052,6 +6106,7 @@ app.post("/api/reservations/clear-all", (req, res) => {
 
 app.get("/api/reservations/checkouts", (req, res) => {
   triggerBackgroundSync();
+  if (reconcileUniversalIntegrity()) saveDatabase();
   const dateStr = req.query.date || getTodayStr();
   const requestsForDate = getRequestsForDate(dateStr);
   const activeSurveys = db.surveys.filter(s => s.isActive);
@@ -6059,15 +6114,15 @@ app.get("/api/reservations/checkouts", (req, res) => {
   const result = requestsForDate.map(req_ => {
     const flat = db.flats.find(f => f.id === req_.flatId) || { id: req_.flatId, number: req_.flatNumber || String(req_.flatId), isOccupied: true };
     const assignedUser = db.users.find(u => u.id === req_.assignedUserId);
-    const checkinResToday = (db.reservations || []).find(r => 
-      (r.flatId === flat.id || String(r.flatNumber || "") === String(flat.number)) && 
-      r.checkinDate === dateStr && 
-      r.status !== "cancelada" && 
+    const checkinResToday = (db.reservations || []).find(r =>
+      (r.flatId === flat.id || String(r.flatNumber || "") === String(flat.number)) &&
+      r.checkinDate === dateStr &&
+      r.status !== "cancelada" &&
       r.status !== "cancelado"
     );
     const hasCheckinToday = Boolean(checkinResToday) || (!req_.isPendingFromPreviousDay && Boolean(req_.arrivingGuest));
-    const resolvedArrivingGuest = checkinResToday 
-      ? (checkinResToday.guestName || checkinResToday.title) 
+    const resolvedArrivingGuest = checkinResToday
+      ? (checkinResToday.guestName || checkinResToday.title)
       : (!req_.isPendingFromPreviousDay ? req_.arrivingGuest : null);
 
     const pendingTasks = [];
@@ -6085,10 +6140,10 @@ app.get("/api/reservations/checkouts", (req, res) => {
       }
       // Vence hoje ou ficou pendente de dias anteriores (aguardando a próxima limpeza)
       if (nextDueAt <= dateStr) {
-        pendingTasks.push({ 
-          id: pt.id, 
-          name: pt.name, 
-          description: pt.description, 
+        pendingTasks.push({
+          id: pt.id,
+          name: pt.name,
+          description: pt.description,
           periodDays: pt.periodDays,
           firstDueDate: pt.firstDueDate,
           nextDueAt
@@ -6107,11 +6162,11 @@ app.get("/api/reservations/checkouts", (req, res) => {
     // Regra de Negócio: Check-outs entram como padrão com status OCUPADO (isOccupied = true, isVacant = false).
     // "Desocupado" apenas quando explicitamente confirmado manualmente via card ou via link (hóspede ou recepção).
     const isExplicitlyVacant = Boolean(
-      req_.isVacantExplicitlySet || 
-      req_.vacantSource === "guest_checkout" || 
-      req_.vacantSource === "reception_checkout" || 
-      req_.vacantSource === "whatsapp_concierge" || 
-      req_.vacantSource === "manual_card" || 
+      req_.isVacantExplicitlySet ||
+      req_.vacantSource === "guest_checkout" ||
+      req_.vacantSource === "reception_checkout" ||
+      req_.vacantSource === "whatsapp_concierge" ||
+      req_.vacantSource === "manual_card" ||
       req_.vacantSource === "admin" ||
       req_.source === "guest_checkout" ||
       req_.source === "whatsapp_concierge"
@@ -6121,16 +6176,16 @@ app.get("/api/reservations/checkouts", (req, res) => {
     const isOccupied = !isVacant;
 
     // Check for arriving reservation setup preferences or admin custom instructions
-    let nextResForSetup = (db.reservations || []).find(r => 
-      (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) && 
-      r.checkinDate === dateStr && 
+    let nextResForSetup = (db.reservations || []).find(r =>
+      (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
+      r.checkinDate === dateStr &&
       r.status !== "cancelada" && r.status !== "cancelado"
     );
     if (!nextResForSetup) {
       const upcoming = (db.reservations || [])
-        .filter(r => 
-          (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) && 
-          r.checkinDate >= dateStr && 
+        .filter(r =>
+          (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
+          r.checkinDate >= dateStr &&
           r.status !== "cancelada" && r.status !== "cancelado"
         )
         .sort((a, b) => a.checkinDate.localeCompare(b.checkinDate));
@@ -6190,7 +6245,7 @@ app.get("/api/reservations/checkouts", (req, res) => {
     };
 
     // Check if flat is currently occupied with a checkout on the next day or future
-    const activeResToday = isInst ? null : (db.reservations || []).find(r => 
+    const activeResToday = isInst ? null : (db.reservations || []).find(r =>
       (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
       r.status !== "cancelada" && r.status !== "cancelado" &&
       r.checkinDate < dateStr && r.checkoutDate > dateStr
@@ -6198,11 +6253,11 @@ app.get("/api/reservations/checkouts", (req, res) => {
     const hasFutureCheckoutOnly = !isInst && Boolean(activeResToday && activeResToday.checkoutDate > dateStr && !req_.leavingGuest && req_.source !== "guest_checkout" && !req_.isVacant);
 
     // Identifica a reserva do hóspede saindo hoje ou ativa no flat
-    const checkoutRes = isInst ? null : ((db.reservations || []).find(r => 
+    const checkoutRes = isInst ? null : ((db.reservations || []).find(r =>
       (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
       r.status !== "cancelada" && r.status !== "cancelado" &&
       r.checkoutDate === (req_.originalRequestDate || req_.requestDate || dateStr)
-    ) || (req_.leavingGuest ? (db.reservations || []).find(r => 
+    ) || (req_.leavingGuest ? (db.reservations || []).find(r =>
       (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
       r.status !== "cancelada" && r.status !== "cancelado" &&
       (r.guestName?.toLowerCase() === req_.leavingGuest?.toLowerCase() || (r.guestName && req_.leavingGuest && req_.leavingGuest.toLowerCase().includes(r.guestName.toLowerCase())))
@@ -6322,7 +6377,7 @@ app.get("/api/reservations/checkins", (req, res) => {
 app.get("/api/reservations/:code/calendar.ics", (req, res) => {
   try {
     const code = req.params.code;
-    const resItem = (db.reservations || []).find(r => 
+    const resItem = (db.reservations || []).find(r =>
       String(r.id) === code || String(r.code) === code || String(r.reservationCode) === code
     );
 
@@ -6338,9 +6393,9 @@ app.get("/api/reservations/:code/calendar.ics", (req, res) => {
     const checkinDt = (resItem.checkinDate || getTodayStr()).replace(/-/g, "") + "T140000";
     const checkoutDt = (resItem.checkoutDate || getTodayStr()).replace(/-/g, "") + "T120000";
     const nowDt = new Date().toISOString().replace(/[-:T.]/g, "").substring(0, 15) + "Z";
-    
+
     const uid = `booking-${resItem.code || resItem.id}@corpflats.com.br`;
-    const title = isCancelled 
+    const title = isCancelled
       ? `CANCELADA: Hospedagem CorpFlats - Flat ${resItem.flatNumber || '113'} (#${resItem.code || resItem.id})`
       : sequence > 0
       ? `REMARCADA: Hospedagem CorpFlats - Flat ${resItem.flatNumber || '113'} (#${resItem.code || resItem.id})`
@@ -6510,7 +6565,7 @@ app.patch("/api/cleaning/assignments/:requestId/twin-beds", (req, res) => {
 
   // Sincroniza também com a reserva correspondente no flat
   const targetDate = requestDate || item.requestDate || getTodayStr();
-  const relatedRes = (db.reservations || []).find(r => 
+  const relatedRes = (db.reservations || []).find(r =>
     (Number(r.flatId) === Number(item.flatId) || String(r.flatNumber) === String(item.flatNumber)) &&
     r.status !== "cancelada" && r.status !== "cancelado" &&
     (r.checkinDate === targetDate || (r.checkinDate <= targetDate && r.checkoutDate >= targetDate))
@@ -6611,7 +6666,7 @@ function findOrUpsertCleaningRequest(reqId, flatNumber, flatId, dateStr = null) 
   // 3. Se ainda não achou, procura nos cards dinâmicos gerados para a data
   if (!item) {
     const virtualList = getRequestsForDate(targetDate);
-    const virtualCard = virtualList.find(c => 
+    const virtualCard = virtualList.find(c =>
       (flatNumber && String(c.flatNumber) === String(flatNumber)) ||
       (flatId && Number(c.flatId) === Number(flatId)) ||
       (reqId && Number(c.id) === Number(reqId))
@@ -6621,7 +6676,7 @@ function findOrUpsertCleaningRequest(reqId, flatNumber, flatId, dateStr = null) 
     const newId = maxId + 1;
     const now = new Date().toISOString();
 
-    const targetFlatObj = db.flats.find(f => 
+    const targetFlatObj = db.flats.find(f =>
       (flatNumber && String(f.number) === String(flatNumber)) ||
       (flatId && Number(f.id) === Number(flatId)) ||
       (virtualCard && (Number(f.id) === Number(virtualCard.flatId) || String(f.number) === String(virtualCard.flatNumber)))
@@ -6662,15 +6717,15 @@ function findOrUpsertCleaningRequest(reqId, flatNumber, flatId, dateStr = null) 
 // ── Cleaning Status Change & Execution ──────────────────────────────────────
 app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
   const reqId = Number(req.params.requestId);
-  const { 
-    status, 
-    observation, 
-    isVacant, 
-    executedPeriodicTaskIds = [], 
-    surveyAnswers = [], 
-    flatNumber, 
-    flatId, 
-    date, 
+  const {
+    status,
+    observation,
+    isVacant,
+    executedPeriodicTaskIds = [],
+    surveyAnswers = [],
+    flatNumber,
+    flatId,
+    date,
     assignedUserId,
     completedAt: customCompletedAt,
     cleaningStartedAt: customStartedAt,
@@ -6678,7 +6733,7 @@ app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
     durationMinutes: customDuration,
     markedByAdmin: bodyMarkedByAdmin
   } = req.body;
-  
+
   let item = findOrUpsertCleaningRequest(reqId, flatNumber, flatId, date);
   if (!item) return res.status(404).json({ error: "Solicitação não encontrada" });
 
@@ -6815,9 +6870,9 @@ app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
       if (status === "clean" && tasksToExecute.length === 0 && !isInstructionRequest) {
         // Auto-conclui tarefas preventivas pendentes deste quarto para governança caso não passadas explicitamente
         const flatTargetId = Number(item.flatId);
-        const pendingForFlat = (db.periodicTasks || []).filter(t => 
-          t.isActive && 
-          t.assignToHousekeeping !== false && 
+        const pendingForFlat = (db.periodicTasks || []).filter(t =>
+          t.isActive &&
+          t.assignToHousekeeping !== false &&
           (!Array.isArray(t.flatIds) || t.flatIds.length === 0 || t.flatIds.map(Number).includes(flatTargetId))
         );
         for (const pt of pendingForFlat) {
@@ -6956,7 +7011,7 @@ app.get("/api/cleaning/history", (req, res) => {
   const result = list.map(r => {
     const flat = db.flats.find(f => f.id === r.flatId);
     const assignedUser = db.users.find(u => u.id === r.assignedUserId);
-    
+
     let durationMinutes = r.durationMinutes || 35;
     if (!r.durationMinutes && r.cleaningStartedAt && r.completedAt) {
       const startMs = new Date(r.cleaningStartedAt).getTime();
@@ -7245,7 +7300,7 @@ app.post("/api/periodic-tasks", (req, res) => {
   }
   const { name, description, periodDays = 7, firstDueDate, assignToHousekeeping = true, flatIds = [] } = req.body;
   if (!db.periodicTasks) db.periodicTasks = [];
-  
+
   const todayStr = getTodayStr();
   const newTask = {
     id: db.periodicTasks.length > 0 ? Math.max(...db.periodicTasks.map(t => t.id)) + 1 : 1,
@@ -7545,7 +7600,7 @@ app.get("/api/analytics/report", (req, res) => {
       });
     let totalMinutes = 0;
     let validDurationCount = 0;
-    
+
     userCleanings.forEach(c => {
       if (c.cleaningStartedAt && c.completedAt) {
         const startMs = new Date(c.cleaningStartedAt).getTime();
@@ -7562,8 +7617,8 @@ app.get("/api/analytics/report", (req, res) => {
     });
 
     const avgMinutes = validDurationCount > 0 ? Math.round(totalMinutes / validDurationCount) : 35;
-    const ratePerRoom = db.cleaningRates.userRates?.[u.id] !== undefined 
-      ? Number(db.cleaningRates.userRates[u.id]) 
+    const ratePerRoom = db.cleaningRates.userRates?.[u.id] !== undefined
+      ? Number(db.cleaningRates.userRates[u.id])
       : defaultRate;
 
     const totalToPay = userCleanings.length * ratePerRoom;
@@ -7916,7 +7971,7 @@ app.get("/api/reservations/availability", (req, res) => {
     const cutoffTime = bedCfg.twinSameDayCutoffTime || "12:00";
 
     const allFlats = (db.flats || []).filter(f => !f.status || f.status !== "manutencao_bloqueada");
-    
+
     // Verifica flats ocupados no período
     const occupiedFlatIds = new Set(
       (db.reservations || [])
@@ -7990,7 +8045,7 @@ app.get("/api/reservations/availability", (req, res) => {
       twinAvailableCount,
       allowTwinBeds: Boolean(bedCfg.allowTwinBeds && allowTwinForDates && twinAvailableCount > 0),
       twinCutoffReached,
-      twinCutoffMessage: twinCutoffReached 
+      twinCutoffMessage: twinCutoffReached
         ? `Flats com 2 camas separadas de solteiro precisam ser reservados até no máximo às ${cutoffTime} do dia do check-in.`
         : (twinAvailableCount === 0 ? "Não há mais disponibilidade de flats com 2 camas de solteiro para as datas selecionadas (apenas Cama Queen Casal disponível)." : null),
       bedConfig: bedCfg,
@@ -8208,15 +8263,15 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
     let candidateFlats = allFlats.filter(f => !occupiedFlatNumbers.has(String(f.number)) && !occupiedFlatNumbers.has(String(f.id)));
 
     // Determina a lista de quartos a alocar
-    const roomsList = Array.isArray(rooms) && rooms.length > 0 
-      ? rooms 
+    const roomsList = Array.isArray(rooms) && rooms.length > 0
+      ? rooms
       : [{ id: 1, bedType, adults: Number(numGuests) || 2 }];
 
     const requiredCount = roomsList.length;
 
     if (candidateFlats.length < requiredCount) {
-      return res.status(400).json({ 
-        error: `Desculpe, temos apenas ${candidateFlats.length} flat(s) disponível(is) para as datas selecionadas, mas foram solicitados ${requiredCount}.` 
+      return res.status(400).json({
+        error: `Desculpe, temos apenas ${candidateFlats.length} flat(s) disponível(is) para as datas selecionadas, mas foram solicitados ${requiredCount}.`
       });
     }
 
@@ -8235,12 +8290,12 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       let chosen = null;
 
       if (isTwin) {
-        const availableTwins = candidateFlats.filter(f => 
+        const availableTwins = candidateFlats.filter(f =>
           twinAllowed.includes(String(f.number)) && !allocatedFlats.some(a => a.id === f.id)
         );
         if (availableTwins.length === 0) {
-          return res.status(400).json({ 
-            error: "Não há flats suficientes com suporte a 2 camas de solteiro para todas as unidades solicitadas." 
+          return res.status(400).json({
+            error: "Não há flats suficientes com suporte a 2 camas de solteiro para todas as unidades solicitadas."
           });
         }
         chosen = availableTwins[0];
@@ -8381,7 +8436,7 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
     const cleanPhone = (guestPhone || "").replace(/\D/g, "");
     const cleanEmail = (guestEmail || "").trim().toLowerCase();
 
-    let guest = db.guests.find(g => 
+    let guest = db.guests.find(g =>
       (cleanDoc && (g.documentNumber || g.document || "").replace(/\D/g, "") === cleanDoc) ||
       (cleanPhone && (g.phone || "").replace(/\D/g, "") === cleanPhone) ||
       (cleanEmail && (g.email || "").trim().toLowerCase() === cleanEmail)
@@ -8617,7 +8672,7 @@ function calculateFairShareStats(checkinDate, checkoutDate, excludeResId = null)
 
   const flatStats = flats.map(flat => {
     // 1. Verifica conflitos no período solicitado
-    const conflicts = (db.reservations || []).filter(r => 
+    const conflicts = (db.reservations || []).filter(r =>
       r.id !== excludeResId &&
       r.status !== "cancelada" &&
       (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
@@ -8625,7 +8680,7 @@ function calculateFairShareStats(checkinDate, checkoutDate, excludeResId = null)
       r.checkoutDate > checkinDate
     );
 
-    const blockConflicts = (db.roomBlocks || []).filter(b => 
+    const blockConflicts = (db.roomBlocks || []).filter(b =>
       (b.flatId === flat.id || String(b.flatNumber) === String(flat.number)) &&
       b.startDate < checkoutDate &&
       b.endDate > checkinDate
@@ -8634,7 +8689,7 @@ function calculateFairShareStats(checkinDate, checkoutDate, excludeResId = null)
     const isAvailable = conflicts.length === 0 && blockConflicts.length === 0;
 
     // 2. Calcula total de diárias ocupadas no mês do checkin
-    const monthReservations = (db.reservations || []).filter(r => 
+    const monthReservations = (db.reservations || []).filter(r =>
       r.id !== excludeResId &&
       r.status !== "cancelada" &&
       (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
@@ -8651,7 +8706,7 @@ function calculateFairShareStats(checkinDate, checkoutDate, excludeResId = null)
     }
 
     // 3. Dias desde o último checkout antes do checkinDate (tempo ocioso)
-    const pastReservations = (db.reservations || []).filter(r => 
+    const pastReservations = (db.reservations || []).filter(r =>
       r.id !== excludeResId &&
       r.status !== "cancelada" &&
       (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
@@ -8943,7 +8998,7 @@ app.get("/api/pms/calendar", (req, res) => {
 
   const flats = (db.flats || []).filter(f => f.isActive !== false).sort((a, b) => String(a.number).localeCompare(String(b.number), undefined, { numeric: true })).map(f => {
     const fNum = String(f.number);
-    const req = cleaningRequestsToday.find(r => 
+    const req = cleaningRequestsToday.find(r =>
       (String(r.flatNumber) === fNum || r.flatId === f.id) &&
       !r.isInstructionOnly &&
       !r.cleaningRequest?.isInstructionOnly &&
@@ -8980,7 +9035,7 @@ app.get("/api/pms/calendar", (req, res) => {
   });
 
   const reservations = rawReservations.map(r => {
-    const matchedGuest = (db.guests || []).find(g => 
+    const matchedGuest = (db.guests || []).find(g =>
       (g.id && g.id === r.guestId) ||
       (g.document && r.guestDocument && g.document.replace(/\D/g, '') === r.guestDocument.replace(/\D/g, '')) ||
       (g.phone && r.guestPhone && g.phone.replace(/\D/g, '') === r.guestPhone.replace(/\D/g, '')) ||
@@ -8989,13 +9044,13 @@ app.get("/api/pms/calendar", (req, res) => {
     );
 
     const isMonthly = Boolean(
-      r.isMonthlyGuest || 
-      r.clientType === "mensalista" || 
-      matchedGuest?.isMonthlyGuest || 
+      r.isMonthlyGuest ||
+      r.clientType === "mensalista" ||
+      matchedGuest?.isMonthlyGuest ||
       matchedGuest?.clientType === "mensalista"
     );
     const autoInvoice = Boolean(
-      r.autoEmitInvoice || 
+      r.autoEmitInvoice ||
       matchedGuest?.autoEmitInvoice
     );
 
@@ -9232,10 +9287,10 @@ app.post("/api/pms/reservations", async (req, res) => {
 
   // Guest Upsert no CRM
   if (!db.guests) db.guests = [];
-  let guest = db.guests.find(g => 
+  let guest = db.guests.find(g =>
     (req.body.guestId && g.id === Number(req.body.guestId)) ||
-    (primaryPhone && g.phone === primaryPhone) || 
-    (primaryDoc && g.document === primaryDoc) || 
+    (primaryPhone && g.phone === primaryPhone) ||
+    (primaryDoc && g.document === primaryDoc) ||
     (g.name.toLowerCase() === primaryName.toLowerCase())
   );
 
@@ -9321,7 +9376,7 @@ app.post("/api/pms/reservations", async (req, res) => {
         };
         db.companies.push(existingComp);
       }
-      
+
       guest.companyId = existingComp.id;
       guest.companyName = existingComp.corporateName;
       guest.autoEmitInvoice = true;
@@ -9456,7 +9511,7 @@ app.post("/api/pms/reservations", async (req, res) => {
       const isMattress = Boolean(newReservation.extraMattress);
       const maidNote = (newReservation.specialRequests || "").trim() || (newReservation.notes || "").trim() || null;
 
-      let cleaningReq = (db.cleaningRequests || []).find(c => 
+      let cleaningReq = (db.cleaningRequests || []).find(c =>
         (String(c.flatNumber) === fNum || c.flatId === flat.id) && c.requestDate === targetDate
       );
 
@@ -9615,7 +9670,7 @@ app.get("/api/pms/reservations/export-csv", (req, res) => {
     const phone = r.guestPhone || g?.phone || r.guests?.[0]?.phone || "";
     const email = r.guestEmail || g?.email || r.guests?.[0]?.email || "";
     const doc = r.guestDocument || g?.document || g?.documentNumber || r.guests?.[0]?.cpf || r.guests?.[0]?.document || "";
-    
+
     let nights = 1;
     try {
       if (r.checkinDate && r.checkoutDate) {
@@ -9704,7 +9759,7 @@ function parseCsvReservationLines(content) {
   };
 
   const rawHeaders = parseLine(lines[0]);
-  const normalizedHeaders = rawHeaders.map(h => 
+  const normalizedHeaders = rawHeaders.map(h =>
     h.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9_]/g, "")
   );
 
@@ -9767,14 +9822,14 @@ function mapRowToReservationData(row) {
   const guestPhone = String(getField(["telefone", "phone", "whatsapp", "celular", "contato"])).trim();
   const guestEmail = String(getField(["email", "e-mail"])).trim();
   const guestDocument = String(getField(["documento", "cpf", "document", "rg", "passaporte", "cnpj"])).trim();
-  
+
   const checkinDate = normalizeReservationDate(getField(["data_checkin", "checkin", "checkindate", "entrada", "data_entrada", "data_de_checkin"]));
   const checkoutDate = normalizeReservationDate(getField(["data_checkout", "checkout", "checkoutdate", "saida", "data_saida", "data_de_checkout"]));
 
   const totalAmount = normalizeReservationAmount(getField(["valor_total", "valor", "totalamount", "total", "preco", "preco_total"]));
   const dailyRate = normalizeReservationAmount(getField(["valor_diaria", "diaria", "dailyrate"]));
   const paidAmount = normalizeReservationAmount(getField(["valor_pago", "pago", "paidamount"]));
-  
+
   const status = String(getField(["status", "situacao"]) || "confirmada").toLowerCase().trim();
   const paymentStatus = String(getField(["status_pagamento", "pagamento_status", "paymentstatus", "status_do_pagamento"]) || (paidAmount >= totalAmount && totalAmount > 0 ? "pago_total" : "pendente")).trim();
   const paymentMethod = String(getField(["forma_pagamento", "metodo_pagamento", "paymentmethod", "forma_de_pagamento"]) || (channel.includes("airbnb") ? "airbnb" : channel.includes("booking") ? "booking" : "pix")).trim();
@@ -9880,7 +9935,7 @@ app.post("/api/pms/reservations/preview-csv", (req, res) => {
       match = existingRes.find(r => r.code === item.code);
     }
     if (!match && item.flatNumber && item.checkinDate && item.checkoutDate) {
-      match = existingRes.find(r => 
+      match = existingRes.find(r =>
         String(r.flatNumber) === item.flatNumber &&
         r.checkinDate === item.checkinDate &&
         r.checkoutDate === item.checkoutDate &&
@@ -9985,7 +10040,7 @@ app.post("/api/pms/reservations/import-csv", async (req, res) => {
       existingIndex = db.reservations.findIndex(r => r.code === item.code);
     }
     if (existingIndex === -1 && item.flatNumber && item.checkinDate && item.checkoutDate) {
-      existingIndex = db.reservations.findIndex(r => 
+      existingIndex = db.reservations.findIndex(r =>
         String(r.flatNumber) === String(item.flatNumber) &&
         r.checkinDate === item.checkinDate &&
         r.checkoutDate === item.checkoutDate &&
@@ -10021,7 +10076,7 @@ app.post("/api/pms/reservations/import-csv", async (req, res) => {
     const primaryEmail = (item.guestEmail || "").trim();
     const primaryDoc = (item.guestDocument || "").trim();
 
-    let guest = db.guests.find(g => 
+    let guest = db.guests.find(g =>
       (primaryPhone && g.phone === primaryPhone) ||
       (primaryDoc && g.document === primaryDoc) ||
       (g.name.toLowerCase() === primaryName.toLowerCase())
@@ -10223,10 +10278,10 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   }
 
   const fields = [
-    "flatId", "checkinDate", "checkoutDate", "checkinTime", "checkoutTime", "status", "channel", 
+    "flatId", "checkinDate", "checkoutDate", "checkinTime", "checkoutTime", "status", "channel",
     "paymentMethod",
-    "dailyRate", "dailyRates", "charges", "payments", "totalAmount", "paidAmount", "paymentStatus", 
-    "adults", "children", "notes", "prefersHighFloor", "twinBeds", 
+    "dailyRate", "dailyRates", "charges", "payments", "totalAmount", "paidAmount", "paymentStatus",
+    "adults", "children", "notes", "prefersHighFloor", "twinBeds",
     "extraMattress", "specialRequests", "isMonthlyGuest", "clientType", "includeBreakfast",
     "autoEmitInvoice", "earlyCheckinAuthorized", "receptionNotes",
     "guestCount", "guests", "guestDocument", "guestPhone", "guestEmail", "requesterType", "requesterInfo",
@@ -10362,7 +10417,7 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   }
 
   // Sincroniza com o hóspede no CRM se aplicável
-  const matchedGuest = (db.guests || []).find(g => 
+  const matchedGuest = (db.guests || []).find(g =>
     (r.guestId && g.id === r.guestId) ||
     (r.guestPhone && g.phone === r.guestPhone) ||
     (r.guestDocument && g.document === r.guestDocument) ||
@@ -10451,9 +10506,9 @@ app.put("/api/pms/reservations/:id", (req, res) => {
     const flatNum = r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number);
 
     // 1. Verifica se na nova data de check-out (r.checkoutDate) já existe uma limpeza concluída para este flat
-    const existingCleanOnTarget = db.cleaningRequests.find(c => 
-      (c.flatId === r.flatId || String(c.flatNumber) === String(flatNum)) && 
-      c.requestDate === r.checkoutDate && 
+    const existingCleanOnTarget = db.cleaningRequests.find(c =>
+      (c.flatId === r.flatId || String(c.flatNumber) === String(flatNum)) &&
+      c.requestDate === r.checkoutDate &&
       c.status === "clean" &&
       !c.isInstructionOnly &&
       c.source !== "manual_instruction" &&
@@ -10462,9 +10517,9 @@ app.put("/api/pms/reservations/:id", (req, res) => {
     );
 
     // 2. Procura solicitação não-concluída na data antiga para este flat
-    const oldReq = db.cleaningRequests.find(c => 
-      (c.flatId === oldFlatId || String(c.flatNumber) === String(flatNum)) && 
-      c.requestDate === oldCheckout && 
+    const oldReq = db.cleaningRequests.find(c =>
+      (c.flatId === oldFlatId || String(c.flatNumber) === String(flatNum)) &&
+      c.requestDate === oldCheckout &&
       c.status !== "clean" &&
       !c.isInstructionOnly &&
       c.source !== "manual_instruction" &&
@@ -10480,8 +10535,8 @@ app.put("/api/pms/reservations/:id", (req, res) => {
       }
     } else if (oldReq) {
       // Verifica se já existe outra solicitação na data de destino
-      const existingOnTarget = db.cleaningRequests.find(c => 
-        (c.flatId === r.flatId || String(c.flatNumber) === String(flatNum)) && 
+      const existingOnTarget = db.cleaningRequests.find(c =>
+        (c.flatId === r.flatId || String(c.flatNumber) === String(flatNum)) &&
         c.requestDate === r.checkoutDate &&
         !c.isInstructionOnly &&
         c.source !== "manual_instruction" &&
@@ -10501,8 +10556,8 @@ app.put("/api/pms/reservations/:id", (req, res) => {
       }
     } else {
       // 3. Se não havia pendência na data antiga e não existe na nova data, garante criação se não cancelada
-      const hasAnyReq = db.cleaningRequests.some(c => 
-        (c.flatId === r.flatId || String(c.flatNumber) === String(flatNum)) && 
+      const hasAnyReq = db.cleaningRequests.some(c =>
+        (c.flatId === r.flatId || String(c.flatNumber) === String(flatNum)) &&
         c.requestDate === r.checkoutDate &&
         !c.isInstructionOnly &&
         c.source !== "manual_instruction" &&
@@ -10541,7 +10596,7 @@ app.put("/api/pms/reservations/:id", (req, res) => {
     const cleanNote = (r.specialRequests || r.notes || "").trim();
     const validNote = (cleanNote && !cleanNote.includes("Limpeza de check-out gerada automaticamente") && cleanNote.toLowerCase() !== "teste") ? cleanNote : null;
 
-    const cleanOnCheckin = (db.cleaningRequests || []).find(c => 
+    const cleanOnCheckin = (db.cleaningRequests || []).find(c =>
       (String(c.flatNumber) === targetFlatNum || (r.flatId && c.flatId === r.flatId)) &&
       c.requestDate === targetCheckin &&
       !c.isInstructionOnly &&
@@ -10567,7 +10622,7 @@ app.put("/api/pms/reservations/:id", (req, res) => {
     if (!db.breakfastOrders) db.breakfastOrders = [];
     let updatedOrdersCount = 0;
     db.breakfastOrders.forEach(o => {
-      const matchReservation = 
+      const matchReservation =
         (o.reservationId && Number(o.reservationId) === Number(r.id)) ||
         (o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) ||
         (prevFlatNum && String(o.roomNumber) === prevFlatNum && o.date >= r.checkinDate && o.date <= r.checkoutDate);
@@ -10766,7 +10821,7 @@ app.put("/api/pms/reservations/:id", (req, res) => {
       const isMattress = Boolean(r.extraMattress);
       const maidNote = (r.specialRequests || "").trim() || (r.notes || "").trim() || null;
 
-      let cleaningReq = (db.cleaningRequests || []).find(c => 
+      let cleaningReq = (db.cleaningRequests || []).find(c =>
         (String(c.flatNumber) === fNum || c.flatId === r.flatId) && c.requestDate === targetDate
       );
 
@@ -10949,8 +11004,8 @@ function findReservationByLocatorOrContact(query) {
   if (!raw) return null;
 
   // 1. Código exato ou ID numérico
-  let r = db.reservations.find(resItem => 
-    (resItem.code && resItem.code.toUpperCase() === raw.toUpperCase()) || 
+  let r = db.reservations.find(resItem =>
+    (resItem.code && resItem.code.toUpperCase() === raw.toUpperCase()) ||
     String(resItem.id) === raw
   );
   if (r) return r;
@@ -10958,7 +11013,7 @@ function findReservationByLocatorOrContact(query) {
   // 2. Código normalizado (sem caracteres especiais/hífens)
   const norm = raw.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
   if (norm.length >= 3) {
-    r = db.reservations.find(resItem => 
+    r = db.reservations.find(resItem =>
       (resItem.code || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase() === norm
     );
     if (r) return r;
@@ -10982,7 +11037,7 @@ function findReservationByLocatorOrContact(query) {
   // 4. E-mail
   if (raw.includes("@")) {
     const email = raw.toLowerCase();
-    r = db.reservations.slice().reverse().find(resItem => 
+    r = db.reservations.slice().reverse().find(resItem =>
       (resItem.guestEmail || "").trim().toLowerCase() === email ||
       (resItem.requesterInfo?.email || "").trim().toLowerCase() === email ||
       (resItem.guests || []).some(g => (g.email || "").trim().toLowerCase() === email)
@@ -11019,7 +11074,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
   const brDate = new Date(nowUtc - (3 * 3600000)); // UTC-3 (Brasília)
   const todayStr = brDate.toISOString().substring(0, 10);
-  
+
   // 1. Status da governança para o flat (Reconcilia solicitações e turnovers do dia)
   let dailyRequests = [];
   try {
@@ -11028,14 +11083,14 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     dailyRequests = [];
   }
 
-  const cleanReq = (db.cleaningRequests || []).find(c => 
-    (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) && 
+  const cleanReq = (db.cleaningRequests || []).find(c =>
+    (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) &&
     c.requestDate === todayStr &&
     !c.isInstructionOnly &&
     c.source !== "manual_instruction" &&
     c.type !== "bed_adjustment_only" &&
     c.type !== "instruction"
-  ) || dailyRequests.find(c => 
+  ) || dailyRequests.find(c =>
     (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) &&
     !c.isInstructionOnly &&
     !c.cleaningRequest?.isInstructionOnly &&
@@ -11044,7 +11099,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     c.type !== "instruction"
   );
 
-  const hasPendingCheckoutToday = (db.reservations || []).some(res => 
+  const hasPendingCheckoutToday = (db.reservations || []).some(res =>
     (res.flatId === r.flatId || String(res.flatNumber) === String(r.flatNumber)) &&
     res.checkoutDate === todayStr && res.id !== r.id && res.status !== "cancelada" && res.status !== "completed"
   );
@@ -11097,8 +11152,8 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   const tomorrowDate = new Date(brDate);
   tomorrowDate.setDate(tomorrowDate.getDate() + 1);
   const tomorrowStr = tomorrowDate.toISOString().substring(0, 10);
-  const existingBreakfastOrder = db.breakfastOrders.find(o => 
-    (String(o.roomNumber) === String(r.flatNumber) || o.phone === r.guestPhone) && 
+  const existingBreakfastOrder = db.breakfastOrders.find(o =>
+    (String(o.roomNumber) === String(r.flatNumber) || o.phone === r.guestPhone) &&
     (o.deliveryDate === todayStr || o.deliveryDate === tomorrowStr)
   );
 
@@ -11108,9 +11163,9 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
 
   const hasBreakfast = Boolean(
     r.includeBreakfast !== undefined ? r.includeBreakfast : (
-      r.hasBreakfast || 
+      r.hasBreakfast ||
       r.ratePlan === "with_breakfast" ||
-      r.notes?.toLowerCase().includes("café") || 
+      r.notes?.toLowerCase().includes("café") ||
       r.notes?.toLowerCase().includes("cafe")
     )
   );
@@ -11240,9 +11295,9 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     canDoEarlyCheckin,
     isPastOrExact14h,
     earlyCheckinMessage: isCheckinToday
-      ? (isFlatClean 
+      ? (isFlatClean
           ? (canDoEarlyCheckin && !isPastOrExact14h
-              ? "🎉 Seu Apartamento já está limpo e inspecionado! Seu benefício de check-in antecipado (cortesia mediante disponibilidade) está liberado. Você já pode se dirigir à portaria 24h." 
+              ? "🎉 Seu Apartamento já está limpo e inspecionado! Seu benefício de check-in antecipado (cortesia mediante disponibilidade) está liberado. Você já pode se dirigir à portaria 24h."
               : (isPastOrExact14h
                   ? "✨ Check-in liberado! Seu apartamento está higienizado e pronto na portaria 24h."
                   : "✨ Seu apartamento já está preparado e limpo. O horário oficial de check-in inicia às 14:00 na portaria 24h."))
@@ -11254,8 +11309,8 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       completedCheckins,
       isFullyCompleted: completedCheckins >= totalGuests,
       completed: Boolean(
-        r.fnhrCompleted || 
-        r.preCheckinCompleted || 
+        r.fnhrCompleted ||
+        r.preCheckinCompleted ||
         r.hasPreCheckin ||
         (completedCheckins >= totalGuests && totalGuests > 0) ||
         (Array.isArray(r.guests) && r.guests.length > 0 && r.guests.some(g => g.hasCompletedCheckin))
@@ -11294,7 +11349,7 @@ app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reser
   const { guestIndex = 1, phone: overridePhone } = req.body || {};
 
   if (!db.reservations) db.reservations = [];
-  const reservation = (typeof findReservationByLocatorOrContact === "function" ? findReservationByLocatorOrContact(idOrCode) : null) || 
+  const reservation = (typeof findReservationByLocatorOrContact === "function" ? findReservationByLocatorOrContact(idOrCode) : null) ||
     (db.reservations || []).find(r => String(r.id) === idOrCode || r.code === idOrCode || r.reservationCode === idOrCode);
 
   if (!reservation) {
@@ -11307,7 +11362,7 @@ app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reser
   const cleanPhone = typeof cleanWhatsAppPhone === "function" ? cleanWhatsAppPhone(rawPhone) : rawPhone.replace(/\D/g, "");
 
   if (!cleanPhone || cleanPhone.length < 10) {
-    return res.status(400).json({ 
+    return res.status(400).json({
       error: `Hóspede ${guestName} não possui número de WhatsApp válido cadastrado.`,
       needsPhone: true,
       guestName
@@ -11390,7 +11445,7 @@ app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reser
       success: sendResult.success,
       phone: cleanPhone,
       guestName,
-      message: sendResult.success 
+      message: sendResult.success
         ? `Link de Check-in Digital enviado com sucesso via WhatsApp para ${guestName} (${cleanPhone})!`
         : `Erro ao enviar via Z-API: ${sendResult.error || "Falha no envio"}`
     });
@@ -11644,7 +11699,7 @@ app.post("/api/pms/guest-portal/:code/cancel", async (req, res) => {
 
   // Cancelar pedidos de café da manhã vinculados à reserva
   if (!db.breakfastOrders) db.breakfastOrders = [];
-  const cancelMotive = req.body?.reason?.trim() 
+  const cancelMotive = req.body?.reason?.trim()
     ? `Reserva cancelada pelo próprio hóspede via autoatendimento (Motivo: ${req.body.reason.trim()})`
     : "Reserva cancelada pelo próprio hóspede via autoatendimento";
 
@@ -11722,7 +11777,7 @@ app.post("/api/pms/guest-portal/:code/cancel", async (req, res) => {
 
   res.json({
     success: true,
-    message: isEligibleForRefund 
+    message: isEligibleForRefund
       ? `Reserva cancelada com sucesso! O estorno integral de R$ ${refundAmount.toFixed(2)} foi processado.`
       : "Reserva cancelada com sucesso. De acordo com as políticas, não houve estorno de valores.",
     refundAmount,
@@ -11959,8 +12014,8 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
 
   // Se houver solicitação de limpeza correspondente, sincroniza as datas
   if (Array.isArray(db.cleaningRequests)) {
-    const reqItem = db.cleaningRequests.find(c => 
-      (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) && 
+    const reqItem = db.cleaningRequests.find(c =>
+      (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) &&
       c.requestDate === r.checkinDate
     );
     if (reqItem) {
@@ -12007,12 +12062,12 @@ app.get("/api/lost-and-found", (req, res) => {
 
 app.post("/api/lost-and-found", async (req, res) => {
   try {
-    const { 
-      flatId, 
-      flatNumber, 
-      description, 
-      locationInRoom = "", 
-      photoBase64 = "", 
+    const {
+      flatId,
+      flatNumber,
+      description,
+      locationInRoom = "",
+      photoBase64 = "",
       notes = "",
       date = "",
       requestDate = "",
@@ -12067,7 +12122,7 @@ app.post("/api/lost-and-found", async (req, res) => {
 
     // Regra A: Se já veio nome do card de limpeza daquele dia (leavingGuest), respeita e busca telefone se faltar
     // Regra B: Busca reserva que teve checkout exatamente na data do cadastro (checkoutDate === registrationDate)
-    const checkoutReservation = (db.reservations || []).find(r => 
+    const checkoutReservation = (db.reservations || []).find(r =>
       (String(r.flatNumber) === String(targetFlat) || (flatId && r.flatId === Number(flatId)) || r.allocatedFlatNumbers?.includes(String(targetFlat))) &&
       r.status !== "cancelada" &&
       r.status !== "CANCELLED" &&
@@ -12086,7 +12141,7 @@ app.post("/api/lost-and-found", async (req, res) => {
 
     // Regra C: Busca na lista de solicitações de limpeza para aquele flat na data do cadastro
     if (!lastGuestName || lastGuestName === "Hóspede Anterior") {
-      const checkoutCleaning = (db.cleaningRequests || []).find(cr => 
+      const checkoutCleaning = (db.cleaningRequests || []).find(cr =>
         (String(cr.flatNumber) === String(targetFlat) || (flatId && cr.flatId === Number(flatId))) &&
         (cr.requestDate === registrationDate || cr.effectiveDate === registrationDate) &&
         cr.leavingGuest
@@ -12100,7 +12155,7 @@ app.post("/api/lost-and-found", async (req, res) => {
     // Regra D: Fallback de segurança caso não haja checkout na data exata (busca a reserva com checkout mais recente <= registrationDate)
     if (!lastGuestName || lastGuestName === "Hóspede Anterior") {
       const priorReservations = (db.reservations || [])
-        .filter(r => 
+        .filter(r =>
           (String(r.flatNumber) === String(targetFlat) || (flatId && r.flatId === Number(flatId)) || r.allocatedFlatNumbers?.includes(String(targetFlat))) &&
           r.status !== "cancelada" &&
           r.status !== "CANCELLED" &&
@@ -12120,7 +12175,7 @@ app.post("/api/lost-and-found", async (req, res) => {
 
     // Regra E: Se tiver o nome do hóspede mas não tiver telefone, busca telefone nas reservas ou no cadastro de hóspedes
     if (lastGuestName && lastGuestName !== "Hóspede Anterior" && !lastGuestPhone) {
-      const guestMatch = (db.reservations || []).find(r => 
+      const guestMatch = (db.reservations || []).find(r =>
         (r.guestName || "").toLowerCase().trim() === lastGuestName.toLowerCase().trim() &&
         r.guestPhone
       );
@@ -12814,7 +12869,7 @@ app.get("/api/pms/guests/:id", (req, res) => {
       if (!fnhrCompletedAt) fnhrCompletedAt = s.fnhrCompletedAt || s.updatedAt;
     }
     if (Array.isArray(s.guests)) {
-      const matchSlot = s.guests.find(rg => 
+      const matchSlot = s.guests.find(rg =>
         (cleanDoc && (rg.cpf || "").replace(/\D/g, "") === cleanDoc) ||
         (guestNameLower && normalizeName(rg.name || "") === guestNameLower) ||
         rg.guestId === guest.id
@@ -12914,7 +12969,7 @@ app.get("/api/pms/guests/:id", (req, res) => {
 app.get("/api/pms/guests/export/csv", (req, res) => {
   if (!db.guests) db.guests = [];
   reconcileAndMergeGuests(db);
-  
+
   const headers = ["ID", "Código", "Nome Completo", "CPF/CNPJ", "Telefone", "E-mail", "Cidade/UF", "Total Gasto (R$)", "Total Estadias", "Flat Mais Frequente", "FNHR Concluída", "Tags", "Empresa"];
   const rows = db.guests.map(g => {
     return [
@@ -12953,7 +13008,7 @@ const handleUpdateGuest = (req, res) => {
   if (req.body.isMonthlyGuest !== undefined || req.body.clientType !== undefined) {
     guest.isMonthlyGuest = Boolean(req.body.isMonthlyGuest || req.body.clientType === "mensalista");
     guest.clientType = guest.isMonthlyGuest ? "mensalista" : "avulso";
-    
+
     // Atualiza imediatamente todas as reservas desse hóspede
     const cleanDoc = (guest.document || guest.documentNumber || "").replace(/\D/g, "");
     const cleanPhone = (guest.phone || "").replace(/\D/g, "");
@@ -13390,22 +13445,22 @@ app.get("/api/reception/today", (req, res) => {
       })
       .map(r => {
         const flat = db.flats.find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber)) || { id: r.flatId, number: r.flatNumber || String(r.flatId) };
-        const guest = (db.guests || []).find(g => 
+        const guest = (db.guests || []).find(g =>
           (r.guestId && g.id === r.guestId) ||
           (r.guestDocument && g.document && r.guestDocument.replace(/\D/g, "") === g.document.replace(/\D/g, "")) ||
           (r.guestEmail && g.email && r.guestEmail.trim().toLowerCase() === g.email.trim().toLowerCase()) ||
           (r.guestPhone && g.phone && r.guestPhone.replace(/\D/g, "") === g.phone.replace(/\D/g, ""))
         ) || {};
-        const cleanReq = (db.cleaningRequests || []).find(c => 
-          (c.flatId === flat.id || String(c.flatNumber) === String(flat.number)) && 
+        const cleanReq = (db.cleaningRequests || []).find(c =>
+          (c.flatId === flat.id || String(c.flatNumber) === String(flat.number)) &&
           c.requestDate === today &&
           !c.isInstructionOnly &&
           c.source !== "manual_instruction" &&
           c.type !== "bed_adjustment_only" &&
           c.type !== "instruction"
         );
-        
-        const hasPendingCheckoutToday = (db.reservations || []).some(res => 
+
+        const hasPendingCheckoutToday = (db.reservations || []).some(res =>
           (res.flatId === flat.id || String(res.flatNumber) === String(flat.number)) &&
           res.checkoutDate === today && res.id !== r.id && res.status !== "cancelada" && res.status !== "completed"
         );
@@ -13598,7 +13653,7 @@ app.get("/api/reception/today", (req, res) => {
       })
       .map(r => {
         const flat = db.flats.find(f => f.id === r.flatId) || { id: r.flatId, number: r.flatNumber || String(r.flatId) };
-        const guest = (db.guests || []).find(g => 
+        const guest = (db.guests || []).find(g =>
           (r.guestId && g.id === r.guestId) ||
           (r.guestDocument && g.document && r.guestDocument.replace(/\D/g, "") === g.document.replace(/\D/g, "")) ||
           (r.guestEmail && g.email && r.guestEmail.trim().toLowerCase() === g.email.trim().toLowerCase()) ||
@@ -13847,7 +13902,7 @@ app.post("/api/reception/checkin/:reservationId", (req, res) => {
       type: "user"
     },
     source: "Recepção / Portaria",
-    description: r.isPartialCheckin 
+    description: r.isPartialCheckin
       ? `Entrada parcial do Apt ${r.flatNumber} registrada na portaria para: ${clearedNames}. Pendente(s): ${remainingNames}`
       : `Check-in / Entrada do Apt ${r.flatNumber} registrado na portaria para: ${clearedNames}`,
     changes: [{ field: "status", label: "Status da Reserva", oldValue: r.status || "confirmada", newValue: "in_house" }]
@@ -13921,8 +13976,8 @@ app.post("/api/reception/checkout/:reservationId", async (req, res) => {
 
   // Notifica ou agenda limpeza na governança
   const today = getTodayStr();
-  let cleanReq = (db.cleaningRequests || []).find(c => 
-    (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) && 
+  let cleanReq = (db.cleaningRequests || []).find(c =>
+    (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) &&
     (c.requestDate === today || c.requestDate === r.checkoutDate)
   );
   if (cleanReq) {
@@ -13997,8 +14052,8 @@ app.post("/api/reception/checkout/:reservationId", async (req, res) => {
     console.warn("[Reception Checkout WhatsApp Trigger Error]:", e.message);
   });
 
-  res.json({ 
-    success: true, 
+  res.json({
+    success: true,
     message: autoInvoiceEmitted
       ? `Check-out do Apt ${r.flatNumber} realizado com sucesso! NFS-e Nº ${autoInvoiceNumber} emitida automaticamente.`
       : `Check-out do Apt ${r.flatNumber} realizado. Apartamento desocupado!`,
@@ -14056,8 +14111,8 @@ app.post("/api/reception/undo-checkout/:reservationId", (req, res) => {
                       o.reservationId === r.id ||
                       (String(o.roomNumber) === String(r.flatNumber));
       if (isMatch && o.status === "cancelled" && o.date >= todayStr && (
-        o.cancelReason?.includes("Early check-out") || 
-        o.cancelReason?.includes("early check-out") || 
+        o.cancelReason?.includes("Early check-out") ||
+        o.cancelReason?.includes("early check-out") ||
         o.cancelReason?.includes("check-out")
       )) {
         o.status = "pending";
@@ -14082,9 +14137,9 @@ export function ensureReservationScheduledEmails(db, saveDatabase, r) {
   const guestEmail = r.guestEmail.trim();
 
   // 1. E-mail de Pré-Check-in / Instruções de Chegada (véspera ou dia do check-in às 09:00)
-  const hasWelcome = db.emailQueue.some(q => 
-    (q.reservationCode === resCode || q.reservationId === String(r.id)) && 
-    q.triggerEvent === "checkin_welcome" && 
+  const hasWelcome = db.emailQueue.some(q =>
+    (q.reservationCode === resCode || q.reservationId === String(r.id)) &&
+    q.triggerEvent === "checkin_welcome" &&
     q.status !== "cancelled"
   );
   if (!hasWelcome && r.checkinDate) {
@@ -14114,9 +14169,9 @@ export function ensureReservationScheduledEmails(db, saveDatabase, r) {
   }
 
   // 2. E-mail de Lembrete de Check-out (dia de saída às 08:30)
-  const hasCheckout = db.emailQueue.some(q => 
-    (q.reservationCode === resCode || q.reservationId === String(r.id)) && 
-    q.triggerEvent === "checkout_reminder" && 
+  const hasCheckout = db.emailQueue.some(q =>
+    (q.reservationCode === resCode || q.reservationId === String(r.id)) &&
+    q.triggerEvent === "checkout_reminder" &&
     q.status !== "cancelled"
   );
   if (!hasCheckout && r.checkoutDate) {
@@ -14162,9 +14217,9 @@ function formatTriggerTitle(trigger) {
 // 1. Obter histórico de comunicações vinculado à reserva (E-mails e WhatsApp: Enviados e Agendados)
 app.get("/api/pms/reservations/:id/communications", (req, res) => {
   const paramId = String(req.params.id || "").trim();
-  const r = (db.reservations || []).find(x => 
-    String(x.id) === paramId || 
-    x.code === paramId || 
+  const r = (db.reservations || []).find(x =>
+    String(x.id) === paramId ||
+    x.code === paramId ||
     (x.code && x.code.toUpperCase() === paramId.toUpperCase())
   );
   const resIdStr = r ? String(r.id) : paramId;
@@ -14176,21 +14231,21 @@ app.get("/api/pms/reservations/:id/communications", (req, res) => {
 
   // 1. E-mails Enviados
   if (!db.reservationCommunications) db.reservationCommunications = [];
-  const emailsSent = db.reservationCommunications.filter(c => 
-    String(c.reservation_id) === resIdStr || 
+  const emailsSent = db.reservationCommunications.filter(c =>
+    String(c.reservation_id) === resIdStr ||
     (resCode && String(c.reservation_id) === String(resCode))
   );
   emailsSent.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
   // 2. E-mails Agendados
   if (!db.emailQueue) db.emailQueue = [];
-  const emailsScheduled = db.emailQueue.filter(q => 
+  const emailsScheduled = db.emailQueue.filter(q =>
     (q.reservationCode && (q.reservationCode === resCode || q.reservationCode === resIdStr)) ||
     (q.reservationId && (String(q.reservationId) === resIdStr || String(q.reservationId) === String(resCode)))
   );
 
   // 3. Resolução Consolidada de Telefones e Identificadores para WhatsApp
-  const matchedGuest = r ? (db.guests || []).find(g => 
+  const matchedGuest = r ? (db.guests || []).find(g =>
     (r.guestId && g.id === r.guestId) ||
     (r.guestPhone && g.phone && g.phone.replace(/\D/g, "") === r.guestPhone.replace(/\D/g, "")) ||
     (r.guestDocument && g.document && g.document.replace(/\D/g, "") === r.guestDocument.replace(/\D/g, "")) ||
@@ -14214,7 +14269,7 @@ app.get("/api/pms/reservations/:id/communications", (req, res) => {
   addPhoneDigits(r?.guests?.[0]?.phone);
   addPhoneDigits(matchedGuest?.phone);
 
-  const isMiller = (r?.guestName && r.guestName.toLowerCase().includes("miller")) || 
+  const isMiller = (r?.guestName && r.guestName.toLowerCase().includes("miller")) ||
                    (r?.guestDocument && r.guestDocument.replace(/\D/g, "") === "12585736792");
   if (isMiller) {
     addPhoneDigits("22998505276");
@@ -14227,9 +14282,9 @@ app.get("/api/pms/reservations/:id/communications", (req, res) => {
     if (!targetPhone) return false;
     const tDigits = String(targetPhone).replace(/\D/g, "");
     if (!tDigits) return false;
-    return candidateDigitsList.some(cand => 
-      cand === tDigits || 
-      cand.endsWith(tDigits) || 
+    return candidateDigitsList.some(cand =>
+      cand === tDigits ||
+      cand.endsWith(tDigits) ||
       tDigits.endsWith(cand) ||
       (cand.length >= 8 && tDigits.length >= 8 && cand.slice(-8) === tDigits.slice(-8))
     );
@@ -14264,10 +14319,10 @@ app.get("/api/pms/reservations/:id/communications", (req, res) => {
   convs.forEach(conv => {
     (conv.messages || []).forEach(m => {
       if (!m.fromMe) return;
-      const isRel = idMatches(m.reservationCode, m.reservationId) || 
+      const isRel = idMatches(m.reservationCode, m.reservationId) ||
                     (m.triggerEvent && m.triggerEvent !== "chat_direct");
       if (isRel) {
-        const already = whatsappHistory.some(h => 
+        const already = whatsappHistory.some(h =>
           (h.id && m.id && h.id === m.id) ||
           (h.message === m.text && h.triggerEvent === m.triggerEvent)
         );
@@ -14489,7 +14544,7 @@ app.post("/api/settings/email/test", async (req, res) => {
     const userDomain = finalConfig.user.split("@")[1]?.toLowerCase();
     const fromDomain = finalConfig.fromEmail.split("@")[1]?.toLowerCase();
     if (userDomain && fromDomain && userDomain !== fromDomain && fromDomain === "gmail.com") {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: `Incompatibilidade de remetente: A conta autenticada é "@${userDomain}", mas o Remetente informado é "@${fromDomain}". O Zoho Mail bloqueia envios com remetente externo (@gmail.com). Altere o "E-mail do Remetente" para ${finalConfig.user} ou outro endereço do seu domínio.`
       });
     }
@@ -14571,11 +14626,11 @@ app.post("/api/emails/config", (req, res) => {
   if (buildingName !== undefined) db.settings.buildingName = buildingName.trim();
 
   saveDatabase();
-  res.json({ 
-    success: true, 
+  res.json({
+    success: true,
     enabled: db.settings.emailSettings.enabled !== false,
-    message: db.settings.emailSettings.enabled !== false 
-      ? "Motor de e-mails automáticos ativado com sucesso!" 
+    message: db.settings.emailSettings.enabled !== false
+      ? "Motor de e-mails automáticos ativado com sucesso!"
       : "Motor de e-mails automáticos pausado."
   });
 });
@@ -14702,7 +14757,7 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
     guest = db.guests.find(g => g.id === accountOrGuest.id);
   }
   if (!guest) {
-    guest = db.guests.find(g => 
+    guest = db.guests.find(g =>
       (cleanEmail && cleanEmail.includes("@") && (g.email || "").trim().toLowerCase() === cleanEmail) ||
       (cleanDoc && cleanDoc.length >= 8 && (g.documentNumber || g.document || "").replace(/\D/g, "") === cleanDoc) ||
       (cleanPhone && cleanPhone.length >= 8 && normalizePhone(g.phone || "") === cleanPhone) ||
@@ -14754,7 +14809,7 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
   // 2. Sincroniza em db.guestAccounts (Minha Conta / Autenticação)
   let account = null;
   if (accountOrGuest?.email || cleanEmail) {
-    account = db.guestAccounts.find(a => 
+    account = db.guestAccounts.find(a =>
       (cleanEmail && a.email.toLowerCase() === cleanEmail) ||
       (cleanDoc && cleanDoc.length >= 8 && a.document && a.document.replace(/\D/g, "") === cleanDoc) ||
       (cleanPhone && cleanPhone.length >= 8 && a.phone && normalizePhone(a.phone) === cleanPhone)
@@ -14805,7 +14860,7 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
   }
 
   // 3. Atualiza reservas correspondentes
-  const reservations = (db.reservations || []).filter(r => 
+  const reservations = (db.reservations || []).filter(r =>
     (cleanEmail && r.guestEmail && r.guestEmail.trim().toLowerCase() === cleanEmail) ||
     (cleanDoc && (r.guestDocument || "").replace(/\D/g, "") === cleanDoc) ||
     (cleanPhone && cleanPhone.length >= 8 && normalizePhone(r.guestPhone || "") === cleanPhone) ||
@@ -14873,7 +14928,7 @@ app.get("/api/pms/pre-checkin/:code", (req, res) => {
     const cleanEmail = (r.guestEmail || "").trim().toLowerCase();
     const cleanName = normalizeName(r.guestName || "");
 
-    guest = db.guests.find(g => 
+    guest = db.guests.find(g =>
       (cleanDoc && (g.documentNumber || g.document || "").replace(/\D/g, "") === cleanDoc) ||
       (cleanPhone && cleanPhone.length >= 8 && normalizePhone(g.phone || "") === cleanPhone) ||
       (cleanEmail && cleanEmail.includes("@") && (g.email || "").trim().toLowerCase() === cleanEmail) ||
@@ -15043,24 +15098,24 @@ app.post("/api/pms/pre-checkin/:code/signature-token", (req, res) => {
 });
 
 app.post("/api/pms/pre-checkin", async (req, res) => {
-  const { 
-    reservationId, 
+  const {
+    reservationId,
     code,
     guestIndex = 1,
-    fullName, 
-    phone, 
-    email, 
-    document, 
-    birthDate, 
-    gender, 
-    address, 
-    city, 
-    state, 
+    fullName,
+    phone,
+    email,
+    document,
+    birthDate,
+    gender,
+    address,
+    city,
+    state,
     country = "Brasil",
     transportMethod = "carro",
     travelReason = "lazer",
-    selfieBase64, 
-    docPhotoBase64, 
+    selfieBase64,
+    docPhotoBase64,
     signatureBase64,
     isMinor,
     minorAge,
@@ -15097,7 +15152,7 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     guest = db.guests.find(g => g.id === r.guestId);
   }
   if (!guest) {
-    guest = db.guests.find(g => 
+    guest = db.guests.find(g =>
       (cleanDoc && (g.documentNumber || g.document || "").replace(/\D/g, "") === cleanDoc) ||
       (cleanPhone && cleanPhone.length >= 8 && normalizePhone(g.phone || "") === cleanPhone) ||
       (cleanEmail && cleanEmail.includes("@") && (g.email || "").trim().toLowerCase() === cleanEmail) ||
@@ -16718,7 +16773,7 @@ app.get("/api/marketing/abandoned-carts", (req, res) => {
   const carts = db.abandonedCarts || [];
   const abandoned = carts.filter(c => c.status === "abandonado" || c.status === "em_andamento");
   const recovered = carts.filter(c => c.status === "recuperado" || c.status === "concluido");
-  
+
   const totalAbandonedAmount = abandoned.reduce((acc, c) => acc + (c.totalAmount || 0), 0);
   const totalRecoveredAmount = recovered.reduce((acc, c) => acc + (c.totalAmount || 0), 0);
   const recoveryRatePct = carts.length > 0 ? (recovered.length / carts.length) * 100 : 0;
@@ -16827,7 +16882,7 @@ app.post("/api/marketing/ad-campaigns/:id/toggle", (req, res) => {
 app.post("/api/marketing/ad-settings", (req, res) => {
   getMarketingData();
   const { autoPilotEnabled, lowOccupancyThresholdPct, highOccupancyPausePct, defaultDailyBudget, metaPixelId, metaApiToken, googleAdsId } = req.body;
-  
+
   if (autoPilotEnabled !== undefined) db.adSettings.autoPilotEnabled = Boolean(autoPilotEnabled);
   if (lowOccupancyThresholdPct !== undefined) db.adSettings.lowOccupancyThresholdPct = Number(lowOccupancyThresholdPct);
   if (highOccupancyPausePct !== undefined) db.adSettings.highOccupancyPausePct = Number(highOccupancyPausePct);
@@ -16886,16 +16941,16 @@ app.get("/api/marketing/creative-generator", (req, res) => {
 });
 
 // ── NFS-e Fiscal Invoices (Padrão Nacional ADN / Receita Federal) ───────────
-import { 
+import {
   toTitleCase,
-  onlyDigits, 
-  isValidCpf, 
-  isValidCnpj, 
-  cleanPhone, 
-  cleanCep, 
-  TAX_CATALOG, 
-  buildNationalDpsPayload, 
-  processNationalInvoiceEmission, 
+  onlyDigits,
+  isValidCpf,
+  isValidCnpj,
+  cleanPhone,
+  cleanCep,
+  TAX_CATALOG,
+  buildNationalDpsPayload,
+  processNationalInvoiceEmission,
   renderDanfseHtml,
   generateChaveAcessoNacional
 } from "./national-nfse.mjs";
@@ -17054,13 +17109,13 @@ app.get("/api/nfse/settings", (req, res) => {
 });
 
 app.post("/api/nfse/settings", (req, res) => {
-  const { 
-    descriptionTemplate, 
-    aliquotaPadrao, 
-    codigoServico, 
-    codigoTributacaoMunicipio, 
-    cnae, 
-    optanteSimplesNacional 
+  const {
+    descriptionTemplate,
+    aliquotaPadrao,
+    codigoServico,
+    codigoTributacaoMunicipio,
+    cnae,
+    optanteSimplesNacional
   } = req.body;
 
   if (!db.fiscalSettings) db.fiscalSettings = {};
@@ -17081,9 +17136,9 @@ app.post("/api/invoices/chat", async (req, res) => {
     const { messages = [], currentData = {}, tomador = null } = req.body;
     const template = db.fiscalSettings?.descriptionTemplate || DEFAULT_FISCAL_TEMPLATE;
 
-    const result = await processChatConversation({ 
-      messages, 
-      currentData, 
+    const result = await processChatConversation({
+      messages,
+      currentData,
       tomadorFixo: tomador,
       customTemplate: template
     });
@@ -17093,7 +17148,7 @@ app.post("/api/invoices/chat", async (req, res) => {
       if (!db.guests) db.guests = [];
       const cleanDoc = result.data.tomadorCpfCnpj;
       const existingGuest = db.guests.find(g => (g.documentNumber || "").replace(/\D/g, "") === cleanDoc);
-      
+
       if (!existingGuest) {
         const nextGuestId = (db.guests.length > 0 ? Math.max(...db.guests.map(g => Number(g.id) || 0)) : 0) + 1;
         const newGuest = {
@@ -17157,15 +17212,15 @@ app.get("/api/nfse/invoices", (req, res) => {
 // Emit NFS-e Padrão Nacional
 app.post("/api/nfse/emit", async (req, res) => {
   getFiscalData();
-  const { 
-    reservationId, 
+  const {
+    reservationId,
     reservationCode,
-    tomadorNome, 
-    tomadorCpfCnpj, 
-    tomadorEmail, 
-    tomadorTelefone, 
-    flatNumber, 
-    valorServico, 
+    tomadorNome,
+    tomadorCpfCnpj,
+    tomadorEmail,
+    tomadorTelefone,
+    flatNumber,
+    valorServico,
     discriminacao,
     regraFiscalId = "hospedagem_corpflats"
   } = req.body;
@@ -17265,8 +17320,8 @@ app.post("/api/nfse/emit", async (req, res) => {
       source: "giss_engine"
     });
 
-    res.status(201).json({ 
-      success: true, 
+    res.status(201).json({
+      success: true,
       invoice: newInvoice,
       numeroNfse: numNfseReal,
       numeroNota: numNfseReal,
@@ -17287,10 +17342,10 @@ app.get("/api/nfse/danfse/:id", (req, res) => {
   const rawId = String(req.params.id || "").trim();
   const numId = Number(rawId);
 
-  let inv = (db.invoices || []).find(i => 
-    i.id === numId || 
-    String(i.id) === rawId || 
-    String(i.numeroNfse) === rawId || 
+  let inv = (db.invoices || []).find(i =>
+    i.id === numId ||
+    String(i.id) === rawId ||
+    String(i.numeroNfse) === rawId ||
     String(i.codigoVerificacao).toUpperCase() === rawId.toUpperCase()
   );
 
@@ -17416,7 +17471,7 @@ app.post("/api/nfse/certificate/upload", (req, res) => {
     try { fs.mkdirSync(certDir, { recursive: true }); } catch {}
 
     const buffer = Buffer.from(fileBase64.replace(/^data:.*,/, ""), "base64");
-    
+
     // Validação com crypto do Node.js
     try {
       crypto.createSecureContext({ pfx: buffer, passphrase });
@@ -17490,7 +17545,7 @@ app.post("/api/nfse/whatsapp/:id", (req, res) => {
   const cleanPhoneNum = onlyDigits(inv.tomadorTelefone);
   const firstName = (inv.tomadorNome || "Hóspede").split(" ")[0];
   const danfseUrl = `https://corpflats.onrender.com/api/nfse/danfse/${inv.id}`;
-  
+
   const msg = encodeURIComponent(
     `Olá, ${firstName}! Tudo bem? 🧾\n\nSegue o Documento Auxiliar da sua Nota Fiscal de Serviços (NFS-e Padrão Nacional Nº ${inv.numeroNfse}) referente ao Flat ${inv.flatNumber || ""}:\n\n🔗 ${danfseUrl}\n\nChave de Acesso Nacional:\n${inv.chaveAcesso || ""}\n\nAgradecemos a sua preferência e esperamos você de volta em breve! ✨`
   );
@@ -17669,9 +17724,9 @@ function splitLegacyCompoundItem(name) {
   if (!name || typeof name !== "string") return [];
   const lower = name.trim().toLowerCase();
   if (
-    lower === "café e leite" || 
-    lower === "cafe e leite" || 
-    lower === "café com leite" || 
+    lower === "café e leite" ||
+    lower === "cafe e leite" ||
+    lower === "café com leite" ||
     lower === "cafe com leite" ||
     lower === "café, leite" ||
     lower === "cafe, leite" ||
@@ -17805,10 +17860,10 @@ app.get("/api/breakfast/standard-config", (req, res) => {
 app.post("/api/breakfast/standard-config", (req, res) => {
   const cfg = getStandardBreakfastConfig();
   const allowed = [
-    "coffee", "otherBeverage", "breads", "accompaniments", "complements", 
+    "coffee", "otherBeverage", "breads", "accompaniments", "complements",
     "sweets", "fruit", "fruitSelected", "fruitAvailableOptions", "sweetener", "description"
   ];
-  
+
   allowed.forEach(k => {
     if (req.body[k] !== undefined) cfg[k] = req.body[k];
   });
@@ -17955,9 +18010,9 @@ function computeBreakfastCancellationReason(order, matchingRes, todayStr, nowBrl
   // 5. Café da manhã desmarcado na reserva
   const hasBf = Boolean(
     matchingRes.includeBreakfast !== undefined ? matchingRes.includeBreakfast : (
-      matchingRes.hasBreakfast || 
+      matchingRes.hasBreakfast ||
       matchingRes.ratePlan === "with_breakfast" ||
-      matchingRes.notes?.toLowerCase().includes("café") || 
+      matchingRes.notes?.toLowerCase().includes("café") ||
       matchingRes.notes?.toLowerCase().includes("cafe")
     )
   );
@@ -17978,7 +18033,7 @@ app.get("/api/breakfast/reservation-context", (req, res) => {
   }
 
   if (!db.reservations) db.reservations = [];
-  const r = db.reservations.find(x => 
+  const r = db.reservations.find(x =>
     (x.breakfastToken && x.breakfastToken === resParam) ||
     (x.code && x.code.toUpperCase() === resParam.toUpperCase()) ||
     (x.reservationCode && x.reservationCode.toUpperCase() === resParam.toUpperCase()) ||
@@ -17995,9 +18050,9 @@ app.get("/api/breakfast/reservation-context", (req, res) => {
   // Check if breakfast is included
   const hasBreakfast = Boolean(
     r.includeBreakfast !== undefined ? r.includeBreakfast : (
-      r.hasBreakfast || 
+      r.hasBreakfast ||
       r.ratePlan === "with_breakfast" ||
-      r.notes?.toLowerCase().includes("café") || 
+      r.notes?.toLowerCase().includes("café") ||
       r.notes?.toLowerCase().includes("cafe")
     )
   );
@@ -18116,7 +18171,7 @@ app.get("/api/breakfast/orders", (req, res) => {
     if (!order.status) order.status = "pending";
     let matchingRes = null;
     if (order.reservationCode || order.reservationId) {
-      matchingRes = (db.reservations || []).find(r => 
+      matchingRes = (db.reservations || []).find(r =>
         (order.reservationCode && (r.code === order.reservationCode || r.reservationCode === order.reservationCode)) ||
         (order.reservationId && r.id === order.reservationId)
       );
@@ -18125,7 +18180,7 @@ app.get("/api/breakfast/orders", (req, res) => {
         order.cancelReason = "Reserva não consta no calendário do hotel (quarto alterado ou reserva excluída)";
       }
     } else if (order.roomNumber) {
-      matchingRes = (db.reservations || []).find(r => 
+      matchingRes = (db.reservations || []).find(r =>
         (String(r.flatNumber) === String(order.roomNumber) || r.flatId === Number(order.roomNumber)) &&
         r.checkinDate <= order.date && r.checkoutDate >= order.date
       );
@@ -18137,9 +18192,9 @@ app.get("/api/breakfast/orders", (req, res) => {
       const isAfterCheckout = order.date > matchingRes.checkoutDate;
       const hasBf = Boolean(
         matchingRes.includeBreakfast !== undefined ? matchingRes.includeBreakfast : (
-          matchingRes.hasBreakfast || 
+          matchingRes.hasBreakfast ||
           matchingRes.ratePlan === "with_breakfast" ||
-          matchingRes.notes?.toLowerCase().includes("café") || 
+          matchingRes.notes?.toLowerCase().includes("café") ||
           matchingRes.notes?.toLowerCase().includes("cafe")
         )
       );
@@ -18155,14 +18210,14 @@ app.get("/api/breakfast/orders", (req, res) => {
         order.status = "cancelled";
         order.cancelReason = computeBreakfastCancellationReason(order, matchingRes, todayStr, nowBrl, db);
       } else if (order.status === "cancelled" && (
-        order.cancelReason?.includes("Early check-out") || 
-        order.cancelReason?.includes("early check-out") || 
-        order.cancelReason?.includes("Check-in") || 
-        order.cancelReason?.includes("check-out") || 
-        order.cancelReason?.includes("antecipou") || 
-        order.cancelReason?.includes("anterior") || 
-        order.cancelReason?.includes("desmarcado") || 
-        order.cancelReason?.includes("Diária removida") || 
+        order.cancelReason?.includes("Early check-out") ||
+        order.cancelReason?.includes("early check-out") ||
+        order.cancelReason?.includes("Check-in") ||
+        order.cancelReason?.includes("check-out") ||
+        order.cancelReason?.includes("antecipou") ||
+        order.cancelReason?.includes("anterior") ||
+        order.cancelReason?.includes("desmarcado") ||
+        order.cancelReason?.includes("Diária removida") ||
         order.cancelReason?.includes("Estadia reduzida")
       )) {
         // Reativa caso a reserva esteja válida com café e sem saída antes da entrega
@@ -18234,9 +18289,9 @@ app.get("/api/breakfast/orders", (req, res) => {
     if (r.status === "cancelada" || r.status === "cancelado") return false;
     const hasBf = Boolean(
       r.includeBreakfast !== undefined ? r.includeBreakfast : (
-        r.hasBreakfast || 
+        r.hasBreakfast ||
         r.ratePlan === "with_breakfast" ||
-        r.notes?.toLowerCase().includes("café") || 
+        r.notes?.toLowerCase().includes("café") ||
         r.notes?.toLowerCase().includes("cafe")
       )
     );
@@ -18253,7 +18308,7 @@ app.get("/api/breakfast/orders", (req, res) => {
     const flatObj = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
     const flatNum = String(r.flatNumber || flatObj?.number || r.flatId || "");
 
-    const hasActiveOrder = activeDayOrders.some(o => 
+    const hasActiveOrder = activeDayOrders.some(o =>
       (o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) ||
       (o.reservationId && o.reservationId === r.id) ||
       (String(o.roomNumber) === flatNum)
@@ -18313,7 +18368,7 @@ app.get("/api/breakfast/orders/history", (req, res) => {
   }
   if (search && typeof search === "string" && search.trim()) {
     const q = search.trim().toLowerCase();
-    list = list.filter(o => 
+    list = list.filter(o =>
       (o.clientName && o.clientName.toLowerCase().includes(q)) ||
       (o.roomNumber && String(o.roomNumber).includes(q)) ||
       (o.notes && o.notes.toLowerCase().includes(q)) ||
@@ -18418,13 +18473,13 @@ app.get("/api/breakfast/orders/insights", (req, res) => {
   const customerMap = new Map();
   for (const order of orders) {
     const name = (order.clientName || "Hóspede").trim();
-    const existing = customerMap.get(name) || { 
-      name, 
-      roomNumber: order.roomNumber, 
-      orderCount: 0, 
-      activeOrderCount: 0, 
-      totalItems: 0, 
-      lastOrderDate: order.date 
+    const existing = customerMap.get(name) || {
+      name,
+      roomNumber: order.roomNumber,
+      orderCount: 0,
+      activeOrderCount: 0,
+      totalItems: 0,
+      lastOrderDate: order.date
     };
     existing.orderCount += 1;
     if (order.status !== "cancelled") {
@@ -18560,7 +18615,7 @@ app.get("/api/breakfast/orders/insights", (req, res) => {
   });
 });
 
-const DEFAULT_BREAKFAST_REMINDER_TEMPLATE = 
+const DEFAULT_BREAKFAST_REMINDER_TEMPLATE =
   "Olá {nome}, vimos que você ainda não efetuou o seu pedido de café da manhã para o Flat {quarto} ({data}). Clique no link a seguir para escolher seus itens e horário: {link}. Precisamos recebê-lo o quanto antes para programar a produção e envio no horário escolhido!";
 
 // GET /api/breakfast/settings (Configurações e template de lembrete de café)
@@ -18817,7 +18872,7 @@ app.get("/api/breakfast/available-slots", (req, res) => {
     // Verifica se algum pedido existente está a menos de 7 minutos desse horário
     const isConflict = occupiedMinutes.some(occ => Math.abs(occ - m) < 7);
     const isAvailable = !isConflict;
-    
+
     slots.push({
       time: timeStr,
       isAvailable,
@@ -18959,15 +19014,15 @@ app.get("/api/breakfast/consumption-summary", (req, res) => {
 // POST /api/breakfast/orders (Suporta 1 a 3 pessoas, slots de 7 min, unificação e normalização canônica)
 app.post("/api/breakfast/orders", (req, res) => {
   initBreakfastData();
-  const { 
-    roomNumber, 
-    clientName, 
-    guestCount, 
-    deliveryTime, 
-    date, 
-    isStandard, 
-    items, 
-    notes, 
+  const {
+    roomNumber,
+    clientName,
+    guestCount,
+    deliveryTime,
+    date,
+    isStandard,
+    items,
+    notes,
     phone,
     reservationCode,
     guestOrders,
@@ -18979,10 +19034,10 @@ app.post("/api/breakfast/orders", (req, res) => {
   // Validação Estrita de Elegibilidade de Café da Manhã
   let activeRes = null;
   if (reservationCode) {
-    activeRes = (db.reservations || []).find(r => 
-      r.code === reservationCode || 
-      r.reservationCode === reservationCode || 
-      String(r.id) === reservationCode || 
+    activeRes = (db.reservations || []).find(r =>
+      r.code === reservationCode ||
+      r.reservationCode === reservationCode ||
+      String(r.id) === reservationCode ||
       r.breakfastToken === reservationCode
     );
   }
@@ -18990,17 +19045,17 @@ app.post("/api/breakfast/orders", (req, res) => {
   // Se não foi encontrada por código de reserva, busca pelo apartamento e período de entrega
   if (!activeRes && roomNumber) {
     const rawDeliveryDate = req.body.deliveryDate || (Array.isArray(req.body.deliveryDates) ? req.body.deliveryDates[0] : null) || getTodayStr();
-    activeRes = (db.reservations || []).find(r => 
-      String(r.flatNumber) === String(roomNumber) && 
-      r.status !== "cancelada" && 
+    activeRes = (db.reservations || []).find(r =>
+      String(r.flatNumber) === String(roomNumber) &&
+      r.status !== "cancelada" &&
       r.status !== "cancelado" &&
       (!rawDeliveryDate || (rawDeliveryDate >= r.checkinDate && rawDeliveryDate <= r.checkoutDate))
     );
 
     if (!activeRes) {
-      activeRes = (db.reservations || []).find(r => 
-        String(r.flatNumber) === String(roomNumber) && 
-        r.status !== "cancelada" && 
+      activeRes = (db.reservations || []).find(r =>
+        String(r.flatNumber) === String(roomNumber) &&
+        r.status !== "cancelada" &&
         r.status !== "cancelado"
       );
     }
@@ -19014,10 +19069,10 @@ app.post("/api/breakfast/orders", (req, res) => {
     }
 
     const isIncluded = Boolean(
-      activeRes.includeBreakfast === true || 
-      activeRes.hasBreakfast === true || 
-      activeRes.ratePlan === "with_breakfast" || 
-      activeRes.notes?.toLowerCase().includes("café") || 
+      activeRes.includeBreakfast === true ||
+      activeRes.hasBreakfast === true ||
+      activeRes.ratePlan === "with_breakfast" ||
+      activeRes.notes?.toLowerCase().includes("café") ||
       activeRes.notes?.toLowerCase().includes("cafe")
     );
     if (!isIncluded) {
@@ -19047,8 +19102,8 @@ app.post("/api/breakfast/orders", (req, res) => {
       return res.status(400).json({ error: `A data ${tDate} já passou. Não é possível realizar pedidos para datas retroativas.` });
     }
     if (tDate === todayStr && nowBrl.hour >= 5) {
-      return res.status(400).json({ 
-        error: `O horário limite para pedidos de hoje (${todayStr}) foi encerrado às 05:00. O próximo café da manhã disponível é para amanhã.` 
+      return res.status(400).json({
+        error: `O horário limite para pedidos de hoje (${todayStr}) foi encerrado às 05:00. O próximo café da manhã disponível é para amanhã.`
       });
     }
     if (activeRes && tDate > activeRes.checkoutDate) {
@@ -19097,7 +19152,7 @@ app.post("/api/breakfast/orders", (req, res) => {
     (std.accompaniments || ["Queijo mussarela", "Presunto"]).forEach(a => addCanonicalItem(a, gCount));
     (std.complements || ["Manteiga"]).forEach(c => addCanonicalItem(c, gCount));
     (std.sweets || ["Bolo do dia"]).forEach(s => addCanonicalItem(s, gCount));
-    
+
     // Fruta do dia (Mamão, maçã ou banana)
     addCanonicalItem("Fruta do dia", gCount);
 
@@ -19223,7 +19278,7 @@ app.post("/api/breakfast/orders", (req, res) => {
   const savedOrders = [];
 
   for (const tDate of targetDates) {
-    const existingIndex = (db.breakfastOrders || []).findIndex(o => 
+    const existingIndex = (db.breakfastOrders || []).findIndex(o =>
       o.date === tDate && (
         (activeRes && (o.reservationCode === activeRes.code || o.reservationId === activeRes.id)) ||
         (!activeRes && !o.reservationCode && !o.reservationId && (String(o.roomNumber) === String(roomNumber)))
@@ -19398,14 +19453,14 @@ app.post("/api/breakfast/orders/:id/whatsapp", async (req, res) => {
 
   let msgText = "";
   if (type === "in_production") {
-    msgText = req.body?.customMessage || 
+    msgText = req.body?.customMessage ||
       `Bom dia, ${firstName}! ☕👨‍🍳\n\nSeu pedido de café da manhã para o Apt ${order.roomNumber} já começou a ser preparado com todo carinho pela nossa cozinha!\n\nHorário agendado para entrega: ${order.deliveryTime || "08:00"}\n\nAssim que sair para entrega no seu quarto, avisaremos por aqui! ✨`;
     if (order.status === "pending") {
       order.status = "in_production";
     }
     order.inProductionNotifiedAt = new Date().toISOString();
   } else {
-    msgText = req.body?.customMessage || 
+    msgText = req.body?.customMessage ||
       `Bom dia, ${firstName}! ☕🥐\n\nSeu pedido de café da manhã para o Apt ${order.roomNumber} está pronto e a caminho do seu quarto!\n\nHorário previsto: ${order.deliveryTime || "08:00"}\n\nTenha um excelente dia e bom apetite! ✨`;
     if (order.status !== "ready" && order.status !== "delivered") {
       order.status = "ready";
@@ -19505,7 +19560,7 @@ app.get("/api/storage/config", (req, res) => {
 app.post("/api/storage/config", (req, res) => {
   const { accountId, accessKeyId, secretAccessKey, bucketName, publicUrl } = req.body;
   if (!db.storageConfig) db.storageConfig = {};
-  
+
   db.storageConfig.r2 = {
     accountId: accountId ? accountId.trim() : "",
     accessKeyId: accessKeyId ? accessKeyId.trim() : "",
@@ -19795,7 +19850,7 @@ app.post("/api/guest-auth/google", (req, res) => {
     const cleanEmail = googleEmail.trim().toLowerCase();
     if (!db.guestAccounts) db.guestAccounts = [];
 
-    let account = db.guestAccounts.find(g => 
+    let account = db.guestAccounts.find(g =>
       (googleSub && g.googleSub === googleSub) || g.email.toLowerCase() === cleanEmail
     );
 
@@ -19856,7 +19911,7 @@ app.get("/api/guest-auth/me", (req, res) => {
   }
 
   // Busca histórico de reservas do hóspede
-  const myReservations = (db.reservations || []).filter(r => 
+  const myReservations = (db.reservations || []).filter(r =>
     (r.guestEmail && r.guestEmail.toLowerCase() === account.email.toLowerCase()) ||
     (r.guestPhone && account.phone && r.guestPhone.replace(/\D/g, "") === account.phone.replace(/\D/g, ""))
   );
@@ -19912,7 +19967,7 @@ app.patch("/api/guest-auth/profile", (req, res) => {
       account.vehicle = vehicle;
       if (vehicle && vehicle.plate) {
         const today = new Date().toISOString().slice(0, 10);
-        const activeReservations = (db.reservations || []).filter(r => 
+        const activeReservations = (db.reservations || []).filter(r =>
           ((r.guestEmail && r.guestEmail.toLowerCase() === cleanEmail) || (account.phone && r.guestPhone && r.guestPhone.replace(/\D/g, "") === account.phone.replace(/\D/g, ""))) &&
           r.status !== "cancelada" &&
           r.checkoutDate >= today
@@ -20165,7 +20220,7 @@ app.post("/api/v2/auth/forgot-password", (req, res) => {
 
     const cleanEmail = email.trim().toLowerCase();
     const account = (db.guestAccounts || []).find(g => g.email.toLowerCase() === cleanEmail);
-    
+
     // Sempre retorna sucesso por segurança para evitar enumeração de e-mails
     const token = `reset_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
     if (account) {
@@ -20192,7 +20247,7 @@ app.post("/api/v2/auth/reset-password", (req, res) => {
       return res.status(400).json({ error: "Token e nova senha (mínimo 6 caracteres) são obrigatórios." });
     }
 
-    const account = (db.guestAccounts || []).find(g => 
+    const account = (db.guestAccounts || []).find(g =>
       g.resetToken === token && g.resetTokenExpires > Date.now()
     );
 
@@ -20254,7 +20309,7 @@ app.patch("/api/v2/auth/profile", (req, res) => {
       if (vehicle && vehicle.plate) {
         const userEmail = (user.email || "").trim().toLowerCase();
         const today = new Date().toISOString().slice(0, 10);
-        const activeReservations = (db.reservations || []).filter(r => 
+        const activeReservations = (db.reservations || []).filter(r =>
           ((userEmail && r.guestEmail && r.guestEmail.toLowerCase() === userEmail) || (user.phone && r.guestPhone && r.guestPhone.replace(/\D/g, "") === user.phone.replace(/\D/g, ""))) &&
           r.status !== "cancelada" &&
           r.checkoutDate >= today
@@ -20356,7 +20411,7 @@ app.get("/api/v2/auth/export-data", (req, res) => {
   const user = getAuthV2User(req);
   if (!user) return res.status(401).json({ error: "Não autenticado." });
 
-  const myReservations = (db.reservations || []).filter(r => 
+  const myReservations = (db.reservations || []).filter(r =>
     r.guestEmail && r.guestEmail.toLowerCase() === user.email.toLowerCase()
   );
 
@@ -20395,7 +20450,7 @@ app.get("/api/live-ops/metrics", (req, res) => {
     const totalFlats = (db.flats || []).length || 10;
 
     // 1. Ocupação Hoje
-    const occupiedReservationsToday = (db.reservations || []).filter(r => 
+    const occupiedReservationsToday = (db.reservations || []).filter(r =>
       r.checkinDate <= todayStr && r.checkoutDate > todayStr
     );
     const occupiedCount = occupiedReservationsToday.length;
@@ -20434,7 +20489,7 @@ app.get("/api/live-ops/metrics", (req, res) => {
     const maintenanceCount = (db.observations || []).filter(o => o.status === "pendente").length;
 
     // 5. Cafés da Manhã de Hoje
-    const breakfastOrdersToday = (db.cleaningRequests || []).filter(r => 
+    const breakfastOrdersToday = (db.cleaningRequests || []).filter(r =>
       r.requestDate === todayStr && (r.hasBreakfast || r.breakfastOrder)
     ).map(r => ({
       flatNumber: r.flatNumber,
@@ -20635,7 +20690,7 @@ initDefaultReviews();
 app.get("/api/ai/reviews", (req, res) => {
   initDefaultReviews();
   const reviews = db.reviews || [];
-  
+
   const pendingActionItems = (db.observations || [])
     .filter(o => o.status === "pendente" && (
       o.generatedFromWhatsApp ||
@@ -20683,12 +20738,12 @@ app.post("/api/ai/clear-test-data", (req, res) => {
     db.guestSentiment = [];
     db.npsResponses = [];
     if (db.observations) {
-      db.observations = db.observations.filter(o => 
-        !o.description?.includes("[IA Auto-Ticket]") && 
-        !o.description?.includes("[NPS Auto-Ticket]") && 
-        !o.description?.includes("[WhatsApp Defeito]") && 
-        !o.description?.includes("[WhatsApp Crítica]") && 
-        !o.generatedFromReviewId && 
+      db.observations = db.observations.filter(o =>
+        !o.description?.includes("[IA Auto-Ticket]") &&
+        !o.description?.includes("[NPS Auto-Ticket]") &&
+        !o.description?.includes("[WhatsApp Defeito]") &&
+        !o.description?.includes("[WhatsApp Crítica]") &&
+        !o.generatedFromReviewId &&
         !o.generatedFromNps &&
         !o.generatedFromWhatsApp
       );
@@ -20763,7 +20818,7 @@ app.post("/api/ai/analyze-reviews", async (req, res) => {
       if (rev.analyzed && rev.maintenanceChecked) continue;
 
       // 1. Detecta número do flat no texto (ex: "quarto 304", "flat 1017", "apt 211")
-      const flatMatch = (rev.comment || "").match(/(?:flat|quarto|apt|apto|apartamento|unidade)\s*([0-9]{2,4})/i) || 
+      const flatMatch = (rev.comment || "").match(/(?:flat|quarto|apt|apto|apartamento|unidade)\s*([0-9]{2,4})/i) ||
                          (rev.flatMentioned ? [null, rev.flatMentioned] : null);
 
       if (flatMatch && flatMatch[1]) {
@@ -20774,8 +20829,8 @@ app.post("/api/ai/analyze-reviews", async (req, res) => {
         for (const kw of maintenanceKeywords) {
           if (kw.trigger.test(rev.comment || "")) {
             if (!db.observations) db.observations = [];
-            
-            const existingObs = db.observations.find(o => 
+
+            const existingObs = db.observations.find(o =>
               o.flatNumber === flatNum && o.description.includes(rev.author || "")
             );
 
@@ -21524,14 +21579,14 @@ app.post("/api/pms/smart-allocate", (req, res) => {
       if (excludeFlatId && flat.id === excludeFlatId) return false;
 
       // Conflito de reserva
-      const hasResConflict = (db.reservations || []).some(r => 
+      const hasResConflict = (db.reservations || []).some(r =>
         (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
         r.checkinDate < checkoutDate && r.checkoutDate > checkinDate
       );
       if (hasResConflict) return false;
 
       // Conflito de bloqueio
-      const hasBlockConflict = (db.roomBlocks || []).some(b => 
+      const hasBlockConflict = (db.roomBlocks || []).some(b =>
         (b.flatId === flat.id || String(b.flatNumber) === String(flat.number)) &&
         b.startDate < checkoutDate && b.endDate > checkinDate
       );
@@ -21541,9 +21596,9 @@ app.post("/api/pms/smart-allocate", (req, res) => {
     });
 
     if (availableFlats.length === 0) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: "Nenhum flat vago disponível para este período.",
-        available: false 
+        available: false
       });
     }
 
@@ -21553,13 +21608,13 @@ app.post("/api/pms/smart-allocate", (req, res) => {
       const reasons = [];
 
       // A) CRITÉRIO 1: Prontidão para Early Check-in (Quarto Vago e Limpo Hoje)
-      const cleanReq = (db.cleaningRequests || []).find(c => 
+      const cleanReq = (db.cleaningRequests || []).find(c =>
         (c.flatNumber === flat.number || c.flatId === flat.id) && c.requestDate === todayStr
       );
       const isCleanToday = cleanReq ? (cleanReq.status === "clean" || cleanReq.status === "inspected") : true;
 
       // Verifica se o quarto está vago no dia anterior
-      const hadPreviousGuest = (db.reservations || []).some(r => 
+      const hadPreviousGuest = (db.reservations || []).some(r =>
         (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
         r.checkoutDate === checkinDate
       );
@@ -21573,7 +21628,7 @@ app.post("/api/pms/smart-allocate", (req, res) => {
       }
 
       // B) CRITÉRIO 2: Rodízio Equitativo (Balanceamento de Desgaste e Ocupação no Mês)
-      const monthDiariasCount = (db.reservations || []).filter(r => 
+      const monthDiariasCount = (db.reservations || []).filter(r =>
         (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
         r.checkinDate && r.checkinDate.startsWith(currentMonth)
       ).reduce((acc, r) => acc + daysDiff(r.checkinDate, r.checkoutDate), 0);
@@ -21585,7 +21640,7 @@ app.post("/api/pms/smart-allocate", (req, res) => {
 
       // C) CRITÉRIO 3: Encaixe Perfeito (Evitar buracos de 1 diária isolada)
       const nextDayStr = checkoutDate;
-      const hasBackToBackNext = (db.reservations || []).some(r => 
+      const hasBackToBackNext = (db.reservations || []).some(r =>
         (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
         r.checkinDate === nextDayStr
       );
@@ -21637,7 +21692,7 @@ app.get("/api/pms/garage/daily-sheet", (req, res) => {
     const todayStr = getIsoDateStr(new Date());
 
     // Busca reservas ativas hoje ou com checkin hoje
-    const activeReservations = (db.reservations || []).filter(r => 
+    const activeReservations = (db.reservations || []).filter(r =>
       r.checkinDate <= todayStr && r.checkoutDate >= todayStr
     );
 
@@ -21694,7 +21749,7 @@ app.post("/api/pms/garage/send-authorization", (req, res) => {
     };
 
     // Procura reserva correspondente ao flat ou cria estrutura sintética
-    let targetReservation = (db.reservations || []).find(r => 
+    let targetReservation = (db.reservations || []).find(r =>
       (String(r.flatNumber) === String(flatNumber) || String(r.flatId) === String(flatNumber)) &&
       r.status !== "cancelada"
     );
@@ -21829,7 +21884,7 @@ app.post("/api/pms/reservations/:code/guest-data", (req, res) => {
     if (!db.guests) db.guests = [];
     const cleanDoc = (document || reservation.guestDocument || "").replace(/\D/g, "");
     const cleanEmail = (email || reservation.guestEmail || "").trim().toLowerCase();
-    let guest = db.guests.find(g => 
+    let guest = db.guests.find(g =>
       (cleanDoc && (g.documentNumber || g.document || "").replace(/\D/g, "") === cleanDoc) ||
       (cleanEmail && (g.email || "").trim().toLowerCase() === cleanEmail)
     );
@@ -23158,8 +23213,8 @@ app.get("/api/finance/payments", (req, res) => {
       }
 
       // Buscar configuração da forma de pagamento
-      const pmConfig = paymentMethodsList.find(m => 
-        m.id === paymentMethod || 
+      const pmConfig = paymentMethodsList.find(m =>
+        m.id === paymentMethod ||
         (paymentMethod.includes("booking") && m.id === "booking") ||
         (paymentMethod.includes("airbnb") && m.id === "airbnb") ||
         (paymentMethod.includes("pix") && m.id === "pix") ||
@@ -23298,7 +23353,7 @@ app.get("/api/finance/payments", (req, res) => {
     }
     if (search && search.trim()) {
       const q = search.trim().toLowerCase();
-      filtered = filtered.filter(p => 
+      filtered = filtered.filter(p =>
         p.guestName?.toLowerCase().includes(q) ||
         p.code?.toLowerCase().includes(q) ||
         String(p.flatNumber)?.toLowerCase().includes(q) ||
@@ -23433,7 +23488,7 @@ app.post("/api/finance/payments/reconcile/:code", async (req, res) => {
 app.get("/api/audit-logs", async (req, res) => {
   try {
     const { category, level, search, startDate, endDate, limit = 100, offset = 0 } = req.query;
-    
+
     let logs = db.auditLogs || [];
 
     // Se houver PostgreSQL conectado, consulta a tabela com índices
@@ -23487,7 +23542,7 @@ app.get("/api/audit-logs", async (req, res) => {
       }
       if (search) {
         const q = search.toLowerCase();
-        logs = logs.filter(l => 
+        logs = logs.filter(l =>
           (l.action && l.action.toLowerCase().includes(q)) ||
           JSON.stringify(l.details || {}).toLowerCase().includes(q) ||
           JSON.stringify(l.actor || {}).toLowerCase().includes(q)
@@ -23632,7 +23687,7 @@ function serveSpaWithMetadata(distFolder, req, res) {
     let flatNumber = "";
     if (resCode) {
       const cleanCode = String(resCode).trim().toLowerCase();
-      const found = (db.reservations || []).find(r => 
+      const found = (db.reservations || []).find(r =>
         (r.code && String(r.code).toLowerCase() === cleanCode) ||
         (r.breakfastToken && String(r.breakfastToken).toLowerCase() === cleanCode) ||
         String(r.id) === cleanCode
@@ -23644,11 +23699,11 @@ function serveSpaWithMetadata(distFolder, req, res) {
     }
 
     // 3. Identificar tipo de página
-    const isBreakfast = 
-      rawPath.startsWith("/cafe") || 
-      rawPath.endsWith("/cafe") || 
-      rawPath.includes("/cafe/") || 
-      rawPath.endsWith("/room-service") || 
+    const isBreakfast =
+      rawPath.startsWith("/cafe") ||
+      rawPath.endsWith("/cafe") ||
+      rawPath.includes("/cafe/") ||
+      rawPath.endsWith("/room-service") ||
       rawPath.includes("/room-service/");
 
     const isPreCheckin = rawPath.startsWith("/pre-checkin");
@@ -23663,19 +23718,19 @@ function serveSpaWithMetadata(distFolder, req, res) {
     let imageHeight = "630";
 
     if (isCheckout) {
-      title = flatNumber 
+      title = flatNumber
         ? `🚪 Check-out Expresso • Flat ${flatNumber} • CorpFlats`
         : "🚪 Check-out Expresso • CorpFlats";
-      desc = guestFirstName 
+      desc = guestFirstName
         ? `Olá ${guestFirstName}! Confirme sua saída do Flat ${flatNumber} com 1 clique e lembre-se de devolver o cartão na recepção.`
         : "Confirme sua saída de forma rápida e prática pelo Check-out Expresso CorpFlats.";
       image = "https://corpflats.onrender.com/flat-preview.jpg";
       imageAlt = "CorpFlats • Check-out Expresso";
     } else if (isBreakfast) {
-      title = flatNumber 
+      title = flatNumber
         ? `☕ Café da Manhã • Flat ${flatNumber} • CorpFlats`
         : "☕ Pedido de Café da Manhã • CorpFlats";
-      desc = guestFirstName 
+      desc = guestFirstName
         ? `Olá ${guestFirstName}! Personalize o seu café da manhã e escolha o horário de entrega no seu flat.`
         : "Personalize o seu cardápio de café da manhã servido com todo o carinho diretamente no seu flat.";
       image = "https://corpflats.onrender.com/breakfast-preview.jpg";
@@ -23683,10 +23738,10 @@ function serveSpaWithMetadata(distFolder, req, res) {
       imageWidth = "800";
       imageHeight = "533";
     } else if (isPreCheckin) {
-      title = flatNumber 
+      title = flatNumber
         ? `📝 Pré-Check-in • Flat ${flatNumber} • CorpFlats`
         : "📝 Pré-Check-in Digital • CorpFlats";
-      desc = guestFirstName 
+      desc = guestFirstName
         ? `Olá ${guestFirstName}! Agilize sua chegada preenchendo os dados do pré-check-in para liberação na portaria 24h.`
         : "Agilize sua chegada confirmando os dados de identificação para liberação rápida na portaria 24h.";
       image = "https://corpflats.onrender.com/flat-preview.jpg";
@@ -23694,10 +23749,10 @@ function serveSpaWithMetadata(distFolder, req, res) {
       imageWidth = "1200";
       imageHeight = "630";
     } else if (isPortal) {
-      title = flatNumber 
+      title = flatNumber
         ? `🏨 Área do Hóspede • Flat ${flatNumber} • CorpFlats`
         : "🏨 Área do Hóspede • CorpFlats";
-      desc = guestFirstName 
+      desc = guestFirstName
         ? `Olá ${guestFirstName}! Acesse os detalhes da sua acomodação, senha da fechadura, Wi-Fi e horários do flat.`
         : "Acesse os detalhes da sua acomodação, senha da fechadura, conexão Wi-Fi, regras do flat e serviços.";
       image = "https://corpflats.onrender.com/flat-preview.jpg";
@@ -24220,8 +24275,8 @@ app.post("/api/maids/:userId/pay", async (req, res) => {
     const msg = `${emoji} *${typeLabel} Realizado! • CorpFlats* 💰\n\nOlá, *${user.name || user.username}*! Informamos que seu ${isAdvance ? "vale" : "pagamento"} foi processado:\n\n💵 *Valor:* ${valorFormatado}\n📅 *Data:* ${dataHoje}\n📌 *Tipo:* ${typeLabel}\n${payment.description ? `📋 *Descrição:* ${payment.description}\n` : ""}${!isAdvance && payment.interTxId ? `🔖 *TxID:* ${payment.interTxId}\n` : ""}${!isAdvance && interResult?.simulated ? "⚠️ _Pagamento simulado (configure PIX para produção)_\n" : ""}\n💼 *Saldo Atual:* ${saldoFormatado}\n\n_Acesse seu app para ver o extrato completo._ 📊`;
 
     try {
-      const sendResult = await sendZapiMessage(db.zapiConfig, { 
-        phone: cleanPh, 
+      const sendResult = await sendZapiMessage(db.zapiConfig, {
+        phone: cleanPh,
         message: msg,
         recipientRole: "camareira",
         bypassTestMode: true
@@ -24289,8 +24344,8 @@ app.post("/api/maids/statement/send-whatsapp", async (req, res) => {
   const msg = `📊 *Extrato Financeiro • CorpFlats* 💼\n\nOlá, *${user.name || user.username}*!\n\n💰 *Saldo Atual:* ${balanceFormatted}\n\n📋 *Últimas movimentações:*\n\`\`\`\n${lines || "Nenhuma movimentação ainda."}\n\`\`\`\n\n_Legenda: (+) Crédito (diária), (-) Débito (pagamento/vale)_\n_Para extrato completo, acesse o app._ ✨`;
 
   try {
-    const sendResult = await sendZapiMessage(db.zapiConfig, { 
-      phone, 
+    const sendResult = await sendZapiMessage(db.zapiConfig, {
+      phone,
       message: msg,
       recipientRole: "camareira",
       bypassTestMode: true

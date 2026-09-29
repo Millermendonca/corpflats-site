@@ -116,7 +116,7 @@ describe('Regra de Ocupação Padrão em Check-outs', () => {
     assert.strictEqual(req511.isVacantExplicitlySet, true, 'Flat 511 deve ter isVacantExplicitlySet: true');
     assert.strictEqual(req511.vacantSource, 'reception_checkout', 'vacantSource do 511 deve ser reception_checkout');
     assert.strictEqual(req511.pendingObservation, null, 'pendingObservation do 511 não deve ter nota de checkout');
-    
+
     const flatObj = (db.flats || []).find(f => f.number == 511 || f.id == 11);
     assert.ok(flatObj, 'Flat 511 deve existir em db.flats');
     assert.strictEqual(flatObj.isOccupied, false, 'Flat 511 deve ter isOccupied: false');
@@ -127,7 +127,7 @@ describe('Regra de Ocupação Padrão em Check-outs', () => {
     const res408 = (db.reservations || []).find(r => r.code === 'RES-408-0294' || (r.flatNumber == '408' && r.guestName && r.guestName.includes('Felipe')));
     assert.ok(res408, 'Reserva do Felipe Junqueira no 408 deve existir');
     assert.strictEqual(res408.checkoutDate, '2026-09-30', 'Checkout do Felipe deve ser 30/09');
-    
+
     // Verifica que não há cleaning dirty em 29/09 para o 408
     const dirty408Today = (db.cleaningRequests || []).filter(c => (c.flatNumber == '408' || c.flatId == 8) && c.requestDate === '2026-09-29' && c.status === 'dirty');
     assert.strictEqual(dirty408Today.length, 0, 'Flat 408 não deve ter cleaningRequest dirty em 29/09');
@@ -272,5 +272,70 @@ describe('Regra de Ocupação Padrão em Check-outs', () => {
 
     assert.strictEqual(flat116, undefined, 'Flat 116 não deve ter card de limpeza em 29/09');
     assert.strictEqual(flat211, undefined, 'Flat 211 não deve ter card de limpeza em 29/09');
+  });
+
+  it('22. Regra Temporal Universal: Check-out futuro ou concluído antes da data nunca pode ser clean', () => {
+    const serverCode = fs.readFileSync(serverPath, 'utf8');
+    function extractFunction(code, fnName) {
+      const match = code.match(new RegExp('(?:export\\s+)?(?:async\\s+)?function\\s+' + fnName + '\\s*\\('));
+      if (!match) throw new Error('Function not found: ' + fnName);
+      const startIdx = match.index;
+      let openBraces = 0;
+      let started = false;
+      let endIdx = startIdx;
+      for (let i = startIdx; i < code.length; i++) {
+        if (code[i] === '{') {
+          openBraces++;
+          started = true;
+        } else if (code[i] === '}') {
+          openBraces--;
+          if (started && openBraces === 0) { endIdx = i + 1; break; }
+        }
+      }
+      return code.substring(startIdx, endIdx);
+    }
+    const grfdCode = extractFunction(serverCode, 'getRequestsForDate');
+    const ruiCode = extractFunction(serverCode, 'reconcileUniversalIntegrity');
+
+    // Injeta um card simulando corrupção temporal futura (Flat 712 em 30/09 marcado com data de 28/09)
+    const mockDb = {
+      flats: [{ id: 14, number: "712", isOccupied: true }],
+      reservations: [
+        { id: 293, code: "RES-712-0293", flatNumber: "712", flatId: 14, guestName: "Leonardo Máximo", checkinDate: "2026-09-28", checkoutDate: "2026-09-30", status: "confirmada" },
+        { id: 306, code: "RES-712-0306", flatNumber: "712", flatId: 14, guestName: "Costa frederico", checkinDate: "2026-09-30", checkoutDate: "2026-10-01", status: "confirmada" }
+      ],
+      cleaningRequests: [
+        {
+          id: 1349,
+          flatId: 14,
+          flatNumber: "712",
+          requestDate: "2026-09-30",
+          effectiveDate: "2026-09-30",
+          source: "checkout",
+          status: "clean",
+          assignedUserId: 2,
+          assignedUsername: "Cris",
+          completedAt: "2026-09-28T12:10:55.665Z",
+          cleaningStartedAt: "2026-09-28T11:17:45.729Z"
+        }
+      ]
+    };
+
+    const fn = new Function('db', 'getTodayStr', 'getOffsetDateStr', 'saveDatabase', 'isTimeBefore', 'getBrasiliaNow', grfdCode + '\n' + ruiCode + '\n return { getRequestsForDate, reconcileUniversalIntegrity };');
+    const scope = fn(mockDb, () => '2026-09-29', (d, off) => '2026-09-29', () => {}, () => false, () => ({ timeStr: '10:00' }));
+
+    scope.reconcileUniversalIntegrity();
+
+    const cardInDb = mockDb.cleaningRequests.find(c => c.id === 1349);
+    assert.strictEqual(cardInDb.status, 'dirty', 'Card corrompido futuro deve ser corrigido para dirty');
+    assert.strictEqual(cardInDb.assignedUserId, null, 'Camareira deve ser limpa');
+    assert.strictEqual(cardInDb.assignedUsername, null, 'Nome da camareira deve ser limpo');
+    assert.strictEqual(cardInDb.completedAt, null, 'completedAt no passado deve ser limpo');
+
+    const reqs30 = scope.getRequestsForDate('2026-09-30');
+    const card30 = reqs30.find(c => String(c.flatNumber) === '712');
+    assert.strictEqual(card30.status, 'dirty', 'getRequestsForDate de data futura deve retornar status dirty');
+    assert.strictEqual(card30.assignedUsername, null, 'Não deve exibir camareira em checkout futuro pendente');
+    assert.strictEqual(card30.completedAt, null, 'Não deve ter completedAt em checkout futuro pendente');
   });
 });
