@@ -1697,6 +1697,34 @@ function reconcileUniversalIntegrity(incomingState = null) {
       );
 
       if (!hasCleaning) {
+        // Se o checkout é no passado e o flat já possui uma limpeza "clean" entre a data de checkout e hoje (ou próximo check-in), NÃO criar limpeza dirty retroativa duplicada
+        if (checkoutDate < todayStr) {
+          const nextReservation = (db.reservations || [])
+            .filter(otherR => 
+              (String(otherR.flatNumber) === String(r.flatNumber) || (r.flatId && otherR.flatId === r.flatId)) &&
+              otherR.status !== "cancelada" && otherR.status !== "cancelled" &&
+              otherR.checkinDate && otherR.checkinDate >= checkoutDate &&
+              otherR.id !== r.id && (otherR.code ? otherR.code !== r.code : true)
+            )
+            .sort((a, b) => (a.checkinDate || "").localeCompare(b.checkinDate || ""))[0];
+
+          const nextCheckinDate = nextReservation ? nextReservation.checkinDate : null;
+
+          const hasCleanBetween = (db.cleaningRequests || []).some(c => {
+            if (String(c.flatNumber) !== String(r.flatNumber) && (!r.flatId || c.flatId !== r.flatId)) return false;
+            if (c.status !== "clean") return false;
+            const cDate = c.requestDate || c.effectiveDate;
+            if (!cDate || cDate < checkoutDate) return false;
+            if (cDate <= todayStr) return true;
+            if (nextCheckinDate && cDate <= nextCheckinDate) return true;
+            return false;
+          });
+
+          if (hasCleanBetween) {
+            return;
+          }
+        }
+
         const sevenDaysAgo = typeof getOffsetDateStr === "function" ? getOffsetDateStr(-7) : "2026-09-20";
         const isOldPastCheckout = checkoutDate < sevenDaysAgo;
         const maxCleanId = db.cleaningRequests.length > 0 
@@ -1737,6 +1765,19 @@ function reconcileUniversalIntegrity(incomingState = null) {
   // sem ter sido realizada por nenhuma camareira (sem assignedUserId e sem completedAt, como o Flat 408 da Danielle), ela deve ser "dirty"!
   const recentWindow = typeof getOffsetDateStr === "function" ? getOffsetDateStr(-7) : "2026-09-20";
   (db.cleaningRequests || []).forEach(c => {
+    // IMMUNITY GUARDS: Nunca reverter marcações manuais do administrador, limpezas canônicas ou registros com responsável/conclusão
+    if (
+      c.markedByAdmin === true ||
+      c.isCanonical === true ||
+      c.source === "admin_manual" ||
+      c.source === "manual" ||
+      c.addedBy === "admin" ||
+      Boolean(c.completedAt) ||
+      Boolean(c.assignedUserId)
+    ) {
+      return;
+    }
+
     if (
       c.source === "checkout" &&
       c.status === "clean" &&
@@ -3417,7 +3458,9 @@ function reconcileCleaningRequests() {
           if (other === cleanItem) continue;
           if (!cleanItem.leavingGuest && other.leavingGuest) cleanItem.leavingGuest = other.leavingGuest;
           if (!cleanItem.arrivingGuest && other.arrivingGuest) cleanItem.arrivingGuest = other.arrivingGuest;
-          if (!cleanItem.adminNote && other.adminNote) cleanItem.adminNote = other.adminNote;
+          if (!cleanItem.adminNote && other.adminNote && !other.adminNote.includes("Limpeza de check-out gerada automaticamente")) {
+            cleanItem.adminNote = other.adminNote;
+          }
           if (typeof cleanItem.twinBeds !== "boolean" && typeof other.twinBeds === "boolean") cleanItem.twinBeds = other.twinBeds;
           if (typeof cleanItem.extraMattress !== "boolean" && typeof other.extraMattress === "boolean") cleanItem.extraMattress = other.extraMattress;
         }
@@ -6503,7 +6546,8 @@ app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
     completedAt: customCompletedAt,
     cleaningStartedAt: customStartedAt,
     effectiveDate: customEffectiveDate,
-    durationMinutes: customDuration
+    durationMinutes: customDuration,
+    markedByAdmin: bodyMarkedByAdmin
   } = req.body;
   
   let item = findOrUpsertCleaningRequest(reqId, flatNumber, flatId, date);
@@ -6545,6 +6589,7 @@ app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
       item.completedAt = null;
       item.pendingObservation = null;
       item.effectiveDate = null;
+      item.markedByAdmin = false;
     } else if (status === "will_clean") {
       item.effectiveDate = customEffectiveDate || item.effectiveDate || date || getTodayStr();
       if (assignedUserId) {
@@ -6572,7 +6617,7 @@ app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
         item.assignedUserName = assignedU.name || assignedU.username;
       }
     } else if (status === "clean" || status === "pending_issue") {
-      item.completedAt = customCompletedAt || now;
+      item.completedAt = customCompletedAt || item.completedAt || now;
       if (customStartedAt) item.cleaningStartedAt = customStartedAt;
       item.effectiveDate = customEffectiveDate || date || getExecutionDateStr(item.completedAt);
       if (assignedUserId) {
@@ -6586,6 +6631,19 @@ app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
         item.assignedUserName = assignedU.name || assignedU.username;
       }
       item.pendingObservation = status === "pending_issue" ? (observation || "Pendência registrada") : null;
+
+      if (status === "clean") {
+        const isAdmin = (userAuth ? userAuth.role === "admin" : true) || Boolean(bodyMarkedByAdmin);
+        if (isAdmin) {
+          item.markedByAdmin = true;
+        }
+        if (!item.completedAt) {
+          item.completedAt = customCompletedAt || now;
+        }
+        if (item.adminNote && item.adminNote.includes("Limpeza de check-out gerada automaticamente")) {
+          item.adminNote = null;
+        }
+      }
 
       if (customDuration !== undefined) {
         item.durationMinutes = Number(customDuration);
@@ -6839,6 +6897,7 @@ app.post("/api/cleaning/admin/record", (req, res) => {
     assignedUserName: targetUser ? targetUser.username : null,
     isVacant: true,
     isPriority: false,
+    markedByAdmin: true,
     adminNote: adminNote || observation || "Lançamento manual pelo ADM",
     pendingObservation: observation || adminNote || null,
     durationMinutes: Number(durationMinutes) || 35,

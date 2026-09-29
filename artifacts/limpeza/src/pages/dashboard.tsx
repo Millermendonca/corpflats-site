@@ -30,11 +30,20 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Textarea } from "@/components/ui/textarea"
 import { 
   ChevronLeft, ChevronRight, CheckSquare, PlusCircle, Sparkles, Filter, X, RefreshCw, Upload, FileSpreadsheet,
-  Calendar as CalendarIcon, UserCheck, CheckCircle2, BedDouble, Coins, MessageSquare
+  Calendar as CalendarIcon, UserCheck, CheckCircle2, BedDouble, Coins, MessageSquare, RotateCcw
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 function getDefaultDate(userRole?: string) {
+  if (typeof window !== "undefined") {
+    try {
+      const params = new URLSearchParams(window.location.search)
+      const dateParam = params.get("date")
+      if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+        return dateParam
+      }
+    } catch {}
+  }
   const now = new Date()
   if (now.getHours() >= 18) {
     return format(addDays(now, 1), "yyyy-MM-dd")
@@ -64,6 +73,13 @@ export default function Dashboard() {
   const setDate = (newDate: string) => {
     setSelectedDateStr(newDate)
     setStatusFilter("all") // Reset filter on date change
+    if (typeof window !== "undefined") {
+      try {
+        const url = new URL(window.location.href)
+        url.searchParams.set("date", newDate)
+        window.history.replaceState({}, "", url.toString())
+      } catch {}
+    }
   }
 
 
@@ -277,9 +293,16 @@ export default function Dashboard() {
     }
   }
 
+  const todayStr = format(new Date(), "yyyy-MM-dd")
+  const tomorrowStr = format(addDays(new Date(), 1), "yyyy-MM-dd")
   const parsedDate = selectedDateStr ? parseISO(selectedDateStr) : new Date()
   const displayDate = format(parsedDate, "dd 'de' MMMM", { locale: ptBR })
-  const isToday = selectedDateStr === format(new Date(), "yyyy-MM-dd")
+  const isToday = selectedDateStr === todayStr
+  const isTomorrow = selectedDateStr === tomorrowStr
+  const isFuture = selectedDateStr > todayStr
+  const isPast = selectedDateStr < todayStr
+  const isAfter18 = new Date().getHours() >= 18
+  const isForecastMode = isTomorrow || (isFuture && !isToday)
 
   return (
     <Shell>
@@ -291,15 +314,60 @@ export default function Dashboard() {
               Controle de Limpeza
             </h1>
             <p className="text-muted-foreground text-sm">
-              {isAdmin ? "Visão geral e gestão operacional dos quartos" : "Sua lista de quartos para higienização hoje"}
+              {isTomorrow
+                ? (isAdmin 
+                    ? "Previsão de check-outs e higienizações para amanhã (próximo turno)" 
+                    : "Previsão de quartos para higienização amanhã")
+                : isFuture
+                  ? (isAdmin
+                      ? "Previsão futura de check-outs e higienizações programadas"
+                      : "Previsão de quartos para higienização nesta data futura")
+                  : (isAdmin 
+                      ? "Visão geral e gestão operacional dos quartos hoje" 
+                      : "Sua lista de quartos para higienização hoje")
+              }
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2.5">
+            {/* Quick 1-click toggle buttons: Hoje & Amanhã */}
+            <div className="flex items-center gap-1.5 bg-muted/40 p-1 rounded-xl border border-border/70 shadow-2xs">
+              <Button
+                type="button"
+                variant={isToday ? "default" : "outline"}
+                size="sm"
+                onClick={() => setDate(todayStr)}
+                className={cn(
+                  "h-8 px-2.5 text-xs font-bold rounded-lg transition-all shadow-2xs cursor-pointer",
+                  isToday 
+                    ? "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600 shadow-xs" 
+                    : "bg-background/90 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 dark:hover:bg-emerald-950/40"
+                )}
+                title="Visualizar quartos e fechamento do turno de hoje"
+              >
+                <span>🟢 Hoje</span>
+              </Button>
+              <Button
+                type="button"
+                variant={isTomorrow ? "default" : "outline"}
+                size="sm"
+                onClick={() => setDate(tomorrowStr)}
+                className={cn(
+                  "h-8 px-2.5 text-xs font-bold rounded-lg transition-all shadow-2xs cursor-pointer",
+                  isTomorrow 
+                    ? "bg-purple-600 hover:bg-purple-700 text-white border-purple-600 shadow-xs" 
+                    : "bg-background/90 hover:bg-purple-50 hover:text-purple-700 hover:border-purple-300 dark:hover:bg-purple-950/40"
+                )}
+                title="Visualizar previsão de saídas e preparações de amanhã"
+              >
+                <span>🔮 Amanhã</span>
+              </Button>
+            </div>
+
             {/* Add Manual Flat Button right on main screen */}
             {isAdmin && (
               <Button 
-                onClick={handleOpenManualModal}
-                className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold shadow-xs flex items-center gap-1.5 text-xs h-9"
+                onClick={() => handleOpenManualModal()}
+                className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold shadow-xs flex items-center gap-1.5 text-xs h-9 cursor-pointer"
               >
                 <PlusCircle className="w-3.5 h-3.5" />
                 <span>Adicionar Quarto</span>
@@ -308,19 +376,68 @@ export default function Dashboard() {
 
             {/* Date Picker Buttons */}
             <div className="flex items-center gap-1 bg-card border border-border/80 rounded-xl p-1 shadow-2xs">
-              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg" onClick={() => setDate(format(subDays(parsedDate, 1), "yyyy-MM-dd"))}>
+              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg cursor-pointer" onClick={() => setDate(format(subDays(parsedDate, 1), "yyyy-MM-dd"))}>
                 <ChevronLeft className="w-4 h-4" />
               </Button>
               <div className="px-3 text-center min-w-[130px]">
                 <div className="font-bold text-sm capitalize">{displayDate}</div>
-                {isToday && <div className="text-[11px] text-primary font-semibold">Hoje</div>}
+                {isToday ? (
+                  <div className="text-[11px] text-emerald-600 dark:text-emerald-400 font-bold">Hoje</div>
+                ) : isTomorrow ? (
+                  <div className="text-[11px] text-purple-600 dark:text-purple-400 font-bold">🔮 Previsão Amanhã</div>
+                ) : isPast ? (
+                  <div className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">Passado</div>
+                ) : (
+                  <div className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold">Futuro</div>
+                )}
               </div>
-              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg" onClick={() => setDate(format(addDays(parsedDate, 1), "yyyy-MM-dd"))}>
+              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg cursor-pointer" onClick={() => setDate(format(addDays(parsedDate, 1), "yyyy-MM-dd"))}>
                 <ChevronRight className="w-4 h-4" />
               </Button>
             </div>
           </div>
         </div>
+
+        {/* Visual Mode Indicator: Modo Previsão (Próximo Turno) */}
+        {isForecastMode && (
+          <div className="mb-6 rounded-2xl border border-purple-200 dark:border-purple-800/60 bg-gradient-to-r from-purple-50 via-indigo-50/50 to-purple-50 dark:from-purple-950/40 dark:via-indigo-950/30 dark:to-purple-950/40 p-4 shadow-sm animate-in fade-in">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start sm:items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-purple-100 dark:bg-purple-900/60 text-purple-700 dark:text-purple-300 flex items-center justify-center shrink-0 shadow-2xs">
+                  <Sparkles className="w-5 h-5 text-purple-600 dark:text-purple-400" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-black text-sm text-purple-950 dark:text-purple-100 tracking-tight">
+                      Modo Previsão (Próximo Turno)
+                    </span>
+                    <Badge className="bg-purple-600 hover:bg-purple-700 text-white font-bold text-[10px] uppercase tracking-wider px-2 py-0.5">
+                      {isTomorrow ? "Turno de Amanhã" : "Previsão Futura"}
+                    </Badge>
+                    {isAfter18 && (
+                      <span className="text-[11px] text-purple-700 dark:text-purple-300 font-medium">
+                        (Virada automática das 18h ativa)
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-purple-900/80 dark:text-purple-300/80 mt-0.5">
+                    Você está visualizando a programação de {isTomorrow ? "amanhã" : "data futura"}. Hóspedes atuais permanecem nos quartos até o horário de check-out regular (12:00).
+                  </p>
+                </div>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setDate(todayStr)}
+                className="shrink-0 bg-white/90 dark:bg-card border-purple-300 dark:border-purple-700 text-purple-900 dark:text-purple-200 hover:bg-purple-100/80 dark:hover:bg-purple-900/50 text-xs font-bold shadow-2xs self-start sm:self-auto cursor-pointer"
+              >
+                <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
+                Ver Turno de Hoje ({format(new Date(), "dd/MM")})
+              </Button>
+            </div>
+          </div>
+        )}
 
         {/* Summary Stats / Filters */}
         {summary && (
@@ -530,7 +647,7 @@ export default function Dashboard() {
                 Exibir Todos os Quartos
               </Button>
             ) : (
-              <Button onClick={handleOpenManualModal} className="font-semibold">
+              <Button onClick={() => handleOpenManualModal()} className="font-semibold">
                 <PlusCircle className="w-4 h-4 mr-1.5" /> Adicionar Quarto para Limpeza
               </Button>
             )}

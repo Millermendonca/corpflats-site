@@ -853,9 +853,17 @@ export function FlatCard({
     }
   }
 
-  const isOccupied = typeof request?.isVacant === "boolean"
-    ? !request.isVacant
-    : (typeof flat.isOccupied === "boolean" ? flat.isOccupied : true)
+  const todayStr = format(new Date(), "yyyy-MM-dd")
+  const tomorrowStr = format(addDays(new Date(), 1), "yyyy-MM-dd")
+  const isViewingToday = date === todayStr
+  const isViewingTomorrow = date === tomorrowStr
+  const isViewingFuture = date > todayStr
+  const isViewingPast = date < todayStr
+
+  // Occupancy precedence: prioritize flat.isOccupied over request.isVacant so future checkouts for occupied rooms don't falsely show "Desocupado"
+  const isOccupied = typeof flat.isOccupied === "boolean"
+    ? flat.isOccupied
+    : (typeof request?.isVacant === "boolean" ? !request.isVacant : true)
 
   const toggleOccupancy = () => {
     updateOccupancy.mutate({
@@ -888,7 +896,11 @@ export function FlatCard({
               Estendeu
             </div>
             <p className="text-xs text-purple-900 dark:text-purple-300 font-medium max-w-xs pt-1">
-              O hóspede estendeu a estadia. A limpeza deste quarto foi cancelada para hoje.
+              {isViewingTomorrow 
+                ? "O hóspede estendeu a estadia. A limpeza deste quarto foi cancelada para amanhã."
+                : isViewingFuture
+                  ? "O hóspede estendeu a estadia. A limpeza deste quarto foi cancelada para esta data."
+                  : "O hóspede estendeu a estadia. A limpeza deste quarto foi cancelada para hoje."}
             </p>
           </div>
 
@@ -1091,13 +1103,34 @@ export function FlatCard({
               {(flat.isPendingFromPreviousDay || request?.isPendingFromPreviousDay) && !isInstruction && (
                 <Badge className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] shadow-2xs px-2 py-0.5 flex items-center gap-1 rounded-lg">
                   <AlertTriangle className="w-3 h-3 shrink-0" />
-                  <span>Não limpo em {(flat.originalRequestDate || request?.originalRequestDate) ? format(new Date((flat.originalRequestDate || request?.originalRequestDate) + "T12:00:00"), "dd/MM") : "dia anterior"}</span>
+                  <span>
+                    {(() => {
+                      const origDate = flat.originalRequestDate || request?.originalRequestDate
+                      if (isViewingTomorrow) {
+                        if (!origDate || origDate === todayStr) {
+                          const dateSuffix = origDate ? ` (${format(new Date(origDate + "T12:00:00"), "dd/MM")})` : ""
+                          return `Pendente do turno de hoje${dateSuffix}`
+                        }
+                        return `Não limpo em ${format(new Date(origDate + "T12:00:00"), "dd/MM")}`
+                      }
+                      if (origDate) {
+                        return `Não limpo em ${format(new Date(origDate + "T12:00:00"), "dd/MM")}`
+                      }
+                      return "Não limpo em dia anterior"
+                    })()}
+                  </span>
                 </Badge>
               )}
 
               {hasCheckin && !isInstruction && (
                 <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] shadow-2xs px-2 py-0.5 flex items-center gap-1 rounded-lg">
-                  <span>🟢 Entra Hoje</span>
+                  <span>
+                    {isViewingTomorrow
+                      ? "🟢 Entra Amanhã"
+                      : isViewingFuture
+                        ? `🟢 Entra em ${(() => { try { return format(parseISO(date), "dd/MM") } catch { return date } })()}`
+                        : "🟢 Entra Hoje"}
+                  </span>
                 </Badge>
               )}
 
@@ -1119,13 +1152,27 @@ export function FlatCard({
               <div className="text-[11px] bg-muted/40 rounded-xl p-2.5 border border-border/70 space-y-1">
                 {flat.leavingGuest && (
                   <div className="flex items-start gap-1.5 text-slate-700 dark:text-slate-300">
-                    <span className="font-bold text-slate-500 shrink-0">Saiu:</span>
+                    <span className="font-bold text-slate-500 shrink-0">
+                      {isViewingTomorrow
+                        ? "Check-out amanhã:"
+                        : isViewingFuture
+                          ? "Saída Prevista:"
+                          : currentStatus === "clean"
+                            ? "Saiu:"
+                            : "Check-out hoje:"}
+                    </span>
                     <span className="font-semibold break-words">{flat.leavingGuest}</span>
                   </div>
                 )}
                 {flat.arrivingGuest && (
                   <div className="flex items-start gap-1.5 text-blue-700 dark:text-blue-400">
-                    <span className="font-bold text-blue-600 dark:text-blue-500 shrink-0">Entra:</span>
+                    <span className="font-bold text-blue-600 dark:text-blue-500 shrink-0">
+                      {isViewingTomorrow
+                        ? "Entra amanhã:"
+                        : isViewingFuture
+                          ? "Entrada Prevista:"
+                          : "Entra:"}
+                    </span>
                     <span className="font-semibold break-words">{flat.arrivingGuest}</span>
                   </div>
                 )}
@@ -1141,7 +1188,13 @@ export function FlatCard({
             {/* Aviso Anônimo para a Camareira */}
             {!isAdmin && hasCheckin && !isInstruction && (
               <div className="text-[11px] text-emerald-900 dark:text-emerald-200 bg-emerald-50/90 dark:bg-emerald-950/40 rounded-xl px-2.5 py-1.5 border border-emerald-200 dark:border-emerald-800/50 font-semibold flex items-center gap-1.5">
-                <span>🟢 Há novo check-in previsto para este flat hoje.</span>
+                <span>
+                  {isViewingTomorrow
+                    ? "🟢 Há novo check-in previsto para este flat amanhã."
+                    : isViewingFuture
+                      ? "🟢 Há novo check-in previsto para este flat nesta data."
+                      : "🟢 Há novo check-in previsto para este flat hoje."}
+                </span>
               </div>
             )}
             {!isAdmin && flat?.activeReservation?.guestName && !isInstruction && (
@@ -1291,7 +1344,7 @@ export function FlatCard({
               </div>
             ) : (
               <div className="space-y-2">
-                {(currentStatus === "dirty" || currentStatus === "pending") && (
+                {(currentStatus === "dirty" || (currentStatus as string) === "pending") && (
                   isAdmin ? (
                     <div className="flex gap-1.5">
                       <Button 
