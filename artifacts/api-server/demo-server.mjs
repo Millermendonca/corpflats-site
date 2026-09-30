@@ -23829,158 +23829,308 @@ if (fs.existsSync(distPath)) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// MÓDULO LISTA DE COMPRAS (COMPARTILHADA ENTRE CAMAREIRAS E ADMIN)
+// MÓDULO LISTA DE COMPRAS — PostgreSQL persistente + fallback JSON
 // ════════════════════════════════════════════════════════════════════════════
 
-function ensureShoppingListDb() {
-  if (!Array.isArray(db.shoppingList)) {
-    db.shoppingList = [
-      {
-        id: "shop_init_1",
-        title: "Detergente Neutro 5L",
-        quantity: "4 galões",
-        category: "Limpeza",
-        notes: "Uso diário da governança",
-        completed: false,
-        createdBy: { id: 1, name: "Admin", role: "admin" },
-        createdAt: new Date().toISOString(),
-        completedBy: null,
-        completedAt: null
-      },
-      {
-        id: "shop_init_2",
-        title: "Papel Higiênico Folha Dupla",
-        quantity: "10 fardos",
-        category: "Cama & Banho",
-        notes: "Reposição dos flats",
-        completed: false,
-        createdBy: { id: 1, name: "Admin", role: "admin" },
-        createdAt: new Date().toISOString(),
-        completedBy: null,
-        completedAt: null
-      },
-      {
-        id: "shop_init_3",
-        title: "Sacos de Lixo 50L e 15L",
-        quantity: "5 pacotes cada",
-        category: "Limpeza",
-        notes: "Urgente para a semana",
-        completed: false,
-        createdBy: { id: 1, name: "Admin", role: "admin" },
-        createdAt: new Date().toISOString(),
-        completedBy: null,
-        completedAt: null
-      }
+// Bootstrap das tabelas de shopping list no PostgreSQL (roda na inicialização)
+async function bootstrapShoppingTables() {
+  if (!pgPool) return;
+  try {
+    await pgPool.query(`
+      CREATE TABLE IF NOT EXISTS shopping_list (
+        id serial PRIMARY KEY,
+        title text NOT NULL,
+        quantity text,
+        category text NOT NULL DEFAULT 'Limpeza',
+        notes text,
+        completed boolean NOT NULL DEFAULT false,
+        sort_order integer NOT NULL DEFAULT 0,
+        created_by_user_id integer NOT NULL DEFAULT 1,
+        created_by_name text NOT NULL DEFAULT 'Admin',
+        created_by_role text NOT NULL DEFAULT 'admin',
+        completed_by_user_id integer,
+        completed_by_name text,
+        completed_at timestamptz,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE TABLE IF NOT EXISTS shopping_catalog (
+        id serial PRIMARY KEY,
+        name text NOT NULL UNIQUE,
+        use_count integer NOT NULL DEFAULT 1,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      );
+    `);
+    // Pré-popula catálogo com itens iniciais
+    const initialItems = [
+      "Papel higiênico","Cif","X14","Saco Lixo","Vassoura","Pá",
+      "Esponja","Bombril","Limpa inox","Detergente","Cloro","Alcool",
+      "Cheirinho","Pano de chão","Lâmpada Banheiro Pequena",
+      "Lâmpada banheiro grande","Lâmpada teto","Lâmpada abajur"
     ];
-    saveDatabase();
+    for (const name of initialItems) {
+      await pgPool.query(
+        `INSERT INTO shopping_catalog (name, use_count) VALUES ($1, 0) ON CONFLICT (name) DO NOTHING`,
+        [name]
+      );
+    }
+    console.log("[ShoppingList] Tabelas PostgreSQL prontas.");
+  } catch (err) {
+    console.warn("[ShoppingList] Erro ao criar tabelas:", err.message);
   }
 }
+bootstrapShoppingTables();
 
-app.get("/api/shopping-list", (req, res) => {
-  ensureShoppingListDb();
-  const { status, category } = req.query;
-  let items = [...db.shoppingList];
+function mapShoppingRow(row) {
+  return {
+    id: String(row.id),
+    title: row.title,
+    quantity: row.quantity || "",
+    category: row.category || "Limpeza",
+    notes: row.notes || "",
+    completed: row.completed,
+    sortOrder: row.sort_order ?? 0,
+    createdBy: { id: row.created_by_user_id, name: row.created_by_name, role: row.created_by_role },
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+    completedBy: row.completed_by_user_id ? { id: row.completed_by_user_id, name: row.completed_by_name || "Admin", role: "admin" } : null,
+    completedAt: row.completed_at ? (row.completed_at instanceof Date ? row.completed_at.toISOString() : row.completed_at) : null,
+  };
+}
 
-  if (status === "pending") {
-    items = items.filter(i => !i.completed);
-  } else if (status === "completed") {
-    items = items.filter(i => i.completed);
-  }
+async function upsertCatalogEntry(name) {
+  if (!pgPool || !name) return;
+  try {
+    await pgPool.query(
+      `INSERT INTO shopping_catalog (name, use_count) VALUES ($1, 1)
+       ON CONFLICT (name) DO UPDATE SET use_count = shopping_catalog.use_count + 1, updated_at = now()`,
+      [name.trim()]
+    );
+  } catch {}
+}
 
-  if (category && category !== "all") {
-    items = items.filter(i => (i.category || "").toLowerCase() === String(category).toLowerCase());
-  }
-
-  // Pendentes primeiro (mais recentes primeiro), depois comprados (mais recentemente comprados primeiro)
-  items.sort((a, b) => {
-    if (a.completed === b.completed) {
-      const dateA = a.completed ? (a.completedAt || a.createdAt) : a.createdAt;
-      const dateB = b.completed ? (b.completedAt || b.createdAt) : b.createdAt;
-      return new Date(dateB).getTime() - new Date(dateA).getTime();
+// GET /api/shopping-list/catalog
+app.get("/api/shopping-list/catalog", async (req, res) => {
+  if (pgPool) {
+    try {
+      const result = await pgPool.query(
+        `SELECT id, name, use_count FROM shopping_catalog ORDER BY use_count DESC, name ASC`
+      );
+      return res.json(result.rows.map(r => ({ id: r.id, name: r.name, useCount: r.use_count })));
+    } catch (err) {
+      console.error("[ShoppingList] catalog error:", err.message);
     }
+  }
+  // Fallback JSON
+  const CATALOG_FALLBACK = [
+    "Papel higiênico","Cif","X14","Saco Lixo","Vassoura","Pá",
+    "Esponja","Bombril","Limpa inox","Detergente","Cloro","Alcool",
+    "Cheirinho","Pano de chão","Lâmpada Banheiro Pequena",
+    "Lâmpada banheiro grande","Lâmpada teto","Lâmpada abajur"
+  ];
+  res.json(CATALOG_FALLBACK.map((name, i) => ({ id: i + 1, name, useCount: 0 })));
+});
+
+// PATCH /api/shopping-list/reorder — antes de /:id para não conflitar
+app.patch("/api/shopping-list/reorder", async (req, res) => {
+  const items = req.body?.items;
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: "items[] obrigatório" });
+  }
+  if (pgPool) {
+    try {
+      await Promise.all(items.map(({ id, sortOrder }) =>
+        pgPool.query(`UPDATE shopping_list SET sort_order=$1, updated_at=now() WHERE id=$2`, [sortOrder, parseInt(id)])
+      ));
+      return res.json({ ok: true });
+    } catch (err) {
+      console.error("[ShoppingList] reorder error:", err.message);
+    }
+  }
+  // Fallback JSON: reorder db.shoppingList
+  if (Array.isArray(db.shoppingList)) {
+    const order = {};
+    items.forEach(({ id, sortOrder }) => { order[id] = sortOrder; });
+    db.shoppingList.sort((a, b) => (order[a.id] ?? 0) - (order[b.id] ?? 0));
+    saveDatabase();
+  }
+  res.json({ ok: true });
+});
+
+// GET /api/shopping-list
+app.get("/api/shopping-list", async (req, res) => {
+  if (pgPool) {
+    try {
+      const result = await pgPool.query(
+        `SELECT * FROM shopping_list ORDER BY sort_order ASC, created_at DESC`
+      );
+      return res.json(result.rows.map(mapShoppingRow));
+    } catch (err) {
+      console.error("[ShoppingList] GET error:", err.message);
+    }
+  }
+  // Fallback JSON (legado)
+  if (!Array.isArray(db.shoppingList)) db.shoppingList = [];
+  const items = [...db.shoppingList].sort((a, b) => {
+    if (a.completed === b.completed) return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     return a.completed ? 1 : -1;
   });
-
   res.json(items);
 });
 
-app.post("/api/shopping-list", (req, res) => {
-  ensureShoppingListDb();
+// POST /api/shopping-list
+app.post("/api/shopping-list", async (req, res) => {
   const { title, quantity, category = "Limpeza", notes } = req.body || {};
   if (!title || !String(title).trim()) {
     return res.status(400).json({ error: "Título do item é obrigatório." });
   }
-
   const userAuth = getAuthUser(req);
+  const name = userAuth?.name || userAuth?.username || "Colaborador";
+
+  if (pgPool) {
+    try {
+      const minQ = await pgPool.query(`SELECT COALESCE(MIN(sort_order), 0) as min_order FROM shopping_list`);
+      const sortOrder = (parseInt(minQ.rows[0].min_order) || 0) - 1;
+      const result = await pgPool.query(
+        `INSERT INTO shopping_list (title, quantity, category, notes, completed, sort_order, created_by_user_id, created_by_name, created_by_role)
+         VALUES ($1,$2,$3,$4,false,$5,$6,$7,$8) RETURNING *`,
+        [
+          String(title).trim(),
+          quantity ? String(quantity).trim() : null,
+          category || "Limpeza",
+          notes ? String(notes).trim() : null,
+          sortOrder,
+          userAuth?.id || 1,
+          name,
+          userAuth?.role || "camareira"
+        ]
+      );
+      await upsertCatalogEntry(String(title).trim());
+      const newItem = mapShoppingRow(result.rows[0]);
+      try {
+        createNotification({
+          category: "general",
+          title: "🛒 Novo item na Lista de Compras",
+          message: `${name} adicionou: "${newItem.title}"`,
+          severity: "info",
+          metadata: { itemId: newItem.id },
+          targetUrl: "/lista-compras"
+        });
+      } catch {}
+      return res.status(201).json(newItem);
+    } catch (err) {
+      console.error("[ShoppingList] POST error:", err.message);
+    }
+  }
+  // Fallback JSON
+  if (!Array.isArray(db.shoppingList)) db.shoppingList = [];
   const newItem = {
     id: `shop_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-    title: String(title).trim(),
-    quantity: quantity ? String(quantity).trim() : "",
-    category: category ? String(category).trim() : "Limpeza",
-    notes: notes ? String(notes).trim() : "",
-    completed: false,
-    createdBy: {
-      id: userAuth?.id || 1,
-      name: userAuth?.name || userAuth?.username || "Colaborador",
-      role: userAuth?.role || "camareira"
-    },
-    createdAt: new Date().toISOString(),
-    completedBy: null,
-    completedAt: null
+    title: String(title).trim(), quantity: quantity || "", category: category || "Limpeza",
+    notes: notes || "", completed: false,
+    createdBy: { id: userAuth?.id || 1, name, role: userAuth?.role || "camareira" },
+    createdAt: new Date().toISOString(), completedBy: null, completedAt: null
   };
-
   db.shoppingList.unshift(newItem);
   saveDatabase();
-
-  try {
-    createNotification({
-      category: "general",
-      title: "🛒 Novo item na Lista de Compras",
-      message: `${newItem.createdBy.name} adicionou: "${newItem.title}" (${newItem.quantity || "Qtd não especificada"})`,
-      severity: "info",
-      metadata: { itemId: newItem.id },
-      targetUrl: "/lista-compras"
-    });
-  } catch {}
-
   res.status(201).json(newItem);
 });
 
-app.patch("/api/shopping-list/:id/toggle", (req, res) => {
-  ensureShoppingListDb();
+// PATCH /api/shopping-list/:id/toggle
+app.patch("/api/shopping-list/:id/toggle", async (req, res) => {
   const { id } = req.params;
-  const item = db.shoppingList.find(i => i.id === id);
-  if (!item) {
-    return res.status(404).json({ error: "Item não encontrado." });
-  }
-
   const userAuth = getAuthUser(req);
-  const willComplete = req.body?.completed !== undefined ? Boolean(req.body.completed) : !item.completed;
+  const name = userAuth?.name || userAuth?.username || "Admin";
 
-  item.completed = willComplete;
-  if (willComplete) {
-    item.completedAt = new Date().toISOString();
-    item.completedBy = {
-      id: userAuth?.id || 1,
-      name: userAuth?.name || userAuth?.username || "Colaborador",
-      role: userAuth?.role || "admin"
-    };
-  } else {
-    item.completedAt = null;
-    item.completedBy = null;
+  if (pgPool) {
+    try {
+      const cur = await pgPool.query(`SELECT * FROM shopping_list WHERE id=$1`, [parseInt(id)]);
+      if (!cur.rows[0]) return res.status(404).json({ error: "Item não encontrado." });
+      const willComplete = req.body?.completed !== undefined ? Boolean(req.body.completed) : !cur.rows[0].completed;
+      const result = await pgPool.query(
+        `UPDATE shopping_list SET
+          completed=$1, completed_at=$2, completed_by_user_id=$3, completed_by_name=$4, updated_at=now()
+         WHERE id=$5 RETURNING *`,
+        [
+          willComplete,
+          willComplete ? new Date() : null,
+          willComplete ? (userAuth?.id || 1) : null,
+          willComplete ? name : null,
+          parseInt(id)
+        ]
+      );
+      return res.json(mapShoppingRow(result.rows[0]));
+    } catch (err) {
+      console.error("[ShoppingList] toggle error:", err.message);
+    }
   }
-
+  // Fallback JSON
+  if (!Array.isArray(db.shoppingList)) db.shoppingList = [];
+  const item = db.shoppingList.find(i => i.id === id);
+  if (!item) return res.status(404).json({ error: "Item não encontrado." });
+  const willComplete = req.body?.completed !== undefined ? Boolean(req.body.completed) : !item.completed;
+  item.completed = willComplete;
+  item.completedAt = willComplete ? new Date().toISOString() : null;
+  item.completedBy = willComplete ? { id: userAuth?.id || 1, name, role: userAuth?.role || "admin" } : null;
   saveDatabase();
   res.json(item);
 });
 
-app.delete("/api/shopping-list/:id", (req, res) => {
-  ensureShoppingListDb();
+// PATCH /api/shopping-list/:id — editar título/quantidade/notas/categoria
+app.patch("/api/shopping-list/:id", async (req, res) => {
   const { id } = req.params;
-  const idx = db.shoppingList.findIndex(i => i.id === id);
-  if (idx === -1) {
-    return res.status(404).json({ error: "Item não encontrado." });
+  const { title, quantity, category, notes } = req.body || {};
+  if (title !== undefined && !String(title).trim()) {
+    return res.status(400).json({ error: "Título não pode ficar vazio." });
   }
+  if (pgPool) {
+    try {
+      const sets = [];
+      const vals = [];
+      let i = 1;
+      if (title !== undefined) { sets.push(`title=$${i++}`); vals.push(String(title).trim()); }
+      if (quantity !== undefined) { sets.push(`quantity=$${i++}`); vals.push(quantity ? String(quantity).trim() : null); }
+      if (category !== undefined) { sets.push(`category=$${i++}`); vals.push(category); }
+      if (notes !== undefined) { sets.push(`notes=$${i++}`); vals.push(notes ? String(notes).trim() : null); }
+      sets.push(`updated_at=now()`);
+      vals.push(parseInt(id));
+      const result = await pgPool.query(
+        `UPDATE shopping_list SET ${sets.join(",")} WHERE id=$${i} RETURNING *`,
+        vals
+      );
+      if (!result.rows[0]) return res.status(404).json({ error: "Item não encontrado." });
+      if (title) await upsertCatalogEntry(String(title).trim());
+      return res.json(mapShoppingRow(result.rows[0]));
+    } catch (err) {
+      console.error("[ShoppingList] PATCH error:", err.message);
+    }
+  }
+  // Fallback JSON
+  if (!Array.isArray(db.shoppingList)) return res.status(404).json({ error: "Item não encontrado." });
+  const item = db.shoppingList.find(i => i.id === id);
+  if (!item) return res.status(404).json({ error: "Item não encontrado." });
+  if (title !== undefined) item.title = String(title).trim();
+  if (quantity !== undefined) item.quantity = quantity || "";
+  if (category !== undefined) item.category = category;
+  if (notes !== undefined) item.notes = notes || "";
+  saveDatabase();
+  res.json(item);
+});
+
+// DELETE /api/shopping-list/:id
+app.delete("/api/shopping-list/:id", async (req, res) => {
+  const { id } = req.params;
+  if (pgPool) {
+    try {
+      await pgPool.query(`DELETE FROM shopping_list WHERE id=$1`, [parseInt(id)]);
+      return res.json({ success: true });
+    } catch (err) {
+      console.error("[ShoppingList] DELETE error:", err.message);
+    }
+  }
+  if (!Array.isArray(db.shoppingList)) return res.status(404).json({ error: "Item não encontrado." });
+  const idx = db.shoppingList.findIndex(i => i.id === id);
+  if (idx === -1) return res.status(404).json({ error: "Item não encontrado." });
   db.shoppingList.splice(idx, 1);
   saveDatabase();
   res.json({ success: true });
