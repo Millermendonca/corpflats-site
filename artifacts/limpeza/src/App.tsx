@@ -50,6 +50,7 @@ import MaidStatementPage from '@/pages/maid-statement';
 import ZapiConnection from '@/pages/zapi-connection';
 import EmailHub from '@/pages/email-hub';
 import ReservationJourney from '@/pages/reservation-journey';
+import ServiceOrders from '@/pages/service-orders';
 import NotFound from '@/pages/not-found';
 
 const queryClient = new QueryClient({
@@ -318,6 +319,10 @@ function Router() {
         <AdminRoute path="/auditoria" component={SystemLogsPage} moduleName="os Logs & Auditoria Fail-Safe" />
         <AdminRoute path="/system-logs" component={SystemLogsPage} moduleName="os Logs do Sistema" />
         <AdminRoute path="/audit" component={SystemLogsPage} moduleName="a Auditoria do Sistema" />
+
+        {/* External Service Orders Management (Admin Only) */}
+        <AdminRoute path="/servicos" component={ServiceOrders} moduleName="a Gestão de Ordens de Serviço" />
+        <AdminRoute path="/service-orders" component={ServiceOrders} moduleName="a Gestão de Ordens de Serviço" />
 
         <Route path="/"><Redirect to="/reservar" /></Route>
         <Route component={NotFound} />

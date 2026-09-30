@@ -10,7 +10,7 @@ import {
   MessageSquareWarning, BarChart3, Bell, ClipboardCheck, Sparkles, Key, Check, AlertCircle,
   CalendarDays, Users, Tablet, Globe, DollarSign, Bot, FileText, Coffee, Menu, X, Search, ChevronRight,
   CreditCard, Palette, Coins, ScrollText, Building2, Package, TrendingUp, Car, ThumbsUp, MessageSquare,
-  Smartphone, ShoppingCart, Wallet, Mail, Workflow
+  Smartphone, ShoppingCart, Wallet, Mail, Workflow, Wrench
 } from "lucide-react"
 import { Button } from "./ui/button"
 import { Skeleton } from "./ui/skeleton"
@@ -24,6 +24,7 @@ import { QuickShoppingModal } from "./quick-shopping-modal"
 interface NavItem {
   href: string
   label: string
+  title?: string
   icon: any
   badge?: number | string | null
   description?: string
@@ -236,6 +237,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         { href: "/tasks", label: "Tarefas Preventivas", icon: ClipboardList, description: "Trocas de filtro, dedetizações e rotinas" },
         { href: "/observations", label: "Ocorrências & Avarias", icon: MessageSquareWarning, description: "Defeitos e manutenções relatadas" },
         ...(isAdmin ? [{ href: "/surveys", label: "Vistorias de Saída", icon: ClipboardCheck, description: "Conferência de itens e fotos pós checkout" }] : []),
+        ...(isAdmin ? [{ title: "Serviços Externos", label: "Serviços Externos", href: "/servicos", icon: Wrench, description: "Ordens de serviço, manutenção e prestadores" }] : []),
         ...(isAdmin ? [{ href: "/automacoes-camareiras", label: "Automação WhatsApp Camareiras", icon: MessageSquare, description: "Gatilhos automáticos, alertas de quarto e fechamentos" }] : []),
       ]
     },
