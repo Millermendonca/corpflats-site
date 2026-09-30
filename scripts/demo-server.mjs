@@ -70,10 +70,14 @@ function getTodayStr() {
 
 function getExecutionDateStr(isoString) {
   if (!isoString) return getTodayStr();
+  const str = String(isoString).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+    return str;
+  }
   try {
-    return BRAZIL_DATE_FORMATTER.format(new Date(isoString));
+    return BRAZIL_DATE_FORMATTER.format(new Date(str));
   } catch {
-    return String(isoString).substring(0, 10);
+    return str.substring(0, 10);
   }
 }
 
@@ -7498,7 +7502,9 @@ app.post("/api/surveys", (req, res) => {
       options: Array.isArray(q.options) ? q.options.filter(Boolean) : [],
       scaleMin: Number(q.scaleMin) || 1,
       scaleMax: Number(q.scaleMax) || 5,
-      isRequired: q.isRequired !== false
+      isRequired: q.isRequired !== false,
+      hasPhoto: Boolean(q.hasPhoto),
+      requirePhotoCondition: q.requirePhotoCondition || (q.type === "yes_no" ? "if_yes" : "always")
     }));
   } else if (req.body.question) {
     normalizedQuestions = [{
@@ -7508,7 +7514,9 @@ app.post("/api/surveys", (req, res) => {
       options: [],
       scaleMin: 1,
       scaleMax: 5,
-      isRequired: true
+      isRequired: true,
+      hasPhoto: false,
+      requirePhotoCondition: "if_yes"
     }];
   }
 
@@ -7548,7 +7556,9 @@ app.put("/api/surveys/:id", (req, res) => {
       options: Array.isArray(q.options) ? q.options.filter(Boolean) : [],
       scaleMin: Number(q.scaleMin) || 1,
       scaleMax: Number(q.scaleMax) || 5,
-      isRequired: q.isRequired !== false
+      isRequired: q.isRequired !== false,
+      hasPhoto: Boolean(q.hasPhoto),
+      requirePhotoCondition: q.requirePhotoCondition || (q.type === "yes_no" ? "if_yes" : "always")
     }));
   }
 
@@ -7894,7 +7904,13 @@ app.patch("/api/service-orders/:id", (req, res) => {
   if (!order) return res.status(404).json({ error: "Ordem de serviço não encontrada." });
 
   const body = req.body || {};
-  if (body.title !== undefined) order.title = String(body.title).trim();
+  if (body.title !== undefined) {
+    const trimmedTitle = String(body.title).trim();
+    if (!trimmedTitle) {
+      return res.status(400).json({ success: false, error: "Título do serviço não pode ser vazio." });
+    }
+    order.title = trimmedTitle;
+  }
   if (body.status !== undefined && ["draft", "active", "closed"].includes(body.status)) order.status = body.status;
   if (body.cleanFlatMode !== undefined && ["never", "priority", "always"].includes(body.cleanFlatMode)) order.cleanFlatMode = body.cleanFlatMode;
   if (body.maxSimultaneousFlats !== undefined) order.maxSimultaneousFlats = Math.max(1, parseInt(body.maxSimultaneousFlats, 10) || 2);
@@ -8129,6 +8145,10 @@ app.post("/api/service/public/:token/flats/:flatId/start", async (req, res) => {
   const order = (db.serviceOrders || []).find(o => o.token === token);
   if (!order) return res.status(404).json({ error: "Ordem de serviço não encontrada ou link inválido." });
 
+  if (order.status === "closed") {
+    return res.status(400).json({ success: false, error: "Esta ordem de serviço está encerrada." });
+  }
+
   // 1. Prestador deve ter registro em serviceWorkers para aquele token (se não tiver → 403)
   const worker = (db.serviceWorkers || []).find(w => (w.token === token || w.serviceOrderId === order.id) && w.mainWorker?.name && w.mainWorker?.cpf);
   if (!worker) {
@@ -8156,7 +8176,7 @@ app.post("/api/service/public/:token/flats/:flatId/start", async (req, res) => {
   // 3. Contar flats com status: "done" finalizados hoje pelo prestador → deve ser < maxFlatsPerDay (400 if reached)
   const maxPerDay = Number(order.maxFlatsPerDay) || 4;
   const todayStr = getTodayStr();
-  const doneTodayCount = (order.flats || []).filter(f => f.status === "done" && f.finishedAt && f.finishedAt.substring(0, 10) === todayStr).length;
+  const doneTodayCount = (order.flats || []).filter(f => f.status === "done" && f.finishedAt && getExecutionDateStr(f.finishedAt) === todayStr).length;
   if (doneTodayCount >= maxPerDay) {
     return res.status(400).json({ error: `Limite diário de apartamentos atingido para hoje (máximo: ${maxPerDay}).` });
   }
@@ -8232,7 +8252,12 @@ app.post("/api/service/public/:token/flats/:flatId/finish", async (req, res) => 
   }
 
   // 2. Se requirePhotos: true na ordem: photos não pode ser vazio (400 if empty)
-  const photos = Array.isArray(req.body.photos) ? req.body.photos : [];
+  const rawPhotos = Array.isArray(req.body.photos) ? req.body.photos : [];
+  const photos = rawPhotos
+    .filter(p => typeof p === "string")
+    .map(p => p.trim())
+    .filter(p => p.length > 0);
+
   if (order.requirePhotos && photos.length === 0) {
     return res.status(400).json({ error: "É obrigatório anexar pelo menos 1 foto para finalizar este serviço." });
   }
@@ -9978,8 +10003,8 @@ app.get("/api/pms/calendar", (req, res) => {
   for (const order of (db.serviceOrders || []).filter(o => o.status === "active")) {
     for (const oflat of (order.flats || [])) {
       if (oflat.status === "in_progress" && oflat.startedAt && oflat.estimatedFinishAt) {
-        const startDate = oflat.startedAt.substring(0, 10);
-        const endDate = oflat.estimatedFinishAt.substring(0, 10);
+        const startDate = getExecutionDateStr(oflat.startedAt);
+        const endDate = getExecutionDateStr(oflat.estimatedFinishAt);
         if (startDate <= end && endDate >= start) {
           serviceOrderBlocks.push({
             id: `service_block_${order.id}_${oflat.flatId}`,
