@@ -94,6 +94,36 @@ async function bootstrap() {
   `);
   console.log("  Push-tokens table ready");
 
+  // ── Feature tables: shopping list ────────────────────────────────────────────
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS shopping_list (
+      id serial PRIMARY KEY,
+      title text NOT NULL,
+      quantity text,
+      category text NOT NULL DEFAULT 'Limpeza',
+      notes text,
+      completed boolean NOT NULL DEFAULT false,
+      sort_order integer NOT NULL DEFAULT 0,
+      created_by_user_id integer NOT NULL,
+      created_by_name text NOT NULL,
+      created_by_role text NOT NULL DEFAULT 'camareira',
+      completed_by_user_id integer,
+      completed_by_name text,
+      completed_at timestamptz,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS shopping_catalog (
+      id serial PRIMARY KEY,
+      name text NOT NULL UNIQUE,
+      use_count integer NOT NULL DEFAULT 1,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+  console.log("  Shopping-list and catalog tables ready");
+
   await pool.end();
 
   // ── Sample flats ─────────────────────────────────────────────────────────────

@@ -11,6 +11,7 @@ import observationsRouter from "./observations";
 import analyticsRouter from "./analytics";
 import notificationsRouter from "./notifications";
 import pushTokensRouter from "./push-tokens";
+import shoppingListRouter from "./shopping-list";
 
 const router: IRouter = Router();
 
@@ -26,5 +27,6 @@ router.use(observationsRouter);
 router.use(analyticsRouter);
 router.use(notificationsRouter);
 router.use(pushTokensRouter);
+router.use(shoppingListRouter);
 
 export default router;

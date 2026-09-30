@@ -7,3 +7,4 @@ export * from "./periodic-tasks";
 export * from "./observations";
 export * from "./push-tokens";
 export * from "./communications";
+export * from "./shopping-list";

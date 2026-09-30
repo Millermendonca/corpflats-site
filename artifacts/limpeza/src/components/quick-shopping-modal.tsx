@@ -92,6 +92,7 @@ export function QuickShoppingModal({
   const inputRef = useRef<HTMLInputElement>(null)
 
   const [items, setItems] = useState<ShoppingItem[]>([])
+  const [catalog, setCatalog] = useState<string[]>(COMMON_SHOPPING_ITEMS)
   const [loading, setLoading] = useState(false)
 
   // Input states
@@ -108,8 +109,8 @@ export function QuickShoppingModal({
   const filteredSuggestions = useMemo(() => {
     const q = normalizeText(title)
     if (!q) return []
-    return COMMON_SHOPPING_ITEMS.filter(item => normalizeText(item).includes(q))
-  }, [title])
+    return catalog.filter(item => normalizeText(item).includes(q)).slice(0, 8)
+  }, [title, catalog])
 
   const fetchItems = async () => {
     try {
@@ -129,10 +130,23 @@ export function QuickShoppingModal({
     }
   }
 
+  const fetchCatalog = async () => {
+    try {
+      const res = await fetch("/api/shopping-list/catalog")
+      if (res.ok) {
+        const data = await res.json()
+        if (Array.isArray(data) && data.length > 0) {
+          setCatalog(data.map((e: any) => e.name))
+        }
+      }
+    } catch {}
+  }
+
   // Foco no input ao abrir
   useEffect(() => {
     if (open) {
       fetchItems()
+      fetchCatalog()
       const t = setTimeout(() => {
         inputRef.current?.focus()
       }, 100)
@@ -151,6 +165,7 @@ export function QuickShoppingModal({
         }
       })
       .catch(() => {})
+    fetchCatalog()
   }, [])
 
   // Google Keep Flow: Adição instantânea com Enter contínuo
@@ -205,6 +220,7 @@ export function QuickShoppingModal({
       if (res.ok) {
         const saved: ShoppingItem = await res.json()
         setItems(prev => prev.map(it => (it.id === tempId ? saved : it)))
+        fetchCatalog()
       }
     } catch {
       // mantém otimista
@@ -482,7 +498,7 @@ export function QuickShoppingModal({
             <span className="text-[11px] font-semibold text-muted-foreground shrink-0 pr-0.5">
               Comuns:
             </span>
-            {COMMON_SHOPPING_ITEMS.map(item => (
+            {catalog.slice(0, 16).map(item => (
               <button
                 key={item}
                 type="button"
