@@ -1,4 +1,4 @@
-# BRIEFING — 2026-09-30T22:31:33Z
+# BRIEFING — 2026-09-30T22:40:00Z
 
 ## Mission
 Independently review and stress-test the remediated backend code for Milestone 1 (Backend Data & API).
@@ -19,14 +19,14 @@ Independently review and stress-test the remediated backend code for Milestone 1
 
 ## Current Parent
 - Conversation ID: 2a43f791-5cc7-4933-bdd2-688af9234cb1
-- Updated: 2026-09-30T22:31:33Z
+- Updated: 2026-09-30T22:40:00Z
 
 ## Review Scope
 - **Files to review**:
   - `artifacts/api-server/demo-server.mjs`
   - `scripts/demo-server.mjs`
-  - `data/checkouts.json`
-  - Tests: `tests/checkout-occupancy-rule.test.mjs`, `tests/governance-integrity.test.mjs`, any new tests
+  - `data/database.json`
+  - Tests: `tests/checkout-occupancy-rule.test.mjs`, `tests/governance-integrity.test.mjs`, `tests/service-orders.test.mjs`, `tests/adversarial-milestone1.test.mjs`, `tests/challenger-m1-cleanflat-integrations.test.mjs`, `tests/challenger-m1-fix2.test.mjs`, `tests/test-empirical-midnight-verification.mjs`
 - **Interface contracts**:
   - `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md`
   - `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_1\PROJECT.md`
@@ -38,17 +38,35 @@ Independently review and stress-test the remediated backend code for Milestone 1
   - Byte-for-byte mirror parity between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`
 
 ## Review Checklist
-- **Items reviewed**: [TBD]
-- **Verdict**: pending
-- **Unverified claims**: [TBD]
+- **Items reviewed**:
+  - `artifacts/api-server/demo-server.mjs` vs `scripts/demo-server.mjs` byte parity (SHA-256 matched, 0 byte diff)
+  - `getExecutionDateStr` timezone conversion and date-only regex guard
+  - `PATCH /api/service-orders/:id` empty and whitespace title validation (400)
+  - `POST /api/service/public/:token/flats/:flatId/start` closed order guard (400) and daily limit timezone boundary
+  - `POST /api/service/public/:token/flats/:flatId/finish` photo array sanitization and whitespace rejection
+  - `GET /api/pms/calendar` service block date alignment with Brazil timezone
+  - Core governance and occupancy regression suite (112/112 tests passed)
+  - Adversarial & Challenger test suites (19/19 adversarial, 12/12 contract, 9/9 clean flat, 14/14 challenger-fix2, 4/4 empirical midnight)
+- **Verdict**: APPROVE
+- **Unverified claims**: None. All verified empirically.
 
 ## Attack Surface
-- **Hypotheses tested**: [TBD]
-- **Vulnerabilities found**: [TBD]
-- **Untested angles**: [TBD]
+- **Hypotheses tested**:
+  - Midnight rollover between UTC ISO and Brazil local time: Tested & verified fixed via `getExecutionDateStr`.
+  - Date-only string rollback bug (`new Date("YYYY-MM-DD")` in UTC-3): Tested & verified prevented via regex `/^\d{4}-\d{2}-\d{2}$/`.
+  - Re-starting flats on closed service orders: Tested & verified guarded (400).
+  - Empty or whitespace title in PATCH: Tested & verified guarded (400).
+  - Whitespace-only or invalid photo strings bypassing requirePhotos: Tested & verified sanitized and rejected.
+  - Concurrency/race conditions on start: Evaluated synchronous event loop guards.
+  - Potential integrity violations (hardcoding, mock facades): Tested & none found.
+- **Vulnerabilities found**: None remaining in remediated code.
+- **Untested angles**: None within Milestone 1 scope.
 
 ## Key Decisions Made
-- Initialized review process
+- Confirmed zero integrity violations in source code.
+- Confirmed byte-for-byte mirror parity.
+- Confirmed zero regressions across existing tests.
+- Issued verdict: APPROVE.
 
 ## Artifact Index
 - `DISPATCH.md` — Record of task dispatch

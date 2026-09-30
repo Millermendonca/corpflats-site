@@ -131,9 +131,9 @@ describe('Challenger 2 Empirical Verification: Milestone 1 Remediation', () => {
 
     fs.writeFileSync(dbPath, JSON.stringify(dbObj, null, 2), 'utf8');
 
-    // 3. Spawn demo-server on test port
+    // 3. Spawn demo-server on test port (with DATABASE_URL: '' to isolate to data/database.json)
     serverProcess = spawn('node', ['artifacts/api-server/demo-server.mjs'], {
-      env: { ...process.env, PORT: String(PORT), NODE_ENV: 'test' },
+      env: { ...process.env, PORT: String(PORT), NODE_ENV: 'test', DATABASE_URL: '' },
       stdio: 'pipe'
     });
 
@@ -206,7 +206,7 @@ describe('Challenger 2 Empirical Verification: Milestone 1 Remediation', () => {
 
     it('1.2 Live HTTP GET /api/pms/calendar places evening started service block on today (2026-09-30), NOT tomorrow', async () => {
       // Query PMS calendar for TODAY: 2026-09-30
-      const resToday = await fetch(`${BASE_URL}/api/pms/calendar?start=2026-09-30&end=2026-09-30`, {
+      const resToday = await fetch(`${BASE_URL}/api/pms/calendar?startDate=2026-09-30&endDate=2026-09-30`, {
         headers: adminHeaders
       });
       assert.strictEqual(resToday.status, 200);
@@ -219,7 +219,7 @@ describe('Challenger 2 Empirical Verification: Milestone 1 Remediation', () => {
       assert.notStrictEqual(blockToday.startDate, '2026-10-01', 'CRITICAL CHECK: startDate must not be tomorrow');
 
       // Query PMS calendar for TOMORROW: 2026-10-01
-      const resTomorrow = await fetch(`${BASE_URL}/api/pms/calendar?start=2026-10-01&end=2026-10-01`, {
+      const resTomorrow = await fetch(`${BASE_URL}/api/pms/calendar?startDate=2026-10-01&endDate=2026-10-01`, {
         headers: adminHeaders
       });
       assert.strictEqual(resTomorrow.status, 200);
@@ -230,7 +230,7 @@ describe('Challenger 2 Empirical Verification: Milestone 1 Remediation', () => {
 
     it('1.3 Live HTTP GET /api/pms/calendar handles service block spanning across midnight (22:30 -> 01:30 BRT)', async () => {
       // Sep 30 query
-      const resSep30 = await fetch(`${BASE_URL}/api/pms/calendar?start=2026-09-30&end=2026-09-30`, {
+      const resSep30 = await fetch(`${BASE_URL}/api/pms/calendar?startDate=2026-09-30&endDate=2026-09-30`, {
         headers: adminHeaders
       });
       assert.strictEqual(resSep30.status, 200);
@@ -241,7 +241,7 @@ describe('Challenger 2 Empirical Verification: Milestone 1 Remediation', () => {
       assert.strictEqual(blockSep30.endDate, '2026-10-01', 'endDate must be 2026-10-01');
 
       // Oct 01 query
-      const resOct01 = await fetch(`${BASE_URL}/api/pms/calendar?start=2026-10-01&end=2026-10-01`, {
+      const resOct01 = await fetch(`${BASE_URL}/api/pms/calendar?startDate=2026-10-01&endDate=2026-10-01`, {
         headers: adminHeaders
       });
       assert.strictEqual(resOct01.status, 200);
@@ -253,7 +253,7 @@ describe('Challenger 2 Empirical Verification: Milestone 1 Remediation', () => {
     });
 
     it('1.4 Inactive or closed orders do NOT generate PMS calendar blocks', async () => {
-      const res = await fetch(`${BASE_URL}/api/pms/calendar?start=2026-09-30&end=2026-10-05`, {
+      const res = await fetch(`${BASE_URL}/api/pms/calendar?startDate=2026-09-30&endDate=2026-10-05`, {
         headers: adminHeaders
       });
       assert.strictEqual(res.status, 200);

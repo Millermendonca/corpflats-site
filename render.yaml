@@ -3,7 +3,7 @@ services:
     name: guest-flow-manager
     env: node
     plan: free
-    buildCommand: pnpm install --no-frozen-lockfile
+    buildCommand: pnpm install --no-frozen-lockfile --ignore-scripts && pnpm --filter @workspace/limpeza build
     startCommand: node server.mjs
     envVars:
       - key: NODE_VERSION
