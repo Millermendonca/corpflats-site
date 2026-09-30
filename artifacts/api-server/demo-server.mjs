@@ -23795,7 +23795,7 @@ function serveSpaWithMetadata(distFolder, req, res) {
 if (fs.existsSync(distPath)) {
   app.use(express.static(distPath, {
     setHeaders: (res, filePath) => {
-      if (filePath.endsWith('.html')) {
+      if (filePath.endsWith('.html') || filePath.endsWith('/index.js') || filePath.endsWith('\\index.js') || filePath.endsWith('/index.css') || filePath.endsWith('\\index.css')) {
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
         res.setHeader('Pragma', 'no-cache');
         res.setHeader('Expires', '0');

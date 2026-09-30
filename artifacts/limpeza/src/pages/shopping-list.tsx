@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
+const _APP_V = "2026.09.30.1"  // força novo hash de build
 import { Shell } from "@/components/layout"
 import { useGetMe } from "@workspace/api-client-react"
 import { useToast } from "@/hooks/use-toast"

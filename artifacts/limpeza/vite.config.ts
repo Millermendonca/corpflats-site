@@ -44,6 +44,17 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, 'dist/public'),
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // Nome fixo sem hash — cache-busting via servidor (Cache-Control)
+        entryFileNames: 'assets/index.js',
+        chunkFileNames: 'assets/[name]-[hash].js',
+        assetFileNames: (assetInfo) => {
+          if (assetInfo.name?.endsWith('.css')) return 'assets/index.css';
+          return 'assets/[name]-[hash][extname]';
+        },
+      },
+    },
   },
   server: {
     port,
