@@ -85,15 +85,24 @@ function formatDateBr(isoStr?: string | null): string {
   }
 }
 
+function normalizeText(t: string) {
+  return t.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+}
+
 export default function ComprasScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
 
   const [items, setItems] = useState<ShoppingItem[]>([]);
+  const [catalog, setCatalog] = useState<string[]>(COMMON_SHOPPING_ITEMS);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<"pending" | "completed" | "all">("pending");
+
+  // Editing
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
 
   // Modal Novo Item
   const [modalOpen, setModalOpen] = useState(false);
@@ -118,9 +127,22 @@ export default function ComprasScreen() {
     }
   }, []);
 
+  const fetchCatalog = useCallback(async () => {
+    try {
+      const res = await fetch(apiUrl("/api/shopping-list/catalog"), { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          setCatalog(data.map((e: any) => e.name));
+        }
+      }
+    } catch {}
+  }, []);
+
   useEffect(() => {
     fetchItems();
-  }, [fetchItems]);
+    fetchCatalog();
+  }, [fetchItems, fetchCatalog]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -131,20 +153,25 @@ export default function ComprasScreen() {
   const handleToggle = async (item: ShoppingItem) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-    // Atualização otimista local
     const nextCompleted = !item.completed;
-    setItems(prev =>
-      prev.map(i =>
+    // Optimistic: move unchecked items to top
+    setItems(prev => {
+      const updated = prev.map(i =>
         i.id === item.id
           ? {
               ...i,
               completed: nextCompleted,
               completedAt: nextCompleted ? new Date().toISOString() : null,
-              completedBy: nextCompleted ? { id: user?.id || 1, name: user?.name || user?.username || "Eu", role: user?.role || "camareira" } : null,
+              completedBy: nextCompleted ? { id: user?.id || 1, name: user?.username || "Eu", role: user?.role || "camareira" } : null,
             }
           : i
-      )
-    );
+      );
+      if (!nextCompleted) {
+        const me = updated.find(i => i.id === item.id)!;
+        return [me, ...updated.filter(i => i.id !== item.id)];
+      }
+      return updated;
+    });
 
     try {
       const res = await fetch(apiUrl(`/api/shopping-list/${item.id}/toggle`), {
@@ -155,13 +182,37 @@ export default function ComprasScreen() {
       });
       if (res.ok) {
         const updated = await res.json();
-        setItems(prev => prev.map(i => (i.id === item.id ? updated : i)));
+        setItems(prev => {
+          const mapped = prev.map(i => (i.id === item.id ? updated : i));
+          if (!nextCompleted) {
+            return [mapped.find(i => i.id === item.id)!, ...mapped.filter(i => i.id !== item.id)];
+          }
+          return mapped;
+        });
       } else {
         fetchItems();
       }
     } catch {
       fetchItems();
     }
+  };
+
+  // Editar item inline (toque longo → edit mode)
+  const handleEditSave = async () => {
+    if (!editingId || !editTitle.trim()) { setEditingId(null); return; }
+    const prevTitle = items.find(i => i.id === editingId)?.title;
+    setItems(prev => prev.map(i => i.id === editingId ? { ...i, title: editTitle.trim() } : i));
+    setEditingId(null);
+    try {
+      const res = await fetch(apiUrl(`/api/shopping-list/${editingId}`), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ title: editTitle.trim() }),
+      });
+      if (!res.ok) fetchItems();
+      else fetchCatalog();
+    } catch { fetchItems(); }
   };
 
   // Excluir item
@@ -191,15 +242,13 @@ export default function ComprasScreen() {
     );
   };
 
-  // Criar novo item (Google Keep style)
+  // Criar novo item
   const handleCreate = async (overrideTitle?: string) => {
     const itemTitle = (overrideTitle || newTitle).trim();
     if (!itemTitle) return;
 
-    // Feedback tátil imediato
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-    // Otimista
     const tempItem: ShoppingItem = {
       id: `temp_${Date.now()}`,
       title: itemTitle,
@@ -209,7 +258,7 @@ export default function ComprasScreen() {
       completed: false,
       createdBy: {
         id: user?.id || 1,
-        name: user?.name || user?.username || "Camareira",
+        name: user?.username || "Camareira",
         role: user?.role || "camareira",
       },
       createdAt: new Date().toISOString(),
@@ -237,6 +286,7 @@ export default function ComprasScreen() {
       if (res.ok) {
         const saved = await res.json();
         setItems(prev => prev.map(it => (it.id === tempItem.id ? saved : it)));
+        fetchCatalog(); // Atualiza catálogo de autocomplete
       } else {
         fetchItems();
       }
@@ -312,11 +362,7 @@ export default function ComprasScreen() {
             Sugestões:
           </Text>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-            {COMMON_SHOPPING_ITEMS.filter(it =>
-              it.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(
-                newTitle.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim()
-              )
-            ).slice(0, 5).map(sug => (
+            {catalog.filter(it => normalizeText(it).includes(normalizeText(newTitle))).slice(0, 6).map(sug => (
               <TouchableOpacity
                 key={sug}
                 onPress={() => handleCreate(sug)}
@@ -347,7 +393,7 @@ export default function ComprasScreen() {
         <Text style={{ fontSize: 11, fontWeight: "700", color: colors.mutedForeground, alignSelf: "center", marginRight: 4 }}>
           Comuns:
         </Text>
-        {COMMON_SHOPPING_ITEMS.map(item => (
+        {catalog.slice(0, 16).map(item => (
           <TouchableOpacity
             key={item}
             onPress={() => handleCreate(item)}
@@ -480,18 +526,42 @@ export default function ComprasScreen() {
                 {/* Content */}
                 <View style={styles.itemBody}>
                   <View style={styles.itemTitleRow}>
-                    <Text
-                      style={[
-                        styles.itemTitle,
-                        {
-                          color: item.completed ? colors.mutedForeground : colors.foreground,
-                          textDecorationLine: item.completed ? "line-through" : "none",
-                        },
-                      ]}
-                      numberOfLines={2}
-                    >
-                      {item.title}
-                    </Text>
+                    {editingId === item.id ? (
+                      <TextInput
+                        style={[styles.itemTitle, { color: colors.foreground, borderBottomWidth: 1, borderBottomColor: colors.primary, flex: 1 }]}
+                        value={editTitle}
+                        onChangeText={setEditTitle}
+                        onSubmitEditing={handleEditSave}
+                        onBlur={handleEditSave}
+                        autoFocus
+                        returnKeyType="done"
+                      />
+                    ) : (
+                      <TouchableOpacity
+                        onLongPress={() => {
+                          if (!item.completed) {
+                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            setEditingId(item.id);
+                            setEditTitle(item.title);
+                          }
+                        }}
+                        activeOpacity={0.8}
+                        style={{ flex: 1 }}
+                      >
+                        <Text
+                          style={[
+                            styles.itemTitle,
+                            {
+                              color: item.completed ? colors.mutedForeground : colors.foreground,
+                              textDecorationLine: item.completed ? "line-through" : "none",
+                            },
+                          ]}
+                          numberOfLines={2}
+                        >
+                          {item.title}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
 
                     {item.quantity ? (
                       <View style={[styles.qtyBadge, { backgroundColor: colors.muted }]}>
@@ -525,6 +595,12 @@ export default function ComprasScreen() {
                         Comprado por {item.completedBy?.name || "Admin"} ({formatDateBr(item.completedAt)})
                       </Text>
                     </View>
+                  )}
+
+                  {!item.completed && editingId !== item.id && (
+                    <Text style={{ fontSize: 10, color: colors.mutedForeground, marginTop: 2 }}>
+                      Segure para editar
+                    </Text>
                   )}
                 </View>
 

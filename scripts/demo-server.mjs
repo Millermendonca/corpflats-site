@@ -5798,8 +5798,11 @@ function getRequestsForDate(dateStr, isNested = false) {
           nextUpcomingRes = upcoming[0] || null;
         }
 
-        const nextResHasTwin = Boolean(nextUpcomingRes && (nextUpcomingRes.twinBeds || nextUpcomingRes.bedType === "2 Solteiro" || nextUpcomingRes.bedType === "twin"));
-        const nextResHasExtraMattress = Boolean(nextUpcomingRes && nextUpcomingRes.extraMattress);
+        // CORREÇÃO: usa somente arrivingRes (check-in no mesmo dia do checkout) para twin beds.
+        // Não usar nextUpcomingRes (pode ser reserva futura), pois o indicador deve refletir apenas
+        // a preparação necessária para hoje.
+        const nextResHasTwin = Boolean(arrivingRes && (arrivingRes.twinBeds || arrivingRes.bedType === "2 Solteiro" || arrivingRes.bedType === "twin"));
+        const nextResHasExtraMattress = Boolean(arrivingRes && arrivingRes.extraMattress);
 
         const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
         const card = {
@@ -5902,11 +5905,15 @@ function getRequestsForDate(dateStr, isNested = false) {
       (String(l.timestamp || "").substring(0, 10) === dateStr)
     ) : null;
 
-    const nextResHasTwin = Boolean(nextUpcomingRes && (nextUpcomingRes.twinBeds || nextUpcomingRes.bedType === "2 Solteiro" || nextUpcomingRes.bedType === "twin"));
-    const nextResHasExtraMattress = Boolean(nextUpcomingRes && nextUpcomingRes.extraMattress);
-    const resolvedTwinBeds = typeof existingCleaning?.twinBeds === "boolean"
-      ? existingCleaning.twinBeds
-      : nextResHasTwin;
+    // CORREÇÃO: nextResHasTwin deve considerar APENAS a reserva chegando HOJE (arrivingRes),
+    // não reservas futuras (nextUpcomingRes). Isso garante que twin beds só apareça no card
+    // quando há check-in nessa data com essa configuração.
+    const arrivingResHasTwin = Boolean(arrivingRes && (arrivingRes.twinBeds || arrivingRes.bedType === "2 Solteiro" || arrivingRes.bedType === "twin"));
+    const nextResHasTwin = arrivingResHasTwin; // alias para manter compatibilidade com código abaixo
+    const nextResHasExtraMattress = Boolean(arrivingRes && arrivingRes.extraMattress);
+    const resolvedTwinBeds = typeof existingCleaning?.twinBeds === "boolean" && existingCleaning.source === "manual_instruction"
+      ? existingCleaning.twinBeds  // instrução manual: respeita o que foi salvo explicitamente
+      : arrivingResHasTwin;         // checkout: só usa twin se check-in é hoje com essa config
     const resolvedExtraMattress = typeof existingCleaning?.extraMattress === "boolean"
       ? existingCleaning.extraMattress
       : nextResHasExtraMattress;
@@ -6192,8 +6199,20 @@ app.get("/api/reservations/checkouts", (req, res) => {
       nextResForSetup = upcoming[0] || null;
     }
 
+    // hasTwinBeds: para instrução manual, usa req_.twinBeds diretamente.
+    // Para limpeza de checkout normal, só aplica twin beds se a reserva que chega é HOJE (checkinDate === dateStr),
+    // não de reservas futuras — isso evita que o indicador "2 Camas Solteiro" apareça indevidamente.
+    const checkinTodayRes = (db.reservations || []).find(r =>
+      (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
+      r.checkinDate === dateStr &&
+      r.status !== "cancelada" && r.status !== "cancelado"
+    );
+    const checkinTodayHasTwin = Boolean(checkinTodayRes && (checkinTodayRes.twinBeds || checkinTodayRes.bedType === "2 Solteiro" || checkinTodayRes.bedType === "twin"));
+    const isInst_early = Boolean(req_.isInstructionOnly || req_.source === "manual_instruction" || req_.type === "instruction" || req_.type === "bed_adjustment_only" || req_.isBedAdjustmentOnly);
+    // Para instruções manuais: usa req_.twinBeds diretamente (atrelado à data específica da instrução)
+    // Para checkouts: só usa twin beds se a reserva de check-in É HOJE (não futuras)
+    const hasTwinBeds = isInst_early ? Boolean(req_.twinBeds) : checkinTodayHasTwin;
     const nextResTwin = Boolean(nextResForSetup && (nextResForSetup.twinBeds || nextResForSetup.bedType === "2 Solteiro" || nextResForSetup.bedType === "twin"));
-    const hasTwinBeds = Boolean(req_.twinBeds || nextResTwin);
     const hasExtraMattress = Boolean(req_.extraMattress || (nextResForSetup && nextResForSetup.extraMattress));
     const hasPrefersHighFloor = Boolean(nextResForSetup && nextResForSetup.prefersHighFloor);
 
@@ -6226,7 +6245,7 @@ app.get("/api/reservations/checkouts", (req, res) => {
     const cleanPendingObs = sanitizeCardNote(req_.pendingObservation);
     const isInst = Boolean(req_.isInstructionOnly || req_.source === "manual_instruction" || req_.type === "instruction" || req_.type === "bed_adjustment_only" || req_.isBedAdjustmentOnly);
     const isPaid = typeof req_.isPaidCleaning === "boolean" ? req_.isPaidCleaning : (isInst ? false : true);
-    const instText = req_.instructionText || req_.notes || sanitizeCardNote(req_.adminNote) || cleanPendingObs || (req_.twinBeds ? "Separar as camas, colocar como 2 solteiras" : null);
+    const instText = req_.instructionText || req_.notes || sanitizeCardNote(req_.adminNote) || cleanPendingObs || (hasTwinBeds ? "Separar as camas, colocar como 2 solteiras" : null);
 
     const setupInfo = isInst ? {
       twinBeds: Boolean(req_.twinBeds),
