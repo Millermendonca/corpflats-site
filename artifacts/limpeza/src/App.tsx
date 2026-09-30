@@ -51,6 +51,7 @@ import ZapiConnection from '@/pages/zapi-connection';
 import EmailHub from '@/pages/email-hub';
 import ReservationJourney from '@/pages/reservation-journey';
 import ServiceOrders from '@/pages/service-orders';
+import ServiceWorkerPortal from '@/pages/service-worker-portal';
 import NotFound from '@/pages/not-found';
 
 const queryClient = new QueryClient({
@@ -214,6 +215,10 @@ function Router() {
         <Route path="/cafe-da-manha" component={GuestBreakfast} />
         <Route path="/breakfast/:code" component={GuestBreakfast} />
         <Route path="/breakfast" component={GuestBreakfast} />
+
+        {/* Public External Service Worker Portal */}
+        <Route path="/servico/:token" component={ServiceWorkerPortal} />
+        <Route path="/service/:token" component={ServiceWorkerPortal} />
 
         {/* Live Operations & AI (Admin Only) */}
         <AdminRoute path="/painel-aovivo" component={LiveOperationsPanel} moduleName="o Painel Operacional Ao Vivo" />
