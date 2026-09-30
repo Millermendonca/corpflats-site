@@ -307,11 +307,13 @@ export function FlatCard({
 
   // Admin Custom Instructions Modal (Twin Beds & Maid Notes)
   const [instructionsModalOpen, setInstructionsModalOpen] = useState(false)
+  // REGRA: estado inicial do modal vem do request (dia-específico).
+  // Não usa setupInfo para twin beds / colchão — instrução deve ser atrelada à data.
   const [twinBedsSetting, setTwinBedsSetting] = useState<boolean>(
-    typeof request?.twinBeds === "boolean" ? request.twinBeds : Boolean(flat?.setupInfo?.twinBeds)
+    Boolean(request?.twinBeds)
   )
   const [extraMattressSetting, setExtraMattressSetting] = useState<boolean>(
-    typeof request?.extraMattress === "boolean" ? request.extraMattress : Boolean(flat?.setupInfo?.extraMattress)
+    Boolean(request?.extraMattress)
   )
   const [adminNoteText, setAdminNoteText] = useState<string>(
     (typeof request?.adminNote === "string" ? request.adminNote : (typeof flat?.setupInfo?.specialRequests === "string" ? flat.setupInfo.specialRequests : (request?.pendingObservation || ""))).trim()
@@ -319,14 +321,14 @@ export function FlatCard({
   const [isSavingInstructions, setIsSavingInstructions] = useState(false)
 
   useEffect(() => {
-    const twin = typeof request?.twinBeds === "boolean" ? request.twinBeds : Boolean(flat?.setupInfo?.twinBeds)
-    const mattress = typeof request?.extraMattress === "boolean" ? request.extraMattress : Boolean(flat?.setupInfo?.extraMattress)
+    const twin = Boolean(request?.twinBeds)
+    const mattress = Boolean(request?.extraMattress)
     const note = (typeof request?.adminNote === "string" ? request.adminNote : (typeof flat?.setupInfo?.specialRequests === "string" ? flat.setupInfo.specialRequests : (request?.pendingObservation || ""))).trim()
 
     setTwinBedsSetting(twin)
     setExtraMattressSetting(mattress)
     setAdminNoteText(note)
-  }, [request?.twinBeds, flat?.setupInfo?.twinBeds, request?.extraMattress, flat?.setupInfo?.extraMattress, flat?.setupInfo?.specialRequests, request?.adminNote, request?.pendingObservation])
+  }, [request?.twinBeds, request?.extraMattress, flat?.setupInfo?.specialRequests, request?.adminNote, request?.pendingObservation])
 
   const handleSaveInstructions = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -418,12 +420,11 @@ export function FlatCard({
 
   const Icon = conf.icon
   const isPriority = typeof request?.isPriority === "boolean" ? request.isPriority : (typeof flat?.isPriority === "boolean" ? flat.isPriority : false)
-  const isTwinBeds = typeof request?.twinBeds === "boolean" 
-    ? request.twinBeds 
-    : Boolean(flat?.setupInfo?.twinBeds)
-  const hasExtraMattress = typeof request?.extraMattress === "boolean" 
-    ? request.extraMattress 
-    : Boolean(flat?.setupInfo?.extraMattress)
+  // REGRA: isTwinBeds só vem do request (atrelado ao dia específico).
+  // Não usa flat.setupInfo.twinBeds como fallback — setupInfo é informação de setup da próxima
+  // reserva e não deve acionar o indicador de instrução de camas para a camareira.
+  const isTwinBeds = Boolean(request?.twinBeds)
+  const hasExtraMattress = Boolean(request?.extraMattress)
   const maidNoteText = (() => {
     const raw = (typeof request?.adminNote === "string" 
       ? request.adminNote 
