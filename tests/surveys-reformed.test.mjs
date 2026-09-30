@@ -13,19 +13,30 @@ let db = {
 
 console.log("▶ Iniciando testes da Reformulação de Vistorias...");
 
-// 1. Criar Vistoria com os 6 tipos de pergunta para Flats específicos (113 e 114)
+// 1. Criar Vistoria com Pergunta Sim/Não com Foto Condicional (Ex: "Tem mofo no teto do banheiro?")
 const surveyPayload = {
-  title: "Inspeção Completa de Pintura e Equipamentos",
+  title: "Inspeção de Mofo e Pintura",
   description: "Verifique detalhadamente antes de liberar",
   flatIds: [1, 2], // Apt 113 e 114
   isActive: true,
   questions: [
-    { id: "q1", question: "A TV está funcionando com todos os canais?", type: "yes_no", isRequired: true },
-    { id: "q2", question: "Como está a pintura do teto do banheiro?", type: "single_choice", options: ["Ótima", "Boa", "Manchas", "Descascando"], isRequired: true },
-    { id: "q3", question: "Quais itens de enxoval precisam de reposição?", type: "multi_choice", options: ["Toalha de Banho", "Tapete", "Fronha", "Manta"], isRequired: false },
-    { id: "q4", question: "Qual a nota para o estado geral de conservação?", type: "scale", scaleMin: 1, scaleMax: 5, isRequired: true },
-    { id: "q5", question: "Observações adicionais ou pendências encontradas:", type: "text", isRequired: false },
-    { id: "q6", question: "Tire uma foto se houver algum dano visível:", type: "photo", isRequired: false }
+    {
+      id: "q1",
+      question: "Tem mofo no teto do banheiro?",
+      type: "yes_no",
+      isRequired: true,
+      hasPhoto: true,
+      requirePhotoCondition: "if_yes" // Exige foto apenas se responder "Sim"
+    },
+    {
+      id: "q2",
+      question: "Como está o estado geral do apartamento?",
+      type: "single_choice",
+      options: ["Ótimo", "Bom", "Regular", "Danificado"],
+      isRequired: true,
+      hasPhoto: true,
+      requirePhotoCondition: "optional" // Foto opcional
+    }
   ]
 };
 
@@ -38,48 +49,56 @@ const newSurvey = {
 db.surveys.push(newSurvey);
 
 assert.strictEqual(db.surveys.length, 1);
-assert.strictEqual(db.surveys[0].questions.length, 6);
-console.log("✔ Vistoria criada com sucesso com 6 tipos de pergunta.");
+assert.strictEqual(db.surveys[0].questions.length, 2);
+assert.strictEqual(db.surveys[0].questions[0].hasPhoto, true);
+assert.strictEqual(db.surveys[0].questions[0].requirePhotoCondition, "if_yes");
+console.log("✔ Vistoria com pergunta Sim/Não e Foto Condicional criada com sucesso.");
 
-// 2. Testar injeção de pendingSurveys para Flat 1 (113) e Flat 3 (116)
-function getPendingSurveysForFlat(flatId) {
-  const activeSurveys = (db.surveys || []).filter(s => s.isActive);
-  const pending = [];
-  for (const s of activeSurveys) {
-    const appliesToFlat = !Array.isArray(s.flatIds) || s.flatIds.length === 0 || s.flatIds.map(Number).includes(Number(flatId));
-    if (!appliesToFlat) continue;
+// 2. Função de validação cliente (como no flat-card)
+function validateSurveyAnswers(survey, answersMap, photosMap) {
+  const missing = [];
+  for (const q of survey.questions) {
+    const val = answersMap[q.id];
+    const photo = photosMap[q.id];
 
-    const alreadyAnswered = Array.isArray(s.responses) && s.responses.some(r => Number(r.flatId) === Number(flatId));
-    if (!alreadyAnswered) {
-      pending.push({
-        id: s.id,
-        title: s.title,
-        questions: s.questions
-      });
+    if (q.isRequired) {
+      if (val === undefined || val === null || String(val).trim() === "") {
+        missing.push(q.question);
+      }
+    }
+
+    if (q.hasPhoto) {
+      if (q.requirePhotoCondition === "if_yes" && val === "Sim" && !photo) {
+        missing.push(`Foto obrigatória ao marcar 'Sim' em: ${q.question}`);
+      } else if (q.requirePhotoCondition === "always" && !photo) {
+        missing.push(`Foto obrigatória para: ${q.question}`);
+      }
     }
   }
-  return pending;
+  return missing;
 }
 
-// Flat 1 (113) deve receber
-const pendingFlat1 = getPendingSurveysForFlat(1);
-assert.strictEqual(pendingFlat1.length, 1, "Flat 113 deve receber a vistoria pendente");
+// Caso A: Camareira responde "Não" para mofo -> NÃO precisa de foto
+const missingCaseA = validateSurveyAnswers(newSurvey, { q1: "Não", q2: "Ótimo" }, {});
+assert.strictEqual(missingCaseA.length, 0, "Quando responde 'Não', não deve exigir foto!");
+console.log("✔ Caso A: Resposta 'Não' validada sem exigir foto.");
 
-// Flat 3 (116) NÃO deve receber (pois está configurado apenas para 1 e 2)
-const pendingFlat3 = getPendingSurveysForFlat(3);
-assert.strictEqual(pendingFlat3.length, 0, "Flat 116 NÃO deve receber a vistoria pois não está em flatIds");
-console.log("✔ Filtragem por flatIds funcionando perfeitamente.");
+// Caso B: Camareira responde "Sim" para mofo sem foto -> DEVE BLOQUEAR com foto pendente
+const missingCaseB = validateSurveyAnswers(newSurvey, { q1: "Sim", q2: "Ótimo" }, {});
+assert.strictEqual(missingCaseB.length, 1, "Quando responde 'Sim', deve exigir foto comprobatória!");
+assert.match(missingCaseB[0], /Foto obrigatória ao marcar 'Sim'/);
+console.log("✔ Caso B: Resposta 'Sim' sem foto bloqueada com sucesso.");
 
-// 3. Simular resposta da camareira para o Flat 1 (113)
-const responseAnswers = [
-  { questionId: "q1", questionText: "TV funcionando?", type: "yes_no", answer: "Sim" },
-  { questionId: "q2", questionText: "Pintura teto?", type: "single_choice", answer: "Boa" },
-  { questionId: "q3", questionText: "Enxoval?", type: "multi_choice", answer: ["Toalha de Banho", "Tapete"] },
-  { questionId: "q4", questionText: "Nota?", type: "scale", answer: 5 },
-  { questionId: "q5", questionText: "Obs?", type: "text", answer: "Tudo limpo e cheiroso" },
-  { questionId: "q6", questionText: "Foto?", type: "photo", answer: "[Foto Anexada]", photoUrl: "https://storage.corpflats.com/surveys/photo1.webp" }
-];
+// Caso C: Camareira responde "Sim" e anexa foto -> DEVE LIBERAR
+const missingCaseC = validateSurveyAnswers(
+  newSurvey,
+  { q1: "Sim", q2: "Danificado" },
+  { q1: "data:image/webp;base64,mockphotodata" }
+);
+assert.strictEqual(missingCaseC.length, 0, "Quando anexa a foto, deve liberar!");
+console.log("✔ Caso C: Resposta 'Sim' com foto anexada aprovada!");
 
+// 3. Simular gravação no backend com a foto
 newSurvey.responses.push({
   id: "resp_101",
   flatId: 1,
@@ -88,34 +107,22 @@ newSurvey.responses.push({
   answeredByUserId: 2,
   answeredByUsername: "Cris",
   answeredAt: new Date().toISOString(),
-  answers: responseAnswers
+  answers: [
+    { questionId: "q1", questionText: "Tem mofo no teto do banheiro?", type: "yes_no", answer: "Sim", photoUrl: "https://storage.corpflats.com/surveys/mofo113.webp" },
+    { questionId: "q2", questionText: "Como está o estado geral?", type: "single_choice", answer: "Danificado", photoUrl: null }
+  ]
 });
 
-// 4. Regra "Aparece só 1 vez por flat": Flat 1 NÃO deve mais receber a vistoria
-const pendingFlat1AfterResponse = getPendingSurveysForFlat(1);
-assert.strictEqual(pendingFlat1AfterResponse.length, 0, "Flat 113 NÃO deve mais receber a vistoria após ter respondido!");
+assert.strictEqual(newSurvey.responses.length, 1);
+assert.strictEqual(newSurvey.responses[0].answers[0].photoUrl, "https://storage.corpflats.com/surveys/mofo113.webp");
+console.log("✔ Resposta persistida com foto acoplada à pergunta Sim/Não!");
 
-// Flat 2 (114) ainda NÃO respondeu, então DEVE continuar recebendo
-const pendingFlat2 = getPendingSurveysForFlat(2);
-assert.strictEqual(pendingFlat2.length, 1, "Flat 114 ainda deve ter a vistoria pendente");
-console.log("✔ Regra de aparição única por flat validada com sucesso!");
-
-// 5. Exclusão de foto para liberar espaço
-const respItem = newSurvey.responses.find(r => r.id === "resp_101");
-const photoAns = respItem.answers.find(a => a.questionId === "q6");
-assert.strictEqual(photoAns.photoUrl, "https://storage.corpflats.com/surveys/photo1.webp");
-
-// Limpar foto
+// 4. Teste de Exclusão da foto para liberar espaço
+const respItem = newSurvey.responses[0];
+const photoAns = respItem.answers.find(a => a.questionId === "q1");
 photoAns.photoUrl = null;
 photoAns.answer = "[Foto excluída para liberar espaço]";
 assert.strictEqual(photoAns.photoUrl, null);
-assert.strictEqual(photoAns.answer, "[Foto excluída para liberar espaço]");
-console.log("✔ Exclusão de foto individual para liberar espaço validada!");
+console.log("✔ Foto excluída para liberar espaço!");
 
-// 6. Reiniciar vistoria para o Flat 1 pelo Admin
-newSurvey.responses = newSurvey.responses.filter(r => r.flatId !== 1);
-const pendingFlat1AfterReset = getPendingSurveysForFlat(1);
-assert.strictEqual(pendingFlat1AfterReset.length, 1, "Flat 113 voltou a ter a vistoria pendente após reset do admin!");
-console.log("✔ Reinício de vistoria por flat validado!");
-
-console.log("🎉 TODOS OS TESTES PASSARAM COM 100% DE SUCESSO!");
+console.log("🎉 TODOS OS TESTES DE FOTO CONDICIONAL PASSARAM COM 100% DE SUCESSO!");

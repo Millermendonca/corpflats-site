@@ -486,6 +486,16 @@ export function FlatCard({
             missing.push(q.question)
           }
         }
+
+        // Validação da Foto acoplada à pergunta (hasPhoto)
+        if (q.hasPhoto && q.type !== "photo") {
+          const condition = q.requirePhotoCondition || (q.type === "yes_no" ? "if_yes" : "always")
+          if (condition === "if_yes" && val === "Sim" && !photo?.base64) {
+            missing.push(`Foto obrigatória ao marcar 'Sim' em: "${q.question}"`)
+          } else if (condition === "always" && !photo?.base64) {
+            missing.push(`Foto obrigatória para: "${q.question}"`)
+          }
+        }
       }
     }
     return missing
@@ -2167,7 +2177,7 @@ export function FlatCard({
                                 />
                               )}
 
-                              {/* 6. FOTO COM COMPRESSÃO AUTOMÁTICA */}
+                              {/* 6. FOTO COM COMPRESSÃO AUTOMÁTICA (Tipo 'photo' puro) */}
                               {q.type === "photo" && (
                                 <div className="space-y-2 pt-0.5">
                                   {currentPhoto ? (
@@ -2210,6 +2220,98 @@ export function FlatCard({
                                           }}
                                         />
                                         <div className="p-3 border-2 border-dashed border-indigo-300 dark:border-indigo-700 hover:border-indigo-500 rounded-xl text-center transition-all bg-indigo-50/30 dark:bg-indigo-950/10 text-indigo-950 dark:text-indigo-200">
+                                          {isCompressingThis ? (
+                                            <div className="flex items-center justify-center gap-1.5 text-xs font-bold text-primary">
+                                              <Loader2 className="w-4 h-4 animate-spin" />
+                                              <span>Compactando foto...</span>
+                                            </div>
+                                          ) : (
+                                            <div className="flex items-center justify-center gap-2 text-xs font-bold">
+                                              <Camera className="w-4 h-4 text-indigo-600" />
+                                              <span>Tirar Foto / Anexar da Galeria</span>
+                                            </div>
+                                          )}
+                                        </div>
+                                      </label>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* FOTO ACOPLADA À PERGUNTA (hasPhoto ativado pelo admin) */}
+                              {q.hasPhoto && q.type !== "photo" && (
+                                <div className="mt-2.5 pt-2 border-t border-border/60 space-y-2">
+                                  {/* Título explicativo da foto conforme a condição */}
+                                  <div className="flex items-center justify-between text-[11px] font-bold">
+                                    <div className="flex items-center gap-1.5 text-indigo-950 dark:text-indigo-200">
+                                      <Camera className="w-3.5 h-3.5 text-indigo-600" />
+                                      <span>
+                                        {q.type === "yes_no" && q.requirePhotoCondition === "if_yes"
+                                          ? "Foto Comprobatória (Exigida ao marcar 'Sim'):"
+                                          : q.requirePhotoCondition === "always"
+                                            ? "Foto Comprobatória (Obrigatória):"
+                                            : "Anexar Foto de Evidência (Opcional):"}
+                                      </span>
+                                    </div>
+
+                                    {(q.requirePhotoCondition === "always" || (q.requirePhotoCondition === "if_yes" && currentVal === "Sim")) ? (
+                                      <Badge className="bg-amber-500/15 text-amber-800 dark:text-amber-300 text-[9px] font-bold border-0">
+                                        Foto Exigida
+                                      </Badge>
+                                    ) : (
+                                      <Badge variant="secondary" className="text-[9px]">
+                                        Opcional
+                                      </Badge>
+                                    )}
+                                  </div>
+
+                                  {/* Exibição da foto já anexada */}
+                                  {currentPhoto ? (
+                                    <div className="flex items-center gap-3 p-2 bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-300 dark:border-emerald-800 rounded-xl">
+                                      <img 
+                                        src={currentPhoto.base64} 
+                                        alt="Evidência" 
+                                        className="w-16 h-16 rounded-lg object-cover border"
+                                      />
+                                      <div className="flex-1 min-w-0 text-[11px]">
+                                        <span className="font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-1">
+                                          <Check className="w-3.5 h-3.5 text-emerald-600" /> Foto anexada com sucesso!
+                                        </span>
+                                        <span className="text-[10px] text-muted-foreground block mt-0.5">
+                                          Comprimida: {currentPhoto.sizeKb} KB (era {currentPhoto.origKb} KB)
+                                        </span>
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="ghost"
+                                          onClick={() => handleRemoveSurveyPhoto(survey.id, q.id)}
+                                          className="text-[10px] h-6 px-1.5 text-destructive hover:bg-destructive/10 mt-1"
+                                        >
+                                          <Trash2 className="w-3 h-3 mr-1" /> Remover / Trocar Foto
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    /* Botão de captura quando ainda não anexou */
+                                    <div>
+                                      <label className="cursor-pointer block">
+                                        <input 
+                                          type="file" 
+                                          accept="image/*" 
+                                          capture="environment"
+                                          className="hidden"
+                                          disabled={isCompressingThis}
+                                          onChange={(e) => {
+                                            const file = e.target.files?.[0]
+                                            if (file) handleSurveyPhotoUpload(survey.id, q.id, file)
+                                          }}
+                                        />
+                                        <div className={cn(
+                                          "p-2.5 border-2 border-dashed rounded-xl text-center transition-all",
+                                          (q.requirePhotoCondition === "always" || (q.requirePhotoCondition === "if_yes" && currentVal === "Sim"))
+                                            ? "border-amber-400 bg-amber-50/40 dark:bg-amber-950/20 text-amber-900 dark:text-amber-200 hover:border-amber-500"
+                                            : "border-indigo-300 dark:border-indigo-700 bg-indigo-50/30 dark:bg-indigo-950/10 text-indigo-950 dark:text-indigo-200 hover:border-indigo-500"
+                                        )}>
                                           {isCompressingThis ? (
                                             <div className="flex items-center justify-center gap-1.5 text-xs font-bold text-primary">
                                               <Loader2 className="w-4 h-4 animate-spin" />

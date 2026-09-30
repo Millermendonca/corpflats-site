@@ -27,6 +27,8 @@ export interface SurveyQuestion {
   scaleMin?: number
   scaleMax?: number
   isRequired: boolean
+  hasPhoto?: boolean
+  requirePhotoCondition?: "always" | "if_yes" | "optional"
 }
 
 export interface Survey {
@@ -115,7 +117,9 @@ export default function SurveysPage() {
         options: ["Muito Bom", "Bom", "Regular", "Apresenta Danos"],
         scaleMin: 1,
         scaleMax: 5,
-        isRequired: true
+        isRequired: true,
+        hasPhoto: false,
+        requirePhotoCondition: "if_yes"
       }
     ])
     setFormModalOpen(true)
@@ -138,7 +142,9 @@ export default function SurveysPage() {
           options: Array.isArray(q.options) ? [...q.options] : [],
           scaleMin: q.scaleMin || 1,
           scaleMax: q.scaleMax || 5,
-          isRequired: q.isRequired !== false
+          isRequired: q.isRequired !== false,
+          hasPhoto: Boolean(q.hasPhoto),
+          requirePhotoCondition: q.requirePhotoCondition || (q.type === "yes_no" ? "if_yes" : "always")
         }))
       : [{
           id: `q_${Date.now()}_1`,
@@ -147,7 +153,9 @@ export default function SurveysPage() {
           options: [],
           scaleMin: 1,
           scaleMax: 5,
-          isRequired: true
+          isRequired: true,
+          hasPhoto: false,
+          requirePhotoCondition: "if_yes"
         }]
 
     setFormQuestions(qs)
@@ -163,7 +171,9 @@ export default function SurveysPage() {
       options: ["Boa", "Regular", "Ruim"],
       scaleMin: 1,
       scaleMax: 5,
-      isRequired: true
+      isRequired: true,
+      hasPhoto: false,
+      requirePhotoCondition: "if_yes"
     }
     setFormQuestions([...formQuestions, newQ])
   }
@@ -705,7 +715,8 @@ export default function SurveysPage() {
                                               </p>
                                             )}
 
-                                            {a.type === "photo" && (
+                                            {/* Foto anexada (pergunta do tipo foto ou pergunta com evidência) */}
+                                            {(a.type === "photo" || a.photoUrl) && (
                                               <div className="space-y-2 pt-1">
                                                 {a.photoUrl ? (
                                                   <div className="flex items-start gap-3">
@@ -821,6 +832,12 @@ export default function SurveysPage() {
                                     <TypeIcon className="w-3 h-3 text-primary" />
                                     <span>{typeInfo.label}</span>
                                   </Badge>
+                                  {q.hasPhoto && (
+                                    <Badge className="bg-indigo-600 text-white text-[10px] font-bold gap-1">
+                                      <Camera className="w-3 h-3" />
+                                      {q.requirePhotoCondition === "if_yes" ? "Foto se 'Sim'" : q.requirePhotoCondition === "always" ? "Foto Obrigatória" : "Foto Opcional"}
+                                    </Badge>
+                                  )}
                                   {q.isRequired ? (
                                     <Badge className="bg-amber-500/15 text-amber-800 dark:text-amber-300 text-[10px] font-bold border-0">
                                       Obrigatória
@@ -1120,6 +1137,89 @@ export default function SurveysPage() {
                         {q.type === "photo" && (
                           <div className="p-2.5 bg-sky-50/50 dark:bg-sky-950/20 border border-sky-200 dark:border-sky-800 rounded-xl text-xs text-sky-900 dark:text-sky-200">
                             📸 <strong>Captura de Foto:</strong> A camareira poderá abrir a câmera do celular ou escolher foto da galeria. A foto é compactada automaticamente (WebP ~80KB) para não consumir dados nem armazenamento.
+                          </div>
+                        )}
+
+                        {/* Opção para Exigir / Permitir Anexo de Foto na Pergunta (quando não for o tipo 'photo') */}
+                        {q.type !== "photo" && (
+                          <div className="p-3 bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-200/80 dark:border-indigo-800 rounded-xl space-y-2.5">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <Checkbox 
+                                  id={`has-photo-${idx}`}
+                                  checked={Boolean(q.hasPhoto)}
+                                  onCheckedChange={v => handleUpdateQuestion(idx, { 
+                                    hasPhoto: Boolean(v),
+                                    requirePhotoCondition: q.requirePhotoCondition || (q.type === "yes_no" ? "if_yes" : "always")
+                                  })}
+                                />
+                                <Label htmlFor={`has-photo-${idx}`} className="text-xs font-bold text-indigo-950 dark:text-indigo-200 cursor-pointer flex items-center gap-1.5">
+                                  <Camera className="w-3.5 h-3.5 text-indigo-600" />
+                                  <span>Solicitar / Exigir Foto nesta pergunta</span>
+                                </Label>
+                              </div>
+
+                              {q.hasPhoto && (
+                                <Badge className="bg-indigo-600 text-white text-[10px] font-bold">
+                                  Foto Ativada
+                                </Badge>
+                              )}
+                            </div>
+
+                            {q.hasPhoto && (
+                              <div className="pl-6 pt-1 space-y-2">
+                                <Label className="text-[11px] font-bold text-muted-foreground uppercase">Condição da Foto:</Label>
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                  {q.type === "yes_no" && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleUpdateQuestion(idx, { requirePhotoCondition: "if_yes" })}
+                                      className={cn(
+                                        "p-2 rounded-lg border text-left text-xs font-bold transition-all",
+                                        (q.requirePhotoCondition || "if_yes") === "if_yes"
+                                          ? "bg-indigo-600 text-white border-indigo-600 shadow-2xs"
+                                          : "bg-background text-foreground border-border hover:bg-muted/40"
+                                      )}
+                                    >
+                                      ⚠️ Exigir foto se responder "Sim"
+                                    </button>
+                                  )}
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUpdateQuestion(idx, { requirePhotoCondition: "always" })}
+                                    className={cn(
+                                      "p-2 rounded-lg border text-left text-xs font-bold transition-all",
+                                      q.requirePhotoCondition === "always"
+                                        ? "bg-indigo-600 text-white border-indigo-600 shadow-2xs"
+                                        : "bg-background text-foreground border-border hover:bg-muted/40"
+                                    )}
+                                  >
+                                    📸 Exigir foto sempre
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUpdateQuestion(idx, { requirePhotoCondition: "optional" })}
+                                    className={cn(
+                                      "p-2 rounded-lg border text-left text-xs font-bold transition-all",
+                                      q.requirePhotoCondition === "optional"
+                                        ? "bg-indigo-600 text-white border-indigo-600 shadow-2xs"
+                                        : "bg-background text-foreground border-border hover:bg-muted/40"
+                                    )}
+                                  >
+                                    📎 Foto opcional
+                                  </button>
+                                </div>
+                                <p className="text-[10px] text-muted-foreground">
+                                  {q.type === "yes_no" && (q.requirePhotoCondition || "if_yes") === "if_yes"
+                                    ? "💡 Exemplo: se a camareira marcar 'Sim' (ex: tem mofo ou defeito), a foto será obrigatória para comprovar o problema."
+                                    : q.requirePhotoCondition === "always"
+                                      ? "💡 A camareira deverá obrigatoriamente anexar uma foto para liberar a resposta."
+                                      : "💡 A camareira poderá anexar uma foto voluntariamente caso ache necessário."}
+                                </p>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
