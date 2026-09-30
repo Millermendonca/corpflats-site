@@ -472,6 +472,8 @@ let db = {
   cleaningRequests: [],
   periodicTasks: [],
   periodicExecutions: [],
+  serviceOrders: [],
+  serviceWorkers: [],
   surveys: [],
   observations: [],
   guests: [],
@@ -2633,6 +2635,8 @@ async function loadDatabase() {
       const content = fs.readFileSync(DB_FILE, "utf-8");
       const loaded = JSON.parse(content);
       Object.assign(db, loaded);
+      if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
+      if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
       reconcileUniversalIntegrity(loaded);
       sanitizeReservationFlags();
     }
@@ -2805,6 +2809,8 @@ async function loadDatabase() {
     }
 
     if (!db.reservationCommunications) db.reservationCommunications = [];
+    if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
+    if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
     ensureReceptionUser(db);
 
     // Restauração de Certificado Digital A1 a partir do PostgreSQL
@@ -5185,11 +5191,192 @@ app.post("/api/public/checkout", async (req, res) => {
   });
 });
 
+// ── Service Orders Helper Functions ──────────────────────────────────────────
+function getFlatServiceInProgress(flatId, flatNumber) {
+  if (!Array.isArray(db.serviceOrders)) return null;
+  const fId = Number(flatId);
+  const fNum = String(flatNumber || "");
+  for (const order of db.serviceOrders) {
+    if (order.status !== "active") continue;
+    if (!Array.isArray(order.flats)) continue;
+    const inProgFlat = order.flats.find(f =>
+      f.status === "in_progress" &&
+      (Number(f.flatId) === fId || (fNum && String(f.flatNumber) === fNum))
+    );
+    if (inProgFlat) {
+      return {
+        serviceTitle: order.title,
+        workerName: inProgFlat.workerName || "Prestador Externo",
+        serviceOrderId: order.id
+      };
+    }
+  }
+  return null;
+}
+
+function isFlatDirty(flatId, flatNumber, dateStr = getTodayStr()) {
+  const fId = Number(flatId);
+  const fNum = String(flatNumber || "");
+
+  // 1. Check active cleaning requests
+  const dirtyReq = (db.cleaningRequests || []).find(c =>
+    (Number(c.flatId) === fId || (fNum && String(c.flatNumber) === fNum)) &&
+    !c.completedAt &&
+    !c.isInstructionOnly &&
+    c.source !== "manual_instruction" &&
+    (c.status === "dirty" || c.status === "in_progress" || c.status === "cleaning_now" || (c.source === "checkout" && c.status !== "clean"))
+  );
+  if (dirtyReq) return true;
+
+  // 2. Check today's checkouts in reservations
+  const checkoutToday = (db.reservations || []).find(r =>
+    (Number(r.flatId) === fId || (fNum && String(r.flatNumber) === fNum)) &&
+    r.checkoutDate === dateStr &&
+    r.status !== "cancelada" &&
+    r.status !== "cancelado"
+  );
+  if (checkoutToday) return true;
+
+  return false;
+}
+
+function formatServiceDuration(startIso, endIso) {
+  if (!startIso || !endIso) return "0 min";
+  const start = new Date(startIso).getTime();
+  const end = new Date(endIso).getTime();
+  const diffMs = Math.max(0, end - start);
+  const totalMins = Math.round(diffMs / 60000);
+  const hours = Math.floor(totalMins / 60);
+  const mins = totalMins % 60;
+  if (hours > 0 && mins > 0) return `${hours}h ${mins}min`;
+  if (hours > 0) return `${hours}h`;
+  return `${mins}min`;
+}
+
+async function dispatchServiceNotifications(action, order, flat, worker) {
+  try {
+    const timeFormatter = new Intl.DateTimeFormat("pt-BR", {
+      timeZone: "America/Sao_Paulo",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    });
+    const nowTimeStr = timeFormatter.format(new Date());
+
+    let message = "";
+    if (action === "start") {
+      const estHours = order.estimatedDurationHours ? `${order.estimatedDurationHours}h` : "2h";
+      message = [
+        `🔧 *Serviço iniciado* — ${order.title}`,
+        `🏠 Flat *${flat.flatNumber}* | Prestador: ${worker.mainWorker.name} · CPF: ${worker.mainWorker.cpf}`,
+        `⏰ ${nowTimeStr} · Previsão: ${estHours}`,
+        `➡️ Liberar cartão de acesso ao flat ${flat.flatNumber}`
+      ].join("\n");
+    } else {
+      const startTimeStr = flat.startedAt ? timeFormatter.format(new Date(flat.startedAt)) : "--:--";
+      const finishTimeStr = flat.finishedAt ? timeFormatter.format(new Date(flat.finishedAt)) : nowTimeStr;
+      const durationStr = formatServiceDuration(flat.startedAt, flat.finishedAt);
+      const cleaningStr = flat.needsCleaning === true ? "Sim" : (flat.needsCleaning === false ? "Não" : "N.A.");
+      const obsStr = flat.observations ? `"${flat.observations}"` : '"Nenhuma"';
+      const photosCount = Array.isArray(flat.photos) ? flat.photos.length : 0;
+
+      message = [
+        `✅ *Serviço finalizado* — ${order.title}`,
+        `🏠 Flat *${flat.flatNumber}* | Prestador: ${worker.mainWorker.name}`,
+        `⏰ ${startTimeStr} → ${finishTimeStr} (${durationStr})`,
+        `🧹 Precisa camareira: *${cleaningStr}*`,
+        `📝 Obs: ${obsStr}`,
+        `📷 ${photosCount} foto(s) disponíveis no sistema`
+      ].join("\n");
+    }
+
+    // 1. WhatsApp Admin (5522998505276)
+    const adminPhone = "5522998505276";
+    if (typeof sendZapiMessage === "function") {
+      sendZapiMessage(db.zapiConfig, {
+        phone: adminPhone,
+        message,
+        bypassTestMode: true
+      }).catch(err => console.warn(`[ServiceOrder] WhatsApp to admin failed:`, err.message));
+    }
+
+    // 2. WhatsApp Reception
+    const rawReceptionPhone = db.settings?.receptionPhone || db.settings?.receptionWhatsApp || db.siteConfig?.branding?.whatsapp || db.users?.find(u => u.role === "recepcao")?.whatsapp || db.settings?.adminWhatsApp || "5522997124021";
+    const cleanReceptionPhone = cleanWhatsAppPhone ? cleanWhatsAppPhone(rawReceptionPhone) : String(rawReceptionPhone).replace(/\D/g, "");
+    if (cleanReceptionPhone && cleanReceptionPhone !== adminPhone && typeof sendZapiMessage === "function") {
+      sendZapiMessage(db.zapiConfig, {
+        phone: cleanReceptionPhone,
+        message,
+        bypassTestMode: true
+      }).catch(err => console.warn(`[ServiceOrder] WhatsApp to reception failed:`, err.message));
+    }
+
+    // 3. Email Reception
+    const receptionEmail = db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
+    if (receptionEmail && typeof sendEmailAsync === "function") {
+      const subject = `[CorpFlats] Serviço ${action === "start" ? "Iniciado" : "Finalizado"} - Flat ${flat.flatNumber} (${order.title})`;
+      const bodyHtml = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; line-height: 1.5;">
+          <h2 style="color: ${action === "start" ? "#0284c7" : "#16a34a"};">
+            ${action === "start" ? "🔧 Serviço Externo Iniciado" : "✅ Serviço Externo Finalizado"}
+          </h2>
+          <p><strong>Serviço:</strong> ${order.title}</p>
+          <p><strong>Apartamento:</strong> Flat ${flat.flatNumber}</p>
+          <p><strong>Prestador:</strong> ${worker.mainWorker.name} (CPF: ${worker.mainWorker.cpf})</p>
+          ${action === "start" ? `
+            <p><strong>Início:</strong> ${nowTimeStr}</p>
+            <p><strong>Previsão de Duração:</strong> ${order.estimatedDurationHours || 2}h</p>
+            <div style="background-color: #f0f9ff; padding: 12px; border-left: 4px solid #0284c7; margin-top: 15px; border-radius: 4px;">
+              ➡️ <strong>Ação para Recepção:</strong> Favor liberar o cartão de acesso para o prestador ao Flat ${flat.flatNumber}.
+            </div>
+          ` : `
+            <p><strong>Duração:</strong> ${formatServiceDuration(flat.startedAt, flat.finishedAt)}</p>
+            <p><strong>Precisa de Camareira:</strong> ${flat.needsCleaning === true ? "Sim" : (flat.needsCleaning === false ? "Não" : "N.A.")}</p>
+            <p><strong>Observações:</strong> ${flat.observations || "Nenhuma observação informada."}</p>
+            <p><strong>Fotos Anexadas:</strong> ${Array.isArray(flat.photos) ? flat.photos.length : 0}</p>
+          `}
+          <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
+          <p style="font-size: 12px; color: #64748b;">Notificação enviada automaticamente pelo sistema CorpFlats Guest-Flow-Manager.</p>
+        </div>
+      `;
+
+      sendEmailAsync({
+        db,
+        saveDatabase,
+        reservationId: "0",
+        recipient: receptionEmail,
+        subject,
+        bodyHtml,
+        metadata: {
+          category: "service_order",
+          serviceOrderId: order.id,
+          flatNumber: flat.flatNumber
+        }
+      }).catch(err => console.warn(`[ServiceOrder] Email to reception failed:`, err.message));
+    }
+
+    // 4. Internal Notification & Audit Log
+    createNotification({
+      category: "service_order",
+      title: action === "start" ? `🔧 Serviço iniciado - Flat ${flat.flatNumber}` : `✅ Serviço finalizado - Flat ${flat.flatNumber}`,
+      message: `${order.title}: ${worker.mainWorker.name} no Flat ${flat.flatNumber}`,
+      severity: "info",
+      metadata: { serviceOrderId: order.id, flatId: flat.flatId, flatNumber: flat.flatNumber },
+      targetUrl: `/servicos`
+    });
+  } catch (err) {
+    console.error("[ServiceOrder] Error dispatching notifications:", err);
+  }
+}
+
 // ── Flats Endpoints ─────────────────────────────────────────────────────────
 app.get("/api/flats", (req, res) => {
   res.set("Cache-Control", "no-store, no-cache, must-revalidate");
   if (reconcileUniversalIntegrity()) saveDatabase();
-  const activeFlats = (db.flats || []).filter(f => f.isActive !== false);
+  const activeFlats = (db.flats || []).filter(f => f.isActive !== false).map(flat => ({
+    ...flat,
+    serviceInProgress: getFlatServiceInProgress(flat.id, flat.number)
+  }));
   triggerBackgroundSync();
   res.json(activeFlats);
 });
@@ -6285,6 +6472,7 @@ app.get("/api/reservations/checkouts", (req, res) => {
     return {
       flatId: flat.id,
       flatNumber: flat.number,
+      serviceInProgress: getFlatServiceInProgress(flat.id, flat.number),
       checkoutDate: req_.requestDate,
       hasCheckinToday: isInst ? false : hasCheckinToday,
       isOccupied: isInst ? false : isOccupied,
@@ -6734,7 +6922,7 @@ function findOrUpsertCleaningRequest(reqId, flatNumber, flatId, dateStr = null) 
 }
 
 // ── Cleaning Status Change & Execution ──────────────────────────────────────
-app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
+app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
   const reqId = Number(req.params.requestId);
   const {
     status,
@@ -7583,6 +7771,561 @@ app.get("/api/periodic-tasks/pending", (req, res) => {
     }
   }
   res.json(result);
+});
+
+// ── External Service Orders (Ordens de Serviço de Prestadores Externos) ───────
+
+// GET /api/service-orders — Lista todas as ordens de serviço (Admin)
+app.get("/api/service-orders", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth) return res.status(401).json({ error: "Não autenticado." });
+  if (userAuth.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+
+  if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
+  const list = [...db.serviceOrders].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+  res.json(list);
+});
+
+// POST /api/service-orders — Cria nova ordem de serviço (Admin)
+app.post("/api/service-orders", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth) return res.status(401).json({ error: "Não autenticado." });
+  if (userAuth.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+
+  const {
+    title,
+    cleanFlatMode = "priority",
+    maxSimultaneousFlats = 2,
+    maxFlatsPerDay = 4,
+    requirePhotos = true,
+    estimatedDurationHours = null,
+    instructionFormat = "text",
+    flats = [],
+    defaultInstructions = ""
+  } = req.body || {};
+
+  if (!title || !String(title).trim()) {
+    return res.status(400).json({ error: "Título do serviço é obrigatório." });
+  }
+
+  // Token único com 24 caracteres hexadecimais
+  const token = crypto.randomBytes(12).toString("hex");
+
+  const formattedFlats = (Array.isArray(flats) ? flats : []).map(f => {
+    let flatId, flatNumber, instructions;
+    if (typeof f === "object" && f !== null) {
+      flatId = Number(f.flatId || f.id);
+      flatNumber = f.flatNumber || f.number;
+      instructions = f.instructions !== undefined ? String(f.instructions).trim() : String(defaultInstructions || "").trim();
+    } else {
+      flatId = Number(f);
+      instructions = String(defaultInstructions || "").trim();
+    }
+    const foundFlat = (db.flats || []).find(fl => fl.id === flatId || String(fl.number) === String(flatNumber));
+    return {
+      flatId: foundFlat ? foundFlat.id : flatId,
+      flatNumber: foundFlat ? foundFlat.number : String(flatNumber || flatId),
+      instructions,
+      status: "pending",
+      startedAt: null,
+      finishedAt: null,
+      workerName: null,
+      workerCpf: null,
+      estimatedFinishAt: null,
+      observations: null,
+      photos: [],
+      needsCleaning: null,
+      wasCleanWhenStarted: null
+    };
+  });
+
+  const newOrder = {
+    id: `so_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    title: String(title).trim(),
+    token,
+    status: req.body.status || "active",
+    createdAt: new Date().toISOString(),
+    createdBy: userAuth.name || userAuth.username || "admin",
+    cleanFlatMode: ["never", "priority", "always"].includes(cleanFlatMode) ? cleanFlatMode : "priority",
+    maxSimultaneousFlats: Math.max(1, parseInt(maxSimultaneousFlats, 10) || 2),
+    maxFlatsPerDay: Math.max(1, parseInt(maxFlatsPerDay, 10) || 4),
+    requirePhotos: typeof requirePhotos === "boolean" ? requirePhotos : true,
+    estimatedDurationHours: estimatedDurationHours ? Number(estimatedDurationHours) : null,
+    instructionFormat: instructionFormat === "list" ? "list" : "text",
+    flats: formattedFlats
+  };
+
+  if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
+  db.serviceOrders.unshift(newOrder);
+  saveDatabase("create_service_order");
+
+  logAuditEvent({
+    level: "info",
+    category: "cleaning",
+    action: "SERVICE_ORDER_CREATED",
+    actor: { id: userAuth.id, name: userAuth.username, role: userAuth.role },
+    details: { orderId: newOrder.id, title: newOrder.title, flatsCount: newOrder.flats.length }
+  });
+
+  res.status(201).json(newOrder);
+});
+
+// GET /api/service-orders/:id — Detalhe da ordem de serviço (Admin)
+app.get("/api/service-orders/:id", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth) return res.status(401).json({ error: "Não autenticado." });
+  if (userAuth.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+
+  const { id } = req.params;
+  const order = (db.serviceOrders || []).find(o => o.id === id || o.token === id);
+  if (!order) return res.status(404).json({ error: "Ordem de serviço não encontrada." });
+
+  res.json(order);
+});
+
+// PATCH /api/service-orders/:id — Atualiza ordem de serviço (Admin)
+app.patch("/api/service-orders/:id", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth) return res.status(401).json({ error: "Não autenticado." });
+  if (userAuth.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+
+  const { id } = req.params;
+  const order = (db.serviceOrders || []).find(o => o.id === id || o.token === id);
+  if (!order) return res.status(404).json({ error: "Ordem de serviço não encontrada." });
+
+  const body = req.body || {};
+  if (body.title !== undefined) order.title = String(body.title).trim();
+  if (body.status !== undefined && ["draft", "active", "closed"].includes(body.status)) order.status = body.status;
+  if (body.cleanFlatMode !== undefined && ["never", "priority", "always"].includes(body.cleanFlatMode)) order.cleanFlatMode = body.cleanFlatMode;
+  if (body.maxSimultaneousFlats !== undefined) order.maxSimultaneousFlats = Math.max(1, parseInt(body.maxSimultaneousFlats, 10) || 2);
+  if (body.maxFlatsPerDay !== undefined) order.maxFlatsPerDay = Math.max(1, parseInt(body.maxFlatsPerDay, 10) || 4);
+  if (body.requirePhotos !== undefined) order.requirePhotos = Boolean(body.requirePhotos);
+  if (body.estimatedDurationHours !== undefined) order.estimatedDurationHours = body.estimatedDurationHours ? Number(body.estimatedDurationHours) : null;
+  if (body.instructionFormat !== undefined) order.instructionFormat = body.instructionFormat === "list" ? "list" : "text";
+
+  if (Array.isArray(body.flats)) {
+    for (const f of body.flats) {
+      const fId = Number(f.flatId || f.id);
+      const existingFlat = (order.flats || []).find(ef => Number(ef.flatId) === fId || String(ef.flatNumber) === String(f.flatNumber || f.number));
+      if (existingFlat) {
+        if (f.instructions !== undefined) existingFlat.instructions = String(f.instructions).trim();
+        if (f.status !== undefined && ["pending", "in_progress", "done"].includes(f.status)) existingFlat.status = f.status;
+      } else {
+        const foundFlat = (db.flats || []).find(fl => fl.id === fId || String(fl.number) === String(f.flatNumber || f.number));
+        order.flats.push({
+          flatId: foundFlat ? foundFlat.id : fId,
+          flatNumber: foundFlat ? foundFlat.number : String(f.flatNumber || f.number || fId),
+          instructions: String(f.instructions || "").trim(),
+          status: "pending",
+          startedAt: null,
+          finishedAt: null,
+          workerName: null,
+          workerCpf: null,
+          estimatedFinishAt: null,
+          observations: null,
+          photos: [],
+          needsCleaning: null,
+          wasCleanWhenStarted: null
+        });
+      }
+    }
+  }
+
+  order.updatedAt = new Date().toISOString();
+  saveDatabase("update_service_order");
+
+  res.json(order);
+});
+
+// DELETE /api/service-orders/:id — Remove ordem de serviço (Admin)
+app.delete("/api/service-orders/:id", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth) return res.status(401).json({ error: "Não autenticado." });
+  if (userAuth.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+
+  const { id } = req.params;
+  const idx = (db.serviceOrders || []).findIndex(o => o.id === id || o.token === id);
+  if (idx === -1) return res.status(404).json({ error: "Ordem de serviço não encontrada." });
+
+  const removed = db.serviceOrders.splice(idx, 1)[0];
+  if (Array.isArray(db.serviceWorkers)) {
+    db.serviceWorkers = db.serviceWorkers.filter(w => w.serviceOrderId !== removed.id && w.token !== removed.token);
+  }
+
+  saveDatabase("delete_service_order");
+  res.json({ success: true, message: "Ordem de serviço removida com sucesso." });
+});
+
+// GET /api/service-orders/:id/progress — Painel de acompanhamento (Admin)
+app.get("/api/service-orders/:id/progress", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth) return res.status(401).json({ error: "Não autenticado." });
+  if (userAuth.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+
+  const { id } = req.params;
+  const order = (db.serviceOrders || []).find(o => o.id === id || o.token === id);
+  if (!order) return res.status(404).json({ error: "Ordem de serviço não encontrada." });
+
+  const flats = order.flats || [];
+  const total = flats.length;
+  const done = flats.filter(f => f.status === "done").length;
+  const inProgress = flats.filter(f => f.status === "in_progress").length;
+  const pending = flats.filter(f => f.status === "pending").length;
+  const percentage = total > 0 ? Math.round((done / total) * 100) : 0;
+
+  const worker = (db.serviceWorkers || []).find(w => w.serviceOrderId === order.id || w.token === order.token) || null;
+
+  res.json({
+    orderId: order.id,
+    title: order.title,
+    token: order.token,
+    status: order.status,
+    stats: {
+      total,
+      done,
+      inProgress,
+      pending,
+      percentage
+    },
+    worker,
+    flats
+  });
+});
+
+// POST /api/service-orders/:id/flats/:flatId/reset — Reabre um flat para 'pending' (Admin)
+app.post("/api/service-orders/:id/flats/:flatId/reset", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth) return res.status(401).json({ error: "Não autenticado." });
+  if (userAuth.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+
+  const { id, flatId } = req.params;
+  const order = (db.serviceOrders || []).find(o => o.id === id || o.token === id);
+  if (!order) return res.status(404).json({ error: "Ordem de serviço não encontrada." });
+
+  const fId = Number(flatId);
+  const flat = (order.flats || []).find(f => Number(f.flatId) === fId || String(f.flatNumber) === String(flatId));
+  if (!flat) return res.status(404).json({ error: "Apartamento não encontrado nesta ordem de serviço." });
+
+  flat.status = "pending";
+  flat.startedAt = null;
+  flat.finishedAt = null;
+  flat.workerName = null;
+  flat.workerCpf = null;
+  flat.estimatedFinishAt = null;
+  flat.observations = null;
+  flat.photos = [];
+  flat.needsCleaning = null;
+  flat.wasCleanWhenStarted = null;
+
+  saveDatabase("reset_service_flat");
+
+  res.json({ success: true, flat });
+});
+
+// ── Rotas Públicas do Prestador (Sem Autenticação, Identificação por Token) ──
+
+// GET /api/service/public/:token — Detalhes da ordem para o prestador
+app.get("/api/service/public/:token", (req, res) => {
+  const { token } = req.params;
+  const order = (db.serviceOrders || []).find(o => o.token === token);
+  if (!order) {
+    return res.status(404).json({ error: "Ordem de serviço não encontrada ou link inválido." });
+  }
+
+  const worker = (db.serviceWorkers || []).find(w => w.token === token || w.serviceOrderId === order.id) || null;
+  const todayStr = getTodayStr();
+
+  const enrichedFlats = (order.flats || []).map(f => {
+    const isDirty = isFlatDirty(f.flatId, f.flatNumber, todayStr);
+    const flatInDb = (db.flats || []).find(fl => fl.id === f.flatId || String(fl.number) === String(f.flatNumber));
+    return {
+      ...f,
+      isDirty,
+      isOccupied: flatInDb ? Boolean(flatInDb.isOccupied) : false
+    };
+  });
+
+  res.json({
+    success: true,
+    order: {
+      id: order.id,
+      title: order.title,
+      token: order.token,
+      status: order.status,
+      createdAt: order.createdAt,
+      createdBy: order.createdBy,
+      cleanFlatMode: order.cleanFlatMode,
+      maxSimultaneousFlats: order.maxSimultaneousFlats,
+      maxFlatsPerDay: order.maxFlatsPerDay,
+      requirePhotos: order.requirePhotos,
+      estimatedDurationHours: order.estimatedDurationHours,
+      instructionFormat: order.instructionFormat,
+      flats: enrichedFlats
+    },
+    worker
+  });
+});
+
+// POST /api/service/public/:token/register — Cadastro de identificação do prestador
+app.post("/api/service/public/:token/register", (req, res) => {
+  const { token } = req.params;
+  const order = (db.serviceOrders || []).find(o => o.token === token);
+  if (!order) {
+    return res.status(404).json({ error: "Ordem de serviço não encontrada ou link inválido." });
+  }
+
+  const { mainWorker, collaborators = [] } = req.body || {};
+  if (!mainWorker || !mainWorker.name || !String(mainWorker.name).trim() || !mainWorker.cpf || !String(mainWorker.cpf).trim()) {
+    return res.status(400).json({ error: "Nome completo e CPF do prestador principal são obrigatórios." });
+  }
+
+  const cleanCpf = String(mainWorker.cpf).replace(/\D/g, "");
+  if (cleanCpf.length !== 11) {
+    return res.status(400).json({ error: "CPF do prestador principal deve conter 11 dígitos." });
+  }
+
+  if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
+  let worker = db.serviceWorkers.find(w => w.token === token || w.serviceOrderId === order.id);
+  const now = new Date().toISOString();
+
+  const formattedCollaborators = Array.isArray(collaborators)
+    ? collaborators
+        .map(c => ({
+          name: String(c.name || "").trim(),
+          cpf: String(c.cpf || "").trim()
+        }))
+        .filter(c => c.name && c.cpf)
+    : [];
+
+  if (worker) {
+    worker.mainWorker = {
+      name: String(mainWorker.name).trim(),
+      cpf: String(mainWorker.cpf).trim()
+    };
+    worker.collaborators = formattedCollaborators;
+    worker.registeredAt = now;
+  } else {
+    worker = {
+      id: `sw_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      serviceOrderId: order.id,
+      token: order.token,
+      mainWorker: {
+        name: String(mainWorker.name).trim(),
+        cpf: String(mainWorker.cpf).trim()
+      },
+      collaborators: formattedCollaborators,
+      registeredAt: now
+    };
+    db.serviceWorkers.push(worker);
+  }
+
+  saveDatabase("register_service_worker");
+  res.json({ success: true, worker });
+});
+
+// POST /api/service/public/:token/flats/:flatId/start — Inicia serviço no apartamento
+app.post("/api/service/public/:token/flats/:flatId/start", async (req, res) => {
+  const { token, flatId } = req.params;
+  const order = (db.serviceOrders || []).find(o => o.token === token);
+  if (!order) return res.status(404).json({ error: "Ordem de serviço não encontrada ou link inválido." });
+
+  // 1. Prestador deve ter registro em serviceWorkers para aquele token (se não tiver → 403)
+  const worker = (db.serviceWorkers || []).find(w => (w.token === token || w.serviceOrderId === order.id) && w.mainWorker?.name && w.mainWorker?.cpf);
+  if (!worker) {
+    return res.status(403).json({ error: "Prestador deve se identificar antes de iniciar o serviço." });
+  }
+
+  const fId = Number(flatId);
+  const flat = (order.flats || []).find(f => Number(f.flatId) === fId || String(f.flatNumber) === String(flatId));
+  if (!flat) return res.status(404).json({ error: "Apartamento não encontrado nesta ordem de serviço." });
+
+  if (flat.status === "in_progress") {
+    return res.status(400).json({ error: "Serviço já está em andamento neste apartamento." });
+  }
+  if (flat.status === "done") {
+    return res.status(400).json({ error: "Serviço já foi finalizado neste apartamento." });
+  }
+
+  // 2. Contar flats com status: "in_progress" do prestador na ordem → deve ser < maxSimultaneousFlats (400 if reached)
+  const maxSimul = Number(order.maxSimultaneousFlats) || 2;
+  const inProgressCount = (order.flats || []).filter(f => f.status === "in_progress").length;
+  if (inProgressCount >= maxSimul) {
+    return res.status(400).json({ error: `Limite de apartamentos simultâneos atingido (máximo: ${maxSimul}). Finalize um apartamento antes de iniciar outro.` });
+  }
+
+  // 3. Contar flats com status: "done" finalizados hoje pelo prestador → deve ser < maxFlatsPerDay (400 if reached)
+  const maxPerDay = Number(order.maxFlatsPerDay) || 4;
+  const todayStr = getTodayStr();
+  const doneTodayCount = (order.flats || []).filter(f => f.status === "done" && f.finishedAt && f.finishedAt.substring(0, 10) === todayStr).length;
+  if (doneTodayCount >= maxPerDay) {
+    return res.status(400).json({ error: `Limite diário de apartamentos atingido para hoje (máximo: ${maxPerDay}).` });
+  }
+
+  // 4. Avaliar cleanFlatMode (considera apenas os flats do serviço):
+  const isDirty = isFlatDirty(flat.flatId, flat.flatNumber, todayStr);
+  const cleanFlatMode = order.cleanFlatMode || "priority";
+
+  if (!isDirty) {
+    if (cleanFlatMode === "never") {
+      return res.status(400).json({ error: "Este serviço não permite intervenção em apartamentos limpos." });
+    }
+    if (cleanFlatMode === "priority") {
+      const otherDirty = (order.flats || []).some(otherF =>
+        Number(otherF.flatId) !== Number(flat.flatId) &&
+        otherF.status !== "done" &&
+        isFlatDirty(otherF.flatId, otherF.flatNumber, todayStr)
+      );
+      if (otherDirty) {
+        return res.status(400).json({ error: "Existem outros apartamentos deste serviço com check-out ou pendência de limpeza. Priorize os apartamentos sujos primeiro." });
+      }
+    }
+  }
+
+  const now = new Date();
+  flat.status = "in_progress";
+  flat.startedAt = now.toISOString();
+  flat.workerName = worker.mainWorker.name;
+  flat.workerCpf = worker.mainWorker.cpf;
+  flat.wasCleanWhenStarted = !isDirty;
+
+  if (order.estimatedDurationHours && Number(order.estimatedDurationHours) > 0) {
+    flat.estimatedFinishAt = new Date(now.getTime() + Number(order.estimatedDurationHours) * 3600 * 1000).toISOString();
+  } else {
+    flat.estimatedFinishAt = null;
+  }
+
+  if (order.status === "draft") {
+    order.status = "active";
+  }
+
+  saveDatabase("service_flat_start");
+
+  // Multi-channel notifications
+  dispatchServiceNotifications("start", order, flat, worker);
+
+  res.json({
+    success: true,
+    flat,
+    prioritySuggested: cleanFlatMode === "always" ? isDirty : false
+  });
+});
+
+// POST /api/service/public/:token/flats/:flatId/finish — Finaliza serviço no apartamento
+app.post("/api/service/public/:token/flats/:flatId/finish", async (req, res) => {
+  const { token, flatId } = req.params;
+  const order = (db.serviceOrders || []).find(o => o.token === token);
+  if (!order) return res.status(404).json({ error: "Ordem de serviço não encontrada ou link inválido." });
+
+  const fId = Number(flatId);
+  const flat = (order.flats || []).find(f => Number(f.flatId) === fId || String(f.flatNumber) === String(flatId));
+  if (!flat) return res.status(404).json({ error: "Apartamento não encontrado nesta ordem de serviço." });
+
+  if (flat.status !== "in_progress") {
+    return res.status(400).json({ error: "Apartamento não está com serviço em andamento." });
+  }
+
+  // 1. Se flat estava limpo: needsCleaning é obrigatório no body (400 if missing)
+  if (flat.wasCleanWhenStarted === true) {
+    if (req.body.needsCleaning === undefined || req.body.needsCleaning === null || typeof req.body.needsCleaning !== "boolean") {
+      return res.status(400).json({ error: "O campo 'needsCleaning' (precisa de limpeza de camareira) é obrigatório para apartamentos que estavam limpos." });
+    }
+  }
+
+  // 2. Se requirePhotos: true na ordem: photos não pode ser vazio (400 if empty)
+  const photos = Array.isArray(req.body.photos) ? req.body.photos : [];
+  if (order.requirePhotos && photos.length === 0) {
+    return res.status(400).json({ error: "É obrigatório anexar pelo menos 1 foto para finalizar este serviço." });
+  }
+
+  const now = new Date();
+  flat.status = "done";
+  flat.finishedAt = now.toISOString();
+  flat.observations = req.body.observations ? String(req.body.observations).trim() : "";
+  flat.photos = photos;
+  flat.needsCleaning = typeof req.body.needsCleaning === "boolean" ? req.body.needsCleaning : null;
+  flat.estimatedFinishAt = null;
+
+  // Se precisa de camareira, enfileirar solicitação de limpeza dirty
+  if (flat.needsCleaning === true) {
+    if (!Array.isArray(db.cleaningRequests)) db.cleaningRequests = [];
+    const maxReqId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
+    const existingReq = db.cleaningRequests.find(r =>
+      (Number(r.flatId) === Number(flat.flatId) || String(r.flatNumber) === String(flat.flatNumber)) &&
+      r.requestDate === getTodayStr() &&
+      r.status !== "clean"
+    );
+    const cleanNote = `[OS: ${order.title}] Limpeza pós-serviço solicitada pelo prestador. Obs: ${flat.observations || "Nenhuma"}`.trim();
+    if (existingReq) {
+      existingReq.status = "dirty";
+      existingReq.adminNote = cleanNote;
+      existingReq.updatedAt = now.toISOString();
+    } else {
+      db.cleaningRequests.unshift({
+        id: maxReqId + 1,
+        flatId: flat.flatId,
+        flatNumber: flat.flatNumber,
+        requestDate: getTodayStr(),
+        source: "service_order",
+        status: "dirty",
+        isVacant: false,
+        adminNote: cleanNote,
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString()
+      });
+    }
+  }
+
+  saveDatabase("service_flat_finish");
+
+  const worker = (db.serviceWorkers || []).find(w => (w.token === token || w.serviceOrderId === order.id)) || { mainWorker: { name: flat.workerName || "Prestador", cpf: flat.workerCpf || "" } };
+
+  // Multi-channel notifications
+  dispatchServiceNotifications("finish", order, flat, worker);
+
+  res.json({
+    success: true,
+    flat
+  });
+});
+
+// POST /api/service/public/:token/flats/:flatId/photos — Upload de fotos do serviço
+app.post("/api/service/public/:token/flats/:flatId/photos", async (req, res) => {
+  try {
+    const { token, flatId } = req.params;
+    const order = (db.serviceOrders || []).find(o => o.token === token);
+    if (!order) return res.status(404).json({ error: "Ordem de serviço não encontrada." });
+
+    const fId = Number(flatId);
+    const flat = (order.flats || []).find(f => Number(f.flatId) === fId || String(f.flatNumber) === String(flatId));
+    if (!flat) return res.status(404).json({ error: "Apartamento não encontrado nesta ordem de serviço." });
+
+    let rawPhotos = [];
+    if (req.body.photo) rawPhotos.push(req.body.photo);
+    if (req.body.photoBase64) rawPhotos.push(req.body.photoBase64);
+    if (Array.isArray(req.body.photos)) rawPhotos.push(...req.body.photos);
+
+    if (rawPhotos.length === 0) {
+      return res.status(400).json({ error: "Nenhuma foto informada no corpo da requisição." });
+    }
+
+    const uploadedUrls = [];
+    for (let i = 0; i < rawPhotos.length; i++) {
+      const p = rawPhotos[i];
+      if (typeof p === "string" && p.trim()) {
+        const url = await uploadImageToStorage(p, `service_flat${flat.flatNumber || flatId}_${Date.now()}_${i}`, db, "services");
+        uploadedUrls.push(url);
+      }
+    }
+
+    res.json({
+      success: true,
+      url: uploadedUrls[0] || null,
+      urls: uploadedUrls
+    });
+  } catch (err) {
+    console.error("[ServiceOrder] Error uploading photo:", err);
+    res.status(500).json({ error: "Falha ao processar upload de foto: " + err.message });
+  }
 });
 
 // ── Observations / Issues ───────────────────────────────────────────────────
@@ -9231,9 +9974,37 @@ app.get("/api/pms/calendar", (req, res) => {
       breakfastToken: r.breakfastToken || (r.code ? `bfk_${r.code.toLowerCase().replace(/[^a-z0-9]/g, '')}` : `bfk_${r.id}`)
     };
   });
-  const blocks = (db.roomBlocks || []).filter(b => {
-    return b.startDate <= end && b.endDate >= start;
-  });
+  const serviceOrderBlocks = [];
+  for (const order of (db.serviceOrders || []).filter(o => o.status === "active")) {
+    for (const oflat of (order.flats || [])) {
+      if (oflat.status === "in_progress" && oflat.startedAt && oflat.estimatedFinishAt) {
+        const startDate = oflat.startedAt.substring(0, 10);
+        const endDate = oflat.estimatedFinishAt.substring(0, 10);
+        if (startDate <= end && endDate >= start) {
+          serviceOrderBlocks.push({
+            id: `service_block_${order.id}_${oflat.flatId}`,
+            flatId: oflat.flatId,
+            flatNumber: oflat.flatNumber,
+            startDate,
+            endDate,
+            reason: "service_order",
+            isServiceBlock: true,
+            title: `🔧 ${order.title}`,
+            serviceTitle: order.title,
+            workerName: oflat.workerName || "Prestador",
+            serviceOrderId: order.id,
+            notes: `Serviço em andamento: ${order.title} (${oflat.workerName || "Prestador"})`,
+            createdAt: oflat.startedAt
+          });
+        }
+      }
+    }
+  }
+
+  const blocks = [
+    ...(db.roomBlocks || []).filter(b => b.startDate <= end && b.endDate >= start),
+    ...serviceOrderBlocks
+  ];
 
   res.json({
     startDate: start,
