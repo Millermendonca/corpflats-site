@@ -119,6 +119,11 @@ export function FlatCard({
   const [attestedTaskIds, setAttestedTaskIds] = useState<number[]>([])
   const [isProcessing, setIsProcessing] = useState(false)
 
+  // Vistorias de Saída Reformuladas (Multi-Perguntas Dinâmicas)
+  const [surveyResponsesState, setSurveyResponsesState] = useState<Record<string, any>>({})
+  const [surveyPhotosState, setSurveyPhotosState] = useState<Record<string, { base64: string; sizeKb: number; origKb: number }>>({})
+  const [compressingSurveyPhotoKey, setCompressingSurveyPhotoKey] = useState<string | null>(null)
+
   // Live elapsed time for cleaning_now
   const [elapsedMinutes, setElapsedMinutes] = useState<number>(0)
   const [revertDirtyModalOpen, setRevertDirtyModalOpen] = useState(false)
@@ -442,6 +447,88 @@ export function FlatCard({
   })()
   const pendingPeriodicTasks = flat?.pendingPeriodicTasks || []
   const pendingSurveys = flat?.pendingSurveys || []
+
+  // Validação de Perguntas Obrigatórias de Vistoria
+  const getMissingRequiredSurveyQuestions = () => {
+    if (!pendingSurveys || pendingSurveys.length === 0) return []
+    const missing: string[] = []
+
+    for (const s of pendingSurveys) {
+      const qs = Array.isArray(s.questions) && s.questions.length > 0
+        ? s.questions
+        : [{ id: `q_${s.id}`, question: s.question || s.title, type: s.type || "yes_no", isRequired: true }]
+
+      for (const q of qs) {
+        if (!q.isRequired) continue
+        const key = `${s.id}_${q.id}`
+        const val = surveyResponsesState[key]
+        const photo = surveyPhotosState[key]
+
+        if (q.type === "photo") {
+          if (!photo?.base64) {
+            missing.push(`Foto: ${q.question}`)
+          }
+        } else if (q.type === "multi_choice") {
+          if (!Array.isArray(val) || val.length === 0) {
+            missing.push(q.question)
+          }
+        } else if (q.type === "scale") {
+          if (!val || Number(val) < 1) {
+            missing.push(q.question)
+          }
+        } else if (q.type === "text") {
+          if (!val || String(val).trim().length === 0) {
+            missing.push(q.question)
+          }
+        } else {
+          // yes_no e single_choice
+          if (val === undefined || val === null || String(val).trim() === "") {
+            missing.push(q.question)
+          }
+        }
+      }
+    }
+    return missing
+  }
+
+  const missingSurveyQuestions = getMissingRequiredSurveyQuestions()
+  const isSurveyValid = missingSurveyQuestions.length === 0
+
+  const handleSurveyPhotoUpload = async (surveyId: number, questionId: string, file: File) => {
+    const key = `${surveyId}_${questionId}`
+    setCompressingSurveyPhotoKey(key)
+    try {
+      const res = await compressImage(file, { maxWidth: 1280, maxHeight: 1280, quality: 0.8, preferredFormat: "image/webp" })
+      const origKb = Math.round(res.originalSizeBytes / 1024)
+      const compKb = Math.round(res.compressedSizeBytes / 1024)
+      setSurveyPhotosState(prev => ({
+        ...prev,
+        [key]: { base64: res.base64, sizeKb: compKb, origKb }
+      }))
+      setSurveyResponsesState(prev => ({
+        ...prev,
+        [key]: "[Foto Anexada]"
+      }))
+    } catch (e) {
+      toast({ title: "Erro ao processar foto", description: "Tente novamente.", variant: "destructive" })
+    } finally {
+      setCompressingSurveyPhotoKey(null)
+    }
+  }
+
+  const handleRemoveSurveyPhoto = (surveyId: number, questionId: string) => {
+    const key = `${surveyId}_${questionId}`
+    setSurveyPhotosState(prev => {
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+    setSurveyResponsesState(prev => {
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+  }
 
   const isPaidCleaning = typeof request?.isPaidCleaning === "boolean"
     ? request.isPaidCleaning
@@ -814,11 +901,30 @@ export function FlatCard({
     setIsProcessing(true)
     try {
       const taskIds = attestedTaskIds.length > 0 ? attestedTaskIds : pendingPeriodicTasks.map((t: any) => t.id)
-      const surveyAnswers = pendingSurveys.map((s: any) => ({
-        surveyId: s.id,
-        answer: surveyAnswer,
-        notes: surveyNotes,
-      }))
+      const surveyAnswers = pendingSurveys.map((s: any) => {
+        const qs = Array.isArray(s.questions) && s.questions.length > 0
+          ? s.questions
+          : [{ id: `q_${s.id}`, question: s.question || s.title, type: s.type || "yes_no" }]
+
+        const answers = qs.map((q: any) => {
+          const key = `${s.id}_${q.id}`
+          const val = surveyResponsesState[key]
+          const photo = surveyPhotosState[key]
+
+          return {
+            questionId: q.id,
+            questionText: q.question,
+            type: q.type,
+            answer: val !== undefined ? val : (q.type === "yes_no" ? "Sim" : ""),
+            photoBase64: photo?.base64 || null
+          }
+        })
+
+        return {
+          surveyId: s.id,
+          answers
+        }
+      })
 
       await fetch(`/api/cleaning/assignments/${request.id}/status`, {
         method: "PATCH",
@@ -1276,16 +1382,26 @@ export function FlatCard({
               </div>
             )}
 
-            {/* Vistoria / Tarefa Preventiva */}
+            {/* Vistoria de Saída Pendente */}
             {pendingSurveys.length > 0 && currentStatus !== "clean" && (
               <div className="bg-indigo-50/90 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 rounded-xl p-2.5 text-xs text-indigo-950 dark:text-indigo-200">
-                <div className="flex items-center gap-1.5 font-bold text-indigo-900 dark:text-indigo-300 mb-1">
-                  <ClipboardCheck className="w-3.5 h-3.5 text-indigo-600" />
-                  <span>Vistoria Pendente:</span>
+                <div className="flex items-center justify-between gap-1 mb-1">
+                  <div className="flex items-center gap-1.5 font-black text-indigo-900 dark:text-indigo-300">
+                    <ClipboardCheck className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Vistoria de Saída Pendente:</span>
+                  </div>
+                  <Badge variant="outline" className="text-[9px] font-black border-indigo-400 text-indigo-700 dark:text-indigo-300 bg-indigo-100/50 dark:bg-indigo-900/40">
+                    {pendingSurveys[0].questions?.length || 1} pergunta(s)
+                  </Badge>
                 </div>
-                <p className="text-[11px] text-indigo-800 dark:text-indigo-300 font-medium">
-                  {pendingSurveys[0].question}
+                <p className="text-[11px] text-indigo-900 dark:text-indigo-200 font-bold line-clamp-1">
+                  {pendingSurveys[0].title || pendingSurveys[0].question}
                 </p>
+                {pendingSurveys[0].description && (
+                  <p className="text-[10px] text-indigo-700/80 dark:text-indigo-400 font-medium line-clamp-1 mt-0.5">
+                    {pendingSurveys[0].description}
+                  </p>
+                )}
               </div>
             )}
 
@@ -1875,53 +1991,252 @@ export function FlatCard({
               </div>
             )}
 
-            {/* Vistorias Pendentes */}
+            {/* Vistorias de Saída Reformuladas (Multi-Perguntas) */}
             {pendingSurveys.length > 0 && (
-              <div className="bg-indigo-500/5 border border-indigo-500/20 rounded-2xl p-3.5 space-y-2.5">
-                <div className="font-black text-xs text-indigo-950 dark:text-indigo-200 flex items-center gap-1.5">
-                  <ClipboardCheck className="w-4 h-4 text-indigo-600" />
-                  <span>Pergunta de Vistoria de Saída:</span>
-                </div>
-                <p className="text-foreground font-bold text-xs">
-                  {pendingSurveys[0].question}
-                </p>
+              <div className="space-y-4 pt-1">
+                {pendingSurveys.map((survey: any) => {
+                  const questions = Array.isArray(survey.questions) && survey.questions.length > 0
+                    ? survey.questions
+                    : [{ id: `q_${survey.id}`, question: survey.question || survey.title, type: survey.type || "yes_no", isRequired: true }]
 
-                <div className="flex gap-2 pt-1">
-                  <Button 
-                    type="button" 
-                    size="sm"
-                    variant={surveyAnswer === "Não" ? "default" : "outline"} 
-                    className={cn(
-                      "rounded-xl text-xs font-bold h-8",
-                      surveyAnswer === "Não" ? "bg-emerald-600 text-white" : ""
-                    )}
-                    onClick={() => setSurveyAnswer("Não")}
-                  >
-                    ✓ Tudo Normal (Não)
-                  </Button>
-                  <Button 
-                    type="button" 
-                    size="sm"
-                    variant={surveyAnswer === "Sim" ? "destructive" : "outline"}
-                    className="rounded-xl text-xs font-bold h-8"
-                    onClick={() => setSurveyAnswer("Sim")}
-                  >
-                    ⚠️ Apresenta Defeito (Sim)
-                  </Button>
-                </div>
+                  return (
+                    <div key={survey.id} className="bg-indigo-50/60 dark:bg-indigo-950/20 border-2 border-indigo-200 dark:border-indigo-800 rounded-2xl p-4 space-y-3.5">
+                      <div className="flex items-center justify-between gap-2 border-b border-indigo-200/60 dark:border-indigo-800/60 pb-2">
+                        <div className="flex items-center gap-1.5">
+                          <ClipboardCheck className="w-4 h-4 text-indigo-600" />
+                          <span className="font-black text-xs text-indigo-950 dark:text-indigo-200 uppercase tracking-wide">
+                            {survey.title || "Vistoria de Saída"}
+                          </span>
+                        </div>
+                        <Badge variant="outline" className="text-[10px] font-bold text-indigo-700 dark:text-indigo-300 border-indigo-300 bg-indigo-100/50 dark:bg-indigo-900/40">
+                          {questions.length} pergunta{questions.length !== 1 ? "s" : ""}
+                        </Badge>
+                      </div>
 
-                {surveyAnswer === "Sim" && (
-                  <div className="pt-2">
-                    <Label htmlFor="snotes" className="text-[11px] font-bold block mb-1">Detalhes do problema:</Label>
-                    <Textarea 
-                      id="snotes" 
-                      value={surveyNotes} 
-                      onChange={e => setSurveyNotes(e.target.value)} 
-                      placeholder="Ex: Barulho na ventoinha do ar-condicionado, controle sem pilha..."
-                      className="resize-none h-16 text-xs rounded-xl"
-                    />
-                  </div>
-                )}
+                      {survey.description && (
+                        <p className="text-[11px] text-indigo-900/80 dark:text-indigo-300 font-medium">
+                          {survey.description}
+                        </p>
+                      )}
+
+                      {/* Lista de Perguntas */}
+                      <div className="space-y-3">
+                        {questions.map((q: any, qIdx: number) => {
+                          const key = `${survey.id}_${q.id}`
+                          const currentVal = surveyResponsesState[key]
+                          const currentPhoto = surveyPhotosState[key]
+                          const isCompressingThis = compressingSurveyPhotoKey === key
+
+                          return (
+                            <div key={q.id || qIdx} className="p-3 bg-background border rounded-xl space-y-2">
+                              <div className="flex items-start justify-between gap-2">
+                                <span className="font-bold text-xs text-foreground">
+                                  {qIdx + 1}. {q.question}
+                                </span>
+                                {q.isRequired ? (
+                                  <Badge className="bg-amber-500/15 text-amber-800 dark:text-amber-300 text-[9px] font-bold shrink-0 border-0">
+                                    Obrigatória
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="secondary" className="text-[9px] shrink-0">
+                                    Opcional
+                                  </Badge>
+                                )}
+                              </div>
+
+                              {/* 1. SIM / NÃO */}
+                              {q.type === "yes_no" && (
+                                <div className="grid grid-cols-2 gap-2 pt-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setSurveyResponsesState(prev => ({ ...prev, [key]: "Sim" }))}
+                                    className={cn(
+                                      "p-2 rounded-xl text-xs font-bold border transition-all text-center",
+                                      currentVal === "Sim"
+                                        ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                                        : "bg-muted/40 hover:bg-muted text-foreground border-border"
+                                    )}
+                                  >
+                                    ✓ Sim
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setSurveyResponsesState(prev => ({ ...prev, [key]: "Não" }))}
+                                    className={cn(
+                                      "p-2 rounded-xl text-xs font-bold border transition-all text-center",
+                                      currentVal === "Não"
+                                        ? "bg-rose-600 text-white border-rose-600 shadow-xs"
+                                        : "bg-muted/40 hover:bg-muted text-foreground border-border"
+                                    )}
+                                  >
+                                    ✕ Não
+                                  </button>
+                                </div>
+                              )}
+
+                              {/* 2. ESCOLHA ÚNICA (SINGLE CHOICE) */}
+                              {q.type === "single_choice" && (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-0.5">
+                                  {(q.options || []).map((opt: string, oIdx: number) => {
+                                    const isSelected = currentVal === opt
+                                    return (
+                                      <button
+                                        key={oIdx}
+                                        type="button"
+                                        onClick={() => setSurveyResponsesState(prev => ({ ...prev, [key]: opt }))}
+                                        className={cn(
+                                          "p-2 rounded-xl text-xs font-bold border transition-all text-left flex items-center gap-2",
+                                          isSelected
+                                            ? "bg-primary text-primary-foreground border-primary shadow-xs"
+                                            : "bg-muted/40 hover:bg-muted text-foreground border-border"
+                                        )}
+                                      >
+                                        <div className={cn(
+                                          "w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0",
+                                          isSelected ? "border-white bg-white/20" : "border-muted-foreground"
+                                        )}>
+                                          {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                                        </div>
+                                        <span className="truncate">{opt}</span>
+                                      </button>
+                                    )
+                                  })}
+                                </div>
+                              )}
+
+                              {/* 3. MÚLTIPLA ESCOLHA (MULTI CHOICE) */}
+                              {q.type === "multi_choice" && (
+                                <div className="space-y-1.5 pt-0.5">
+                                  {(q.options || []).map((opt: string, oIdx: number) => {
+                                    const selectedArr: string[] = Array.isArray(currentVal) ? currentVal : []
+                                    const isChecked = selectedArr.includes(opt)
+                                    return (
+                                      <div
+                                        key={oIdx}
+                                        onClick={() => {
+                                          const next = isChecked
+                                            ? selectedArr.filter(x => x !== opt)
+                                            : [...selectedArr, opt]
+                                          setSurveyResponsesState(prev => ({ ...prev, [key]: next }))
+                                        }}
+                                        className={cn(
+                                          "p-2 rounded-xl text-xs font-semibold border cursor-pointer transition-all flex items-center gap-2",
+                                          isChecked
+                                            ? "bg-primary/10 border-primary text-primary font-bold shadow-2xs"
+                                            : "bg-muted/30 hover:bg-muted/60 text-foreground border-border"
+                                        )}
+                                      >
+                                        <Checkbox checked={isChecked} className="rounded-md" />
+                                        <span>{opt}</span>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              )}
+
+                              {/* 4. ESCALA NUMÉRICA (SCALE 1 A 5) */}
+                              {q.type === "scale" && (
+                                <div className="flex items-center gap-1.5 pt-0.5">
+                                  {[1, 2, 3, 4, 5].map((num) => {
+                                    const isSelected = Number(currentVal) === num
+                                    return (
+                                      <button
+                                        key={num}
+                                        type="button"
+                                        onClick={() => setSurveyResponsesState(prev => ({ ...prev, [key]: num }))}
+                                        className={cn(
+                                          "flex-1 p-2 rounded-xl text-xs font-black border transition-all flex flex-col items-center gap-0.5",
+                                          isSelected
+                                            ? "bg-amber-500 text-white border-amber-500 shadow-xs"
+                                            : "bg-muted/40 hover:bg-muted text-foreground border-border"
+                                        )}
+                                      >
+                                        <span>{num}</span>
+                                        <Star className={cn("w-3 h-3", isSelected ? "fill-white text-white" : "text-amber-500")} />
+                                      </button>
+                                    )
+                                  })}
+                                </div>
+                              )}
+
+                              {/* 5. TEXTO LIVRE */}
+                              {q.type === "text" && (
+                                <Textarea 
+                                  value={currentVal || ""}
+                                  onChange={e => setSurveyResponsesState(prev => ({ ...prev, [key]: e.target.value }))}
+                                  placeholder="Digite sua resposta ou detalhes observados..."
+                                  rows={2}
+                                  className="text-xs resize-none rounded-xl"
+                                />
+                              )}
+
+                              {/* 6. FOTO COM COMPRESSÃO AUTOMÁTICA */}
+                              {q.type === "photo" && (
+                                <div className="space-y-2 pt-0.5">
+                                  {currentPhoto ? (
+                                    <div className="flex items-center gap-3 p-2 bg-muted/40 border rounded-xl">
+                                      <img 
+                                        src={currentPhoto.base64} 
+                                        alt="Preview" 
+                                        className="w-16 h-16 rounded-lg object-cover border"
+                                      />
+                                      <div className="flex-1 min-w-0 text-[11px]">
+                                        <span className="font-bold text-emerald-600 dark:text-emerald-400 block flex items-center gap-1">
+                                          <Check className="w-3.5 h-3.5" /> Foto capturada!
+                                        </span>
+                                        <span className="text-[10px] text-muted-foreground block mt-0.5">
+                                          Comprimida: {currentPhoto.sizeKb} KB (era {currentPhoto.origKb} KB)
+                                        </span>
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="ghost"
+                                          onClick={() => handleRemoveSurveyPhoto(survey.id, q.id)}
+                                          className="text-[10px] h-6 px-1.5 text-destructive hover:bg-destructive/10 mt-1"
+                                        >
+                                          <Trash2 className="w-3 h-3 mr-1" /> Remover / Trocar Foto
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div>
+                                      <label className="cursor-pointer">
+                                        <input 
+                                          type="file" 
+                                          accept="image/*" 
+                                          capture="environment"
+                                          className="hidden"
+                                          disabled={isCompressingThis}
+                                          onChange={(e) => {
+                                            const file = e.target.files?.[0]
+                                            if (file) handleSurveyPhotoUpload(survey.id, q.id, file)
+                                          }}
+                                        />
+                                        <div className="p-3 border-2 border-dashed border-indigo-300 dark:border-indigo-700 hover:border-indigo-500 rounded-xl text-center transition-all bg-indigo-50/30 dark:bg-indigo-950/10 text-indigo-950 dark:text-indigo-200">
+                                          {isCompressingThis ? (
+                                            <div className="flex items-center justify-center gap-1.5 text-xs font-bold text-primary">
+                                              <Loader2 className="w-4 h-4 animate-spin" />
+                                              <span>Compactando foto...</span>
+                                            </div>
+                                          ) : (
+                                            <div className="flex items-center justify-center gap-2 text-xs font-bold">
+                                              <Camera className="w-4 h-4 text-indigo-600" />
+                                              <span>Tirar Foto / Anexar da Galeria</span>
+                                            </div>
+                                          )}
+                                        </div>
+                                      </label>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             )}
           </div>
@@ -1937,12 +2252,18 @@ export function FlatCard({
             <Button 
               className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl h-9.5 text-xs shadow-xs"
               onClick={submitCompletion}
-              disabled={isProcessing || (pendingPeriodicTasks.length > 0 && attestedTaskIds.length < pendingPeriodicTasks.length)}
+              disabled={
+                isProcessing || 
+                (pendingPeriodicTasks.length > 0 && attestedTaskIds.length < pendingPeriodicTasks.length) ||
+                !isSurveyValid
+              }
             >
               {isProcessing ? "Gravando..." : (
                 pendingPeriodicTasks.length > 0 && attestedTaskIds.length < pendingPeriodicTasks.length
                   ? `Marque o atestado das ${pendingPeriodicTasks.length} tarefas`
-                  : "Confirmar Atestado & Concluir Limpeza"
+                  : !isSurveyValid
+                    ? `Responda à vistoria (${missingSurveyQuestions.length} obrigatória(s))`
+                    : "Confirmar Atestado & Concluir Limpeza"
               )}
             </Button>
           </DialogFooter>

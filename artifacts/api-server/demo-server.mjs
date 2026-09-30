@@ -6153,9 +6153,28 @@ app.get("/api/reservations/checkouts", (req, res) => {
 
     const pendingSurveys = [];
     for (const s of activeSurveys) {
-      const alreadyAnswered = s.responses.some(r => r.flatId === flat.id);
+      // Se a vistoria tiver flatIds especificados, só se aplica aos flats selecionados
+      const appliesToFlat = !Array.isArray(s.flatIds) || s.flatIds.length === 0 || s.flatIds.map(Number).includes(Number(flat.id));
+      if (!appliesToFlat) continue;
+
+      // Só aparece se o flat ainda NÃO tiver respondido
+      const alreadyAnswered = Array.isArray(s.responses) && s.responses.some(r => Number(r.flatId) === Number(flat.id));
       if (!alreadyAnswered) {
-        pendingSurveys.push({ id: s.id, title: s.title, question: s.question, type: s.type });
+        pendingSurveys.push({
+          id: s.id,
+          title: s.title,
+          description: s.description || "",
+          flatIds: s.flatIds || [],
+          questions: Array.isArray(s.questions) && s.questions.length > 0
+            ? s.questions
+            : [{
+                id: `q_${s.id}_default`,
+                question: s.question || s.title,
+                type: s.type || "yes_no",
+                options: [],
+                isRequired: true
+              }]
+        });
       }
     }
 
@@ -6905,18 +6924,59 @@ app.patch("/api/cleaning/assignments/:requestId/status", (req, res) => {
       }
 
       for (const ans of surveyAnswers) {
-        const survey = db.surveys.find(s => s.id === Number(ans.surveyId));
+        const survey = (db.surveys || []).find(s => s.id === Number(ans.surveyId));
         if (survey) {
+          if (!Array.isArray(survey.responses)) survey.responses = [];
           const flat = db.flats.find(f => f.id === item.flatId);
-          survey.responses.push({
+
+          let parsedAnswers = [];
+          if (Array.isArray(ans.answers)) {
+            for (const a of ans.answers) {
+              let photoUrl = a.photoUrl || null;
+              if (a.type === "photo" && a.photoBase64) {
+                try {
+                  photoUrl = await uploadImageToStorage(a.photoBase64, `survey_flat${item.flatId}_${a.questionId}`, db, "surveys");
+                } catch (err) {
+                  console.warn("Falha upload foto vistoria, salvando base64:", err.message);
+                  photoUrl = a.photoBase64;
+                }
+              }
+              parsedAnswers.push({
+                questionId: a.questionId,
+                questionText: a.questionText || "",
+                type: a.type || "text",
+                answer: a.answer ?? "",
+                photoUrl: photoUrl || null
+              });
+            }
+          } else {
+            // Compatibilidade retroativa
+            parsedAnswers.push({
+              questionId: "q_legacy",
+              questionText: survey.question || survey.title,
+              type: survey.type || "yes_no",
+              answer: ans.answer || "Sim",
+              notes: ans.notes || null
+            });
+          }
+
+          const existingRespIdx = survey.responses.findIndex(r => Number(r.flatId) === Number(item.flatId));
+          const respObj = {
+            id: `resp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
             flatId: item.flatId,
             flatNumber: flat ? flat.number : String(item.flatId),
-            answer: ans.answer || "Sim",
-            notes: ans.notes || null,
+            cleaningRequestId: item.id,
             answeredByUserId: item.assignedUserId || (userAuth ? userAuth.id : 2),
-            answeredByUsername: userAuth ? userAuth.username : "Camareira",
+            answeredByUsername: userAuth ? (userAuth.name || userAuth.username) : "Camareira",
             answeredAt: now,
-          });
+            answers: parsedAnswers
+          };
+
+          if (existingRespIdx >= 0) {
+            survey.responses[existingRespIdx] = respObj;
+          } else {
+            survey.responses.push(respObj);
+          }
         }
       }
     } else if (status === "dirty") {
@@ -7229,43 +7289,140 @@ app.patch("/api/cleaning/admin/record/:id", (req, res) => {
 
 // ── Surveys Endpoints ───────────────────────────────────────────────────────
 app.get("/api/surveys", (req, res) => {
-  res.json(db.surveys);
+  res.json(db.surveys || []);
 });
 
 app.get("/api/surveys/active", (req, res) => {
-  res.json(db.surveys.filter(s => s.isActive));
+  res.json((db.surveys || []).filter(s => s.isActive));
 });
 
 app.post("/api/surveys", (req, res) => {
-  const { title, question, type = "yes_no", isActive = true } = req.body;
-  if (!title || !question) return res.status(400).json({ error: "Título e pergunta são obrigatórios" });
+  const { title, description, flatIds = [], questions = [], type = "yes_no", isActive = true } = req.body;
+  if (!title) return res.status(400).json({ error: "Título da vistoria é obrigatório" });
+
+  // Normalizar perguntas caso venham no novo formato ou formato legado
+  let normalizedQuestions = [];
+  if (Array.isArray(questions) && questions.length > 0) {
+    normalizedQuestions = questions.map((q, idx) => ({
+      id: q.id || `q_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
+      question: q.question || "",
+      type: q.type || "yes_no",
+      options: Array.isArray(q.options) ? q.options.filter(Boolean) : [],
+      scaleMin: Number(q.scaleMin) || 1,
+      scaleMax: Number(q.scaleMax) || 5,
+      isRequired: q.isRequired !== false
+    }));
+  } else if (req.body.question) {
+    normalizedQuestions = [{
+      id: `q_${Date.now()}_1`,
+      question: req.body.question,
+      type: type || "yes_no",
+      options: [],
+      scaleMin: 1,
+      scaleMax: 5,
+      isRequired: true
+    }];
+  }
 
   const newSurvey = {
     id: db.surveys.length > 0 ? Math.max(...db.surveys.map(s => s.id)) + 1 : 1,
-    title,
-    question,
-    type,
+    title: title.trim(),
+    description: description ? description.trim() : "",
+    flatIds: Array.isArray(flatIds) ? flatIds.map(Number).filter(Boolean) : [],
+    questions: normalizedQuestions,
     isActive: Boolean(isActive),
     createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
     responses: []
   };
+
+  if (!Array.isArray(db.surveys)) db.surveys = [];
   db.surveys.unshift(newSurvey);
   saveDatabase();
   res.status(201).json(newSurvey);
 });
 
+app.put("/api/surveys/:id", (req, res) => {
+  const survey = (db.surveys || []).find(s => s.id === Number(req.params.id));
+  if (!survey) return res.status(404).json({ error: "Pesquisa não encontrada" });
+
+  const { title, description, flatIds, questions, isActive } = req.body;
+  if (title !== undefined) survey.title = String(title).trim();
+  if (description !== undefined) survey.description = String(description).trim();
+  if (flatIds !== undefined) survey.flatIds = Array.isArray(flatIds) ? flatIds.map(Number).filter(Boolean) : [];
+  if (isActive !== undefined) survey.isActive = Boolean(isActive);
+
+  if (Array.isArray(questions)) {
+    survey.questions = questions.map((q, idx) => ({
+      id: q.id || `q_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
+      question: q.question || "",
+      type: q.type || "yes_no",
+      options: Array.isArray(q.options) ? q.options.filter(Boolean) : [],
+      scaleMin: Number(q.scaleMin) || 1,
+      scaleMax: Number(q.scaleMax) || 5,
+      isRequired: q.isRequired !== false
+    }));
+  }
+
+  survey.updatedAt = new Date().toISOString();
+  saveDatabase();
+  res.json(survey);
+});
+
 app.patch("/api/surveys/:id/toggle", (req, res) => {
-  const survey = db.surveys.find(s => s.id === Number(req.params.id));
+  const survey = (db.surveys || []).find(s => s.id === Number(req.params.id));
   if (!survey) return res.status(404).json({ error: "Pesquisa não encontrada" });
   survey.isActive = !survey.isActive;
+  survey.updatedAt = new Date().toISOString();
   saveDatabase();
   res.json(survey);
 });
 
 app.delete("/api/surveys/:id", (req, res) => {
-  db.surveys = db.surveys.filter(s => s.id !== Number(req.params.id));
+  db.surveys = (db.surveys || []).filter(s => s.id !== Number(req.params.id));
   saveDatabase();
   res.json({ success: true });
+});
+
+// Resetar resposta de um flat específico para que ele responda novamente
+app.post("/api/surveys/:id/reset-flat/:flatId", (req, res) => {
+  const survey = (db.surveys || []).find(s => s.id === Number(req.params.id));
+  if (!survey) return res.status(404).json({ error: "Pesquisa não encontrada" });
+
+  const targetFlatId = Number(req.params.flatId);
+  survey.responses = (survey.responses || []).filter(r => Number(r.flatId) !== targetFlatId);
+  survey.updatedAt = new Date().toISOString();
+  saveDatabase();
+  res.json({ success: true, message: `Vistoria reiniciada para o flat ${targetFlatId}.` });
+});
+
+// Excluir resposta específica
+app.delete("/api/surveys/:id/responses/:responseId", (req, res) => {
+  const survey = (db.surveys || []).find(s => s.id === Number(req.params.id));
+  if (!survey) return res.status(404).json({ error: "Pesquisa não encontrada" });
+
+  survey.responses = (survey.responses || []).filter(r => String(r.id) !== String(req.params.responseId));
+  survey.updatedAt = new Date().toISOString();
+  saveDatabase();
+  res.json({ success: true });
+});
+
+// Excluir foto de uma resposta para liberar espaço de armazenamento
+app.delete("/api/surveys/:id/responses/:responseId/photos/:questionId", (req, res) => {
+  const survey = (db.surveys || []).find(s => s.id === Number(req.params.id));
+  if (!survey) return res.status(404).json({ error: "Pesquisa não encontrada" });
+
+  const resp = (survey.responses || []).find(r => String(r.id) === String(req.params.responseId));
+  if (!resp) return res.status(404).json({ error: "Resposta não encontrada" });
+
+  const answerItem = (resp.answers || []).find(a => String(a.questionId) === String(req.params.questionId));
+  if (answerItem) {
+    answerItem.photoUrl = null;
+    answerItem.answer = "[Foto excluída para liberar espaço]";
+  }
+
+  saveDatabase();
+  res.json({ success: true, message: "Foto excluída com sucesso para liberar espaço." });
 });
 
 // ── Periodic Tasks (Manutenções Preventivas & Recorrentes) ───────────────────
