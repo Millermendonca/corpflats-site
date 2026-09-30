@@ -24869,12 +24869,60 @@ async function bootstrapShoppingTables() {
 }
 bootstrapShoppingTables();
 
+// ── Auto-categorização inteligente (IA por regras de palavras-chave) ──────────
+const FOOD_SUBCATEGORIES = new Set(["Carnes","Frios","Laticínios","Padaria","Bebidas","Secos & Grãos","Hortifrúti","Temperos","Mercearia","Conservas","Congelados","Café da Manhã"]);
+const AUTO_CATEGORY_RULES = [
+  { cats: ["Carnes"],           kw: ["carne","frango","peixe","file","file de","linguica","salsicha","bacon","hamburguer","alcatra","costela","bife","camarao","fruto do mar","tilapia","salmao","atum fresco","picanha","maminha","patinho","pernil","pato","chester"] },
+  { cats: ["Frios"],            kw: ["presunto","mortadela","salame","salaminho","peito de peru","blanquet","copa","lombo defumado","pastrami","mucarela","mussarela","prato"] },
+  { cats: ["Laticínios"],       kw: ["leite","creme de leite","nata","leite condensado","iogurte","queijo","ricota","cottage","requeijao","manteiga","margarina","ghee","cream cheese"] },
+  { cats: ["Padaria"],          kw: ["pao","bolo","biscoito","bolacha","croissant","torrada","rosca","broa","wafer","cookie","muffin","cupcake","baguete"] },
+  { cats: ["Bebidas"],          kw: ["agua","suco","nectar","refrigerante","cerveja","vinho","energetico","isotonico","coca","pepsi","guarana","sprite","fanta","cha","kombucha","gin","vodka","whisky","sake","tonica","limonada","caldo de cana","agua de coco"] },
+  { cats: ["Secos & Grãos"],    kw: ["arroz","feijao","macarrao","espaguete","farinha","amido","fuba","aveia","granola","lentilha","grao de bico","quinoa","cuscuz","canjica","tapioca","polenta","flocao","triguilho","chia"] },
+  { cats: ["Temperos"],         kw: ["sal","pimenta","cominho","colorau","acafrao","louro","oregano","manjericao","caldo","shoyu","molho de soja","vinagre","tempero","chimichurri","páprica","paprica","gengibre","canela","noz moscada"] },
+  { cats: ["Mercearia"],        kw: ["acucar","azeite","oleo","molho","extrato de tomate","ketchup","maionese","mostarda","geleia","mel","nutella","chocolate","cafe","nescafe","cappuccino","achocolatado","leite em po","proteina"] },
+  { cats: ["Hortifrúti"],       kw: ["alface","tomate","cebola","batata","cenoura","abobrinha","pimentao","pepino","brocolis","couve","espinafre","banana","maca","laranja","limao","uva","melao","manga","abacaxi","morango","mamao","abacate","coco","verdura","legume","fruta","salada","rucula","agriao","berinjela","chuchu","inhame","mandioca","macaxeira","jiló"] },
+  { cats: ["Conservas"],        kw: ["atum","sardinha","ervilha enlatada","azeitona","palmito","cogumelo","picles","champignon","carne seca","bacalhau","milho enlatado"] },
+  { cats: ["Congelados"],       kw: ["sorvete","lasanha congelada","pizza congelada","nugget","empanado","hamburguer congelado","pao de queijo congelado","batata frita congelada"] },
+  { cats: ["Café da Manhã"],    kw: ["cafe da manha","nescau","milo","granola cafe","torrada cafe"] },
+  { cats: ["Limpeza"],          kw: ["detergente","sabao em po","desinfetante","cloro","alcool","cif","x14","veja","ajax","multiuso","desengordurante","amaciante","agua sanitaria","alvejante","removedor","limpa forno","limpa pedra","tira manchas","qboa","soda caustica","flash","bom bril","bombril","palha de aco"] },
+  { cats: ["Higiene"],          kw: ["xampu","shampoo","sabonete","pasta de dente","creme dental","escova de dente","fio dental","absorvente","desodorante","papel higienico","fralda","algodao","cotonete","lamina","barbear","hidratante","protetor solar","condicionador","creme","loção","locao","enxaguante","antisseptico","curativo","band aid","luva descartavel"] },
+  { cats: ["Limpeza"],          kw: ["saco de lixo","saco lixo","pano de chao","vassoura","rodo","balde","esponja","pano multiuso","luva de limpeza","esfregao","mop","recolhedor","pa de lixo"] },
+  { cats: ["Governança"],       kw: ["lampada","pilha","bateria","pano de prato","pano","cheirinho","aromatizador","inseticida","repelente","vela","fosforo","fita","durex","tesoura","elástico","clipe","grampo"] },
+];
+
+function autoCategorize(name) {
+  const n = name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const found = new Set();
+  for (const { cats, kw } of AUTO_CATEGORY_RULES) {
+    for (const k of kw) {
+      if (n.includes(k)) { cats.forEach(c => found.add(c)); break; }
+    }
+  }
+  // Adiciona super-categoria "Alimentos" para qualquer item de comida/bebida
+  const isFood = [...found].some(c => FOOD_SUBCATEGORIES.has(c));
+  if (isFood) found.add("Alimentos");
+  if (found.size === 0) found.add("Geral");
+  return JSON.stringify([...found]);
+}
+
+function parseCategories(category) {
+  if (!category) return ["Geral"];
+  try {
+    const p = JSON.parse(category);
+    if (Array.isArray(p)) return p;
+  } catch {}
+  return [String(category)]; // fallback para strings antigas
+}
+
 function mapShoppingRow(row) {
+  const rawCat = row.category || "Geral";
+  const categories = parseCategories(rawCat);
   return {
     id: String(row.id),
     title: row.title,
     quantity: row.quantity || "",
-    category: row.category || "Limpeza",
+    category: rawCat,       // raw para compatibilidade
+    categories,             // array parseado
     notes: row.notes || "",
     completed: row.completed,
     sortOrder: row.sort_order ?? 0,
@@ -24944,6 +24992,20 @@ app.patch("/api/shopping-list/reorder", async (req, res) => {
   res.json({ ok: true });
 });
 
+// GET /api/shopping-list/categories — categorias com contagem
+app.get("/api/shopping-list/categories", async (req, res) => {
+  const allItems = [];
+  if (pgPool) {
+    try {
+      const result = await pgPool.query(`SELECT category FROM shopping_list WHERE completed = false`);
+      result.rows.forEach(r => { allItems.push(...parseCategories(r.category)); });
+    } catch {}
+  }
+  const counts = {};
+  allItems.forEach(c => { counts[c] = (counts[c] || 0) + 1; });
+  return res.json(Object.entries(counts).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count));
+});
+
 // GET /api/shopping-list
 app.get("/api/shopping-list", async (req, res) => {
   if (pgPool) {
@@ -24967,12 +25029,14 @@ app.get("/api/shopping-list", async (req, res) => {
 
 // POST /api/shopping-list
 app.post("/api/shopping-list", async (req, res) => {
-  const { title, quantity, category = "Limpeza", notes } = req.body || {};
+  const { title, quantity, notes } = req.body || {};
   if (!title || !String(title).trim()) {
     return res.status(400).json({ error: "Título do item é obrigatório." });
   }
   const userAuth = getAuthUser(req);
   const name = userAuth?.name || userAuth?.username || "Colaborador";
+  // Auto-categorização por IA
+  const category = autoCategorize(String(title).trim());
 
   if (pgPool) {
     try {
@@ -24984,7 +25048,7 @@ app.post("/api/shopping-list", async (req, res) => {
         [
           String(title).trim(),
           quantity ? String(quantity).trim() : null,
-          category || "Limpeza",
+          category,
           notes ? String(notes).trim() : null,
           sortOrder,
           userAuth?.id || 1,
