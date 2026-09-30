@@ -1067,15 +1067,12 @@ export function FlatCard({
                   <h3 className="text-lg font-black tracking-tight text-foreground whitespace-nowrap shrink-0">
                     Apt {flat.flatNumber}
                   </h3>
-                  {isPriority && !isInstruction && (
+                  {/* Camareira (não-admin): Exibe badge ao lado do número do apto */}
+                  {isPriority && !isInstruction && !isAdmin && (
                     <Badge 
                       variant="destructive" 
-                      onClick={isAdmin ? togglePriority : undefined}
-                      title={isAdmin ? "Prioridade Alta Ativa (Clique para desativar)" : "Prioridade Alta"}
-                      className={cn(
-                        "animate-pulse bg-red-600 text-white text-[10px] font-black px-1.5 py-0.5 flex items-center gap-0.5 shrink-0",
-                        isAdmin && "cursor-pointer hover:bg-red-700 select-none"
-                      )}
+                      title="Prioridade Alta"
+                      className="animate-pulse bg-red-600 text-white text-[10px] font-black px-1.5 py-0.5 flex items-center gap-0.5 shrink-0 select-none"
                     >
                       <Flame className="w-3 h-3 fill-current" />
                       <span>Prioridade</span>

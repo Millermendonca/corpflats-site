@@ -5175,7 +5175,46 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       }
     }
 
-    // 4. Detecção de Previsão de Chegada para Check-in de Hoje (Priorização Automática de Limpeza)
+    // Função auxiliar: Analisa o texto da mensagem para extrair previsão de chegada e verificar se é cedo/próximo das 14h
+    function parseArrivalFromWhatsAppText(text) {
+      if (!text || typeof text !== "string") return null;
+      const t = text.trim();
+      const lower = t.toLowerCase();
+
+      // 1. Termos de chegada imediata ou no hotel
+      if (/\b(j[aá]\s+(estou|cheguei|no\s+hotel)|chegando\s+agora|chegando|estou\s+aqui|na\s+porta|j[aá]\s+no\s+hotel)\b/i.test(lower)) {
+        return { raw: t, formatted: "Chegando agora", isEarly: true };
+      }
+      if (/\b(meio\s*dia|12h|12:00)\b/i.test(lower)) {
+        return { raw: t, formatted: "12:00", isEarly: true };
+      }
+
+      // 2. Extração de horário com contexto ou isolado
+      const timeRegex = /(?:previs[aã]o|cheg(?:o|ar|aremos|ada)?|por\s+volta\s+d[ea]|umas?|[aà]s?|\b)\s*([0-2]?\d)(?:[:hH](\d{2})?|\s*h(?:oras?)?)\b/i;
+      const colonMatch = /\b([0-2]?\d):(\d{2})\b/.exec(t);
+      const match = colonMatch || t.match(timeRegex);
+
+      if (match) {
+        const hour = parseInt(match[1], 10);
+        const min = parseInt(match[2] || "0", 10);
+        if (!isNaN(hour) && hour >= 0 && hour <= 23 && min >= 0 && min <= 59) {
+          // Descarta se não houver contexto de chegada ou horário e mensagem for longa (evita números soltos)
+          const hasArrivalContext = /(?:previs[aã]o|cheg|hor[aá]rio|[aà]s|umas?|volta|tarde|noite|manh[aã]|h\b)/i.test(lower) || /^\s*[aà]s?\s*[0-2]?\d(?:[:hH]\d{2}|\s*h)?\s*$/i.test(t);
+          if (!hasArrivalContext && t.length > 15) {
+            return null;
+          }
+          const totalMinutes = hour * 60 + min;
+          // Cedo ou próximo das 14h: das 06:00 (360) até 15:00 (900)
+          const isEarly = totalMinutes >= 360 && totalMinutes <= 900;
+          const formatted = `${String(hour).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+          return { raw: t, formatted, isEarly };
+        }
+      }
+
+      return null;
+    }
+
+    // 4. Detecção de Previsão de Chegada para Check-in de Hoje (Priorização Automática de Limpeza apenas se for cedo / próximo das 14h)
     if (!incomingInfo.fromMe && !incomingInfo.isGroup && incomingInfo.text && cleanTarget) {
       try {
         const { todayStr, timeStr } = getBrasiliaDateParts();
@@ -5187,34 +5226,44 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         });
 
         if (todayRes) {
-          const flatNum = String(todayRes.flatNumber || "");
-          const flatId = todayRes.flatId;
-          const cleanReq = (db.cleaningRequests || []).find(c =>
-            (c.flatId === flatId || String(c.flatNumber) === flatNum) &&
-            (c.requestDate === todayStr || c.effectiveDate === todayStr)
-          );
+          // Extrai horário/previsão de chegada real da mensagem (evita mensagens genéricas como 'ok', 'obrigado', etc.)
+          const arrivalInfo = parseArrivalFromWhatsAppText(incomingInfo.text);
+          if (arrivalInfo) {
+            const flatNum = String(todayRes.flatNumber || "");
+            const flatId = todayRes.flatId;
+            const cleanReq = (db.cleaningRequests || []).find(c =>
+              (c.flatId === flatId || String(c.flatNumber) === flatNum) &&
+              (c.requestDate === todayStr || c.effectiveDate === todayStr)
+            );
 
-          // Se o flat ainda não estiver concluído/limpo, marca como prioridade máxima no quadro de governança
-          if (cleanReq && cleanReq.status !== "clean") {
-            cleanReq.isPriority = true;
-            cleanReq.priorityReason = `Hóspede respondeu WhatsApp às ${brDate.toLocaleTimeString("pt-BR")}: "${incomingInfo.text.trim().substring(0, 80)}"`;
-            cleanReq.updatedAt = new Date().toISOString();
-          }
+            let wasPrioritized = false;
+            // Se o horário for cedo ou muito próximo das 14:00 (<= 15:00) e o flat ainda não estiver limpo, marca prioridade
+            if (arrivalInfo.isEarly && cleanReq && cleanReq.status !== "clean") {
+              cleanReq.isPriority = true;
+              cleanReq.priorityReason = `Hóspede informou chegada cedo (${arrivalInfo.formatted}) via WhatsApp às ${brDate.toLocaleTimeString("pt-BR")}`;
+              cleanReq.updatedAt = new Date().toISOString();
+              wasPrioritized = true;
+            }
 
-          todayRes.guestArrivalResponse = incomingInfo.text.trim();
-          todayRes.guestArrivalResponseAt = new Date().toISOString();
-          todayRes.estimatedArrivalTime = incomingInfo.text.trim();
-          todayRes.updatedAt = new Date().toISOString();
+            todayRes.guestArrivalResponse = incomingInfo.text.trim();
+            todayRes.guestArrivalResponseAt = new Date().toISOString();
+            todayRes.estimatedArrivalTime = arrivalInfo.formatted;
+            todayRes.updatedAt = new Date().toISOString();
 
-          if (typeof saveDatabase === "function") saveDatabase();
+            if (typeof saveDatabase === "function") saveDatabase();
 
-          if (typeof createNotification === "function") {
-            createNotification({
-              title: `🚨 PRIORIDADE: Flat ${flatNum} - Resposta de Chegada`,
-              message: `${todayRes.guestName} informou via WhatsApp: "${incomingInfo.text.trim().substring(0, 100)}". Limpeza do Flat ${flatNum} marcada como PRIORIDADE!`,
-              type: "cleaning_priority",
-              link: "/limpeza"
-            });
+            if (typeof createNotification === "function") {
+              createNotification({
+                title: wasPrioritized
+                  ? `🚨 PRIORIDADE: Flat ${flatNum} - Chegada ${arrivalInfo.formatted}`
+                  : `🕒 Previsão Chegada: Flat ${flatNum} - ${arrivalInfo.formatted}`,
+                message: wasPrioritized
+                  ? `${todayRes.guestName} informou via WhatsApp chegada para ${arrivalInfo.formatted}. Flat ${flatNum} marcado como PRIORIDADE no quadro!`
+                  : `${todayRes.guestName} informou via WhatsApp previsão de chegada para ${arrivalInfo.formatted}.`,
+                type: wasPrioritized ? "cleaning_priority" : "cleaning_info",
+                link: "/limpeza"
+              });
+            }
           }
         }
       } catch (arrivalErr) {

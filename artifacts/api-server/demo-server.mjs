@@ -12382,7 +12382,25 @@ app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reser
   }
 });
 
-// Endpoint: Hóspede informa Previsão de Chegada Hoje (Prioriza Limpeza no Quadro)
+// Verifica se o horário previsto de chegada é cedo ou muito próximo do horário padrão de check-in (14h)
+// Janela de priorização: das 06:00 até 15:00 (ou termos como "agora", "já cheguei", "meio dia")
+function isEarlyOrNearCheckinTime(timeStr) {
+  if (!timeStr || typeof timeStr !== "string") return false;
+  const lower = timeStr.toLowerCase().trim();
+  if (/\b(j[aá]\s+(estou|cheguei|no\s+hotel)|chegando\s+agora|chegando|estou\s+aqui|na\s+porta|j[aá]\s+no\s+hotel|meio\s*dia|cedo|manh[aã])\b/i.test(lower)) {
+    return true;
+  }
+  const match = lower.match(/\b([0-2]?\d)(?:[:hH](\d{2})?|\s*h)?\b/);
+  if (!match) return false;
+  const hour = parseInt(match[1], 10);
+  const min = match[2] ? parseInt(match[2], 10) : 0;
+  if (isNaN(hour) || hour < 0 || hour > 23 || min < 0 || min > 59) return false;
+  const totalMinutes = hour * 60 + min;
+  // Cedo ou próximo das 14h: das 06:00 (360) até 15:00 (900)
+  return totalMinutes >= 360 && totalMinutes <= 900;
+}
+
+// Endpoint: Hóspede informa Previsão de Chegada Hoje (Prioriza Limpeza no Quadro somente se for cedo/próximo das 14h)
 app.post(["/api/pms/guest-portal/:code/estimated-arrival", "/api/pms/reservations/by-code/:code/estimated-arrival"], (req, res) => {
   const code = (req.params.code || "").trim();
   const { estimatedArrivalTime, arrivalTime } = req.body || {};
@@ -12408,16 +12426,18 @@ app.post(["/api/pms/guest-portal/:code/estimated-arrival", "/api/pms/reservation
   const flatNum = String(r.flatNumber || "");
   const flatId = r.flatId;
 
-  // Localiza o card de limpeza de hoje daquele flat e prioriza
+  // Localiza o card de limpeza de hoje daquele flat
   const cleanReq = (db.cleaningRequests || []).find(c =>
     (c.flatId === flatId || String(c.flatNumber) === flatNum) &&
     (c.requestDate === todayStr || c.effectiveDate === todayStr)
   );
 
+  const isEarly = isEarlyOrNearCheckinTime(timeVal);
+
   let wasPrioritized = false;
-  if (cleanReq && cleanReq.status !== "clean") {
+  if (isEarly && cleanReq && cleanReq.status !== "clean") {
     cleanReq.isPriority = true;
-    cleanReq.priorityReason = `Hóspede informou previsão de chegada para às ${timeVal} via Portal.`;
+    cleanReq.priorityReason = `Hóspede informou previsão de chegada às ${timeVal} via Portal.`;
     cleanReq.updatedAt = nowIso;
     wasPrioritized = true;
   }
@@ -12425,17 +12445,21 @@ app.post(["/api/pms/guest-portal/:code/estimated-arrival", "/api/pms/reservation
   saveDatabase();
 
   createNotification({
-    title: `🕒 Previsão Chegada: Flat ${flatNum} (${timeVal})`,
-    message: `${r.guestName} informou previsão de chegada para às ${timeVal} hoje. Limpeza do Flat ${flatNum} marcada como PRIORIDADE no quadro!`,
+    title: wasPrioritized ? `🕒 Previsão Chegada (Prioridade): Flat ${flatNum} (${timeVal})` : `🕒 Previsão Chegada: Flat ${flatNum} (${timeVal})`,
+    message: wasPrioritized
+      ? `${r.guestName} informou previsão de chegada para às ${timeVal} hoje. Flat ${flatNum} marcado como PRIORIDADE no quadro de governança!`
+      : `${r.guestName} informou previsão de chegada para às ${timeVal} hoje.`,
     severity: "info",
-    category: "cleaning_priority",
-    metadata: { flatId, flatNumber: flatNum, code: r.code, estimatedArrivalTime: timeVal },
+    category: wasPrioritized ? "cleaning_priority" : "cleaning_info",
+    metadata: { flatId, flatNumber: flatNum, code: r.code, estimatedArrivalTime: timeVal, isPriority: wasPrioritized },
     targetUrl: "/limpeza"
   });
 
   res.json({
     success: true,
-    message: `Previsão de chegada (${timeVal}) registrada com sucesso! Priorizamos a preparação do seu flat na governança.`,
+    message: wasPrioritized
+      ? `Previsão de chegada (${timeVal}) registrada com sucesso! Priorizamos a preparação do seu flat na governança.`
+      : `Previsão de chegada (${timeVal}) registrada com sucesso!`,
     estimatedArrivalTime: timeVal,
     flatNumber: flatNum,
     isPriority: wasPrioritized
