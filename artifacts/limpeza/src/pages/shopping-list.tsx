@@ -92,39 +92,41 @@ function EditRow({ item, isAdmin, onSave, onCancel }: EditRowProps) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-wrap items-center gap-2 w-full">
-      <Input
-        ref={inputRef}
-        value={title}
-        onChange={e => setTitle(e.target.value)}
-        className="h-8 text-xs rounded-xl flex-1 min-w-[120px]"
-        required
-      />
-      <Input
-        value={quantity}
-        onChange={e => setQuantity(e.target.value)}
-        placeholder="Qtd"
-        className="h-8 text-xs rounded-xl w-24"
-      />
-      {isAdmin && (
-        <select
-          value={category}
-          onChange={e => setCategory(e.target.value)}
-          className="h-8 rounded-xl border border-border bg-background px-2 text-xs font-semibold"
-        >
-          {CATEGORIES.map(c => <option key={c.label} value={c.label}>{c.label}</option>)}
-        </select>
-      )}
-      <Input
-        value={notes}
-        onChange={e => setNotes(e.target.value)}
-        placeholder="Obs"
-        className="h-8 text-xs rounded-xl flex-1 min-w-[100px]"
-      />
-      <Button type="submit" size="sm" className="h-8 px-3 text-xs rounded-xl">Salvar</Button>
-      <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs rounded-xl" onClick={onCancel}>
-        <X className="w-3.5 h-3.5" />
-      </Button>
+    <form onSubmit={handleSubmit} className="space-y-2 w-full">
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          ref={inputRef}
+          value={title}
+          onChange={e => setTitle(e.target.value)}
+          className="h-8 text-xs rounded-xl flex-1 min-w-0"
+          required
+        />
+        <Input
+          value={quantity}
+          onChange={e => setQuantity(e.target.value)}
+          placeholder="Qtd"
+          className="h-8 text-xs rounded-xl w-20 shrink-0"
+        />
+        {isAdmin && (
+          <select
+            value={category}
+            onChange={e => setCategory(e.target.value)}
+            className="h-8 rounded-xl border border-border bg-background px-2 text-xs font-semibold shrink-0"
+          >
+            {CATEGORIES.map(c => <option key={c.label} value={c.label}>{c.label}</option>)}
+          </select>
+        )}
+        <Input
+          value={notes}
+          onChange={e => setNotes(e.target.value)}
+          placeholder="Obs"
+          className="h-8 text-xs rounded-xl flex-1 min-w-0"
+        />
+        <Button type="submit" size="sm" className="h-8 px-3 text-xs rounded-xl shrink-0">Salvar</Button>
+        <Button type="button" variant="ghost" size="sm" className="h-8 px-2 text-xs rounded-xl shrink-0" onClick={onCancel}>
+          <X className="w-3.5 h-3.5" />
+        </Button>
+      </div>
     </form>
   )
 }
@@ -469,8 +471,8 @@ export default function ShoppingListPage() {
           <CardContent className="p-4 space-y-3 overflow-visible">
             {/* Main input with autocomplete */}
             <div className="relative">
-              <div className="flex items-center gap-2">
-                <div className="relative flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="relative flex-1 min-w-0">
                   <Input
                     ref={inputRef}
                     value={newTitle}
@@ -478,7 +480,7 @@ export default function ShoppingListPage() {
                     onFocus={() => setShowSuggestions(true)}
                     onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
                     onKeyDown={handleKeyDown}
-                    placeholder="Nome do item... (Enter para adicionar)"
+                    placeholder="Nome do item..."
                     className="rounded-xl h-10 text-sm font-semibold pr-8"
                   />
                   {newTitle && (
@@ -491,38 +493,31 @@ export default function ShoppingListPage() {
                     </button>
                   )}
                 </div>
-                {isAdmin && (
-                  <>
-                    <Input
-                      value={newQuantity}
-                      onChange={e => setNewQuantity(e.target.value)}
-                      placeholder="Qtd"
-                      className="rounded-xl h-10 text-xs w-24"
-                    />
-                    <select
-                      value={newCategory}
-                      onChange={e => setNewCategory(e.target.value)}
-                      className="h-10 rounded-xl border border-border bg-background px-3 text-xs font-semibold"
-                    >
-                      {CATEGORIES.map(c => <option key={c.label} value={c.label}>{c.label}</option>)}
-                    </select>
-                  </>
-                )}
-                {!isAdmin && (
-                  <Input
-                    value={newQuantity}
-                    onChange={e => setNewQuantity(e.target.value)}
-                    placeholder="Qtd (opcional)"
-                    className="rounded-xl h-10 text-xs w-32"
-                  />
-                )}
                 <Button
                   onClick={() => handleCreate()}
                   disabled={!newTitle.trim()}
-                  className="rounded-xl h-10 text-xs font-bold gap-1.5 px-4"
+                  className="rounded-xl h-10 text-xs font-bold gap-1.5 px-4 shrink-0"
                 >
                   <Plus className="w-4 h-4" /> Adicionar
                 </Button>
+                {/* Qtd + Categoria em linha separada em mobile */}
+                <div className="flex gap-2 w-full">
+                  <Input
+                    value={newQuantity}
+                    onChange={e => setNewQuantity(e.target.value)}
+                    placeholder="Quantidade (opcional)"
+                    className="rounded-xl h-9 text-xs flex-1"
+                  />
+                  {isAdmin && (
+                    <select
+                      value={newCategory}
+                      onChange={e => setNewCategory(e.target.value)}
+                      className="h-9 rounded-xl border border-border bg-background px-2 text-xs font-semibold shrink-0"
+                    >
+                      {CATEGORIES.map(c => <option key={c.label} value={c.label}>{c.label}</option>)}
+                    </select>
+                  )}
+                </div>
               </div>
 
               {/* Autocomplete dropdown */}
