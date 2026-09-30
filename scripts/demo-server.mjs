@@ -5344,19 +5344,29 @@ async function dispatchServiceNotifications(action, order, flat, worker) {
         </div>
       `;
 
-      sendEmailAsync({
-        db,
-        saveDatabase,
-        reservationId: "0",
-        recipient: receptionEmail,
-        subject,
-        bodyHtml,
-        metadata: {
-          category: "service_order",
-          serviceOrderId: order.id,
-          flatNumber: flat.flatNumber
-        }
-      }).catch(err => console.warn(`[ServiceOrder] Email to reception failed:`, err.message));
+      try {
+        sendEmailAsync({
+          db,
+          saveDatabase,
+          reservationId: "0",
+          recipient: receptionEmail,
+          to: receptionEmail,
+          subject,
+          emailSubject: subject,
+          bodyHtml,
+          html: bodyHtml,
+          emailHtml: bodyHtml,
+          metadata: {
+            category: "service_order",
+            serviceOrderId: order.id,
+            flatNumber: flat.flatNumber,
+            flatId: flat.flatId,
+            action
+          }
+        });
+      } catch (emailErr) {
+        console.warn("[SERVICE-ORDERS] Erro ao enviar email para recepção:", emailErr?.message || emailErr);
+      }
     }
 
     // 4. Internal Notification & Audit Log
