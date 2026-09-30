@@ -117,6 +117,8 @@ class MainActivity : AppCompatActivity() {
         settings.allowContentAccess = true
         settings.mediaPlaybackRequiresUserGesture = false
         settings.setSupportZoom(false)
+        // Sempre buscar versão atual do servidor — evita que updates fiquem presos no cache
+        settings.cacheMode = WebSettings.LOAD_NO_CACHE
 
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
