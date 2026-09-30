@@ -49,9 +49,19 @@ export function Shell({ children }: { children: React.ReactNode }) {
     cancelGoogleOneTap()
   }, [location])
 
-  // Quick Shopping Modal state
-  const [quickShoppingOpen, setQuickShoppingOpen] = useState(false)
+  // Pending shopping count — fetched directly (no modal needed)
   const [pendingShoppingCount, setPendingShoppingCount] = useState(0)
+  useEffect(() => {
+    const loadCount = () => {
+      fetch("/api/shopping-list")
+        .then(r => r.json())
+        .then((d: any[]) => { if (Array.isArray(d)) setPendingShoppingCount(d.filter(i => !i.completed).length) })
+        .catch(() => {})
+    }
+    loadCount()
+    const interval = setInterval(loadCount, 60000)
+    return () => clearInterval(interval)
+  }, [])
 
   // Change password modal state
   const [pwModalOpen, setPwModalOpen] = useState(false)
@@ -570,12 +580,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             </Link>
 
             {/* 4. Lista de Compras */}
-            <button 
-              type="button"
-              onClick={() => setQuickShoppingOpen(true)}
-              className="flex-1 flex flex-col items-center py-1 px-1 rounded-xl transition-all relative text-muted-foreground hover:text-foreground active:scale-95 cursor-pointer"
-              title="Pedir / Ver Lista de Compras"
-            >
+            <Link href="/lista-compras" className="flex-1 flex flex-col items-center py-1 px-1 rounded-xl transition-all relative text-muted-foreground hover:text-foreground active:scale-95 cursor-pointer" title="Ver Lista de Compras">
               <div className="relative">
                 <ShoppingCart className="w-5 h-5" />
                 {pendingShoppingCount > 0 && (
@@ -585,7 +590,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 )}
               </div>
               <span className="text-[9.5px] sm:text-[10.5px] mt-0.5 font-bold text-center leading-tight">Lista Compras</span>
-            </button>
+            </Link>
 
             {/* 5. Mais */}
             <button 
@@ -612,12 +617,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             </Link>
 
             {/* 2. Atalho Rápido para Lista de Compras */}
-            <button 
-              type="button"
-              onClick={() => setQuickShoppingOpen(true)}
-              className="flex-1 flex flex-col items-center py-1 px-1 rounded-xl transition-all relative text-muted-foreground hover:text-foreground active:scale-95 cursor-pointer"
-              title="Pedir / Ver Lista de Compras"
-            >
+            <Link href="/lista-compras" className="flex-1 flex flex-col items-center py-1 px-1 rounded-xl transition-all relative text-muted-foreground hover:text-foreground active:scale-95 cursor-pointer" title="Ver Lista de Compras">
               <div className="relative">
                 <ShoppingCart className="w-5 h-5" />
                 {pendingShoppingCount > 0 && (
@@ -627,7 +627,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 )}
               </div>
               <span className="text-[10px] mt-0.5 font-bold text-center leading-tight">Compras</span>
-            </button>
+            </Link>
 
             {/* 3. Extrato */}
             <Link href="/extrato" className="flex-1">
@@ -865,12 +865,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </DialogContent>
       </Dialog>
 
-      {/* Modal Rápido da Lista de Compras (Acionado pelo atalho inferior) */}
-      <QuickShoppingModal 
-        open={quickShoppingOpen} 
-        onOpenChange={setQuickShoppingOpen} 
-        onPendingCountChange={setPendingShoppingCount} 
-      />
     </div>
   )
 }

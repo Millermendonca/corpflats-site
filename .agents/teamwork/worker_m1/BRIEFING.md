@@ -1,62 +1,73 @@
-# BRIEFING — 2026-09-29T05:34:00Z
+# BRIEFING — 2026-09-30T22:07:45Z
 
 ## Mission
-Fortify Guest-Flow-Manager backend engine (demo-server.mjs) against unauthorized status reverts, note pollution, and duplicate cleanings.
+Implement backend data and API for the External Service Orders feature (OS de Serviços Externos - R1, R2, R3, R6, R7), including database initialization, admin endpoints, public worker endpoints, integrations with existing endpoints, validations, notifications, test coverage, and synchronization between artifacts and scripts demo-server.
 
 ## 🔒 My Identity
 - Archetype: implementer
 - Roles: implementer, qa, specialist
-- Working directory: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/worker_m1
-- Original parent: 5ad82d68-5382-4b5d-b3af-ea9aa33373f7
-- Milestone: M1 - Backend Engine Governance Overhaul
+- Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1
+- Original parent: 2a43f791-5cc7-4933-bdd2-688af9234cb1
+- Milestone: M1 - Backend Data & API Implementer
 
 ## 🔒 Key Constraints
-- Exclusive Write Ownership: `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`.
-- Do NOT edit frontend files or database files.
-- Keep `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs` 100% byte-for-byte synchronized!
-- Integrity Mandate: Genuine logic, no hardcoding, no dummy/facade implementations.
-- Git Push by default if git commit is performed.
+- Own exclusively: data/database.json, artifacts/api-server/demo-server.mjs, scripts/demo-server.mjs.
+- scripts/demo-server.mjs must be byte-for-byte identical to artifacts/api-server/demo-server.mjs.
+- Genuine implementations only: no hardcoding, no facades, real state transitions.
+- All admin endpoints require auth + role === 'admin'.
+- All public endpoints are unauthenticated and scoped to token.
+- Git commit rule: always git push by default after commit.
+- Verification tests must be comprehensive and passing.
 
 ## Current Parent
-- Conversation ID: 5ad82d68-5382-4b5d-b3af-ea9aa33373f7
-- Updated: 2026-09-29T05:20:30Z
+- Conversation ID: 2a43f791-5cc7-4933-bdd2-688af9234cb1
+- Updated: 2026-09-30T22:07:45Z
 
 ## Task Summary
 - **What to build**:
-  1. Fortify `reconcileUniversalIntegrity()` against reverting clean cleanings to dirty if admin marked, canonical, admin/manual source, completedAt, or assigned.
-  2. Prevent note copy-pollution in `reconcileCleaningRequests()`.
-  3. In `/api/cleaning/assignments/:requestId/status`: set `markedByAdmin: true`, ensure `completedAt` populated, and clear auto-gen adminNote when set to clean.
-  4. In `reconcileUniversalIntegrity()` checkout creation: check if flat already has clean cleaning between checkout and now/next checkin to prevent duplicate dirty checkout cleaning.
-  5. Byte-for-byte sync between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`.
-- **Success criteria**: All tests pass, backend verification passes, clean cleanings protected from reversion.
-- **Interface contracts**: PROJECT.md, survey_backend.md, context.md
-- **Code layout**: Backend server in `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`.
+  1. Add serviceOrders and serviceWorkers to database.json and loadDatabase().
+  2. Implement Admin REST API: GET, POST (24 hex token), GET :id, PATCH :id, DELETE :id, GET :id/progress, POST :id/flats/:flatId/reset.
+  3. Implement Public REST API: GET public/:token, POST register, POST flats/:flatId/start, POST flats/:flatId/finish, POST flats/:flatId/photos.
+  4. Inject serviceInProgress into GET /api/flats and GET /api/reservations/checkouts; inject synthetic service blocks into GET /api/pms/calendar.
+  5. Business logic validations (maxSimultaneousFlats, maxFlatsPerDay, cleanFlatMode, needsCleaning on clean flat finish, requirePhotos) and notifications (WhatsApp bypassTestMode: true, email, internal notification).
+  6. Mirror demo-server.mjs to scripts/demo-server.mjs.
+  7. Verification via tests.
+- **Success criteria**: All endpoints functional, strict validation, notifications dispatched, tests passing, mirror files identical.
+- **Interface contracts**: PROJECT.md, analysis.md, handoff.md from explorer_survey_backend.
+- **Code layout**: Backend in artifacts/api-server/demo-server.mjs & scripts/demo-server.mjs, DB in data/database.json.
 
 ## Key Decisions Made
-- Added multi-layered immunity checks in `reconcileUniversalIntegrity()` returning early if `markedByAdmin === true`, `isCanonical === true`, `source === "admin_manual"`, `source === "manual"`, `addedBy === "admin"`, or `Boolean(completedAt)` or `Boolean(assignedUserId)`.
-- Added retroactive checkout creation guard in `reconcileUniversalIntegrity()` preventing duplicate dirty cleaning requests if the flat already has a `clean` cleaning between past checkoutDate and todayStr or next checkin.
-- Hardened `reconcileCleaningRequests()` to exclude notes containing "Limpeza de check-out gerada automaticamente" from merging onto clean records.
-- Enhanced `PATCH /api/cleaning/assignments/:requestId/status` to set `markedByAdmin: true`, ensure `completedAt` timestamp is preserved/set, and clear auto-gen checkout notes when marked clean.
-- Maintained exact 100% byte-for-byte synchronization between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`.
+- Added `serviceOrders: []` and `serviceWorkers: []` to `data/database.json` and initial `db` schema with defensive guards in `loadDatabase()`.
+- Implemented Admin REST endpoints under `/api/service-orders` requiring `getAuthUser(req)` with `role === "admin"`.
+- Implemented Public REST endpoints under `/api/service/public/:token` with full business logic (limits, cleanFlatMode, registration check, photo upload, finish rules).
+- Multi-channel notification pipeline dispatches to Admin WhatsApp (`5522998505276`), Reception WhatsApp, Reception Email (`mail-service.mjs`), and internal audit logs/system notifications (`createNotification`).
+- Injected `serviceInProgress` on `GET /api/flats` and `GET /api/reservations/checkouts`; synthetic service blocks on `GET /api/pms/calendar`.
+- Fixed pre-existing syntax error (missing async on `/api/cleaning/assignments/:requestId/status`) and synchronized `scripts/demo-server.mjs` to exact byte-for-byte SHA256 parity.
+- Created unit/contract tests (`tests/service-orders.test.mjs`) and live HTTP API integration tests (`tests/service-orders-api-live.test.mjs`), with all tests passing 100%.
+- Committed changes and executed `git push origin main`.
 
 ## Artifact Index
-- `.agents/teamwork/worker_m1/DISPATCH.md` — Assigned task instructions
-- `.agents/teamwork/worker_m1/BRIEFING.md` — Agent briefing & working memory
-- `.agents/teamwork/worker_m1/progress.md` — Liveness & progress tracker
-- `.agents/teamwork/worker_m1/handoff.md` — Handoff report
-- `scratch/test_m1_reconciliation.mjs` — Comprehensive 5-suite verification harness
+- .agents/teamwork/worker_m1/DISPATCH.md — assignment dispatch
+- .agents/teamwork/worker_m1/BRIEFING.md — persistent situational awareness
+- .agents/teamwork/worker_m1/progress.md — liveness heartbeat
+- .agents/teamwork/worker_m1/handoff.md — final handoff report
+- tests/service-orders.test.mjs — static and contract tests
+- tests/service-orders-api-live.test.mjs — live HTTP API end-to-end tests
 
 ## Change Tracker
 - **Files modified**:
-  - `artifacts/api-server/demo-server.mjs`: Added immunity guards, checkout creation guard, note pollution filter, status patch hardening, admin record creation flag.
-  - `scripts/demo-server.mjs`: Synchronized byte-for-byte with `artifacts/api-server/demo-server.mjs`.
-- **Build status**: Pass (`node -c` syntax check on both files, all 5 suites in `scratch/test_m1_reconciliation.mjs` pass, `scratch/test_dates.mjs` pass).
-- **Pending issues**: None.
+  * data/database.json: added serviceOrders: [] and serviceWorkers: []
+  * artifacts/api-server/demo-server.mjs: added helpers, serviceOrders & serviceWorkers init, injected serviceInProgress into flats & checkouts, injected service blocks into calendar, added 12 REST routes
+  * scripts/demo-server.mjs: byte-for-byte identical mirror of demo-server.mjs
+  * tests/service-orders.test.mjs: contract & logic tests
+  * tests/service-orders-api-live.test.mjs: live HTTP API tests
+- **Build status**: PASS (all 35/35 unit tests pass, all 16/16 live API tests pass)
+- **Pending issues**: None
 
 ## Quality Status
-- **Build/test result**: All 5 test suites PASS with 100% assertions satisfied.
-- **Lint status**: Clean; no syntax or runtime errors.
-- **Tests added/modified**: `scratch/test_m1_reconciliation.mjs` covering immunity guards, non-immune reversion preservation, note copy-pollution defense, retroactive checkout creation guards, byte-for-byte file synchronization, and status PATCH route semantics.
+- **Build/test result**: PASS (node -c clean, checkout-occupancy-rule: 22/22, service-orders: 12/12, service-orders-api-live: 16/16, surveys-reformed: 1/1, governance-integrity: 90/90)
+- **Lint status**: Clean
+- **Tests added/modified**: tests/service-orders.test.mjs, tests/service-orders-api-live.test.mjs
 
 ## Loaded Skills
 - None
