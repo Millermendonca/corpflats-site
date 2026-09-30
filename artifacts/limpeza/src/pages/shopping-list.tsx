@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
-const _APP_V = "2026.09.30.1"  // força novo hash de build
 import { Shell } from "@/components/layout"
 import { useGetMe } from "@workspace/api-client-react"
 import { useToast } from "@/hooks/use-toast"
@@ -14,6 +13,8 @@ import {
   GripVertical,
   Pencil,
   X,
+  Filter,
+  Tag,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -26,7 +27,8 @@ interface ShoppingItem {
   id: string
   title: string
   quantity?: string
-  category?: string
+  category?: string       // raw (JSON string ou string simples)
+  categories?: string[]   // array parseado pelo servidor
   notes?: string
   completed: boolean
   sortOrder: number
@@ -59,13 +61,38 @@ function formatDateBr(isoStr?: string | null): string {
   }
 }
 
-const CATEGORIES = [
-  { label: "Limpeza",     color: "text-emerald-700 bg-emerald-500/10 border-emerald-500/20" },
-  { label: "Cama & Banho", color: "text-indigo-700 bg-indigo-500/10 border-indigo-500/20" },
-  { label: "Manutenção",  color: "text-amber-700 bg-amber-500/10 border-amber-500/20" },
-  { label: "Cozinha",     color: "text-pink-700 bg-pink-500/10 border-pink-500/20" },
-  { label: "Geral",       color: "text-slate-700 bg-slate-500/10 border-slate-500/20" },
-]
+function parseCategories(item: ShoppingItem): string[] {
+  if (item.categories && Array.isArray(item.categories) && item.categories.length > 0) return item.categories
+  if (!item.category) return ["Geral"]
+  try { const p = JSON.parse(item.category); if (Array.isArray(p)) return p } catch {}
+  return [item.category]
+}
+
+// Mapa de cores para categorias por setor de supermercado
+const CATEGORY_COLORS: Record<string, string> = {
+  "Alimentos":      "text-orange-700 bg-orange-500/10 border-orange-500/30",
+  "Carnes":         "text-red-700 bg-red-500/10 border-red-500/30",
+  "Frios":          "text-blue-700 bg-blue-500/10 border-blue-500/30",
+  "Laticínios":     "text-sky-700 bg-sky-500/10 border-sky-500/30",
+  "Padaria":        "text-amber-700 bg-amber-500/10 border-amber-500/30",
+  "Bebidas":        "text-cyan-700 bg-cyan-500/10 border-cyan-500/30",
+  "Secos & Grãos":  "text-yellow-700 bg-yellow-500/10 border-yellow-500/30",
+  "Hortifrúti":     "text-green-700 bg-green-500/10 border-green-500/30",
+  "Temperos":       "text-lime-700 bg-lime-500/10 border-lime-500/30",
+  "Mercearia":      "text-teal-700 bg-teal-500/10 border-teal-500/30",
+  "Conservas":      "text-indigo-700 bg-indigo-500/10 border-indigo-500/30",
+  "Congelados":     "text-violet-700 bg-violet-500/10 border-violet-500/30",
+  "Café da Manhã":  "text-amber-800 bg-amber-600/10 border-amber-600/30",
+  "Limpeza":        "text-emerald-700 bg-emerald-500/10 border-emerald-500/30",
+  "Higiene":        "text-pink-700 bg-pink-500/10 border-pink-500/30",
+  "Governança":     "text-purple-700 bg-purple-500/10 border-purple-500/30",
+  "Geral":          "text-slate-700 bg-slate-500/10 border-slate-500/30",
+}
+
+function getCategoryColor(cat: string): string {
+  return CATEGORY_COLORS[cat] ?? "text-slate-700 bg-slate-500/10 border-slate-500/30"
+}
+
 
 // ─── Inline Edit Row ──────────────────────────────────────────────────────────
 
@@ -143,11 +170,11 @@ export default function ShoppingListPage() {
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<"pending" | "completed">("pending")
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null)
 
   // ── Quick-add state ────────────────────────────────────────────────────────
   const [newTitle, setNewTitle] = useState("")
   const [newQuantity, setNewQuantity] = useState("")
-  const [newCategory, setNewCategory] = useState("Limpeza")
   const [newNotes, setNewNotes] = useState("")
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [suggestionIdx, setSuggestionIdx] = useState(-1)
@@ -407,7 +434,21 @@ export default function ShoppingListPage() {
 
   const pendingItems = useMemo(() => items.filter(i => !i.completed), [items])
   const completedItems = useMemo(() => items.filter(i => i.completed), [items])
-  const displayedItems = activeTab === "pending" ? pendingItems : completedItems
+
+  // Categorias disponíveis nos itens pendentes (para filtro)
+  const availableCategories = useMemo(() => {
+    const counts: Record<string, number> = {}
+    pendingItems.forEach(item => {
+      parseCategories(item).forEach(cat => { counts[cat] = (counts[cat] || 0) + 1 })
+    })
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count }))
+  }, [pendingItems])
+
+  const displayedItems = useMemo(() => {
+    const base = activeTab === "pending" ? pendingItems : completedItems
+    if (!categoryFilter) return base
+    return base.filter(item => parseCategories(item).includes(categoryFilter))
+  }, [activeTab, pendingItems, completedItems, categoryFilter])
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -578,13 +619,47 @@ export default function ShoppingListPage() {
           {(["pending", "completed"] as const).map(tab => (
             <button
               key={tab}
-              onClick={() => setActiveTab(tab)}
+              onClick={() => { setActiveTab(tab); setCategoryFilter(null) }}
               className={`flex-1 py-1.5 rounded-xl text-xs font-bold transition-all ${activeTab === tab ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"}`}
             >
               {tab === "pending" ? `Pendentes (${pendingItems.length})` : `Comprados (${completedItems.length})`}
             </button>
           ))}
         </div>
+
+        {/* Filtros de categoria */}
+        {activeTab === "pending" && availableCategories.length > 0 && (
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-1.5 text-[11px] font-bold text-muted-foreground">
+              <Filter className="w-3 h-3" /> Filtrar por categoria
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                onClick={() => setCategoryFilter(null)}
+                className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition-all ${
+                  !categoryFilter
+                    ? "bg-foreground text-background border-foreground"
+                    : "bg-muted/60 border-border/60 text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Todos ({pendingItems.length})
+              </button>
+              {availableCategories.map(({ name, count }) => (
+                <button
+                  key={name}
+                  onClick={() => setCategoryFilter(categoryFilter === name ? null : name)}
+                  className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition-all ${
+                    categoryFilter === name
+                      ? getCategoryColor(name) + " border-current ring-1 ring-current"
+                      : "bg-muted/40 border-border/60 text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {name} <span className="opacity-70">({count})</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Items List */}
         {loading ? (
@@ -593,7 +668,9 @@ export default function ShoppingListPage() {
           <Card className="rounded-3xl border border-dashed p-12 text-center">
             <ShoppingCart className="w-10 h-10 mx-auto mb-3 opacity-20 text-muted-foreground" />
             <p className="font-bold">
-              {activeTab === "pending" ? "Nenhum item pendente!" : "Nenhum item comprado ainda."}
+              {categoryFilter
+                ? `Nenhum item pendente em "${categoryFilter}"`
+                : activeTab === "pending" ? "Nenhum item pendente!" : "Nenhum item comprado ainda."}
             </p>
           </Card>
         ) : (
@@ -604,7 +681,7 @@ export default function ShoppingListPage() {
               </p>
             )}
             {displayedItems.map(item => {
-              const catObj = CATEGORIES.find(c => c.label.toLowerCase() === (item.category || "").toLowerCase()) || CATEGORIES[0]
+              const itemCategories = parseCategories(item)
               const isEditing = editingId === item.id
               const isDraggable = activeTab === "pending"
 
@@ -669,9 +746,24 @@ export default function ShoppingListPage() {
                                 {item.quantity}
                               </Badge>
                             )}
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${catObj.color}`}>
-                              {item.category || "Limpeza"}
-                            </span>
+                          </div>
+                          {/* Tags de categoria coloridas */}
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {itemCategories.filter(c => c !== "Alimentos").map(cat => (
+                              <span
+                                key={cat}
+                                className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md border cursor-pointer ${getCategoryColor(cat)}`}
+                                onClick={() => setCategoryFilter(cat === categoryFilter ? null : cat)}
+                                title={`Filtrar por ${cat}`}
+                              >
+                                {cat}
+                              </span>
+                            ))}
+                            {itemCategories.includes("Alimentos") && (
+                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md border ${getCategoryColor("Alimentos")}`}>
+                                🍽️ Alimentos
+                              </span>
+                            )}
                           </div>
                           {item.notes && (
                             <p className="text-xs text-muted-foreground mt-1">📝 {item.notes}</p>

@@ -1,10 +1,10 @@
 # Orchestrator Progress Log
 
 ## Current Status
-Last visited: 2026-09-30T22:40:20Z
+Last visited: 2026-09-30T22:50:35Z
 
 ## Iteration Status
-Current iteration: 3 / 32
+Current iteration: 4 / 32
 
 ## Milestones
 - [x] Phase 0: Survey & Architecture Discovery
@@ -16,12 +16,12 @@ Current iteration: 3 / 32
   - [x] Verifiers Gate 1: 3 APPROVE, 1 CLEAN, 1 REQUEST_CHANGES
   - [x] Remedy Iteration: 3 explorers mapped exact diffs (completed)
   - [x] Worker M1 Fix: Implemented all diffs, synced mirror, pushed commit (completed)
-  - [/] Gate 2 Verification:
-    - [ ] Reviewer Fix 1 (`94d0fd28-5b66-48b9-8943-6d2f95d9c986` - running: governance tests)
-    - [ ] Reviewer Fix 2 (`3d9ba6c5-9983-47ae-bff6-dc33771902c3` - running: finalizing report)
-    - [ ] Challenger Fix 1 (`35d31f9c-1785-47ec-9c99-bc0d8760f818` - running: verifying midnight tests)
-    - [x] Challenger Fix 2 (`e26365db-81fa-41f1-bb10-87c6746be48e` - APPROVE: 14/14 tests passing)
-    - [ ] Auditor Fix (`1d49c746-fca7-4887-a601-1c3a14ce885e` - running: forensic audit)
+  - [x] Gate 2 Verification: 3 APPROVE, 1 CLEAN, 1 REQUEST_CHANGES
+  - [x] Worker M1 Notify Fix: Fixed sendEmailAsync, synced mirror, pushed commit d97af12 (completed)
+  - [/] Gate 3 Final Verification:
+    - [ ] Reviewer M1 Final (`43f6c259-3e4c-48cd-8d2b-00d3af3eba55` - running)
+    - [ ] Challenger M1 Final (`5db835eb-0cbc-4483-aab4-37d07a4980db` - running)
+    - [ ] Auditor M1 Final (`7056b1b0-a973-473c-8b87-cac9e36f9b74` - running)
 - [ ] Phase 2: M2 - Admin Management Page (R4) & Routing
   - [ ] `artifacts/limpeza/src/pages/service-orders.tsx` with 3 tabs
   - [ ] Route `/servicos` in `App.tsx`
@@ -41,4 +41,4 @@ Current iteration: 3 / 32
   - [ ] Final audit & completion notification to parent Sentinel
 
 ## Retrospective Notes
-- Heartbeat iteration 6: Challenger Fix 2 delivered APPROVE (14/14 tests passed). The other 4 verifiers are in their final stages.
+- Gate 3 final verification team dispatched to verify notification pipeline fix. Awaiting reports to conclude Milestone 1.
