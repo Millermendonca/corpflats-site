@@ -7,8 +7,8 @@ import path from 'node:path';
 describe('Challenger M1 Final: Empirical Verification of Start/Finish Notifications & Channel Execution', () => {
   const PORT = 3998;
   const BASE_URL = `http://127.0.0.1:${PORT}`;
-  const dbPath = path.resolve('data/database.json');
-  let dbBackup = null;
+  const prodDbPath = path.resolve('data/database.json');
+  const isolatedDbPath = path.resolve('data/isolated-m1-final-database.json');
   let serverProcess = null;
   let stdoutLogs = '';
   let stderrLogs = '';
@@ -32,7 +32,7 @@ describe('Challenger M1 Final: Empirical Verification of Start/Finish Notificati
   function readDbWithRetry(retries = 15, delayMs = 100) {
     for (let i = 0; i < retries; i++) {
       try {
-        const content = fs.readFileSync(dbPath, 'utf8');
+        const content = fs.readFileSync(isolatedDbPath, 'utf8');
         if (content && content.trim()) {
           return JSON.parse(content);
         }
@@ -43,7 +43,7 @@ describe('Challenger M1 Final: Empirical Verification of Start/Finish Notificati
         execSync(`powershell -Command "Start-Sleep -Milliseconds ${delayMs}"`, { stdio: 'ignore' });
       } catch {}
     }
-    return JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+    return JSON.parse(fs.readFileSync(isolatedDbPath, 'utf8'));
   }
 
   async function waitForNotification(predicate, timeoutMs = 3500) {
@@ -71,10 +71,10 @@ describe('Challenger M1 Final: Empirical Verification of Start/Finish Notificati
   }
 
   before(async () => {
-    dbBackup = fs.readFileSync(dbPath, 'utf8');
+    fs.copyFileSync(prodDbPath, isolatedDbPath);
 
     serverProcess = spawn('node', ['artifacts/api-server/demo-server.mjs'], {
-      env: { ...process.env, PORT: String(PORT), NODE_ENV: 'test', DATABASE_URL: '' },
+      env: { ...process.env, PORT: String(PORT), NODE_ENV: 'test', DATABASE_URL: '', DATABASE_FILE: isolatedDbPath },
       stdio: 'pipe'
     });
 
@@ -104,8 +104,8 @@ describe('Challenger M1 Final: Empirical Verification of Start/Finish Notificati
     if (serverProcess && serverProcess.pid) {
       killProcessTree(serverProcess.pid);
     }
-    if (dbBackup) {
-      fs.writeFileSync(dbPath, dbBackup, 'utf8');
+    if (fs.existsSync(isolatedDbPath)) {
+      try { fs.unlinkSync(isolatedDbPath); } catch {}
     }
   });
 

@@ -341,6 +341,8 @@ describe('Adversarial Challenge: Admin Service Orders Page (Milestone M2)', () =
   describe('Suite 5: Live API Verification with Backend Endpoints', () => {
     const TEST_PORT = 3989;
     const BASE_URL = `http://127.0.0.1:${TEST_PORT}`;
+    const prodDbPath = path.resolve('data/database.json');
+    const isolatedDbPath = path.resolve('data/isolated-admin-challenge-database.json');
     let serverProcess;
 
     const adminToken = Buffer.from(JSON.stringify({ v: 2, id: 1 })).toString('base64');
@@ -357,8 +359,10 @@ describe('Adversarial Challenge: Admin Service Orders Page (Milestone M2)', () =
     };
 
     before(async () => {
+      fs.copyFileSync(prodDbPath, isolatedDbPath);
+
       serverProcess = spawn('node', ['artifacts/api-server/demo-server.mjs'], {
-        env: { ...process.env, PORT: String(TEST_PORT), NODE_ENV: 'test' },
+        env: { ...process.env, PORT: String(TEST_PORT), NODE_ENV: 'test', DATABASE_URL: '', DATABASE_FILE: isolatedDbPath },
         stdio: 'pipe'
       });
 
@@ -381,6 +385,9 @@ describe('Adversarial Challenge: Admin Service Orders Page (Milestone M2)', () =
     after(() => {
       if (serverProcess) {
         serverProcess.kill('SIGTERM');
+      }
+      if (fs.existsSync(isolatedDbPath)) {
+        try { fs.unlinkSync(isolatedDbPath); } catch {}
       }
     });
 

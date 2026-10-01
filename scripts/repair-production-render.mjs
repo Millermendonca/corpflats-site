@@ -56,47 +56,66 @@ async function run() {
     console.error("   Erro Frederico:", e.message);
   }
 
-  // 2. Restaurar Adriana Alves da Silva (id: 318) no Flat 712 (30/09 a 01/10)
-  console.log("2. Restaurando Adriana Alves da Silva (Flat 712 -> 30/09 a 01/10)...");
+  // 2. Garantir Adriana Alves da Silva (id: 318) no Flat 712 (30/09 a 01/10)
+  console.log("2. Verificando Adriana Alves da Silva no Flat 712...");
   try {
-    const adrianaPayload = {
-      id: 318,
-      code: "RES-712-0318",
-      flatId: 14,
-      flatNumber: "712",
-      guestId: 165,
-      guestName: "Adriana Alves da Silva",
-      guestDocument: "06955536745",
-      guestPhone: "21981090085",
-      guestCount: 1,
-      guests: [
-        {
-          cpf: "06955536745",
-          name: "Adriana Alves da Silva",
-          email: "",
-          index: 1,
-          phone: "21981090085",
-          checkinCompletedAt: null,
-          hasCompletedCheckin: false
-        }
-      ],
-      checkinDate: "2026-09-30",
-      checkinTime: "14:00",
-      checkoutDate: "2026-10-01",
-      checkoutTime: "12:00",
-      dailyRate: 230,
-      totalAmount: 230,
-      paidAmount: 230,
-      paymentMethod: "pix",
-      paymentStatus: "pago_total",
-      channel: "whatsapp",
-      clientType: "avulso",
-      isMonthlyGuest: false,
-      includeBreakfast: false,
-      status: "confirmada"
-    };
-    const res318 = await apiRequest("POST", "/api/pms/reservations", adrianaPayload);
-    console.log("   Resultado Adriana:", res318.status, res318.data?.id || res318.data?.code || res318.data?.error || res318.text?.slice(0, 100));
+    const calRes = await apiRequest("GET", "/api/pms/calendar?startDate=2026-09-30&endDate=2026-10-02");
+    const reservations = calRes.data?.reservations || [];
+    const activeAdriana = reservations.find(r =>
+      String(r.flatNumber) === "712" && r.guestName && r.guestName.includes("Adriana") && r.status !== "cancelada"
+    );
+    if (!activeAdriana) {
+      console.log("   Adriana não encontrada no Flat 712. Criando reserva...");
+      const adrianaPayload = {
+        id: 318,
+        code: "RES-712-0318",
+        flatId: 14,
+        flatNumber: "712",
+        guestId: 165,
+        guestName: "Adriana Alves da Silva",
+        guestDocument: "06955536745",
+        guestPhone: "21981090085",
+        guestCount: 1,
+        guests: [
+          {
+            cpf: "06955536745",
+            name: "Adriana Alves da Silva",
+            email: "",
+            index: 1,
+            phone: "21981090085",
+            checkinCompletedAt: null,
+            hasCompletedCheckin: false
+          }
+        ],
+        checkinDate: "2026-09-30",
+        checkinTime: "14:00",
+        checkoutDate: "2026-10-01",
+        checkoutTime: "12:00",
+        dailyRate: 230,
+        totalAmount: 230,
+        paidAmount: 230,
+        paymentMethod: "pix",
+        paymentStatus: "pago_total",
+        channel: "whatsapp",
+        clientType: "avulso",
+        isMonthlyGuest: false,
+        includeBreakfast: false,
+        status: "confirmada"
+      };
+      const res318 = await apiRequest("POST", "/api/pms/reservations", adrianaPayload);
+      console.log("   Resultado Adriana:", res318.status, res318.data?.id || res318.data?.code || res318.data?.error || res318.text?.slice(0, 100));
+    } else {
+      console.log("   Adriana já confirmada e presente no Flat 712 (ID:", activeAdriana.id, activeAdriana.code, ")");
+    }
+
+    // Cancelar duplicatas acidentais se houverem
+    for (const dupId of [321, 322, 323]) {
+      const dup = reservations.find(r => r.id === dupId && r.status !== "cancelada");
+      if (dup) {
+        console.log(`   Removendo duplicata acidental ID ${dupId}...`);
+        await apiRequest("DELETE", `/api/pms/reservations/${dupId}`);
+      }
+    }
   } catch (e) {
     console.error("   Erro Adriana:", e.message);
   }

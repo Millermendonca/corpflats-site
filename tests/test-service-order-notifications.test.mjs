@@ -7,8 +7,8 @@ import path from 'node:path';
 describe('Adversarial Test: Service Order Notification Pipeline Integrity', () => {
   const PORT = 3997;
   const BASE_URL = `http://127.0.0.1:${PORT}`;
-  const dbPath = path.resolve('data/database.json');
-  let dbBackup = null;
+  const prodDbPath = path.resolve('data/database.json');
+  const isolatedDbPath = path.resolve('data/isolated-notifications-database.json');
   let serverProcess = null;
 
   const adminToken = Buffer.from(JSON.stringify({ v: 2, id: 1 })).toString('base64');
@@ -28,10 +28,10 @@ describe('Adversarial Test: Service Order Notification Pipeline Integrity', () =
   }
 
   before(async () => {
-    dbBackup = fs.readFileSync(dbPath, 'utf8');
+    fs.copyFileSync(prodDbPath, isolatedDbPath);
 
     serverProcess = spawn('node', ['artifacts/api-server/demo-server.mjs'], {
-      env: { ...process.env, PORT: String(PORT), NODE_ENV: 'test', DATABASE_URL: '' },
+      env: { ...process.env, PORT: String(PORT), NODE_ENV: 'test', DATABASE_URL: '', DATABASE_FILE: isolatedDbPath },
       stdio: 'pipe'
     });
 
@@ -53,8 +53,8 @@ describe('Adversarial Test: Service Order Notification Pipeline Integrity', () =
     if (serverProcess && serverProcess.pid) {
       killProcessTree(serverProcess.pid);
     }
-    if (dbBackup) {
-      fs.writeFileSync(dbPath, dbBackup, 'utf8');
+    if (fs.existsSync(isolatedDbPath)) {
+      try { fs.unlinkSync(isolatedDbPath); } catch {}
     }
   });
 
@@ -92,8 +92,8 @@ describe('Adversarial Test: Service Order Notification Pipeline Integrity', () =
     // Wait a brief moment for async dispatch
     await new Promise(r => setTimeout(r, 500));
 
-    // Verify notification exists in db.notifications
-    const currentDb = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+    // Verify notification exists in isolated db.notifications
+    const currentDb = JSON.parse(fs.readFileSync(isolatedDbPath, 'utf8'));
     const notifications = (currentDb.notifications || []).filter(
       n => n.category === 'service_order' && n.metadata?.serviceOrderId === order.id
     );
@@ -101,7 +101,7 @@ describe('Adversarial Test: Service Order Notification Pipeline Integrity', () =
     console.log(`[Notification Test] Service order notifications found: ${notifications.length}`);
     assert.ok(
       notifications.length > 0,
-      'Internal notification MUST be created in db.notifications when flat is started, but failed due to TypeError on sendEmailAsync(...).catch'
+      'Internal notification MUST be created in db.notifications when flat is started'
     );
   });
 });

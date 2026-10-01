@@ -129,11 +129,12 @@ describe('Challenger 2 Empirical Verification: Milestone 1 Remediation', () => {
       ]
     });
 
-    fs.writeFileSync(dbPath, JSON.stringify(dbObj, null, 2), 'utf8');
+    const isolatedDbPath = path.resolve('data/test-challenger-m1-fix2.json');
+    fs.writeFileSync(isolatedDbPath, JSON.stringify(dbObj, null, 2), 'utf8');
 
-    // 3. Spawn demo-server on test port (with DATABASE_URL: '' to isolate to data/database.json)
+    // 3. Spawn demo-server on test port (with DATABASE_URL: '' and isolated DATABASE_FILE)
     serverProcess = spawn('node', ['artifacts/api-server/demo-server.mjs'], {
-      env: { ...process.env, PORT: String(PORT), NODE_ENV: 'test', DATABASE_URL: '' },
+      env: { ...process.env, PORT: String(PORT), NODE_ENV: 'test', DATABASE_URL: '', DATABASE_FILE: isolatedDbPath },
       stdio: 'pipe'
     });
 
@@ -160,6 +161,9 @@ describe('Challenger 2 Empirical Verification: Milestone 1 Remediation', () => {
     if (serverProcess) {
       serverProcess.kill('SIGTERM');
     }
+    try {
+      fs.unlinkSync(path.resolve('data/test-challenger-m1-fix2.json'));
+    } catch {}
     if (dbBackup) {
       try {
         fs.writeFileSync(dbPath, dbBackup, 'utf8');

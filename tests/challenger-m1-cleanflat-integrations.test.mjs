@@ -8,8 +8,8 @@ describe('Milestone 1 Empirical Challenge: cleanFlatMode & Integrations', () => 
   const PORT = 3995;
   const BASE_URL = `http://127.0.0.1:${PORT}`;
   let serverProcess;
-  const dbPath = path.resolve('data/database.json');
-  let originalDbContent;
+  const prodDbPath = path.resolve('data/database.json');
+  const isolatedDbPath = path.resolve('data/isolated-cleanflat-database.json');
 
   const adminToken = Buffer.from(JSON.stringify({ v: 2, id: 1 })).toString('base64');
   const maidToken = Buffer.from(JSON.stringify({ v: 2, id: 2 })).toString('base64');
@@ -29,12 +29,31 @@ describe('Milestone 1 Empirical Challenge: cleanFlatMode & Integrations', () => 
   };
 
   before(async () => {
-    // 1. Backup database.json
-    originalDbContent = fs.readFileSync(dbPath, 'utf8');
+    // 1. Prepare isolated database
+    const rawDb = JSON.parse(fs.readFileSync(prodDbPath, 'utf8'));
+    const today = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()).split('/').reverse().join('-');
+    rawDb.reservations = (rawDb.reservations || []).map(r => (Number(r.flatId) === 1 || String(r.flatNumber) === '113') ? { ...r, checkoutDate: today } : r);
+    if (!Array.isArray(rawDb.cleaningRequests)) rawDb.cleaningRequests = [];
+    const hasTodayCheckout1 = rawDb.cleaningRequests.some(c => Number(c.flatId) === 1 && c.requestDate === today && c.source === 'checkout');
+    if (!hasTodayCheckout1) {
+      rawDb.cleaningRequests.push({
+        id: 99991,
+        flatId: 1,
+        flatNumber: '113',
+        requestDate: today,
+        source: 'checkout',
+        status: 'dirty',
+        isVacant: false,
+        completedAt: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+    }
+    fs.writeFileSync(isolatedDbPath, JSON.stringify(rawDb, null, 2), 'utf8');
 
-    // 2. Spawn server on PORT 3995
+    // 2. Spawn server on PORT 3995 with isolated database
     serverProcess = spawn('node', ['artifacts/api-server/demo-server.mjs'], {
-      env: { ...process.env, PORT: String(PORT), NODE_ENV: 'test' },
+      env: { ...process.env, PORT: String(PORT), NODE_ENV: 'test', DATABASE_URL: '', DATABASE_FILE: isolatedDbPath },
       stdio: 'pipe'
     });
 
@@ -59,9 +78,8 @@ describe('Milestone 1 Empirical Challenge: cleanFlatMode & Integrations', () => 
     if (serverProcess) {
       serverProcess.kill('SIGTERM');
     }
-    // Restore original database content
-    if (originalDbContent) {
-      fs.writeFileSync(dbPath, originalDbContent, 'utf8');
+    if (fs.existsSync(isolatedDbPath)) {
+      try { fs.unlinkSync(isolatedDbPath); } catch {}
     }
   });
 

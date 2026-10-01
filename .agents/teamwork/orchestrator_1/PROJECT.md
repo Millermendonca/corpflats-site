@@ -32,7 +32,7 @@
 | 13 | Worker Public Route (R5) | Add `/servico/:token` public route in `App.tsx` | M3 (DONE) | ORIGINAL_REQUEST §R5 |
 | 14 | Maid Dashboard Integration (R6) | In `flat-card.tsx`: display service badge, disable cleaning button with tooltip | M4 (DONE) | ORIGINAL_REQUEST §R6 |
 | 15 | PMS Calendar Integration (R7) | In `pms-calendar.tsx`: display visual blocked period badge, warn on booking attempt | M4 (DONE) | ORIGINAL_REQUEST §R7 |
-| 16 | Build & Deploy Verification (R8) | Build `artifacts/limpeza`, stage `dist/`, commit and `git push origin main` | M5 | ORIGINAL_REQUEST §R8 |
+| 16 | Build & Deploy Verification (R8) | Build `artifacts/limpeza`, stage `dist/`, commit and `git push origin main` | M5 (DONE) | ORIGINAL_REQUEST §R8 |
 
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
@@ -42,7 +42,7 @@
 | M2 | Admin Management Page & Route | R4: `service-orders.tsx` (3 tabs) and `App.tsx` route | M1 | DONE |
 | M3 | Public Worker Portal & Route | R5: `service-worker-portal.tsx` and `App.tsx` route | M1, M2 | DONE |
 | M4 | Dashboard & Calendar Integrations | R6 (`flat-card.tsx`) and R7 (`pms-calendar.tsx`) | M1 | DONE |
-| M5 | E2E Testing, Build & Push | R8: verification of all acceptance criteria, build `dist/`, commit and push | M1, M2, M3, M4 | IN_PROGRESS |
+| M5 | E2E Testing, Build & Push | R8: verification of all acceptance criteria, build `dist/`, commit and push | M1, M2, M3, M4 | DONE |
 
 ## Code Layout
 - Backend Monolith: `artifacts/api-server/demo-server.mjs` (M1 - DONE)

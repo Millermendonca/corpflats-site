@@ -367,9 +367,10 @@ describe('Adversarial Challenge: Public Worker Portal (R5 / Milestone M3)', () =
   // SUITE 5: Live HTTP Interoperability with Backend Monolith
   // ──────────────────────────────────────────────────────────────────────────
   describe('Suite 5: Live HTTP Interoperability & Backend Stress Test', () => {
-    const TEST_PORT = 3998;
+    const TEST_PORT = 3993;
     const BASE_URL = `http://127.0.0.1:${TEST_PORT}`;
-    let dbBackup = null;
+    const prodDbPath = path.resolve('data/database.json');
+    const isolatedDbPath = path.resolve('data/isolated-worker-portal-challenge-database.json');
     let serverProcess = null;
 
     const adminToken = Buffer.from(JSON.stringify({ v: 2, id: 1 })).toString('base64');
@@ -389,10 +390,10 @@ describe('Adversarial Challenge: Public Worker Portal (R5 / Milestone M3)', () =
     }
 
     before(async () => {
-      dbBackup = fs.readFileSync(dbPath, 'utf8');
+      fs.copyFileSync(prodDbPath, isolatedDbPath);
 
       serverProcess = spawn('node', ['artifacts/api-server/demo-server.mjs'], {
-        env: { ...process.env, PORT: String(TEST_PORT), NODE_ENV: 'test', DATABASE_URL: '' },
+        env: { ...process.env, PORT: String(TEST_PORT), NODE_ENV: 'test', DATABASE_URL: '', DATABASE_FILE: isolatedDbPath },
         stdio: 'pipe',
       });
 
@@ -407,15 +408,15 @@ describe('Adversarial Challenge: Public Worker Portal (R5 / Milestone M3)', () =
         } catch {}
         await new Promise((r) => setTimeout(r, 250));
       }
-      assert.ok(ready, 'Server failed to start on test port 3998');
+      assert.ok(ready, 'Server failed to start on test port 3993');
     });
 
     after(() => {
       if (serverProcess && serverProcess.pid) {
         killProcessTree(serverProcess.pid);
       }
-      if (dbBackup) {
-        fs.writeFileSync(dbPath, dbBackup, 'utf8');
+      if (fs.existsSync(isolatedDbPath)) {
+        try { fs.unlinkSync(isolatedDbPath); } catch {}
       }
     });
 

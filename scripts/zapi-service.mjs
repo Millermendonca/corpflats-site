@@ -2988,7 +2988,13 @@ export async function handleDisconnectionEvent({ db, saveDatabase, createNotific
   const lastAlertTime = db.zapiConfig?.lastAlertSentAt ? new Date(db.zapiConfig.lastAlertSentAt).getTime() : 0;
   const cooldownPassed = (now.getTime() - lastAlertTime) > 15 * 60 * 1000;
 
-  if (!isTest && lastState === "disconnected" && !cooldownPassed) {
+  // Bloqueia se: não é teste E (já está marcado como desconectado OU alerta enviado recentemente)
+  if (!isTest && !cooldownPassed && lastAlertTime > 0) {
+    console.log(`[Z-API Watchdog] Cooldown ativo — alerta de desconexão enviado há menos de 15min. Ignorando.`);
+    return;
+  }
+
+  if (!isTest && lastState === "disconnected" && !cooldownPassed && lastAlertTime === 0) {
     console.log(`[Z-API Watchdog] Instância já marcada como desconectada (alerta enviado há menos de 15 min).`);
     return;
   }
@@ -6049,7 +6055,10 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       if (cronCounter % 3 === 0 && db.zapiConfig.instanceId && db.zapiConfig.token) {
         try {
           const status = await getZapiStatus(db.zapiConfig);
-          if (!status.connected && db.zapiConfig.connectionState !== "disconnected") {
+          const prevState = db.zapiConfig.connectionState;
+          // Só dispara alerta de desconexão se houve transição real: estava "connected" e agora não está.
+          // Estado "unknown" (boot inicial) NUNCA deve gerar alerta para evitar loop de notificações.
+          if (!status.connected && prevState === "connected") {
             console.log("[Z-API Watchdog] Queda de conexão detectada pelo heartbeat proativo!");
             await handleDisconnectionEvent({
               db,
@@ -6059,7 +6068,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
               source: "watchdog_heartbeat",
               details: status
             });
-          } else if (status.connected && db.zapiConfig.connectionState === "disconnected") {
+          } else if (!status.connected && prevState === "unknown") {
+            // Apenas atualiza o estado silenciosamente, sem disparar alertas
+            db.zapiConfig.connectionState = "disconnected";
+            if (typeof saveDatabase === "function") saveDatabase();
+            console.log("[Z-API Watchdog] Estado inicial 'unknown' → marcado como 'disconnected' silenciosamente (sem alerta).");
+          } else if (status.connected && prevState === "disconnected") {
             console.log("[Z-API Watchdog] Reconexão detectada pelo heartbeat proativo!");
             await handleConnectionEvent({
               db,

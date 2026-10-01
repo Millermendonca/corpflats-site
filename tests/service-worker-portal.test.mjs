@@ -322,9 +322,10 @@ describe('Service Worker Public Portal (R5) Verification Suite', () => {
   });
 
   describe('6. End-to-End API Integration & Flow', () => {
-    const PORT = 3996;
+    const PORT = 3992;
     const BASE_URL = `http://127.0.0.1:${PORT}`;
-    let dbBackup = null;
+    const prodDbPath = path.resolve('data/database.json');
+    const isolatedDbPath = path.resolve('data/isolated-worker-portal-database.json');
     let serverProcess = null;
 
     const adminToken = Buffer.from(JSON.stringify({ v: 2, id: 1 })).toString('base64');
@@ -344,10 +345,10 @@ describe('Service Worker Public Portal (R5) Verification Suite', () => {
     }
 
     before(async () => {
-      dbBackup = fs.readFileSync(dbPath, 'utf8');
+      fs.copyFileSync(prodDbPath, isolatedDbPath);
 
       serverProcess = spawn('node', ['artifacts/api-server/demo-server.mjs'], {
-        env: { ...process.env, PORT: String(PORT), NODE_ENV: 'test', DATABASE_URL: '' },
+        env: { ...process.env, PORT: String(PORT), NODE_ENV: 'test', DATABASE_URL: '', DATABASE_FILE: isolatedDbPath },
         stdio: 'pipe',
       });
 
@@ -369,8 +370,8 @@ describe('Service Worker Public Portal (R5) Verification Suite', () => {
       if (serverProcess && serverProcess.pid) {
         killProcessTree(serverProcess.pid);
       }
-      if (dbBackup) {
-        fs.writeFileSync(dbPath, dbBackup, 'utf8');
+      if (fs.existsSync(isolatedDbPath)) {
+        try { fs.unlinkSync(isolatedDbPath); } catch {}
       }
     });
 

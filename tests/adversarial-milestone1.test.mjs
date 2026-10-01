@@ -35,13 +35,16 @@ describe('Adversarial Edge-Case & Boundary Stress Test Suite — Milestone 1 Bac
     'Content-Type': 'application/json'
   };
 
-  before(async () => {
-    // 1. Backup database.json
-    dbBackup = fs.readFileSync(dbPath, 'utf8');
+  const isolatedDbPath = path.resolve('data/test-adversarial-m1.json');
 
-    // 2. Spawn test server instance
+  before(async () => {
+    // 1. Prepare isolated copy of database.json
+    dbBackup = fs.readFileSync(dbPath, 'utf8');
+    fs.writeFileSync(isolatedDbPath, dbBackup, 'utf8');
+
+    // 2. Spawn test server instance with isolated database
     serverProcess = spawn('node', ['artifacts/api-server/demo-server.mjs'], {
-      env: { ...process.env, PORT: String(PORT), NODE_ENV: 'test' },
+      env: { ...process.env, PORT: String(PORT), NODE_ENV: 'test', DATABASE_FILE: isolatedDbPath },
       stdio: 'pipe'
     });
 
@@ -68,6 +71,9 @@ describe('Adversarial Edge-Case & Boundary Stress Test Suite — Milestone 1 Bac
     if (serverProcess) {
       serverProcess.kill('SIGTERM');
     }
+    try {
+      fs.unlinkSync(isolatedDbPath);
+    } catch {}
     if (dbBackup) {
       try {
         fs.writeFileSync(dbPath, dbBackup, 'utf8');

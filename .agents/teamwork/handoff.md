@@ -1,41 +1,32 @@
-# Sentinel Final Handoff Report
+# Sentinel Handoff Report
 
 ## Observation
-- The user requested a deep audit, cleanup, and definitive resolution of governance reconciliation routines, retroactive checkout rules, 18:00 date switchover, maid assignment, and flat inconsistencies across flats 904, 313, 511, 512, and the full base in Guest-Flow-Manager.
-- The Project Orchestrator was dispatched, which systematically executed the project pattern: Phase 0 (parallel survey across backend, frontend, and database), Phase 1 (90 tests created in `tests/governance-integrity.test.mjs`), Phase 2 (implementation workers across backend, frontend, database), and Phase 3 (dual reviewer, dual challenger, and internal forensic audit).
-- 113 total automated tests were created and passed 100% (`tests/governance-integrity.test.mjs` and `tests/adversarial-stress.test.mjs`).
-- The project orchestrator claimed victory and submitted full evidence.
-- The Sentinel invoked the Independent Victory Auditor (`1b78e95f-a76d-4217-90f9-b3d474855729`), which conducted a blind 3-phase audit (Phase A timeline, Phase B anti-cheating, Phase C independent test re-execution).
-- The Victory Auditor returned the verdict: **VICTORY CONFIRMED**.
+The user requested the complete implementation of the External Service Provider Management Module (R1 to R8) for Guest-Flow-Manager (CorpFlats).
+The task was routed to the General path with `teamwork_preview_orchestrator`.
+The orchestrator decomposed and coordinated the development through 5 milestones:
+- M1: Backend data models (`serviceOrders`, `serviceWorkers`) in `data/database.json`, admin and public endpoints in `artifacts/api-server/demo-server.mjs`, and byte-for-byte SHA256 mirror parity with `scripts/demo-server.mjs`.
+- M2: Admin Management interface in `artifacts/limpeza/src/pages/service-orders.tsx` with 3 tabs, routes, and navigation link.
+- M3: Public Worker Portal in `artifacts/limpeza/src/pages/service-worker-portal.tsx` with public routing and registration validation.
+- M4: Maid flat card badge and clean button disabling in `flat-card.tsx`, PMS calendar visual service block and reservation conflict protection in `pms-calendar.tsx`.
+- M5: End-to-end integration test suite, frontend production build, git commit and push to `origin main`.
 
 ## Logic Chain
-1. **R1 (Flat 512 & Universal Engine Immunity)**:
-   - Root cause: `reconcileUniversalIntegrity()` reverted `clean` status to `dirty` on recent cleanings lacking `assignedUserId` or `completedAt`.
-   - Resolution: Explicit immunity checks added for `markedByAdmin: true`, `source: "admin_manual"`, `isCanonical: true`, `addedBy: "admin"`, and completed cleanings. Dual servers (`artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`) synchronized with identical SHA-256 hashes. Flat 512 remains clean permanently.
-2. **R2 (Flat 904 & 18:00 Date Switchover)**:
-   - Root cause: After 18:00, dashboard auto-advanced default date to tomorrow, presenting next-day checkout cleanings without prominent contextual signaling.
-   - Resolution: Added a high-visibility gradient banner ("Modo Previsão (Próximo Turno)") with subtitle and quick toggles `[ 🟢 Hoje ]` / `[ 🔮 Amanhã ]`, updated card phrasing to "Saída Prevista: [Hóspede]" and "Check-out amanhã", and prioritized room occupancy (`flat.isOccupied: true`) over checkout vacancy.
-3. **R3 (Flats 313 & 511 Saneamento)**:
-   - Root cause: Flat 313 had orphan dirty checkout ID 1358 dragging daily. Flat 511 had cleaning ID 1338 manually attributed to Grazi on an off-duty day with unearned statement credit.
-   - Resolution: ID 1358 purged with `hasCleanBetween` preventing recreation; Felipe's stay cleanly displayed without false backlog. Flat 511, 907, and 1004 reassigned to Cris (on duty 26/09); false note removed; unearned credits purged from Grazi's statement; Cris credited appropriately.
-4. **R4 (Universal 19-Flat Audit & RES-712-0291)**:
-   - Root cause: `RES-712-0291` was erroneously linked to Flat 512 (`flatId: 12`).
-   - Resolution: Reservation 291 and cleaning ID 1351 properly moved to Flat 712 (`flatId: 14`). All 19 active flats validated; orphan cleanings resolved.
-5. **Quality & Release Discipline**:
-   - `npm run build` executed in `artifacts/limpeza` producing clean bundles in `dist/public/`.
-   - Commit and `git push origin main` executed per `AGENTS.md`. All subagents and crons cleaned up.
+- Every milestone was gated with multi-agent reviews, adversarial challenges, and forensic audits.
+- When an edge case was identified (e.g., timezone date boundaries, synchronous email handling, mirror byte disparity), binary vetoes were applied, remedies were designed by explorers, and exact fixes were deployed and re-audited.
+- After orchestrator victory claim, independent Post-Victory Auditor (`teamwork_preview_victory_auditor`) executed 3-phase audit independently.
+- Independent test execution ran 213 tests across 11 test suites with 100% pass rate.
+- Final verdict returned: `VICTORY CONFIRMED`.
 
 ## Caveats
-- Production deployment relies on git remote `origin main`, which is up-to-date with HEAD.
-- Any future manual cleanings created via administration should maintain standard metadata properties (`markedByAdmin: true` or `addedBy: "admin"`).
+- Production deployment runs on Render; frontend build artifacts in `dist/` are tracked and pushed to trigger automated continuous deployment.
+- WhatsApp notifications require Z-API service credentials in production to reach recipients outside local simulation.
 
 ## Conclusion
-All requirements and acceptance criteria have been achieved, verified by 113 automated tests, confirmed through independent victory audit, and pushed to remote production.
+All requirements R1 to R8 and acceptance criteria are fully met, verified by independent testing and forensic analysis, committed, and pushed to `origin main`.
 
 ## Verification Method
-- Independent Victory Auditor verdict: `VICTORY CONFIRMED`.
-- Automated test runs:
-  * `node --test tests/governance-integrity.test.mjs` -> 90/90 pass.
-  * `node --test tests/adversarial-stress.test.mjs` -> 23/23 pass.
-- Frontend build: `npm run build` in `artifacts/limpeza` -> exit code 0.
-- Git sync: `git rev-parse HEAD` == `git rev-parse origin/main`.
+- Independent post-victory audit report: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\victory_auditor_1\handoff.md`
+- 213 automated tests passed (node --test)
+- Byte-for-byte SHA256 mirror check between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs` (0 diff bytes)
+- Production build: `npm run build` in `artifacts/limpeza` exited with code 0
+- Remote git status: `origin/main` in sync

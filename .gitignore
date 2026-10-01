@@ -62,6 +62,8 @@ data/backups/database_backup_post_recovery_*.json
 data/test-database.json
 test-database.json
 data/*.test.json
-
-
-
+data/*test*.json
+data/*challenge*.json
+data/*isolated*.json
+data/e2e-final-test-database.json
+data/test-*.json

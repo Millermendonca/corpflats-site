@@ -1,11 +1,14 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 
 describe('Live HTTP API Tests for External Service Orders', () => {
   const PORT = 3987;
   const BASE_URL = `http://127.0.0.1:${PORT}`;
+  const prodDbPath = path.resolve('data/database.json');
+  const isolatedDbPath = path.resolve('data/isolated-api-live-database.json');
   let serverProcess;
 
   // Session tokens based on getAuthUser implementation (v: 2)
@@ -27,9 +30,11 @@ describe('Live HTTP API Tests for External Service Orders', () => {
   };
 
   before(async () => {
-    // Start server in background with custom PORT
+    fs.copyFileSync(prodDbPath, isolatedDbPath);
+
+    // Start server in background with custom PORT and isolated database
     serverProcess = spawn('node', ['artifacts/api-server/demo-server.mjs'], {
-      env: { ...process.env, PORT: String(PORT), NODE_ENV: 'test' },
+      env: { ...process.env, PORT: String(PORT), NODE_ENV: 'test', DATABASE_URL: '', DATABASE_FILE: isolatedDbPath },
       stdio: 'pipe'
     });
 
@@ -57,6 +62,9 @@ describe('Live HTTP API Tests for External Service Orders', () => {
   after(() => {
     if (serverProcess) {
       serverProcess.kill('SIGTERM');
+    }
+    if (fs.existsSync(isolatedDbPath)) {
+      try { fs.unlinkSync(isolatedDbPath); } catch {}
     }
   });
 
