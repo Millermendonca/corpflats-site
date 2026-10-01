@@ -224,18 +224,6 @@
   ],
   "cleaningRequests": [
     {
-      "id": 1372,
-      "flatId": 1,
-      "flatNumber": "113",
-      "requestDate": "2026-09-30",
-      "source": "service_order",
-      "status": "dirty",
-      "isVacant": false,
-      "adminNote": "[OS: Pintura e Reparos de Teste E2E (Atualizado)] Limpeza pós-serviço solicitada pelo prestador. Obs: Pintura concluída com acabamento fosco",
-      "createdAt": "2026-09-30T22:05:19.485Z",
-      "updatedAt": "2026-10-01T00:45:29.644Z"
-    },
-    {
       "id": 290,
       "flatId": 7,
       "flatNumber": "313",
@@ -5268,7 +5256,7 @@
       "isExtended": false,
       "twinBeds": false,
       "extraMattress": false,
-      "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 512 (Reserva RES-512-0295)",
+      "adminNote": null,
       "leavingGuest": "Marco",
       "arrivingGuest": null,
       "pendingObservation": null,
@@ -5546,7 +5534,7 @@
       "isExtended": false,
       "twinBeds": false,
       "extraMattress": false,
-      "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 715 (Reserva RES-715-0260)",
+      "adminNote": null,
       "leavingGuest": "Vanderson",
       "arrivingGuest": null,
       "pendingObservation": null,
@@ -5778,7 +5766,7 @@
       "isExtended": false,
       "twinBeds": false,
       "extraMattress": false,
-      "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 712 (Reserva RES-712-0306)",
+      "adminNote": null,
       "leavingGuest": "Costa frederico",
       "arrivingGuest": null,
       "pendingObservation": null,
@@ -5803,7 +5791,7 @@
       "isExtended": false,
       "twinBeds": false,
       "extraMattress": false,
-      "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 1004 (Reserva RES-1004-0307)",
+      "adminNote": null,
       "leavingGuest": "Alessandra Dias",
       "arrivingGuest": null,
       "pendingObservation": null,
@@ -5878,7 +5866,7 @@
       "isExtended": false,
       "twinBeds": false,
       "extraMattress": false,
-      "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 1304 (Reserva RES-1304-0305)",
+      "adminNote": null,
       "leavingGuest": "Angelo",
       "arrivingGuest": null,
       "pendingObservation": null,
@@ -5928,7 +5916,7 @@
       "isExtended": false,
       "twinBeds": false,
       "extraMattress": false,
-      "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 605 (Reserva RES-605-0320)",
+      "adminNote": null,
       "leavingGuest": "Gilberto",
       "arrivingGuest": null,
       "pendingObservation": null,
@@ -5953,7 +5941,7 @@
       "isExtended": false,
       "twinBeds": false,
       "extraMattress": false,
-      "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 211 (Reserva RES-211-0319)",
+      "adminNote": null,
       "leavingGuest": "Isabela Barbosa dos Santos Ribeiro",
       "arrivingGuest": null,
       "pendingObservation": null,
@@ -7590,505 +7578,8 @@
       "createdAt": "2026-08-30T14:30:00.000Z"
     }
   ],
-  "serviceOrders": [
-    {
-      "id": "so_1790813554423_47g7b",
-      "title": "Verificação Elétrica Flat Limpo",
-      "token": "c65372cc150990237239b156",
-      "status": "active",
-      "createdAt": "2026-10-01T00:12:34.423Z",
-      "createdBy": "admin",
-      "cleanFlatMode": "always",
-      "maxSimultaneousFlats": 2,
-      "maxFlatsPerDay": 4,
-      "requirePhotos": false,
-      "estimatedDurationHours": null,
-      "instructionFormat": "text",
-      "flats": [
-        {
-          "flatId": 18,
-          "flatNumber": "907",
-          "instructions": "",
-          "status": "in_progress",
-          "startedAt": "2026-10-01T00:12:34.521Z",
-          "finishedAt": null,
-          "workerName": "Eletricista Pro",
-          "workerCpf": "77788899900",
-          "estimatedFinishAt": null,
-          "observations": null,
-          "photos": [],
-          "needsCleaning": null,
-          "wasCleanWhenStarted": true
-        }
-      ]
-    },
-    {
-      "id": "so_1790808920379_95evu",
-      "title": "Decoração e Cortinas 501",
-      "token": "b749a446ad71dce100480dc9",
-      "status": "active",
-      "createdAt": "2026-09-30T22:55:20.379Z",
-      "createdBy": "admin",
-      "cleanFlatMode": "always",
-      "maxSimultaneousFlats": 2,
-      "maxFlatsPerDay": 4,
-      "requirePhotos": false,
-      "estimatedDurationHours": null,
-      "instructionFormat": "text",
-      "flats": [
-        {
-          "flatId": 501,
-          "flatNumber": "501",
-          "instructions": "",
-          "status": "in_progress",
-          "startedAt": "2026-09-30T22:55:20.465Z",
-          "finishedAt": null,
-          "workerName": "Ana Decoradora",
-          "workerCpf": "11122233344",
-          "estimatedFinishAt": null,
-          "observations": null,
-          "photos": [],
-          "needsCleaning": null,
-          "wasCleanWhenStarted": true
-        }
-      ]
-    },
-    {
-      "id": "so_1790808918007_94pt4",
-      "title": "Troca de Lâmpadas LED Múltiplos Flats",
-      "token": "66cae74cc85476181e2530f8",
-      "status": "active",
-      "createdAt": "2026-09-30T22:55:18.007Z",
-      "createdBy": "admin",
-      "cleanFlatMode": "always",
-      "maxSimultaneousFlats": 3,
-      "maxFlatsPerDay": 4,
-      "requirePhotos": true,
-      "estimatedDurationHours": null,
-      "instructionFormat": "text",
-      "flats": [
-        {
-          "flatId": 401,
-          "flatNumber": "401",
-          "instructions": "",
-          "status": "done",
-          "startedAt": "2026-09-30T22:55:18.085Z",
-          "finishedAt": "2026-09-30T22:55:19.100Z",
-          "workerName": "Eletricista Multi",
-          "workerCpf": "77788899911",
-          "estimatedFinishAt": null,
-          "observations": "Concluído 401",
-          "photos": [
-            "https://storage.corpflats.com/foto401.jpg"
-          ],
-          "needsCleaning": false,
-          "wasCleanWhenStarted": true
-        },
-        {
-          "flatId": 402,
-          "flatNumber": "402",
-          "instructions": "",
-          "status": "done",
-          "startedAt": "2026-09-30T22:55:18.601Z",
-          "finishedAt": "2026-09-30T22:55:19.600Z",
-          "workerName": "Eletricista Multi",
-          "workerCpf": "77788899911",
-          "estimatedFinishAt": null,
-          "observations": "Concluído 402",
-          "photos": [
-            "https://storage.corpflats.com/foto402.jpg"
-          ],
-          "needsCleaning": true,
-          "wasCleanWhenStarted": true
-        }
-      ]
-    },
-    {
-      "id": "so_1790808916678_jotat",
-      "title": "Manutenção de Ar Condicionado Flat 301",
-      "token": "e56a2a5b985b827505ee843d",
-      "status": "active",
-      "createdAt": "2026-09-30T22:55:16.678Z",
-      "createdBy": "admin",
-      "cleanFlatMode": "always",
-      "maxSimultaneousFlats": 2,
-      "maxFlatsPerDay": 4,
-      "requirePhotos": false,
-      "estimatedDurationHours": null,
-      "instructionFormat": "text",
-      "flats": [
-        {
-          "flatId": 301,
-          "flatNumber": "301",
-          "instructions": "",
-          "status": "done",
-          "startedAt": "2026-09-30T22:55:16.745Z",
-          "finishedAt": "2026-09-30T22:55:17.332Z",
-          "workerName": "Roberto Climatização",
-          "workerCpf": "33344455566",
-          "estimatedFinishAt": null,
-          "observations": "Limpeza de filtros e carga de gás R410a efetuada.",
-          "photos": [],
-          "needsCleaning": false,
-          "wasCleanWhenStarted": true
-        }
-      ]
-    },
-    {
-      "id": "so_1790808915338_th2go",
-      "title": "Revisão Hidráulica Flat 201",
-      "token": "c410bd7cb21a9f8a1bb7cc36",
-      "status": "active",
-      "createdAt": "2026-09-30T22:55:15.338Z",
-      "createdBy": "admin",
-      "cleanFlatMode": "always",
-      "maxSimultaneousFlats": 2,
-      "maxFlatsPerDay": 4,
-      "requirePhotos": false,
-      "estimatedDurationHours": null,
-      "instructionFormat": "text",
-      "flats": [
-        {
-          "flatId": 201,
-          "flatNumber": "201",
-          "instructions": "",
-          "status": "done",
-          "startedAt": "2026-09-30T22:55:15.438Z",
-          "finishedAt": "2026-09-30T22:55:15.903Z",
-          "workerName": "Mário Encanador",
-          "workerCpf": "98765432100",
-          "estimatedFinishAt": null,
-          "observations": "Substituição de sifão e torneira concluída com sucesso.",
-          "photos": [
-            "https://storage.corpflats.com/sifao_novo.jpg"
-          ],
-          "needsCleaning": true,
-          "wasCleanWhenStarted": true
-        }
-      ]
-    },
-    {
-      "id": "so_1790808914379_j2z53",
-      "title": "Pintura Fachada e Sala 101",
-      "token": "469d1bfeefdcf923064676cd",
-      "status": "active",
-      "createdAt": "2026-09-30T22:55:14.379Z",
-      "createdBy": "admin",
-      "cleanFlatMode": "always",
-      "maxSimultaneousFlats": 2,
-      "maxFlatsPerDay": 4,
-      "requirePhotos": true,
-      "estimatedDurationHours": 3,
-      "instructionFormat": "text",
-      "flats": [
-        {
-          "flatId": 101,
-          "flatNumber": "101",
-          "instructions": "",
-          "status": "in_progress",
-          "startedAt": "2026-09-30T22:55:14.546Z",
-          "finishedAt": null,
-          "workerName": "Carlos Pintor",
-          "workerCpf": "12345678900",
-          "estimatedFinishAt": "2026-10-01T01:55:14.546Z",
-          "observations": null,
-          "photos": [],
-          "needsCleaning": null,
-          "wasCleanWhenStarted": true
-        }
-      ]
-    },
-    {
-      "id": "so_today_latenight",
-      "title": "Ordem Limite Noturno Hoje",
-      "token": "token_today_latenight_123",
-      "status": "active",
-      "createdAt": "2026-09-30T22:53:40.629Z",
-      "cleanFlatMode": "always",
-      "maxSimultaneousFlats": 2,
-      "maxFlatsPerDay": 1,
-      "requirePhotos": false,
-      "flats": [
-        {
-          "flatId": 1,
-          "flatNumber": "113",
-          "instructions": "",
-          "status": "done",
-          "startedAt": "2026-10-01T00:00:00.000Z",
-          "finishedAt": "2026-10-01T01:30:00.000Z",
-          "workerName": "Prestador Noturno",
-          "workerCpf": "11122233344",
-          "needsCleaning": false
-        },
-        {
-          "flatId": 2,
-          "flatNumber": "114",
-          "instructions": "",
-          "status": "pending",
-          "startedAt": null,
-          "finishedAt": null,
-          "workerName": null,
-          "workerCpf": null,
-          "needsCleaning": null
-        }
-      ]
-    },
-    {
-      "id": "so_yesterday_latenight",
-      "title": "Ordem Ontem Noturno Sem Roubo",
-      "token": "token_yesterday_latenight_12",
-      "status": "active",
-      "createdAt": "2026-09-30T22:53:40.629Z",
-      "cleanFlatMode": "always",
-      "maxSimultaneousFlats": 2,
-      "maxFlatsPerDay": 1,
-      "requirePhotos": false,
-      "flats": [
-        {
-          "flatId": 3,
-          "flatNumber": "116",
-          "instructions": "",
-          "status": "done",
-          "startedAt": "2026-09-30T00:00:00.000Z",
-          "finishedAt": "2026-09-30T01:30:00.000Z",
-          "workerName": "Prestador Matutino",
-          "workerCpf": "22233344455",
-          "needsCleaning": false
-        },
-        {
-          "flatId": 4,
-          "flatNumber": "211",
-          "instructions": "",
-          "status": "pending",
-          "startedAt": null,
-          "finishedAt": null,
-          "workerName": null,
-          "workerCpf": null,
-          "needsCleaning": null
-        }
-      ]
-    },
-    {
-      "id": "so_calendar_block",
-      "title": "Reforma Eletrica Noturna",
-      "token": "token_calendar_block_1234",
-      "status": "active",
-      "createdAt": "2026-09-30T22:53:40.629Z",
-      "cleanFlatMode": "always",
-      "maxSimultaneousFlats": 2,
-      "maxFlatsPerDay": 4,
-      "requirePhotos": false,
-      "flats": [
-        {
-          "flatId": 5,
-          "flatNumber": "302",
-          "instructions": "",
-          "status": "in_progress",
-          "startedAt": "2026-10-01T00:30:00.000Z",
-          "estimatedFinishAt": "2026-10-01T02:30:00.000Z",
-          "workerName": "Eletricista Noturno",
-          "workerCpf": "33344455566",
-          "needsCleaning": null
-        }
-      ]
-    },
-    {
-      "id": "so_test_night_order_21h",
-      "title": "Serviço Noturno 21h30",
-      "token": "night21h0000000000000001",
-      "status": "active",
-      "createdAt": "2026-10-01T00:25:00.000Z",
-      "createdBy": "admin",
-      "cleanFlatMode": "always",
-      "maxSimultaneousFlats": 2,
-      "maxFlatsPerDay": 4,
-      "requirePhotos": false,
-      "estimatedDurationHours": 2,
-      "flats": [
-        {
-          "flatId": 901,
-          "flatNumber": "901",
-          "instructions": "Pintura noturna",
-          "status": "in_progress",
-          "startedAt": "2026-10-01T00:30:00.000Z",
-          "finishedAt": null,
-          "workerName": "Pintor Noturno",
-          "workerCpf": "11122233344",
-          "estimatedFinishAt": "2026-10-01T02:30:00.000Z",
-          "observations": null,
-          "photos": [],
-          "needsCleaning": null,
-          "wasCleanWhenStarted": false
-        }
-      ]
-    },
-    {
-      "id": "so_test_cross_midnight_order",
-      "title": "Serviço Cruza Meia-Noite",
-      "token": "crossmid0000000000000002",
-      "status": "active",
-      "createdAt": "2026-10-01T01:25:00.000Z",
-      "createdBy": "admin",
-      "cleanFlatMode": "always",
-      "maxSimultaneousFlats": 2,
-      "maxFlatsPerDay": 4,
-      "requirePhotos": false,
-      "estimatedDurationHours": 3,
-      "flats": [
-        {
-          "flatId": 902,
-          "flatNumber": "902",
-          "instructions": "Manutenção elétrica",
-          "status": "in_progress",
-          "startedAt": "2026-10-01T01:30:00.000Z",
-          "finishedAt": null,
-          "workerName": "Eletricista Noturno",
-          "workerCpf": "22233344455",
-          "estimatedFinishAt": "2026-10-01T04:30:00.000Z",
-          "observations": null,
-          "photos": [],
-          "needsCleaning": null,
-          "wasCleanWhenStarted": false
-        }
-      ]
-    },
-    {
-      "id": "so_test_closed_cal_order",
-      "title": "Serviço Encerrado Calendário",
-      "token": "closedcal000000000000003",
-      "status": "closed",
-      "createdAt": "2026-10-01T00:00:00.000Z",
-      "createdBy": "admin",
-      "cleanFlatMode": "always",
-      "maxSimultaneousFlats": 2,
-      "maxFlatsPerDay": 4,
-      "requirePhotos": false,
-      "estimatedDurationHours": 2,
-      "flats": [
-        {
-          "flatId": 903,
-          "flatNumber": "903",
-          "instructions": "Teste fechado",
-          "status": "in_progress",
-          "startedAt": "2026-10-01T00:30:00.000Z",
-          "finishedAt": null,
-          "workerName": "Pintor",
-          "workerCpf": "33344455566",
-          "estimatedFinishAt": "2026-10-01T02:30:00.000Z",
-          "observations": null,
-          "photos": [],
-          "needsCleaning": null,
-          "wasCleanWhenStarted": false
-        }
-      ]
-    }
-  ],
-  "serviceWorkers": [
-    {
-      "id": "sw_today",
-      "serviceOrderId": "so_today_latenight",
-      "token": "token_today_latenight_123",
-      "mainWorker": {
-        "name": "Prestador Noturno",
-        "cpf": "11122233344"
-      },
-      "collaborators": [],
-      "registeredAt": "2026-09-30T22:53:40.629Z"
-    },
-    {
-      "id": "sw_yesterday",
-      "serviceOrderId": "so_yesterday_latenight",
-      "token": "token_yesterday_latenight_12",
-      "mainWorker": {
-        "name": "Prestador Matutino",
-        "cpf": "22233344455"
-      },
-      "collaborators": [],
-      "registeredAt": "2026-09-30T22:53:40.629Z"
-    },
-    {
-      "id": "sw_calendar",
-      "serviceOrderId": "so_calendar_block",
-      "token": "token_calendar_block_1234",
-      "mainWorker": {
-        "name": "Eletricista Noturno",
-        "cpf": "33344455566"
-      },
-      "collaborators": [],
-      "registeredAt": "2026-09-30T22:53:40.629Z"
-    },
-    {
-      "id": "sw_1790808914499_6c633",
-      "serviceOrderId": "so_1790808914379_j2z53",
-      "token": "469d1bfeefdcf923064676cd",
-      "mainWorker": {
-        "name": "Carlos Pintor",
-        "cpf": "12345678900"
-      },
-      "collaborators": [],
-      "registeredAt": "2026-09-30T22:55:14.499Z"
-    },
-    {
-      "id": "sw_1790808915395_s4dyv",
-      "serviceOrderId": "so_1790808915338_th2go",
-      "token": "c410bd7cb21a9f8a1bb7cc36",
-      "mainWorker": {
-        "name": "Mário Encanador",
-        "cpf": "98765432100"
-      },
-      "collaborators": [],
-      "registeredAt": "2026-09-30T22:55:15.395Z"
-    },
-    {
-      "id": "sw_1790808916718_zl500",
-      "serviceOrderId": "so_1790808916678_jotat",
-      "token": "e56a2a5b985b827505ee843d",
-      "mainWorker": {
-        "name": "Roberto Climatização",
-        "cpf": "33344455566"
-      },
-      "collaborators": [],
-      "registeredAt": "2026-09-30T22:55:16.718Z"
-    },
-    {
-      "id": "sw_1790808918047_p46av",
-      "serviceOrderId": "so_1790808918007_94pt4",
-      "token": "66cae74cc85476181e2530f8",
-      "mainWorker": {
-        "name": "Eletricista Multi",
-        "cpf": "77788899911"
-      },
-      "collaborators": [],
-      "registeredAt": "2026-09-30T22:55:18.047Z"
-    },
-    {
-      "id": "sw_1790808920424_442a0",
-      "serviceOrderId": "so_1790808920379_95evu",
-      "token": "b749a446ad71dce100480dc9",
-      "mainWorker": {
-        "name": "Ana Decoradora",
-        "cpf": "11122233344"
-      },
-      "collaborators": [
-        {
-          "name": "Ajudante Paulo",
-          "cpf": "55566677788"
-        }
-      ],
-      "registeredAt": "2026-09-30T22:55:20.423Z"
-    },
-    {
-      "id": "sw_1790813554470_nqgqv",
-      "serviceOrderId": "so_1790813554423_47g7b",
-      "token": "c65372cc150990237239b156",
-      "mainWorker": {
-        "name": "Eletricista Pro",
-        "cpf": "77788899900"
-      },
-      "collaborators": [],
-      "registeredAt": "2026-10-01T00:12:34.470Z"
-    }
-  ],
+  "serviceOrders": [],
+  "serviceWorkers": [],
   "surveys": [],
   "observations": [],
   "guests": [
@@ -27968,6 +27459,292 @@
   ],
   "reservationCommunications": [
     {
+      "id": "8f70d64d-5f7c-4a1a-9348-4a6f71599f22",
+      "reservation_id": "0",
+      "type": "email",
+      "direction": "outbound",
+      "recipient": "millerpessanha@gmail.com",
+      "cc": null,
+      "bcc": null,
+      "subject": "[CorpFlats] Serviço Iniciado - Flat 113 (Pintura e Reparos de Teste E2E (Atualizado))",
+      "body": "\n        <div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; line-height: 1.5;\">\n          <h2 style=\"color: #0284c7;\">\n            🔧 Serviço Externo Iniciado\n          </h2>\n          <p><strong>Serviço:</strong> Pintura e Reparos de Teste E2E (Atualizado)</p>\n          <p><strong>Apartamento:</strong> Flat 113</p>\n          <p><strong>Prestador:</strong> João Pintor (CPF: 12345678901)</p>\n          \n            <p><strong>Início:</strong> 00:30</p>\n            <p><strong>Previsão de Duração:</strong> 3h</p>\n            <div style=\"background-color: #f0f9ff; padding: 12px; border-left: 4px solid #0284c7; margin-top: 15px; border-radius: 4px;\">\n              ➡️ <strong>Ação para Recepção:</strong> Favor liberar o cartão de acesso para o prestador ao Flat 113.\n            </div>\n          \n          <hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;\" />\n          <p style=\"font-size: 12px; color: #64748b;\">Notificação enviada automaticamente pelo sistema CorpFlats Guest-Flow-Manager.</p>\n        </div>\n      ",
+      "status": "failed",
+      "metadata": {
+        "category": "service_order",
+        "serviceOrderId": "so_1790825433614_tddjn",
+        "flatNumber": "113",
+        "flatId": 1,
+        "action": "start",
+        "hasAttachments": false,
+        "attachmentsCount": 0,
+        "attempts": 1,
+        "queuedAt": "2026-10-01T03:30:33.968Z",
+        "error": "SMTP não configurado no backend (credenciais de SMTP_USER/SMTP_PASS ausentes).",
+        "failedAt": "2026-10-01T03:30:34.117Z"
+      },
+      "created_at": "2026-10-01T03:30:33.968Z"
+    },
+    {
+      "id": "f436210b-01c8-4cff-aa67-a0bedad4e476",
+      "reservation_id": "0",
+      "type": "email",
+      "direction": "outbound",
+      "recipient": "millerpessanha@gmail.com",
+      "cc": null,
+      "bcc": null,
+      "subject": "[CorpFlats] Serviço Finalizado - Flat 402 (Troca de Lâmpadas LED Múltiplos Flats)",
+      "body": "\n        <div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; line-height: 1.5;\">\n          <h2 style=\"color: #16a34a;\">\n            ✅ Serviço Externo Finalizado\n          </h2>\n          <p><strong>Serviço:</strong> Troca de Lâmpadas LED Múltiplos Flats</p>\n          <p><strong>Apartamento:</strong> Flat 402</p>\n          <p><strong>Prestador:</strong> Eletricista Multi (CPF: 77788899911)</p>\n          \n            <p><strong>Duração:</strong> 0min</p>\n            <p><strong>Precisa de Camareira:</strong> Sim</p>\n            <p><strong>Observações:</strong> Concluído 402</p>\n            <p><strong>Fotos Anexadas:</strong> 0</p>\n          \n          <hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;\" />\n          <p style=\"font-size: 12px; color: #64748b;\">Notificação enviada automaticamente pelo sistema CorpFlats Guest-Flow-Manager.</p>\n        </div>\n      ",
+      "status": "failed",
+      "metadata": {
+        "category": "service_order",
+        "serviceOrderId": "so_1790825182599_eejmg",
+        "flatNumber": "402",
+        "flatId": 402,
+        "action": "finish",
+        "hasAttachments": false,
+        "attachmentsCount": 0,
+        "attempts": 1,
+        "queuedAt": "2026-10-01T03:26:24.296Z",
+        "error": "SMTP não configurado no backend (credenciais de SMTP_USER/SMTP_PASS ausentes).",
+        "failedAt": "2026-10-01T03:26:24.360Z"
+      },
+      "created_at": "2026-10-01T03:26:24.296Z"
+    },
+    {
+      "id": "64d5f133-46fa-4119-9aeb-8a50a3726c0e",
+      "reservation_id": "0",
+      "type": "email",
+      "direction": "outbound",
+      "recipient": "millerpessanha@gmail.com",
+      "cc": null,
+      "bcc": null,
+      "subject": "[CorpFlats] Serviço Finalizado - Flat 401 (Troca de Lâmpadas LED Múltiplos Flats)",
+      "body": "\n        <div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; line-height: 1.5;\">\n          <h2 style=\"color: #16a34a;\">\n            ✅ Serviço Externo Finalizado\n          </h2>\n          <p><strong>Serviço:</strong> Troca de Lâmpadas LED Múltiplos Flats</p>\n          <p><strong>Apartamento:</strong> Flat 401</p>\n          <p><strong>Prestador:</strong> Eletricista Multi (CPF: 77788899911)</p>\n          \n            <p><strong>Duração:</strong> 0min</p>\n            <p><strong>Precisa de Camareira:</strong> Não</p>\n            <p><strong>Observações:</strong> Concluído 401</p>\n            <p><strong>Fotos Anexadas:</strong> 0</p>\n          \n          <hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;\" />\n          <p style=\"font-size: 12px; color: #64748b;\">Notificação enviada automaticamente pelo sistema CorpFlats Guest-Flow-Manager.</p>\n        </div>\n      ",
+      "status": "failed",
+      "metadata": {
+        "category": "service_order",
+        "serviceOrderId": "so_1790825182599_eejmg",
+        "flatNumber": "401",
+        "flatId": 401,
+        "action": "finish",
+        "hasAttachments": false,
+        "attachmentsCount": 0,
+        "attempts": 1,
+        "queuedAt": "2026-10-01T03:26:23.793Z",
+        "error": "SMTP não configurado no backend (credenciais de SMTP_USER/SMTP_PASS ausentes).",
+        "failedAt": "2026-10-01T03:26:23.875Z"
+      },
+      "created_at": "2026-10-01T03:26:23.793Z"
+    },
+    {
+      "id": "ab751b62-c2cc-419d-b1e2-c382a12146d3",
+      "reservation_id": "0",
+      "type": "email",
+      "direction": "outbound",
+      "recipient": "millerpessanha@gmail.com",
+      "cc": null,
+      "bcc": null,
+      "subject": "[CorpFlats] Serviço Iniciado - Flat 402 (Troca de Lâmpadas LED Múltiplos Flats)",
+      "body": "\n        <div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; line-height: 1.5;\">\n          <h2 style=\"color: #0284c7;\">\n            🔧 Serviço Externo Iniciado\n          </h2>\n          <p><strong>Serviço:</strong> Troca de Lâmpadas LED Múltiplos Flats</p>\n          <p><strong>Apartamento:</strong> Flat 402</p>\n          <p><strong>Prestador:</strong> Eletricista Multi (CPF: 77788899911)</p>\n          \n            <p><strong>Início:</strong> 00:26</p>\n            <p><strong>Previsão de Duração:</strong> 2h</p>\n            <div style=\"background-color: #f0f9ff; padding: 12px; border-left: 4px solid #0284c7; margin-top: 15px; border-radius: 4px;\">\n              ➡️ <strong>Ação para Recepção:</strong> Favor liberar o cartão de acesso para o prestador ao Flat 402.\n            </div>\n          \n          <hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;\" />\n          <p style=\"font-size: 12px; color: #64748b;\">Notificação enviada automaticamente pelo sistema CorpFlats Guest-Flow-Manager.</p>\n        </div>\n      ",
+      "status": "failed",
+      "metadata": {
+        "category": "service_order",
+        "serviceOrderId": "so_1790825182599_eejmg",
+        "flatNumber": "402",
+        "flatId": 402,
+        "action": "start",
+        "hasAttachments": false,
+        "attachmentsCount": 0,
+        "attempts": 1,
+        "queuedAt": "2026-10-01T03:26:23.294Z",
+        "error": "SMTP não configurado no backend (credenciais de SMTP_USER/SMTP_PASS ausentes).",
+        "failedAt": "2026-10-01T03:26:23.375Z"
+      },
+      "created_at": "2026-10-01T03:26:23.294Z"
+    },
+    {
+      "id": "1948403a-b0cc-4de5-8cc4-ac427b13b214",
+      "reservation_id": "0",
+      "type": "email",
+      "direction": "outbound",
+      "recipient": "millerpessanha@gmail.com",
+      "cc": null,
+      "bcc": null,
+      "subject": "[CorpFlats] Serviço Iniciado - Flat 401 (Troca de Lâmpadas LED Múltiplos Flats)",
+      "body": "\n        <div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; line-height: 1.5;\">\n          <h2 style=\"color: #0284c7;\">\n            🔧 Serviço Externo Iniciado\n          </h2>\n          <p><strong>Serviço:</strong> Troca de Lâmpadas LED Múltiplos Flats</p>\n          <p><strong>Apartamento:</strong> Flat 401</p>\n          <p><strong>Prestador:</strong> Eletricista Multi (CPF: 77788899911)</p>\n          \n            <p><strong>Início:</strong> 00:26</p>\n            <p><strong>Previsão de Duração:</strong> 2h</p>\n            <div style=\"background-color: #f0f9ff; padding: 12px; border-left: 4px solid #0284c7; margin-top: 15px; border-radius: 4px;\">\n              ➡️ <strong>Ação para Recepção:</strong> Favor liberar o cartão de acesso para o prestador ao Flat 401.\n            </div>\n          \n          <hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;\" />\n          <p style=\"font-size: 12px; color: #64748b;\">Notificação enviada automaticamente pelo sistema CorpFlats Guest-Flow-Manager.</p>\n        </div>\n      ",
+      "status": "failed",
+      "metadata": {
+        "category": "service_order",
+        "serviceOrderId": "so_1790825182599_eejmg",
+        "flatNumber": "401",
+        "flatId": 401,
+        "action": "start",
+        "hasAttachments": false,
+        "attachmentsCount": 0,
+        "attempts": 1,
+        "queuedAt": "2026-10-01T03:26:22.844Z",
+        "error": "SMTP não configurado no backend (credenciais de SMTP_USER/SMTP_PASS ausentes).",
+        "failedAt": "2026-10-01T03:26:22.897Z"
+      },
+      "created_at": "2026-10-01T03:26:22.844Z"
+    },
+    {
+      "id": "8085ad8a-fbcb-44c9-90d9-14dfaf30c89d",
+      "reservation_id": "0",
+      "type": "email",
+      "direction": "outbound",
+      "recipient": "millerpessanha@gmail.com",
+      "cc": null,
+      "bcc": null,
+      "subject": "[CorpFlats] Serviço Finalizado - Flat 201 (Revisão Hidráulica Flat 201)",
+      "body": "\n        <div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; line-height: 1.5;\">\n          <h2 style=\"color: #16a34a;\">\n            ✅ Serviço Externo Finalizado\n          </h2>\n          <p><strong>Serviço:</strong> Revisão Hidráulica Flat 201</p>\n          <p><strong>Apartamento:</strong> Flat 201</p>\n          <p><strong>Prestador:</strong> Mário Encanador (CPF: 98765432100)</p>\n          \n            <p><strong>Duração:</strong> 0min</p>\n            <p><strong>Precisa de Camareira:</strong> Sim</p>\n            <p><strong>Observações:</strong> Substituição de sifão e torneira concluída com sucesso.</p>\n            <p><strong>Fotos Anexadas:</strong> 1</p>\n          \n          <hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;\" />\n          <p style=\"font-size: 12px; color: #64748b;\">Notificação enviada automaticamente pelo sistema CorpFlats Guest-Flow-Manager.</p>\n        </div>\n      ",
+      "status": "failed",
+      "metadata": {
+        "category": "service_order",
+        "serviceOrderId": "so_1790825176949_ils0r",
+        "flatNumber": "201",
+        "flatId": 201,
+        "action": "finish",
+        "hasAttachments": false,
+        "attachmentsCount": 0,
+        "attempts": 1,
+        "queuedAt": "2026-10-01T03:26:19.705Z",
+        "error": "SMTP não configurado no backend (credenciais de SMTP_USER/SMTP_PASS ausentes).",
+        "failedAt": "2026-10-01T03:26:19.749Z"
+      },
+      "created_at": "2026-10-01T03:26:19.705Z"
+    },
+    {
+      "id": "1a858bca-4183-4e3c-8f4d-a3320b1dc6ac",
+      "reservation_id": "0",
+      "type": "email",
+      "direction": "outbound",
+      "recipient": "millerpessanha@gmail.com",
+      "cc": null,
+      "bcc": null,
+      "subject": "[CorpFlats] Serviço Finalizado - Flat 301 (Manutenção de Ar Condicionado Flat 301)",
+      "body": "\n        <div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; line-height: 1.5;\">\n          <h2 style=\"color: #16a34a;\">\n            ✅ Serviço Externo Finalizado\n          </h2>\n          <p><strong>Serviço:</strong> Manutenção de Ar Condicionado Flat 301</p>\n          <p><strong>Apartamento:</strong> Flat 301</p>\n          <p><strong>Prestador:</strong> Roberto Climatização (CPF: 33344455566)</p>\n          \n            <p><strong>Duração:</strong> 0min</p>\n            <p><strong>Precisa de Camareira:</strong> Não</p>\n            <p><strong>Observações:</strong> Limpeza de filtros e carga de gás R410a efetuada.</p>\n            <p><strong>Fotos Anexadas:</strong> 0</p>\n          \n          <hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;\" />\n          <p style=\"font-size: 12px; color: #64748b;\">Notificação enviada automaticamente pelo sistema CorpFlats Guest-Flow-Manager.</p>\n        </div>\n      ",
+      "status": "failed",
+      "metadata": {
+        "category": "service_order",
+        "serviceOrderId": "so_1790825178003_xw7gg",
+        "flatNumber": "301",
+        "flatId": 301,
+        "action": "finish",
+        "hasAttachments": false,
+        "attachmentsCount": 0,
+        "attempts": 1,
+        "queuedAt": "2026-10-01T03:26:18.778Z",
+        "error": "SMTP não configurado no backend (credenciais de SMTP_USER/SMTP_PASS ausentes).",
+        "failedAt": "2026-10-01T03:26:18.832Z"
+      },
+      "created_at": "2026-10-01T03:26:18.778Z"
+    },
+    {
+      "id": "1e771c18-4373-4629-8f4d-4e5b74bc2262",
+      "reservation_id": "0",
+      "type": "email",
+      "direction": "outbound",
+      "recipient": "millerpessanha@gmail.com",
+      "cc": null,
+      "bcc": null,
+      "subject": "[CorpFlats] Serviço Iniciado - Flat 301 (Manutenção de Ar Condicionado Flat 301)",
+      "body": "\n        <div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; line-height: 1.5;\">\n          <h2 style=\"color: #0284c7;\">\n            🔧 Serviço Externo Iniciado\n          </h2>\n          <p><strong>Serviço:</strong> Manutenção de Ar Condicionado Flat 301</p>\n          <p><strong>Apartamento:</strong> Flat 301</p>\n          <p><strong>Prestador:</strong> Roberto Climatização (CPF: 33344455566)</p>\n          \n            <p><strong>Início:</strong> 00:26</p>\n            <p><strong>Previsão de Duração:</strong> 2h</p>\n            <div style=\"background-color: #f0f9ff; padding: 12px; border-left: 4px solid #0284c7; margin-top: 15px; border-radius: 4px;\">\n              ➡️ <strong>Ação para Recepção:</strong> Favor liberar o cartão de acesso para o prestador ao Flat 301.\n            </div>\n          \n          <hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;\" />\n          <p style=\"font-size: 12px; color: #64748b;\">Notificação enviada automaticamente pelo sistema CorpFlats Guest-Flow-Manager.</p>\n        </div>\n      ",
+      "status": "failed",
+      "metadata": {
+        "category": "service_order",
+        "serviceOrderId": "so_1790825178003_xw7gg",
+        "flatNumber": "301",
+        "flatId": 301,
+        "action": "start",
+        "hasAttachments": false,
+        "attachmentsCount": 0,
+        "attempts": 1,
+        "queuedAt": "2026-10-01T03:26:18.217Z",
+        "error": "SMTP não configurado no backend (credenciais de SMTP_USER/SMTP_PASS ausentes).",
+        "failedAt": "2026-10-01T03:26:18.276Z"
+      },
+      "created_at": "2026-10-01T03:26:18.217Z"
+    },
+    {
+      "id": "cbcae7c7-c162-45e8-88ee-bb0e6ba86862",
+      "reservation_id": "0",
+      "type": "email",
+      "direction": "outbound",
+      "recipient": "millerpessanha@gmail.com",
+      "cc": null,
+      "bcc": null,
+      "subject": "[CorpFlats] Serviço Iniciado - Flat 201 (Revisão Hidráulica Flat 201)",
+      "body": "\n        <div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; line-height: 1.5;\">\n          <h2 style=\"color: #0284c7;\">\n            🔧 Serviço Externo Iniciado\n          </h2>\n          <p><strong>Serviço:</strong> Revisão Hidráulica Flat 201</p>\n          <p><strong>Apartamento:</strong> Flat 201</p>\n          <p><strong>Prestador:</strong> Mário Encanador (CPF: 98765432100)</p>\n          \n            <p><strong>Início:</strong> 00:26</p>\n            <p><strong>Previsão de Duração:</strong> 2h</p>\n            <div style=\"background-color: #f0f9ff; padding: 12px; border-left: 4px solid #0284c7; margin-top: 15px; border-radius: 4px;\">\n              ➡️ <strong>Ação para Recepção:</strong> Favor liberar o cartão de acesso para o prestador ao Flat 201.\n            </div>\n          \n          <hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;\" />\n          <p style=\"font-size: 12px; color: #64748b;\">Notificação enviada automaticamente pelo sistema CorpFlats Guest-Flow-Manager.</p>\n        </div>\n      ",
+      "status": "failed",
+      "metadata": {
+        "category": "service_order",
+        "serviceOrderId": "so_1790825176949_ils0r",
+        "flatNumber": "201",
+        "flatId": 201,
+        "action": "start",
+        "hasAttachments": false,
+        "attachmentsCount": 0,
+        "attempts": 1,
+        "queuedAt": "2026-10-01T03:26:17.312Z",
+        "error": "SMTP não configurado no backend (credenciais de SMTP_USER/SMTP_PASS ausentes).",
+        "failedAt": "2026-10-01T03:26:17.436Z"
+      },
+      "created_at": "2026-10-01T03:26:17.312Z"
+    },
+    {
+      "id": "373bec7a-1823-44dc-ba61-88f19502beae",
+      "reservation_id": "0",
+      "type": "email",
+      "direction": "outbound",
+      "recipient": "millerpessanha@gmail.com",
+      "cc": null,
+      "bcc": null,
+      "subject": "[CorpFlats] Serviço Iniciado - Flat 101 (Pintura Fachada e Sala 101)",
+      "body": "\n        <div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; line-height: 1.5;\">\n          <h2 style=\"color: #0284c7;\">\n            🔧 Serviço Externo Iniciado\n          </h2>\n          <p><strong>Serviço:</strong> Pintura Fachada e Sala 101</p>\n          <p><strong>Apartamento:</strong> Flat 101</p>\n          <p><strong>Prestador:</strong> Carlos Pintor (CPF: 12345678900)</p>\n          \n            <p><strong>Início:</strong> 00:26</p>\n            <p><strong>Previsão de Duração:</strong> 3h</p>\n            <div style=\"background-color: #f0f9ff; padding: 12px; border-left: 4px solid #0284c7; margin-top: 15px; border-radius: 4px;\">\n              ➡️ <strong>Ação para Recepção:</strong> Favor liberar o cartão de acesso para o prestador ao Flat 101.\n            </div>\n          \n          <hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;\" />\n          <p style=\"font-size: 12px; color: #64748b;\">Notificação enviada automaticamente pelo sistema CorpFlats Guest-Flow-Manager.</p>\n        </div>\n      ",
+      "status": "failed",
+      "metadata": {
+        "category": "service_order",
+        "serviceOrderId": "so_1790825176186_94vda",
+        "flatNumber": "101",
+        "flatId": 101,
+        "action": "start",
+        "hasAttachments": false,
+        "attachmentsCount": 0,
+        "attempts": 1,
+        "queuedAt": "2026-10-01T03:26:16.535Z",
+        "error": "SMTP não configurado no backend (credenciais de SMTP_USER/SMTP_PASS ausentes).",
+        "failedAt": "2026-10-01T03:26:16.892Z"
+      },
+      "created_at": "2026-10-01T03:26:16.535Z"
+    },
+    {
+      "id": "d431c11d-d6b9-4488-bca9-9d9abb7c8135",
+      "reservation_id": "0",
+      "type": "email",
+      "direction": "outbound",
+      "recipient": "millerpessanha@gmail.com",
+      "cc": null,
+      "bcc": null,
+      "subject": "[CorpFlats] Serviço Iniciado - Flat 113 (Pintura e Reparos de Teste E2E (Atualizado))",
+      "body": "\n        <div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; line-height: 1.5;\">\n          <h2 style=\"color: #0284c7;\">\n            🔧 Serviço Externo Iniciado\n          </h2>\n          <p><strong>Serviço:</strong> Pintura e Reparos de Teste E2E (Atualizado)</p>\n          <p><strong>Apartamento:</strong> Flat 113</p>\n          <p><strong>Prestador:</strong> João Pintor (CPF: 12345678901)</p>\n          \n            <p><strong>Início:</strong> 00:21</p>\n            <p><strong>Previsão de Duração:</strong> 3h</p>\n            <div style=\"background-color: #f0f9ff; padding: 12px; border-left: 4px solid #0284c7; margin-top: 15px; border-radius: 4px;\">\n              ➡️ <strong>Ação para Recepção:</strong> Favor liberar o cartão de acesso para o prestador ao Flat 113.\n            </div>\n          \n          <hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;\" />\n          <p style=\"font-size: 12px; color: #64748b;\">Notificação enviada automaticamente pelo sistema CorpFlats Guest-Flow-Manager.</p>\n        </div>\n      ",
+      "status": "failed",
+      "metadata": {
+        "category": "service_order",
+        "serviceOrderId": "so_1790824877957_1d20j",
+        "flatNumber": "113",
+        "flatId": 1,
+        "action": "start",
+        "hasAttachments": false,
+        "attachmentsCount": 0,
+        "attempts": 1,
+        "queuedAt": "2026-10-01T03:21:18.257Z",
+        "error": "SMTP não configurado no backend (credenciais de SMTP_USER/SMTP_PASS ausentes).",
+        "failedAt": "2026-10-01T03:21:18.412Z"
+      },
+      "created_at": "2026-10-01T03:21:18.257Z"
+    },
+    {
       "id": "5ffc29ba-4d02-447f-a265-b72074e62331",
       "reservation_id": "0",
       "type": "email",
@@ -28653,381 +28430,6 @@
   "roomBlocks": [],
   "notifications": [
     {
-      "id": 1787151090009,
-      "category": "service_order",
-      "title": "✅ Serviço finalizado - Flat 113",
-      "message": "Pintura e Reparos de Teste E2E (Atualizado): João Pintor no Flat 113",
-      "severity": "info",
-      "metadata": {
-        "serviceOrderId": "so_1790815528524_qd1lu",
-        "flatId": 1,
-        "flatNumber": "113"
-      },
-      "targetUrl": "/servicos",
-      "read": false,
-      "createdAt": "2026-10-01T00:45:29.688Z"
-    },
-    {
-      "id": 1787151090008,
-      "category": "service_order",
-      "title": "🔧 Serviço iniciado - Flat 113",
-      "message": "Pintura e Reparos de Teste E2E (Atualizado): João Pintor no Flat 113",
-      "severity": "info",
-      "metadata": {
-        "serviceOrderId": "so_1790815528524_qd1lu",
-        "flatId": 1,
-        "flatNumber": "113"
-      },
-      "targetUrl": "/servicos",
-      "read": false,
-      "createdAt": "2026-10-01T00:45:28.706Z"
-    },
-    {
-      "id": 1787151090007,
-      "category": "service_order",
-      "title": "✅ Serviço finalizado - Flat 113",
-      "message": "Pintura e Reparos de Teste E2E (Atualizado): João Pintor no Flat 113",
-      "severity": "info",
-      "metadata": {
-        "serviceOrderId": "so_1790814120816_qvdkj",
-        "flatId": 1,
-        "flatNumber": "113"
-      },
-      "targetUrl": "/servicos",
-      "read": false,
-      "createdAt": "2026-10-01T00:22:02.320Z"
-    },
-    {
-      "id": 1787151090006,
-      "category": "service_order",
-      "title": "🔧 Serviço iniciado - Flat 113",
-      "message": "Pintura e Reparos de Teste E2E (Atualizado): João Pintor no Flat 113",
-      "severity": "info",
-      "metadata": {
-        "serviceOrderId": "so_1790814120816_qvdkj",
-        "flatId": 1,
-        "flatNumber": "113"
-      },
-      "targetUrl": "/servicos",
-      "read": false,
-      "createdAt": "2026-10-01T00:22:01.035Z"
-    },
-    {
-      "id": 1787151090005,
-      "category": "service_order",
-      "title": "🔧 Serviço iniciado - Flat 907",
-      "message": "Verificação Elétrica Flat Limpo: Eletricista Pro no Flat 907",
-      "severity": "info",
-      "metadata": {
-        "serviceOrderId": "so_1790813554423_47g7b",
-        "flatId": 18,
-        "flatNumber": "907"
-      },
-      "targetUrl": "/servicos",
-      "read": false,
-      "createdAt": "2026-10-01T00:12:34.615Z"
-    },
-    {
-      "id": 1787151090004,
-      "category": "service_order",
-      "title": "✅ Serviço finalizado - Flat 113",
-      "message": "Reforma Geral do Piso: Roberto Piso no Flat 113",
-      "severity": "info",
-      "metadata": {
-        "serviceOrderId": "so_1790813553885_hn1oh",
-        "flatId": 1,
-        "flatNumber": "113"
-      },
-      "targetUrl": "/servicos",
-      "read": false,
-      "createdAt": "2026-10-01T00:12:34.235Z"
-    },
-    {
-      "id": 1787151090003,
-      "category": "service_order",
-      "title": "🔧 Serviço iniciado - Flat 113",
-      "message": "Reforma Geral do Piso: Roberto Piso no Flat 113",
-      "severity": "info",
-      "metadata": {
-        "serviceOrderId": "so_1790813553885_hn1oh",
-        "flatId": 1,
-        "flatNumber": "113"
-      },
-      "targetUrl": "/servicos",
-      "read": false,
-      "createdAt": "2026-10-01T00:12:34.028Z"
-    },
-    {
-      "id": 1787151090002,
-      "category": "service_order",
-      "title": "✅ Serviço finalizado - Flat 113",
-      "message": "Manutenção Hidráulica: Mário Encanador no Flat 113",
-      "severity": "info",
-      "metadata": {
-        "serviceOrderId": "so_1790813553383_57nrf",
-        "flatId": 1,
-        "flatNumber": "113"
-      },
-      "targetUrl": "/servicos",
-      "read": false,
-      "createdAt": "2026-10-01T00:12:33.706Z"
-    },
-    {
-      "id": 1787151090001,
-      "category": "service_order",
-      "title": "🔧 Serviço iniciado - Flat 113",
-      "message": "Manutenção Hidráulica: Mário Encanador no Flat 113",
-      "severity": "info",
-      "metadata": {
-        "serviceOrderId": "so_1790813553383_57nrf",
-        "flatId": 1,
-        "flatNumber": "113"
-      },
-      "targetUrl": "/servicos",
-      "read": false,
-      "createdAt": "2026-10-01T00:12:33.533Z"
-    },
-    {
-      "id": 1787151090000,
-      "category": "service_order",
-      "title": "🔧 Serviço iniciado - Flat 113",
-      "message": "Desafio Modo Always: Always Worker no Flat 113",
-      "severity": "info",
-      "metadata": {
-        "serviceOrderId": "so_1790813552946_sm8u9",
-        "flatId": 1,
-        "flatNumber": "113"
-      },
-      "targetUrl": "/servicos",
-      "read": false,
-      "createdAt": "2026-10-01T00:12:33.213Z"
-    },
-    {
-      "id": 1787151089999,
-      "category": "service_order",
-      "title": "🔧 Serviço iniciado - Flat 907",
-      "message": "Desafio Modo Always: Always Worker no Flat 907",
-      "severity": "info",
-      "metadata": {
-        "serviceOrderId": "so_1790813552946_sm8u9",
-        "flatId": 18,
-        "flatNumber": "907"
-      },
-      "targetUrl": "/servicos",
-      "read": false,
-      "createdAt": "2026-10-01T00:12:33.067Z"
-    },
-    {
-      "id": 1787151089998,
-      "category": "service_order",
-      "title": "🔧 Serviço iniciado - Flat 907",
-      "message": "Desafio Modo Priority Apenas Limpos: Solo Worker no Flat 907",
-      "severity": "info",
-      "metadata": {
-        "serviceOrderId": "so_1790813552689_pp3t3",
-        "flatId": 18,
-        "flatNumber": "907"
-      },
-      "targetUrl": "/servicos",
-      "read": false,
-      "createdAt": "2026-10-01T00:12:32.847Z"
-    },
-    {
-      "id": 1787151089997,
-      "category": "service_order",
-      "title": "🔧 Serviço iniciado - Flat 907",
-      "message": "Desafio Modo Priority Sequencial: Priority Worker no Flat 907",
-      "severity": "info",
-      "metadata": {
-        "serviceOrderId": "so_1790813552241_97hz2",
-        "flatId": 18,
-        "flatNumber": "907"
-      },
-      "targetUrl": "/servicos",
-      "read": false,
-      "createdAt": "2026-10-01T00:12:32.541Z"
-    },
-    {
-      "id": 1787151089996,
-      "category": "service_order",
-      "title": "✅ Serviço finalizado - Flat 113",
-      "message": "Desafio Modo Priority Sequencial: Priority Worker no Flat 113",
-      "severity": "info",
-      "metadata": {
-        "serviceOrderId": "so_1790813552241_97hz2",
-        "flatId": 1,
-        "flatNumber": "113"
-      },
-      "targetUrl": "/servicos",
-      "read": false,
-      "createdAt": "2026-10-01T00:12:32.425Z"
-    },
-    {
-      "id": 1787151089995,
-      "category": "service_order",
-      "title": "🔧 Serviço iniciado - Flat 113",
-      "message": "Desafio Modo Priority Sequencial: Priority Worker no Flat 113",
-      "severity": "info",
-      "metadata": {
-        "serviceOrderId": "so_1790813552241_97hz2",
-        "flatId": 1,
-        "flatNumber": "113"
-      },
-      "targetUrl": "/servicos",
-      "read": false,
-      "createdAt": "2026-10-01T00:12:32.320Z"
-    },
-    {
-      "id": 1787151089994,
-      "category": "service_order",
-      "title": "🔧 Serviço iniciado - Flat 113",
-      "message": "Desafio Modo Never: Empirical Worker no Flat 113",
-      "severity": "info",
-      "metadata": {
-        "serviceOrderId": "so_1790813551998_xe1iz",
-        "flatId": 1,
-        "flatNumber": "113"
-      },
-      "targetUrl": "/servicos",
-      "read": false,
-      "createdAt": "2026-10-01T00:12:32.128Z"
-    },
-    {
-      "id": 1787151089993,
-      "category": "service_order",
-      "title": "✅ Serviço finalizado - Flat 402",
-      "message": "Troca de Lâmpadas LED Múltiplos Flats: Eletricista Multi no Flat 402",
-      "severity": "info",
-      "metadata": {
-        "serviceOrderId": "so_1790808918007_94pt4",
-        "flatId": 402,
-        "flatNumber": "402"
-      },
-      "targetUrl": "/servicos",
-      "read": false,
-      "createdAt": "2026-09-30T22:55:19.670Z"
-    },
-    {
-      "id": 1787151089992,
-      "category": "service_order",
-      "title": "✅ Serviço finalizado - Flat 401",
-      "message": "Troca de Lâmpadas LED Múltiplos Flats: Eletricista Multi no Flat 401",
-      "severity": "info",
-      "metadata": {
-        "serviceOrderId": "so_1790808918007_94pt4",
-        "flatId": 401,
-        "flatNumber": "401"
-      },
-      "targetUrl": "/servicos",
-      "read": false,
-      "createdAt": "2026-09-30T22:55:19.150Z"
-    },
-    {
-      "id": 1787151089991,
-      "category": "service_order",
-      "title": "🔧 Serviço iniciado - Flat 402",
-      "message": "Troca de Lâmpadas LED Múltiplos Flats: Eletricista Multi no Flat 402",
-      "severity": "info",
-      "metadata": {
-        "serviceOrderId": "so_1790808918007_94pt4",
-        "flatId": 402,
-        "flatNumber": "402"
-      },
-      "targetUrl": "/servicos",
-      "read": false,
-      "createdAt": "2026-09-30T22:55:18.655Z"
-    },
-    {
-      "id": 1787151089990,
-      "category": "service_order",
-      "title": "🔧 Serviço iniciado - Flat 401",
-      "message": "Troca de Lâmpadas LED Múltiplos Flats: Eletricista Multi no Flat 401",
-      "severity": "info",
-      "metadata": {
-        "serviceOrderId": "so_1790808918007_94pt4",
-        "flatId": 401,
-        "flatNumber": "401"
-      },
-      "targetUrl": "/servicos",
-      "read": false,
-      "createdAt": "2026-09-30T22:55:18.145Z"
-    },
-    {
-      "id": 1787151089989,
-      "category": "service_order",
-      "title": "✅ Serviço finalizado - Flat 301",
-      "message": "Manutenção de Ar Condicionado Flat 301: Roberto Climatização no Flat 301",
-      "severity": "info",
-      "metadata": {
-        "serviceOrderId": "so_1790808916678_jotat",
-        "flatId": 301,
-        "flatNumber": "301"
-      },
-      "targetUrl": "/servicos",
-      "read": false,
-      "createdAt": "2026-09-30T22:55:17.407Z"
-    },
-    {
-      "id": 1787151089988,
-      "category": "service_order",
-      "title": "🔧 Serviço iniciado - Flat 301",
-      "message": "Manutenção de Ar Condicionado Flat 301: Roberto Climatização no Flat 301",
-      "severity": "info",
-      "metadata": {
-        "serviceOrderId": "so_1790808916678_jotat",
-        "flatId": 301,
-        "flatNumber": "301"
-      },
-      "targetUrl": "/servicos",
-      "read": false,
-      "createdAt": "2026-09-30T22:55:16.797Z"
-    },
-    {
-      "id": 1787151089987,
-      "category": "service_order",
-      "title": "✅ Serviço finalizado - Flat 201",
-      "message": "Revisão Hidráulica Flat 201: Mário Encanador no Flat 201",
-      "severity": "info",
-      "metadata": {
-        "serviceOrderId": "so_1790808915338_th2go",
-        "flatId": 201,
-        "flatNumber": "201"
-      },
-      "targetUrl": "/servicos",
-      "read": false,
-      "createdAt": "2026-09-30T22:55:15.976Z"
-    },
-    {
-      "id": 1787151089986,
-      "category": "service_order",
-      "title": "🔧 Serviço iniciado - Flat 201",
-      "message": "Revisão Hidráulica Flat 201: Mário Encanador no Flat 201",
-      "severity": "info",
-      "metadata": {
-        "serviceOrderId": "so_1790808915338_th2go",
-        "flatId": 201,
-        "flatNumber": "201"
-      },
-      "targetUrl": "/servicos",
-      "read": false,
-      "createdAt": "2026-09-30T22:55:15.549Z"
-    },
-    {
-      "id": 1787151089985,
-      "category": "service_order",
-      "title": "🔧 Serviço iniciado - Flat 101",
-      "message": "Pintura Fachada e Sala 101: Carlos Pintor no Flat 101",
-      "severity": "info",
-      "metadata": {
-        "serviceOrderId": "so_1790808914379_j2z53",
-        "flatId": 101,
-        "flatNumber": "101"
-      },
-      "targetUrl": "/servicos",
-      "read": false,
-      "createdAt": "2026-09-30T22:55:14.657Z"
-    },
-    {
       "id": 1787151089984,
       "category": "breakfast",
       "title": "☕ Pedido de Café  - Apt 993",
@@ -29548,6 +28950,458 @@
     }
   ],
   "auditLogs": [
+    {
+      "id": "audit_1790575107631_4aobq11111111111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-10-01T03:30:34.927Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_SERVICE_ORDER",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "✅ Serviço finalizado - Flat 113",
+        "message": "Pintura e Reparos de Teste E2E (Atualizado): João Pintor no Flat 113",
+        "metadata": {
+          "serviceOrderId": "so_1790825433614_tddjn",
+          "flatId": 1,
+          "flatNumber": "113"
+        },
+        "targetUrl": "/servicos"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq1111111111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-10-01T03:30:33.894Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_SERVICE_ORDER",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "🔧 Serviço iniciado - Flat 113",
+        "message": "Pintura e Reparos de Teste E2E (Atualizado): João Pintor no Flat 113",
+        "metadata": {
+          "serviceOrderId": "so_1790825433614_tddjn",
+          "flatId": 1,
+          "flatNumber": "113"
+        },
+        "targetUrl": "/servicos"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq111111111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-10-01T03:30:33.647Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "SERVICE_ORDER_CREATED",
+      "actor": {
+        "id": 1,
+        "name": "admin",
+        "role": "admin"
+      },
+      "details": {
+        "orderId": "so_1790825433614_tddjn",
+        "title": "Pintura e Reparos de Teste E2E",
+        "flatsCount": 3
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq11111111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-10-01T03:26:24.218Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_SERVICE_ORDER",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "✅ Serviço finalizado - Flat 402",
+        "message": "Troca de Lâmpadas LED Múltiplos Flats: Eletricista Multi no Flat 402",
+        "metadata": {
+          "serviceOrderId": "so_1790825182599_eejmg",
+          "flatId": 402,
+          "flatNumber": "402"
+        },
+        "targetUrl": "/servicos"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq1111111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-10-01T03:26:23.717Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_SERVICE_ORDER",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "✅ Serviço finalizado - Flat 401",
+        "message": "Troca de Lâmpadas LED Múltiplos Flats: Eletricista Multi no Flat 401",
+        "metadata": {
+          "serviceOrderId": "so_1790825182599_eejmg",
+          "flatId": 401,
+          "flatNumber": "401"
+        },
+        "targetUrl": "/servicos"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq111111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-10-01T03:26:23.247Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_SERVICE_ORDER",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "🔧 Serviço iniciado - Flat 402",
+        "message": "Troca de Lâmpadas LED Múltiplos Flats: Eletricista Multi no Flat 402",
+        "metadata": {
+          "serviceOrderId": "so_1790825182599_eejmg",
+          "flatId": 402,
+          "flatNumber": "402"
+        },
+        "targetUrl": "/servicos"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq11111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-10-01T03:26:22.792Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_SERVICE_ORDER",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "🔧 Serviço iniciado - Flat 401",
+        "message": "Troca de Lâmpadas LED Múltiplos Flats: Eletricista Multi no Flat 401",
+        "metadata": {
+          "serviceOrderId": "so_1790825182599_eejmg",
+          "flatId": 401,
+          "flatNumber": "401"
+        },
+        "targetUrl": "/servicos"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq1111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-10-01T03:26:22.642Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "SERVICE_ORDER_CREATED",
+      "actor": {
+        "id": 1,
+        "name": "admin",
+        "role": "admin"
+      },
+      "details": {
+        "orderId": "so_1790825182599_eejmg",
+        "title": "Troca de Lâmpadas LED Múltiplos Flats",
+        "flatsCount": 2
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq111111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-10-01T03:26:18.715Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_SERVICE_ORDER",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "✅ Serviço finalizado - Flat 301",
+        "message": "Manutenção de Ar Condicionado Flat 301: Roberto Climatização no Flat 301",
+        "metadata": {
+          "serviceOrderId": "so_1790825178003_xw7gg",
+          "flatId": 301,
+          "flatNumber": "301"
+        },
+        "targetUrl": "/servicos"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq11111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-10-01T03:26:18.168Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_SERVICE_ORDER",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "🔧 Serviço iniciado - Flat 301",
+        "message": "Manutenção de Ar Condicionado Flat 301: Roberto Climatização no Flat 301",
+        "metadata": {
+          "serviceOrderId": "so_1790825178003_xw7gg",
+          "flatId": 301,
+          "flatNumber": "301"
+        },
+        "targetUrl": "/servicos"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq1111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-10-01T03:26:18.048Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "SERVICE_ORDER_CREATED",
+      "actor": {
+        "id": 1,
+        "name": "admin",
+        "role": "admin"
+      },
+      "details": {
+        "orderId": "so_1790825178003_xw7gg",
+        "title": "Manutenção de Ar Condicionado Flat 301",
+        "flatsCount": 1
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq111111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-10-01T03:26:17.888Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_SERVICE_ORDER",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "✅ Serviço finalizado - Flat 201",
+        "message": "Revisão Hidráulica Flat 201: Mário Encanador no Flat 201",
+        "metadata": {
+          "serviceOrderId": "so_1790825176949_ils0r",
+          "flatId": 201,
+          "flatNumber": "201"
+        },
+        "targetUrl": "/servicos"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq11111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-10-01T03:26:17.206Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_SERVICE_ORDER",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "🔧 Serviço iniciado - Flat 201",
+        "message": "Revisão Hidráulica Flat 201: Mário Encanador no Flat 201",
+        "metadata": {
+          "serviceOrderId": "so_1790825176949_ils0r",
+          "flatId": 201,
+          "flatNumber": "201"
+        },
+        "targetUrl": "/servicos"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq1111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-10-01T03:26:17.031Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "SERVICE_ORDER_CREATED",
+      "actor": {
+        "id": 1,
+        "name": "admin",
+        "role": "admin"
+      },
+      "details": {
+        "orderId": "so_1790825176949_ils0r",
+        "title": "Revisão Hidráulica Flat 201",
+        "flatsCount": 1
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq111111111111111111111111111111111111111111111111",
+      "timestamp": "2026-10-01T03:26:16.458Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_SERVICE_ORDER",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "🔧 Serviço iniciado - Flat 101",
+        "message": "Pintura Fachada e Sala 101: Carlos Pintor no Flat 101",
+        "metadata": {
+          "serviceOrderId": "so_1790825176186_94vda",
+          "flatId": 101,
+          "flatNumber": "101"
+        },
+        "targetUrl": "/servicos"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq11111111111111111111111111111111111111111111111",
+      "timestamp": "2026-10-01T03:26:16.280Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "SERVICE_ORDER_CREATED",
+      "actor": {
+        "id": 1,
+        "name": "admin",
+        "role": "admin"
+      },
+      "details": {
+        "orderId": "so_1790825176186_94vda",
+        "title": "Pintura Fachada e Sala 101",
+        "flatsCount": 1
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq1111111111111111111111111111111111111111111111",
+      "timestamp": "2026-10-01T03:21:19.373Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_SERVICE_ORDER",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "✅ Serviço finalizado - Flat 113",
+        "message": "Pintura e Reparos de Teste E2E (Atualizado): João Pintor no Flat 113",
+        "metadata": {
+          "serviceOrderId": "so_1790824877957_1d20j",
+          "flatId": 1,
+          "flatNumber": "113"
+        },
+        "targetUrl": "/servicos"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq111111111111111111111111111111111111111111111",
+      "timestamp": "2026-10-01T03:21:18.190Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_SERVICE_ORDER",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "🔧 Serviço iniciado - Flat 113",
+        "message": "Pintura e Reparos de Teste E2E (Atualizado): João Pintor no Flat 113",
+        "metadata": {
+          "serviceOrderId": "so_1790824877957_1d20j",
+          "flatId": 1,
+          "flatNumber": "113"
+        },
+        "targetUrl": "/servicos"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq11111111111111111111111111111111111111111111",
+      "timestamp": "2026-10-01T03:21:17.991Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "SERVICE_ORDER_CREATED",
+      "actor": {
+        "id": 1,
+        "name": "admin",
+        "role": "admin"
+      },
+      "details": {
+        "orderId": "so_1790824877957_1d20j",
+        "title": "Pintura e Reparos de Teste E2E",
+        "flatsCount": 3
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq1111111111111111111111111111111111111111111",
+      "timestamp": "2026-10-01T03:21:13.943Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "SERVICE_ORDER_CREATED",
+      "actor": {
+        "id": 1,
+        "name": "admin",
+        "role": "admin"
+      },
+      "details": {
+        "orderId": "so_1790824873914_p107j",
+        "title": "Desafio Challenger M2 Pintura",
+        "flatsCount": 2
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
     {
       "id": "audit_1790575107631_4aobq111111111111111111111111111111111111111111",
       "timestamp": "2026-10-01T00:45:29.687Z",
@@ -49488,7 +49342,7 @@
     "conciergeGroupName": "Checkout Flats",
     "conciergeMonitoringEnabled": true,
     "conciergeRequireKeywords": false,
-    "webhooksSyncedAt": "2026-09-30T23:59:44.994Z",
+    "webhooksSyncedAt": "2026-10-01T03:26:23.486Z",
     "googleReviewUrl": "https://share.google/LHu3541d5lhkdvbL2",
     "alertEmail": "millerpessanha@gmail.com",
     "alertEmailEnabled": true,
@@ -54997,5 +54851,8 @@
       "createdAt": "2026-09-25T14:00:00.000Z",
       "paidAt": "2026-09-25T14:00:00.000Z"
     }
+  ],
+  "systemMigrations": [
+    "migration_20260930_incident_repaired"
   ]
 }
