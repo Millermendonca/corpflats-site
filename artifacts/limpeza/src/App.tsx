@@ -46,6 +46,7 @@ import WhatsappAutomation from '@/pages/whatsapp-automation';
 import WhatsappChat from '@/pages/whatsapp-chat';
 import MaidWhatsappAutomation from '@/pages/maid-whatsapp-automation';
 import ShoppingListPage from '@/pages/shopping-list';
+import AiStatusPage from '@/pages/ai-status';
 import MaidStatementPage from '@/pages/maid-statement';
 import ZapiConnection from '@/pages/zapi-connection';
 import EmailHub from '@/pages/email-hub';
@@ -324,6 +325,9 @@ function Router() {
         <AdminRoute path="/auditoria" component={SystemLogsPage} moduleName="os Logs & Auditoria Fail-Safe" />
         <AdminRoute path="/system-logs" component={SystemLogsPage} moduleName="os Logs do Sistema" />
         <AdminRoute path="/audit" component={SystemLogsPage} moduleName="a Auditoria do Sistema" />
+        <AdminRoute path="/ia-status" component={AiStatusPage} moduleName="o Status da IA" />
+        <AdminRoute path="/ai-status" component={AiStatusPage} moduleName="o Status da IA" />
+        <AdminRoute path="/status-ia" component={AiStatusPage} moduleName="o Status da IA" />
 
         {/* External Service Orders Management (Admin Only) */}
         <AdminRoute path="/servicos" component={ServiceOrders} moduleName="a Gestão de Ordens de Serviço" />
