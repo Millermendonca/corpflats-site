@@ -5528,7 +5528,7 @@ async function dispatchServiceNotifications(action, order, flat, worker) {
         `⏰ ${startTimeStr} → ${finishTimeStr} (${durationStr})`,
         `🧹 Precisa camareira: *${cleaningStr}*`,
         `📝 Obs: ${obsStr}`,
-        `📷 ${photosCount} foto(s) disponíveis no sistema`
+        `📷 ${photosCount} foto(s)${photosCount > 0 ? " (enviadas abaixo)" : " disponíveis no sistema"}`
       ].join("\n");
     }
 
@@ -5551,6 +5551,44 @@ async function dispatchServiceNotifications(action, order, flat, worker) {
         message,
         bypassTestMode: true
       }).catch(err => console.warn(`[ServiceOrder] WhatsApp to reception failed:`, err.message));
+    }
+
+    // 2b. Enviar fotos via WhatsApp (somente na finalização)
+    if (action === "finish" && Array.isArray(flat.photos) && flat.photos.length > 0) {
+      const zapiCfg = db.zapiConfig;
+      const instanceId = zapiCfg?.instanceId?.trim();
+      const token = zapiCfg?.token?.trim();
+      const clientToken = zapiCfg?.clientToken?.trim();
+      const baseUrl = (zapiCfg?.baseUrl || "https://api.z-api.io").replace(/\/+$/, "");
+      const sendImageToPhone = async (phone, photoUrl, caption) => {
+        if (!instanceId || !token || !phone) return;
+        const url = `${baseUrl}/instances/${instanceId}/token/${token}/send-image`;
+        const headers = { "Content-Type": "application/json" };
+        if (clientToken) headers["Client-Token"] = clientToken;
+        try {
+          await fetch(url, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ phone, image: photoUrl, caption: caption || "" })
+          });
+        } catch (imgErr) {
+          console.warn(`[ServiceOrder] Falha ao enviar foto ${photoUrl} via WhatsApp para ${phone}:`, imgErr.message);
+        }
+      };
+      // Monta URL pública para cada foto e envia sequencialmente
+      const serverBaseUrl = process.env.SERVER_BASE_URL || db.settings?.serverBaseUrl || db.siteConfig?.branding?.siteUrl || "";
+      for (let i = 0; i < flat.photos.length; i++) {
+        const rawUrl = flat.photos[i];
+        // Se a URL já é absoluta (https://), usa diretamente; senão, prefixa com serverBaseUrl
+        const photoUrl = rawUrl && rawUrl.startsWith("http") ? rawUrl : (serverBaseUrl ? `${serverBaseUrl.replace(/\/+$/, "")}${rawUrl}` : rawUrl);
+        const caption = `📷 Flat ${flat.flatNumber} – ${order.title} (${i + 1}/${flat.photos.length})`;
+        if (photoUrl) {
+          await sendImageToPhone(adminPhone, photoUrl, caption);
+          if (cleanReceptionPhone && cleanReceptionPhone !== adminPhone) {
+            await sendImageToPhone(cleanReceptionPhone, photoUrl, caption);
+          }
+        }
+      }
     }
 
     // 3. Email Reception
