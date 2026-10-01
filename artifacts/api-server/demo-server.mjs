@@ -25540,7 +25540,7 @@ const ALL_CATEGORIES = ["Carnes","Frios","Laticínios","Padaria","Bebidas","Seco
 
 // Tenta chamar Gemini com um método de auth, retorna resposta ou null
 async function callGemini(prompt, apiKey, method) {
-  const baseUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
+  const baseUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent";
   const url = method === "key" ? `${baseUrl}?key=${apiKey}` : baseUrl;
   const headers = { "Content-Type": "application/json" };
   if (method === "bearer") headers["Authorization"] = `Bearer ${apiKey}`;
@@ -25771,7 +25771,7 @@ app.get("/api/shopping-list/ai-test", async (req, res) => {
     contents: [{ parts: [{ text: testPrompt }] }],
     generationConfig: { temperature: 0, maxOutputTokens: 50 },
   });
-  const baseUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
+  const baseUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent";
 
   // Testa ?key=
   try {
