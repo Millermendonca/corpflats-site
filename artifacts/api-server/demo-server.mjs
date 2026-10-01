@@ -2066,64 +2066,13 @@ export function repairIncidentSept30(db) {
 
   let changed = false;
 
-  // ── Restauração dos Pedidos de Café da Manhã do Incidente de 30/09 (Alexandre Flat 212 e Marco Flat 512) ──
+  // ── Restauração dos Pedidos de Café da Manhã do Incidente de 30/09 (Marco Flat 512 e Alexandre Flat 212) ──
   if (!db.systemMigrations.includes("migration_20260930_breakfast_repaired")) {
     if (!Array.isArray(db.breakfastOrders)) db.breakfastOrders = [];
 
-    let maxBfId = db.breakfastOrders.length > 0 ? Math.max(...db.breakfastOrders.map(o => Number(o.id) || 0)) : 0;
+    let maxBfId = db.breakfastOrders.reduce((max, o) => Math.max(max, Number(o.id) || 0), 0);
 
-    // 1. Alexandre De Oliveira Carvalho — Flat 212, RES-212-0296, 06:45, 1 pessoa, 9 dias (01/10 a 09/10) - Audit log #3110
-    const alexDates = [
-      "2026-10-01", "2026-10-02", "2026-10-03",
-      "2026-10-04", "2026-10-05", "2026-10-06",
-      "2026-10-07", "2026-10-08", "2026-10-09"
-    ];
-    const alexItems = [
-      { name: "Café", quantity: 1 },
-      { name: "Leite", quantity: 1 },
-      { name: "Suco de laranja", quantity: 1 },
-      { name: "Pão francês", quantity: 1 },
-      { name: "Pão de queijo", quantity: 1 },
-      { name: "Queijo mussarela", quantity: 1 },
-      { name: "Presunto", quantity: 1 },
-      { name: "Ovos mexidos", quantity: 1 },
-      { name: "Manteiga", quantity: 1 },
-      { name: "Bolo do dia", quantity: 1 },
-      { name: "Fruta do dia", quantity: 1 },
-      { name: "Açúcar", quantity: 1 }
-    ];
-
-    for (const dt of alexDates) {
-      const exists = db.breakfastOrders.find(o => String(o.roomNumber) === "212" && o.date === dt);
-      if (!exists) {
-        maxBfId++;
-        db.breakfastOrders.push({
-          id: maxBfId,
-          date: dt,
-          deliveryTime: "06:45",
-          roomNumber: "212",
-          clientName: "Alexandre De Oliveira Carvalho",
-          guestCount: 1,
-          isStandard: true,
-          orderMode: "unified",
-          guestOrders: null,
-          guestChoices: null,
-          preferences: null,
-          items: alexItems,
-          notes: "",
-          status: "pending",
-          phone: "",
-          reservationCode: "RES-212-0296",
-          reservationId: 296,
-          originalCheckin: "2026-09-28",
-          originalCheckout: "2026-10-09",
-          createdAt: "2026-09-30T17:42:08.000Z"
-        });
-        changed = true;
-      }
-    }
-
-    // 2. Marco — Flat 512, RES-512-0295, 08:02, 1 pessoa, 1 dia (01/10) - Audit log #3188
+    // 1. Marco — Flat 512, RES-512-0295, 08:02, 1 pessoa, 1 dia (01/10) - Audit log #3188
     const marcoExists = db.breakfastOrders.find(o => String(o.roomNumber) === "512" && o.date === "2026-10-01");
     if (!marcoExists) {
       maxBfId++;
@@ -2184,9 +2133,60 @@ export function repairIncidentSept30(db) {
       changed = true;
     }
 
+    // 2. Alexandre De Oliveira Carvalho — Flat 212, RES-212-0296, 06:45, 1 pessoa, 9 dias (01/10 a 09/10) - Audit log #3110
+    const alexDates = [
+      "2026-10-01", "2026-10-02", "2026-10-03",
+      "2026-10-04", "2026-10-05", "2026-10-06",
+      "2026-10-07", "2026-10-08", "2026-10-09"
+    ];
+    const alexItems = [
+      { name: "Café", quantity: 1 },
+      { name: "Leite", quantity: 1 },
+      { name: "Suco de laranja", quantity: 1 },
+      { name: "Pão francês", quantity: 1 },
+      { name: "Pão de queijo", quantity: 1 },
+      { name: "Queijo mussarela", quantity: 1 },
+      { name: "Presunto", quantity: 1 },
+      { name: "Ovos mexidos", quantity: 1 },
+      { name: "Manteiga", quantity: 1 },
+      { name: "Bolo do dia", quantity: 1 },
+      { name: "Fruta do dia", quantity: 1 },
+      { name: "Açúcar", quantity: 1 }
+    ];
+
+    for (const dt of alexDates) {
+      const exists = db.breakfastOrders.find(o => String(o.roomNumber) === "212" && o.date === dt);
+      if (!exists) {
+        maxBfId++;
+        db.breakfastOrders.push({
+          id: maxBfId,
+          date: dt,
+          deliveryTime: "06:45",
+          roomNumber: "212",
+          clientName: "Alexandre De Oliveira Carvalho",
+          guestCount: 1,
+          isStandard: true,
+          orderMode: "unified",
+          guestOrders: null,
+          guestChoices: null,
+          preferences: null,
+          items: alexItems,
+          notes: "",
+          status: "pending",
+          phone: "",
+          reservationCode: "RES-212-0296",
+          reservationId: 296,
+          originalCheckin: "2026-09-28",
+          originalCheckout: "2026-10-09",
+          createdAt: "2026-09-30T17:42:08.000Z"
+        });
+        changed = true;
+      }
+    }
+
     db.systemMigrations.push("migration_20260930_breakfast_repaired");
     changed = true;
-    console.log("[Incident Sept 30 Fix] Pedidos de café de Alexandre (Flat 212) e Marco (Flat 512) restaurados com sucesso.");
+    console.log("[Incident Sept 30 Fix] Pedidos de café de Marco (Flat 512) e Alexandre (Flat 212) restaurados com sucesso.");
   }
 
   // Se a migração corretiva de reservas já foi aplicada, pula a etapa das reservas para não sobrescrever futuras extensões de estadia
@@ -2555,7 +2555,7 @@ function sanitizeReservationFlags() {
 
 
 // ── Recuperação Automática e À Prova de Falhas via Logs de Auditoria do PostgreSQL ──
-async function reconcileFromAuditLogs(db, pgPool) {
+export async function reconcileFromAuditLogs(db, pgPool) {
   if (!pgPool) return false;
   try {
     const q = await pgPool.query(
@@ -2797,24 +2797,31 @@ async function reconcileFromAuditLogs(db, pgPool) {
     // 2. RECONCILIAR PEDIDOS DE CAFÉ DA MANHÃ
     if (!db.breakfastOrders) db.breakfastOrders = [];
     const bfLogs = logs.filter(l => l.action === "NOTIFICATION_BREAKFAST");
-    let maxBfId = db.breakfastOrders.length > 0 ? Math.max(...db.breakfastOrders.map(o => Number(o.id) || 0)) : 0;
+    let maxBfId = db.breakfastOrders.reduce((max, o) => Math.max(max, Number(o.id) || 0), 0);
 
     for (const l of bfLogs) {
       const d = l.details || {};
       const meta = d.metadata || {};
-      const dates = meta.dates || [l.timestamp.substring(0, 10)];
+      const tsStr = l.timestamp instanceof Date ? l.timestamp.toISOString() : String(l.timestamp || "");
+      const fallbackDate = tsStr.length >= 10 ? tsStr.substring(0, 10) : new Date().toISOString().substring(0, 10);
+      const dates = (Array.isArray(meta.dates) && meta.dates.length > 0)
+        ? meta.dates
+        : (meta.date ? [meta.date] : [fallbackDate]);
+
       const room = String(meta.roomNumber || "").trim().replace(/\D/g, "");
       if (!room) continue;
       const deliveryTime = meta.deliveryTime || "08:00";
-      const guestCount = meta.guestCount || 1;
 
-      let guestName = "Hóspede";
+      let extractedName = null;
       if (d.message) {
-        const match = d.message.match(/^(.+?)\s+agendou café/i);
-        if (match) guestName = match[1].trim();
+        const match = d.message.match(/^(.+?)\s+(?:agendou|repetiu)/i);
+        if (match) extractedName = match[1].trim();
       }
 
-      for (const dt of dates) {
+      for (const rawDt of dates) {
+        const dt = String(rawDt || "").trim();
+        if (!dt) continue;
+
         let existing = db.breakfastOrders.find(o => String(o.roomNumber) === room && o.date === dt);
         if (existing) {
           if (existing.status === "cancelled") {
@@ -2823,7 +2830,6 @@ async function reconcileFromAuditLogs(db, pgPool) {
             changed = true;
           }
         } else {
-          maxBfId++;
           const activeRes = (db.reservations || []).find(r =>
             String(r.flatNumber) === room &&
             r.status !== "cancelada" &&
@@ -2831,8 +2837,15 @@ async function reconcileFromAuditLogs(db, pgPool) {
             dt >= r.checkinDate && dt <= r.checkoutDate
           );
 
-          const finalClientName = (meta.clientName || guestName || activeRes?.guestName || "Hóspede").trim();
-          const finalGuestCount = Math.min(Math.max(Number(guestCount) || Number(meta.guestCount) || 1, 1), 3);
+          const finalClientName = (meta.clientName || extractedName || activeRes?.guestName || "Hóspede").trim();
+          const rawGuestCount = meta.guestCount || activeRes?.guestCount || 1;
+          const finalGuestCount = Math.min(Math.max(Number(rawGuestCount) || 1, 1), 3);
+
+          const explicitId = Number(meta.orderId || meta.id);
+          const orderIdToUse = (explicitId && !db.breakfastOrders.some(o => Number(o.id) === explicitId))
+            ? explicitId
+            : ++maxBfId;
+          maxBfId = Math.max(maxBfId, orderIdToUse);
 
           let orderItems = Array.isArray(meta.items) && meta.items.length > 0 ? meta.items : null;
           let orderPrefs = meta.preferences || null;
@@ -2876,7 +2889,7 @@ async function reconcileFromAuditLogs(db, pgPool) {
           const createdTs = l.timestamp instanceof Date ? l.timestamp.toISOString() : (String(l.timestamp || "") || new Date().toISOString());
 
           const newOrder = {
-            id: maxBfId,
+            id: orderIdToUse,
             date: dt,
             deliveryTime: deliveryTime,
             roomNumber: room,
@@ -2900,12 +2913,13 @@ async function reconcileFromAuditLogs(db, pgPool) {
 
           db.breakfastOrders.unshift(newOrder);
           changed = true;
-          console.log(`[Reconcile Audit] Pedido de café restaurado/criado para Flat ${room} na data ${dt} (Hóspede: ${finalClientName}, ID: ${maxBfId}).`);
+          console.log(`[Reconcile Audit] Pedido de café restaurado/criado para Flat ${room} na data ${dt} (Hóspede: ${finalClientName}, ID: ${orderIdToUse}).`);
         }
       }
     }
 
     // 3. RECONCILIAR LIMPEZAS DAS CAMAREIRAS
+    if (!Array.isArray(db.cleaningRequests)) db.cleaningRequests = [];
     const cleaningsMap = new Map();
     const cleaningsByReqId = new Map();
     for (const l of logs) {

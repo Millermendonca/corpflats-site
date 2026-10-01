@@ -9,7 +9,7 @@ const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "..");
 
 function extractFunction(code, fnName) {
-  const match = code.match(new RegExp(`(?:export\\s+)?function\\s+${fnName}\\s*\\(`));
+  const match = code.match(new RegExp(`(?:export\\s+)?(?:async\\s+)?function\\s+${fnName}\\s*\\(`));
   if (!match) throw new Error(`Function ${fnName} not found`);
   const startIdx = match.index;
   let openBraces = 0;
@@ -83,8 +83,8 @@ test("Suite de Validação: Restauração e Blindagem de Breakfast Orders", asyn
     // Mock DB sem pedidos
     const mockDb = {
       reservations: [
-        { id: 296, code: "RES-212-0296", flatNumber: "212", guestName: "Alexandre De Oliveira Carvalho", checkinDate: "2026-09-28", checkoutDate: "2026-10-09" },
-        { id: 295, code: "RES-512-0295", flatNumber: "512", guestName: "Marco", checkinDate: "2026-09-28", checkoutDate: "2026-10-01" }
+        { id: 295, code: "RES-512-0295", flatNumber: "512", guestName: "Marco", checkinDate: "2026-09-28", checkoutDate: "2026-10-01" },
+        { id: 296, code: "RES-212-0296", flatNumber: "212", guestName: "Alexandre De Oliveira Carvalho", checkinDate: "2026-09-28", checkoutDate: "2026-10-09" }
       ],
       breakfastOrders: [],
       systemMigrations: []
@@ -94,19 +94,22 @@ test("Suite de Validação: Restauração e Blindagem de Breakfast Orders", asyn
     assert.strictEqual(changedFirst, true, "Primeira execução deve retornar true indicando reparação");
     assert.ok(mockDb.systemMigrations.includes("migration_20260930_breakfast_repaired"));
 
-    // Verifica que Alexandre recebeu 9 pedidos e Marco 1 pedido
-    const alexOrders = mockDb.breakfastOrders.filter(o => String(o.roomNumber) === "212");
-    assert.strictEqual(alexOrders.length, 9, "Alexandre deve ter 9 pedidos restaurados");
-    assert.strictEqual(alexOrders[0].deliveryTime, "06:45");
-    assert.strictEqual(alexOrders[0].clientName, "Alexandre De Oliveira Carvalho");
-    assert.strictEqual(alexOrders[0].isStandard, true);
-
+    // Verifica que Marco recebeu ID 1 e Alexandre IDs 2 a 10 (ou ordens sequenciais)
     const marcoOrder = mockDb.breakfastOrders.find(o => String(o.roomNumber) === "512" && o.date === "2026-10-01");
     assert.ok(marcoOrder, "Marco deve ter pedido restaurado para 01/10");
+    assert.strictEqual(marcoOrder.id, 1, "Marco restaurado primeiro deve receber ID 1");
     assert.strictEqual(marcoOrder.deliveryTime, "08:02");
     assert.strictEqual(marcoOrder.clientName, "Marco");
     assert.strictEqual(marcoOrder.isStandard, false);
     assert.strictEqual(marcoOrder.preferences.coffee, "Café");
+
+    const alexOrders = mockDb.breakfastOrders.filter(o => String(o.roomNumber) === "212");
+    assert.strictEqual(alexOrders.length, 9, "Alexandre deve ter 9 pedidos restaurados");
+    assert.strictEqual(alexOrders[0].id, 2, "Primeiro pedido de Alexandre deve receber ID 2");
+    assert.strictEqual(alexOrders[8].id, 10, "Último pedido de Alexandre deve receber ID 10");
+    assert.strictEqual(alexOrders[0].deliveryTime, "06:45");
+    assert.strictEqual(alexOrders[0].clientName, "Alexandre De Oliveira Carvalho");
+    assert.strictEqual(alexOrders[0].isStandard, true);
 
     // Idempotência: segunda execução não duplica
     const countBefore = mockDb.breakfastOrders.length;
@@ -115,12 +118,85 @@ test("Suite de Validação: Restauração e Blindagem de Breakfast Orders", asyn
     assert.strictEqual(mockDb.breakfastOrders.length, countBefore, "Contagem de pedidos não deve mudar");
   });
 
-  await t.test("4. reconcileFromAuditLogs cria pedidos ausentes a partir do audit log", () => {
-    const content = fs.readFileSync(artifactsServerPath, "utf-8");
-    // Verifica que a seção de reconciliação de café da manhã em reconcileFromAuditLogs cria pedidos quando !existing
-    assert.ok(content.includes("[Reconcile Audit] Pedido de café restaurado/criado"), "reconcileFromAuditLogs deve conter criação de pedidos ausentes");
-    assert.ok(content.includes("maxBfId++"), "reconcileFromAuditLogs deve incrementar maxBfId ao criar pedidos");
-    assert.ok(content.includes("db.breakfastOrders.unshift(newOrder)"), "reconcileFromAuditLogs deve adicionar novo pedido ao banco");
+  await t.test("4. reconcileFromAuditLogs cria pedidos ausentes e lida defensivamente com Date objects, nomes e explicit IDs", async () => {
+    const serverCode = fs.readFileSync(artifactsServerPath, "utf-8");
+    const fnCode = extractFunction(serverCode, "reconcileFromAuditLogs");
+    const reconcileFn = new Function("db", "pgPool", `${fnCode}; return reconcileFromAuditLogs(db, pgPool);`);
+
+    const mockDb = {
+      flats: [{ id: 1, number: "212" }, { id: 2, number: "512" }],
+      reservations: [
+        { id: 296, code: "RES-212-0296", flatNumber: "212", guestName: "Alexandre De Oliveira Carvalho", guestPhone: "11999990001", checkinDate: "2026-10-01", checkoutDate: "2026-10-09" }
+      ],
+      breakfastOrders: []
+    };
+
+    // Caso A: Log com timestamp Date object e SEM meta.dates (deve extrair data do Date sem crashar .substring)
+    // E sem meta.clientName, devendo fazer fallback para o guestName da reserva ativa
+    const mockPgPool = {
+      query: async (sql) => {
+        return {
+          rows: [
+            {
+              id: 3110,
+              timestamp: new Date("2026-10-01T17:42:08.000Z"),
+              action: "NOTIFICATION_BREAKFAST",
+              details: {
+                title: "☕ Pedido de Café - Apt 212",
+                message: "Pedido de café agendado", // Sem 'X agendou café'
+                metadata: {
+                  roomNumber: "212",
+                  deliveryTime: "06:45",
+                  guestCount: 1
+                  // dates ausente propositalmente para testar fallback em Date object
+                  // clientName ausente propositalmente para testar fallback em activeRes.guestName
+                }
+              }
+            },
+            {
+              id: 3188,
+              timestamp: new Date("2026-10-01T21:22:07.000Z"),
+              action: "NOTIFICATION_BREAKFAST",
+              details: {
+                title: "☕ Pedido Repetido - Apt 512",
+                message: "Marco repetiu o pedido de café para entrega às 08:02",
+                metadata: {
+                  orderId: 38,
+                  roomNumber: "512",
+                  dates: ["2026-10-01"],
+                  deliveryTime: "08:02",
+                  guestCount: 1,
+                  clientName: "Marco",
+                  items: [{ name: "Pão de queijo", quantity: 2 }]
+                }
+              }
+            }
+          ]
+        };
+      }
+    };
+
+    const changed = await reconcileFn(mockDb, mockPgPool);
+    assert.strictEqual(changed, true, "Reconciliação deve retornar true indicando novos pedidos criados");
+
+    // Verifica pedido criado para Flat 212
+    const order212 = mockDb.breakfastOrders.find(o => String(o.roomNumber) === "212" && o.date === "2026-10-01");
+    assert.ok(order212, "Pedido para Flat 212 na data 2026-10-01 deve ser criado");
+    assert.strictEqual(order212.clientName, "Alexandre De Oliveira Carvalho", "clientName deve vir de activeRes.guestName quando ausente no metadata");
+    assert.strictEqual(order212.deliveryTime, "06:45");
+    assert.strictEqual(order212.status, "pending");
+
+    // Verifica pedido criado para Flat 512 com ID explícito preservado
+    const order512 = mockDb.breakfastOrders.find(o => String(o.roomNumber) === "512" && o.date === "2026-10-01");
+    assert.ok(order512, "Pedido para Flat 512 deve ser criado");
+    assert.strictEqual(order512.id, 38, "ID explícito 38 do metadata deve ser preservado");
+    assert.strictEqual(order512.clientName, "Marco");
+
+    // Idempotência: re-execução não duplica pedidos existentes
+    const countBefore = mockDb.breakfastOrders.length;
+    const changedAgain = await reconcileFn(mockDb, mockPgPool);
+    assert.strictEqual(changedAgain, false, "Re-execução de reconcileFn não deve alterar nada se já existem");
+    assert.strictEqual(mockDb.breakfastOrders.length, countBefore, "Contagem não deve aumentar na re-execução");
   });
 
   await t.test("5. logAuditEvent / createNotification grava items, preferences e guestChoices no metadata", () => {
@@ -138,5 +214,83 @@ test("Suite de Validação: Restauração e Blindagem de Breakfast Orders", asyn
     // Verifica throttle de 30s
     assert.ok(content.includes("nowMs - lastBackupSnapshotTime > 30000"), "system_store_backups deve ter throttle de 30000ms");
     assert.ok(!content.includes("nowMs - lastBackupSnapshotTime > 5000"), "system_store_backups não deve ter throttle de 5000ms");
+  });
+
+  await t.test("7. Casos de borda: meta.dates vazio, reativação de cancelados e deduplicação de múltiplos logs", async () => {
+    const serverCode = fs.readFileSync(artifactsServerPath, "utf-8");
+    const fnCode = extractFunction(serverCode, "reconcileFromAuditLogs");
+    const reconcileFn = new Function("db", "pgPool", `${fnCode}; return reconcileFromAuditLogs(db, pgPool);`);
+
+    const mockDb = {
+      flats: [{ id: 1, number: "101" }, { id: 2, number: "102" }],
+      reservations: [
+        { id: 101, code: "RES-101-0101", flatNumber: "101", guestName: "Hóspede Teste", checkinDate: "2026-10-01", checkoutDate: "2026-10-05" }
+      ],
+      breakfastOrders: [
+        // Pedido previamente cancelado
+        { id: 99, date: "2026-10-02", deliveryTime: "08:00", roomNumber: "101", clientName: "Hóspede Teste", status: "cancelled", cancelReason: "teste" }
+      ]
+    };
+
+    const mockPgPool = {
+      query: async () => ({
+        rows: [
+          // 1. Log com dates vazio [] que deve usar a data do timestamp
+          {
+            id: 4001,
+            timestamp: new Date("2026-10-01T08:00:00.000Z"),
+            action: "NOTIFICATION_BREAKFAST",
+            details: {
+              metadata: {
+                roomNumber: "101",
+                dates: [], // Vazio! Deve fazer fallback para timestamp
+                deliveryTime: "07:30"
+              }
+            }
+          },
+          // 2. Log duplicado para a mesma data (não deve duplicar)
+          {
+            id: 4002,
+            timestamp: new Date("2026-10-01T08:05:00.000Z"),
+            action: "NOTIFICATION_BREAKFAST",
+            details: {
+              metadata: {
+                roomNumber: "101",
+                dates: ["2026-10-01"],
+                deliveryTime: "07:30"
+              }
+            }
+          },
+          // 3. Log para o pedido cancelado 99 (deve reativar para 'pending')
+          {
+            id: 4003,
+            timestamp: new Date("2026-10-02T08:00:00.000Z"),
+            action: "NOTIFICATION_BREAKFAST",
+            details: {
+              metadata: {
+                roomNumber: "101",
+                dates: ["2026-10-02"],
+                deliveryTime: "08:00"
+              }
+            }
+          }
+        ]
+      })
+    };
+
+    const changed = await reconcileFn(mockDb, mockPgPool);
+    assert.strictEqual(changed, true);
+
+    // Verifica que dates=[] gerou pedido para 2026-10-01
+    const order101 = mockDb.breakfastOrders.filter(o => String(o.roomNumber) === "101" && o.date === "2026-10-01");
+    assert.strictEqual(order101.length, 1, "Log duplicado não deve criar 2 pedidos para a mesma data e apt");
+    assert.strictEqual(order101[0].deliveryTime, "07:30");
+    assert.ok(Array.isArray(order101[0].items), "Itens padrão devem ser gerados");
+    assert.ok(order101[0].preferences, "Preferências padrão devem ser geradas");
+
+    // Verifica reativação do pedido 99
+    const order99 = mockDb.breakfastOrders.find(o => o.id === 99);
+    assert.strictEqual(order99.status, "pending", "Pedido cancelado deve ser reativado para pending");
+    assert.strictEqual(order99.cancelReason, null, "cancelReason deve ser limpo");
   });
 });
