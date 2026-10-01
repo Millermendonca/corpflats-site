@@ -58,6 +58,10 @@ artifacts/api-server/uploads/fnrh_documents/*
 scratch/
 data/backups/database_backup_post_recovery_*.json
 
+# Banco de dados local — PostgreSQL na nuvem é a fonte de verdade.
+# Este arquivo NÃO deve ser commitado para evitar sobrescrita de dados em produção.
+data/database.json
+
 # Isolated test databases
 data/test-database.json
 test-database.json
