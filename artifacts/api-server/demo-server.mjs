@@ -2058,13 +2058,20 @@ export function sanitizeMaidUsers() {
   return changed;
 }
 
-// Saneamento e Restauração Mandatória do Incidente de 30/09
+// Saneamento e Restauração Mandatória do Incidente de 30/09 (Execução Segura / Idempotente / Anti-Sobrescrita)
 export function repairIncidentSept30(db) {
   if (!db || !Array.isArray(db.reservations)) return false;
+  if (!Array.isArray(db.systemMigrations)) db.systemMigrations = [];
+
+  // Se a migração corretiva já foi aplicada, nunca re-aplica para não sobrescrever futuras extensões de estadia
+  if (db.systemMigrations.includes("migration_20260930_incident_repaired")) {
+    return false;
+  }
+
   let changed = false;
 
   // 1. Adriana Alves da Silva (Flat 712, 30/09 a 01/10) - Audit log #3148
-  let adriana = db.reservations.find(r => r.id === 318 || r.id === 321 || r.code === "RES-712-0318" || r.code === "RES-712-0321" || (String(r.flatNumber) === "712" && r.guestName && r.guestName.toLowerCase().includes("adriana")));
+  let adriana = db.reservations.find(r => r.id === 318 || r.code === "RES-712-0318");
   if (!adriana) {
     adriana = {
       id: 318,
@@ -2107,15 +2114,12 @@ export function repairIncidentSept30(db) {
     db.reservations.push(adriana);
     changed = true;
     console.log("[Incident Sept 30 Fix] Restaurada reserva da Adriana Alves da Silva no Flat 712 (30/09 a 01/10).");
-  } else {
-    if (adriana.checkinDate !== "2026-09-30" || adriana.checkoutDate !== "2026-10-01" || adriana.status !== "confirmada" || !adriana.guestName.includes("Adriana")) {
-      adriana.checkinDate = "2026-09-30";
-      adriana.checkoutDate = "2026-10-01";
-      adriana.guestName = "Adriana Alves da Silva";
-      adriana.status = "confirmada";
-      changed = true;
-    }
   }
+
+  // Purgar duplicatas sintéticas acidentais de Adriana se existirem (321, 322, 323)
+  const preLen = db.reservations.length;
+  db.reservations = db.reservations.filter(r => !( (r.id === 321 || r.id === 322 || r.id === 323 || r.code === "RES-712-0321" || r.code === "RES-712-0322" || r.code === "RES-712-0323") && r.guestName && r.guestName.toLowerCase().includes("adriana") ));
+  if (db.reservations.length !== preLen) changed = true;
 
   // Garante cadastro da Adriana em db.guests
   if (Array.isArray(db.guests)) {
@@ -2137,7 +2141,7 @@ export function repairIncidentSept30(db) {
   // 2. Costa Frederico (Flat 712, 01/10 a 02/10) - Usuário confirmou: "o costa frederico vai ficar do dia 1 ao 2"
   const frederico = db.reservations.find(r => r.id === 306 || r.code === "RES-712-0306" || (String(r.flatNumber) === "712" && r.guestName && r.guestName.toLowerCase().includes("frederico")));
   if (frederico) {
-    if (frederico.checkinDate !== "2026-10-01" || frederico.checkoutDate !== "2026-10-02") {
+    if (frederico.checkinDate === "2026-09-30") {
       frederico.checkinDate = "2026-10-01";
       frederico.checkoutDate = "2026-10-02";
       frederico.status = "confirmada";
@@ -2150,7 +2154,7 @@ export function repairIncidentSept30(db) {
   // 3. Felipe (Flat 605, checkout 28/09) - Usuário confirmou: "Flat 605 o felipe saiu dele no dia 28. Hoje realmente enrou o gilbenrto"
   const felipe = db.reservations.find(r => r.id === 179 || r.code === "RES-605-0179" || (String(r.flatNumber) === "605" && r.guestName && r.guestName.toLowerCase().includes("felipe")));
   if (felipe) {
-    if (felipe.checkoutDate !== "2026-09-28") {
+    if (felipe.checkoutDate > "2026-09-28" && felipe.checkinDate === "2026-09-25") {
       felipe.checkoutDate = "2026-09-28";
       felipe.status = "confirmada";
       felipe.updatedAt = new Date().toISOString();
@@ -2191,13 +2195,6 @@ export function repairIncidentSept30(db) {
     db.reservations.push(gil);
     changed = true;
     console.log("[Incident Sept 30 Fix] Restaurada reserva de Gilberto no Flat 605 (30/09 a 01/10).");
-  } else {
-    if (gil.checkinDate !== "2026-09-30" || gil.checkoutDate !== "2026-10-01") {
-      gil.checkinDate = "2026-09-30";
-      gil.checkoutDate = "2026-10-01";
-      gil.status = "confirmada";
-      changed = true;
-    }
   }
 
   // 5. Isabela Barbosa (Flat 211, 30/09 a 01/10) - Audit log #3149
@@ -2248,7 +2245,7 @@ export function repairIncidentSept30(db) {
   // 6. Angelo (Flat 1304, checkout em 01/10) - Audit log #3115
   const angelo = db.reservations.find(r => r.id === 305 || r.code === "RES-1304-0305" || (String(r.flatNumber) === "1304" && r.guestName && r.guestName.toLowerCase().includes("angelo")));
   if (angelo) {
-    if (angelo.checkoutDate !== "2026-10-01") {
+    if (angelo.checkoutDate === "2026-09-30") {
       angelo.checkoutDate = "2026-10-01";
       angelo.totalAmount = 500;
       angelo.paidAmount = 500;
@@ -2261,7 +2258,7 @@ export function repairIncidentSept30(db) {
   // 7. Heverton Martins (Flat 509, checkout em 09/10) - Audit log #2633
   const heverton = db.reservations.find(r => r.id === 36 || r.code === "RES-509-0036" || (String(r.flatNumber) === "509" && r.guestName && r.guestName.toLowerCase().includes("heverton")));
   if (heverton) {
-    if (heverton.checkinDate !== "2026-09-04" || heverton.checkoutDate !== "2026-10-09") {
+    if (heverton.checkoutDate === "2026-09-29") {
       heverton.checkinDate = "2026-09-04";
       heverton.checkoutDate = "2026-10-09";
       heverton.status = "confirmada";
@@ -2273,11 +2270,11 @@ export function repairIncidentSept30(db) {
     }
   }
 
-  // 8. Remoção da reserva zumbi de Miller no Flat 509 (id 302 / RES-509-0302)
+  // 8. Remoção pontual da reserva zumbi de Miller no Flat 509 (id 302 / RES-509-0302)
   const initialCount = db.reservations.length;
   db.reservations = db.reservations.filter(r => {
-    if (String(r.flatNumber) === "509" && (r.id === 302 || r.code === "RES-509-0302" || (r.guestName && r.guestName.toLowerCase().includes("miller")))) {
-      console.log("[Incident Sept 30 Fix] Removendo reserva zumbi de Miller no Flat 509 (ID:", r.id, r.code, ")");
+    if (String(r.flatNumber) === "509" && (r.id === 302 || r.code === "RES-509-0302")) {
+      console.log("[Incident Sept 30 Fix] Removendo reserva zumbi pontual de Miller no Flat 509 (ID:", r.id, r.code, ")");
       return false;
     }
     return true;
@@ -2286,7 +2283,7 @@ export function repairIncidentSept30(db) {
     changed = true;
   }
 
-  // Limpeza de governança do Flat 509 vinculada à reserva zumbi
+  // Limpeza de governança do Flat 509 vinculada estritamente à reserva zumbi pontual
   if (Array.isArray(db.cleaningRequests)) {
     const origCleanCount = db.cleaningRequests.length;
     db.cleaningRequests = db.cleaningRequests.filter(c => {
@@ -2297,7 +2294,6 @@ export function repairIncidentSept30(db) {
     });
     if (db.cleaningRequests.length !== origCleanCount) changed = true;
 
-    // Se houver cleaning no dia 29/09 para o 509 com arrivingGuest Miller, limpa esse hóspede
     db.cleaningRequests.forEach(c => {
       if (String(c.flatNumber) === "509" && c.requestDate === "2026-09-29") {
         if (c.arrivingGuest && c.arrivingGuest.toLowerCase().includes("miller")) {
@@ -2307,6 +2303,9 @@ export function repairIncidentSept30(db) {
       }
     });
   }
+
+  db.systemMigrations.push("migration_20260930_incident_repaired");
+  changed = true;
 
   return changed;
 }
@@ -5505,12 +5504,15 @@ async function dispatchServiceNotifications(action, order, flat, worker) {
     });
     const nowTimeStr = timeFormatter.format(new Date());
 
+    const workerName = (worker?.mainWorker?.name || flat.workerName || "Prestador").trim();
+    const workerCpf = worker?.mainWorker?.cpf || flat.workerCpf || "";
+
     let message = "";
     if (action === "start") {
       const estHours = order.estimatedDurationHours ? `${order.estimatedDurationHours}h` : "2h";
       message = [
         `🔧 *Serviço iniciado* — ${order.title}`,
-        `🏠 Flat *${flat.flatNumber}* | Prestador: ${worker.mainWorker.name} · CPF: ${worker.mainWorker.cpf}`,
+        `🏠 Flat *${flat.flatNumber}* | Prestador: ${workerName}${workerCpf ? ` · CPF: ${workerCpf}` : ""}`,
         `⏰ ${nowTimeStr} · Previsão: ${estHours}`,
         `➡️ Liberar cartão de acesso ao flat ${flat.flatNumber}`
       ].join("\n");
@@ -5524,12 +5526,26 @@ async function dispatchServiceNotifications(action, order, flat, worker) {
 
       message = [
         `✅ *Serviço finalizado* — ${order.title}`,
-        `🏠 Flat *${flat.flatNumber}* | Prestador: ${worker.mainWorker.name}`,
+        `🏠 Flat *${flat.flatNumber}* | Prestador: ${workerName}`,
         `⏰ ${startTimeStr} → ${finishTimeStr} (${durationStr})`,
         `🧹 Precisa camareira: *${cleaningStr}*`,
         `📝 Obs: ${obsStr}`,
         `📷 ${photosCount} foto(s)${photosCount > 0 ? " (enviadas abaixo)" : " disponíveis no sistema"}`
       ].join("\n");
+    }
+
+    // 0. Notificação Interna e Registro no Audit Log Imediatos (Sem bloqueio por I/O de rede externa)
+    try {
+      createNotification({
+        category: "service_order",
+        title: action === "start" ? `🔧 Serviço iniciado - Flat ${flat.flatNumber}` : `✅ Serviço finalizado - Flat ${flat.flatNumber}`,
+        message: `${order.title}: ${workerName} no Flat ${flat.flatNumber}`,
+        severity: "info",
+        metadata: { serviceOrderId: order.id, flatId: flat.flatId, flatNumber: flat.flatNumber },
+        targetUrl: `/servicos`
+      });
+    } catch (notifErr) {
+      console.warn("[ServiceOrder] Falha ao registrar notificação interna:", notifErr?.message || notifErr);
     }
 
     // 1. WhatsApp Admin (5522998505276)
@@ -5602,7 +5618,7 @@ async function dispatchServiceNotifications(action, order, flat, worker) {
           </h2>
           <p><strong>Serviço:</strong> ${order.title}</p>
           <p><strong>Apartamento:</strong> Flat ${flat.flatNumber}</p>
-          <p><strong>Prestador:</strong> ${worker.mainWorker.name} (CPF: ${worker.mainWorker.cpf})</p>
+          <p><strong>Prestador:</strong> ${workerName}${workerCpf ? ` (CPF: ${workerCpf})` : ""}</p>
           ${action === "start" ? `
             <p><strong>Início:</strong> ${nowTimeStr}</p>
             <p><strong>Previsão de Duração:</strong> ${order.estimatedDurationHours || 2}h</p>
@@ -5644,16 +5660,6 @@ async function dispatchServiceNotifications(action, order, flat, worker) {
         console.warn("[SERVICE-ORDERS] Erro ao enviar email para recepção:", emailErr?.message || emailErr);
       }
     }
-
-    // 4. Internal Notification & Audit Log
-    createNotification({
-      category: "service_order",
-      title: action === "start" ? `🔧 Serviço iniciado - Flat ${flat.flatNumber}` : `✅ Serviço finalizado - Flat ${flat.flatNumber}`,
-      message: `${order.title}: ${worker.mainWorker.name} no Flat ${flat.flatNumber}`,
-      severity: "info",
-      metadata: { serviceOrderId: order.id, flatId: flat.flatId, flatNumber: flat.flatNumber },
-      targetUrl: `/servicos`
-    });
   } catch (err) {
     console.error("[ServiceOrder] Error dispatching notifications:", err);
   }
