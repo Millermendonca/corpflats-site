@@ -25517,21 +25517,76 @@ const AUTO_CATEGORY_RULES = [
   { cats: ["Descartáveis"], kw: ["copo descartavel","prato descartavel","talheres descartaveis","garfo descartavel","faca descartavel","colher descartavel","canudo","palito de dente","palito","toalha de papel","guardanapo","papel toalha","papel aluminio","papel manteiga","papel filme","saco plastico","saco zip","ziplock","sacola","sacolinha","embalagem","pote descartavel","marmita","isopor","bandeja"] },
 ];
 
-function autoCategorize(name) {
+// Categorização por keywords (fallback)
+function autoCategorizeRules(name) {
   const n = name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   const found = new Set();
   for (const { cats, kw } of AUTO_CATEGORY_RULES) {
     for (const k of kw) {
-      // Normaliza a keyword também antes de comparar
       const kn = k.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
       if (n.includes(kn)) { cats.forEach(c => found.add(c)); break; }
     }
   }
-  // Super-categoria "Alimentos" para qualquer item alimentar
   const isFood = [...found].some(c => FOOD_SUBCATEGORIES.has(c));
   if (isFood) found.add("Alimentos");
   if (found.size === 0) found.add("Geral");
   return JSON.stringify([...found]);
+}
+
+// Categorização principal com Gemini AI + fallback para keywords
+const ALL_CATEGORIES = ["Carnes","Frios","Laticínios","Padaria","Bebidas","Secos & Grãos","Hortifrúti","Temperos","Mercearia","Conservas","Congelados","Café da Manhã","Limpeza","Higiene","Governança","Descartáveis","Geral"];
+
+async function autoCategorize(name) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return autoCategorizeRules(name);
+
+  try {
+    const prompt = `Você é um categorizador de produtos de supermercado e itens de uso doméstico/hoteleiro no Brasil.
+Dado o nome de um produto, retorne APENAS um array JSON com as categorias mais adequadas.
+Categorias disponíveis: ${ALL_CATEGORIES.join(", ")}.
+Produto: "${name}"
+Regras:
+- Use apenas categorias da lista acima (respeitando acentos e maiúsculas)
+- Pode usar múltiplas categorias se o produto se encaixar em mais de uma
+- Se não souber, use ["Geral"]
+- Retorne SOMENTE o array JSON, sem texto extra, sem markdown`;
+
+    const resp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0, maxOutputTokens: 100 },
+        }),
+      }
+    );
+
+    if (!resp.ok) throw new Error(`Gemini HTTP ${resp.status}`);
+    const data = await resp.json();
+    const text = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+
+    // Extrai o array JSON da resposta
+    const match = text.match(/\[[\s\S]*?\]/);
+    if (!match) throw new Error("No JSON array in response");
+    const cats = JSON.parse(match[0]);
+    if (!Array.isArray(cats) || cats.length === 0) throw new Error("Empty categories");
+
+    // Valida e filtra apenas categorias conhecidas
+    const valid = cats.filter(c => ALL_CATEGORIES.includes(c));
+    if (valid.length === 0) throw new Error("No valid categories");
+
+    // Adiciona super-categoria "Alimentos" se necessário
+    if (valid.some(c => FOOD_SUBCATEGORIES.has(c))) valid.push("Alimentos");
+
+    const result = JSON.stringify([...new Set(valid)]);
+    console.log(`[AI] "${name}" → ${result}`);
+    return result;
+  } catch (e) {
+    console.warn(`[AI] Fallback para keywords ("${name}"): ${e.message}`);
+    return autoCategorizeRules(name);
+  }
 }
 
 // Migração retroativa: recategoriza itens que ainda têm categorias antigas (não-JSON)
@@ -25547,7 +25602,7 @@ async function migrateShoppingCategories() {
       const isGenericOnly = Array.isArray(cats) && cats.length === 1 && cats[0] === "Geral";
       const isOldFormat = !row.category || !row.category.startsWith('[');
       if (isOldFormat || isGenericOnly) {
-        const newCat = autoCategorize(row.title);
+        const newCat = await autoCategorize(row.title);
         await pgPool.query(`UPDATE shopping_list SET category = $1 WHERE id = $2`, [newCat, row.id]);
         updated++;
       }
@@ -25667,7 +25722,7 @@ app.post("/api/shopping-list/recategorize", async (req, res) => {
     const { rows } = await pgPool.query(`SELECT id, title FROM shopping_list`);
     let updated = 0;
     for (const row of rows) {
-      const newCat = autoCategorize(row.title);
+      const newCat = await autoCategorize(row.title);
       await pgPool.query(`UPDATE shopping_list SET category = $1 WHERE id = $2`, [newCat, row.id]);
       updated++;
     }
@@ -25706,8 +25761,8 @@ app.post("/api/shopping-list", async (req, res) => {
   }
   const userAuth = getAuthUser(req);
   const name = userAuth?.name || userAuth?.username || "Colaborador";
-  // Auto-categorização por IA
-  const category = autoCategorize(String(title).trim());
+  // Auto-categorização por IA (Gemini + fallback keywords)
+  const category = await autoCategorize(String(title).trim());
 
   if (pgPool) {
     try {
