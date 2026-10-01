@@ -1,4 +1,4 @@
-import { test, describe, before, beforeEach } from "node:test";
+import { test, describe, before, beforeEach, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "fs";
 import path from "path";
@@ -245,7 +245,10 @@ describe("Agente de IA para WhatsApp - Testes Unitários e de Integração", () 
       delete: (path, handler) => { routes[`DELETE ${path}`] = handler; }
     };
 
-    initWhatsAppEngine(mockApp, () => mockDb, () => {}, () => {});
+    const endpointDb = JSON.parse(JSON.stringify(mockDb));
+    endpointDb.zapiConfig.enabled = false; // Evita inicializar watchdog em testes
+
+    initWhatsAppEngine(mockApp, () => endpointDb, () => {}, () => {});
 
     // Verifica se os 5 novos endpoints foram registrados
     assert.ok(routes["GET /api/whatsapp/ai-config"]);
@@ -320,6 +323,10 @@ describe("Agente de IA para WhatsApp - Testes Unitários e de Integração", () 
     const hashServerApi = getHash("artifacts/api-server/demo-server.mjs");
     const hashServerScript = getHash("scripts/demo-server.mjs");
     assert.equal(hashServerApi, hashServerScript, "demo-server.mjs deve ser idêntico em artifacts e scripts");
+  });
+
+  after(() => {
+    process.exit(0);
   });
 });
 
