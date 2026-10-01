@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { Shell } from "@/components/layout"
 import { useGetMe } from "@workspace/api-client-react"
 import { useToast } from "@/hooks/use-toast"
+import { ToastAction } from "@/components/ui/toast"
 import {
   ShoppingCart,
   Plus,
@@ -138,6 +139,9 @@ export default function ShoppingListPage() {
   const dragItem = useRef<string | null>(null)
   const dragOver = useRef<string | null>(null)
 
+  // ── Undo delete ────────────────────────────────────────────────────────────
+  const pendingDeletes = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+
   // ── Fetch ──────────────────────────────────────────────────────────────────
 
   const fetchItems = useCallback(async () => {
@@ -255,15 +259,41 @@ export default function ShoppingListPage() {
     } catch { refresh() }
   }
 
-  // ── Delete ─────────────────────────────────────────────────────────────────
+  // ── Delete com Desfazer ────────────────────────────────────────────────────
 
-  const handleDelete = async (id: string, title: string) => {
-    if (!confirm(`Remover "${title}" da lista?`)) return
-    setItems(prev => prev.filter(i => i.id !== id))
-    try {
-      const res = await fetch(`/api/shopping-list/${id}`, { method: "DELETE" })
-      if (!res.ok) refresh()
-    } catch { refresh() }
+  const handleDelete = (item: ShoppingItem) => {
+    // Remove da UI imediatamente (otimista)
+    setItems(prev => prev.filter(i => i.id !== item.id))
+
+    // Agenda a deleção real no servidor após 6 segundos
+    const tid = setTimeout(async () => {
+      pendingDeletes.current.delete(item.id)
+      try { await fetch(`/api/shopping-list/${item.id}`, { method: "DELETE" }) } catch {}
+    }, 6000)
+    pendingDeletes.current.set(item.id, tid)
+
+    // Toast com botão Desfazer
+    toast({
+      title: `"${item.title}" removido`,
+      description: "Você pode desfazer nos próximos segundos",
+      duration: 6000,
+      action: (
+        <ToastAction
+          altText="Desfazer remoção"
+          onClick={() => {
+            const t = pendingDeletes.current.get(item.id)
+            if (t) { clearTimeout(t); pendingDeletes.current.delete(item.id) }
+            setItems(prev => {
+              // Reinsere na posição original (por sortOrder)
+              const updated = [item, ...prev].sort((a, b) => a.sortOrder - b.sortOrder)
+              return updated
+            })
+          }}
+        >
+          Desfazer
+        </ToastAction>
+      ),
+    })
   }
 
   // ── Drag-and-drop ──────────────────────────────────────────────────────────
@@ -588,24 +618,24 @@ export default function ShoppingListPage() {
                     )}
                   </div>
 
-                  {/* Ações */}
+                  {/* Ações — sempre visíveis */}
                   {!isEditing && (
-                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                    <div className="flex items-center gap-0.5 shrink-0">
                       {!item.completed && (
                         <button
                           onClick={() => setEditingId(item.id)}
-                          className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-primary rounded-lg transition-colors"
+                          className="w-7 h-7 flex items-center justify-center text-muted-foreground/40 hover:text-primary rounded-lg transition-colors"
                           title="Editar"
                         >
                           <Pencil className="w-3.5 h-3.5" />
                         </button>
                       )}
                       <button
-                        onClick={() => handleDelete(item.id, item.title)}
-                        className="w-7 h-7 flex items-center justify-center text-muted-foreground hover:text-destructive rounded-lg transition-colors"
-                        title="Remover"
+                        onClick={() => handleDelete(item)}
+                        className="w-8 h-8 flex items-center justify-center text-muted-foreground/40 hover:text-destructive active:text-destructive rounded-lg transition-colors"
+                        title="Remover (pode desfazer)"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <X className="w-4 h-4" />
                       </button>
                     </div>
                   )}
