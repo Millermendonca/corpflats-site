@@ -25616,7 +25616,7 @@ async function migrateShoppingCategories() {
       const isGenericOnly = Array.isArray(cats) && cats.length === 1 && cats[0] === "Geral";
       const isOldFormat = !row.category || !row.category.startsWith('[');
       if (isOldFormat || isGenericOnly) {
-        const newCat = await autoCategorize(row.title);
+        const newCat = autoCategorizeRules(row.title);
         await pgPool.query(`UPDATE shopping_list SET category = $1 WHERE id = $2`, [newCat, row.id]);
         updated++;
       }
@@ -25736,7 +25736,7 @@ app.post("/api/shopping-list/recategorize", async (req, res) => {
     const { rows } = await pgPool.query(`SELECT id, title FROM shopping_list`);
     let updated = 0;
     for (const row of rows) {
-      const newCat = await autoCategorize(row.title);
+      const newCat = autoCategorizeRules(row.title);
       await pgPool.query(`UPDATE shopping_list SET category = $1 WHERE id = $2`, [newCat, row.id]);
       updated++;
     }
@@ -25747,18 +25747,23 @@ app.post("/api/shopping-list/recategorize", async (req, res) => {
 });
 
 // GET /api/shopping-list/ai-test — diagnóstico da conexão com Gemini
+// Cache: guarda resultado por 5 minutos para não gastar cota com auto-refresh
+let _aiTestCache = { result: null, ts: 0 };
+const AI_TEST_CACHE_MS = 5 * 60 * 1000; // 5 minutos
+
 app.get("/api/shopping-list/ai-test", async (req, res) => {
   const apiKey = process.env.GEMINI_API_KEY;
   const testProduct = req.query.product || "queijo minas frescal";
+  const forceRefresh = req.query.refresh === "1";
+
   const results = {
     hasApiKey: !!apiKey,
     keyPrefix: apiKey ? apiKey.slice(0, 6) + "..." : null,
     keyLength: apiKey ? apiKey.length : 0,
     testProduct,
-    keyMethodTest: null,
-    bearerMethodTest: null,
-    finalResult: null,
+    geminiTest: null,
     fallbackResult: autoCategorizeRules(testProduct),
+    cached: false,
   };
 
   if (!apiKey) {
@@ -25766,46 +25771,28 @@ app.get("/api/shopping-list/ai-test", async (req, res) => {
     return res.json(results);
   }
 
-  const testPrompt = `Responda apenas: ["teste"]`;
-  const body = JSON.stringify({
-    contents: [{ parts: [{ text: testPrompt }] }],
-    generationConfig: { temperature: 0, maxOutputTokens: 50 },
-  });
-  const baseUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent";
+  // Retorna cache se ainda válido (evita gastar cota com auto-refresh)
+  if (!forceRefresh && _aiTestCache.result && (Date.now() - _aiTestCache.ts) < AI_TEST_CACHE_MS) {
+    return res.json({ ..._aiTestCache.result, cached: true, cacheAge: Math.round((Date.now() - _aiTestCache.ts) / 1000) + "s" });
+  }
 
-  // Testa ?key=
+  // Faz UMA chamada de teste
+  const baseUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent";
   try {
     const r = await fetch(`${baseUrl}?key=${apiKey}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body,
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: `Responda apenas: ["teste"]` }] }],
+        generationConfig: { temperature: 0, maxOutputTokens: 50 },
+      }),
     });
     const txt = await r.text();
-    results.keyMethodTest = { status: r.status, ok: r.ok, body: txt.slice(0, 500) };
-  } catch (e) { results.keyMethodTest = { error: e.message }; }
+    results.geminiTest = { status: r.status, ok: r.ok, body: txt.slice(0, 300) };
+  } catch (e) { results.geminiTest = { error: e.message }; }
 
-  // Testa Bearer
-  try {
-    const r = await fetch(baseUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-      body,
-    });
-    const txt = await r.text();
-    results.bearerMethodTest = { status: r.status, ok: r.ok, body: txt.slice(0, 500) };
-  } catch (e) { results.bearerMethodTest = { error: e.message }; }
-
-  // Testa com x-goog-api-key header (terceiro método)
-  try {
-    const r = await fetch(baseUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-      body,
-    });
-    const txt = await r.text();
-    results.xGoogHeaderTest = { status: r.status, ok: r.ok, body: txt.slice(0, 500) };
-  } catch (e) { results.xGoogHeaderTest = { error: e.message }; }
-
+  // Atualiza cache
+  _aiTestCache = { result: results, ts: Date.now() };
   return res.json(results);
 });
 

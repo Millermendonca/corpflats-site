@@ -26,11 +26,10 @@ interface AiTestResponse {
   keyPrefix: string | null
   keyLength: number
   testProduct: string
-  keyMethodTest: TestResult | { error: string } | null
-  bearerMethodTest: TestResult | { error: string } | null
-  xGoogHeaderTest: TestResult | { error: string } | null
-  finalResult: string | null
+  geminiTest: TestResult | { error: string } | null
   fallbackResult: string | null
+  cached: boolean
+  cacheAge?: string
 }
 
 function StatusBadge({ ok, label, detail }: { ok: boolean | null; label: string; detail?: string }) {
@@ -66,11 +65,12 @@ export default function AiStatusPage() {
   const [testProduct, setTestProduct] = useState("queijo minas frescal")
   const [customProduct, setCustomProduct] = useState("")
 
-  const runTest = useCallback(async (product?: string) => {
+  const runTest = useCallback(async (product?: string, forceRefresh = false) => {
     setLoading(true)
     try {
       const p = product || testProduct
-      const res = await fetch(`/api/shopping-list/ai-test?product=${encodeURIComponent(p)}`)
+      const refreshParam = forceRefresh ? "&refresh=1" : ""
+      const res = await fetch(`/api/shopping-list/ai-test?product=${encodeURIComponent(p)}${refreshParam}`)
       if (res.ok) {
         const d = await res.json()
         setData(d)
@@ -82,21 +82,21 @@ export default function AiStatusPage() {
 
   useEffect(() => { runTest() }, [])
 
-  // Auto-refresh a cada 30s
+  // Auto-refresh a cada 5 minutos (servidor faz cache, não gasta cota)
   useEffect(() => {
-    const iv = setInterval(() => runTest(), 30000)
+    const iv = setInterval(() => runTest(), 5 * 60 * 1000)
     return () => clearInterval(iv)
   }, [runTest])
 
   const getMethodStatus = (test: TestResult | { error: string } | null): { ok: boolean | null; detail: string } => {
     if (!test) return { ok: null, detail: "Aguardando..." }
     if ("error" in test) return { ok: false, detail: test.error }
-    if (test.ok) return { ok: true, detail: `HTTP ${test.status} — Operacional` }
-    // Parse error message from body
+    if (test.ok) return { ok: true, detail: `HTTP ${test.status} — Operacional ✅` }
     try {
       const parsed = JSON.parse(test.body)
       const msg = parsed?.error?.message || test.body
       if (test.status === 503) return { ok: false, detail: `⏳ Alta demanda — ${msg.slice(0, 120)}` }
+      if (test.status === 429) return { ok: false, detail: `⚠️ Cota excedida — ${msg.slice(0, 120)}` }
       if (test.status === 404) return { ok: false, detail: `❌ Modelo não encontrado — ${msg.slice(0, 120)}` }
       if (test.status === 401 || test.status === 403) return { ok: false, detail: `🔑 Autenticação falhou — ${msg.slice(0, 120)}` }
       return { ok: false, detail: `HTTP ${test.status} — ${msg.slice(0, 120)}` }
@@ -105,13 +105,9 @@ export default function AiStatusPage() {
     }
   }
 
-  const keyStatus = getMethodStatus(data?.keyMethodTest ?? null)
-  const xGoogStatus = getMethodStatus(data?.xGoogHeaderTest ?? null)
-  const geminiWorking = keyStatus.ok || xGoogStatus.ok
-  const geminiOverloaded = !geminiWorking && data && (
-    (data.keyMethodTest && "status" in data.keyMethodTest && data.keyMethodTest.status === 503) ||
-    (data.xGoogHeaderTest && "status" in data.xGoogHeaderTest && data.xGoogHeaderTest.status === 503)
-  )
+  const geminiStatus = getMethodStatus(data?.geminiTest ?? null)
+  const geminiWorking = geminiStatus.ok === true
+  const geminiOverloaded = !geminiWorking && data?.geminiTest && "status" in data.geminiTest && (data.geminiTest.status === 503 || data.geminiTest.status === 429)
 
   return (
     <Shell>
@@ -126,7 +122,7 @@ export default function AiStatusPage() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => runTest()}
+            onClick={() => runTest(undefined, true)}
             disabled={loading}
             className="gap-1.5"
           >
@@ -167,14 +163,18 @@ export default function AiStatusPage() {
           </div>
         </div>
 
-        {/* Métodos de autenticação */}
+        {/* Conexão Gemini */}
         <div className="space-y-2">
           <h2 className="text-sm font-bold text-muted-foreground flex items-center gap-1.5">
-            <Shield className="w-3.5 h-3.5" /> Métodos de Autenticação
+            <Shield className="w-3.5 h-3.5" /> Conexão Gemini
           </h2>
           <div className="grid gap-2">
-            <StatusBadge ok={keyStatus.ok} label="?key= (API Key)" detail={keyStatus.detail} />
-            <StatusBadge ok={xGoogStatus.ok} label="x-goog-api-key (Header)" detail={xGoogStatus.detail} />
+            <StatusBadge ok={geminiStatus.ok} label="API Gemini 3.8 Flash" detail={geminiStatus.detail} />
+            {data?.cached && (
+              <p className="text-[10px] text-muted-foreground ml-1">
+                📦 Resultado em cache (atualizado há {data.cacheAge}) — clique Atualizar para forçar nova verificação
+              </p>
+            )}
           </div>
         </div>
 
@@ -254,7 +254,7 @@ export default function AiStatusPage() {
             </div>
             <div className="flex items-center justify-between">
               <span className="text-xs text-muted-foreground">Auto-refresh:</span>
-              <span className="text-xs">A cada 30 segundos</span>
+              <span className="text-xs">A cada 5 minutos</span>
             </div>
           </div>
         </div>
