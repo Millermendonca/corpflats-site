@@ -25479,13 +25479,14 @@ bootstrapShoppingTables();
 // ── Auto-categorização inteligente (IA por regras de palavras-chave) ──────────
 const FOOD_SUBCATEGORIES = new Set(["Carnes","Frios","Laticínios","Padaria","Bebidas","Secos & Grãos","Hortifrúti","Temperos","Mercearia","Conservas","Congelados","Café da Manhã"]);
 const AUTO_CATEGORY_RULES = [
-  { cats: ["Carnes"],           kw: ["carne","frango","peixe","file","file de","linguica","salsicha","bacon","hamburguer","alcatra","costela","bife","camarao","fruto do mar","tilapia","salmao","atum fresco","picanha","maminha","patinho","pernil","pato","chester"] },
   // ── CARNES ────────────────────────────────────────────────────────────────
-  { cats: ["Carnes"], kw: ["carne","frango","peixe","file de","linguica","salsicha","bacon","hamburguer","alcatra","costela","bife","camarao","fruto do mar","tilapia","salmao","picanha","maminha","patinho","pernil","chester","fraldinha","acem","coxao","músculo","musculo","cupim","iscas","medalhao","carne de sol","charque","jerked beef","carré","corte bovino","suíno","suino","porco"] },
+  { cats: ["Carnes"], kw: ["carne","frango","peixe","file de","linguica","salsicha","bacon","hamburguer","alcatra","costela","bife","camarao","fruto do mar","tilapia","salmao","picanha","maminha","patinho","pernil","chester","fraldinha","acem","coxao","musculo","cupim","iscas","medalhao","carne de sol","charque","jerked beef","carre","suino","porco","leitao","cordeiro","cabrito","javali","coelho","pato","ganso","galinha","galeto","peru","codorna","avestruz","peixe espada","linguado","merluza","robalo","badejo","cacao","dourado","tucunare","pacu","lambari","traira","bagre","cavalinha","calamar","polvo","lagosta","siri","ostra","mexilhao","vieira","pescada","anchova","arenque"] },
+  // ── OVOS ──────────────────────────────────────────────────────────────────
+  { cats: ["Laticínios"], kw: ["ovo","ovos","ovo de galinha","ovo caipira","ovo codorna","clara de ovo","gema","ovos brancos","ovos vermelhos","caixa de ovos","ovo organico","ovo pasteurizado"] },
   // ── FRIOS ─────────────────────────────────────────────────────────────────
-  { cats: ["Frios","Laticínios"], kw: ["presunto","mortadela","salame","salaminho","peito de peru","blanquet","copa","lombo defumado","pastrami","frescal","parmesao","parmesão","gruyere","gorgonzola","provolone","brie","camembert","coalho","mucarela","mussarela","muçarela","catupiry","cream cheese","boursin","emental"] },
+  { cats: ["Frios","Laticínios"], kw: ["presunto","mortadela","salame","salaminho","peito de peru","blanquet","copa","lombo defumado","pastrami","frescal","parmesao","parmesão","gruyere","gorgonzola","provolone","brie","camembert","coalho","mucarela","mussarela","mucarela","catupiry","cream cheese","boursin","emental","requeijao","queijo fundido","minas","queijo ralado","queijo fatiado","queijo minas"] },
   // ── LATICÍNIOS ────────────────────────────────────────────────────────────
-  { cats: ["Laticínios"], kw: ["leite","creme de leite","nata","leite condensado","iogurte","queijo","ricota","cottage","requeijao","requeijão","manteiga","margarina","ghee","chantilly","creme fresco","buttermilk","kefir","skyr"] },
+  { cats: ["Laticínios"], kw: ["leite","creme de leite","nata","leite condensado","iogurte","queijo","ricota","cottage","manteiga","margarina","ghee","chantilly","creme fresco","buttermilk","kefir","skyr","bebida lactea","yakult","activia","vitamina","batida de leite"] },
   // ── PADARIA ───────────────────────────────────────────────────────────────
   { cats: ["Padaria"], kw: ["pao","bolo","biscoito","bolacha","croissant","torrada","rosca","broa","wafer","cookie","muffin","cupcake","baguete","bisnaguinha","bisnaga","paozinho","pao de forma","pão de queijo","pao de queijo","crepe","panqueca","wrap"] },
   // ── BEBIDAS ───────────────────────────────────────────────────────────────
@@ -25540,8 +25541,12 @@ async function migrateShoppingCategories() {
     const { rows } = await pgPool.query(`SELECT id, title, category FROM shopping_list`);
     let updated = 0;
     for (const row of rows) {
-      const needsMigration = !row.category || (!row.category.startsWith('[') && row.category !== 'null');
-      if (needsMigration) {
+      let cats = [];
+      try { cats = row.category ? JSON.parse(row.category) : []; } catch { cats = []; }
+      // Recategoriza se: não-JSON antigo, só tem ["Geral"], ou está vazio
+      const isGenericOnly = Array.isArray(cats) && cats.length === 1 && cats[0] === "Geral";
+      const isOldFormat = !row.category || !row.category.startsWith('[');
+      if (isOldFormat || isGenericOnly) {
         const newCat = autoCategorize(row.title);
         await pgPool.query(`UPDATE shopping_list SET category = $1 WHERE id = $2`, [newCat, row.id]);
         updated++;
@@ -25653,6 +25658,23 @@ app.get("/api/shopping-list/categories", async (req, res) => {
   const counts = {};
   allItems.forEach(c => { counts[c] = (counts[c] || 0) + 1; });
   return res.json(Object.entries(counts).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count));
+});
+
+// POST /api/shopping-list/recategorize — force recategorization of ALL items
+app.post("/api/shopping-list/recategorize", async (req, res) => {
+  if (!pgPool) return res.status(503).json({ error: "DB not available" });
+  try {
+    const { rows } = await pgPool.query(`SELECT id, title FROM shopping_list`);
+    let updated = 0;
+    for (const row of rows) {
+      const newCat = autoCategorize(row.title);
+      await pgPool.query(`UPDATE shopping_list SET category = $1 WHERE id = $2`, [newCat, row.id]);
+      updated++;
+    }
+    return res.json({ ok: true, updated, message: `${updated} itens recategorizados.` });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
 });
 
 // GET /api/shopping-list
