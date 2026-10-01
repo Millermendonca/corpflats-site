@@ -25551,31 +25551,42 @@ Regras:
 - Se não souber, use ["Geral"]
 - Retorne SOMENTE o array JSON, sem texto extra, sem markdown`;
 
-    const resp = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0, maxOutputTokens: 100 },
-        }),
-      }
-    );
+    // Detecta formato da chave:
+    // "AIza..." → API Key padrão (query param ?key=)
+    // "AQ...." ou outro → OAuth2 access token (header Authorization: Bearer)
+    const isApiKey = /^AIza/i.test(apiKey);
+    const url = isApiKey
+      ? `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`
+      : `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent`;
 
-    if (!resp.ok) throw new Error(`Gemini HTTP ${resp.status}`);
+    const headers = { "Content-Type": "application/json" };
+    if (!isApiKey) headers["Authorization"] = `Bearer ${apiKey}`;
+
+    const resp = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0, maxOutputTokens: 100 },
+      }),
+    });
+
+    if (!resp.ok) {
+      const errBody = await resp.text().catch(() => "");
+      throw new Error(`Gemini HTTP ${resp.status}: ${errBody.slice(0, 200)}`);
+    }
     const data = await resp.json();
     const text = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
 
     // Extrai o array JSON da resposta
     const match = text.match(/\[[\s\S]*?\]/);
-    if (!match) throw new Error("No JSON array in response");
+    if (!match) throw new Error(`No JSON array in response: "${text.slice(0, 100)}"`);
     const cats = JSON.parse(match[0]);
     if (!Array.isArray(cats) || cats.length === 0) throw new Error("Empty categories");
 
     // Valida e filtra apenas categorias conhecidas
     const valid = cats.filter(c => ALL_CATEGORIES.includes(c));
-    if (valid.length === 0) throw new Error("No valid categories");
+    if (valid.length === 0) throw new Error(`No valid categories. Got: ${JSON.stringify(cats)}`);
 
     // Adiciona super-categoria "Alimentos" se necessário
     if (valid.some(c => FOOD_SUBCATEGORIES.has(c))) valid.push("Alimentos");
