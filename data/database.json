@@ -233,7 +233,7 @@
       "isVacant": false,
       "adminNote": "[OS: Pintura e Reparos de Teste E2E (Atualizado)] Limpeza pós-serviço solicitada pelo prestador. Obs: Pintura concluída com acabamento fosco",
       "createdAt": "2026-09-30T22:05:19.485Z",
-      "updatedAt": "2026-09-30T22:05:19.485Z"
+      "updatedAt": "2026-10-01T00:22:02.273Z"
     },
     {
       "id": 290,
@@ -27968,6 +27968,58 @@
   ],
   "reservationCommunications": [
     {
+      "id": "5abcec1f-e3ce-46d9-9144-96fe7ccc0d8e",
+      "reservation_id": "0",
+      "type": "email",
+      "direction": "outbound",
+      "recipient": "millerpessanha@gmail.com",
+      "cc": null,
+      "bcc": null,
+      "subject": "[CorpFlats] Serviço Finalizado - Flat 113 (Pintura e Reparos de Teste E2E (Atualizado))",
+      "body": "\n        <div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; line-height: 1.5;\">\n          <h2 style=\"color: #16a34a;\">\n            ✅ Serviço Externo Finalizado\n          </h2>\n          <p><strong>Serviço:</strong> Pintura e Reparos de Teste E2E (Atualizado)</p>\n          <p><strong>Apartamento:</strong> Flat 113</p>\n          <p><strong>Prestador:</strong> João Pintor (CPF: 12345678901)</p>\n          \n            <p><strong>Duração:</strong> 0min</p>\n            <p><strong>Precisa de Camareira:</strong> Sim</p>\n            <p><strong>Observações:</strong> Pintura concluída com acabamento fosco</p>\n            <p><strong>Fotos Anexadas:</strong> 1</p>\n          \n          <hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;\" />\n          <p style=\"font-size: 12px; color: #64748b;\">Notificação enviada automaticamente pelo sistema CorpFlats Guest-Flow-Manager.</p>\n        </div>\n      ",
+      "status": "failed",
+      "metadata": {
+        "category": "service_order",
+        "serviceOrderId": "so_1790814120816_qvdkj",
+        "flatNumber": "113",
+        "flatId": 1,
+        "action": "finish",
+        "hasAttachments": false,
+        "attachmentsCount": 0,
+        "attempts": 1,
+        "queuedAt": "2026-10-01T00:22:02.298Z",
+        "error": "SMTP não configurado no backend (credenciais de SMTP_USER/SMTP_PASS ausentes).",
+        "failedAt": "2026-10-01T00:22:02.350Z"
+      },
+      "created_at": "2026-10-01T00:22:02.298Z"
+    },
+    {
+      "id": "0dd42ae3-07c3-412f-8290-d5260f34fc61",
+      "reservation_id": "0",
+      "type": "email",
+      "direction": "outbound",
+      "recipient": "millerpessanha@gmail.com",
+      "cc": null,
+      "bcc": null,
+      "subject": "[CorpFlats] Serviço Iniciado - Flat 113 (Pintura e Reparos de Teste E2E (Atualizado))",
+      "body": "\n        <div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; line-height: 1.5;\">\n          <h2 style=\"color: #0284c7;\">\n            🔧 Serviço Externo Iniciado\n          </h2>\n          <p><strong>Serviço:</strong> Pintura e Reparos de Teste E2E (Atualizado)</p>\n          <p><strong>Apartamento:</strong> Flat 113</p>\n          <p><strong>Prestador:</strong> João Pintor (CPF: 12345678901)</p>\n          \n            <p><strong>Início:</strong> 21:22</p>\n            <p><strong>Previsão de Duração:</strong> 3h</p>\n            <div style=\"background-color: #f0f9ff; padding: 12px; border-left: 4px solid #0284c7; margin-top: 15px; border-radius: 4px;\">\n              ➡️ <strong>Ação para Recepção:</strong> Favor liberar o cartão de acesso para o prestador ao Flat 113.\n            </div>\n          \n          <hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;\" />\n          <p style=\"font-size: 12px; color: #64748b;\">Notificação enviada automaticamente pelo sistema CorpFlats Guest-Flow-Manager.</p>\n        </div>\n      ",
+      "status": "failed",
+      "metadata": {
+        "category": "service_order",
+        "serviceOrderId": "so_1790814120816_qvdkj",
+        "flatNumber": "113",
+        "flatId": 1,
+        "action": "start",
+        "hasAttachments": false,
+        "attachmentsCount": 0,
+        "attempts": 1,
+        "queuedAt": "2026-10-01T00:22:01.010Z",
+        "error": "SMTP não configurado no backend (credenciais de SMTP_USER/SMTP_PASS ausentes).",
+        "failedAt": "2026-10-01T00:22:01.153Z"
+      },
+      "created_at": "2026-10-01T00:22:01.010Z"
+    },
+    {
       "id": "057f0815-4f24-439e-b6b4-cb7b17de797a",
       "reservation_id": "0",
       "type": "email",
@@ -28548,6 +28600,36 @@
   ],
   "roomBlocks": [],
   "notifications": [
+    {
+      "id": 1787151090007,
+      "category": "service_order",
+      "title": "✅ Serviço finalizado - Flat 113",
+      "message": "Pintura e Reparos de Teste E2E (Atualizado): João Pintor no Flat 113",
+      "severity": "info",
+      "metadata": {
+        "serviceOrderId": "so_1790814120816_qvdkj",
+        "flatId": 1,
+        "flatNumber": "113"
+      },
+      "targetUrl": "/servicos",
+      "read": false,
+      "createdAt": "2026-10-01T00:22:02.320Z"
+    },
+    {
+      "id": 1787151090006,
+      "category": "service_order",
+      "title": "🔧 Serviço iniciado - Flat 113",
+      "message": "Pintura e Reparos de Teste E2E (Atualizado): João Pintor no Flat 113",
+      "severity": "info",
+      "metadata": {
+        "serviceOrderId": "so_1790814120816_qvdkj",
+        "flatId": 1,
+        "flatNumber": "113"
+      },
+      "targetUrl": "/servicos",
+      "read": false,
+      "createdAt": "2026-10-01T00:22:01.035Z"
+    },
     {
       "id": 1787151090005,
       "category": "service_order",
@@ -29384,6 +29466,94 @@
     }
   ],
   "auditLogs": [
+    {
+      "id": "audit_1790575107631_4aobq11111111111111111111111111111111111111",
+      "timestamp": "2026-10-01T00:22:02.320Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_SERVICE_ORDER",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "✅ Serviço finalizado - Flat 113",
+        "message": "Pintura e Reparos de Teste E2E (Atualizado): João Pintor no Flat 113",
+        "metadata": {
+          "serviceOrderId": "so_1790814120816_qvdkj",
+          "flatId": 1,
+          "flatNumber": "113"
+        },
+        "targetUrl": "/servicos"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq1111111111111111111111111111111111111",
+      "timestamp": "2026-10-01T00:22:01.034Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_SERVICE_ORDER",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "🔧 Serviço iniciado - Flat 113",
+        "message": "Pintura e Reparos de Teste E2E (Atualizado): João Pintor no Flat 113",
+        "metadata": {
+          "serviceOrderId": "so_1790814120816_qvdkj",
+          "flatId": 1,
+          "flatNumber": "113"
+        },
+        "targetUrl": "/servicos"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq111111111111111111111111111111111111",
+      "timestamp": "2026-10-01T00:22:00.840Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "SERVICE_ORDER_CREATED",
+      "actor": {
+        "id": 1,
+        "name": "admin",
+        "role": "admin"
+      },
+      "details": {
+        "orderId": "so_1790814120816_qvdkj",
+        "title": "Pintura e Reparos de Teste E2E",
+        "flatsCount": 3
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq11111111111111111111111111111111111",
+      "timestamp": "2026-10-01T00:21:57.002Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "SERVICE_ORDER_CREATED",
+      "actor": {
+        "id": 1,
+        "name": "admin",
+        "role": "admin"
+      },
+      "details": {
+        "orderId": "so_1790814116973_oib2h",
+        "title": "Desafio Challenger M2 Pintura",
+        "flatsCount": 2
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
     {
       "id": "audit_1790575107631_4aobq1111111111111111111111111111111111",
       "timestamp": "2026-10-01T00:12:34.614Z",
