@@ -46866,6 +46866,982 @@
   ],
   "breakfastOrders": [
     {
+      "id": 47,
+      "date": "2026-10-09",
+      "deliveryTime": "06:45",
+      "roomNumber": "212",
+      "clientName": "Alexandre De Oliveira Carvalho",
+      "guestCount": 1,
+      "isStandard": true,
+      "orderMode": "unified",
+      "guestOrders": null,
+      "guestChoices": null,
+      "preferences": null,
+      "items": [
+        {
+          "name": "Café",
+          "quantity": 1
+        },
+        {
+          "name": "Leite",
+          "quantity": 1
+        },
+        {
+          "name": "Suco de laranja",
+          "quantity": 1
+        },
+        {
+          "name": "Pão francês",
+          "quantity": 1
+        },
+        {
+          "name": "Pão de queijo",
+          "quantity": 1
+        },
+        {
+          "name": "Queijo mussarela",
+          "quantity": 1
+        },
+        {
+          "name": "Presunto",
+          "quantity": 1
+        },
+        {
+          "name": "Ovos mexidos",
+          "quantity": 1
+        },
+        {
+          "name": "Manteiga",
+          "quantity": 1
+        },
+        {
+          "name": "Bolo do dia",
+          "quantity": 1
+        },
+        {
+          "name": "Fruta do dia",
+          "quantity": 1
+        },
+        {
+          "name": "Açúcar",
+          "quantity": 1
+        }
+      ],
+      "notes": "",
+      "status": "pending",
+      "phone": "",
+      "reservationCode": "RES-212-0296",
+      "reservationId": 296,
+      "originalCheckin": "2026-09-28",
+      "originalCheckout": "2026-10-09",
+      "createdAt": "2026-10-01T03:55:59.686Z"
+    },
+    {
+      "id": 46,
+      "date": "2026-10-08",
+      "deliveryTime": "06:45",
+      "roomNumber": "212",
+      "clientName": "Alexandre De Oliveira Carvalho",
+      "guestCount": 1,
+      "isStandard": true,
+      "orderMode": "unified",
+      "guestOrders": null,
+      "guestChoices": null,
+      "preferences": null,
+      "items": [
+        {
+          "name": "Café",
+          "quantity": 1
+        },
+        {
+          "name": "Leite",
+          "quantity": 1
+        },
+        {
+          "name": "Suco de laranja",
+          "quantity": 1
+        },
+        {
+          "name": "Pão francês",
+          "quantity": 1
+        },
+        {
+          "name": "Pão de queijo",
+          "quantity": 1
+        },
+        {
+          "name": "Queijo mussarela",
+          "quantity": 1
+        },
+        {
+          "name": "Presunto",
+          "quantity": 1
+        },
+        {
+          "name": "Ovos mexidos",
+          "quantity": 1
+        },
+        {
+          "name": "Manteiga",
+          "quantity": 1
+        },
+        {
+          "name": "Bolo do dia",
+          "quantity": 1
+        },
+        {
+          "name": "Fruta do dia",
+          "quantity": 1
+        },
+        {
+          "name": "Açúcar",
+          "quantity": 1
+        }
+      ],
+      "notes": "",
+      "status": "pending",
+      "phone": "",
+      "reservationCode": "RES-212-0296",
+      "reservationId": 296,
+      "originalCheckin": "2026-09-28",
+      "originalCheckout": "2026-10-09",
+      "createdAt": "2026-10-01T03:55:59.686Z"
+    },
+    {
+      "id": 45,
+      "date": "2026-10-07",
+      "deliveryTime": "06:45",
+      "roomNumber": "212",
+      "clientName": "Alexandre De Oliveira Carvalho",
+      "guestCount": 1,
+      "isStandard": true,
+      "orderMode": "unified",
+      "guestOrders": null,
+      "guestChoices": null,
+      "preferences": null,
+      "items": [
+        {
+          "name": "Café",
+          "quantity": 1
+        },
+        {
+          "name": "Leite",
+          "quantity": 1
+        },
+        {
+          "name": "Suco de laranja",
+          "quantity": 1
+        },
+        {
+          "name": "Pão francês",
+          "quantity": 1
+        },
+        {
+          "name": "Pão de queijo",
+          "quantity": 1
+        },
+        {
+          "name": "Queijo mussarela",
+          "quantity": 1
+        },
+        {
+          "name": "Presunto",
+          "quantity": 1
+        },
+        {
+          "name": "Ovos mexidos",
+          "quantity": 1
+        },
+        {
+          "name": "Manteiga",
+          "quantity": 1
+        },
+        {
+          "name": "Bolo do dia",
+          "quantity": 1
+        },
+        {
+          "name": "Fruta do dia",
+          "quantity": 1
+        },
+        {
+          "name": "Açúcar",
+          "quantity": 1
+        }
+      ],
+      "notes": "",
+      "status": "pending",
+      "phone": "",
+      "reservationCode": "RES-212-0296",
+      "reservationId": 296,
+      "originalCheckin": "2026-09-28",
+      "originalCheckout": "2026-10-09",
+      "createdAt": "2026-10-01T03:55:59.686Z"
+    },
+    {
+      "id": 44,
+      "date": "2026-10-06",
+      "deliveryTime": "06:45",
+      "roomNumber": "212",
+      "clientName": "Alexandre De Oliveira Carvalho",
+      "guestCount": 1,
+      "isStandard": true,
+      "orderMode": "unified",
+      "guestOrders": null,
+      "guestChoices": null,
+      "preferences": null,
+      "items": [
+        {
+          "name": "Café",
+          "quantity": 1
+        },
+        {
+          "name": "Leite",
+          "quantity": 1
+        },
+        {
+          "name": "Suco de laranja",
+          "quantity": 1
+        },
+        {
+          "name": "Pão francês",
+          "quantity": 1
+        },
+        {
+          "name": "Pão de queijo",
+          "quantity": 1
+        },
+        {
+          "name": "Queijo mussarela",
+          "quantity": 1
+        },
+        {
+          "name": "Presunto",
+          "quantity": 1
+        },
+        {
+          "name": "Ovos mexidos",
+          "quantity": 1
+        },
+        {
+          "name": "Manteiga",
+          "quantity": 1
+        },
+        {
+          "name": "Bolo do dia",
+          "quantity": 1
+        },
+        {
+          "name": "Fruta do dia",
+          "quantity": 1
+        },
+        {
+          "name": "Açúcar",
+          "quantity": 1
+        }
+      ],
+      "notes": "",
+      "status": "pending",
+      "phone": "",
+      "reservationCode": "RES-212-0296",
+      "reservationId": 296,
+      "originalCheckin": "2026-09-28",
+      "originalCheckout": "2026-10-09",
+      "createdAt": "2026-10-01T03:55:59.686Z"
+    },
+    {
+      "id": 43,
+      "date": "2026-10-05",
+      "deliveryTime": "06:45",
+      "roomNumber": "212",
+      "clientName": "Alexandre De Oliveira Carvalho",
+      "guestCount": 1,
+      "isStandard": true,
+      "orderMode": "unified",
+      "guestOrders": null,
+      "guestChoices": null,
+      "preferences": null,
+      "items": [
+        {
+          "name": "Café",
+          "quantity": 1
+        },
+        {
+          "name": "Leite",
+          "quantity": 1
+        },
+        {
+          "name": "Suco de laranja",
+          "quantity": 1
+        },
+        {
+          "name": "Pão francês",
+          "quantity": 1
+        },
+        {
+          "name": "Pão de queijo",
+          "quantity": 1
+        },
+        {
+          "name": "Queijo mussarela",
+          "quantity": 1
+        },
+        {
+          "name": "Presunto",
+          "quantity": 1
+        },
+        {
+          "name": "Ovos mexidos",
+          "quantity": 1
+        },
+        {
+          "name": "Manteiga",
+          "quantity": 1
+        },
+        {
+          "name": "Bolo do dia",
+          "quantity": 1
+        },
+        {
+          "name": "Fruta do dia",
+          "quantity": 1
+        },
+        {
+          "name": "Açúcar",
+          "quantity": 1
+        }
+      ],
+      "notes": "",
+      "status": "pending",
+      "phone": "",
+      "reservationCode": "RES-212-0296",
+      "reservationId": 296,
+      "originalCheckin": "2026-09-28",
+      "originalCheckout": "2026-10-09",
+      "createdAt": "2026-10-01T03:55:59.686Z"
+    },
+    {
+      "id": 42,
+      "date": "2026-10-04",
+      "deliveryTime": "06:45",
+      "roomNumber": "212",
+      "clientName": "Alexandre De Oliveira Carvalho",
+      "guestCount": 1,
+      "isStandard": true,
+      "orderMode": "unified",
+      "guestOrders": null,
+      "guestChoices": null,
+      "preferences": null,
+      "items": [
+        {
+          "name": "Café",
+          "quantity": 1
+        },
+        {
+          "name": "Leite",
+          "quantity": 1
+        },
+        {
+          "name": "Suco de laranja",
+          "quantity": 1
+        },
+        {
+          "name": "Pão francês",
+          "quantity": 1
+        },
+        {
+          "name": "Pão de queijo",
+          "quantity": 1
+        },
+        {
+          "name": "Queijo mussarela",
+          "quantity": 1
+        },
+        {
+          "name": "Presunto",
+          "quantity": 1
+        },
+        {
+          "name": "Ovos mexidos",
+          "quantity": 1
+        },
+        {
+          "name": "Manteiga",
+          "quantity": 1
+        },
+        {
+          "name": "Bolo do dia",
+          "quantity": 1
+        },
+        {
+          "name": "Fruta do dia",
+          "quantity": 1
+        },
+        {
+          "name": "Açúcar",
+          "quantity": 1
+        }
+      ],
+      "notes": "",
+      "status": "pending",
+      "phone": "",
+      "reservationCode": "RES-212-0296",
+      "reservationId": 296,
+      "originalCheckin": "2026-09-28",
+      "originalCheckout": "2026-10-09",
+      "createdAt": "2026-10-01T03:55:59.686Z"
+    },
+    {
+      "id": 41,
+      "date": "2026-10-03",
+      "deliveryTime": "06:45",
+      "roomNumber": "212",
+      "clientName": "Alexandre De Oliveira Carvalho",
+      "guestCount": 1,
+      "isStandard": true,
+      "orderMode": "unified",
+      "guestOrders": null,
+      "guestChoices": null,
+      "preferences": null,
+      "items": [
+        {
+          "name": "Café",
+          "quantity": 1
+        },
+        {
+          "name": "Leite",
+          "quantity": 1
+        },
+        {
+          "name": "Suco de laranja",
+          "quantity": 1
+        },
+        {
+          "name": "Pão francês",
+          "quantity": 1
+        },
+        {
+          "name": "Pão de queijo",
+          "quantity": 1
+        },
+        {
+          "name": "Queijo mussarela",
+          "quantity": 1
+        },
+        {
+          "name": "Presunto",
+          "quantity": 1
+        },
+        {
+          "name": "Ovos mexidos",
+          "quantity": 1
+        },
+        {
+          "name": "Manteiga",
+          "quantity": 1
+        },
+        {
+          "name": "Bolo do dia",
+          "quantity": 1
+        },
+        {
+          "name": "Fruta do dia",
+          "quantity": 1
+        },
+        {
+          "name": "Açúcar",
+          "quantity": 1
+        }
+      ],
+      "notes": "",
+      "status": "pending",
+      "phone": "",
+      "reservationCode": "RES-212-0296",
+      "reservationId": 296,
+      "originalCheckin": "2026-09-28",
+      "originalCheckout": "2026-10-09",
+      "createdAt": "2026-10-01T03:55:59.686Z"
+    },
+    {
+      "id": 40,
+      "date": "2026-10-02",
+      "deliveryTime": "06:45",
+      "roomNumber": "212",
+      "clientName": "Alexandre De Oliveira Carvalho",
+      "guestCount": 1,
+      "isStandard": true,
+      "orderMode": "unified",
+      "guestOrders": null,
+      "guestChoices": null,
+      "preferences": null,
+      "items": [
+        {
+          "name": "Café",
+          "quantity": 1
+        },
+        {
+          "name": "Leite",
+          "quantity": 1
+        },
+        {
+          "name": "Suco de laranja",
+          "quantity": 1
+        },
+        {
+          "name": "Pão francês",
+          "quantity": 1
+        },
+        {
+          "name": "Pão de queijo",
+          "quantity": 1
+        },
+        {
+          "name": "Queijo mussarela",
+          "quantity": 1
+        },
+        {
+          "name": "Presunto",
+          "quantity": 1
+        },
+        {
+          "name": "Ovos mexidos",
+          "quantity": 1
+        },
+        {
+          "name": "Manteiga",
+          "quantity": 1
+        },
+        {
+          "name": "Bolo do dia",
+          "quantity": 1
+        },
+        {
+          "name": "Fruta do dia",
+          "quantity": 1
+        },
+        {
+          "name": "Açúcar",
+          "quantity": 1
+        }
+      ],
+      "notes": "",
+      "status": "pending",
+      "phone": "",
+      "reservationCode": "RES-212-0296",
+      "reservationId": 296,
+      "originalCheckin": "2026-09-28",
+      "originalCheckout": "2026-10-09",
+      "createdAt": "2026-10-01T03:55:59.686Z"
+    },
+    {
+      "id": 36,
+      "date": "2026-10-01",
+      "items": [
+        {
+          "name": "Café",
+          "quantity": 1
+        },
+        {
+          "name": "Leite",
+          "quantity": 1
+        },
+        {
+          "name": "Suco de laranja",
+          "quantity": 1
+        },
+        {
+          "name": "Pão francês",
+          "quantity": 1
+        },
+        {
+          "name": "Pão de queijo",
+          "quantity": 1
+        },
+        {
+          "name": "Queijo mussarela",
+          "quantity": 1
+        },
+        {
+          "name": "Presunto",
+          "quantity": 1
+        },
+        {
+          "name": "Ovos mexidos",
+          "quantity": 1
+        },
+        {
+          "name": "Manteiga",
+          "quantity": 1
+        },
+        {
+          "name": "Bolo do dia",
+          "quantity": 1
+        },
+        {
+          "name": "Mamão",
+          "quantity": 1
+        },
+        {
+          "name": "Adoçante",
+          "quantity": 1
+        }
+      ],
+      "notes": "",
+      "phone": "31998171397",
+      "status": "pending",
+      "createdAt": "2026-09-30T22:34:26.862Z",
+      "orderMode": "unified",
+      "clientName": "Patricia Carvalho",
+      "guestCount": 1,
+      "isStandard": false,
+      "roomNumber": "904",
+      "guestOrders": null,
+      "preferences": {
+        "fruit": "Mamão",
+        "breads": [
+          "Pão francês",
+          "Pão de queijo"
+        ],
+        "coffee": "Café com leite",
+        "sweets": [
+          "Bolo do dia"
+        ],
+        "sweetener": "Adoçante",
+        "fruitHoney": false,
+        "complements": [
+          "Manteiga"
+        ],
+        "otherBeverage": "Suco de laranja",
+        "accompaniments": [
+          "Queijo mussarela",
+          "Presunto",
+          "Ovos mexidos"
+        ]
+      },
+      "deliveryTime": "09:19",
+      "guestChoices": [
+        {
+          "fruit": "Mamão",
+          "breads": [
+            "Pão francês",
+            "Pão de queijo"
+          ],
+          "coffee": "Café com leite",
+          "sweets": [
+            "Bolo do dia"
+          ],
+          "guestName": "Patricia Carvalho",
+          "sweetener": "Adoçante",
+          "fruitHoney": false,
+          "guestIndex": 1,
+          "isStandard": false,
+          "complements": [
+            "Manteiga"
+          ],
+          "deliveryTime": "09:19",
+          "otherBeverage": "Suco de laranja",
+          "accompaniments": [
+            "Queijo mussarela",
+            "Presunto",
+            "Ovos mexidos"
+          ]
+        }
+      ],
+      "reservationId": 310,
+      "originalCheckin": "2026-09-30",
+      "reservationCode": "RES-907-0310",
+      "originalCheckout": "2026-10-02"
+    },
+    {
+      "id": 37,
+      "date": "2026-10-01",
+      "items": [
+        {
+          "name": "Café",
+          "quantity": 1
+        },
+        {
+          "name": "Leite",
+          "quantity": 1
+        },
+        {
+          "name": "Suco de laranja",
+          "quantity": 1
+        },
+        {
+          "name": "Pão francês",
+          "quantity": 1
+        },
+        {
+          "name": "Pão de queijo",
+          "quantity": 1
+        },
+        {
+          "name": "Queijo mussarela",
+          "quantity": 1
+        },
+        {
+          "name": "Presunto",
+          "quantity": 1
+        },
+        {
+          "name": "Ovos mexidos",
+          "quantity": 1
+        },
+        {
+          "name": "Queijo Minas frescal",
+          "quantity": 1
+        },
+        {
+          "name": "Manteiga",
+          "quantity": 1
+        },
+        {
+          "name": "Torradas amanteigadas",
+          "quantity": 1
+        },
+        {
+          "name": "Casadinho (biscoito com goiabada)",
+          "quantity": 1
+        },
+        {
+          "name": "Salada de frutas",
+          "quantity": 1
+        },
+        {
+          "name": "Mel",
+          "quantity": 1
+        },
+        {
+          "name": "Ambos (Açúcar + Adoçante)",
+          "quantity": 1
+        }
+      ],
+      "notes": "Copo dagua",
+      "phone": "21 993514373",
+      "status": "pending",
+      "createdAt": "2026-09-30T22:39:23.955Z",
+      "orderMode": "unified",
+      "clientName": "Alessandra Dias",
+      "guestCount": 1,
+      "isStandard": false,
+      "roomNumber": "116",
+      "guestOrders": null,
+      "preferences": {
+        "fruit": "Salada de frutas",
+        "breads": [
+          "Pão francês",
+          "Pão de queijo"
+        ],
+        "coffee": "Café com leite",
+        "sweets": [
+          "Torradas amanteigadas",
+          "Casadinho (biscoito com goiabada)"
+        ],
+        "sweetener": "Ambos",
+        "fruitHoney": false,
+        "complements": [
+          "Manteiga"
+        ],
+        "otherBeverage": "Suco de laranja",
+        "accompaniments": [
+          "Queijo mussarela",
+          "Presunto",
+          "Ovos mexidos",
+          "Queijo Minas frescal"
+        ],
+        "fruitSaladOption": "Mel"
+      },
+      "deliveryTime": "09:26",
+      "guestChoices": [
+        {
+          "fruit": "Salada de frutas",
+          "breads": [
+            "Pão francês",
+            "Pão de queijo"
+          ],
+          "coffee": "Café com leite",
+          "sweets": [
+            "Torradas amanteigadas",
+            "Casadinho (biscoito com goiabada)"
+          ],
+          "guestName": "Alessandra Dias",
+          "sweetener": "Ambos",
+          "fruitHoney": false,
+          "guestIndex": 1,
+          "isStandard": false,
+          "complements": [
+            "Manteiga"
+          ],
+          "deliveryTime": "09:26",
+          "otherBeverage": "Suco de laranja",
+          "accompaniments": [
+            "Queijo mussarela",
+            "Presunto",
+            "Ovos mexidos",
+            "Queijo Minas frescal"
+          ],
+          "fruitSaladOption": "Mel"
+        }
+      ],
+      "reservationId": 317,
+      "originalCheckin": "2026-09-30",
+      "reservationCode": "RES-116-0317",
+      "originalCheckout": "2026-10-02"
+    },
+    {
+      "id": 38,
+      "date": "2026-10-01",
+      "deliveryTime": "08:02",
+      "roomNumber": "512",
+      "clientName": "Marco",
+      "guestCount": 1,
+      "isStandard": false,
+      "orderMode": "unified",
+      "guestOrders": null,
+      "guestChoices": [
+        {
+          "guestIndex": 1,
+          "guestName": "Marco",
+          "deliveryTime": "08:02",
+          "isStandard": false,
+          "fruit": "Nenhuma fruta",
+          "breads": [
+            "Pão de queijo"
+          ],
+          "coffee": "Café",
+          "sweets": [
+            "Torradas amanteigadas"
+          ],
+          "sweetener": "Nenhum",
+          "fruitHoney": false,
+          "complements": [
+            "Manteiga"
+          ],
+          "otherBeverage": "Suco de laranja",
+          "accompaniments": []
+        }
+      ],
+      "preferences": {
+        "fruit": "Nenhuma fruta",
+        "breads": [
+          "Pão de queijo"
+        ],
+        "coffee": "Café",
+        "sweets": [
+          "Torradas amanteigadas"
+        ],
+        "sweetener": "Nenhum",
+        "fruitHoney": false,
+        "complements": [
+          "Manteiga"
+        ],
+        "otherBeverage": "Suco de laranja",
+        "accompaniments": []
+      },
+      "items": [
+        {
+          "name": "Café",
+          "quantity": 1
+        },
+        {
+          "name": "Suco de laranja",
+          "quantity": 1
+        },
+        {
+          "name": "Pão de queijo",
+          "quantity": 2
+        },
+        {
+          "name": "Manteiga",
+          "quantity": 1
+        },
+        {
+          "name": "Torradas amanteigadas",
+          "quantity": 1
+        }
+      ],
+      "notes": "",
+      "status": "pending",
+      "phone": "",
+      "reservationCode": "RES-512-0295",
+      "reservationId": 295,
+      "originalCheckin": "2026-09-28",
+      "originalCheckout": "2026-10-01",
+      "createdAt": "2026-10-01T03:55:52.601Z"
+    },
+    {
+      "id": 39,
+      "date": "2026-10-01",
+      "deliveryTime": "06:45",
+      "roomNumber": "212",
+      "clientName": "Alexandre De Oliveira Carvalho",
+      "guestCount": 1,
+      "isStandard": true,
+      "orderMode": "unified",
+      "guestOrders": null,
+      "guestChoices": null,
+      "preferences": null,
+      "items": [
+        {
+          "name": "Café",
+          "quantity": 1
+        },
+        {
+          "name": "Leite",
+          "quantity": 1
+        },
+        {
+          "name": "Suco de laranja",
+          "quantity": 1
+        },
+        {
+          "name": "Pão francês",
+          "quantity": 1
+        },
+        {
+          "name": "Pão de queijo",
+          "quantity": 1
+        },
+        {
+          "name": "Queijo mussarela",
+          "quantity": 1
+        },
+        {
+          "name": "Presunto",
+          "quantity": 1
+        },
+        {
+          "name": "Ovos mexidos",
+          "quantity": 1
+        },
+        {
+          "name": "Manteiga",
+          "quantity": 1
+        },
+        {
+          "name": "Bolo do dia",
+          "quantity": 1
+        },
+        {
+          "name": "Fruta do dia",
+          "quantity": 1
+        },
+        {
+          "name": "Açúcar",
+          "quantity": 1
+        }
+      ],
+      "notes": "",
+      "status": "pending",
+      "phone": "",
+      "reservationCode": "RES-212-0296",
+      "reservationId": 296,
+      "originalCheckin": "2026-09-28",
+      "originalCheckout": "2026-10-09",
+      "createdAt": "2026-10-01T03:55:59.686Z"
+    },
+    {
       "id": 3,
       "date": "2026-09-06",
       "deliveryTime": "08:14",
@@ -49342,7 +50318,7 @@
     "conciergeGroupName": "Checkout Flats",
     "conciergeMonitoringEnabled": true,
     "conciergeRequireKeywords": false,
-    "webhooksSyncedAt": "2026-10-01T03:26:23.486Z",
+    "webhooksSyncedAt": "2026-10-01T04:01:32.859Z",
     "googleReviewUrl": "https://share.google/LHu3541d5lhkdvbL2",
     "alertEmail": "millerpessanha@gmail.com",
     "alertEmailEnabled": true,
@@ -54853,6 +55829,7 @@
     }
   ],
   "systemMigrations": [
-    "migration_20260930_incident_repaired"
+    "migration_20260930_incident_repaired",
+    "migration_20260930_breakfast_repaired"
   ]
 }
