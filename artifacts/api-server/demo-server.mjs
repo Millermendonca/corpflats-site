@@ -25755,8 +25755,8 @@ app.get("/api/shopping-list/ai-test", async (req, res) => {
     keyPrefix: apiKey ? apiKey.slice(0, 6) + "..." : null,
     keyLength: apiKey ? apiKey.length : 0,
     testProduct,
-    keyMethod: null,
-    bearerMethod: null,
+    keyMethodTest: null,
+    bearerMethodTest: null,
     finalResult: null,
     fallbackResult: autoCategorizeRules(testProduct),
   };
@@ -25766,22 +25766,45 @@ app.get("/api/shopping-list/ai-test", async (req, res) => {
     return res.json(results);
   }
 
+  const testPrompt = `Responda apenas: ["teste"]`;
+  const body = JSON.stringify({
+    contents: [{ parts: [{ text: testPrompt }] }],
+    generationConfig: { temperature: 0, maxOutputTokens: 50 },
+  });
+  const baseUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
+
   // Testa ?key=
   try {
-    const r = await callGemini(`Responda apenas: ["teste"]`, apiKey, "key");
-    results.keyMethod = r ? "OK" : "FAILED";
-  } catch (e) { results.keyMethod = `ERROR: ${e.message}`; }
+    const r = await fetch(`${baseUrl}?key=${apiKey}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    const txt = await r.text();
+    results.keyMethodTest = { status: r.status, ok: r.ok, body: txt.slice(0, 500) };
+  } catch (e) { results.keyMethodTest = { error: e.message }; }
 
   // Testa Bearer
   try {
-    const r = await callGemini(`Responda apenas: ["teste"]`, apiKey, "bearer");
-    results.bearerMethod = r ? "OK" : "FAILED";
-  } catch (e) { results.bearerMethod = `ERROR: ${e.message}`; }
+    const r = await fetch(baseUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+      body,
+    });
+    const txt = await r.text();
+    results.bearerMethodTest = { status: r.status, ok: r.ok, body: txt.slice(0, 500) };
+  } catch (e) { results.bearerMethodTest = { error: e.message }; }
 
-  // Testa categorização real
+  // Testa com x-goog-api-key header (terceiro método)
   try {
-    results.finalResult = await autoCategorize(testProduct);
-  } catch (e) { results.finalResult = `ERROR: ${e.message}`; }
+    const r = await fetch(baseUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      body,
+    });
+    const txt = await r.text();
+    results.xGoogHeaderTest = { status: r.status, ok: r.ok, body: txt.slice(0, 500) };
+  } catch (e) { results.xGoogHeaderTest = { error: e.message }; }
 
   return res.json(results);
 });
