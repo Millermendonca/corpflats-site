@@ -17,7 +17,7 @@ import {
   Calendar as CalendarIcon, User, Users, Phone, Mail, ShieldAlert, CheckCircle2,
   Clock, DollarSign, BedDouble, AlertTriangle, Lock, Trash2, Edit3, MessageCircle, KeyRound, Sparkles, FileText, Tag, Coffee, Building2, Wind, Zap, Bed, Check, RotateCcw, AlertCircle, RefreshCw, SlidersHorizontal, Copy,
   LogIn, LogOut, TrendingUp, Send, ChevronDown, ChevronUp, History, ArrowRight, CreditCard, ExternalLink, QrCode, Link2, DoorOpen, Car,
-  Download, Upload, FileSpreadsheet
+  Download, Upload, FileSpreadsheet, Wrench
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { 
@@ -25,6 +25,7 @@ import {
   isSameDay, isToday, isYesterday, parseISO, differenceInDays, differenceInCalendarDays 
 } from "date-fns"
 import { ptBR } from "date-fns/locale"
+import { cn } from "@/lib/utils"
 
 const CHANNEL_CONFIG: Record<string, { label: string; bg: string; text: string; border: string }> = {
   site: { label: "Site Próprio", bg: "bg-indigo-600", text: "text-white", border: "border-indigo-700" },
@@ -702,6 +703,18 @@ export default function PmsCalendar() {
   const [formForceReplace, setFormForceReplace] = useState(false)
   const [formIsMonthlyGuest, setFormIsMonthlyGuest] = useState(false)
 
+  // Active Service Order Block Conflict in Reservation Modal
+  const activeServiceBlockConflict = useMemo(() => {
+    if (!formFlatId || !formCheckin || !formCheckout) return null;
+    return (data.blocks || []).find(b => {
+      const isService = Boolean(b.isServiceBlock || b.reason === "service_order");
+      if (!isService) return false;
+      const sameFlat = Number(b.flatId) === Number(formFlatId) || String(b.flatNumber) === String(formFlatId);
+      if (!sameFlat) return false;
+      return b.startDate <= formCheckout && b.endDate >= formCheckin;
+    });
+  }, [formFlatId, formCheckin, formCheckout, data.blocks]);
+
 
   // Multi-Guest & Corporate Requester State
   const [formGuestCount, setFormGuestCount] = useState<"1" | "2" | "3">("1")
@@ -1181,16 +1194,40 @@ export default function PmsCalendar() {
         return r.checkinDate < current.currentCheckout && r.checkoutDate > current.currentCheckin;
       });
 
-      const hasBlockConflict = data.blocks.some(b => {
+      const serviceBlockConflict = data.blocks.find(b => {
+        const isService = Boolean(b.isServiceBlock || b.reason === "service_order");
+        if (!isService) return false;
+        const sameFlat = b.flatId === current.currentFlatId || String(b.flatNumber) === String(current.currentFlatNumber);
+        return sameFlat && b.startDate <= current.currentCheckout && b.endDate >= current.currentCheckin;
+      });
+
+      const hasHardBlockConflict = data.blocks.some(b => {
+        const isService = Boolean(b.isServiceBlock || b.reason === "service_order");
+        if (isService) return false;
         const sameFlat = b.flatId === current.currentFlatId || String(b.flatNumber) === String(current.currentFlatNumber);
         if (!sameFlat) return false;
         return b.startDate <= current.currentCheckout && b.endDate >= current.currentCheckin;
       });
 
-      if (hasConflict || hasBlockConflict) {
+      if (hasConflict || hasHardBlockConflict) {
         alert(`Não foi possível alterar a reserva: o Apt ${current.currentFlatNumber} já possui ocupação ou bloqueio no período (${format(parseISO(current.currentCheckin), "dd/MM")} a ${format(parseISO(current.currentCheckout), "dd/MM")}).`);
         setResDragState(null);
         return;
+      }
+
+      if (serviceBlockConflict) {
+        const servTitle = serviceBlockConflict.serviceTitle || serviceBlockConflict.title || "Serviço Externo";
+        const workerTxt = serviceBlockConflict.workerName ? ` (Prestador: ${serviceBlockConflict.workerName})` : "";
+        const proceed = confirm(
+          `⚠️ AVISO DE CONFLITO COM SERVIÇO EXTERNO\n\n` +
+          `O Apt ${current.currentFlatNumber} possui o serviço "${servTitle}" agendado/em andamento neste período${workerTxt}.\n\n` +
+          `A reserva pode ser movida, mas o flat pode estar indisponível.\n\n` +
+          `Deseja prosseguir e mover a reserva sobrescrevendo este bloqueio?`
+        );
+        if (!proceed) {
+          setResDragState(null);
+          return;
+        }
       }
 
       const originNights = differenceInDays(parseISO(current.originCheckout), parseISO(current.originCheckin)) || 1;
@@ -2691,6 +2728,22 @@ export default function PmsCalendar() {
       return
     }
 
+    if (activeServiceBlockConflict) {
+      const flatObj = data.flats.find(f => String(f.id) === String(formFlatId));
+      const flatNum = flatObj?.number || formFlatId;
+      const servTitle = activeServiceBlockConflict.serviceTitle || activeServiceBlockConflict.title || "Serviço Externo";
+      const workerTxt = activeServiceBlockConflict.workerName ? ` (Prestador: ${activeServiceBlockConflict.workerName})` : "";
+      const proceed = confirm(
+        `⚠️ AVISO DE CONFLITO COM SERVIÇO EXTERNO\n\n` +
+        `Este apartamento (Apt ${flatNum}) possui serviço externo agendado/em andamento neste período: ${servTitle}${workerTxt}.\n\n` +
+        `A reserva pode ser criada, mas o flat pode estar indisponível.\n\n` +
+        `Deseja prosseguir e salvar a reserva mesmo assim?`
+      );
+      if (!proceed) {
+        return;
+      }
+    }
+
     if (formGuestPhone.trim().replace(/\D/g, "").length >= 10) {
       const cleanDigits = formGuestPhone.trim().replace(/\D/g, "");
       let ver = phoneVerification && phoneVerification.phone === cleanDigits && phoneVerification.checked !== undefined ? phoneVerification : null;
@@ -3849,6 +3902,9 @@ export default function PmsCalendar() {
                         const bPos = getBlockPosition(blockItem.startDate, blockItem.endDate);
                         if (!bPos) return null;
 
+                        const isService = Boolean(blockItem.isServiceBlock || blockItem.reason === "service_order");
+                        const serviceTitle = blockItem.serviceTitle || blockItem.title?.replace(/^🔧\s*/, "") || "Serviço Externo";
+
                         return (
                           <div
                             key={`block-${blockItem.id}`}
@@ -3860,27 +3916,50 @@ export default function PmsCalendar() {
                               height: "34px"
                             }}
                             onClick={(e) => { e.stopPropagation(); handleOpenBlockDetails(blockItem, flat); }}
-                            className="rounded-xl bg-slate-900/90 hover:bg-slate-800 text-white flex items-center justify-between px-2.5 text-[10.5px] font-bold shadow-xs z-10 cursor-pointer overflow-hidden border border-slate-700 hover:border-amber-400/60 transition-all hover:scale-[1.01] active:scale-[0.99] group"
-                            title={`Bloqueio: ${blockItem.reason === 'manutencao' ? 'Manutenção' : 'Bloqueio'} • Clique para ver detalhes ou remover bloqueio`}
+                            className={cn(
+                              "rounded-xl flex items-center justify-between px-2.5 text-[10.5px] font-bold shadow-xs z-10 cursor-pointer overflow-hidden border transition-all hover:scale-[1.01] active:scale-[0.99] group",
+                              isService
+                                ? "bg-amber-950/95 hover:bg-amber-900 text-amber-100 border-amber-500/80 shadow-amber-900/30"
+                                : "bg-slate-900/90 hover:bg-slate-800 text-white border-slate-700 hover:border-amber-400/60"
+                            )}
+                            title={isService 
+                              ? `🔧 Serviço: ${serviceTitle}${blockItem.workerName ? ` • Prestador: ${blockItem.workerName}` : ''} • Período: ${blockItem.startDate} a ${blockItem.endDate} • Clique para ver detalhes`
+                              : `Bloqueio: ${blockItem.reason === 'manutencao' ? 'Manutenção' : 'Bloqueio'} • Clique para ver detalhes ou remover bloqueio`}
                           >
                             <div className="flex items-center gap-1.5 truncate">
-                              <Lock className="w-3.5 h-3.5 shrink-0 text-amber-400" />
-                              <span className="truncate">
-                                {blockItem.reason === "manutencao" ? "🛠️ Manutenção" : "🔑 Bloqueio"} {blockItem.notes ? `• ${blockItem.notes}` : ""}
-                              </span>
+                              {isService ? (
+                                <>
+                                  <Wrench className="w-3.5 h-3.5 shrink-0 text-amber-400 animate-pulse" />
+                                  <span className="truncate font-black text-amber-200">
+                                    🔧 {serviceTitle}
+                                    {blockItem.workerName && (
+                                      <span className="opacity-85 font-normal ml-1">({blockItem.workerName})</span>
+                                    )}
+                                  </span>
+                                </>
+                              ) : (
+                                <>
+                                  <Lock className="w-3.5 h-3.5 shrink-0 text-amber-400" />
+                                  <span className="truncate">
+                                    {blockItem.reason === "manutencao" ? "🛠️ Manutenção" : "🔑 Bloqueio"} {blockItem.notes ? `• ${blockItem.notes}` : ""}
+                                  </span>
+                                </>
+                              )}
                             </div>
 
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteBlock(blockItem.id);
-                              }}
-                              className="opacity-0 group-hover:opacity-100 p-1 hover:bg-rose-600 rounded-lg text-white transition-all shrink-0 ml-1.5"
-                              title="Remover Bloqueio"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
+                            {!isService && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteBlock(blockItem.id);
+                                }}
+                                className="opacity-0 group-hover:opacity-100 p-1 hover:bg-rose-600 rounded-lg text-white transition-all shrink-0 ml-1.5"
+                                title="Remover Bloqueio"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            )}
                           </div>
                         );
                       })}
@@ -4246,6 +4325,25 @@ export default function PmsCalendar() {
                     </div>
                   </div>
                 )}
+
+                {/* Banner de Aviso de Conflito com Serviço Externo */}
+                {activeServiceBlockConflict && (
+                  <div className="p-3.5 bg-amber-500/15 dark:bg-amber-950/40 border-2 border-amber-500/70 rounded-2xl flex items-start gap-3 text-xs text-amber-950 dark:text-amber-200 shadow-2xs">
+                    <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <div className="font-black text-sm flex items-center gap-1.5 text-amber-900 dark:text-amber-300">
+                        <span>Aviso de Serviço Externo</span>
+                      </div>
+                      <p className="text-[11.5px] leading-relaxed font-medium">
+                        ⚠️ Atenção: Este apartamento possui serviço externo agendado/em andamento neste período: <strong>{activeServiceBlockConflict.serviceTitle || activeServiceBlockConflict.title || "Serviço Externo"}</strong>{activeServiceBlockConflict.workerName ? ` (Prestador: ${activeServiceBlockConflict.workerName})` : ""}. A reserva pode ser criada, mas o flat pode estar indisponível.
+                      </p>
+                      <p className="text-[10.5px] text-amber-800 dark:text-amber-400 italic">
+                        ℹ️ Este bloqueio é visual. Administradores podem salvar a reserva normalmente para sobrescrever o período após confirmação.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 items-start">
                   <div className="space-y-1.5 min-w-0">
                     <div className="flex items-center justify-between">
@@ -7630,11 +7728,22 @@ export default function PmsCalendar() {
           <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-base font-black">
-                <Lock className="w-5 h-5 text-amber-500" />
-                Bloqueio de Quarto - Apt {selectedBlockForDetails?.flatNumber}
+                {selectedBlockForDetails?.isServiceBlock || selectedBlockForDetails?.reason === "service_order" ? (
+                  <>
+                    <Wrench className="w-5 h-5 text-amber-500 animate-pulse" />
+                    <span>Ordem de Serviço - Apt {selectedBlockForDetails?.flatNumber}</span>
+                  </>
+                ) : (
+                  <>
+                    <Lock className="w-5 h-5 text-amber-500" />
+                    <span>Bloqueio de Quarto - Apt {selectedBlockForDetails?.flatNumber}</span>
+                  </>
+                )}
               </DialogTitle>
               <DialogDescription className="text-xs">
-                Informações do período bloqueado no mapa de reservas.
+                {selectedBlockForDetails?.isServiceBlock || selectedBlockForDetails?.reason === "service_order"
+                  ? "Informações do serviço externo em andamento bloqueando o quarto."
+                  : "Informações do período bloqueado no mapa de reservas."}
               </DialogDescription>
             </DialogHeader>
 
@@ -7648,9 +7757,27 @@ export default function PmsCalendar() {
                   <div className="flex justify-between items-center">
                     <span className="text-muted-foreground font-semibold">Motivo:</span>
                     <span className="font-bold text-foreground capitalize">
-                      {selectedBlockForDetails.reason === "manutencao" ? "🛠️ Manutenção / Reparo" : "🔑 Bloqueio Operacional"}
+                      {selectedBlockForDetails.isServiceBlock || selectedBlockForDetails.reason === "service_order"
+                        ? "🔧 Serviço Externo em Andamento"
+                        : selectedBlockForDetails.reason === "manutencao" ? "🛠️ Manutenção / Reparo" : "🔑 Bloqueio Operacional"}
                     </span>
                   </div>
+                  {(selectedBlockForDetails.serviceTitle || selectedBlockForDetails.isServiceBlock) && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground font-semibold">Serviço:</span>
+                      <span className="font-bold text-amber-600 dark:text-amber-400">
+                        {selectedBlockForDetails.serviceTitle || selectedBlockForDetails.title || "Serviço Externo"}
+                      </span>
+                    </div>
+                  )}
+                  {selectedBlockForDetails.workerName && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground font-semibold">Prestador:</span>
+                      <span className="font-bold text-foreground">
+                        {selectedBlockForDetails.workerName}
+                      </span>
+                    </div>
+                  )}
                   <div className="flex justify-between items-center">
                     <span className="text-muted-foreground font-semibold">Período Bloqueado:</span>
                     <span className="font-bold text-foreground">
@@ -7668,16 +7795,31 @@ export default function PmsCalendar() {
                 </div>
 
                 <DialogFooter className="gap-2 pt-2 flex items-center justify-between sm:justify-between">
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    disabled={deletingBlock}
-                    onClick={() => handleDeleteBlock(selectedBlockForDetails.id)}
-                    className="rounded-xl h-9 text-xs font-black gap-1.5"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    {deletingBlock ? "Removendo..." : "Remover Bloqueio"}
-                  </Button>
+                  {selectedBlockForDetails.isServiceBlock || selectedBlockForDetails.reason === "service_order" ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => {
+                        setBlockDetailsModalOpen(false);
+                        setLocation("/servicos");
+                      }}
+                      className="rounded-xl h-9 text-xs font-black gap-1.5 bg-amber-500 hover:bg-amber-600 text-white"
+                    >
+                      <Wrench className="w-3.5 h-3.5" />
+                      Ver em Serviços
+                    </Button>
+                  ) : (
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      disabled={deletingBlock}
+                      onClick={() => handleDeleteBlock(selectedBlockForDetails.id)}
+                      className="rounded-xl h-9 text-xs font-black gap-1.5"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      {deletingBlock ? "Removendo..." : "Remover Bloqueio"}
+                    </Button>
+                  )}
 
                   <Button
                     type="button"

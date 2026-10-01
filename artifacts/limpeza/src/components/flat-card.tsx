@@ -28,6 +28,7 @@ import {
   DollarSign, CalendarDays, Trash2, Coins
 } from "lucide-react"
 import { compressImage } from "@/lib/image-compression"
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 
 export type FlatStatus = "dirty" | "will_clean" | "cleaning_now" | "pending_issue" | "clean" | "extended" | "no_show"
@@ -1051,14 +1052,15 @@ export function FlatCard({
         "overflow-hidden transition-all duration-200 border rounded-2xl shadow-xs hover:shadow-md flex flex-col justify-between h-full bg-card",
         conf.cardBg,
         isSelected && "ring-2 ring-primary ring-offset-1 shadow-md",
-        isPriority && !isInstruction && "border-rose-400 dark:border-rose-800 shadow-rose-100/50 dark:shadow-none"
+        isPriority && !isInstruction && "border-rose-400 dark:border-rose-800 shadow-rose-100/50 dark:shadow-none",
+        Boolean(flat.serviceInProgress) && "border-amber-500/90 dark:border-amber-600 shadow-amber-100/50"
       )}>
         <CardContent className="p-4 flex flex-col justify-between h-full space-y-3">
           <div className="space-y-2.5">
             {/* Top Bar - Linha 1: Identificação do Flat (Sem corte) e Ocupação */}
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 shrink-0">
-                {selectable && currentStatus === "dirty" && !isAssignedToOther && !isInstruction && (
+                {selectable && currentStatus === "dirty" && !isAssignedToOther && !isInstruction && !flat.serviceInProgress && (
                   <input
                     type="checkbox"
                     checked={isSelected}
@@ -1178,6 +1180,18 @@ export function FlatCard({
                 {conf.label}
               </Badge>
 
+              {flat.serviceInProgress && (
+                <Badge 
+                  className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-[10.5px] shadow-2xs px-2 py-0.5 flex items-center gap-1 rounded-lg border border-amber-600 animate-pulse shrink-0"
+                  title={flat.serviceInProgress.workerName 
+                    ? `Prestador: ${flat.serviceInProgress.workerName} • Serviço: ${flat.serviceInProgress.serviceTitle || "Em andamento"}`
+                    : "Serviço externo em andamento no flat"}
+                >
+                  <Wrench className="w-3 h-3 shrink-0" />
+                  <span>🔧 Serviço em andamento</span>
+                </Badge>
+              )}
+
               {/* Tag de Remuneração: Exibida SOMENTE para Administradores */}
               {isAdmin && isInstruction && (
                 <Badge variant="outline" className={cn(
@@ -1291,6 +1305,23 @@ export function FlatCard({
             {!isAdmin && flat?.activeReservation?.guestName && !isInstruction && (
               <div className="text-[11px] text-amber-900 dark:text-amber-200 bg-amber-50/90 dark:bg-amber-950/40 rounded-xl px-2.5 py-1.5 border border-amber-200 dark:border-amber-800/50 font-semibold flex items-center gap-1.5">
                 <span>⚠️ Quarto atualmente ocupado por hóspede em estadia.</span>
+              </div>
+            )}
+
+            {/* Box Informativo de Bloqueio por Serviço Externo */}
+            {flat.serviceInProgress && (
+              <div className="bg-amber-100/90 dark:bg-amber-950/40 border-2 border-amber-400 dark:border-amber-700/80 rounded-xl p-2.5 text-xs text-amber-950 dark:text-amber-200 shadow-2xs space-y-1">
+                <div className="flex items-center gap-1.5 font-black text-amber-900 dark:text-amber-300">
+                  <Wrench className="w-3.5 h-3.5 text-amber-700 dark:text-amber-400 shrink-0 animate-pulse" />
+                  <span>Serviço Externo em Andamento:</span>
+                </div>
+                <p className="text-[11px] font-semibold text-amber-900 dark:text-amber-200">
+                  {flat.serviceInProgress.serviceTitle || "Manutenção"}
+                  {flat.serviceInProgress.workerName && ` • Prestador: ${flat.serviceInProgress.workerName}`}
+                </p>
+                <p className="text-[10px] text-amber-800 dark:text-amber-400 font-medium">
+                  Aguardando conclusão do serviço externo para liberar a higienização do apartamento.
+                </p>
               </div>
             )}
 
@@ -1446,7 +1477,26 @@ export function FlatCard({
             ) : (
               <div className="space-y-2">
                 {(currentStatus === "dirty" || (currentStatus as string) === "pending") && (
-                  isAdmin ? (
+                  flat.serviceInProgress ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="w-full cursor-not-allowed">
+                          <Button 
+                            size="sm" 
+                            disabled 
+                            className="w-full bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-semibold cursor-not-allowed shadow-none border border-slate-300 dark:border-slate-700"
+                          >
+                            <Wrench className="w-3.5 h-3.5 mr-1 text-amber-600" />
+                            <span>Iniciar Limpeza (Serviço em Andamento)</span>
+                          </Button>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent className="bg-slate-900 text-white text-xs max-w-xs p-2.5 rounded-xl shadow-lg border border-slate-700">
+                        <p className="font-bold text-amber-400 mb-0.5">⚠️ Limpeza Bloqueada</p>
+                        <p>⚠️ Limpeza Bloqueada: Aguardando finalização do serviço: {flat.serviceInProgress.serviceTitle || "Serviço"}{flat.serviceInProgress.workerName ? ` (Prestador: ${flat.serviceInProgress.workerName})` : ""}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : isAdmin ? (
                     <div className="flex gap-1.5">
                       <Button 
                         size="sm" 
@@ -1494,38 +1544,59 @@ export function FlatCard({
                 )}
 
                 {currentStatus === "will_clean" && (
-                  <div className="flex gap-2">
-                    <Button 
-                      size="sm" 
-                      className="flex-1 bg-amber-500 hover:bg-amber-600 text-white font-semibold shadow-2xs" 
-                      onClick={() => handleStatusChange("cleaning_now")}
-                      disabled={isProcessing}
-                    >
-                      <Sparkles className="w-4 h-4 mr-1" /> {isInstruction ? "Iniciar Tarefa" : "Iniciar"}
-                    </Button>
-                    {isAdmin && (
+                  flat.serviceInProgress ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="w-full cursor-not-allowed">
+                          <Button 
+                            size="sm" 
+                            disabled 
+                            className="w-full bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-semibold cursor-not-allowed shadow-none border border-slate-300 dark:border-slate-700"
+                          >
+                            <Wrench className="w-3.5 h-3.5 mr-1 text-amber-600" />
+                            <span>Iniciar Limpeza (Serviço em Andamento)</span>
+                          </Button>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent className="bg-slate-900 text-white text-xs max-w-xs p-2.5 rounded-xl shadow-lg border border-slate-700">
+                        <p className="font-bold text-amber-400 mb-0.5">⚠️ Limpeza Bloqueada</p>
+                        <p>⚠️ Limpeza Bloqueada: Aguardando finalização do serviço: {flat.serviceInProgress.serviceTitle || "Serviço"}{flat.serviceInProgress.workerName ? ` (Prestador: ${flat.serviceInProgress.workerName})` : ""}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <div className="flex gap-2">
                       <Button 
                         size="sm" 
-                        className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-2xs text-xs" 
-                        onClick={() => setAdminCleanModalOpen(true)}
+                        className="flex-1 bg-amber-500 hover:bg-amber-600 text-white font-semibold shadow-2xs" 
+                        onClick={() => handleStatusChange("cleaning_now")}
                         disabled={isProcessing}
                       >
-                        <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> {isInstruction ? "Concluir" : "Limpo"}
+                        <Sparkles className="w-4 h-4 mr-1" /> {isInstruction ? "Iniciar Tarefa" : "Iniciar"}
                       </Button>
-                    )}
-                    {(isAssignedToMe || isAdmin) && (
-                      <Button 
-                        size="sm" 
-                        variant="outline" 
-                        className="text-xs text-slate-600 border-slate-300 hover:bg-slate-100" 
-                        onClick={handleRelease}
-                        title="Devolver quarto para que outra camareira possa pegar"
-                        disabled={isProcessing}
-                      >
-                        <RotateCcw className="w-3.5 h-3.5 mr-1" /> Devolver
-                      </Button>
-                    )}
-                  </div>
+                      {isAdmin && (
+                        <Button 
+                          size="sm" 
+                          className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-2xs text-xs" 
+                          onClick={() => setAdminCleanModalOpen(true)}
+                          disabled={isProcessing}
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> {isInstruction ? "Concluir" : "Limpo"}
+                        </Button>
+                      )}
+                      {(isAssignedToMe || isAdmin) && (
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          className="text-xs text-slate-600 border-slate-300 hover:bg-slate-100" 
+                          onClick={handleRelease}
+                          title="Devolver quarto para que outra camareira possa pegar"
+                          disabled={isProcessing}
+                        >
+                          <RotateCcw className="w-3.5 h-3.5 mr-1" /> Devolver
+                        </Button>
+                      )}
+                    </div>
+                  )
                 )}
 
                 {currentStatus === "cleaning_now" && (
