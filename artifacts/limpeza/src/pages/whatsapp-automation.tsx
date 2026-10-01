@@ -50,7 +50,8 @@ import {
   ShieldCheck,
   RotateCcw,
   FileText,
-  Workflow
+  Workflow,
+  Bot
 } from "lucide-react"
 import { AccessDenied } from "@/components/access-denied"
 import { useQuickMessages, WhatsAppQuickMessage, renderQuickMessage } from "@/hooks/use-quick-messages"
@@ -416,6 +417,105 @@ export default function WhatsappAutomation() {
     setQmModalOpen(false)
   }
 
+  // ─── Agente de IA para WhatsApp State & Handlers ─────────────────────────
+  const [aiConfig, setAiConfig] = useState<any>({
+    enabled: true,
+    mode: "autonomous",
+    agentName: "Sofia",
+    agentRole: "Concierge Virtual CorpFlats",
+    responseDelaySeconds: 3,
+    offHoursStart: "18:00",
+    offHoursEnd: "08:00",
+    handoverKeywords: [],
+    systemPrompt: "",
+    knowledgeBase: {}
+  })
+  const [geminiStatus, setGeminiStatus] = useState<{ configured: boolean; model: string }>({ configured: false, model: "" })
+  const [aiTestModeOnly, setAiTestModeOnly] = useState(true)
+  const [aiTestAllowedPhones, setAiTestAllowedPhones] = useState("")
+  const [loadingAiConfig, setLoadingAiConfig] = useState(false)
+  const [savingAiConfig, setSavingAiConfig] = useState(false)
+  const [simMessage, setSimMessage] = useState("Olá, qual a senha do wifi?")
+  const [simPhone, setSimPhone] = useState("22998505276")
+  const [simulatingAi, setSimulatingAi] = useState(false)
+  const [simResult, setSimResult] = useState<any>(null)
+
+  const fetchAiConfig = async () => {
+    try {
+      setLoadingAiConfig(true)
+      const res = await fetch("/api/whatsapp/ai-config")
+      if (res.ok) {
+        const data = await res.json()
+        if (data.aiConfig) {
+          setAiConfig(data.aiConfig)
+        }
+        setGeminiStatus({
+          configured: Boolean(data.geminiConfigured),
+          model: data.geminiModel || "gemini-2.0-flash"
+        })
+        setAiTestModeOnly(data.testModeOnly ?? true)
+        setAiTestAllowedPhones(data.testAllowedPhones || "")
+      }
+    } catch (e: any) {
+      console.warn("Erro ao carregar configurações da IA:", e.message)
+    } finally {
+      setLoadingAiConfig(false)
+    }
+  }
+
+  const handleSaveAiConfig = async () => {
+    try {
+      setSavingAiConfig(true)
+      const payload = {
+        ...aiConfig,
+        testModeOnly: aiTestModeOnly,
+        testAllowedPhones: aiTestAllowedPhones
+      }
+      const res = await fetch("/api/whatsapp/ai-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      })
+      if (res.ok) {
+        toast({
+          title: "Configurações da IA Salvas! 🤖✨",
+          description: "O Agente de IA está atualizado com os novos parâmetros."
+        })
+        fetchAiConfig()
+      } else {
+        const err = await res.json()
+        toast({ title: "Erro ao salvar", description: err.error || "Falha na requisição", variant: "destructive" })
+      }
+    } catch (err: any) {
+      toast({ title: "Erro ao salvar", description: err.message, variant: "destructive" })
+    } finally {
+      setSavingAiConfig(false)
+    }
+  }
+
+  const handleSimulateAi = async () => {
+    if (!simMessage.trim()) return
+    try {
+      setSimulatingAi(true)
+      setSimResult(null)
+      const res = await fetch("/api/whatsapp/ai-simulate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: simMessage, phone: simPhone })
+      })
+      const data = await res.json()
+      if (data.success) {
+        setSimResult(data)
+      } else {
+        toast({ title: "Erro na simulação", description: data.error || "Falha ao gerar resposta", variant: "destructive" })
+      }
+    } catch (err: any) {
+      toast({ title: "Erro na simulação", description: err.message, variant: "destructive" })
+    } finally {
+      setSimulatingAi(false)
+    }
+  }
+
   // Initial Data Fetching
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -430,6 +530,7 @@ export default function WhatsappAutomation() {
     fetchConfig()
     fetchReservations()
     checkStatus()
+    fetchAiConfig()
   }, [])
 
   const fetchTemplates = async () => {
@@ -1301,7 +1402,11 @@ export default function WhatsappAutomation() {
 
         {/* Tabs Principais */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid grid-cols-2 md:grid-cols-4 w-full md:w-auto rounded-xl p-1 bg-muted/60">
+          <TabsList className="grid grid-cols-2 md:grid-cols-5 w-full md:w-auto rounded-xl p-1 bg-muted/60">
+            <TabsTrigger value="ai_agent" className="rounded-lg text-xs font-bold gap-1.5">
+              <Bot className="w-3.5 h-3.5 text-blue-500" />
+              🤖 Agente de IA
+            </TabsTrigger>
             <TabsTrigger value="rules" className="rounded-lg text-xs font-bold gap-1.5">
               <Zap className="w-3.5 h-3.5 text-amber-500" />
               Régua Automática
@@ -1327,6 +1432,492 @@ export default function WhatsappAutomation() {
               Histórico
             </TabsTrigger>
           </TabsList>
+
+          {/* ════════════════════════════════════════════════════════════════════
+              ABA 0: AGENTE DE IA (CONCIERGE VIRTUAL)
+          ════════════════════════════════════════════════════════════════════ */}
+          <TabsContent value="ai_agent" className="space-y-6">
+            {/* Top Status & Overview Banner */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <Card className="border-blue-200 dark:border-blue-900/60 bg-blue-50/50 dark:bg-blue-950/20 shadow-xs">
+                <CardHeader className="p-4 pb-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-blue-700 dark:text-blue-300 flex items-center gap-1.5">
+                      <Bot className="w-4 h-4 text-blue-600" />
+                      Motor de IA
+                    </span>
+                    <Badge variant={aiConfig.enabled ? "default" : "secondary"} className={aiConfig.enabled ? "bg-emerald-600 text-white" : ""}>
+                      {aiConfig.enabled ? "Ativo" : "Desativado"}
+                    </Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-4 pt-1">
+                  <p className="text-sm font-black text-slate-900 dark:text-slate-100">
+                    {aiConfig.agentName || "Sofia"}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {aiConfig.agentRole || "Concierge Virtual CorpFlats"}
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card className="border-purple-200 dark:border-purple-900/60 bg-purple-50/50 dark:bg-purple-950/20 shadow-xs">
+                <CardHeader className="p-4 pb-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-purple-700 dark:text-purple-300 flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4 text-purple-600" />
+                      Modelo LLM
+                    </span>
+                    <Badge variant="outline" className={geminiStatus.configured ? "border-emerald-500 text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60" : "border-amber-500 text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60"}>
+                      {geminiStatus.configured ? "Google Gemini" : "Heurístico Local"}
+                    </Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-4 pt-1">
+                  <p className="text-sm font-black text-slate-900 dark:text-slate-100">
+                    {geminiStatus.configured ? geminiStatus.model : "Contingência Ativa"}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {geminiStatus.configured ? "Respostas dinâmicas em linguagem natural" : "Respostas de alta precisão via base interna"}
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card className="border-amber-200 dark:border-amber-900/60 bg-amber-50/50 dark:bg-amber-950/20 shadow-xs">
+                <CardHeader className="p-4 pb-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-amber-700 dark:text-amber-300 flex items-center gap-1.5">
+                      <ShieldCheck className="w-4 h-4 text-amber-600" />
+                      Ambiente de Disparo
+                    </span>
+                    <Badge variant={aiTestModeOnly ? "outline" : "default"} className={aiTestModeOnly ? "border-amber-500 text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 font-bold" : "bg-emerald-600 text-white font-bold"}>
+                      {aiTestModeOnly ? "Modo Teste" : "Produção"}
+                    </Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-4 pt-1">
+                  <p className="text-sm font-black text-slate-900 dark:text-slate-100">
+                    {aiTestModeOnly ? "Números Autorizados" : "Todos os Contatos"}
+                  </p>
+                  <p className="text-xs text-muted-foreground truncate" title={aiTestAllowedPhones}>
+                    {aiTestModeOnly ? (aiTestAllowedPhones || "Nenhum número cadastrado") : "Hóspedes e novos clientes autorizados"}
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Painel Principal de Configurações */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Coluna Esquerda: Controles & Prompt (7 cols) */}
+              <div className="lg:col-span-7 space-y-6">
+                <Card className="border shadow-xs">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <CardTitle className="text-base font-bold flex items-center gap-2">
+                          <Bot className="w-4 h-4 text-blue-600" />
+                          Modo de Atuação & Parâmetros Principais
+                        </CardTitle>
+                        <CardDescription className="text-xs">
+                          Defina como o agente de IA interage com as conversas recebidas via WhatsApp.
+                        </CardDescription>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Label htmlFor="ai-master-toggle" className="text-xs font-bold">
+                          {aiConfig.enabled ? "IA Ativada" : "IA Pausada"}
+                        </Label>
+                        <Switch
+                          id="ai-master-toggle"
+                          checked={aiConfig.enabled}
+                          onCheckedChange={checked => setAiConfig((prev: any) => ({ ...prev, enabled: checked }))}
+                        />
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4 pt-2">
+                    {/* Modo de Operação */}
+                    <div className="space-y-2">
+                      <Label className="text-xs font-bold text-slate-700 dark:text-slate-300">Modo de Operação</Label>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                        <div
+                          onClick={() => setAiConfig((prev: any) => ({ ...prev, mode: "autonomous" }))}
+                          className={`p-3 rounded-xl border cursor-pointer transition-all ${
+                            aiConfig.mode === "autonomous"
+                              ? "border-blue-500 bg-blue-50/60 dark:bg-blue-950/40 ring-1 ring-blue-500 shadow-xs"
+                              : "border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-xs font-bold text-slate-900 dark:text-slate-100">Autônomo</span>
+                            <Badge variant="outline" className="text-[9px] px-1 py-0 border-blue-400 text-blue-700 dark:text-blue-300">Recomendado</Badge>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground leading-snug">
+                            Responde sozinho e pausa se o atendente intervir ou o hóspede pedir.
+                          </p>
+                        </div>
+
+                        <div
+                          onClick={() => setAiConfig((prev: any) => ({ ...prev, mode: "copilot" }))}
+                          className={`p-3 rounded-xl border cursor-pointer transition-all ${
+                            aiConfig.mode === "copilot"
+                              ? "border-purple-500 bg-purple-50/60 dark:bg-purple-950/40 ring-1 ring-purple-500 shadow-xs"
+                              : "border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-xs font-bold text-slate-900 dark:text-slate-100">Copiloto</span>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground leading-snug">
+                            Nunca envia mensagens sozinho. Gera sugestões com 1 clique no chat para aprovação.
+                          </p>
+                        </div>
+
+                        <div
+                          onClick={() => setAiConfig((prev: any) => ({ ...prev, mode: "off_hours" }))}
+                          className={`p-3 rounded-xl border cursor-pointer transition-all ${
+                            aiConfig.mode === "off_hours"
+                              ? "border-amber-500 bg-amber-50/60 dark:bg-amber-950/40 ring-1 ring-amber-500 shadow-xs"
+                              : "border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-xs font-bold text-slate-900 dark:text-slate-100">Fora do Expediente</span>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground leading-snug">
+                            Autônomo à noite e finais de semana; atua como copiloto durante o dia.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Delay & Modo de Teste */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="response-delay" className="text-xs font-semibold">
+                          Delay de Resposta Humanizado (segundos)
+                        </Label>
+                        <Input
+                          id="response-delay"
+                          type="number"
+                          min="1"
+                          max="15"
+                          value={aiConfig.responseDelaySeconds || 3}
+                          onChange={e => setAiConfig((prev: any) => ({ ...prev, responseDelaySeconds: Number(e.target.value) || 3 }))}
+                          className="h-9 text-xs"
+                        />
+                        <p className="text-[10px] text-muted-foreground">Simula digitação natural para evitar respostas mecânicas.</p>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <Label htmlFor="test-mode-toggle" className="text-xs font-semibold">Modo de Teste</Label>
+                          <Switch
+                            id="test-mode-toggle"
+                            checked={aiTestModeOnly}
+                            onCheckedChange={setAiTestModeOnly}
+                          />
+                        </div>
+                        <Input
+                          placeholder="Ex: 22998505276, 22988486446"
+                          value={aiTestAllowedPhones}
+                          onChange={e => setAiTestAllowedPhones(e.target.value)}
+                          className="h-9 text-xs font-mono"
+                          disabled={!aiTestModeOnly}
+                        />
+                        <p className="text-[10px] text-muted-foreground">Telefones autorizados a interagir com a IA em modo teste.</p>
+                      </div>
+                    </div>
+
+                    {/* Identidade do Agente */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold">Nome do Agente</Label>
+                        <Input
+                          value={aiConfig.agentName || ""}
+                          onChange={e => setAiConfig((prev: any) => ({ ...prev, agentName: e.target.value }))}
+                          placeholder="Ex: Sofia"
+                          className="h-9 text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold">Cargo / Papel</Label>
+                        <Input
+                          value={aiConfig.agentRole || ""}
+                          onChange={e => setAiConfig((prev: any) => ({ ...prev, agentRole: e.target.value }))}
+                          placeholder="Ex: Concierge Virtual CorpFlats"
+                          className="h-9 text-xs"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Prompt do Sistema */}
+                    <div className="space-y-1.5 pt-2">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs font-semibold flex items-center gap-1.5">
+                          <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                          Instruções do Sistema (Prompt Base da Sofia)
+                        </Label>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setAiConfig((prev: any) => ({ ...prev, systemPrompt: "Você é a Sofia, concierge virtual inteligente e acolhedora dos flats de alto padrão da CorpFlats em Campos dos Goytacazes/RJ.\nSeu objetivo é encantar os hóspedes, responder dúvidas com precisão e fornecer assistência ágil e atenciosa.\n\nDIRETRIZES DE ATENDIMENTO:\n1. Responda em português brasileiro de forma acolhedora, prestativa e concisa.\n2. Use emojis amigáveis com moderação (🏨, ✨, 🔑, ☕, 🚗, 🕒, 📍).\n3. Seja sempre fidedigna às informações oficiais. NUNCA invente números de apartamentos ou códigos.\n4. Se o hóspede pedir humano, transfira amigavelmente para a recepção." }))}
+                          className="h-6 text-[10px] text-muted-foreground hover:text-foreground gap-1"
+                        >
+                          <RotateCcw className="w-2.5 h-2.5" />
+                          Restaurar Padrão
+                        </Button>
+                      </div>
+                      <Textarea
+                        rows={6}
+                        value={aiConfig.systemPrompt || ""}
+                        onChange={e => setAiConfig((prev: any) => ({ ...prev, systemPrompt: e.target.value }))}
+                        className="text-xs font-mono leading-relaxed"
+                        placeholder="Instruções para o modelo sobre tom, regras e como agir..."
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Base de Conhecimento Rápida */}
+                <Card className="border shadow-xs">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base font-bold flex items-center gap-2">
+                      <Key className="w-4 h-4 text-amber-600" />
+                      Base de Conhecimento Rápida
+                    </CardTitle>
+                    <CardDescription className="text-xs">
+                      Informações oficiais utilizadas para responder dúvidas instantaneamente e contextualizar a IA.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4 pt-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold flex items-center gap-1">
+                          <Wifi className="w-3 h-3 text-emerald-600" /> Nome da Rede Wi-Fi
+                        </Label>
+                        <Input
+                          value={aiConfig.knowledgeBase?.wifiNetwork || ""}
+                          onChange={e => setAiConfig((prev: any) => ({
+                            ...prev,
+                            knowledgeBase: { ...prev.knowledgeBase, wifiNetwork: e.target.value }
+                          }))}
+                          className="h-9 text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold flex items-center gap-1">
+                          <Key className="w-3 h-3 text-emerald-600" /> Senha do Wi-Fi
+                        </Label>
+                        <Input
+                          value={aiConfig.knowledgeBase?.wifiPassword || ""}
+                          onChange={e => setAiConfig((prev: any) => ({
+                            ...prev,
+                            knowledgeBase: { ...prev.knowledgeBase, wifiPassword: e.target.value }
+                          }))}
+                          className="h-9 text-xs font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold">Horário Check-in</Label>
+                        <Input
+                          value={aiConfig.knowledgeBase?.checkinTime || "14:00"}
+                          onChange={e => setAiConfig((prev: any) => ({
+                            ...prev,
+                            knowledgeBase: { ...prev.knowledgeBase, checkinTime: e.target.value }
+                          }))}
+                          className="h-9 text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold">Horário Check-out</Label>
+                        <Input
+                          value={aiConfig.knowledgeBase?.checkoutTime || "12:00"}
+                          onChange={e => setAiConfig((prev: any) => ({
+                            ...prev,
+                            knowledgeBase: { ...prev.knowledgeBase, checkoutTime: e.target.value }
+                          }))}
+                          className="h-9 text-xs"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-semibold flex items-center gap-1">
+                        <Coffee className="w-3 h-3 text-amber-600" /> Café da Manhã
+                      </Label>
+                      <Input
+                        value={aiConfig.knowledgeBase?.breakfastInfo || ""}
+                        onChange={e => setAiConfig((prev: any) => ({
+                          ...prev,
+                          knowledgeBase: { ...prev.knowledgeBase, breakfastInfo: e.target.value }
+                        }))}
+                        className="h-9 text-xs"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-semibold flex items-center gap-1">
+                        <DoorOpen className="w-3 h-3 text-blue-600" /> Garagem & Estacionamento
+                      </Label>
+                      <Input
+                        value={aiConfig.knowledgeBase?.garageInfo || ""}
+                        onChange={e => setAiConfig((prev: any) => ({
+                          ...prev,
+                          knowledgeBase: { ...prev.knowledgeBase, garageInfo: e.target.value }
+                        }))}
+                        className="h-9 text-xs"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-semibold flex items-center gap-1">
+                        <MapPin className="w-3 h-3 text-rose-600" /> Endereço Oficial
+                      </Label>
+                      <Input
+                        value={aiConfig.knowledgeBase?.address || ""}
+                        onChange={e => setAiConfig((prev: any) => ({
+                          ...prev,
+                          knowledgeBase: { ...prev.knowledgeBase, address: e.target.value }
+                        }))}
+                        className="h-9 text-xs"
+                      />
+                    </div>
+
+                    <div className="pt-2">
+                      <Button
+                        type="button"
+                        onClick={handleSaveAiConfig}
+                        disabled={savingAiConfig}
+                        className="w-full h-10 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs gap-2"
+                      >
+                        {savingAiConfig ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                        Salvar Todas as Configurações da IA
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* Coluna Direita: Simulador de Atendimento Interativo (5 cols) */}
+              <div className="lg:col-span-5 space-y-6">
+                <Card className="border border-blue-200 dark:border-blue-900/60 shadow-xs">
+                  <CardHeader className="bg-gradient-to-tr from-blue-50/80 to-indigo-50/50 dark:from-blue-950/30 dark:to-indigo-950/20 border-b pb-3">
+                    <CardTitle className="text-base font-bold flex items-center gap-2 text-blue-900 dark:text-blue-100">
+                      <Sparkles className="w-4 h-4 text-blue-600" />
+                      Simulador do Agente de IA
+                    </CardTitle>
+                    <CardDescription className="text-xs text-blue-700/80 dark:text-blue-300/80">
+                      Teste perguntas e veja em tempo real como o agente responderá aos hóspedes antes de ativar em produção.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="p-4 space-y-4">
+                    {/* Botões Rápidos de Perguntas Típicas */}
+                    <div className="space-y-1.5">
+                      <Label className="text-[11px] font-semibold text-slate-500">Perguntas Rápidas de Teste:</Label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {[
+                          "Qual a senha do wifi?",
+                          "Meu quarto já está pronto?",
+                          "Quero falar com uma pessoa",
+                          "Tem café da manhã?",
+                          "Qual o horário de check-out?",
+                          "Qual o endereço?",
+                          "Tem vaga de garagem?"
+                        ].map((q, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => setSimMessage(q)}
+                            className="text-[11px] px-2 py-1 rounded-lg bg-slate-100 hover:bg-blue-50 hover:text-blue-700 dark:bg-slate-800 dark:hover:bg-blue-950/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 transition-colors"
+                          >
+                            {q}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-semibold">Telefone de Teste (para simular reconhecimento de reserva)</Label>
+                      <Input
+                        value={simPhone}
+                        onChange={e => setSimPhone(e.target.value)}
+                        placeholder="Ex: 22998505276 (ou deixe outro número para testar lead)"
+                        className="h-9 text-xs font-mono"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-semibold">Mensagem do Hóspede</Label>
+                      <Textarea
+                        rows={3}
+                        value={simMessage}
+                        onChange={e => setSimMessage(e.target.value)}
+                        placeholder="Digite o que o hóspede falaria no WhatsApp..."
+                        className="text-xs"
+                      />
+                    </div>
+
+                    <Button
+                      type="button"
+                      onClick={handleSimulateAi}
+                      disabled={simulatingAi || !simMessage.trim()}
+                      className="w-full h-9 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs gap-2"
+                    >
+                      {simulatingAi ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                      Testar Resposta da IA
+                    </Button>
+
+                    {/* Exibição do Resultado da Simulação */}
+                    {simResult && (
+                      <div className="space-y-3 pt-2 border-t mt-3">
+                        <div className="flex items-center justify-between text-xs font-bold">
+                          <span className="flex items-center gap-1.5 text-blue-700 dark:text-blue-300">
+                            <Bot className="w-3.5 h-3.5" />
+                            Resposta Gerada:
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            {simResult.shouldHandover && (
+                              <Badge variant="destructive" className="text-[10px] py-0">
+                                🚨 Transbordo Detectado
+                              </Badge>
+                            )}
+                            <Badge variant="outline" className="text-[10px] py-0">
+                              {simResult.source === "gemini" ? `Gemini (${simResult.modelUsed})` : "Heurístico Local"}
+                            </Badge>
+                          </div>
+                        </div>
+
+                        {/* Balão estilo WhatsApp */}
+                        <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-slate-800 dark:text-slate-100 text-xs leading-relaxed whitespace-pre-wrap shadow-2xs font-sans">
+                          {simResult.replyText}
+                        </div>
+
+                        {/* Detalhes do Contexto Detectado */}
+                        {simResult.guestContext && (
+                          <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border text-[11px] space-y-1">
+                            <span className="font-bold text-slate-700 dark:text-slate-300 block">Contexto Identificado pelo Sistema:</span>
+                            <div className="grid grid-cols-2 gap-1 text-muted-foreground">
+                              <span>Hóspede: <strong>{simResult.guestContext.guestName || "Lead / Sem Reserva"}</strong></span>
+                              <span>Status: <strong>{simResult.guestContext.stayStatus}</strong></span>
+                              {simResult.guestContext.flatNumber && (
+                                <span>Flat: <strong>{simResult.guestContext.flatNumber}</strong></span>
+                              )}
+                              {simResult.guestContext.cleaningStatus && (
+                                <span>Limpeza: <strong>{simResult.guestContext.cleaningStatus}</strong></span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+          </TabsContent>
 
           {/* ════════════════════════════════════════════════════════════════════
               ABA 1: RÉGUA DE GATILHOS (AUTOMAÇÕES)

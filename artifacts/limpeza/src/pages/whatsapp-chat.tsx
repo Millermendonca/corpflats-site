@@ -49,7 +49,11 @@ import {
   FileCheck,
   Maximize2,
   Minimize2,
-  GripVertical
+  GripVertical,
+  Bot,
+  Sparkles,
+  Pause,
+  Play
 } from 'lucide-react'
 
 export interface ChatMessage {
@@ -80,6 +84,8 @@ export interface ChatConversation {
   unreadCount: number
   pinned: boolean
   channel?: string
+  aiPaused?: boolean
+  aiPausedReason?: string
   lastMessage?: {
     text: string
     timestamp: string
@@ -322,6 +328,72 @@ export default function WhatsappChat() {
         toast({ title: data.pinned ? 'Conversa fixada no topo' : 'Conversa desafixada' })
       }
     } catch {}
+  }
+
+  const [loadingAiSuggestion, setLoadingAiSuggestion] = useState(false)
+  const [togglingAi, setTogglingAi] = useState(false)
+
+  // Alternar IA Ativa / Pausada na conversa ativa
+  const handleToggleAi = async () => {
+    if (!activePhone) return
+    try {
+      setTogglingAi(true)
+      const isCurrentlyPaused = Boolean(activeConversation?.aiPaused)
+      const res = await fetch(`/api/whatsapp/chat/${activePhone}/ai-toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ aiPaused: !isCurrentlyPaused })
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setActiveConversation(prev => prev ? { ...prev, aiPaused: data.aiPaused, aiPausedReason: data.aiPausedReason } : null)
+        setConversations(prev => prev.map(c => c.phone === activePhone ? { ...c, aiPaused: data.aiPaused, aiPausedReason: data.aiPausedReason } : c))
+        toast({
+          title: data.aiPaused ? 'IA Pausada nesta conversa ⏸️' : 'IA Ativada nesta conversa 🤖',
+          description: data.aiPaused
+            ? 'Atendimento manual exclusivo. A IA não responderá novas mensagens deste contato.'
+            : 'A IA responderá automaticamente novas mensagens enviadas por este contato.'
+        })
+      }
+    } catch (err: any) {
+      toast({ title: 'Erro ao alternar IA', description: err.message, variant: 'destructive' })
+    } finally {
+      setTogglingAi(false)
+    }
+  }
+
+  // Copiloto: Sugerir Resposta com IA
+  const handleSuggestWithAi = async () => {
+    if (!activePhone) return
+    try {
+      setLoadingAiSuggestion(true)
+      const res = await fetch(`/api/whatsapp/chat/${activePhone}/ai-suggest`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: inputMessage })
+      })
+      const data = await res.json()
+      if (data.success && data.suggestion) {
+        setInputMessage(data.suggestion)
+        toast({
+          title: 'Sugestão da IA Carregada! ✨',
+          description: data.source === 'gemini'
+            ? `Gerada com sucesso pelo Google Gemini (${data.modelUsed || 'Gemini'})`
+            : 'Gerada pela base de conhecimento inteligente do CorpFlats'
+        })
+        if (textareaRef.current) textareaRef.current.focus()
+      } else {
+        toast({
+          title: 'Não foi possível gerar sugestão',
+          description: data.error || 'Tente novamente em instantes.',
+          variant: 'destructive'
+        })
+      }
+    } catch (err: any) {
+      toast({ title: 'Erro ao consultar IA', description: err.message, variant: 'destructive' })
+    } finally {
+      setLoadingAiSuggestion(false)
+    }
   }
 
   // Initial Load
@@ -874,8 +946,8 @@ Muito obrigado!`
                         </span>
                       </div>
 
-                      {/* Código da Reserva & Canal */}
-                      <div className="flex items-center gap-1 text-[10.5px] text-slate-500 dark:text-slate-400 mb-1">
+                      {/* Código da Reserva & Canal & Status IA */}
+                      <div className="flex items-center gap-1 text-[10.5px] text-slate-500 dark:text-slate-400 mb-1 flex-wrap">
                         {conv.reservationCode && (
                           <span className="font-mono font-semibold text-slate-600 dark:text-slate-300">
                             {conv.reservationCode}
@@ -886,6 +958,21 @@ Muito obrigado!`
                             <span>•</span>
                             <span className="capitalize text-[10px] text-slate-400">{conv.channel}</span>
                           </>
+                        )}
+                        {conv.aiPaused ? (
+                          conv.aiPausedReason === 'guest_requested_human' ? (
+                            <span className="text-[9px] font-black px-1.5 py-0.2 rounded bg-rose-100 dark:bg-rose-950/70 text-rose-700 dark:text-rose-300 shrink-0 border border-rose-300 dark:border-rose-800">
+                              🚨 Transbordo
+                            </span>
+                          ) : (
+                            <span className="text-[9px] font-semibold px-1 py-0.2 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 shrink-0 border border-amber-300 dark:border-amber-800 flex items-center gap-0.5">
+                              <Pause className="w-2.5 h-2.5" /> Humano
+                            </span>
+                          )
+                        ) : (
+                          <span className="text-[9px] font-semibold px-1 py-0.2 rounded bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 shrink-0 border border-emerald-200 dark:border-emerald-800 flex items-center gap-0.5">
+                            <Bot className="w-2.5 h-2.5" /> IA
+                          </span>
                         )}
                       </div>
 
@@ -1000,6 +1087,36 @@ Muito obrigado!`
 
                 {/* Ações do Header do Chat */}
                 <div className="flex items-center gap-1">
+                  {/* Status da IA & Botão de Alternância */}
+                  {activeConversation.aiPaused ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleToggleAi}
+                      disabled={togglingAi}
+                      className="h-8 px-2.5 rounded-lg border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 text-xs font-bold gap-1.5 hover:bg-amber-100"
+                      title={activeConversation.aiPausedReason === 'guest_requested_human' 
+                        ? 'Hóspede solicitou atendente humano. Clique para reativar IA nesta conversa' 
+                        : 'Atendimento manual ativo. Clique para reativar IA nesta conversa'}
+                    >
+                      <Play className="w-3.5 h-3.5 text-amber-600" />
+                      <span className="hidden lg:inline">Retomar IA</span>
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleToggleAi}
+                      disabled={togglingAi}
+                      className="h-8 px-2.5 rounded-lg border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-xs font-bold gap-1.5 hover:bg-emerald-100"
+                      title="IA respondendo automaticamente. Clique para pausar e assumir atendimento humano"
+                    >
+                      <Bot className="w-3.5 h-3.5 text-emerald-600" />
+                      <span className="hidden lg:inline">IA Ativa</span>
+                      <Pause className="w-3 h-3 text-slate-400 ml-0.5" />
+                    </Button>
+                  )}
+
                   <Button
                     variant="ghost"
                     size="icon"
@@ -1378,6 +1495,19 @@ Muito obrigado!`
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
+
+                  {/* Botão Copiloto: Sugerir Resposta com IA */}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={handleSuggestWithAi}
+                    disabled={loadingAiSuggestion || !activePhone}
+                    className="h-10 w-10 rounded-xl border-purple-200 dark:border-purple-800/80 bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/60 shrink-0 shadow-2xs transition-colors"
+                    title="✨ Sugerir resposta com Inteligência Artificial (Copiloto)"
+                  >
+                    <Sparkles className={`w-4 h-4 ${loadingAiSuggestion ? 'animate-spin text-purple-600' : ''}`} />
+                  </Button>
 
                   {/* Campo de Digitação com auto-grow e suporte a mensagens grandes */}
                   <div className="flex-1 min-w-0 relative">

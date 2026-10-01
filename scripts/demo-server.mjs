@@ -462,7 +462,7 @@ const DATA_DIR = path.resolve(__dirname, "../../data");
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
-const DB_FILE = path.join(DATA_DIR, "database.json");
+const DB_FILE = process.env.DATA_FILE || process.env.DATABASE_FILE || path.join(DATA_DIR, "database.json");
 
 const defaultUsers = [
   { id: 1, username: "admin", role: "admin", passwordHash: hashPassword("admin123") },
@@ -1490,14 +1490,16 @@ function reconcileUniversalIntegrity(incomingState = null) {
       });
     }
 
-    // 1.3 Reservas (União estrita para TODOS os flats)
+    // 1.3 Reservas (União estrita e NÃO-DESTRUTIVA para TODOS os flats)
+    // Regra de Ouro Anti-Perda: NUNCA fundir ou sobrescrever reservas apenas por coincidência de flat e datas!
+    // Coincidência de quarto e datas representa conflito/overbooking real, NUNCA a mesma reserva.
     if (Array.isArray(incomingState.reservations)) {
       incomingState.reservations.forEach(incRes => {
-        const existingIdx = db.reservations.findIndex(r =>
-          (r.id && incRes.id && Number(r.id) === Number(incRes.id)) ||
-          (r.code && incRes.code && r.code.toUpperCase() === incRes.code.toUpperCase()) ||
-          (String(r.flatNumber) === String(incRes.flatNumber) && r.checkinDate === incRes.checkinDate && r.checkoutDate === incRes.checkoutDate && r.checkinDate && r.checkoutDate)
-        );
+        const existingIdx = db.reservations.findIndex(r => {
+          if (r.id && incRes.id && Number(r.id) === Number(incRes.id)) return true;
+          if (r.code && incRes.code && r.code.toUpperCase() === incRes.code.toUpperCase()) return true;
+          return false;
+        });
         if (existingIdx === -1) {
           db.reservations.push({ ...incRes });
           changed = true;
@@ -1505,17 +1507,29 @@ function reconcileUniversalIntegrity(incomingState = null) {
           const existing = db.reservations[existingIdx];
           const incDate = incRes.updatedAt || incRes.createdAt || "";
           const curDate = existing.updatedAt || existing.createdAt || "";
+          const existingGuest = (existing.guestName || "").trim().toLowerCase();
+          const incGuest = (incRes.guestName || "").trim().toLowerCase();
+
+          // Se os nomes dos hóspedes forem incompatíveis e ambos existirem, blindagem total: NÃO sobrescrever!
+          if (existingGuest && incGuest && existingGuest !== incGuest && Number(existing.id) !== Number(incRes.id)) {
+            return;
+          }
+
           if (incDate > curDate) {
             // Preserva alterações operacionais em tempo real feitas em produção (datas e status)
             const savedCheckin = existing.checkinDate;
             const savedCheckout = existing.checkoutDate;
             const savedStatus = existing.status;
-            db.reservations[existingIdx] = { ...existing, ...incRes };
+            const merged = { ...existing, ...incRes };
             if (savedCheckin && savedCheckout) {
-              db.reservations[existingIdx].checkinDate = savedCheckin;
-              db.reservations[existingIdx].checkoutDate = savedCheckout;
-              db.reservations[existingIdx].status = savedStatus || db.reservations[existingIdx].status;
+              merged.checkinDate = savedCheckin;
+              merged.checkoutDate = savedCheckout;
+              merged.status = savedStatus || merged.status;
             }
+            if (!merged.guestName && existing.guestName) merged.guestName = existing.guestName;
+            if (!merged.guestPhone && existing.guestPhone) merged.guestPhone = existing.guestPhone;
+            if (!merged.guestDocument && existing.guestDocument) merged.guestDocument = existing.guestDocument;
+            db.reservations[existingIdx] = merged;
             changed = true;
           }
         }
@@ -1728,17 +1742,6 @@ function reconcileUniversalIntegrity(incomingState = null) {
       }
     }
 
-    // Flat 509: Miller Mendonça Pessanha checkin em 29/09 com 2 camas solteiro + 1 colchão extra
-    if (String(r.flatNumber) === "509" && r.checkinDate === "2026-09-29") {
-      if (!r.twinBeds || !r.extraMattress || !r.specialRequests || !r.specialRequests.includes("colchão extra")) {
-        r.twinBeds = true;
-        r.extraMattress = true;
-        r.bedType = "2 Solteiro";
-        r.specialRequests = "Separar as camas, colocar como 2 solteiras • Colocar 1 colchão extra";
-        r.notes = "Separar as camas, colocar como 2 solteiras • Colocar 1 colchão extra";
-        changed = true;
-      }
-    }
 
     // Sincronização geral de preferências de quarto (camas/colchão/recado) da reserva com a solicitação de limpeza do dia do check-in
     if (r.status !== "cancelada" && r.status !== "cancelled" && r.checkinDate) {
@@ -1958,28 +1961,6 @@ function reconcileUniversalIntegrity(incomingState = null) {
       }
     }
 
-    // Flat 509: Check-out de 29/09 (Heverton Martins) não foi limpo por admin; é dirty aguardando camareira
-    // O hóspede que entra hoje (29/09 - Miller Mendonça) requer 2 camas de solteiro e 1 colchão extra
-    if (String(c.flatNumber) === "509" && c.requestDate === "2026-09-29") {
-      if (c.status === "clean" && (c.assignedUsername === "admin" || !c.assignedUserId || c.assignedUserId === 1)) {
-        c.status = "dirty";
-        c.assignedUserId = null;
-        c.assignedUsername = null;
-        c.assignedUserName = null;
-        c.completedAt = null;
-        c.cleaningStartedAt = null;
-        c.durationMinutes = null;
-        changed = true;
-      }
-      if (!c.twinBeds || !c.extraMattress || !c.adminNote || !c.adminNote.includes("colchão extra")) {
-        c.twinBeds = true;
-        c.extraMattress = true;
-        c.adminNote = "Separar as camas, colocar como 2 solteiras • Colocar 1 colchão extra";
-        c.pendingObservation = "Separar as camas, colocar como 2 solteiras • Colocar 1 colchão extra";
-        c.arrivingGuest = "Miller Mendonça Pessanha";
-        changed = true;
-      }
-    }
 
     // Flat 1004: Check-out de 29/09 (Roselene) não foi limpo por Cris; é dirty aguardando camareira
     if (String(c.flatNumber) === "1004" && c.requestDate === "2026-09-29") {
@@ -2077,8 +2058,267 @@ export function sanitizeMaidUsers() {
   return changed;
 }
 
+// Saneamento e Restauração Mandatória do Incidente de 30/09
+export function repairIncidentSept30(db) {
+  if (!db || !Array.isArray(db.reservations)) return false;
+  let changed = false;
+
+  // 1. Adriana Alves da Silva (Flat 712, 30/09 a 01/10) - Audit log #3148
+  let adriana = db.reservations.find(r => r.id === 318 || r.id === 321 || r.code === "RES-712-0318" || r.code === "RES-712-0321" || (String(r.flatNumber) === "712" && r.guestName && r.guestName.toLowerCase().includes("adriana")));
+  if (!adriana) {
+    adriana = {
+      id: 318,
+      code: "RES-712-0318",
+      flatId: 14,
+      flatNumber: "712",
+      guestId: 165,
+      guestName: "Adriana Alves da Silva",
+      guestDocument: "06955536745",
+      guestPhone: "21981090085",
+      guestCount: 1,
+      guests: [
+        {
+          cpf: "06955536745",
+          name: "Adriana Alves da Silva",
+          email: "",
+          index: 1,
+          phone: "21981090085",
+          checkinCompletedAt: null,
+          hasCompletedCheckin: false
+        }
+      ],
+      checkinDate: "2026-09-30",
+      checkinTime: "14:00",
+      checkoutDate: "2026-10-01",
+      checkoutTime: "12:00",
+      dailyRate: 230,
+      totalAmount: 230,
+      paidAmount: 230,
+      paymentMethod: "pix",
+      paymentStatus: "pago_total",
+      channel: "whatsapp",
+      clientType: "avulso",
+      isMonthlyGuest: false,
+      includeBreakfast: false,
+      status: "confirmada",
+      createdAt: "2026-09-30T18:38:37.265Z",
+      updatedAt: "2026-09-30T18:38:37.265Z"
+    };
+    db.reservations.push(adriana);
+    changed = true;
+    console.log("[Incident Sept 30 Fix] Restaurada reserva da Adriana Alves da Silva no Flat 712 (30/09 a 01/10).");
+  } else {
+    if (adriana.checkinDate !== "2026-09-30" || adriana.checkoutDate !== "2026-10-01" || adriana.status !== "confirmada" || !adriana.guestName.includes("Adriana")) {
+      adriana.checkinDate = "2026-09-30";
+      adriana.checkoutDate = "2026-10-01";
+      adriana.guestName = "Adriana Alves da Silva";
+      adriana.status = "confirmada";
+      changed = true;
+    }
+  }
+
+  // Garante cadastro da Adriana em db.guests
+  if (Array.isArray(db.guests)) {
+    const guestAdriana = db.guests.find(g => g.id === 165 || (g.document && g.document.replace(/\D/g, '') === '06955536745'));
+    if (!guestAdriana) {
+      db.guests.push({
+        id: 165,
+        guestCode: "HOSP-00165",
+        name: "Adriana Alves da Silva",
+        document: "06955536745",
+        phone: "21981090085",
+        clientType: "avulso",
+        createdAt: "2026-09-30T18:38:37.265Z"
+      });
+      changed = true;
+    }
+  }
+
+  // 2. Costa Frederico (Flat 712, 01/10 a 02/10) - Usuário confirmou: "o costa frederico vai ficar do dia 1 ao 2"
+  const frederico = db.reservations.find(r => r.id === 306 || r.code === "RES-712-0306" || (String(r.flatNumber) === "712" && r.guestName && r.guestName.toLowerCase().includes("frederico")));
+  if (frederico) {
+    if (frederico.checkinDate !== "2026-10-01" || frederico.checkoutDate !== "2026-10-02") {
+      frederico.checkinDate = "2026-10-01";
+      frederico.checkoutDate = "2026-10-02";
+      frederico.status = "confirmada";
+      frederico.updatedAt = new Date().toISOString();
+      changed = true;
+      console.log("[Incident Sept 30 Fix] Costa Frederico movido para 01/10 a 02/10 no Flat 712.");
+    }
+  }
+
+  // 3. Felipe (Flat 605, checkout 28/09) - Usuário confirmou: "Flat 605 o felipe saiu dele no dia 28. Hoje realmente enrou o gilbenrto"
+  const felipe = db.reservations.find(r => r.id === 179 || r.code === "RES-605-0179" || (String(r.flatNumber) === "605" && r.guestName && r.guestName.toLowerCase().includes("felipe")));
+  if (felipe) {
+    if (felipe.checkoutDate !== "2026-09-28") {
+      felipe.checkoutDate = "2026-09-28";
+      felipe.status = "confirmada";
+      felipe.updatedAt = new Date().toISOString();
+      changed = true;
+      console.log("[Incident Sept 30 Fix] Ajustada saída do Felipe no Flat 605 para 28/09.");
+    }
+  }
+
+  // 4. Gil / Gilberto (Flat 605, 30/09 a 01/10) - Audit log #3181
+  let gil = db.reservations.find(r => r.id === 320 || r.code === "RES-605-0320" || (String(r.flatNumber) === "605" && r.guestName && (r.guestName.toLowerCase().includes("gil") || r.guestName.toLowerCase().includes("gilberto"))));
+  if (!gil) {
+    gil = {
+      id: 320,
+      code: "RES-605-0320",
+      flatId: 13,
+      flatNumber: "605",
+      guestId: 167,
+      guestName: "Gilberto",
+      guestPhone: "27998221965",
+      guestCount: 2,
+      checkinDate: "2026-09-30",
+      checkinTime: "14:00",
+      checkoutDate: "2026-10-01",
+      checkoutTime: "12:00",
+      dailyRate: 230,
+      totalAmount: 230,
+      paidAmount: 230,
+      paymentMethod: "pix",
+      paymentStatus: "pago_total",
+      channel: "whatsapp",
+      clientType: "avulso",
+      isMonthlyGuest: false,
+      includeBreakfast: false,
+      status: "confirmada",
+      createdAt: "2026-09-30T18:43:30.164Z",
+      updatedAt: "2026-09-30T18:43:30.164Z"
+    };
+    db.reservations.push(gil);
+    changed = true;
+    console.log("[Incident Sept 30 Fix] Restaurada reserva de Gilberto no Flat 605 (30/09 a 01/10).");
+  } else {
+    if (gil.checkinDate !== "2026-09-30" || gil.checkoutDate !== "2026-10-01") {
+      gil.checkinDate = "2026-09-30";
+      gil.checkoutDate = "2026-10-01";
+      gil.status = "confirmada";
+      changed = true;
+    }
+  }
+
+  // 5. Isabela Barbosa (Flat 211, 30/09 a 01/10) - Audit log #3149
+  let isabela = db.reservations.find(r => r.id === 319 || r.code === "RES-211-0319");
+  if (!isabela) {
+    isabela = {
+      id: 319,
+      code: "RES-211-0319",
+      flatId: 4,
+      flatNumber: "211",
+      guestId: 166,
+      guestName: "Isabela Barbosa dos Santos Ribeiro",
+      guestDocument: "14807628739",
+      guestCount: 1,
+      guests: [
+        {
+          cpf: "14807628739",
+          name: "Isabela Barbosa dos Santos Ribeiro",
+          email: "",
+          index: 1,
+          phone: "",
+          checkinCompletedAt: null,
+          hasCompletedCheckin: false
+        }
+      ],
+      checkinDate: "2026-09-30",
+      checkinTime: "14:00",
+      checkoutDate: "2026-10-01",
+      checkoutTime: "12:00",
+      dailyRate: 230,
+      totalAmount: 230,
+      paidAmount: 230,
+      paymentMethod: "pix",
+      paymentStatus: "pago_total",
+      channel: "whatsapp",
+      clientType: "avulso",
+      isMonthlyGuest: false,
+      includeBreakfast: false,
+      status: "confirmada",
+      createdAt: "2026-09-30T18:40:30.886Z",
+      updatedAt: "2026-09-30T18:40:30.886Z"
+    };
+    db.reservations.push(isabela);
+    changed = true;
+    console.log("[Incident Sept 30 Fix] Garantida presença de Isabela Barbosa no Flat 211 (30/09 a 01/10).");
+  }
+
+  // 6. Angelo (Flat 1304, checkout em 01/10) - Audit log #3115
+  const angelo = db.reservations.find(r => r.id === 305 || r.code === "RES-1304-0305" || (String(r.flatNumber) === "1304" && r.guestName && r.guestName.toLowerCase().includes("angelo")));
+  if (angelo) {
+    if (angelo.checkoutDate !== "2026-10-01") {
+      angelo.checkoutDate = "2026-10-01";
+      angelo.totalAmount = 500;
+      angelo.paidAmount = 500;
+      angelo.updatedAt = new Date().toISOString();
+      changed = true;
+      console.log("[Incident Sept 30 Fix] Estendido checkout do Angelo no Flat 1304 para 01/10.");
+    }
+  }
+
+  // 7. Heverton Martins (Flat 509, checkout em 09/10) - Audit log #2633
+  const heverton = db.reservations.find(r => r.id === 36 || r.code === "RES-509-0036" || (String(r.flatNumber) === "509" && r.guestName && r.guestName.toLowerCase().includes("heverton")));
+  if (heverton) {
+    if (heverton.checkinDate !== "2026-09-04" || heverton.checkoutDate !== "2026-10-09") {
+      heverton.checkinDate = "2026-09-04";
+      heverton.checkoutDate = "2026-10-09";
+      heverton.status = "confirmada";
+      heverton.isMonthlyGuest = true;
+      heverton.clientType = "mensalista";
+      heverton.updatedAt = new Date().toISOString();
+      changed = true;
+      console.log("[Incident Sept 30 Fix] Restaurada estadia de Heverton Martins no Flat 509 para 09/10.");
+    }
+  }
+
+  // 8. Remoção da reserva zumbi de Miller no Flat 509 (id 302 / RES-509-0302)
+  const initialCount = db.reservations.length;
+  db.reservations = db.reservations.filter(r => {
+    if (String(r.flatNumber) === "509" && (r.id === 302 || r.code === "RES-509-0302" || (r.guestName && r.guestName.toLowerCase().includes("miller")))) {
+      console.log("[Incident Sept 30 Fix] Removendo reserva zumbi de Miller no Flat 509 (ID:", r.id, r.code, ")");
+      return false;
+    }
+    return true;
+  });
+  if (db.reservations.length !== initialCount) {
+    changed = true;
+  }
+
+  // Limpeza de governança do Flat 509 vinculada à reserva zumbi
+  if (Array.isArray(db.cleaningRequests)) {
+    const origCleanCount = db.cleaningRequests.length;
+    db.cleaningRequests = db.cleaningRequests.filter(c => {
+      if (String(c.flatNumber) === "509" && c.requestDate === "2026-09-30" && c.leavingGuest && c.leavingGuest.toLowerCase().includes("miller")) {
+        return false;
+      }
+      return true;
+    });
+    if (db.cleaningRequests.length !== origCleanCount) changed = true;
+
+    // Se houver cleaning no dia 29/09 para o 509 com arrivingGuest Miller, limpa esse hóspede
+    db.cleaningRequests.forEach(c => {
+      if (String(c.flatNumber) === "509" && c.requestDate === "2026-09-29") {
+        if (c.arrivingGuest && c.arrivingGuest.toLowerCase().includes("miller")) {
+          c.arrivingGuest = null;
+          changed = true;
+        }
+      }
+    });
+  }
+
+  return changed;
+}
+
 function sanitizeReservationFlags() {
   sanitizeMaidUsers();
+  if (repairIncidentSept30(db)) {
+    try {
+      saveDatabase("repair_incident_sept30");
+      console.log("[Auto-Fix] Dados do incidente de 30/09 regularizados com sucesso.");
+    } catch (_) {}
+  }
   if (!db.reservations) return;
   // Auto-recuperação/correção para a reserva RES-905-0067
   const res905 = (db.reservations || []).find(r =>
@@ -2338,15 +2578,7 @@ async function reconcileFromAuditLogs(db, pgPool) {
     }
 
     for (const r of distinctRes.values()) {
-      if (r.guestName && r.guestName.toLowerCase().includes("heverton")) {
-        if (!r.checkinDate) r.checkinDate = "2026-09-04";
-        r.checkoutDate = "2026-09-29";
-        r.flatNumber = "509";
-        r.flatId = 10;
-        r.isMonthlyGuest = true;
-        r.clientType = "mensalista";
-        r.status = "confirmada";
-      }
+
       if (r.guestName && r.guestName.toLowerCase().includes("angelo") && String(r.code) === "RES-408-0188") {
         r.status = "cancelada";
       }
@@ -2407,8 +2639,7 @@ async function reconcileFromAuditLogs(db, pgPool) {
     for (const r of validRes) {
       const existingIdx = db.reservations.findIndex(ex =>
         (ex.id && r.id && Number(ex.id) === Number(r.id)) ||
-        (ex.code && r.code && ex.code.toUpperCase() === r.code.toUpperCase()) ||
-        (String(ex.flatNumber) === String(r.flatNumber) && ex.checkinDate === r.checkinDate && ex.checkoutDate === r.checkoutDate)
+        (ex.code && r.code && ex.code.toUpperCase() === r.code.toUpperCase())
       );
 
       if (existingIdx === -1) {
@@ -2419,15 +2650,15 @@ async function reconcileFromAuditLogs(db, pgPool) {
         const logDate = r.updatedAt || r.createdAt || "";
         const curDate = existing.updatedAt || existing.createdAt || "";
         if (logDate && logDate >= curDate) {
-          const merged = { ...r, ...existing };
-          if (!merged.companyName && r.companyName) merged.companyName = r.companyName;
-          if (!merged.companyId && r.companyId) merged.companyId = r.companyId;
-          if ((!merged.requesterType || merged.requesterType === "guest") && r.requesterType && r.requesterType !== "guest") merged.requesterType = r.requesterType;
-          if (!merged.requesterInfo && r.requesterInfo) merged.requesterInfo = r.requesterInfo;
-          if (!merged.guestPhone && r.guestPhone) merged.guestPhone = r.guestPhone;
-          if (!merged.guestDocument && r.guestDocument) merged.guestDocument = r.guestDocument;
-          if (!merged.guestEmail && r.guestEmail) merged.guestEmail = r.guestEmail;
-          if ((!merged.guests || merged.guests.length === 0) && r.guests && r.guests.length > 0) merged.guests = r.guests;
+          const merged = { ...existing, ...r };
+          if (!merged.companyName && existing.companyName) merged.companyName = existing.companyName;
+          if (!merged.companyId && existing.companyId) merged.companyId = existing.companyId;
+          if ((!merged.requesterType || merged.requesterType === "guest") && existing.requesterType && existing.requesterType !== "guest") merged.requesterType = existing.requesterType;
+          if (!merged.requesterInfo && existing.requesterInfo) merged.requesterInfo = existing.requesterInfo;
+          if (!merged.guestPhone && existing.guestPhone) merged.guestPhone = existing.guestPhone;
+          if (!merged.guestDocument && existing.guestDocument) merged.guestDocument = existing.guestDocument;
+          if (!merged.guestEmail && existing.guestEmail) merged.guestEmail = existing.guestEmail;
+          if ((!merged.guests || merged.guests.length === 0) && existing.guests && existing.guests.length > 0) merged.guests = existing.guests;
           merged.updatedAt = logDate;
           merged.status = r.status || existing.status;
           merged.checkinDate = r.checkinDate || existing.checkinDate;
@@ -2781,18 +3012,18 @@ async function loadDatabase() {
           sanitizeLostAndFound();
           sanitizeReservationFlags();
           const didChange = reconcileUniversalIntegrity({
-            reservations: localReservations,
-            cleaningRequests: localCleanings,
-            guests: localGuests,
+            reservations: (!pgLoaded.reservations || pgLoaded.reservations.length === 0) ? localReservations : undefined,
+            cleaningRequests: (!pgLoaded.cleaningRequests || pgLoaded.cleaningRequests.length === 0) ? localCleanings : undefined,
+            guests: (!pgLoaded.guests || pgLoaded.guests.length === 0) ? localGuests : undefined,
             flats: db.flats,
-            breakfastOrders: localBreakfastOrders,
-            maidPayments: localMaidPayments,
-            maidStatementEntries: localMaidStatementEntries,
-            lostAndFound: localLostAndFound,
-            companies: localCompanies,
-            whatsappHistory: localWhatsappHistory,
-            whatsappQueue: localWhatsappQueue,
-            whatsappConversations: localWhatsappConversations
+            breakfastOrders: (!pgLoaded.breakfastOrders || pgLoaded.breakfastOrders.length === 0) ? localBreakfastOrders : undefined,
+            maidPayments: (!pgLoaded.maidPayments || pgLoaded.maidPayments.length === 0) ? localMaidPayments : undefined,
+            maidStatementEntries: (!pgLoaded.maidStatementEntries || pgLoaded.maidStatementEntries.length === 0) ? localMaidStatementEntries : undefined,
+            lostAndFound: (!pgLoaded.lostAndFound || pgLoaded.lostAndFound.length === 0) ? localLostAndFound : undefined,
+            companies: (!pgLoaded.companies || pgLoaded.companies.length === 0) ? localCompanies : undefined,
+            whatsappHistory: (!pgLoaded.whatsappHistory || pgLoaded.whatsappHistory.length === 0) ? localWhatsappHistory : undefined,
+            whatsappQueue: (!pgLoaded.whatsappQueue || pgLoaded.whatsappQueue.length === 0) ? localWhatsappQueue : undefined,
+            whatsappConversations: (!pgLoaded.whatsappConversations || pgLoaded.whatsappConversations.length === 0) ? localWhatsappConversations : undefined
           });
           syncMaidCredits(2);
           syncMaidCredits(3);
@@ -3687,6 +3918,8 @@ async function ensureBackupsTable() {
   }
 }
 
+let lastBackupSnapshotTime = 0;
+
 function saveDatabase(reason = "auto_save") {
   try {
     reconcileCleaningRequests();
@@ -3709,14 +3942,19 @@ function saveDatabase(reason = "auto_save") {
 
       const resCount = db.reservations ? db.reservations.length : 0;
       if (resCount > 0) {
-        ensureBackupsTable().then(() => {
-          return pgPool.query(
-            "INSERT INTO system_store_backups (timestamp, reason, reservations_count, value) VALUES (NOW(), $1, $2, $3::jsonb)",
-            [reason, resCount, stateJson]
-          );
-        }).then(() => {
-          pgPool.query("DELETE FROM system_store_backups WHERE id NOT IN (SELECT id FROM system_store_backups ORDER BY timestamp DESC LIMIT 100)").catch(() => {});
-        }).catch(e => console.warn("[PostgreSQL Backup Snapshot]", e.message));
+        const nowMs = Date.now();
+        // Evita rajada excessiva de snapshots em system_store_backups (mínimo 5s entre auto_saves)
+        if (nowMs - lastBackupSnapshotTime > 5000 || reason.startsWith("manual_") || reason.startsWith("repair_")) {
+          lastBackupSnapshotTime = nowMs;
+          ensureBackupsTable().then(() => {
+            return pgPool.query(
+              "INSERT INTO system_store_backups (timestamp, reason, reservations_count, value) VALUES (NOW(), $1, $2, $3::jsonb)",
+              [reason, resCount, stateJson]
+            );
+          }).then(() => {
+            pgPool.query("DELETE FROM system_store_backups WHERE id NOT IN (SELECT id FROM system_store_backups ORDER BY timestamp DESC LIMIT 100)").catch(() => {});
+          }).catch(e => console.warn("[PostgreSQL Backup Snapshot]", e.message));
+        }
       }
     }
   } catch (err) {
@@ -6213,7 +6451,7 @@ function getRequestsForDate(dateStr, isNested = false) {
     // Instrução: concluiu, sumiu! Não exibe no painel de pendências ativas
     if (isInst && r.status === "clean") continue;
     if (r.requestDate === dateStr && (!existingFlatNumbersForDate.has(fNumber) || isInst)) {
-      if (stayoverFlatNumbers.has(fNumber) && r.source === "checkout") continue;
+      if (stayoverFlatNumbers.has(fNumber) && r.source === "checkout" && !r.twinBeds && !r.extraMattress && !r.adminNote && !r.pendingObservation) continue;
       requestsForDate.push(r);
       if (!isInst) existingFlatNumbersForDate.add(fNumber);
     }
@@ -9912,6 +10150,22 @@ app.all(["/api/pms/reservations/restore-all", "/api/system/restore-all"], async 
     activeReservations: (db.reservations || []).filter(r => r.status !== "cancelada").length,
     totalCleanings: db.cleaningRequests ? db.cleaningRequests.length : 0,
     message: "Todas as reservas foram reconciliadas do histórico de auditoria e persistidas na nuvem com sucesso!"
+  });
+});
+
+app.all(["/api/pms/reservations/repair-incident-sept30", "/api/system/repair-incident-sept30"], async (req, res) => {
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate");
+  const userAuth = getAuthUser(req);
+  if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "reception")) {
+    return res.status(403).json({ error: "Acesso restrito a administradores." });
+  }
+  const changed = repairIncidentSept30(db);
+  if (changed) saveDatabase("manual_repair_incident_sept30");
+  res.json({
+    success: true,
+    repaired: changed,
+    totalReservations: db.reservations ? db.reservations.length : 0,
+    message: "Reparação do incidente de 30/09 executada e persistida com sucesso!"
   });
 });
 

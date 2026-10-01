@@ -1,32 +1,54 @@
-## 2026-09-29T05:20:00Z
-You are Worker M2 (Frontend UI Worker) for the Guest-Flow-Manager governance overhaul.
-Your working directory is: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/worker_m2
+## 2026-09-30T23:20:51Z
+
+You are Worker M2: Frontend Admin Implementer.
+Your working directory is: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m2
+
+You MUST read:
+1. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
+2. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_1\PROJECT.md
+3. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_frontend\analysis.md
+4. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_frontend\handoff.md
+
+Write Ownership:
+You own exclusively:
+- artifacts/limpeza/src/pages/service-orders.tsx (new file)
+- artifacts/limpeza/src/App.tsx
+- artifacts/limpeza/src/components/layout.tsx
 
 MANDATORY INTEGRITY WARNING:
 DO NOT CHEAT. All implementations must be genuine. DO NOT hardcode test results, create dummy/facade implementations, or circumvent the intended task. A teamwork_preview_auditor will independently verify your work. Integrity violations WILL be detected and your work WILL be rejected.
 
-You MUST read:
-1. c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/ORIGINAL_REQUEST.md (MANDATORY: read this first!)
-2. c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/PROJECT.md
-3. c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/worker_m2/context.md
-4. c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/explorer_survey_2/survey_frontend.md
-
-Exclusive Write Ownership:
-- `artifacts/limpeza/src/pages/dashboard.tsx`
-- `artifacts/limpeza/src/components/flat-card.tsx`
-- `artifacts/limpeza/src/pages/login.tsx`
-- `artifacts/limpeza/dist/`
-(Do NOT edit backend files or database files).
-
-Implementation Tasks:
-1. In `artifacts/limpeza/src/pages/dashboard.tsx`:
-   - Add visual mode indicator ("Modo Previsão (Próximo Turno)" banner/badge) when viewing tomorrow / after 18:00.
-   - Add quick 1-click toggle buttons: `[ 🟢 Hoje ]` and `[ 🔮 Amanhã ]` so the user can easily toggle between today's work and tomorrow's forecast.
-   - Dynamic page subtitle reflecting today vs tomorrow view.
-2. In `artifacts/limpeza/src/components/flat-card.tsx`:
-   - Temporal card phrasing: For future dates, display "Saída Prevista: {flat.leavingGuest}" or "Check-out amanhã: {flat.leavingGuest}" instead of past-tense "Saiu: {flat.leavingGuest}".
-   - Check-in phrasing: Display "🟢 Entra Amanhã" when viewing tomorrow instead of "Entra Hoje".
-   - Occupancy precedence: Prioritize `flat.isOccupied` over `request.isVacant` so future checkouts for occupied rooms don't falsely show "Desocupado".
-   - Carry-over badge clarity: If viewing tomorrow, label today's pending carry-overs as "Pendente do turno de hoje" rather than "dia anterior".
-3. Run `npm run build` in `artifacts/limpeza`. Verify build succeeds cleanly (exit code 0) and assets in `artifacts/limpeza/dist/public` are updated.
-4. Write your `handoff.md` and message the orchestrator when complete.
+Your Tasks:
+1. Create artifacts/limpeza/src/pages/service-orders.tsx implementing R4:
+   - Use Shell from components/layout.tsx
+   - Use Tabs (components/ui/tabs.tsx) with 3 tabs:
+     * Tab 1 (Lista): Cards showing title, status badge, progress bar (X/Y flats completed), copyable portal link (${window.location.origin}/servico/${token}), buttons: "Novo Serviço", "Ver Progresso", "Editar", "Encerrar/Reativar".
+     * Tab 2 (Criar/Editar): Full form with:
+       - title
+       - cleanFlatMode radio/select with 3 clear explanatory labels:
+         "never": Bloquear se o flat estiver limpo (não tem pós-checkout nem dirty)
+         "priority": Só liberar flat limpo se nenhum outro flat do serviço estiver sujo
+         "always": Liberar qualquer flat a qualquer momento (com sugestão de prioridade)
+       - maxSimultaneousFlats (number)
+       - maxFlatsPerDay (number)
+       - requirePhotos (switch / toggle)
+       - estimatedDurationHours (number, optional)
+       - Flat selection checkbox grid for all 19 active flats
+       - Instructions field "aplicar a todos" + option for individual flat instructions
+       - instructionFormat toggle: "text" (texto corrido) or "list" (lista de itens)
+       - Save button calling POST /api/service-orders or PATCH /api/service-orders/:id.
+     * Tab 3 (Painel de Acompanhamento): Real-time polling/refetch table with:
+       - Flat | Status badge | Prestador | Início | Fim | Precisa Camareira | Observações | Fotos
+       - Filter by status (Todos, Pendente, Em Andamento, Finalizado)
+       - Clickable row opening Dialog modal with full photos, observations, timestamps
+       - Admin button to reset flat to "pending" via POST /api/service-orders/:id/flats/:flatId/reset.
+2. In artifacts/limpeza/src/App.tsx:
+   - Register <AdminRoute path="/servicos" component={ServiceOrders} moduleName="a Gestão de Ordens de Serviço" />
+3. In artifacts/limpeza/src/components/layout.tsx:
+   - In navCategories under "🧹 Governança & Camareiras", add { title: "Serviços Externos", href: "/servicos", icon: Wrench } (import Wrench from lucide-react).
+4. Run build verification:
+   - Run npm run build in artifacts/limpeza (must build cleanly with exit code 0).
+5. Git commit and push:
+   - Stage modified files and dist/, commit, and git push origin main per AGENTS.md.
+6. Deliver report:
+   - Write comprehensive report to c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m2\handoff.md and send message.

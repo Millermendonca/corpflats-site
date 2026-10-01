@@ -1,78 +1,63 @@
-# BRIEFING — 2026-09-29T05:35:00Z
+# BRIEFING — 2026-09-30T23:28:00Z
 
 ## Mission
-Implement Milestone M2: Frontend UI overhaul for date switchover, mode indicators, temporal phrasing, and occupancy precedence in Guest-Flow-Manager housekeeping dashboard.
+Implement the Frontend Admin UI for External Service Orders (Ordens de Serviço de Terceirizados / Manutenção), including routes, navigation sidebar link, and full 3-tab interface (Lista, Criar/Editar, Acompanhamento) with full backend API integration, build verification, and git push.
 
 ## 🔒 My Identity
-- Archetype: implementer, qa
-- Roles: implementer, qa
-- Working directory: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/worker_m2
-- Original parent: 5ad82d68-5382-4b5d-b3af-ea9aa33373f7
-- Milestone: M2 - Frontend Date Switchover & Dashboard UI Overhaul
+- Archetype: worker
+- Roles: implementer, qa, specialist
+- Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m2
+- Original parent: 2a43f791-5cc7-4933-bdd2-688af9234cb1
+- Milestone: M2 - Frontend Admin Implementer
 
 ## 🔒 Key Constraints
-- Exclusive write ownership:
-  - artifacts/limpeza/src/pages/dashboard.tsx
-  - artifacts/limpeza/src/components/flat-card.tsx
-  - artifacts/limpeza/src/pages/login.tsx
-  - artifacts/limpeza/dist/
-  - .agents/teamwork/worker_m2/
-- DO NOT edit backend files or database files
-- Integrity mandate: No dummy/facade implementations or hardcoded values
-- Run `npm run build` in `artifacts/limpeza` and verify exit code 0
-- Comply with AGENTS.md (build verification & git push rules)
+- Write ownership strictly limited to:
+  * artifacts/limpeza/src/pages/service-orders.tsx
+  * artifacts/limpeza/src/App.tsx
+  * artifacts/limpeza/src/components/layout.tsx
+- No shortcuts or facades; genuine real-state implementations only.
+- Build verification: `npm run build` in `artifacts/limpeza` must pass with code 0.
+- Per AGENTS.md: Always `git commit` and `git push` to `origin main` with generated `dist/`.
 
 ## Current Parent
-- Conversation ID: 5ad82d68-5382-4b5d-b3af-ea9aa33373f7
-- Updated: 2026-09-29T05:35:00Z
+- Conversation ID: 2a43f791-5cc7-4933-bdd2-688af9234cb1
+- Updated: 2026-09-30T23:28:00Z
 
 ## Task Summary
-- **What to build**:
-  1. In `artifacts/limpeza/src/pages/dashboard.tsx`:
-     - Visual mode indicator ("Modo Previsão (Próximo Turno)" banner and badge) when viewing tomorrow / after 18:00.
-     - Quick 1-click toggle buttons: `[ 🟢 Hoje ]` and `[ 🔮 Amanhã ]` so the user can easily toggle between today's work and tomorrow's forecast.
-     - Dynamic page subtitle reflecting today vs tomorrow view.
-  2. In `artifacts/limpeza/src/components/flat-card.tsx`:
-     - Temporal card phrasing: For future dates, display "Saída Prevista: {flat.leavingGuest}" or "Check-out amanhã: {flat.leavingGuest}" instead of past-tense "Saiu: {flat.leavingGuest}".
-     - Check-in phrasing: Display "🟢 Entra Amanhã" when viewing tomorrow instead of "Entra Hoje".
-     - Occupancy precedence: Prioritize `flat.isOccupied` over `request.isVacant` so future checkouts for occupied rooms don't falsely show "Desocupado".
-     - Carry-over badge clarity: If viewing tomorrow, label today's pending carry-overs as "Pendente do turno de hoje" rather than "dia anterior".
-  3. Rebuild frontend via `npm run build` in `artifacts/limpeza`.
-- **Success criteria**: Vite build passes cleanly (exit code 0), updated dist/public files generated, UI fulfills all specifications accurately.
-- **Interface contracts**: PROJECT.md
-- **Code layout**: PROJECT.md § Code Layout
+- **What to build**: Full Frontend Admin page for Service Orders (`service-orders.tsx`) with 3 tabs (Lista, Criar/Editar, Acompanhamento com polling/filtros/modal de detalhes/reset flat), register route in `App.tsx`, add navigation menu item in `layout.tsx`.
+- **Success criteria**: Clean compilation, zero lint/TS errors, functional backend integration with full adherence to R4 requirements.
+- **Interface contracts**: API routes defined in PROJECT.md (`/api/service-orders`, `/api/service-orders/:id`, `/api/service-orders/:id/flats/:flatId/reset`, `/api/flats`, etc.).
+- **Code layout**: `artifacts/limpeza/src/pages/service-orders.tsx`, `artifacts/limpeza/src/App.tsx`, `artifacts/limpeza/src/components/layout.tsx`.
 
 ## Key Decisions Made
-- Prioritized `flat.isOccupied` before `request.isVacant` in `flat-card.tsx` so future checkouts for rooms where the current guest is still residing correctly indicate "Ocupado".
-- Added `[ 🟢 Hoje ]` and `[ 🔮 Amanhã ]` quick toggles with active status styling.
-- Added visual banner for Forecast Mode (`isForecastMode`), explaining clearly that guests remain in the flats until regular checkout time (12:00) with a 1-click return button to today's shift.
-- Added dynamic temporal card phrasing ("Check-out amanhã: {guest}", "Entra amanhã: {guest}", "🟢 Entra Amanhã").
-- Updated carry-over badge when viewing tomorrow to read "Pendente do turno de hoje ({date})".
-- Allowed `getDefaultDate` to read URL `?date=` query parameters and synchronized URL state in `setDate`.
-- Fixed pre-existing TS typing issues in `dashboard.tsx` and `flat-card.tsx`.
+- Tab 1: Implemented search, status filtering, order cards with progress bar, copyable public link (`${window.location.origin}/servico/${token}`), action buttons ("Ver Progresso", "Editar", "Encerrar/Reativar", "Excluir").
+- Tab 2: Implemented comprehensive form with 3 clear explanatory options for `cleanFlatMode` (never, priority, always), `maxSimultaneousFlats`, `maxFlatsPerDay`, `requirePhotos`, `estimatedDurationHours`, 19-flat checkbox grid, general instructions + individual flat instructions option, and `instructionFormat` toggle ("text" | "list").
+- Tab 3: Implemented real-time tracking panel polling every 10s via TanStack Query, KPI counters, order selector, status filters, complete table with status badges and timestamps, clickable rows opening rich Dialog modal with photo viewer and zoom, and admin button to reset flat to "pending" via `POST /api/service-orders/:id/flats/:flatId/reset`.
 
 ## Artifact Index
-- `.agents/teamwork/worker_m2/BRIEFING.md` — persistent working memory
-- `.agents/teamwork/worker_m2/progress.md` — heartbeat and progress tracker
-- `.agents/teamwork/worker_m2/handoff.md` — final handoff report
-- `artifacts/limpeza/src/pages/dashboard.tsx` — updated dashboard component
-- `artifacts/limpeza/src/components/flat-card.tsx` — updated flat card component
-- `artifacts/limpeza/dist/public/` — compiled production frontend assets
+- `.agents/teamwork/worker_m2/DISPATCH.md` — Assignment instructions
+- `.agents/teamwork/worker_m2/progress.md` — Liveness and execution progress
+- `.agents/teamwork/worker_m2/BRIEFING.md` — Situational awareness and state
+- `.agents/teamwork/worker_m2/handoff.md` — Final completion report
+- `artifacts/limpeza/src/pages/service-orders.tsx` — Admin page implementation
+- `artifacts/limpeza/src/App.tsx` — Registered AdminRoute for /servicos
+- `artifacts/limpeza/src/components/layout.tsx` — Sidebar navigation item
+- `tests/service-orders-admin-frontend.test.mjs` — Automated verification tests
 
 ## Change Tracker
 - **Files modified**:
-  - `artifacts/limpeza/src/pages/dashboard.tsx`: mode banner, quick toggles, dynamic subtitle, date param handling
-  - `artifacts/limpeza/src/components/flat-card.tsx`: occupancy precedence, temporal card phrasing, check-in phrasing, carry-over clarity
-  - `artifacts/limpeza/dist/public/index.html`: updated production index
-  - `artifacts/limpeza/dist/public/assets/index-BVJjErzV.js`: compiled bundle
-  - `artifacts/limpeza/dist/public/assets/index-CAuWHVw7.css`: compiled styles
-- **Build status**: PASS (Vite built cleanly in 16.57s, exit code 0)
-- **Pending issues**: none
+  * `artifacts/limpeza/src/pages/service-orders.tsx` (created): Admin page with 3 tabs and full API integration
+  * `artifacts/limpeza/src/App.tsx`: Added AdminRoute for `/servicos` and `/service-orders`
+  * `artifacts/limpeza/src/components/layout.tsx`: Added sidebar navigation link under Governança & Camareiras
+  * `tests/service-orders-admin-frontend.test.mjs` (created): Test suite verifying all R4 requirements
+  * `artifacts/limpeza/dist/`: Updated production build bundle
+- **Build status**: PASS (npm run build exit 0, tests 8/8 pass, regression 34/34 pass)
+- **Pending issues**: None
 
 ## Quality Status
-- **Build/test result**: Vite build exit code 0; zero TypeScript errors in modified files
-- **Lint status**: clean
-- **Tests added/modified**: covered via Vite production bundle compilation
+- **Build/test result**: PASS (100%)
+- **Lint status**: Clean compilation
+- **Tests added/modified**: `tests/service-orders-admin-frontend.test.mjs` (8 tests)
 
 ## Loaded Skills
 - None

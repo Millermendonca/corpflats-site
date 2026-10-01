@@ -224,30 +224,6 @@
   ],
   "cleaningRequests": [
     {
-      "id": 1374,
-      "flatId": 402,
-      "flatNumber": "402",
-      "requestDate": "2026-09-30",
-      "source": "service_order",
-      "status": "dirty",
-      "isVacant": false,
-      "adminNote": "[OS: Troca de Lâmpadas LED Múltiplos Flats] Limpeza pós-serviço solicitada pelo prestador. Obs: Concluído 402",
-      "createdAt": "2026-09-30T22:55:19.600Z",
-      "updatedAt": "2026-09-30T22:55:19.600Z"
-    },
-    {
-      "id": 1373,
-      "flatId": 201,
-      "flatNumber": "201",
-      "requestDate": "2026-09-30",
-      "source": "service_order",
-      "status": "dirty",
-      "isVacant": false,
-      "adminNote": "[OS: Revisão Hidráulica Flat 201] Limpeza pós-serviço solicitada pelo prestador. Obs: Substituição de sifão e torneira concluída com sucesso.",
-      "createdAt": "2026-09-30T22:55:15.903Z",
-      "updatedAt": "2026-09-30T22:55:15.903Z"
-    },
-    {
       "id": 1372,
       "flatId": 1,
       "flatNumber": "113",
@@ -5673,7 +5649,7 @@
       "extraMattress": true,
       "adminNote": "Separar as camas, colocar como 2 solteiras • Colocar 1 colchão extra",
       "leavingGuest": "Heverton Martins",
-      "arrivingGuest": "Miller Mendonça Pessanha",
+      "arrivingGuest": null,
       "pendingObservation": "Separar as camas, colocar como 2 solteiras • Colocar 1 colchão extra",
       "willCleanAt": "2026-09-29T13:00:00.000Z",
       "createdAt": "2026-09-29T08:00:00.000Z",
@@ -5709,31 +5685,6 @@
       "durationMinutes": 45,
       "createdAt": "2026-09-02T08:00:00.000Z",
       "updatedAt": "2026-09-02T15:00:00.000Z"
-    },
-    {
-      "id": 1366,
-      "flatId": 10,
-      "flatNumber": "509",
-      "requestDate": "2026-09-30",
-      "effectiveDate": "2026-09-30",
-      "source": "checkout",
-      "status": "dirty",
-      "assignedUserId": null,
-      "assignedUsername": null,
-      "assignedUserName": null,
-      "isVacant": false,
-      "isVacantExplicitlySet": false,
-      "isPriority": false,
-      "isExtended": false,
-      "twinBeds": true,
-      "extraMattress": true,
-      "adminNote": null,
-      "leavingGuest": "Miller Mendonça Pessanha",
-      "arrivingGuest": null,
-      "pendingObservation": null,
-      "willCleanAt": "2026-09-30T13:00:00.000Z",
-      "createdAt": "2026-09-30T08:00:00.000Z",
-      "updatedAt": "2026-09-30T13:00:00.000Z"
     },
     {
       "id": 1367,
@@ -5854,6 +5805,156 @@
       "extraMattress": false,
       "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 1004 (Reserva RES-1004-0307)",
       "leavingGuest": "Alessandra Dias",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-10-01T13:00:00.000Z",
+      "createdAt": "2026-10-01T08:00:00.000Z",
+      "updatedAt": "2026-10-01T13:00:00.000Z"
+    },
+    {
+      "id": 1373,
+      "flatId": 13,
+      "flatNumber": "605",
+      "requestDate": "2026-09-28",
+      "effectiveDate": "2026-09-28",
+      "source": "checkout",
+      "status": "dirty",
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "assignedUserName": null,
+      "isVacant": false,
+      "isVacantExplicitlySet": false,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 605 (Reserva RES-605-0179)",
+      "leavingGuest": "Felipe",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-09-28T13:00:00.000Z",
+      "createdAt": "2026-09-28T08:00:00.000Z",
+      "updatedAt": "2026-09-28T13:00:00.000Z"
+    },
+    {
+      "id": 1374,
+      "flatId": 10,
+      "flatNumber": "509",
+      "requestDate": "2026-10-09",
+      "effectiveDate": "2026-10-09",
+      "source": "checkout",
+      "status": "dirty",
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "assignedUserName": null,
+      "isVacant": false,
+      "isVacantExplicitlySet": false,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 509 (Reserva RES-509-0036)",
+      "leavingGuest": "Heverton Martins",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-10-09T13:00:00.000Z",
+      "createdAt": "2026-10-09T08:00:00.000Z",
+      "updatedAt": "2026-10-09T13:00:00.000Z"
+    },
+    {
+      "id": 1375,
+      "flatId": 21,
+      "flatNumber": "1304",
+      "requestDate": "2026-10-01",
+      "effectiveDate": "2026-10-01",
+      "source": "checkout",
+      "status": "dirty",
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "assignedUserName": null,
+      "isVacant": false,
+      "isVacantExplicitlySet": false,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 1304 (Reserva RES-1304-0305)",
+      "leavingGuest": "Angelo",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-10-01T13:00:00.000Z",
+      "createdAt": "2026-10-01T08:00:00.000Z",
+      "updatedAt": "2026-10-01T13:00:00.000Z"
+    },
+    {
+      "id": 1376,
+      "flatId": 14,
+      "flatNumber": "712",
+      "requestDate": "2026-10-02",
+      "effectiveDate": "2026-10-02",
+      "source": "checkout",
+      "status": "dirty",
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "assignedUserName": null,
+      "isVacant": false,
+      "isVacantExplicitlySet": false,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 712 (Reserva RES-712-0306)",
+      "leavingGuest": "Costa frederico",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-10-02T13:00:00.000Z",
+      "createdAt": "2026-10-02T08:00:00.000Z",
+      "updatedAt": "2026-10-02T13:00:00.000Z"
+    },
+    {
+      "id": 1377,
+      "flatId": 13,
+      "flatNumber": "605",
+      "requestDate": "2026-10-01",
+      "effectiveDate": "2026-10-01",
+      "source": "checkout",
+      "status": "dirty",
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "assignedUserName": null,
+      "isVacant": false,
+      "isVacantExplicitlySet": false,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 605 (Reserva RES-605-0320)",
+      "leavingGuest": "Gilberto",
+      "arrivingGuest": null,
+      "pendingObservation": null,
+      "willCleanAt": "2026-10-01T13:00:00.000Z",
+      "createdAt": "2026-10-01T08:00:00.000Z",
+      "updatedAt": "2026-10-01T13:00:00.000Z"
+    },
+    {
+      "id": 1378,
+      "flatId": 4,
+      "flatNumber": "211",
+      "requestDate": "2026-10-01",
+      "effectiveDate": "2026-10-01",
+      "source": "checkout",
+      "status": "dirty",
+      "assignedUserId": null,
+      "assignedUsername": null,
+      "assignedUserName": null,
+      "isVacant": false,
+      "isVacantExplicitlySet": false,
+      "isPriority": false,
+      "isExtended": false,
+      "twinBeds": false,
+      "extraMattress": false,
+      "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 211 (Reserva RES-211-0319)",
+      "leavingGuest": "Isabela Barbosa dos Santos Ribeiro",
       "arrivingGuest": null,
       "pendingObservation": null,
       "willCleanAt": "2026-10-01T13:00:00.000Z",
@@ -7491,6 +7592,37 @@
   ],
   "serviceOrders": [
     {
+      "id": "so_1790813554423_47g7b",
+      "title": "Verificação Elétrica Flat Limpo",
+      "token": "c65372cc150990237239b156",
+      "status": "active",
+      "createdAt": "2026-10-01T00:12:34.423Z",
+      "createdBy": "admin",
+      "cleanFlatMode": "always",
+      "maxSimultaneousFlats": 2,
+      "maxFlatsPerDay": 4,
+      "requirePhotos": false,
+      "estimatedDurationHours": null,
+      "instructionFormat": "text",
+      "flats": [
+        {
+          "flatId": 18,
+          "flatNumber": "907",
+          "instructions": "",
+          "status": "in_progress",
+          "startedAt": "2026-10-01T00:12:34.521Z",
+          "finishedAt": null,
+          "workerName": "Eletricista Pro",
+          "workerCpf": "77788899900",
+          "estimatedFinishAt": null,
+          "observations": null,
+          "photos": [],
+          "needsCleaning": null,
+          "wasCleanWhenStarted": true
+        }
+      ]
+    },
+    {
       "id": "so_1790808920379_95evu",
       "title": "Decoração e Cortinas 501",
       "token": "b749a446ad71dce100480dc9",
@@ -7944,6 +8076,17 @@
         }
       ],
       "registeredAt": "2026-09-30T22:55:20.423Z"
+    },
+    {
+      "id": "sw_1790813554470_nqgqv",
+      "serviceOrderId": "so_1790813554423_47g7b",
+      "token": "c65372cc150990237239b156",
+      "mainWorker": {
+        "name": "Eletricista Pro",
+        "cpf": "77788899900"
+      },
+      "collaborators": [],
+      "registeredAt": "2026-10-01T00:12:34.470Z"
     }
   ],
   "surveys": [],
@@ -13142,6 +13285,27 @@
       "createdAt": "2026-09-29T08:00:00.000Z",
       "documentNumber": "",
       "document": ""
+    },
+    {
+      "id": 165,
+      "guestCode": "HOSP-00165",
+      "name": "Adriana Alves da Silva",
+      "document": "06955536745",
+      "phone": "21981090085",
+      "clientType": "avulso",
+      "createdAt": "2026-09-30T18:38:37.265Z",
+      "fullName": "Adriana Alves da Silva",
+      "documentNumber": "06955536745"
+    },
+    {
+      "id": 166,
+      "guestCode": "HOSP-00166",
+      "name": "Isabela Barbosa dos Santos Ribeiro",
+      "fullName": "Isabela Barbosa dos Santos Ribeiro",
+      "createdAt": "2026-09-30T18:43:30.164Z",
+      "phone": "27998221965",
+      "document": "14807628739",
+      "documentNumber": "14807628739"
     }
   ],
   "guestAccounts": [
@@ -18360,14 +18524,14 @@
       "createdAt": "2026-09-21T19:30:31.607Z",
       "guestCode": "HOSP-00118",
       "guestName": "Felipe",
-      "updatedAt": "2026-09-27T19:27:08.761Z",
+      "updatedAt": "2026-10-01T00:00:09.389Z",
       "clientType": "avulso",
       "flatNumber": "605",
       "paidAmount": 1220,
       "checkinDate": "2026-09-25",
       "checkinTime": "14:00",
       "totalAmount": 1220,
-      "checkoutDate": "2026-10-02",
+      "checkoutDate": "2026-09-28",
       "checkoutDone": true,
       "checkoutTime": "12:00",
       "extraMattress": false,
@@ -24842,14 +25006,14 @@
       "createdAt": "2026-09-14T21:58:07.024Z",
       "guestCode": "HOSP-00140",
       "guestName": "Heverton Martins",
-      "updatedAt": "2026-09-14T21:58:07.024Z",
+      "updatedAt": "2026-10-01T00:00:09.390Z",
       "clientType": "mensalista",
       "flatNumber": "509",
       "paidAmount": 2500,
       "checkinDate": "2026-09-04",
       "checkinTime": "14:00",
       "totalAmount": 2500,
-      "checkoutDate": "2026-09-29",
+      "checkoutDate": "2026-10-09",
       "checkoutTime": "12:00",
       "paymentStatus": "pago_total",
       "breakfastToken": "bfk_res5090036",
@@ -27589,36 +27753,6 @@
       "earlyCheckinAuthorized": false
     },
     {
-      "id": 302,
-      "code": "RES-509-0302",
-      "flatId": 10,
-      "flatNumber": "509",
-      "guestName": "Miller Mendonça Pessanha",
-      "guestCount": 1,
-      "checkinDate": "2026-09-29",
-      "checkoutDate": "2026-09-30",
-      "checkinTime": "14:00",
-      "checkoutTime": "12:00",
-      "status": "confirmada",
-      "channel": "whatsapp",
-      "twinBeds": true,
-      "extraMattress": true,
-      "bedType": "2 Solteiro",
-      "specialRequests": "Separar as camas, colocar como 2 solteiras • Colocar 1 colchão extra",
-      "notes": "Separar as camas, colocar como 2 solteiras • Colocar 1 colchão extra",
-      "earlyCheckinAuthorized": true,
-      "isMonthlyGuest": false,
-      "includeBreakfast": false,
-      "clientType": "avulso",
-      "paidAmount": 250,
-      "totalAmount": 250,
-      "paymentStatus": "pago_total",
-      "createdAt": "2026-09-29T08:00:00.000Z",
-      "updatedAt": "2026-09-29T12:00:00.000Z",
-      "guestId": 33,
-      "guestCode": "HOSP-00033"
-    },
-    {
       "id": 303,
       "code": "RES-211-0303",
       "flatId": 4,
@@ -27668,16 +27802,16 @@
       "guestName": "Angelo",
       "guestCount": 1,
       "checkinDate": "2026-09-29",
-      "checkoutDate": "2026-09-30",
+      "checkoutDate": "2026-10-01",
       "checkinTime": "14:00",
       "checkoutTime": "12:00",
       "status": "confirmada",
       "channel": "whatsapp",
-      "paidAmount": 250,
-      "totalAmount": 250,
+      "paidAmount": 500,
+      "totalAmount": 500,
       "paymentStatus": "pago_total",
       "createdAt": "2026-09-29T08:00:00.000Z",
-      "updatedAt": "2026-09-29T08:00:00.000Z",
+      "updatedAt": "2026-10-01T00:00:09.390Z",
       "guestId": 27,
       "guestCode": "HOSP-00027"
     },
@@ -27688,8 +27822,8 @@
       "flatNumber": "712",
       "guestName": "Costa frederico",
       "guestCount": 1,
-      "checkinDate": "2026-09-30",
-      "checkoutDate": "2026-10-01",
+      "checkinDate": "2026-10-01",
+      "checkoutDate": "2026-10-02",
       "checkinTime": "14:00",
       "checkoutTime": "12:00",
       "status": "confirmada",
@@ -27698,7 +27832,7 @@
       "totalAmount": 250,
       "paymentStatus": "pago_total",
       "createdAt": "2026-09-29T08:00:00.000Z",
-      "updatedAt": "2026-09-29T08:00:00.000Z",
+      "updatedAt": "2026-10-01T00:00:09.387Z",
       "guestId": 56,
       "guestCode": "HOSP-00056"
     },
@@ -27722,9 +27856,427 @@
       "updatedAt": "2026-09-29T08:00:00.000Z",
       "guestId": 29,
       "guestCode": "HOSP-00029"
+    },
+    {
+      "id": 318,
+      "code": "RES-712-0318",
+      "flatId": 14,
+      "flatNumber": "712",
+      "guestId": 165,
+      "guestName": "Adriana Alves da Silva",
+      "guestDocument": "06955536745",
+      "guestPhone": "21981090085",
+      "guestCount": 1,
+      "guests": [
+        {
+          "cpf": "06955536745",
+          "name": "Adriana Alves da Silva",
+          "email": "",
+          "index": 1,
+          "phone": "21981090085",
+          "checkinCompletedAt": null,
+          "hasCompletedCheckin": false,
+          "guestId": 165,
+          "guestCode": "HOSP-00165"
+        }
+      ],
+      "checkinDate": "2026-09-30",
+      "checkinTime": "14:00",
+      "checkoutDate": "2026-10-01",
+      "checkoutTime": "12:00",
+      "dailyRate": 230,
+      "totalAmount": 230,
+      "paidAmount": 230,
+      "paymentMethod": "pix",
+      "paymentStatus": "pago_total",
+      "channel": "whatsapp",
+      "clientType": "avulso",
+      "isMonthlyGuest": false,
+      "includeBreakfast": false,
+      "status": "confirmada",
+      "createdAt": "2026-09-30T18:38:37.265Z",
+      "updatedAt": "2026-09-30T18:38:37.265Z",
+      "guestCode": "HOSP-00165"
+    },
+    {
+      "id": 320,
+      "code": "RES-605-0320",
+      "flatId": 13,
+      "flatNumber": "605",
+      "guestId": 166,
+      "guestName": "Gilberto",
+      "guestPhone": "27998221965",
+      "guestCount": 2,
+      "checkinDate": "2026-09-30",
+      "checkinTime": "14:00",
+      "checkoutDate": "2026-10-01",
+      "checkoutTime": "12:00",
+      "dailyRate": 230,
+      "totalAmount": 230,
+      "paidAmount": 230,
+      "paymentMethod": "pix",
+      "paymentStatus": "pago_total",
+      "channel": "whatsapp",
+      "clientType": "avulso",
+      "isMonthlyGuest": false,
+      "includeBreakfast": false,
+      "status": "confirmada",
+      "createdAt": "2026-09-30T18:43:30.164Z",
+      "updatedAt": "2026-09-30T18:43:30.164Z",
+      "guestCode": "HOSP-00166"
+    },
+    {
+      "id": 319,
+      "code": "RES-211-0319",
+      "flatId": 4,
+      "flatNumber": "211",
+      "guestId": 166,
+      "guestName": "Isabela Barbosa dos Santos Ribeiro",
+      "guestDocument": "14807628739",
+      "guestCount": 1,
+      "guests": [
+        {
+          "cpf": "14807628739",
+          "name": "Isabela Barbosa dos Santos Ribeiro",
+          "email": "",
+          "index": 1,
+          "phone": "",
+          "checkinCompletedAt": null,
+          "hasCompletedCheckin": false,
+          "guestId": 166,
+          "guestCode": "HOSP-00166"
+        }
+      ],
+      "checkinDate": "2026-09-30",
+      "checkinTime": "14:00",
+      "checkoutDate": "2026-10-01",
+      "checkoutTime": "12:00",
+      "dailyRate": 230,
+      "totalAmount": 230,
+      "paidAmount": 230,
+      "paymentMethod": "pix",
+      "paymentStatus": "pago_total",
+      "channel": "whatsapp",
+      "clientType": "avulso",
+      "isMonthlyGuest": false,
+      "includeBreakfast": false,
+      "status": "confirmada",
+      "createdAt": "2026-09-30T18:40:30.886Z",
+      "updatedAt": "2026-09-30T18:40:30.886Z",
+      "guestCode": "HOSP-00166"
     }
   ],
   "reservationCommunications": [
+    {
+      "id": "057f0815-4f24-439e-b6b4-cb7b17de797a",
+      "reservation_id": "0",
+      "type": "email",
+      "direction": "outbound",
+      "recipient": "millerpessanha@gmail.com",
+      "cc": null,
+      "bcc": null,
+      "subject": "[CorpFlats] Serviço Iniciado - Flat 907 (Verificação Elétrica Flat Limpo)",
+      "body": "\n        <div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; line-height: 1.5;\">\n          <h2 style=\"color: #0284c7;\">\n            🔧 Serviço Externo Iniciado\n          </h2>\n          <p><strong>Serviço:</strong> Verificação Elétrica Flat Limpo</p>\n          <p><strong>Apartamento:</strong> Flat 907</p>\n          <p><strong>Prestador:</strong> Eletricista Pro (CPF: 77788899900)</p>\n          \n            <p><strong>Início:</strong> 21:12</p>\n            <p><strong>Previsão de Duração:</strong> 2h</p>\n            <div style=\"background-color: #f0f9ff; padding: 12px; border-left: 4px solid #0284c7; margin-top: 15px; border-radius: 4px;\">\n              ➡️ <strong>Ação para Recepção:</strong> Favor liberar o cartão de acesso para o prestador ao Flat 907.\n            </div>\n          \n          <hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;\" />\n          <p style=\"font-size: 12px; color: #64748b;\">Notificação enviada automaticamente pelo sistema CorpFlats Guest-Flow-Manager.</p>\n        </div>\n      ",
+      "status": "pending",
+      "metadata": {
+        "category": "service_order",
+        "serviceOrderId": "so_1790813554423_47g7b",
+        "flatNumber": "907",
+        "flatId": 18,
+        "action": "start",
+        "hasAttachments": false,
+        "attachmentsCount": 0,
+        "attempts": 1,
+        "queuedAt": "2026-10-01T00:12:34.567Z"
+      },
+      "created_at": "2026-10-01T00:12:34.567Z"
+    },
+    {
+      "id": "1176822d-415d-4346-9d6b-ae0eb49dbf01",
+      "reservation_id": "0",
+      "type": "email",
+      "direction": "outbound",
+      "recipient": "millerpessanha@gmail.com",
+      "cc": null,
+      "bcc": null,
+      "subject": "[CorpFlats] Serviço Finalizado - Flat 113 (Reforma Geral do Piso)",
+      "body": "\n        <div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; line-height: 1.5;\">\n          <h2 style=\"color: #16a34a;\">\n            ✅ Serviço Externo Finalizado\n          </h2>\n          <p><strong>Serviço:</strong> Reforma Geral do Piso</p>\n          <p><strong>Apartamento:</strong> Flat 113</p>\n          <p><strong>Prestador:</strong> Roberto Piso (CPF: 66677788899)</p>\n          \n            <p><strong>Duração:</strong> 0min</p>\n            <p><strong>Precisa de Camareira:</strong> N.A.</p>\n            <p><strong>Observações:</strong> Piso reformado</p>\n            <p><strong>Fotos Anexadas:</strong> 0</p>\n          \n          <hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;\" />\n          <p style=\"font-size: 12px; color: #64748b;\">Notificação enviada automaticamente pelo sistema CorpFlats Guest-Flow-Manager.</p>\n        </div>\n      ",
+      "status": "failed",
+      "metadata": {
+        "category": "service_order",
+        "serviceOrderId": "so_1790813553885_hn1oh",
+        "flatNumber": "113",
+        "flatId": 1,
+        "action": "finish",
+        "hasAttachments": false,
+        "attachmentsCount": 0,
+        "attempts": 1,
+        "queuedAt": "2026-10-01T00:12:34.195Z",
+        "error": "SMTP não configurado no backend (credenciais de SMTP_USER/SMTP_PASS ausentes).",
+        "failedAt": "2026-10-01T00:12:34.273Z"
+      },
+      "created_at": "2026-10-01T00:12:34.195Z"
+    },
+    {
+      "id": "ed1d43e4-120e-4c7d-ab1d-cf9c7c858e1c",
+      "reservation_id": "0",
+      "type": "email",
+      "direction": "outbound",
+      "recipient": "millerpessanha@gmail.com",
+      "cc": null,
+      "bcc": null,
+      "subject": "[CorpFlats] Serviço Iniciado - Flat 113 (Reforma Geral do Piso)",
+      "body": "\n        <div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; line-height: 1.5;\">\n          <h2 style=\"color: #0284c7;\">\n            🔧 Serviço Externo Iniciado\n          </h2>\n          <p><strong>Serviço:</strong> Reforma Geral do Piso</p>\n          <p><strong>Apartamento:</strong> Flat 113</p>\n          <p><strong>Prestador:</strong> Roberto Piso (CPF: 66677788899)</p>\n          \n            <p><strong>Início:</strong> 21:12</p>\n            <p><strong>Previsão de Duração:</strong> 4h</p>\n            <div style=\"background-color: #f0f9ff; padding: 12px; border-left: 4px solid #0284c7; margin-top: 15px; border-radius: 4px;\">\n              ➡️ <strong>Ação para Recepção:</strong> Favor liberar o cartão de acesso para o prestador ao Flat 113.\n            </div>\n          \n          <hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;\" />\n          <p style=\"font-size: 12px; color: #64748b;\">Notificação enviada automaticamente pelo sistema CorpFlats Guest-Flow-Manager.</p>\n        </div>\n      ",
+      "status": "failed",
+      "metadata": {
+        "category": "service_order",
+        "serviceOrderId": "so_1790813553885_hn1oh",
+        "flatNumber": "113",
+        "flatId": 1,
+        "action": "start",
+        "hasAttachments": false,
+        "attachmentsCount": 0,
+        "attempts": 1,
+        "queuedAt": "2026-10-01T00:12:33.991Z",
+        "error": "SMTP não configurado no backend (credenciais de SMTP_USER/SMTP_PASS ausentes).",
+        "failedAt": "2026-10-01T00:12:34.072Z"
+      },
+      "created_at": "2026-10-01T00:12:33.991Z"
+    },
+    {
+      "id": "77dde26f-0ac3-49fd-8bdd-28a51256daa5",
+      "reservation_id": "0",
+      "type": "email",
+      "direction": "outbound",
+      "recipient": "millerpessanha@gmail.com",
+      "cc": null,
+      "bcc": null,
+      "subject": "[CorpFlats] Serviço Finalizado - Flat 113 (Manutenção Hidráulica)",
+      "body": "\n        <div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; line-height: 1.5;\">\n          <h2 style=\"color: #16a34a;\">\n            ✅ Serviço Externo Finalizado\n          </h2>\n          <p><strong>Serviço:</strong> Manutenção Hidráulica</p>\n          <p><strong>Apartamento:</strong> Flat 113</p>\n          <p><strong>Prestador:</strong> Mário Encanador (CPF: 55566677788)</p>\n          \n            <p><strong>Duração:</strong> 0min</p>\n            <p><strong>Precisa de Camareira:</strong> N.A.</p>\n            <p><strong>Observações:</strong> Troca de torneira feita</p>\n            <p><strong>Fotos Anexadas:</strong> 0</p>\n          \n          <hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;\" />\n          <p style=\"font-size: 12px; color: #64748b;\">Notificação enviada automaticamente pelo sistema CorpFlats Guest-Flow-Manager.</p>\n        </div>\n      ",
+      "status": "failed",
+      "metadata": {
+        "category": "service_order",
+        "serviceOrderId": "so_1790813553383_57nrf",
+        "flatNumber": "113",
+        "flatId": 1,
+        "action": "finish",
+        "hasAttachments": false,
+        "attachmentsCount": 0,
+        "attempts": 1,
+        "queuedAt": "2026-10-01T00:12:33.676Z",
+        "error": "SMTP não configurado no backend (credenciais de SMTP_USER/SMTP_PASS ausentes).",
+        "failedAt": "2026-10-01T00:12:33.742Z"
+      },
+      "created_at": "2026-10-01T00:12:33.676Z"
+    },
+    {
+      "id": "f293c4b5-773c-4f5c-906e-6f3ff6341ae1",
+      "reservation_id": "0",
+      "type": "email",
+      "direction": "outbound",
+      "recipient": "millerpessanha@gmail.com",
+      "cc": null,
+      "bcc": null,
+      "subject": "[CorpFlats] Serviço Iniciado - Flat 113 (Manutenção Hidráulica)",
+      "body": "\n        <div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; line-height: 1.5;\">\n          <h2 style=\"color: #0284c7;\">\n            🔧 Serviço Externo Iniciado\n          </h2>\n          <p><strong>Serviço:</strong> Manutenção Hidráulica</p>\n          <p><strong>Apartamento:</strong> Flat 113</p>\n          <p><strong>Prestador:</strong> Mário Encanador (CPF: 55566677788)</p>\n          \n            <p><strong>Início:</strong> 21:12</p>\n            <p><strong>Previsão de Duração:</strong> 2h</p>\n            <div style=\"background-color: #f0f9ff; padding: 12px; border-left: 4px solid #0284c7; margin-top: 15px; border-radius: 4px;\">\n              ➡️ <strong>Ação para Recepção:</strong> Favor liberar o cartão de acesso para o prestador ao Flat 113.\n            </div>\n          \n          <hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;\" />\n          <p style=\"font-size: 12px; color: #64748b;\">Notificação enviada automaticamente pelo sistema CorpFlats Guest-Flow-Manager.</p>\n        </div>\n      ",
+      "status": "failed",
+      "metadata": {
+        "category": "service_order",
+        "serviceOrderId": "so_1790813553383_57nrf",
+        "flatNumber": "113",
+        "flatId": 1,
+        "action": "start",
+        "hasAttachments": false,
+        "attachmentsCount": 0,
+        "attempts": 1,
+        "queuedAt": "2026-10-01T00:12:33.498Z",
+        "error": "SMTP não configurado no backend (credenciais de SMTP_USER/SMTP_PASS ausentes).",
+        "failedAt": "2026-10-01T00:12:33.575Z"
+      },
+      "created_at": "2026-10-01T00:12:33.498Z"
+    },
+    {
+      "id": "30b05f42-3b46-479b-8950-c8d71c26c8df",
+      "reservation_id": "0",
+      "type": "email",
+      "direction": "outbound",
+      "recipient": "millerpessanha@gmail.com",
+      "cc": null,
+      "bcc": null,
+      "subject": "[CorpFlats] Serviço Iniciado - Flat 113 (Desafio Modo Always)",
+      "body": "\n        <div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; line-height: 1.5;\">\n          <h2 style=\"color: #0284c7;\">\n            🔧 Serviço Externo Iniciado\n          </h2>\n          <p><strong>Serviço:</strong> Desafio Modo Always</p>\n          <p><strong>Apartamento:</strong> Flat 113</p>\n          <p><strong>Prestador:</strong> Always Worker (CPF: 44455566677)</p>\n          \n            <p><strong>Início:</strong> 21:12</p>\n            <p><strong>Previsão de Duração:</strong> 2h</p>\n            <div style=\"background-color: #f0f9ff; padding: 12px; border-left: 4px solid #0284c7; margin-top: 15px; border-radius: 4px;\">\n              ➡️ <strong>Ação para Recepção:</strong> Favor liberar o cartão de acesso para o prestador ao Flat 113.\n            </div>\n          \n          <hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;\" />\n          <p style=\"font-size: 12px; color: #64748b;\">Notificação enviada automaticamente pelo sistema CorpFlats Guest-Flow-Manager.</p>\n        </div>\n      ",
+      "status": "failed",
+      "metadata": {
+        "category": "service_order",
+        "serviceOrderId": "so_1790813552946_sm8u9",
+        "flatNumber": "113",
+        "flatId": 1,
+        "action": "start",
+        "hasAttachments": false,
+        "attachmentsCount": 0,
+        "attempts": 1,
+        "queuedAt": "2026-10-01T00:12:33.180Z",
+        "error": "SMTP não configurado no backend (credenciais de SMTP_USER/SMTP_PASS ausentes).",
+        "failedAt": "2026-10-01T00:12:33.245Z"
+      },
+      "created_at": "2026-10-01T00:12:33.180Z"
+    },
+    {
+      "id": "689749d7-b1ad-45ea-afbf-c2239ce2ba80",
+      "reservation_id": "0",
+      "type": "email",
+      "direction": "outbound",
+      "recipient": "millerpessanha@gmail.com",
+      "cc": null,
+      "bcc": null,
+      "subject": "[CorpFlats] Serviço Iniciado - Flat 907 (Desafio Modo Always)",
+      "body": "\n        <div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; line-height: 1.5;\">\n          <h2 style=\"color: #0284c7;\">\n            🔧 Serviço Externo Iniciado\n          </h2>\n          <p><strong>Serviço:</strong> Desafio Modo Always</p>\n          <p><strong>Apartamento:</strong> Flat 907</p>\n          <p><strong>Prestador:</strong> Always Worker (CPF: 44455566677)</p>\n          \n            <p><strong>Início:</strong> 21:12</p>\n            <p><strong>Previsão de Duração:</strong> 2h</p>\n            <div style=\"background-color: #f0f9ff; padding: 12px; border-left: 4px solid #0284c7; margin-top: 15px; border-radius: 4px;\">\n              ➡️ <strong>Ação para Recepção:</strong> Favor liberar o cartão de acesso para o prestador ao Flat 907.\n            </div>\n          \n          <hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;\" />\n          <p style=\"font-size: 12px; color: #64748b;\">Notificação enviada automaticamente pelo sistema CorpFlats Guest-Flow-Manager.</p>\n        </div>\n      ",
+      "status": "failed",
+      "metadata": {
+        "category": "service_order",
+        "serviceOrderId": "so_1790813552946_sm8u9",
+        "flatNumber": "907",
+        "flatId": 18,
+        "action": "start",
+        "hasAttachments": false,
+        "attachmentsCount": 0,
+        "attempts": 1,
+        "queuedAt": "2026-10-01T00:12:33.038Z",
+        "error": "SMTP não configurado no backend (credenciais de SMTP_USER/SMTP_PASS ausentes).",
+        "failedAt": "2026-10-01T00:12:33.104Z"
+      },
+      "created_at": "2026-10-01T00:12:33.038Z"
+    },
+    {
+      "id": "d30ad80c-100d-4fd8-83d0-5634e7733487",
+      "reservation_id": "0",
+      "type": "email",
+      "direction": "outbound",
+      "recipient": "millerpessanha@gmail.com",
+      "cc": null,
+      "bcc": null,
+      "subject": "[CorpFlats] Serviço Iniciado - Flat 907 (Desafio Modo Priority Apenas Limpos)",
+      "body": "\n        <div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; line-height: 1.5;\">\n          <h2 style=\"color: #0284c7;\">\n            🔧 Serviço Externo Iniciado\n          </h2>\n          <p><strong>Serviço:</strong> Desafio Modo Priority Apenas Limpos</p>\n          <p><strong>Apartamento:</strong> Flat 907</p>\n          <p><strong>Prestador:</strong> Solo Worker (CPF: 33344455566)</p>\n          \n            <p><strong>Início:</strong> 21:12</p>\n            <p><strong>Previsão de Duração:</strong> 2h</p>\n            <div style=\"background-color: #f0f9ff; padding: 12px; border-left: 4px solid #0284c7; margin-top: 15px; border-radius: 4px;\">\n              ➡️ <strong>Ação para Recepção:</strong> Favor liberar o cartão de acesso para o prestador ao Flat 907.\n            </div>\n          \n          <hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;\" />\n          <p style=\"font-size: 12px; color: #64748b;\">Notificação enviada automaticamente pelo sistema CorpFlats Guest-Flow-Manager.</p>\n        </div>\n      ",
+      "status": "failed",
+      "metadata": {
+        "category": "service_order",
+        "serviceOrderId": "so_1790813552689_pp3t3",
+        "flatNumber": "907",
+        "flatId": 18,
+        "action": "start",
+        "hasAttachments": false,
+        "attachmentsCount": 0,
+        "attempts": 1,
+        "queuedAt": "2026-10-01T00:12:32.811Z",
+        "error": "SMTP não configurado no backend (credenciais de SMTP_USER/SMTP_PASS ausentes).",
+        "failedAt": "2026-10-01T00:12:32.876Z"
+      },
+      "created_at": "2026-10-01T00:12:32.811Z"
+    },
+    {
+      "id": "99bb8f90-5941-4912-8401-ded361ac8a93",
+      "reservation_id": "0",
+      "type": "email",
+      "direction": "outbound",
+      "recipient": "millerpessanha@gmail.com",
+      "cc": null,
+      "bcc": null,
+      "subject": "[CorpFlats] Serviço Iniciado - Flat 907 (Desafio Modo Priority Sequencial)",
+      "body": "\n        <div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; line-height: 1.5;\">\n          <h2 style=\"color: #0284c7;\">\n            🔧 Serviço Externo Iniciado\n          </h2>\n          <p><strong>Serviço:</strong> Desafio Modo Priority Sequencial</p>\n          <p><strong>Apartamento:</strong> Flat 907</p>\n          <p><strong>Prestador:</strong> Priority Worker (CPF: 22233344455)</p>\n          \n            <p><strong>Início:</strong> 21:12</p>\n            <p><strong>Previsão de Duração:</strong> 2h</p>\n            <div style=\"background-color: #f0f9ff; padding: 12px; border-left: 4px solid #0284c7; margin-top: 15px; border-radius: 4px;\">\n              ➡️ <strong>Ação para Recepção:</strong> Favor liberar o cartão de acesso para o prestador ao Flat 907.\n            </div>\n          \n          <hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;\" />\n          <p style=\"font-size: 12px; color: #64748b;\">Notificação enviada automaticamente pelo sistema CorpFlats Guest-Flow-Manager.</p>\n        </div>\n      ",
+      "status": "failed",
+      "metadata": {
+        "category": "service_order",
+        "serviceOrderId": "so_1790813552241_97hz2",
+        "flatNumber": "907",
+        "flatId": 18,
+        "action": "start",
+        "hasAttachments": false,
+        "attachmentsCount": 0,
+        "attempts": 1,
+        "queuedAt": "2026-10-01T00:12:32.518Z",
+        "error": "SMTP não configurado no backend (credenciais de SMTP_USER/SMTP_PASS ausentes).",
+        "failedAt": "2026-10-01T00:12:32.572Z"
+      },
+      "created_at": "2026-10-01T00:12:32.518Z"
+    },
+    {
+      "id": "69950a62-bc9e-4718-889f-75bc3ec00809",
+      "reservation_id": "0",
+      "type": "email",
+      "direction": "outbound",
+      "recipient": "millerpessanha@gmail.com",
+      "cc": null,
+      "bcc": null,
+      "subject": "[CorpFlats] Serviço Finalizado - Flat 113 (Desafio Modo Priority Sequencial)",
+      "body": "\n        <div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; line-height: 1.5;\">\n          <h2 style=\"color: #16a34a;\">\n            ✅ Serviço Externo Finalizado\n          </h2>\n          <p><strong>Serviço:</strong> Desafio Modo Priority Sequencial</p>\n          <p><strong>Apartamento:</strong> Flat 113</p>\n          <p><strong>Prestador:</strong> Priority Worker (CPF: 22233344455)</p>\n          \n            <p><strong>Duração:</strong> 0min</p>\n            <p><strong>Precisa de Camareira:</strong> N.A.</p>\n            <p><strong>Observações:</strong> Pintura do flat sujo concluida</p>\n            <p><strong>Fotos Anexadas:</strong> 0</p>\n          \n          <hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;\" />\n          <p style=\"font-size: 12px; color: #64748b;\">Notificação enviada automaticamente pelo sistema CorpFlats Guest-Flow-Manager.</p>\n        </div>\n      ",
+      "status": "failed",
+      "metadata": {
+        "category": "service_order",
+        "serviceOrderId": "so_1790813552241_97hz2",
+        "flatNumber": "113",
+        "flatId": 1,
+        "action": "finish",
+        "hasAttachments": false,
+        "attachmentsCount": 0,
+        "attempts": 1,
+        "queuedAt": "2026-10-01T00:12:32.401Z",
+        "error": "SMTP não configurado no backend (credenciais de SMTP_USER/SMTP_PASS ausentes).",
+        "failedAt": "2026-10-01T00:12:32.452Z"
+      },
+      "created_at": "2026-10-01T00:12:32.401Z"
+    },
+    {
+      "id": "8d554160-8e83-4dd0-928a-c54c69829dd1",
+      "reservation_id": "0",
+      "type": "email",
+      "direction": "outbound",
+      "recipient": "millerpessanha@gmail.com",
+      "cc": null,
+      "bcc": null,
+      "subject": "[CorpFlats] Serviço Iniciado - Flat 113 (Desafio Modo Priority Sequencial)",
+      "body": "\n        <div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; line-height: 1.5;\">\n          <h2 style=\"color: #0284c7;\">\n            🔧 Serviço Externo Iniciado\n          </h2>\n          <p><strong>Serviço:</strong> Desafio Modo Priority Sequencial</p>\n          <p><strong>Apartamento:</strong> Flat 113</p>\n          <p><strong>Prestador:</strong> Priority Worker (CPF: 22233344455)</p>\n          \n            <p><strong>Início:</strong> 21:12</p>\n            <p><strong>Previsão de Duração:</strong> 2h</p>\n            <div style=\"background-color: #f0f9ff; padding: 12px; border-left: 4px solid #0284c7; margin-top: 15px; border-radius: 4px;\">\n              ➡️ <strong>Ação para Recepção:</strong> Favor liberar o cartão de acesso para o prestador ao Flat 113.\n            </div>\n          \n          <hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;\" />\n          <p style=\"font-size: 12px; color: #64748b;\">Notificação enviada automaticamente pelo sistema CorpFlats Guest-Flow-Manager.</p>\n        </div>\n      ",
+      "status": "failed",
+      "metadata": {
+        "category": "service_order",
+        "serviceOrderId": "so_1790813552241_97hz2",
+        "flatNumber": "113",
+        "flatId": 1,
+        "action": "start",
+        "hasAttachments": false,
+        "attachmentsCount": 0,
+        "attempts": 1,
+        "queuedAt": "2026-10-01T00:12:32.303Z",
+        "error": "SMTP não configurado no backend (credenciais de SMTP_USER/SMTP_PASS ausentes).",
+        "failedAt": "2026-10-01T00:12:32.343Z"
+      },
+      "created_at": "2026-10-01T00:12:32.303Z"
+    },
+    {
+      "id": "2833aad0-d8ac-4431-a302-2aba8610e893",
+      "reservation_id": "0",
+      "type": "email",
+      "direction": "outbound",
+      "recipient": "millerpessanha@gmail.com",
+      "cc": null,
+      "bcc": null,
+      "subject": "[CorpFlats] Serviço Iniciado - Flat 113 (Desafio Modo Never)",
+      "body": "\n        <div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; line-height: 1.5;\">\n          <h2 style=\"color: #0284c7;\">\n            🔧 Serviço Externo Iniciado\n          </h2>\n          <p><strong>Serviço:</strong> Desafio Modo Never</p>\n          <p><strong>Apartamento:</strong> Flat 113</p>\n          <p><strong>Prestador:</strong> Empirical Worker (CPF: 11122233344)</p>\n          \n            <p><strong>Início:</strong> 21:12</p>\n            <p><strong>Previsão de Duração:</strong> 2h</p>\n            <div style=\"background-color: #f0f9ff; padding: 12px; border-left: 4px solid #0284c7; margin-top: 15px; border-radius: 4px;\">\n              ➡️ <strong>Ação para Recepção:</strong> Favor liberar o cartão de acesso para o prestador ao Flat 113.\n            </div>\n          \n          <hr style=\"border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;\" />\n          <p style=\"font-size: 12px; color: #64748b;\">Notificação enviada automaticamente pelo sistema CorpFlats Guest-Flow-Manager.</p>\n        </div>\n      ",
+      "status": "failed",
+      "metadata": {
+        "category": "service_order",
+        "serviceOrderId": "so_1790813551998_xe1iz",
+        "flatNumber": "113",
+        "flatId": 1,
+        "action": "start",
+        "hasAttachments": false,
+        "attachmentsCount": 0,
+        "attempts": 1,
+        "queuedAt": "2026-10-01T00:12:32.108Z",
+        "error": "SMTP não configurado no backend (credenciais de SMTP_USER/SMTP_PASS ausentes).",
+        "failedAt": "2026-10-01T00:12:32.200Z"
+      },
+      "created_at": "2026-10-01T00:12:32.108Z"
+    },
     {
       "id": "3f026949-a97e-406c-91b5-8b5a2542c4a7",
       "reservation_id": "0",
@@ -27996,6 +28548,186 @@
   ],
   "roomBlocks": [],
   "notifications": [
+    {
+      "id": 1787151090005,
+      "category": "service_order",
+      "title": "🔧 Serviço iniciado - Flat 907",
+      "message": "Verificação Elétrica Flat Limpo: Eletricista Pro no Flat 907",
+      "severity": "info",
+      "metadata": {
+        "serviceOrderId": "so_1790813554423_47g7b",
+        "flatId": 18,
+        "flatNumber": "907"
+      },
+      "targetUrl": "/servicos",
+      "read": false,
+      "createdAt": "2026-10-01T00:12:34.615Z"
+    },
+    {
+      "id": 1787151090004,
+      "category": "service_order",
+      "title": "✅ Serviço finalizado - Flat 113",
+      "message": "Reforma Geral do Piso: Roberto Piso no Flat 113",
+      "severity": "info",
+      "metadata": {
+        "serviceOrderId": "so_1790813553885_hn1oh",
+        "flatId": 1,
+        "flatNumber": "113"
+      },
+      "targetUrl": "/servicos",
+      "read": false,
+      "createdAt": "2026-10-01T00:12:34.235Z"
+    },
+    {
+      "id": 1787151090003,
+      "category": "service_order",
+      "title": "🔧 Serviço iniciado - Flat 113",
+      "message": "Reforma Geral do Piso: Roberto Piso no Flat 113",
+      "severity": "info",
+      "metadata": {
+        "serviceOrderId": "so_1790813553885_hn1oh",
+        "flatId": 1,
+        "flatNumber": "113"
+      },
+      "targetUrl": "/servicos",
+      "read": false,
+      "createdAt": "2026-10-01T00:12:34.028Z"
+    },
+    {
+      "id": 1787151090002,
+      "category": "service_order",
+      "title": "✅ Serviço finalizado - Flat 113",
+      "message": "Manutenção Hidráulica: Mário Encanador no Flat 113",
+      "severity": "info",
+      "metadata": {
+        "serviceOrderId": "so_1790813553383_57nrf",
+        "flatId": 1,
+        "flatNumber": "113"
+      },
+      "targetUrl": "/servicos",
+      "read": false,
+      "createdAt": "2026-10-01T00:12:33.706Z"
+    },
+    {
+      "id": 1787151090001,
+      "category": "service_order",
+      "title": "🔧 Serviço iniciado - Flat 113",
+      "message": "Manutenção Hidráulica: Mário Encanador no Flat 113",
+      "severity": "info",
+      "metadata": {
+        "serviceOrderId": "so_1790813553383_57nrf",
+        "flatId": 1,
+        "flatNumber": "113"
+      },
+      "targetUrl": "/servicos",
+      "read": false,
+      "createdAt": "2026-10-01T00:12:33.533Z"
+    },
+    {
+      "id": 1787151090000,
+      "category": "service_order",
+      "title": "🔧 Serviço iniciado - Flat 113",
+      "message": "Desafio Modo Always: Always Worker no Flat 113",
+      "severity": "info",
+      "metadata": {
+        "serviceOrderId": "so_1790813552946_sm8u9",
+        "flatId": 1,
+        "flatNumber": "113"
+      },
+      "targetUrl": "/servicos",
+      "read": false,
+      "createdAt": "2026-10-01T00:12:33.213Z"
+    },
+    {
+      "id": 1787151089999,
+      "category": "service_order",
+      "title": "🔧 Serviço iniciado - Flat 907",
+      "message": "Desafio Modo Always: Always Worker no Flat 907",
+      "severity": "info",
+      "metadata": {
+        "serviceOrderId": "so_1790813552946_sm8u9",
+        "flatId": 18,
+        "flatNumber": "907"
+      },
+      "targetUrl": "/servicos",
+      "read": false,
+      "createdAt": "2026-10-01T00:12:33.067Z"
+    },
+    {
+      "id": 1787151089998,
+      "category": "service_order",
+      "title": "🔧 Serviço iniciado - Flat 907",
+      "message": "Desafio Modo Priority Apenas Limpos: Solo Worker no Flat 907",
+      "severity": "info",
+      "metadata": {
+        "serviceOrderId": "so_1790813552689_pp3t3",
+        "flatId": 18,
+        "flatNumber": "907"
+      },
+      "targetUrl": "/servicos",
+      "read": false,
+      "createdAt": "2026-10-01T00:12:32.847Z"
+    },
+    {
+      "id": 1787151089997,
+      "category": "service_order",
+      "title": "🔧 Serviço iniciado - Flat 907",
+      "message": "Desafio Modo Priority Sequencial: Priority Worker no Flat 907",
+      "severity": "info",
+      "metadata": {
+        "serviceOrderId": "so_1790813552241_97hz2",
+        "flatId": 18,
+        "flatNumber": "907"
+      },
+      "targetUrl": "/servicos",
+      "read": false,
+      "createdAt": "2026-10-01T00:12:32.541Z"
+    },
+    {
+      "id": 1787151089996,
+      "category": "service_order",
+      "title": "✅ Serviço finalizado - Flat 113",
+      "message": "Desafio Modo Priority Sequencial: Priority Worker no Flat 113",
+      "severity": "info",
+      "metadata": {
+        "serviceOrderId": "so_1790813552241_97hz2",
+        "flatId": 1,
+        "flatNumber": "113"
+      },
+      "targetUrl": "/servicos",
+      "read": false,
+      "createdAt": "2026-10-01T00:12:32.425Z"
+    },
+    {
+      "id": 1787151089995,
+      "category": "service_order",
+      "title": "🔧 Serviço iniciado - Flat 113",
+      "message": "Desafio Modo Priority Sequencial: Priority Worker no Flat 113",
+      "severity": "info",
+      "metadata": {
+        "serviceOrderId": "so_1790813552241_97hz2",
+        "flatId": 1,
+        "flatNumber": "113"
+      },
+      "targetUrl": "/servicos",
+      "read": false,
+      "createdAt": "2026-10-01T00:12:32.320Z"
+    },
+    {
+      "id": 1787151089994,
+      "category": "service_order",
+      "title": "🔧 Serviço iniciado - Flat 113",
+      "message": "Desafio Modo Never: Empirical Worker no Flat 113",
+      "severity": "info",
+      "metadata": {
+        "serviceOrderId": "so_1790813551998_xe1iz",
+        "flatId": 1,
+        "flatNumber": "113"
+      },
+      "targetUrl": "/servicos",
+      "read": false,
+      "createdAt": "2026-10-01T00:12:32.128Z"
+    },
     {
       "id": 1787151089993,
       "category": "service_order",
@@ -28652,6 +29384,454 @@
     }
   ],
   "auditLogs": [
+    {
+      "id": "audit_1790575107631_4aobq1111111111111111111111111111111111",
+      "timestamp": "2026-10-01T00:12:34.614Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_SERVICE_ORDER",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "🔧 Serviço iniciado - Flat 907",
+        "message": "Verificação Elétrica Flat Limpo: Eletricista Pro no Flat 907",
+        "metadata": {
+          "serviceOrderId": "so_1790813554423_47g7b",
+          "flatId": 18,
+          "flatNumber": "907"
+        },
+        "targetUrl": "/servicos"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq111111111111111111111111111111111",
+      "timestamp": "2026-10-01T00:12:34.464Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "SERVICE_ORDER_CREATED",
+      "actor": {
+        "id": 1,
+        "name": "admin",
+        "role": "admin"
+      },
+      "details": {
+        "orderId": "so_1790813554423_47g7b",
+        "title": "Verificação Elétrica Flat Limpo",
+        "flatsCount": 1
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq11111111111111111111111111111111",
+      "timestamp": "2026-10-01T00:12:34.234Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_SERVICE_ORDER",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "✅ Serviço finalizado - Flat 113",
+        "message": "Reforma Geral do Piso: Roberto Piso no Flat 113",
+        "metadata": {
+          "serviceOrderId": "so_1790813553885_hn1oh",
+          "flatId": 1,
+          "flatNumber": "113"
+        },
+        "targetUrl": "/servicos"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq1111111111111111111111111111111",
+      "timestamp": "2026-10-01T00:12:34.027Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_SERVICE_ORDER",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "🔧 Serviço iniciado - Flat 113",
+        "message": "Reforma Geral do Piso: Roberto Piso no Flat 113",
+        "metadata": {
+          "serviceOrderId": "so_1790813553885_hn1oh",
+          "flatId": 1,
+          "flatNumber": "113"
+        },
+        "targetUrl": "/servicos"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq111111111111111111111111111111",
+      "timestamp": "2026-10-01T00:12:33.911Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "SERVICE_ORDER_CREATED",
+      "actor": {
+        "id": 1,
+        "name": "admin",
+        "role": "admin"
+      },
+      "details": {
+        "orderId": "so_1790813553885_hn1oh",
+        "title": "Reforma Geral do Piso",
+        "flatsCount": 1
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq11111111111111111111111111111",
+      "timestamp": "2026-10-01T00:12:33.705Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_SERVICE_ORDER",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "✅ Serviço finalizado - Flat 113",
+        "message": "Manutenção Hidráulica: Mário Encanador no Flat 113",
+        "metadata": {
+          "serviceOrderId": "so_1790813553383_57nrf",
+          "flatId": 1,
+          "flatNumber": "113"
+        },
+        "targetUrl": "/servicos"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq1111111111111111111111111111",
+      "timestamp": "2026-10-01T00:12:33.532Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_SERVICE_ORDER",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "🔧 Serviço iniciado - Flat 113",
+        "message": "Manutenção Hidráulica: Mário Encanador no Flat 113",
+        "metadata": {
+          "serviceOrderId": "so_1790813553383_57nrf",
+          "flatId": 1,
+          "flatNumber": "113"
+        },
+        "targetUrl": "/servicos"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq111111111111111111111111111",
+      "timestamp": "2026-10-01T00:12:33.420Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "SERVICE_ORDER_CREATED",
+      "actor": {
+        "id": 1,
+        "name": "admin",
+        "role": "admin"
+      },
+      "details": {
+        "orderId": "so_1790813553383_57nrf",
+        "title": "Manutenção Hidráulica",
+        "flatsCount": 1
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq11111111111111111111111111",
+      "timestamp": "2026-10-01T00:12:33.212Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_SERVICE_ORDER",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "🔧 Serviço iniciado - Flat 113",
+        "message": "Desafio Modo Always: Always Worker no Flat 113",
+        "metadata": {
+          "serviceOrderId": "so_1790813552946_sm8u9",
+          "flatId": 1,
+          "flatNumber": "113"
+        },
+        "targetUrl": "/servicos"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq1111111111111111111111111",
+      "timestamp": "2026-10-01T00:12:33.067Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_SERVICE_ORDER",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "🔧 Serviço iniciado - Flat 907",
+        "message": "Desafio Modo Always: Always Worker no Flat 907",
+        "metadata": {
+          "serviceOrderId": "so_1790813552946_sm8u9",
+          "flatId": 18,
+          "flatNumber": "907"
+        },
+        "targetUrl": "/servicos"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq111111111111111111111111",
+      "timestamp": "2026-10-01T00:12:32.980Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "SERVICE_ORDER_CREATED",
+      "actor": {
+        "id": 1,
+        "name": "admin",
+        "role": "admin"
+      },
+      "details": {
+        "orderId": "so_1790813552946_sm8u9",
+        "title": "Desafio Modo Always",
+        "flatsCount": 2
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq11111111111111111111111",
+      "timestamp": "2026-10-01T00:12:32.847Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_SERVICE_ORDER",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "🔧 Serviço iniciado - Flat 907",
+        "message": "Desafio Modo Priority Apenas Limpos: Solo Worker no Flat 907",
+        "metadata": {
+          "serviceOrderId": "so_1790813552689_pp3t3",
+          "flatId": 18,
+          "flatNumber": "907"
+        },
+        "targetUrl": "/servicos"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq1111111111111111111111",
+      "timestamp": "2026-10-01T00:12:32.719Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "SERVICE_ORDER_CREATED",
+      "actor": {
+        "id": 1,
+        "name": "admin",
+        "role": "admin"
+      },
+      "details": {
+        "orderId": "so_1790813552689_pp3t3",
+        "title": "Desafio Modo Priority Apenas Limpos",
+        "flatsCount": 1
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq111111111111111111111",
+      "timestamp": "2026-10-01T00:12:32.541Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_SERVICE_ORDER",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "🔧 Serviço iniciado - Flat 907",
+        "message": "Desafio Modo Priority Sequencial: Priority Worker no Flat 907",
+        "metadata": {
+          "serviceOrderId": "so_1790813552241_97hz2",
+          "flatId": 18,
+          "flatNumber": "907"
+        },
+        "targetUrl": "/servicos"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq11111111111111111111",
+      "timestamp": "2026-10-01T00:12:32.424Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_SERVICE_ORDER",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "✅ Serviço finalizado - Flat 113",
+        "message": "Desafio Modo Priority Sequencial: Priority Worker no Flat 113",
+        "metadata": {
+          "serviceOrderId": "so_1790813552241_97hz2",
+          "flatId": 1,
+          "flatNumber": "113"
+        },
+        "targetUrl": "/servicos"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq1111111111111111111",
+      "timestamp": "2026-10-01T00:12:32.319Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_SERVICE_ORDER",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "🔧 Serviço iniciado - Flat 113",
+        "message": "Desafio Modo Priority Sequencial: Priority Worker no Flat 113",
+        "metadata": {
+          "serviceOrderId": "so_1790813552241_97hz2",
+          "flatId": 1,
+          "flatNumber": "113"
+        },
+        "targetUrl": "/servicos"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq111111111111111111",
+      "timestamp": "2026-10-01T00:12:32.258Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "SERVICE_ORDER_CREATED",
+      "actor": {
+        "id": 1,
+        "name": "admin",
+        "role": "admin"
+      },
+      "details": {
+        "orderId": "so_1790813552241_97hz2",
+        "title": "Desafio Modo Priority Sequencial",
+        "flatsCount": 2
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq11111111111111111",
+      "timestamp": "2026-10-01T00:12:32.127Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "NOTIFICATION_SERVICE_ORDER",
+      "actor": {
+        "name": "Sistema",
+        "role": "system"
+      },
+      "details": {
+        "title": "🔧 Serviço iniciado - Flat 113",
+        "message": "Desafio Modo Never: Empirical Worker no Flat 113",
+        "metadata": {
+          "serviceOrderId": "so_1790813551998_xe1iz",
+          "flatId": 1,
+          "flatNumber": "113"
+        },
+        "targetUrl": "/servicos"
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq1111111111111111",
+      "timestamp": "2026-10-01T00:12:32.016Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "SERVICE_ORDER_CREATED",
+      "actor": {
+        "id": 1,
+        "name": "admin",
+        "role": "admin"
+      },
+      "details": {
+        "orderId": "so_1790813551998_xe1iz",
+        "title": "Desafio Modo Never",
+        "flatsCount": 2
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
+    {
+      "id": "audit_1790575107631_4aobq111111111111111",
+      "timestamp": "2026-09-30T23:48:27.239Z",
+      "level": "info",
+      "category": "cleaning",
+      "action": "SERVICE_ORDER_CREATED",
+      "actor": {
+        "id": 1,
+        "name": "admin",
+        "role": "admin"
+      },
+      "details": {
+        "orderId": "so_1790812107218_8vynh",
+        "title": "Desafio Challenger M2 Pintura",
+        "flatsCount": 2
+      },
+      "source": "server",
+      "ip": "",
+      "userAgent": ""
+    },
     {
       "id": "audit_1790575107631_4aobq11111111111111",
       "timestamp": "2026-09-30T22:55:20.414Z",
@@ -47968,7 +49148,7 @@
     "conciergeGroupName": "Checkout Flats",
     "conciergeMonitoringEnabled": true,
     "conciergeRequireKeywords": false,
-    "webhooksSyncedAt": "2026-09-30T22:55:20.197Z",
+    "webhooksSyncedAt": "2026-09-30T23:59:44.994Z",
     "googleReviewUrl": "https://share.google/LHu3541d5lhkdvbL2",
     "alertEmail": "millerpessanha@gmail.com",
     "alertEmailEnabled": true,
@@ -47981,7 +49161,53 @@
     "webhookReceivedUrl": "https://corpflats.onrender.com/api/whatsapp/webhook/received",
     "testAllowedPhones": "22988486446, 22999106204",
     "allowMaidsInTestMode": true,
-    "testModeOnly": true
+    "testModeOnly": true,
+    "aiAgent": {
+      "enabled": true,
+      "mode": "autonomous",
+      "agentName": "Sofia",
+      "agentRole": "Concierge Virtual CorpFlats",
+      "responseDelaySeconds": 3,
+      "offHoursStart": "18:00",
+      "offHoursEnd": "08:00",
+      "handoverKeywords": [
+        "humano",
+        "atendente",
+        "falar com pessoa",
+        "falar com atendente",
+        "gerente",
+        "recepcao",
+        "recepção",
+        "pessoa real",
+        "outro atendente",
+        "reclamar",
+        "reclamacao",
+        "reclamação",
+        "cancelar reserva",
+        "cancelamento",
+        "falar com alguém",
+        "suporte humano",
+        "atendimento humano"
+      ],
+      "systemPrompt": "Você é a Sofia, concierge virtual inteligente e acolhedora dos flats de alto padrão da CorpFlats em Campos dos Goytacazes/RJ.\nSeu objetivo é encantar os hóspedes, responder dúvidas com precisão e fornecer assistência ágil e atenciosa.\n\nDIRETRIZES DE ATENDIMENTO:\n1. Responda em português brasileiro de forma acolhedora, prestativa e concisa (ideal para leitura dinâmica em telas de celular no WhatsApp).\n2. Use emojis amigáveis com moderação (🏨, ✨, 🔑, ☕, 🚗, 🕒, 📍).\n3. Seja sempre fidedigna às informações fornecidas no CONTEXTO DO HÓSPEDE e na BASE DE CONHECIMENTO. NUNCA invente números de apartamentos, códigos ou senhas que não constem nos dados oficiais.\n4. Se o hóspede solicitar expressamente falar com um atendente humano, transborde o atendimento com gentileza informando que a equipe da recepção assumirá a conversa em instantes.\n5. Para hóspedes que chegam hoje: confira o status de limpeza informado no contexto. Se estiver \"LIMPO E LIBERADO\", comemore que o apartamento já está pronto para recebê-lo! Se estiver \"EM PREPARAÇÃO\", informe que a governança está caprichando na higienização para liberar o flat até o horário oficial das 14:00 (ou antes se finalizado).\n6. Para novos clientes / sem reserva: apresente a CorpFlats como a melhor opção de flats executivos mobiliados e climatizados em Campos dos Goytacazes (Av. Pelinca, melhor ponto da cidade), convide a reservar pelo site oficial e tire dúvidas de diárias e comodidades.",
+      "knowledgeBase": {
+        "address": "Av. Pelinca, 100 - Parque Pelinca, Campos dos Goytacazes - RJ (Excelente localização, próximo a restaurantes, bancos e comércio)",
+        "checkinTime": "14:00 (Check-in padrão a partir das 14h)",
+        "checkoutTime": "12:00 (Check-out padrão até às 12h)",
+        "earlyCheckinPolicy": "Entrada antecipada a partir das 10:00 é um benefício gratuito para reservas diretas (Site ou WhatsApp), ESTRITAMENTE MEDIANTE DISPONIBILIDADE de limpeza prévia do flat pela governança.",
+        "lateCheckoutPolicy": "Saída após as 12:00 deve ser combinada previamente com a recepção e depende de disponibilidade de outros hóspedes.",
+        "wifiNetwork": "CorpFlats-Hospedes",
+        "wifiPassword": "corpflats2026",
+        "breakfastInfo": "O café da manhã é servido das 06:30 às 10:00. Hóspedes com café incluso desfrutam de buffet completo; hóspedes sem café podem solicitar inclusão avulsa ou delivery na recepção.",
+        "garageInfo": "Estacionamento privativo com vaga coberta disponível. É necessário informar placa, modelo e cor do veículo com antecedência para cadastro e autorização na portaria.",
+        "petPolicy": "Aceitamos pets de pequeno porte em apartamentos selecionados mediante aviso prévio e taxa de higienização diferenciada.",
+        "smokingPolicy": "Ambiente 100% livre de fumo! É estritamente proibido fumar dentro dos apartamentos e nas áreas fechadas do edifício.",
+        "amenities": "Apartamentos completos com cama box confortável, ar-condicionado Split, Smart TV, Wi-Fi veloz, cozinha equipada com micro-ondas e frigobar, enxoval completo de hotelaria e ducha aquecida.",
+        "directBookingBenefits": "Melhor tarifa garantida sem taxas de intermediários, prioridade de early check-in a partir das 10h (quando disponível) e suporte direto com a nossa administração.",
+        "receptionPhone": "5522998505276",
+        "siteUrl": "https://corpflats.onrender.com"
+      }
+    }
   },
   "whatsappTemplates": [
     {
@@ -49075,6 +50301,46 @@
   "zapiConnectionLogs": [],
   "conciergeWhatsappLogs": [],
   "whatsappConversations": [
+    {
+      "id": "5527998221965",
+      "phone": "5527998221965",
+      "formattedPhone": "+55 (27) 99822-1965",
+      "name": "Gilberto",
+      "avatarUrl": "",
+      "isGroup": false,
+      "unreadCount": 0,
+      "pinned": false,
+      "reservationCode": "RES-605-0320",
+      "flatNumber": "605",
+      "checkinDate": "2026-09-30",
+      "checkoutDate": "2026-10-01",
+      "status": "confirmada",
+      "paymentStatus": "pago_total",
+      "totalAmount": 230,
+      "lastMessage": null,
+      "updatedAt": "2026-09-30T18:43:30.164Z",
+      "messages": []
+    },
+    {
+      "id": "5521981090085",
+      "phone": "5521981090085",
+      "formattedPhone": "+55 (21) 98109-0085",
+      "name": "Adriana Alves da Silva",
+      "avatarUrl": "",
+      "isGroup": false,
+      "unreadCount": 0,
+      "pinned": false,
+      "reservationCode": "RES-712-0318",
+      "flatNumber": "712",
+      "checkinDate": "2026-09-30",
+      "checkoutDate": "2026-10-01",
+      "status": "confirmada",
+      "paymentStatus": "pago_total",
+      "totalAmount": 230,
+      "lastMessage": null,
+      "updatedAt": "2026-09-30T18:38:37.265Z",
+      "messages": []
+    },
     {
       "id": "5522997544507",
       "phone": "5522997544507",

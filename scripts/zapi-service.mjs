@@ -14,6 +14,12 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { getSmtpConfig, createTransporter } from "./mail-service.mjs";
+import {
+  getWhatsAppAiConfig,
+  generateAiWhatsAppResponse,
+  processAiInboundMessage,
+  DEFAULT_AI_CONFIG
+} from "./whatsapp-ai-service.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -3920,6 +3926,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       db.conciergeWhatsappLogs = [];
     }
 
+    getWhatsAppAiConfig(db);
+
     if (!db.whatsappTemplates || db.whatsappTemplates.length === 0) {
       db.whatsappTemplates = DEFAULT_WHATSAPP_TEMPLATES;
     } else {
@@ -5271,6 +5279,21 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       }
     }
 
+    // 5. Agente de IA para WhatsApp (Atuação Híbrida / Resposta Autônoma / Transbordo Humano)
+    if (!incomingInfo.fromMe && !incomingInfo.isGroup && incomingInfo.text && cleanTarget) {
+      processAiInboundMessage({
+        db,
+        incomingInfo,
+        cleanTarget,
+        saveDatabase,
+        createNotification,
+        sendZapiMessage,
+        appendMessageFn: appendMessageToConversation
+      }).catch(aiErr => {
+        console.warn("[WhatsApp AI Processing Error]:", aiErr.message);
+      });
+    }
+
     res.status(200).json({ success: true, result, chatUpdated: Boolean(updatedConv) });
   });
 
@@ -5643,6 +5666,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       groupId: isGroup ? cleanPhone : null
     });
 
+    if (updatedConv) {
+      updatedConv.aiPaused = true;
+      updatedConv.aiPausedAt = nowIso;
+      updatedConv.aiPausedReason = "operator_manual_reply";
+    }
+
     if (!db.whatsappHistory) db.whatsappHistory = [];
     db.whatsappHistory.push({
       id: `chat_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
@@ -5824,6 +5853,155 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       importedCount,
       totalConversations: db.whatsappConversations.length
     });
+  });
+
+  // ─── Agente de IA para WhatsApp Endpoints ─────────────────────────────────
+
+  // 1. Obter Configurações do Agente de IA
+  app.get("/api/whatsapp/ai-config", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const aiConfig = getWhatsAppAiConfig(db);
+    const geminiKey = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY;
+    res.json({
+      success: true,
+      aiConfig,
+      geminiConfigured: Boolean(geminiKey),
+      geminiModel: db.settings?.geminiModel || "gemini-2.0-flash",
+      testModeOnly: db.zapiConfig?.testModeOnly ?? true,
+      testAllowedPhones: db.zapiConfig?.testAllowedPhones || ""
+    });
+  });
+
+  // 2. Atualizar Configurações do Agente de IA
+  app.post("/api/whatsapp/ai-config", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const current = getWhatsAppAiConfig(db);
+    const updates = req.body || {};
+
+    if (updates.enabled !== undefined) current.enabled = Boolean(updates.enabled);
+    if (updates.mode) current.mode = updates.mode;
+    if (updates.agentName) current.agentName = String(updates.agentName).trim();
+    if (updates.agentRole) current.agentRole = String(updates.agentRole).trim();
+    if (updates.responseDelaySeconds !== undefined) current.responseDelaySeconds = Number(updates.responseDelaySeconds) || 3;
+    if (updates.offHoursStart) current.offHoursStart = String(updates.offHoursStart);
+    if (updates.offHoursEnd) current.offHoursEnd = String(updates.offHoursEnd);
+    if (Array.isArray(updates.handoverKeywords)) current.handoverKeywords = updates.handoverKeywords;
+    if (updates.systemPrompt) current.systemPrompt = String(updates.systemPrompt);
+    if (updates.knowledgeBase && typeof updates.knowledgeBase === "object") {
+      current.knowledgeBase = { ...current.knowledgeBase, ...updates.knowledgeBase };
+    }
+
+    if (updates.testModeOnly !== undefined && db.zapiConfig) {
+      db.zapiConfig.testModeOnly = Boolean(updates.testModeOnly);
+    }
+    if (updates.testAllowedPhones !== undefined && db.zapiConfig) {
+      db.zapiConfig.testAllowedPhones = String(updates.testAllowedPhones);
+    }
+
+    saveDatabase();
+    res.json({ success: true, aiConfig: current });
+  });
+
+  // 3. Simular resposta do Agente de IA (para testes no painel)
+  app.post("/api/whatsapp/ai-simulate", async (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const { message, phone = "22998505276" } = req.body;
+    if (!message || typeof message !== "string") {
+      return res.status(400).json({ error: "Mensagem obrigatória para simulação." });
+    }
+
+    try {
+      const result = await generateAiWhatsAppResponse({
+        db,
+        phone,
+        messageText: message,
+        history: [],
+        isCopilot: true
+      });
+      res.json({
+        success: true,
+        replyText: result.replyText,
+        guestContext: result.guestContext,
+        shouldHandover: result.shouldHandover,
+        matchedKeyword: result.matchedKeyword,
+        source: result.source,
+        modelUsed: result.modelUsed
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 4. Alternar Ativação/Pausa da IA para uma conversa específica (/api/whatsapp/chat/:phone/ai-toggle)
+  app.post("/api/whatsapp/chat/:phone/ai-toggle", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const rawPhone = String(req.params.phone || "");
+    const cleanPhone = cleanWhatsAppPhone(rawPhone);
+
+    const conv = (db.whatsappConversations || []).find(c => {
+      const p = cleanWhatsAppPhone(c.phone);
+      return p && (p.endsWith(cleanPhone.slice(-8)) || cleanPhone.endsWith(p.slice(-8)));
+    });
+
+    if (!conv) {
+      return res.status(404).json({ error: "Conversa não encontrada." });
+    }
+
+    const currentPaused = Boolean(conv.aiPaused);
+    const newPaused = req.body.aiPaused !== undefined ? Boolean(req.body.aiPaused) : !currentPaused;
+
+    conv.aiPaused = newPaused;
+    conv.aiPausedAt = newPaused ? new Date().toISOString() : null;
+    conv.aiPausedReason = newPaused ? (req.body.reason || "operator_toggle") : null;
+
+    saveDatabase();
+    res.json({
+      success: true,
+      phone: cleanPhone,
+      aiPaused: conv.aiPaused,
+      aiPausedReason: conv.aiPausedReason
+    });
+  });
+
+  // 5. Sugerir resposta com IA (Copiloto) para o operador (/api/whatsapp/chat/:phone/ai-suggest)
+  app.post("/api/whatsapp/chat/:phone/ai-suggest", async (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const rawPhone = String(req.params.phone || "");
+    const cleanPhone = cleanWhatsAppPhone(rawPhone);
+
+    const conv = (db.whatsappConversations || []).find(c => {
+      const p = cleanWhatsAppPhone(c.phone);
+      return p && (p.endsWith(cleanPhone.slice(-8)) || cleanPhone.endsWith(p.slice(-8)));
+    });
+
+    const lastIncoming = (conv?.messages || []).slice().reverse().find(m => !m.fromMe);
+    const messageText = req.body.message || lastIncoming?.text || "Olá, tudo bem?";
+
+    try {
+      const result = await generateAiWhatsAppResponse({
+        db,
+        phone: cleanPhone,
+        messageText,
+        history: conv?.messages || [],
+        isCopilot: true
+      });
+
+      res.json({
+        success: true,
+        suggestion: result.replyText,
+        guestContext: result.guestContext,
+        shouldHandover: result.shouldHandover,
+        source: result.source,
+        modelUsed: result.modelUsed
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // Auto-sincronização de webhooks e notifySentByMe na inicialização

@@ -58,4 +58,10 @@ artifacts/api-server/uploads/fnrh_documents/*
 scratch/
 data/backups/database_backup_post_recovery_*.json
 
+# Isolated test databases
+data/test-database.json
+test-database.json
+data/*.test.json
+
+
 
