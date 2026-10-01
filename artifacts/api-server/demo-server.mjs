@@ -25512,9 +25512,11 @@ const AUTO_CATEGORY_RULES = [
   // ── LIMPEZA (complemento) ─────────────────────────────────────────────────
   { cats: ["Limpeza"], kw: ["saco de lixo","saco lixo","pano de chao","vassoura","rodo","balde","esponja","pano multiuso","luva de limpeza","esfregao","mop","recolhedor","pa de lixo","flanela","pano de pó","pano de po","limpa vidro","tira pó","tira po","desodorizador","odorizador","aromatizador de ambientes"] },
   // ── GOVERNANÇA / UTILIDADES ───────────────────────────────────────────────
-  { cats: ["Governança"], kw: ["lampada","pilha","bateria","cheirinho","aromatizador","inseticida","repelente","vela","fosforo","fita","durex","tesoura","elastico","clipe","grampo","pino","parafuso","pregador","clips de roupa","hastes de bambu","saco de vácuo","saco de vacuo"] },
+  { cats: ["Governança"], kw: ["lampada","pilha","bateria","cheirinho","aromatizador","inseticida","repelente","vela","fosforo","fita","durex","tesoura","elastico","clipe","grampo","pino","parafuso","pregador","clips de roupa","hastes de bambu","saco de vacuo"] },
   // ── DESCARTÁVEIS ──────────────────────────────────────────────────────────
   { cats: ["Descartáveis"], kw: ["copo descartavel","prato descartavel","talheres descartaveis","garfo descartavel","faca descartavel","colher descartavel","canudo","palito de dente","palito","toalha de papel","guardanapo","papel toalha","papel aluminio","papel manteiga","papel filme","saco plastico","saco zip","ziplock","sacola","sacolinha","embalagem","pote descartavel","marmita","isopor","bandeja"] },
+  // ── ELETRÔNICOS / ELETRODOMÉSTICOS ────────────────────────────────────────
+  { cats: ["Eletrônicos"], kw: ["tv","televisao","televisão","smart tv","monitor","notebook","laptop","computador","tablet","celular","smartphone","ipad","iphone","samsung","carregador","cabo usb","cabo hdmi","fone","fone de ouvido","headset","caixa de som","bluetooth","mouse","teclado","pendrive","hd externo","ssd","roteador","wifi","controle remoto","pilha recarregavel","chromecast","firestick","alexa","echo","google home","ventilador","ar condicionado","ar-condicionado","aquecedor","umidificador","purificador de ar","liquidificador","batedeira","mixer","processador","cafeteira","torradeira","sanduicheira","grill","microondas","forno eletrico","panela eletrica","air fryer","airfryer","fritadeira","aspirador","ferro de passar","secador","chapinha","prancha"] },
 ];
 
 // Categorização por keywords (fallback)
@@ -25534,7 +25536,31 @@ function autoCategorizeRules(name) {
 }
 
 // Categorização principal com Gemini AI + fallback para keywords
-const ALL_CATEGORIES = ["Carnes","Frios","Laticínios","Padaria","Bebidas","Secos & Grãos","Hortifrúti","Temperos","Mercearia","Conservas","Congelados","Café da Manhã","Limpeza","Higiene","Governança","Descartáveis","Geral"];
+const ALL_CATEGORIES = ["Carnes","Frios","Laticínios","Padaria","Bebidas","Secos & Grãos","Hortifrúti","Temperos","Mercearia","Conservas","Congelados","Café da Manhã","Limpeza","Higiene","Governança","Descartáveis","Eletrônicos","Geral"];
+
+// Tenta chamar Gemini com um método de auth, retorna resposta ou null
+async function callGemini(prompt, apiKey, method) {
+  const baseUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
+  const url = method === "key" ? `${baseUrl}?key=${apiKey}` : baseUrl;
+  const headers = { "Content-Type": "application/json" };
+  if (method === "bearer") headers["Authorization"] = `Bearer ${apiKey}`;
+
+  const resp = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0, maxOutputTokens: 100 },
+    }),
+  });
+
+  if (!resp.ok) {
+    const errBody = await resp.text().catch(() => "");
+    console.warn(`[AI] ${method} auth failed: HTTP ${resp.status} — ${errBody.slice(0, 150)}`);
+    return null;
+  }
+  return resp.json();
+}
 
 async function autoCategorize(name) {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -25551,44 +25577,21 @@ Regras:
 - Se não souber, use ["Geral"]
 - Retorne SOMENTE o array JSON, sem texto extra, sem markdown`;
 
-    // Detecta formato da chave:
-    // "AIza..." → API Key padrão (query param ?key=)
-    // "AQ...." ou outro → OAuth2 access token (header Authorization: Bearer)
-    const isApiKey = /^AIza/i.test(apiKey);
-    const url = isApiKey
-      ? `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`
-      : `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent`;
+    // Tenta ?key= primeiro, depois Bearer — cobre todos os formatos de chave
+    let data = await callGemini(prompt, apiKey, "key");
+    if (!data) data = await callGemini(prompt, apiKey, "bearer");
+    if (!data) throw new Error("Both auth methods failed");
 
-    const headers = { "Content-Type": "application/json" };
-    if (!isApiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-
-    const resp = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0, maxOutputTokens: 100 },
-      }),
-    });
-
-    if (!resp.ok) {
-      const errBody = await resp.text().catch(() => "");
-      throw new Error(`Gemini HTTP ${resp.status}: ${errBody.slice(0, 200)}`);
-    }
-    const data = await resp.json();
     const text = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
 
-    // Extrai o array JSON da resposta
     const match = text.match(/\[[\s\S]*?\]/);
     if (!match) throw new Error(`No JSON array in response: "${text.slice(0, 100)}"`);
     const cats = JSON.parse(match[0]);
     if (!Array.isArray(cats) || cats.length === 0) throw new Error("Empty categories");
 
-    // Valida e filtra apenas categorias conhecidas
     const valid = cats.filter(c => ALL_CATEGORIES.includes(c));
     if (valid.length === 0) throw new Error(`No valid categories. Got: ${JSON.stringify(cats)}`);
 
-    // Adiciona super-categoria "Alimentos" se necessário
     if (valid.some(c => FOOD_SUBCATEGORIES.has(c))) valid.push("Alimentos");
 
     const result = JSON.stringify([...new Set(valid)]);
@@ -25741,6 +25744,46 @@ app.post("/api/shopping-list/recategorize", async (req, res) => {
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }
+});
+
+// GET /api/shopping-list/ai-test — diagnóstico da conexão com Gemini
+app.get("/api/shopping-list/ai-test", async (req, res) => {
+  const apiKey = process.env.GEMINI_API_KEY;
+  const testProduct = req.query.product || "queijo minas frescal";
+  const results = {
+    hasApiKey: !!apiKey,
+    keyPrefix: apiKey ? apiKey.slice(0, 6) + "..." : null,
+    keyLength: apiKey ? apiKey.length : 0,
+    testProduct,
+    keyMethod: null,
+    bearerMethod: null,
+    finalResult: null,
+    fallbackResult: autoCategorizeRules(testProduct),
+  };
+
+  if (!apiKey) {
+    results.error = "GEMINI_API_KEY not set";
+    return res.json(results);
+  }
+
+  // Testa ?key=
+  try {
+    const r = await callGemini(`Responda apenas: ["teste"]`, apiKey, "key");
+    results.keyMethod = r ? "OK" : "FAILED";
+  } catch (e) { results.keyMethod = `ERROR: ${e.message}`; }
+
+  // Testa Bearer
+  try {
+    const r = await callGemini(`Responda apenas: ["teste"]`, apiKey, "bearer");
+    results.bearerMethod = r ? "OK" : "FAILED";
+  } catch (e) { results.bearerMethod = `ERROR: ${e.message}`; }
+
+  // Testa categorização real
+  try {
+    results.finalResult = await autoCategorize(testProduct);
+  } catch (e) { results.finalResult = `ERROR: ${e.message}`; }
+
+  return res.json(results);
 });
 
 // GET /api/shopping-list

@@ -73,6 +73,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   "Higiene":         "text-pink-700 bg-pink-500/10 border-pink-500/30",
   "Governança":      "text-purple-700 bg-purple-500/10 border-purple-500/30",
   "Descartáveis":    "text-rose-700 bg-rose-500/10 border-rose-500/30",
+  "Eletrônicos":     "text-gray-700 bg-gray-500/10 border-gray-500/30",
   "Geral":           "text-slate-700 bg-slate-500/10 border-slate-500/30",
 }
 
