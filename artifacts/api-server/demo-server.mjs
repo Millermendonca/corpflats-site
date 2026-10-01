@@ -25480,21 +25480,40 @@ bootstrapShoppingTables();
 const FOOD_SUBCATEGORIES = new Set(["Carnes","Frios","Laticínios","Padaria","Bebidas","Secos & Grãos","Hortifrúti","Temperos","Mercearia","Conservas","Congelados","Café da Manhã"]);
 const AUTO_CATEGORY_RULES = [
   { cats: ["Carnes"],           kw: ["carne","frango","peixe","file","file de","linguica","salsicha","bacon","hamburguer","alcatra","costela","bife","camarao","fruto do mar","tilapia","salmao","atum fresco","picanha","maminha","patinho","pernil","pato","chester"] },
-  { cats: ["Frios"],            kw: ["presunto","mortadela","salame","salaminho","peito de peru","blanquet","copa","lombo defumado","pastrami","mucarela","mussarela","prato"] },
-  { cats: ["Laticínios"],       kw: ["leite","creme de leite","nata","leite condensado","iogurte","queijo","ricota","cottage","requeijao","manteiga","margarina","ghee","cream cheese"] },
-  { cats: ["Padaria"],          kw: ["pao","bolo","biscoito","bolacha","croissant","torrada","rosca","broa","wafer","cookie","muffin","cupcake","baguete"] },
-  { cats: ["Bebidas"],          kw: ["agua","suco","nectar","refrigerante","cerveja","vinho","energetico","isotonico","coca","pepsi","guarana","sprite","fanta","cha","kombucha","gin","vodka","whisky","sake","tonica","limonada","caldo de cana","agua de coco"] },
-  { cats: ["Secos & Grãos"],    kw: ["arroz","feijao","macarrao","espaguete","farinha","amido","fuba","aveia","granola","lentilha","grao de bico","quinoa","cuscuz","canjica","tapioca","polenta","flocao","triguilho","chia"] },
-  { cats: ["Temperos"],         kw: ["sal","pimenta","cominho","colorau","acafrao","louro","oregano","manjericao","caldo","shoyu","molho de soja","vinagre","tempero","chimichurri","páprica","paprica","gengibre","canela","noz moscada"] },
-  { cats: ["Mercearia"],        kw: ["acucar","azeite","oleo","molho","extrato de tomate","ketchup","maionese","mostarda","geleia","mel","nutella","chocolate","cafe","nescafe","cappuccino","achocolatado","leite em po","proteina"] },
-  { cats: ["Hortifrúti"],       kw: ["alface","tomate","cebola","batata","cenoura","abobrinha","pimentao","pepino","brocolis","couve","espinafre","banana","maca","laranja","limao","uva","melao","manga","abacaxi","morango","mamao","abacate","coco","verdura","legume","fruta","salada","rucula","agriao","berinjela","chuchu","inhame","mandioca","macaxeira","jiló"] },
-  { cats: ["Conservas"],        kw: ["atum","sardinha","ervilha enlatada","azeitona","palmito","cogumelo","picles","champignon","carne seca","bacalhau","milho enlatado"] },
-  { cats: ["Congelados"],       kw: ["sorvete","lasanha congelada","pizza congelada","nugget","empanado","hamburguer congelado","pao de queijo congelado","batata frita congelada"] },
-  { cats: ["Café da Manhã"],    kw: ["cafe da manha","nescau","milo","granola cafe","torrada cafe"] },
-  { cats: ["Limpeza"],          kw: ["detergente","sabao em po","desinfetante","cloro","alcool","cif","x14","veja","ajax","multiuso","desengordurante","amaciante","agua sanitaria","alvejante","removedor","limpa forno","limpa pedra","tira manchas","qboa","soda caustica","flash","bom bril","bombril","palha de aco"] },
-  { cats: ["Higiene"],          kw: ["xampu","shampoo","sabonete","pasta de dente","creme dental","escova de dente","fio dental","absorvente","desodorante","papel higienico","fralda","algodao","cotonete","lamina","barbear","hidratante","protetor solar","condicionador","creme","loção","locao","enxaguante","antisseptico","curativo","band aid","luva descartavel"] },
-  { cats: ["Limpeza"],          kw: ["saco de lixo","saco lixo","pano de chao","vassoura","rodo","balde","esponja","pano multiuso","luva de limpeza","esfregao","mop","recolhedor","pa de lixo"] },
-  { cats: ["Governança"],       kw: ["lampada","pilha","bateria","pano de prato","pano","cheirinho","aromatizador","inseticida","repelente","vela","fosforo","fita","durex","tesoura","elástico","clipe","grampo"] },
+  // ── CARNES ────────────────────────────────────────────────────────────────
+  { cats: ["Carnes"], kw: ["carne","frango","peixe","file de","linguica","salsicha","bacon","hamburguer","alcatra","costela","bife","camarao","fruto do mar","tilapia","salmao","picanha","maminha","patinho","pernil","chester","fraldinha","acem","coxao","músculo","musculo","cupim","iscas","medalhao","carne de sol","charque","jerked beef","carré","corte bovino","suíno","suino","porco"] },
+  // ── FRIOS ─────────────────────────────────────────────────────────────────
+  { cats: ["Frios","Laticínios"], kw: ["presunto","mortadela","salame","salaminho","peito de peru","blanquet","copa","lombo defumado","pastrami","frescal","parmesao","parmesão","gruyere","gorgonzola","provolone","brie","camembert","coalho","mucarela","mussarela","muçarela","catupiry","cream cheese","boursin","emental"] },
+  // ── LATICÍNIOS ────────────────────────────────────────────────────────────
+  { cats: ["Laticínios"], kw: ["leite","creme de leite","nata","leite condensado","iogurte","queijo","ricota","cottage","requeijao","requeijão","manteiga","margarina","ghee","chantilly","creme fresco","buttermilk","kefir","skyr"] },
+  // ── PADARIA ───────────────────────────────────────────────────────────────
+  { cats: ["Padaria"], kw: ["pao","bolo","biscoito","bolacha","croissant","torrada","rosca","broa","wafer","cookie","muffin","cupcake","baguete","bisnaguinha","bisnaga","paozinho","pao de forma","pão de queijo","pao de queijo","crepe","panqueca","wrap"] },
+  // ── BEBIDAS ───────────────────────────────────────────────────────────────
+  { cats: ["Bebidas"], kw: ["agua","suco","nectar","refrigerante","cerveja","vinho","energetico","isotonico","coca","pepsi","guarana","sprite","fanta","cha pronto","kombucha","gin","vodka","whisky","sake","tonica","limonada","caldo de cana","agua de coco","espumante","prosecco","caipirinha","drinque","lager","ale","stout","porter","weiss","pilsen"] },
+  // ── SECOS & GRÃOS ─────────────────────────────────────────────────────────
+  { cats: ["Secos & Grãos"], kw: ["arroz","feijao","macarrao","espaguete","farinha","amido","fuba","aveia","granola","lentilha","grao de bico","quinoa","cuscuz","canjica","tapioca","polenta","flocao","triguilho","chia","centeio","trigo","trigo sarraceno","flocos de milho","cereal matinal","corn flakes","cream cracker","grão"] },
+  // ── TEMPEROS ──────────────────────────────────────────────────────────────
+  { cats: ["Temperos"], kw: ["sal","pimenta","cominho","colorau","louro","oregano","manjericao","caldo","shoyu","molho de soja","vinagre","tempero","chimichurri","paprica","gengibre","canela","noz moscada","curcuma","acafrao","ervas","curry","bicarbonato","fermento biol","fermento quimico","extrato","baunilha","glutamato"] },
+  // ── MERCEARIA ─────────────────────────────────────────────────────────────
+  { cats: ["Mercearia"], kw: ["acucar","azeite","oleo","ketchup","maionese","mostarda","geleia","mel","nutella","chocolate","cafe","nescafe","cappuccino","achocolatado","leite em po","proteina","manteiga de amendoim","pasta de amendoim","amendoim","castanha","nozes","ameixa seca","tâmara","damasco","uva passa","granola bar","barra de cereal","achocolatado","mistura para bolo","preparo","massa","molho","catchup"] },
+  // ── HORTIFRÚTI ────────────────────────────────────────────────────────────
+  { cats: ["Hortifrúti"], kw: ["alface","tomate","cebola","batata","cenoura","abobrinha","pimentao","pepino","brocolis","couve","espinafre","banana","maca","laranja","limao","uva","melao","manga","abacaxi","morango","mamao","abacate","coco","verdura","legume","fruta","salada","rucula","agriao","berinjela","chuchu","inhame","mandioca","macaxeira","jilo","rabanete","nabo","salsao","salsinha","cheiro-verde","cheiro verde","cebolinha","coentro","manjericao fresco","hortelã","beterraba","milho verde","vagem","quiabo","maxixe","pimenta fresca","acelga","repolho","gengibre fresco","alho","alho poro","alho-poro","limao siciliano","kiwi","pera","pessego","nectarina","maracuja","caju","goiaba","jabuticaba","pitanga","framboesa","mirtilo","cranberry","romã","tangerina","mexerica","poncã","laranja lima","laranja bahia","acerola","cupuacu","graviola","amora"] },
+  // ── CONSERVAS ─────────────────────────────────────────────────────────────
+  { cats: ["Conservas"], kw: ["atum em lata","sardinha em lata","ervilha enlatada","azeitona","palmito","cogumelo","picles","champignon","carne seca","bacalhau","milho enlatado","seleta","feijao enlatado","milho em lata","atum","sardinha"] },
+  // ── CONGELADOS ────────────────────────────────────────────────────────────
+  { cats: ["Congelados"], kw: ["sorvete","lasanha congelada","pizza congelada","nugget","empanado","hamburguer congelado","pao de queijo congelado","batata frita congelada","picolé","picole","gelado","frango congelado","carne congelada","peixe congelado","camarao congelado","legumes congelados"] },
+  // ── CAFÉ DA MANHÃ ─────────────────────────────────────────────────────────
+  { cats: ["Café da Manhã"], kw: ["nescau","milo","achocolatado em po","cafe soluvel","cafe instantaneo","capsula nespresso","dolce gusto","tres coracoes","pilao","melitta"] },
+  // ── LIMPEZA ───────────────────────────────────────────────────────────────
+  { cats: ["Limpeza"], kw: ["detergente","sabao em po","sabao barra","sabao liquido","desinfetante","cloro","alcool em gel","alcool liquido","cif","x14","veja","ajax","omo","ariel","bold","downy","comfort","ace","flash","qboa","multiuso","desengordurante","amaciante","agua sanitaria","alvejante","removedor","limpa forno","limpa pedra","tira manchas","soda caustica","bom bril","bombril","palha de aco","lava roupas","lava louça","lava-louça","lava louças","tira graxo","eliminador de odor","purificador","neutralizador","desentupidor","solvente","thinner","aguarras","sabao de barra","sabao de coco"] },
+  // ── HIGIENE ───────────────────────────────────────────────────────────────
+  { cats: ["Higiene"], kw: ["xampu","shampoo","sabonete","pasta de dente","creme dental","escova de dente","fio dental","absorvente","desodorante","papel higienico","fralda","algodao","cotonete","lamina de barbear","aparelho de barbear","hidratante","protetor solar","condicionador","loção corporal","locao corporal","enxaguante bucal","antisseptico","curativo","band aid","luva descartavel","mascara facial","creme de barbear","espuma de barbear","demaquilante","toner","serum","vitamina c","esfoliante","sabonete liquido","gel de banho","body wash","colonia","perfume","fixador","laca","gel cabelo","pomada capilar","dry shampoo","cha de hamamelis"] },
+  // ── LIMPEZA (complemento) ─────────────────────────────────────────────────
+  { cats: ["Limpeza"], kw: ["saco de lixo","saco lixo","pano de chao","vassoura","rodo","balde","esponja","pano multiuso","luva de limpeza","esfregao","mop","recolhedor","pa de lixo","flanela","pano de pó","pano de po","limpa vidro","tira pó","tira po","desodorizador","odorizador","aromatizador de ambientes"] },
+  // ── GOVERNANÇA / UTILIDADES ───────────────────────────────────────────────
+  { cats: ["Governança"], kw: ["lampada","pilha","bateria","cheirinho","aromatizador","inseticida","repelente","vela","fosforo","fita","durex","tesoura","elastico","clipe","grampo","pino","parafuso","pregador","clips de roupa","hastes de bambu","saco de vácuo","saco de vacuo"] },
+  // ── DESCARTÁVEIS ──────────────────────────────────────────────────────────
+  { cats: ["Descartáveis"], kw: ["copo descartavel","prato descartavel","talheres descartaveis","garfo descartavel","faca descartavel","colher descartavel","canudo","palito de dente","palito","toalha de papel","guardanapo","papel toalha","papel aluminio","papel manteiga","papel filme","saco plastico","saco zip","ziplock","sacola","sacolinha","embalagem","pote descartavel","marmita","isopor","bandeja"] },
 ];
 
 function autoCategorize(name) {
@@ -25502,15 +25521,38 @@ function autoCategorize(name) {
   const found = new Set();
   for (const { cats, kw } of AUTO_CATEGORY_RULES) {
     for (const k of kw) {
-      if (n.includes(k)) { cats.forEach(c => found.add(c)); break; }
+      // Normaliza a keyword também antes de comparar
+      const kn = k.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      if (n.includes(kn)) { cats.forEach(c => found.add(c)); break; }
     }
   }
-  // Adiciona super-categoria "Alimentos" para qualquer item de comida/bebida
+  // Super-categoria "Alimentos" para qualquer item alimentar
   const isFood = [...found].some(c => FOOD_SUBCATEGORIES.has(c));
   if (isFood) found.add("Alimentos");
   if (found.size === 0) found.add("Geral");
   return JSON.stringify([...found]);
 }
+
+// Migração retroativa: recategoriza itens que ainda têm categorias antigas (não-JSON)
+async function migrateShoppingCategories() {
+  if (!pgPool) return;
+  try {
+    const { rows } = await pgPool.query(`SELECT id, title, category FROM shopping_list`);
+    let updated = 0;
+    for (const row of rows) {
+      const needsMigration = !row.category || (!row.category.startsWith('[') && row.category !== 'null');
+      if (needsMigration) {
+        const newCat = autoCategorize(row.title);
+        await pgPool.query(`UPDATE shopping_list SET category = $1 WHERE id = $2`, [newCat, row.id]);
+        updated++;
+      }
+    }
+    if (updated > 0) console.log(`[ShoppingList] ${updated} itens recategorizados automaticamente.`);
+  } catch (e) {
+    console.warn("[ShoppingList] Erro na migração de categorias:", e.message);
+  }
+}
+migrateShoppingCategories();
 
 function parseCategories(category) {
   if (!category) return ["Geral"];

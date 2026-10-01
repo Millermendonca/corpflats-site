@@ -55,23 +55,24 @@ function parseCategories(item: ShoppingItem): string[] {
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
-  "Alimentos":      "text-orange-700 bg-orange-500/10 border-orange-500/30",
-  "Carnes":         "text-red-700 bg-red-500/10 border-red-500/30",
-  "Frios":          "text-blue-700 bg-blue-500/10 border-blue-500/30",
-  "Laticínios":     "text-sky-700 bg-sky-500/10 border-sky-500/30",
-  "Padaria":        "text-amber-700 bg-amber-500/10 border-amber-500/30",
-  "Bebidas":        "text-cyan-700 bg-cyan-500/10 border-cyan-500/30",
-  "Secos & Grãos":  "text-yellow-700 bg-yellow-500/10 border-yellow-500/30",
-  "Hortifrúti":     "text-green-700 bg-green-500/10 border-green-500/30",
-  "Temperos":       "text-lime-700 bg-lime-500/10 border-lime-500/30",
-  "Mercearia":      "text-teal-700 bg-teal-500/10 border-teal-500/30",
-  "Conservas":      "text-indigo-700 bg-indigo-500/10 border-indigo-500/30",
-  "Congelados":     "text-violet-700 bg-violet-500/10 border-violet-500/30",
-  "Café da Manhã":  "text-amber-800 bg-amber-600/10 border-amber-600/30",
-  "Limpeza":        "text-emerald-700 bg-emerald-500/10 border-emerald-500/30",
-  "Higiene":        "text-pink-700 bg-pink-500/10 border-pink-500/30",
-  "Governança":     "text-purple-700 bg-purple-500/10 border-purple-500/30",
-  "Geral":          "text-slate-700 bg-slate-500/10 border-slate-500/30",
+  "Alimentos":       "text-orange-700 bg-orange-500/10 border-orange-500/30",
+  "Carnes":          "text-red-700 bg-red-500/10 border-red-500/30",
+  "Frios":           "text-blue-700 bg-blue-500/10 border-blue-500/30",
+  "Laticínios":      "text-sky-700 bg-sky-500/10 border-sky-500/30",
+  "Padaria":         "text-amber-700 bg-amber-500/10 border-amber-500/30",
+  "Bebidas":         "text-cyan-700 bg-cyan-500/10 border-cyan-500/30",
+  "Secos & Grãos":   "text-yellow-700 bg-yellow-500/10 border-yellow-500/30",
+  "Hortifrúti":      "text-green-700 bg-green-500/10 border-green-500/30",
+  "Temperos":        "text-lime-700 bg-lime-500/10 border-lime-500/30",
+  "Mercearia":       "text-teal-700 bg-teal-500/10 border-teal-500/30",
+  "Conservas":       "text-indigo-700 bg-indigo-500/10 border-indigo-500/30",
+  "Congelados":      "text-violet-700 bg-violet-500/10 border-violet-500/30",
+  "Café da Manhã":   "text-amber-800 bg-amber-600/10 border-amber-600/30",
+  "Limpeza":         "text-emerald-700 bg-emerald-500/10 border-emerald-500/30",
+  "Higiene":         "text-pink-700 bg-pink-500/10 border-pink-500/30",
+  "Governança":      "text-purple-700 bg-purple-500/10 border-purple-500/30",
+  "Descartáveis":    "text-rose-700 bg-rose-500/10 border-rose-500/30",
+  "Geral":           "text-slate-700 bg-slate-500/10 border-slate-500/30",
 }
 
 function getCategoryColor(cat: string) {
@@ -324,7 +325,7 @@ export default function ShoppingListPage() {
 
   return (
     <Shell>
-      <div className="space-y-4 max-w-2xl mx-auto pb-20 px-0">
+      <div className="space-y-4 max-w-2xl mx-auto pb-20 overflow-x-hidden w-full">
 
         {/* Header compacto */}
         <div className="flex items-center justify-between py-1">
@@ -423,17 +424,19 @@ export default function ShoppingListPage() {
 
         {/* Atalhos rápidos — itens comuns */}
         {catalog.length > 0 && (
-          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar -mt-1 pb-0.5">
-            <span className="text-[11px] font-semibold text-muted-foreground shrink-0">Comuns:</span>
-            {catalog.slice(0, 16).map(item => (
-              <button
-                key={item.id}
-                onClick={() => handleCreate(item.name)}
-                className="shrink-0 px-2.5 py-1 rounded-full text-xs font-medium bg-muted/60 hover:bg-primary/10 hover:text-primary border border-border/60 transition-all"
-              >
-                + {item.name}
-              </button>
-            ))}
+          <div className="w-full overflow-x-auto no-scrollbar -mt-1">
+            <div className="flex items-center gap-1.5 pb-0.5 min-w-0">
+              <span className="text-[11px] font-semibold text-muted-foreground shrink-0">Comuns:</span>
+              {catalog.slice(0, 16).map(item => (
+                <button
+                  key={item.id}
+                  onClick={() => handleCreate(item.name)}
+                  className="shrink-0 px-2.5 py-1 rounded-full text-xs font-medium bg-muted/60 hover:bg-primary/10 hover:text-primary border border-border/60 transition-all"
+                >
+                  + {item.name}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
@@ -454,30 +457,32 @@ export default function ShoppingListPage() {
 
         {/* Filtros de categoria — linha horizontal compacta */}
         {activeTab === "pending" && availableCategories.length > 0 && (
-          <div className="flex gap-1.5 overflow-x-auto no-scrollbar -mt-1 pb-0.5">
-            <button
-              onClick={() => setCategoryFilter(null)}
-              className={`shrink-0 px-2.5 py-0.5 rounded-full text-[11px] font-bold border transition-all ${
-                !categoryFilter
-                  ? "bg-foreground text-background border-foreground"
-                  : "bg-muted/40 border-border/60 text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Todos
-            </button>
-            {availableCategories.map(({ name, count }) => (
+          <div className="w-full overflow-x-auto no-scrollbar -mt-1">
+            <div className="flex gap-1.5 pb-0.5">
               <button
-                key={name}
-                onClick={() => setCategoryFilter(categoryFilter === name ? null : name)}
+                onClick={() => setCategoryFilter(null)}
                 className={`shrink-0 px-2.5 py-0.5 rounded-full text-[11px] font-bold border transition-all ${
-                  categoryFilter === name
-                    ? getCategoryColor(name) + " ring-1 ring-current"
+                  !categoryFilter
+                    ? "bg-foreground text-background border-foreground"
                     : "bg-muted/40 border-border/60 text-muted-foreground hover:text-foreground"
                 }`}
               >
-                {name} <span className="opacity-60">({count})</span>
+                Todos
               </button>
-            ))}
+              {availableCategories.map(({ name, count }) => (
+                <button
+                  key={name}
+                  onClick={() => setCategoryFilter(categoryFilter === name ? null : name)}
+                  className={`shrink-0 px-2.5 py-0.5 rounded-full text-[11px] font-bold border transition-all ${
+                    categoryFilter === name
+                      ? getCategoryColor(name) + " ring-1 ring-current"
+                      : "bg-muted/40 border-border/60 text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {name} <span className="opacity-60">({count})</span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
