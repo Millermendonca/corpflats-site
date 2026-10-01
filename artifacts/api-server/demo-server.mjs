@@ -4138,10 +4138,69 @@ async function ensureBackupsTable() {
 
 let lastBackupSnapshotTime = 0;
 
+// ── Pruning Engine — Limita coleções em memória para evitar OOM (512MB Render Free) ──
+function pruneDatabase() {
+  const LIMITS = {
+    whatsappHistory: 500,
+    whatsappConversations: 200,
+    whatsappQueue: 100,
+    breakfastOrders: 500,
+    maidPayments: 500,
+    maidStatementEntries: 500,
+    lostAndFound: 300,
+    garageAuthorizations: 500,
+    reservationCommunications: 500,
+    serviceOrders: 500
+  };
+
+  for (const [key, max] of Object.entries(LIMITS)) {
+    if (Array.isArray(db[key]) && db[key].length > max) {
+      // Ordena por data mais recente primeiro e mantém os N mais recentes
+      db[key] = db[key]
+        .sort((a, b) => {
+          const dateA = a.createdAt || a.sentAt || a.date || a.updatedAt || "";
+          const dateB = b.createdAt || b.sentAt || b.date || b.updatedAt || "";
+          return dateB.localeCompare(dateA);
+        })
+        .slice(0, max);
+    }
+  }
+
+  // Limpeza de histórico antigo de cleaningRequests (manter últimos 120 dias + todos abertos)
+  if (Array.isArray(db.cleaningRequests) && db.cleaningRequests.length > 1500) {
+    const cutoffDate = getOffsetDateStr(-120);
+    db.cleaningRequests = db.cleaningRequests.filter(r =>
+      r.requestDate >= cutoffDate ||
+      (r.status !== "clean" && r.status !== "no_show" && r.status !== "cancelled")
+    );
+  }
+
+  // Limpeza de reservas muito antigas (manter últimos 180 dias + ativas/futuras)
+  if (Array.isArray(db.reservations) && db.reservations.length > 800) {
+    const cutoffDate = getOffsetDateStr(-180);
+    db.reservations = db.reservations.filter(r =>
+      (r.checkoutDate && r.checkoutDate >= cutoffDate) ||
+      r.status === "confirmada" ||
+      r.status === "checkin" ||
+      r.status === "pendente"
+    );
+  }
+
+  // Truncar mensagens dentro de conversas WhatsApp (máx 50 msgs por conversa)
+  if (Array.isArray(db.whatsappConversations)) {
+    for (const conv of db.whatsappConversations) {
+      if (Array.isArray(conv.messages) && conv.messages.length > 50) {
+        conv.messages = conv.messages.slice(-50);
+      }
+    }
+  }
+}
+
 function saveDatabase(reason = "auto_save") {
   try {
     reconcileCleaningRequests();
-    const stateJson = JSON.stringify(db, null, 2);
+    pruneDatabase();
+    const stateJson = JSON.stringify(db);
     fs.writeFileSync(DB_FILE, stateJson, "utf-8");
     if (pgPool) {
       if (!pgHydratedSuccessfully) {
@@ -26163,7 +26222,7 @@ setInterval(async () => {
   } catch (errLoop) {
     // Silencioso
   }
-}, 20000);
+}, 120000); // 2 minutos (era 20s — reduzido para aliviar memória)
 
 // 6.5 Rotina Matinal das 07:00 - Disparo Individual de E-mails de Check-in para Recepção e Garagem
 setInterval(async () => {
@@ -26244,7 +26303,7 @@ setInterval(async () => {
   } catch (errLoop) {
     // Silencioso
   }
-}, 30000);
+}, 300000); // 5 minutos (era 30s — rotina matinal não precisa de polling agressivo)
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`[Demo Server] API rodando em http://0.0.0.0:${PORT}`);
