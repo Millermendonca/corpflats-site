@@ -899,6 +899,13 @@ export function FlatCard({
         }
       }
       refreshData()
+      if (pendingPeriodicTasks.length > 0 && (newStatus === "will_clean" || newStatus === "cleaning_now")) {
+        toast({
+          title: `🛠️ Preventiva Agendada no Apt ${flat.flatNumber}!`,
+          description: `Lembre-se de realizar: ${pendingPeriodicTasks.map((t: any) => t.name).join(", ")}. Você atestará a execução ao finalizar a limpeza.`,
+          duration: 7000,
+        })
+      }
     } catch (e) {
       console.error("Erro ao alterar status:", e)
     } finally {
@@ -1239,6 +1246,21 @@ export function FlatCard({
                 </Badge>
               )}
 
+              {/* Badge de Tarefas Preventivas Agendadas */}
+              {pendingPeriodicTasks.length > 0 && currentStatus !== "clean" && (
+                <Badge 
+                  className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-[10px] shadow-2xs px-2 py-0.5 flex items-center gap-1 rounded-lg border border-amber-600 animate-pulse shrink-0"
+                  title={`Este quarto possui ${pendingPeriodicTasks.length} tarefa(s) preventiva(s) obrigatória(s) agendada(s)`}
+                >
+                  <Wrench className="w-3 h-3 shrink-0" />
+                  <span>
+                    {pendingPeriodicTasks.length === 1 
+                      ? "1 Preventiva Agendada" 
+                      : `${pendingPeriodicTasks.length} Preventivas Agendadas`}
+                  </span>
+                </Badge>
+              )}
+
               {currentStatus === "cleaning_now" && (
                 <Badge variant="outline" className={cn(
                   "text-[10px] px-2 py-0.5 font-bold border rounded-lg",
@@ -1443,14 +1465,55 @@ export function FlatCard({
               </div>
             )}
 
-            {/* Tarefa Preventiva Periódica */}
+            {/* ── TAREFAS PREVENTIVAS AGENDADAS (Executar antes de concluir) ── */}
             {pendingPeriodicTasks.length > 0 && currentStatus !== "clean" && (
-              <div className="bg-cyan-50 dark:bg-cyan-950/30 border border-cyan-200 dark:border-cyan-800 rounded-xl p-2.5 text-xs text-cyan-950 dark:text-cyan-200">
-                <div className="flex items-center gap-1.5 font-bold text-cyan-900 dark:text-cyan-300 mb-0.5">
-                  <Wrench className="w-3.5 h-3.5 text-cyan-700" />
-                  <span>Tarefa Preventiva:</span>
+              <div className="bg-gradient-to-r from-amber-500/15 via-orange-500/10 to-amber-500/15 dark:from-amber-950/50 dark:to-orange-950/40 border-2 border-amber-400 dark:border-amber-600 rounded-xl p-3 text-xs space-y-2.5 shadow-xs">
+                <div className="flex items-center justify-between gap-1.5">
+                  <div className="flex items-center gap-1.5 font-black text-amber-950 dark:text-amber-200">
+                    <Wrench className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                    <span className="text-[11.5px] uppercase tracking-wide">
+                      {pendingPeriodicTasks.length === 1 
+                        ? "1 Tarefa Preventiva Agendada" 
+                        : `${pendingPeriodicTasks.length} Tarefas Preventivas Agendadas`}
+                    </span>
+                  </div>
+                  <Badge className="bg-amber-600 text-white font-black text-[9.5px] px-2 py-0.5 rounded-md shadow-2xs">
+                    Executar no Quarto
+                  </Badge>
                 </div>
-                <p className="text-[11px] text-cyan-800 dark:text-cyan-300 font-semibold">{pendingPeriodicTasks[0].name}</p>
+
+                <div className="space-y-1.5">
+                  {pendingPeriodicTasks.map((task: any, idx: number) => (
+                    <div 
+                      key={task.id || idx} 
+                      className="bg-background/95 dark:bg-slate-900/90 rounded-lg p-2.5 border border-amber-300 dark:border-amber-700/80 shadow-2xs space-y-1"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-extrabold text-[12px] text-amber-950 dark:text-amber-100 flex items-center gap-1.5">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                          <span>{task.name}</span>
+                        </span>
+                        {task.periodDays && (
+                          <span className="text-[9.5px] text-amber-800 dark:text-amber-300 font-semibold bg-amber-100/80 dark:bg-amber-900/60 px-1.5 py-0.5 rounded shrink-0">
+                            A cada {task.periodDays} dias
+                          </span>
+                        )}
+                      </div>
+                      {task.description && (
+                        <p className="text-[11px] text-muted-foreground font-medium pl-5 leading-snug">
+                          {task.description}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="bg-amber-100/90 dark:bg-amber-950/70 rounded-lg p-2 border border-amber-300/80 flex items-start gap-2 text-[11px] text-amber-950 dark:text-amber-200 font-semibold leading-relaxed">
+                  <AlertCircle className="w-4 h-4 text-amber-700 dark:text-amber-400 shrink-0 mt-0.5" />
+                  <span>
+                    <strong>Atenção Camareira:</strong> Este serviço preventivo deve ser feito durante o atendimento deste flat. O atestado formal será exigido ao marcar como limpo.
+                  </span>
+                </div>
               </div>
             )}
 

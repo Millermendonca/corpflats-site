@@ -295,6 +295,25 @@ export default function Tasks() {
   const [execDialogTaskId, setExecDialogTaskId] = useState<number | null>(null)
   const [execFlatId, setExecFlatId] = useState<number | null>(null)
   const [execNotes, setExecNotes] = useState("")
+  const [regularizing, setRegularizing] = useState(false)
+
+  const handleRegularize = async () => {
+    setRegularizing(true)
+    try {
+      const res = await fetch("/api/admin/regularize-housekeeping-tasks", { method: "POST" })
+      const data = await res.json()
+      toast({
+        title: "Regularização de Preventivas",
+        description: data.message || "Preventivas passadas regularizadas com sucesso!",
+      })
+      qc.invalidateQueries({ queryKey: getListPendingPeriodicTasksQueryKey() })
+      qc.invalidateQueries({ queryKey: ["/api/reservations/checkouts"] })
+    } catch {
+      toast({ title: "Erro ao regularizar", variant: "destructive" })
+    } finally {
+      setRegularizing(false)
+    }
+  }
 
   const deleteTask = useDeletePeriodicTask({
     mutation: {
@@ -359,9 +378,22 @@ export default function Tasks() {
             </p>
           </div>
           {isAdmin && (
-            <Button onClick={() => { setEditTask(null); setFormOpen(true) }} className="font-bold gap-1.5 shadow-xs">
-              <Plus className="w-4 h-4" /> Nova Preventiva
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button 
+                variant="outline"
+                size="sm"
+                onClick={handleRegularize} 
+                disabled={regularizing}
+                className="font-bold gap-1.5 shadow-2xs text-xs"
+                title="Marca todas as preventivas atrasadas de camareiras anteriores a hoje como executadas"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                <span>{regularizing ? "Regularizando..." : "Regularizar Atrasadas"}</span>
+              </Button>
+              <Button onClick={() => { setEditTask(null); setFormOpen(true) }} className="font-bold gap-1.5 shadow-xs">
+                <Plus className="w-4 h-4" /> Nova Preventiva
+              </Button>
+            </div>
           )}
         </div>
 

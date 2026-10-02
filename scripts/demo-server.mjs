@@ -1977,12 +1977,63 @@ function reconcileUniversalIntegrity(incomingState = null) {
     }
   });
 
+  // Regularização automática de preventivas das camareiras anteriores a hoje
+  if (regularizeHousekeepingPreventiveTasks()) {
+    changed = true;
+  }
+
   return changed;
 }
 
 // Alias de retrocompatibilidade
 function ensureRestoredSeptReservations() {
   return reconcileUniversalIntegrity();
+}
+
+// Regularização de Tarefas Preventivas das Camareiras (marca backlog passado como executado e mantém apenas de hoje em diante)
+export function regularizeHousekeepingPreventiveTasks() {
+  const todayStr = getTodayStr();
+  const yesterdayStr = addDaysToDateStr(todayStr, -1);
+  let changed = false;
+
+  if (!Array.isArray(db.periodicExecutions)) db.periodicExecutions = [];
+  const housekeepingTasks = (db.periodicTasks || []).filter(t => t.isActive && t.assignToHousekeeping !== false);
+  const activeFlats = (db.flats || []).filter(f => f.isActive !== false && String(f.number) !== "502" && f.id !== 9);
+
+  let nextId = db.periodicExecutions.length > 0 ? Math.max(...db.periodicExecutions.map(e => e.id)) + 1 : 1;
+
+  for (const flat of activeFlats) {
+    for (const t of housekeepingTasks) {
+      if (Array.isArray(t.flatIds) && t.flatIds.length > 0 && !t.flatIds.map(Number).includes(Number(flat.id))) {
+        continue;
+      }
+      const executions = db.periodicExecutions.filter(e => Number(e.periodicTaskId) === Number(t.id) && Number(e.flatId) === Number(flat.id));
+      executions.sort((a, b) => new Date(b.executedAt).getTime() - new Date(a.executedAt).getTime());
+      const lastExec = executions[0] || null;
+
+      let nextDueAt;
+      if (lastExec) {
+        nextDueAt = addDaysToDateStr(getExecutionDateStr(lastExec.executedAt), Number(t.periodDays) || 1);
+      } else {
+        nextDueAt = t.firstDueDate || (t.createdAt ? getExecutionDateStr(t.createdAt) : todayStr);
+      }
+
+      if (nextDueAt < todayStr) {
+        db.periodicExecutions.push({
+          id: nextId++,
+          periodicTaskId: Number(t.id),
+          flatId: Number(flat.id),
+          executedByUserId: 1,
+          executedAt: `${yesterdayStr}T23:59:00.000Z`,
+          notes: "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+          createdAt: new Date().toISOString()
+        });
+        changed = true;
+      }
+    }
+  }
+
+  return changed;
 }
 
 // Blindagem e Persistência Garantida dos Dados das Camareiras (Cris e Grazi)
@@ -8156,6 +8207,19 @@ app.post("/api/admin/restore-periodic-tasks", (req, res) => {
     message: "Tarefas preventivas e histórico de execuções sincronizados com sucesso!",
     tasksCount: (db.periodicTasks || []).length,
     executionsCount: (db.periodicExecutions || []).length
+  });
+});
+
+app.post("/api/admin/regularize-housekeeping-tasks", (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || userAuth.role !== "admin") {
+    return res.status(403).json({ error: "Apenas administradores podem regularizar tarefas preventivas." });
+  }
+  const didChange = regularizeHousekeepingPreventiveTasks();
+  if (didChange) saveDatabase("manual_regularize_housekeeping_tasks");
+  res.json({
+    success: true,
+    message: didChange ? "Tarefas preventivas passadas foram regularizadas com sucesso." : "Todas as tarefas preventivas já estão em dia!"
   });
 });
 
