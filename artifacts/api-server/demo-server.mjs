@@ -6806,8 +6806,18 @@ function getRequestsForDate(dateStr, isNested = false) {
     const previousUncleaned = (db.cleaningRequests || []).filter(r => {
       const fNumber = String(r.flatNumber || "");
       const isInst = Boolean(r.isInstructionOnly || r.source === "manual_instruction" || r.type === "instruction" || r.type === "bed_adjustment_only" || r.isBedAdjustmentOnly);
-      if (isInst) return false; // Instruções não têm que levar pra outro dia
-      if (stayoverFlatNumbers.has(fNumber)) return false;
+      if (stayoverFlatNumbers.has(fNumber)) {
+        const currentStayRes = (db.reservations || []).find(res =>
+          res.status !== "cancelada" &&
+          res.status !== "cancelled" &&
+          String(res.flatNumber || (db.flats.find(f => f.id === res.flatId)?.number || "")) === fNumber &&
+          res.checkinDate < dateStr && res.checkoutDate > dateStr
+        );
+        // Só descarta se a solicitação for de uma estadia anterior à chegada do hóspede atual
+        if (currentStayRes && r.requestDate < currentStayRes.checkinDate) return false;
+        // Se for checkout puramente automático sem camas/instruções gerado para data intermediária que não coincide com a saída, descarta
+        if (r.source === "checkout" && !r.twinBeds && !r.extraMattress && !r.adminNote && !r.pendingObservation && (!currentStayRes || r.requestDate !== currentStayRes.checkoutDate)) return false;
+      }
       if (!r.requestDate || r.requestDate < "2026-09-01" || r.requestDate >= dateStr || r.status === "clean" || r.status === "extended" || r.status === "no_show") return false;
       if (!r.leavingGuest && r.source !== "manual" && r.source !== "admin_manual" && r.source !== "guest_checkout") return false;
       if (existingFlatNumbersForDate.has(fNumber)) return false;

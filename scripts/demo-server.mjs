@@ -1977,63 +1977,12 @@ function reconcileUniversalIntegrity(incomingState = null) {
     }
   });
 
-  // Regularização automática de preventivas das camareiras anteriores a hoje
-  if (regularizeHousekeepingPreventiveTasks()) {
-    changed = true;
-  }
-
   return changed;
 }
 
 // Alias de retrocompatibilidade
 function ensureRestoredSeptReservations() {
   return reconcileUniversalIntegrity();
-}
-
-// Regularização de Tarefas Preventivas das Camareiras (marca backlog passado como executado e mantém apenas de hoje em diante)
-export function regularizeHousekeepingPreventiveTasks() {
-  const todayStr = getTodayStr();
-  const yesterdayStr = addDaysToDateStr(todayStr, -1);
-  let changed = false;
-
-  if (!Array.isArray(db.periodicExecutions)) db.periodicExecutions = [];
-  const housekeepingTasks = (db.periodicTasks || []).filter(t => t.isActive && t.assignToHousekeeping !== false);
-  const activeFlats = (db.flats || []).filter(f => f.isActive !== false && String(f.number) !== "502" && f.id !== 9);
-
-  let nextId = db.periodicExecutions.length > 0 ? Math.max(...db.periodicExecutions.map(e => e.id)) + 1 : 1;
-
-  for (const flat of activeFlats) {
-    for (const t of housekeepingTasks) {
-      if (Array.isArray(t.flatIds) && t.flatIds.length > 0 && !t.flatIds.map(Number).includes(Number(flat.id))) {
-        continue;
-      }
-      const executions = db.periodicExecutions.filter(e => Number(e.periodicTaskId) === Number(t.id) && Number(e.flatId) === Number(flat.id));
-      executions.sort((a, b) => new Date(b.executedAt).getTime() - new Date(a.executedAt).getTime());
-      const lastExec = executions[0] || null;
-
-      let nextDueAt;
-      if (lastExec) {
-        nextDueAt = addDaysToDateStr(getExecutionDateStr(lastExec.executedAt), Number(t.periodDays) || 1);
-      } else {
-        nextDueAt = t.firstDueDate || (t.createdAt ? getExecutionDateStr(t.createdAt) : todayStr);
-      }
-
-      if (nextDueAt < todayStr) {
-        db.periodicExecutions.push({
-          id: nextId++,
-          periodicTaskId: Number(t.id),
-          flatId: Number(flat.id),
-          executedByUserId: 1,
-          executedAt: `${yesterdayStr}T23:59:00.000Z`,
-          notes: "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
-          createdAt: new Date().toISOString()
-        });
-        changed = true;
-      }
-    }
-  }
-
-  return changed;
 }
 
 // Blindagem e Persistência Garantida dos Dados das Camareiras (Cris e Grazi)
@@ -4189,10 +4138,69 @@ async function ensureBackupsTable() {
 
 let lastBackupSnapshotTime = 0;
 
+// ── Pruning Engine — Limita coleções em memória para evitar OOM (512MB Render Free) ──
+function pruneDatabase() {
+  const LIMITS = {
+    whatsappHistory: 500,
+    whatsappConversations: 200,
+    whatsappQueue: 100,
+    breakfastOrders: 500,
+    maidPayments: 500,
+    maidStatementEntries: 500,
+    lostAndFound: 300,
+    garageAuthorizations: 500,
+    reservationCommunications: 500,
+    serviceOrders: 500
+  };
+
+  for (const [key, max] of Object.entries(LIMITS)) {
+    if (Array.isArray(db[key]) && db[key].length > max) {
+      // Ordena por data mais recente primeiro e mantém os N mais recentes
+      db[key] = db[key]
+        .sort((a, b) => {
+          const dateA = a.createdAt || a.sentAt || a.date || a.updatedAt || "";
+          const dateB = b.createdAt || b.sentAt || b.date || b.updatedAt || "";
+          return dateB.localeCompare(dateA);
+        })
+        .slice(0, max);
+    }
+  }
+
+  // Limpeza de histórico antigo de cleaningRequests (manter últimos 120 dias + todos abertos)
+  if (Array.isArray(db.cleaningRequests) && db.cleaningRequests.length > 1500) {
+    const cutoffDate = getOffsetDateStr(-120);
+    db.cleaningRequests = db.cleaningRequests.filter(r =>
+      r.requestDate >= cutoffDate ||
+      (r.status !== "clean" && r.status !== "no_show" && r.status !== "cancelled")
+    );
+  }
+
+  // Limpeza de reservas muito antigas (manter últimos 180 dias + ativas/futuras)
+  if (Array.isArray(db.reservations) && db.reservations.length > 800) {
+    const cutoffDate = getOffsetDateStr(-180);
+    db.reservations = db.reservations.filter(r =>
+      (r.checkoutDate && r.checkoutDate >= cutoffDate) ||
+      r.status === "confirmada" ||
+      r.status === "checkin" ||
+      r.status === "pendente"
+    );
+  }
+
+  // Truncar mensagens dentro de conversas WhatsApp (máx 50 msgs por conversa)
+  if (Array.isArray(db.whatsappConversations)) {
+    for (const conv of db.whatsappConversations) {
+      if (Array.isArray(conv.messages) && conv.messages.length > 50) {
+        conv.messages = conv.messages.slice(-50);
+      }
+    }
+  }
+}
+
 function saveDatabase(reason = "auto_save") {
   try {
     reconcileCleaningRequests();
-    const stateJson = JSON.stringify(db, null, 2);
+    pruneDatabase();
+    const stateJson = JSON.stringify(db);
     fs.writeFileSync(DB_FILE, stateJson, "utf-8");
     if (pgPool) {
       if (!pgHydratedSuccessfully) {
@@ -6798,8 +6806,18 @@ function getRequestsForDate(dateStr, isNested = false) {
     const previousUncleaned = (db.cleaningRequests || []).filter(r => {
       const fNumber = String(r.flatNumber || "");
       const isInst = Boolean(r.isInstructionOnly || r.source === "manual_instruction" || r.type === "instruction" || r.type === "bed_adjustment_only" || r.isBedAdjustmentOnly);
-      if (isInst) return false; // Instruções não têm que levar pra outro dia
-      if (stayoverFlatNumbers.has(fNumber)) return false;
+      if (stayoverFlatNumbers.has(fNumber)) {
+        const currentStayRes = (db.reservations || []).find(res =>
+          res.status !== "cancelada" &&
+          res.status !== "cancelled" &&
+          String(res.flatNumber || (db.flats.find(f => f.id === res.flatId)?.number || "")) === fNumber &&
+          res.checkinDate < dateStr && res.checkoutDate > dateStr
+        );
+        // Só descarta se a solicitação for de uma estadia anterior à chegada do hóspede atual
+        if (currentStayRes && r.requestDate < currentStayRes.checkinDate) return false;
+        // Se for checkout puramente automático sem camas/instruções gerado para data intermediária que não coincide com a saída, descarta
+        if (r.source === "checkout" && !r.twinBeds && !r.extraMattress && !r.adminNote && !r.pendingObservation && (!currentStayRes || r.requestDate !== currentStayRes.checkoutDate)) return false;
+      }
       if (!r.requestDate || r.requestDate < "2026-09-01" || r.requestDate >= dateStr || r.status === "clean" || r.status === "extended" || r.status === "no_show") return false;
       if (!r.leavingGuest && r.source !== "manual" && r.source !== "admin_manual" && r.source !== "guest_checkout") return false;
       if (existingFlatNumbersForDate.has(fNumber)) return false;
@@ -8207,19 +8225,6 @@ app.post("/api/admin/restore-periodic-tasks", (req, res) => {
     message: "Tarefas preventivas e histórico de execuções sincronizados com sucesso!",
     tasksCount: (db.periodicTasks || []).length,
     executionsCount: (db.periodicExecutions || []).length
-  });
-});
-
-app.post("/api/admin/regularize-housekeeping-tasks", (req, res) => {
-  const userAuth = getAuthUser(req);
-  if (!userAuth || userAuth.role !== "admin") {
-    return res.status(403).json({ error: "Apenas administradores podem regularizar tarefas preventivas." });
-  }
-  const didChange = regularizeHousekeepingPreventiveTasks();
-  if (didChange) saveDatabase("manual_regularize_housekeeping_tasks");
-  res.json({
-    success: true,
-    message: didChange ? "Tarefas preventivas passadas foram regularizadas com sucesso." : "Todas as tarefas preventivas já estão em dia!"
   });
 });
 
@@ -25484,38 +25489,154 @@ bootstrapShoppingTables();
 // ── Auto-categorização inteligente (IA por regras de palavras-chave) ──────────
 const FOOD_SUBCATEGORIES = new Set(["Carnes","Frios","Laticínios","Padaria","Bebidas","Secos & Grãos","Hortifrúti","Temperos","Mercearia","Conservas","Congelados","Café da Manhã"]);
 const AUTO_CATEGORY_RULES = [
-  { cats: ["Carnes"],           kw: ["carne","frango","peixe","file","file de","linguica","salsicha","bacon","hamburguer","alcatra","costela","bife","camarao","fruto do mar","tilapia","salmao","atum fresco","picanha","maminha","patinho","pernil","pato","chester"] },
-  { cats: ["Frios"],            kw: ["presunto","mortadela","salame","salaminho","peito de peru","blanquet","copa","lombo defumado","pastrami","mucarela","mussarela","prato"] },
-  { cats: ["Laticínios"],       kw: ["leite","creme de leite","nata","leite condensado","iogurte","queijo","ricota","cottage","requeijao","manteiga","margarina","ghee","cream cheese"] },
-  { cats: ["Padaria"],          kw: ["pao","bolo","biscoito","bolacha","croissant","torrada","rosca","broa","wafer","cookie","muffin","cupcake","baguete"] },
-  { cats: ["Bebidas"],          kw: ["agua","suco","nectar","refrigerante","cerveja","vinho","energetico","isotonico","coca","pepsi","guarana","sprite","fanta","cha","kombucha","gin","vodka","whisky","sake","tonica","limonada","caldo de cana","agua de coco"] },
-  { cats: ["Secos & Grãos"],    kw: ["arroz","feijao","macarrao","espaguete","farinha","amido","fuba","aveia","granola","lentilha","grao de bico","quinoa","cuscuz","canjica","tapioca","polenta","flocao","triguilho","chia"] },
-  { cats: ["Temperos"],         kw: ["sal","pimenta","cominho","colorau","acafrao","louro","oregano","manjericao","caldo","shoyu","molho de soja","vinagre","tempero","chimichurri","páprica","paprica","gengibre","canela","noz moscada"] },
-  { cats: ["Mercearia"],        kw: ["acucar","azeite","oleo","molho","extrato de tomate","ketchup","maionese","mostarda","geleia","mel","nutella","chocolate","cafe","nescafe","cappuccino","achocolatado","leite em po","proteina"] },
-  { cats: ["Hortifrúti"],       kw: ["alface","tomate","cebola","batata","cenoura","abobrinha","pimentao","pepino","brocolis","couve","espinafre","banana","maca","laranja","limao","uva","melao","manga","abacaxi","morango","mamao","abacate","coco","verdura","legume","fruta","salada","rucula","agriao","berinjela","chuchu","inhame","mandioca","macaxeira","jiló"] },
-  { cats: ["Conservas"],        kw: ["atum","sardinha","ervilha enlatada","azeitona","palmito","cogumelo","picles","champignon","carne seca","bacalhau","milho enlatado"] },
-  { cats: ["Congelados"],       kw: ["sorvete","lasanha congelada","pizza congelada","nugget","empanado","hamburguer congelado","pao de queijo congelado","batata frita congelada"] },
-  { cats: ["Café da Manhã"],    kw: ["cafe da manha","nescau","milo","granola cafe","torrada cafe"] },
-  { cats: ["Limpeza"],          kw: ["detergente","sabao em po","desinfetante","cloro","alcool","cif","x14","veja","ajax","multiuso","desengordurante","amaciante","agua sanitaria","alvejante","removedor","limpa forno","limpa pedra","tira manchas","qboa","soda caustica","flash","bom bril","bombril","palha de aco"] },
-  { cats: ["Higiene"],          kw: ["xampu","shampoo","sabonete","pasta de dente","creme dental","escova de dente","fio dental","absorvente","desodorante","papel higienico","fralda","algodao","cotonete","lamina","barbear","hidratante","protetor solar","condicionador","creme","loção","locao","enxaguante","antisseptico","curativo","band aid","luva descartavel"] },
-  { cats: ["Limpeza"],          kw: ["saco de lixo","saco lixo","pano de chao","vassoura","rodo","balde","esponja","pano multiuso","luva de limpeza","esfregao","mop","recolhedor","pa de lixo"] },
-  { cats: ["Governança"],       kw: ["lampada","pilha","bateria","pano de prato","pano","cheirinho","aromatizador","inseticida","repelente","vela","fosforo","fita","durex","tesoura","elástico","clipe","grampo"] },
+  // ── CARNES ────────────────────────────────────────────────────────────────
+  { cats: ["Carnes"], kw: ["carne","frango","peixe","file de","linguica","salsicha","bacon","hamburguer","alcatra","costela","bife","camarao","fruto do mar","tilapia","salmao","picanha","maminha","patinho","pernil","chester","fraldinha","acem","coxao","musculo","cupim","iscas","medalhao","carne de sol","charque","jerked beef","carre","suino","porco","leitao","cordeiro","cabrito","javali","coelho","pato","ganso","galinha","galeto","peru","codorna","avestruz","peixe espada","linguado","merluza","robalo","badejo","cacao","dourado","tucunare","pacu","lambari","traira","bagre","cavalinha","calamar","polvo","lagosta","siri","ostra","mexilhao","vieira","pescada","anchova","arenque"] },
+  // ── OVOS ──────────────────────────────────────────────────────────────────
+  { cats: ["Laticínios"], kw: ["ovo","ovos","ovo de galinha","ovo caipira","ovo codorna","clara de ovo","gema","ovos brancos","ovos vermelhos","caixa de ovos","ovo organico","ovo pasteurizado"] },
+  // ── FRIOS ─────────────────────────────────────────────────────────────────
+  { cats: ["Frios","Laticínios"], kw: ["presunto","mortadela","salame","salaminho","peito de peru","blanquet","copa","lombo defumado","pastrami","frescal","parmesao","parmesão","gruyere","gorgonzola","provolone","brie","camembert","coalho","mucarela","mussarela","mucarela","catupiry","cream cheese","boursin","emental","requeijao","queijo fundido","minas","queijo ralado","queijo fatiado","queijo minas"] },
+  // ── LATICÍNIOS ────────────────────────────────────────────────────────────
+  { cats: ["Laticínios"], kw: ["leite","creme de leite","nata","leite condensado","iogurte","queijo","ricota","cottage","manteiga","margarina","ghee","chantilly","creme fresco","buttermilk","kefir","skyr","bebida lactea","yakult","activia","vitamina","batida de leite"] },
+  // ── PADARIA ───────────────────────────────────────────────────────────────
+  { cats: ["Padaria"], kw: ["pao","bolo","biscoito","bolacha","croissant","torrada","rosca","broa","wafer","cookie","muffin","cupcake","baguete","bisnaguinha","bisnaga","paozinho","pao de forma","pão de queijo","pao de queijo","crepe","panqueca","wrap"] },
+  // ── BEBIDAS ───────────────────────────────────────────────────────────────
+  { cats: ["Bebidas"], kw: ["agua","suco","nectar","refrigerante","cerveja","vinho","energetico","isotonico","coca","pepsi","guarana","sprite","fanta","cha pronto","kombucha","gin","vodka","whisky","sake","tonica","limonada","caldo de cana","agua de coco","espumante","prosecco","caipirinha","drinque","lager","ale","stout","porter","weiss","pilsen"] },
+  // ── SECOS & GRÃOS ─────────────────────────────────────────────────────────
+  { cats: ["Secos & Grãos"], kw: ["arroz","feijao","macarrao","espaguete","farinha","amido","fuba","aveia","granola","lentilha","grao de bico","quinoa","cuscuz","canjica","tapioca","polenta","flocao","triguilho","chia","centeio","trigo","trigo sarraceno","flocos de milho","cereal matinal","corn flakes","cream cracker","grão"] },
+  // ── TEMPEROS ──────────────────────────────────────────────────────────────
+  { cats: ["Temperos"], kw: ["sal","pimenta","cominho","colorau","louro","oregano","manjericao","caldo","shoyu","molho de soja","vinagre","tempero","chimichurri","paprica","gengibre","canela","noz moscada","curcuma","acafrao","ervas","curry","bicarbonato","fermento biol","fermento quimico","extrato","baunilha","glutamato"] },
+  // ── MERCEARIA ─────────────────────────────────────────────────────────────
+  { cats: ["Mercearia"], kw: ["acucar","azeite","oleo","ketchup","maionese","mostarda","geleia","mel","nutella","chocolate","cafe","nescafe","cappuccino","achocolatado","leite em po","proteina","manteiga de amendoim","pasta de amendoim","amendoim","castanha","nozes","ameixa seca","tâmara","damasco","uva passa","granola bar","barra de cereal","achocolatado","mistura para bolo","preparo","massa","molho","catchup"] },
+  // ── HORTIFRÚTI ────────────────────────────────────────────────────────────
+  { cats: ["Hortifrúti"], kw: ["alface","tomate","cebola","batata","cenoura","abobrinha","pimentao","pepino","brocolis","couve","espinafre","banana","maca","laranja","limao","uva","melao","manga","abacaxi","morango","mamao","abacate","coco","verdura","legume","fruta","salada","rucula","agriao","berinjela","chuchu","inhame","mandioca","macaxeira","jilo","rabanete","nabo","salsao","salsinha","cheiro-verde","cheiro verde","cebolinha","coentro","manjericao fresco","hortelã","beterraba","milho verde","vagem","quiabo","maxixe","pimenta fresca","acelga","repolho","gengibre fresco","alho","alho poro","alho-poro","limao siciliano","kiwi","pera","pessego","nectarina","maracuja","caju","goiaba","jabuticaba","pitanga","framboesa","mirtilo","cranberry","romã","tangerina","mexerica","poncã","laranja lima","laranja bahia","acerola","cupuacu","graviola","amora"] },
+  // ── CONSERVAS ─────────────────────────────────────────────────────────────
+  { cats: ["Conservas"], kw: ["atum em lata","sardinha em lata","ervilha enlatada","azeitona","palmito","cogumelo","picles","champignon","carne seca","bacalhau","milho enlatado","seleta","feijao enlatado","milho em lata","atum","sardinha"] },
+  // ── CONGELADOS ────────────────────────────────────────────────────────────
+  { cats: ["Congelados"], kw: ["sorvete","lasanha congelada","pizza congelada","nugget","empanado","hamburguer congelado","pao de queijo congelado","batata frita congelada","picolé","picole","gelado","frango congelado","carne congelada","peixe congelado","camarao congelado","legumes congelados"] },
+  // ── CAFÉ DA MANHÃ ─────────────────────────────────────────────────────────
+  { cats: ["Café da Manhã"], kw: ["nescau","milo","achocolatado em po","cafe soluvel","cafe instantaneo","capsula nespresso","dolce gusto","tres coracoes","pilao","melitta"] },
+  // ── LIMPEZA ───────────────────────────────────────────────────────────────
+  { cats: ["Limpeza"], kw: ["detergente","sabao em po","sabao barra","sabao liquido","desinfetante","cloro","alcool em gel","alcool liquido","cif","x14","veja","ajax","omo","ariel","bold","downy","comfort","ace","flash","qboa","multiuso","desengordurante","amaciante","agua sanitaria","alvejante","removedor","limpa forno","limpa pedra","tira manchas","soda caustica","bom bril","bombril","palha de aco","lava roupas","lava louça","lava-louça","lava louças","tira graxo","eliminador de odor","purificador","neutralizador","desentupidor","solvente","thinner","aguarras","sabao de barra","sabao de coco"] },
+  // ── HIGIENE ───────────────────────────────────────────────────────────────
+  { cats: ["Higiene"], kw: ["xampu","shampoo","sabonete","pasta de dente","creme dental","escova de dente","fio dental","absorvente","desodorante","papel higienico","fralda","algodao","cotonete","lamina de barbear","aparelho de barbear","hidratante","protetor solar","condicionador","loção corporal","locao corporal","enxaguante bucal","antisseptico","curativo","band aid","luva descartavel","mascara facial","creme de barbear","espuma de barbear","demaquilante","toner","serum","vitamina c","esfoliante","sabonete liquido","gel de banho","body wash","colonia","perfume","fixador","laca","gel cabelo","pomada capilar","dry shampoo","cha de hamamelis"] },
+  // ── LIMPEZA (complemento) ─────────────────────────────────────────────────
+  { cats: ["Limpeza"], kw: ["saco de lixo","saco lixo","pano de chao","vassoura","rodo","balde","esponja","pano multiuso","luva de limpeza","esfregao","mop","recolhedor","pa de lixo","flanela","pano de pó","pano de po","limpa vidro","tira pó","tira po","desodorizador","odorizador","aromatizador de ambientes"] },
+  // ── GOVERNANÇA / UTILIDADES ───────────────────────────────────────────────
+  { cats: ["Governança"], kw: ["lampada","pilha","bateria","cheirinho","aromatizador","inseticida","repelente","vela","fosforo","fita","durex","tesoura","elastico","clipe","grampo","pino","parafuso","pregador","clips de roupa","hastes de bambu","saco de vacuo"] },
+  // ── DESCARTÁVEIS ──────────────────────────────────────────────────────────
+  { cats: ["Descartáveis"], kw: ["copo descartavel","prato descartavel","talheres descartaveis","garfo descartavel","faca descartavel","colher descartavel","canudo","palito de dente","palito","toalha de papel","guardanapo","papel toalha","papel aluminio","papel manteiga","papel filme","saco plastico","saco zip","ziplock","sacola","sacolinha","embalagem","pote descartavel","marmita","isopor","bandeja"] },
+  // ── ELETRÔNICOS / ELETRODOMÉSTICOS ────────────────────────────────────────
+  { cats: ["Eletrônicos"], kw: ["tv","televisao","televisão","smart tv","monitor","notebook","laptop","computador","tablet","celular","smartphone","ipad","iphone","samsung","carregador","cabo usb","cabo hdmi","fone","fone de ouvido","headset","caixa de som","bluetooth","mouse","teclado","pendrive","hd externo","ssd","roteador","wifi","controle remoto","pilha recarregavel","chromecast","firestick","alexa","echo","google home","ventilador","ar condicionado","ar-condicionado","aquecedor","umidificador","purificador de ar","liquidificador","batedeira","mixer","processador","cafeteira","torradeira","sanduicheira","grill","microondas","forno eletrico","panela eletrica","air fryer","airfryer","fritadeira","aspirador","ferro de passar","secador","chapinha","prancha"] },
 ];
 
-function autoCategorize(name) {
+// Categorização por keywords (fallback)
+function autoCategorizeRules(name) {
   const n = name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   const found = new Set();
   for (const { cats, kw } of AUTO_CATEGORY_RULES) {
     for (const k of kw) {
-      if (n.includes(k)) { cats.forEach(c => found.add(c)); break; }
+      const kn = k.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      if (n.includes(kn)) { cats.forEach(c => found.add(c)); break; }
     }
   }
-  // Adiciona super-categoria "Alimentos" para qualquer item de comida/bebida
   const isFood = [...found].some(c => FOOD_SUBCATEGORIES.has(c));
   if (isFood) found.add("Alimentos");
   if (found.size === 0) found.add("Geral");
   return JSON.stringify([...found]);
 }
+
+// Categorização principal com Gemini AI + fallback para keywords
+const ALL_CATEGORIES = ["Carnes","Frios","Laticínios","Padaria","Bebidas","Secos & Grãos","Hortifrúti","Temperos","Mercearia","Conservas","Congelados","Café da Manhã","Limpeza","Higiene","Governança","Descartáveis","Eletrônicos","Geral"];
+
+// Tenta chamar Gemini com um método de auth, retorna resposta ou null
+async function callGemini(prompt, apiKey, method) {
+  const baseUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent";
+  const url = method === "key" ? `${baseUrl}?key=${apiKey}` : baseUrl;
+  const headers = { "Content-Type": "application/json" };
+  if (method === "bearer") headers["Authorization"] = `Bearer ${apiKey}`;
+
+  const resp = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0, maxOutputTokens: 100 },
+    }),
+  });
+
+  if (!resp.ok) {
+    const errBody = await resp.text().catch(() => "");
+    console.warn(`[AI] ${method} auth failed: HTTP ${resp.status} — ${errBody.slice(0, 150)}`);
+    return null;
+  }
+  return resp.json();
+}
+
+async function autoCategorize(name) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return autoCategorizeRules(name);
+
+  try {
+    const prompt = `Você é um categorizador de produtos de supermercado e itens de uso doméstico/hoteleiro no Brasil.
+Dado o nome de um produto, retorne APENAS um array JSON com as categorias mais adequadas.
+Categorias disponíveis: ${ALL_CATEGORIES.join(", ")}.
+Produto: "${name}"
+Regras:
+- Use apenas categorias da lista acima (respeitando acentos e maiúsculas)
+- Pode usar múltiplas categorias se o produto se encaixar em mais de uma
+- Se não souber, use ["Geral"]
+- Retorne SOMENTE o array JSON, sem texto extra, sem markdown`;
+
+    // Tenta ?key= primeiro, depois Bearer — cobre todos os formatos de chave
+    let data = await callGemini(prompt, apiKey, "key");
+    if (!data) data = await callGemini(prompt, apiKey, "bearer");
+    if (!data) throw new Error("Both auth methods failed");
+
+    const text = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+
+    const match = text.match(/\[[\s\S]*?\]/);
+    if (!match) throw new Error(`No JSON array in response: "${text.slice(0, 100)}"`);
+    const cats = JSON.parse(match[0]);
+    if (!Array.isArray(cats) || cats.length === 0) throw new Error("Empty categories");
+
+    const valid = cats.filter(c => ALL_CATEGORIES.includes(c));
+    if (valid.length === 0) throw new Error(`No valid categories. Got: ${JSON.stringify(cats)}`);
+
+    if (valid.some(c => FOOD_SUBCATEGORIES.has(c))) valid.push("Alimentos");
+
+    const result = JSON.stringify([...new Set(valid)]);
+    console.log(`[AI] "${name}" → ${result}`);
+    return result;
+  } catch (e) {
+    console.warn(`[AI] Fallback para keywords ("${name}"): ${e.message}`);
+    return autoCategorizeRules(name);
+  }
+}
+
+// Migração retroativa: recategoriza itens que ainda têm categorias antigas (não-JSON)
+async function migrateShoppingCategories() {
+  if (!pgPool) return;
+  try {
+    const { rows } = await pgPool.query(`SELECT id, title, category FROM shopping_list`);
+    let updated = 0;
+    for (const row of rows) {
+      let cats = [];
+      try { cats = row.category ? JSON.parse(row.category) : []; } catch { cats = []; }
+      // Recategoriza se: não-JSON antigo, só tem ["Geral"], ou está vazio
+      const isGenericOnly = Array.isArray(cats) && cats.length === 1 && cats[0] === "Geral";
+      const isOldFormat = !row.category || !row.category.startsWith('[');
+      if (isOldFormat || isGenericOnly) {
+        const newCat = autoCategorizeRules(row.title);
+        await pgPool.query(`UPDATE shopping_list SET category = $1 WHERE id = $2`, [newCat, row.id]);
+        updated++;
+      }
+    }
+    if (updated > 0) console.log(`[ShoppingList] ${updated} itens recategorizados automaticamente.`);
+  } catch (e) {
+    console.warn("[ShoppingList] Erro na migração de categorias:", e.message);
+  }
+}
+migrateShoppingCategories();
 
 function parseCategories(category) {
   if (!category) return ["Geral"];
@@ -25618,6 +25739,73 @@ app.get("/api/shopping-list/categories", async (req, res) => {
   return res.json(Object.entries(counts).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count));
 });
 
+// POST /api/shopping-list/recategorize — force recategorization of ALL items
+app.post("/api/shopping-list/recategorize", async (req, res) => {
+  if (!pgPool) return res.status(503).json({ error: "DB not available" });
+  try {
+    const { rows } = await pgPool.query(`SELECT id, title FROM shopping_list`);
+    let updated = 0;
+    for (const row of rows) {
+      const newCat = autoCategorizeRules(row.title);
+      await pgPool.query(`UPDATE shopping_list SET category = $1 WHERE id = $2`, [newCat, row.id]);
+      updated++;
+    }
+    return res.json({ ok: true, updated, message: `${updated} itens recategorizados.` });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/shopping-list/ai-test — diagnóstico da conexão com Gemini
+// Cache: guarda resultado por 5 minutos para não gastar cota com auto-refresh
+let _aiTestCache = { result: null, ts: 0 };
+const AI_TEST_CACHE_MS = 5 * 60 * 1000; // 5 minutos
+
+app.get("/api/shopping-list/ai-test", async (req, res) => {
+  const apiKey = process.env.GEMINI_API_KEY;
+  const testProduct = req.query.product || "queijo minas frescal";
+  const forceRefresh = req.query.refresh === "1";
+
+  const results = {
+    hasApiKey: !!apiKey,
+    keyPrefix: apiKey ? apiKey.slice(0, 6) + "..." : null,
+    keyLength: apiKey ? apiKey.length : 0,
+    testProduct,
+    geminiTest: null,
+    fallbackResult: autoCategorizeRules(testProduct),
+    cached: false,
+  };
+
+  if (!apiKey) {
+    results.error = "GEMINI_API_KEY not set";
+    return res.json(results);
+  }
+
+  // Retorna cache se ainda válido (evita gastar cota com auto-refresh)
+  if (!forceRefresh && _aiTestCache.result && (Date.now() - _aiTestCache.ts) < AI_TEST_CACHE_MS) {
+    return res.json({ ..._aiTestCache.result, cached: true, cacheAge: Math.round((Date.now() - _aiTestCache.ts) / 1000) + "s" });
+  }
+
+  // Faz UMA chamada de teste
+  const baseUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent";
+  try {
+    const r = await fetch(`${baseUrl}?key=${apiKey}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: `Responda apenas: ["teste"]` }] }],
+        generationConfig: { temperature: 0, maxOutputTokens: 50 },
+      }),
+    });
+    const txt = await r.text();
+    results.geminiTest = { status: r.status, ok: r.ok, body: txt.slice(0, 300) };
+  } catch (e) { results.geminiTest = { error: e.message }; }
+
+  // Atualiza cache
+  _aiTestCache = { result: results, ts: Date.now() };
+  return res.json(results);
+});
+
 // GET /api/shopping-list
 app.get("/api/shopping-list", async (req, res) => {
   if (pgPool) {
@@ -25647,8 +25835,8 @@ app.post("/api/shopping-list", async (req, res) => {
   }
   const userAuth = getAuthUser(req);
   const name = userAuth?.name || userAuth?.username || "Colaborador";
-  // Auto-categorização por IA
-  const category = autoCategorize(String(title).trim());
+  // Auto-categorização por IA (Gemini + fallback keywords)
+  const category = await autoCategorize(String(title).trim());
 
   if (pgPool) {
     try {
@@ -26227,7 +26415,7 @@ setInterval(async () => {
   } catch (errLoop) {
     // Silencioso
   }
-}, 20000);
+}, 120000); // 2 minutos (era 20s — reduzido para aliviar memória)
 
 // 6.5 Rotina Matinal das 07:00 - Disparo Individual de E-mails de Check-in para Recepção e Garagem
 setInterval(async () => {
@@ -26308,7 +26496,7 @@ setInterval(async () => {
   } catch (errLoop) {
     // Silencioso
   }
-}, 30000);
+}, 300000); // 5 minutos (era 30s — rotina matinal não precisa de polling agressivo)
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`[Demo Server] API rodando em http://0.0.0.0:${PORT}`);

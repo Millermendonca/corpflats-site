@@ -1212,27 +1212,33 @@ export function FlatCard({
                 </Badge>
               )}
 
-              {(flat.isPendingFromPreviousDay || request?.isPendingFromPreviousDay) && !isInstruction && (
-                <Badge className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] shadow-2xs px-2 py-0.5 flex items-center gap-1 rounded-lg">
-                  <AlertTriangle className="w-3 h-3 shrink-0" />
-                  <span>
-                    {(() => {
-                      const origDate = flat.originalRequestDate || request?.originalRequestDate
-                      if (isViewingTomorrow) {
-                        if (!origDate || origDate === todayStr) {
-                          const dateSuffix = origDate ? ` (${format(new Date(origDate + "T12:00:00"), "dd/MM")})` : ""
-                          return `Pendente do turno de hoje${dateSuffix}`
-                        }
-                        return `Não limpo em ${format(new Date(origDate + "T12:00:00"), "dd/MM")}`
-                      }
-                      if (origDate) {
-                        return `Não limpo em ${format(new Date(origDate + "T12:00:00"), "dd/MM")}`
-                      }
-                      return "Não limpo em dia anterior"
-                    })()}
-                  </span>
-                </Badge>
-              )}
+              {/* Badge de Pendência (Carryover): Exibido SOMENTE em quartos que ficaram pendentes de um dia para o outro */}
+              {(() => {
+                if (isInstruction) return null
+                const isPending = Boolean(flat.isPendingFromPreviousDay || request?.isPendingFromPreviousDay)
+                if (!isPending) return null
+
+                const origDate = flat.originalRequestDate || request?.originalRequestDate
+                // Regra do Usuário: Quartos de hoje NÃO devem exibir o badge "Pendente".
+                // O badge "Pendente" é EXCLUSIVO para quartos que ficaram pendentes de um dia para o outro (origDate anterior à data visualizada e anterior a hoje).
+                if (!origDate || origDate >= date || origDate === todayStr) {
+                  return null
+                }
+
+                let dateSuffix = ""
+                try {
+                  dateSuffix = ` (${format(new Date(origDate + "T12:00:00"), "dd/MM")})`
+                } catch {
+                  dateSuffix = ""
+                }
+
+                return (
+                  <Badge className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] shadow-2xs px-2 py-0.5 flex items-center gap-1 rounded-lg">
+                    <AlertTriangle className="w-3 h-3 shrink-0" />
+                    <span>{`Pendente${dateSuffix}`}</span>
+                  </Badge>
+                )
+              })()}
 
               {hasCheckin && !isInstruction && (
                 <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] shadow-2xs px-2 py-0.5 flex items-center gap-1 rounded-lg">
