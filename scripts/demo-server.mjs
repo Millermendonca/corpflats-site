@@ -1503,45 +1503,6 @@ function reconcileUniversalIntegrity(incomingState = null) {
   if (!db.flats) db.flats = [];
   if (!db.reservations) db.reservations = [];
   if (!db.cleaningRequests) db.cleaningRequests = [];
-  // Validação do Token WhatsApp OTP (2FA)
-  let whatsapp2faVerified = false;
-  let verifiedOtpRecord = null;
-  const submittedOtp = String(whatsappOtp || otp || "").replace(/\D/g, "").trim();
-
-  if (submittedOtp && Array.isArray(db.fnrhWhatsappOtps)) {
-    const now = Date.now();
-    verifiedOtpRecord = db.fnrhWhatsappOtps.find(t =>
-      (t.reservationCode === r.code || String(t.reservationId) === String(r.id)) &&
-      Number(t.guestIndex) === Number(guestIndex) &&
-      !t.superseded &&
-      t.code === submittedOtp &&
-      new Date(t.expiresAt).getTime() > now
-    );
-
-    if (verifiedOtpRecord) {
-      whatsapp2faVerified = true;
-      verifiedOtpRecord.verified = true;
-      verifiedOtpRecord.verifiedAt = new Date().toISOString();
-    } else {
-      return res.status(400).json({
-        error: "Código de confirmação do WhatsApp incorreto ou expirado. Por favor, confira o código de 6 dígitos recebido ou solicite um novo."
-      });
-    }
-  } else if (!submittedOtp) {
-    const now = Date.now();
-    const activeOtp = (db.fnrhWhatsappOtps || []).find(t =>
-      (t.reservationCode === r.code || String(t.reservationId) === String(r.id)) &&
-      Number(t.guestIndex) === Number(guestIndex) &&
-      !t.superseded &&
-      new Date(t.expiresAt).getTime() > now
-    );
-    if (activeOtp) {
-      return res.status(400).json({
-        error: "É obrigatório digitar o código de 6 dígitos enviado para seu WhatsApp para autenticar o check-in."
-      });
-    }
-  }
-
   if (!db.guests) db.guests = [];
   let changed = false;
 
@@ -17088,6 +17049,45 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
       if (new Date(tRec.expiresAt).getTime() < Date.now()) {
         return res.status(400).json({ error: "Sua sessão de assinatura de 2 horas expirou por motivos de conformidade jurídica. Clique em 'Renovar Sessão' para gerar mais 2 horas." });
       }
+    }
+  }
+
+  // Validação do Token WhatsApp OTP (2FA)
+  let whatsapp2faVerified = false;
+  let verifiedOtpRecord = null;
+  const submittedOtp = String(whatsappOtp || otp || "").replace(/\D/g, "").trim();
+
+  if (submittedOtp && Array.isArray(db.fnrhWhatsappOtps)) {
+    const now = Date.now();
+    verifiedOtpRecord = db.fnrhWhatsappOtps.find(t =>
+      (t.reservationCode === r.code || String(t.reservationId) === String(r.id)) &&
+      Number(t.guestIndex) === Number(guestIndex) &&
+      !t.superseded &&
+      t.code === submittedOtp &&
+      new Date(t.expiresAt).getTime() > now
+    );
+
+    if (verifiedOtpRecord) {
+      whatsapp2faVerified = true;
+      verifiedOtpRecord.verified = true;
+      verifiedOtpRecord.verifiedAt = new Date().toISOString();
+    } else {
+      return res.status(400).json({
+        error: "Código de confirmação do WhatsApp incorreto ou expirado. Por favor, confira o código de 6 dígitos recebido ou solicite um novo."
+      });
+    }
+  } else if (!submittedOtp) {
+    const now = Date.now();
+    const activeOtp = (db.fnrhWhatsappOtps || []).find(t =>
+      (t.reservationCode === r.code || String(t.reservationId) === String(r.id)) &&
+      Number(t.guestIndex) === Number(guestIndex) &&
+      !t.superseded &&
+      new Date(t.expiresAt).getTime() > now
+    );
+    if (activeOtp) {
+      return res.status(400).json({
+        error: "É obrigatório digitar o código de 6 dígitos enviado para seu WhatsApp para autenticar o check-in."
+      });
     }
   }
 
