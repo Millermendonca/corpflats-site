@@ -565,6 +565,48 @@ export function renderGarageAuthorizationEmail({ reservation, flat, vehicle, set
 }
 
 /**
+ * Retorna a data atual no fuso horário oficial de Brasília (America/Sao_Paulo) no formato YYYY-MM-DD.
+ */
+export function getBrasiliaTodayStr() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date());
+}
+
+/**
+ * Determina se a reserva tem check-in estritamente para o dia de hoje.
+ */
+export function isReservationForToday(reservation) {
+  if (!reservation) return false;
+  const checkin = reservation.checkinDate || reservation.checkIn || reservation.checkInDate;
+  if (!checkin) return false;
+  return String(checkin).substring(0, 10) === getBrasiliaTodayStr();
+}
+
+/**
+ * Determina se a reserva é para uma data futura (check-in posterior ao dia de hoje).
+ */
+export function isReservationForFuture(reservation) {
+  if (!reservation) return false;
+  const checkin = reservation.checkinDate || reservation.checkIn || reservation.checkInDate;
+  if (!checkin) return false;
+  return String(checkin).substring(0, 10) > getBrasiliaTodayStr();
+}
+
+/**
+ * Determina se a reserva é para o dia de hoje ou anterior (estadias em andamento ou no dia de chegada).
+ */
+export function isReservationForTodayOrPast(reservation) {
+  if (!reservation) return false;
+  const checkin = reservation.checkinDate || reservation.checkIn || reservation.checkInDate;
+  if (!checkin) return true;
+  return String(checkin).substring(0, 10) <= getBrasiliaTodayStr();
+}
+
+/**
  * Verifica se a recepção/portaria já recebeu os dados desta reserva por e-mail previamente.
  * Alterações e cancelamentos só devem ser informados à recepção se eles já receberam a reserva antes.
  * Se a alteração/cancelamento ocorrer antes do disparo para o e-mail deles (ex: antes da rotina das 07h do check-in),
@@ -572,6 +614,13 @@ export function renderGarageAuthorizationEmail({ reservation, flat, vehicle, set
  */
 export function hasReceptionReceivedReservation(reservation, db = {}) {
   if (!reservation) return false;
+
+  // Regra de Comunicação Estrita:
+  // Se a reserva tem check-in para data futura, a recepção NUNCA deve receber e-mails de alteração
+  // ou cancelamento com antecedência. Reservas futuras sempre aguardam o dia do check-in (rotina das 07:00).
+  if (isReservationForFuture(reservation)) {
+    return false;
+  }
 
   // 1. Indicadores diretos gravados na própria reserva
   if (Boolean(reservation.morningEmailSentDate) || 

@@ -59,6 +59,9 @@ export async function generateFnrhPdf({
   geolocation,
   clientTimezone,
   optInMarketing,
+  whatsapp2faVerified,
+  whatsappPhone,
+  whatsappOtpVerifiedAt,
   baseUrl = "https://corpflats.onrender.com"
 }) {
   const g = guestData || guest || {};
@@ -366,6 +369,14 @@ export async function generateFnrhPdf({
   const cleanUa = ua.substring(0, 85);
   doc.fillColor("#475569").fontSize(6.5).font("Courier").text(cleanUa, aX + 115, aY, { width: 295 });
 
+  if (whatsapp2faVerified) {
+    aY += 13;
+    doc.fillColor("#0f172a").fontSize(7.5).font("Helvetica-Bold").text("Autenticação de Posse WhatsApp (2FA):", aX, aY);
+    const wPhone = whatsappPhone || guestPhone || "";
+    const masked = wPhone ? `Validado com sucesso via Z-API (${wPhone.slice(-4) ? '•••-' + wPhone.slice(-4) : wPhone})` : "Posse Comprovada via Token WhatsApp Z-API";
+    doc.fillColor("#047857").fontSize(7.5).font("Helvetica-Bold").text(masked, aX + 165, aY);
+  }
+
   aY += 16;
   // Disposição Jurídica Legal
   doc.roundedRect(aX, aY, 405, 24, 3).fill("#e0f2fe");
@@ -388,7 +399,8 @@ export async function generateFnrhPdf({
     transportMethod: transportMethodStr,
     signedAt: signedAtIso,
     signerIp: ip,
-    signerUserAgent: ua
+    signerUserAgent: ua,
+    whatsapp2faVerified: Boolean(whatsapp2faVerified)
   });
   const canonicalHash = crypto.createHash("sha256").update(canonicalSignaturePayload).digest("hex");
 
@@ -456,6 +468,9 @@ export async function generateFnrhPdf({
       signerIp: ip,
       signerUserAgent: ua,
       geolocation: geolocation || null,
+      whatsapp2faVerified: Boolean(whatsapp2faVerified),
+      whatsappPhone: whatsappPhone || null,
+      whatsappOtpVerifiedAt: whatsappOtpVerifiedAt || null,
       signedAt: signedAtIso,
       signedAtBrasilia,
       sha256Hash: finalFileSha256,

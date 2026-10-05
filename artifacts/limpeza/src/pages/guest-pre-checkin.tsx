@@ -110,6 +110,18 @@ export default function GuestPreCheckin() {
   const [settings, setSettings] = useState<any>(null)
   const [siteConfig, setSiteConfig] = useState<any>(null)
 
+  // Token OTP via WhatsApp / E-mail (2FA - Duplo Fator de Autenticação)
+  const [whatsappOtpInput, setWhatsappOtpInput] = useState("")
+  const [otpSent, setOtpSent] = useState(false)
+  const [otpLoading, setOtpLoading] = useState(false)
+  const [otpCooldown, setOtpCooldown] = useState(0)
+  const [otpMaskedPhone, setOtpMaskedPhone] = useState("")
+  const [otpMaskedEmail, setOtpMaskedEmail] = useState("")
+  const [otpChannel, setOtpChannel] = useState<"whatsapp" | "email">("whatsapp")
+  const [otpVerified, setOtpVerified] = useState(false)
+  const [otpError, setOtpError] = useState<string | null>(null)
+  const [otpSuccessMessage, setOtpSuccessMessage] = useState<string | null>(null)
+
   // Veículo para Garagem
   const [vehiclePlate, setVehiclePlate] = useState("")
   const [vehicleModel, setVehicleModel] = useState("")
@@ -136,6 +148,60 @@ export default function GuestPreCheckin() {
   }, [birthDate])
 
   const isMinorGuest = calculatedAge !== null && calculatedAge < 18
+
+  // Temporizador regressivo de reenvio do OTP (60s)
+  useEffect(() => {
+    if (otpCooldown > 0) {
+      const timer = setTimeout(() => setOtpCooldown(c => c - 1), 1000)
+      return () => clearTimeout(timer)
+    }
+  }, [otpCooldown])
+
+  // Disparo automático do código OTP no WhatsApp ao chegar no Passo 3 (Assinatura)
+  useEffect(() => {
+    if (step === 3 && !otpSent && (phone || reservation?.guestPhone) && !isTokenSessionExpired) {
+      handleSendOtp("whatsapp")
+    }
+  }, [step, isTokenSessionExpired])
+
+  const handleSendOtp = async (channel: "whatsapp" | "email" = "whatsapp", forceNew = false) => {
+    setOtpLoading(true)
+    setOtpError(null)
+    setOtpSuccessMessage(null)
+    try {
+      const resCode = code || reservation?.code
+      const res = await fetch(`/api/pms/pre-checkin/${resCode}/whatsapp-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          guestIndex: selectedGuestIndex,
+          phone,
+          email,
+          fullName,
+          channel,
+          forceNew
+        })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setOtpSent(true)
+        setOtpChannel(channel)
+        setOtpCooldown(data.cooldownSeconds || 60)
+        if (data.maskedPhone) setOtpMaskedPhone(data.maskedPhone)
+        if (data.maskedEmail) setOtpMaskedEmail(data.maskedEmail)
+        setOtpSuccessMessage(data.message || (channel === "whatsapp" ? "Código enviado no WhatsApp!" : "Código enviado por e-mail!"))
+      } else {
+        if (data.cooldownRemaining) {
+          setOtpCooldown(data.cooldownRemaining)
+        }
+        setOtpError(data.error || "Não foi possível enviar o código agora.")
+      }
+    } catch (err: any) {
+      setOtpError("Erro de conexão ao solicitar código de confirmação.")
+    } finally {
+      setOtpLoading(false)
+    }
+  }
 
   // Canvas for signature
 
@@ -563,6 +629,10 @@ export default function GuestPreCheckin() {
   }
 
   const handleSubmit = async () => {
+    if (otpSent && whatsappOtpInput.trim().length !== 6) {
+      alert("Por favor, informe o código de 6 dígitos recebido no seu WhatsApp para confirmar a assinatura.")
+      return
+    }
     setLoading(true)
     try {
       const cleanPlate = (transportMethod === "Carro próprio" || transportMethod === "Carro alugado" || transportMethod === "carro") ? vehiclePlate.trim().toUpperCase() : ""
@@ -578,6 +648,7 @@ export default function GuestPreCheckin() {
           reservationId: reservation?.id,
           guestIndex: selectedGuestIndex,
           token: signatureToken || (typeof window !== "undefined" ? (new URLSearchParams(window.location.search).get("token") || "") : ""),
+          whatsappOtp: whatsappOtpInput.trim(),
           fullName,
           phone,
           email,
@@ -2387,6 +2458,98 @@ export default function GuestPreCheckin() {
                 </button>
               </div>
 
+              {/* 📱 Autenticação de Posse via WhatsApp (2FA) */}
+              <div className="p-4 sm:p-5 bg-gradient-to-r from-emerald-50/80 via-teal-50/50 to-sky-50/80 border border-emerald-300 rounded-2xl space-y-3.5 shadow-xs">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-xs shrink-0">
+                      <MessageCircle className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="font-bold text-xs sm:text-sm text-slate-900 block leading-tight">
+                        Código de Segurança no WhatsApp (2FA)
+                      </span>
+                      <span className="text-[11px] text-slate-600 block mt-0.5">
+                        {otpChannel === "whatsapp" 
+                          ? `Enviado para o WhatsApp ${otpMaskedPhone || phone || ""}` 
+                          : `Enviado para o e-mail ${otpMaskedEmail || email || ""}`}
+                      </span>
+                    </div>
+                  </div>
+                  <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 text-[10px] font-bold py-0.5 px-2">
+                    Posse Comprovada
+                  </Badge>
+                </div>
+
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Para conferir validade jurídica à sua assinatura (Lei 14.063/2020), enviamos um código de 6 dígitos no seu WhatsApp. Digite-o abaixo:
+                </p>
+
+                {/* Mensagens de Sucesso ou Erro do OTP */}
+                {otpSuccessMessage && (
+                  <div className="text-xs font-semibold text-emerald-800 bg-emerald-100/90 border border-emerald-300 rounded-xl p-2.5 flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>{otpSuccessMessage}</span>
+                  </div>
+                )}
+
+                {otpError && (
+                  <div className="text-xs font-semibold text-rose-800 bg-rose-50 border border-rose-200 rounded-xl p-2.5 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>{otpError}</span>
+                  </div>
+                )}
+
+                {/* Input de Código OTP de 6 Dígitos & Botões de Ação */}
+                <div className="flex flex-col sm:flex-row items-center gap-3">
+                  <div className="relative w-full sm:w-60">
+                    <Input
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={6}
+                      value={whatsappOtpInput}
+                      onChange={e => {
+                        const val = e.target.value.replace(/\D/g, "").slice(0, 6)
+                        setWhatsappOtpInput(val)
+                        setOtpError(null)
+                      }}
+                      placeholder="000000"
+                      className="text-center font-mono text-xl sm:text-2xl tracking-[0.4em] font-black h-12 bg-white border-2 border-emerald-300 focus:border-emerald-600 focus:ring-emerald-500 rounded-xl shadow-inner text-slate-900"
+                    />
+                    {whatsappOtpInput.length === 6 && (
+                      <CheckCircle2 className="w-5 h-5 text-emerald-600 absolute right-3 top-3.5" />
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={otpCooldown > 0 || otpLoading}
+                      onClick={() => handleSendOtp("whatsapp", true)}
+                      className="text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 border-slate-200 rounded-xl h-12 px-3 gap-1.5 flex-1 sm:flex-none"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${otpLoading ? "animate-spin" : ""}`} />
+                      <span>{otpCooldown > 0 ? `Reenviar (${otpCooldown}s)` : "Reenviar no WhatsApp"}</span>
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Link de Contingência: Receber por E-mail */}
+                <div className="flex items-center justify-between text-[11px] pt-1 border-t border-emerald-200/60 text-slate-500">
+                  <span>Não recebeu o código no WhatsApp?</span>
+                  <button
+                    type="button"
+                    onClick={() => handleSendOtp("email", true)}
+                    disabled={otpLoading}
+                    className="text-sky-700 hover:text-sky-900 font-bold hover:underline"
+                  >
+                    Receber código por E-mail →
+                  </button>
+                </div>
+              </div>
+
               {/* 🔒 Card de Segurança da Informação & Conformidade LGPD */}
               <div className="p-4 sm:p-5 bg-slate-900 border border-sky-500/40 rounded-2xl text-slate-200 space-y-3 shadow-lg">
                 <div className="flex items-center gap-2 text-sky-400 font-bold text-sm">
@@ -2492,7 +2655,7 @@ export default function GuestPreCheckin() {
                   <ArrowLeft className="w-4 h-4 mr-1" /> Voltar
                 </Button>
                 <Button 
-                  disabled={loading || !signatureData || !legalDeclarationAccepted || isTokenSessionExpired}
+                  disabled={loading || !signatureData || !legalDeclarationAccepted || isTokenSessionExpired || (otpSent && whatsappOtpInput.trim().length !== 6)}
                   onClick={handleSubmit} 
                   className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm h-12 rounded-xl gap-2 shadow-md shadow-emerald-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
                 >

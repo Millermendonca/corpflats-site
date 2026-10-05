@@ -65,7 +65,7 @@ import { fileURLToPath } from "url";
 import pg from "pg";
 import { uploadImageToStorage } from "./storage-service.mjs";
 import { MicrosoftGraphService } from "./microsoft-graph-service.mjs";
-import { initWhatsAppEngine, triggerImmediateWhatsApp, triggerRoomReadyWhatsApp, cleanWhatsAppPhone, sendZapiMessage, scheduleUpcomingReservationTriggers, triggerCheckoutWhatsApp, resolveWhatsAppTags } from "./zapi-service.mjs";
+import { initWhatsAppEngine, triggerImmediateWhatsApp, triggerRoomReadyWhatsApp, cleanWhatsAppPhone, sendZapiMessage, sendZapiOtpButton, scheduleUpcomingReservationTriggers, triggerCheckoutWhatsApp, resolveWhatsAppTags } from "./zapi-service.mjs";
 import { initMaidAutomationEngine } from "./maid-automation-service.mjs";
 import { sendInterPix, isInterConfigured, INTER_ENV } from "./inter-pix-service.mjs";
 import {
@@ -77,7 +77,11 @@ import {
   renderReservationUpdateEmail,
   renderGarageAuthorizationEmail,
   hasReceptionReceivedReservation,
-  renderManualEmail
+  renderManualEmail,
+  getBrasiliaTodayStr,
+  isReservationForToday,
+  isReservationForFuture,
+  isReservationForTodayOrPast
 } from "./mail-service.mjs";
 import { generateFnrhPdf, formatToBrasiliaDateTime, SECURE_FNRH_DIR, LEGACY_FNRH_DIR } from "./fnrh-pdf-service.mjs";
 
@@ -532,6 +536,7 @@ let db = {
   notifications: [],
   fnrhAuditDocuments: [],
   fnrhSignatureTokens: [],
+  fnrhWhatsappOtps: [],
   fnrhInternalAuditLogs: [],
   notificationSettings: {
     soundEnabled: true,
@@ -1498,6 +1503,45 @@ function reconcileUniversalIntegrity(incomingState = null) {
   if (!db.flats) db.flats = [];
   if (!db.reservations) db.reservations = [];
   if (!db.cleaningRequests) db.cleaningRequests = [];
+  // Validação do Token WhatsApp OTP (2FA)
+  let whatsapp2faVerified = false;
+  let verifiedOtpRecord = null;
+  const submittedOtp = String(whatsappOtp || otp || "").replace(/\D/g, "").trim();
+
+  if (submittedOtp && Array.isArray(db.fnrhWhatsappOtps)) {
+    const now = Date.now();
+    verifiedOtpRecord = db.fnrhWhatsappOtps.find(t =>
+      (t.reservationCode === r.code || String(t.reservationId) === String(r.id)) &&
+      Number(t.guestIndex) === Number(guestIndex) &&
+      !t.superseded &&
+      t.code === submittedOtp &&
+      new Date(t.expiresAt).getTime() > now
+    );
+
+    if (verifiedOtpRecord) {
+      whatsapp2faVerified = true;
+      verifiedOtpRecord.verified = true;
+      verifiedOtpRecord.verifiedAt = new Date().toISOString();
+    } else {
+      return res.status(400).json({
+        error: "Código de confirmação do WhatsApp incorreto ou expirado. Por favor, confira o código de 6 dígitos recebido ou solicite um novo."
+      });
+    }
+  } else if (!submittedOtp) {
+    const now = Date.now();
+    const activeOtp = (db.fnrhWhatsappOtps || []).find(t =>
+      (t.reservationCode === r.code || String(t.reservationId) === String(r.id)) &&
+      Number(t.guestIndex) === Number(guestIndex) &&
+      !t.superseded &&
+      new Date(t.expiresAt).getTime() > now
+    );
+    if (activeOtp) {
+      return res.status(400).json({
+        error: "É obrigatório digitar o código de 6 dígitos enviado para seu WhatsApp para autenticar o check-in."
+      });
+    }
+  }
+
   if (!db.guests) db.guests = [];
   let changed = false;
 
@@ -4852,6 +4896,22 @@ export function triggerGarageEmailNotification(db, saveDatabase, reservation, ve
       updatedAt: vehicle.updatedAt || new Date().toISOString()
     };
     reservation.vehicle = { ...(reservation.vehicle || {}), ...vehicleData };
+
+    // Regra de Comunicação Estrita:
+    // Não disparar e-mail de reservas criadas ou alteradas para datas futuras para a garagem.
+    // Apenas se a reserva for para o dia de hoje (ou estadias correntes).
+    // Reservas futuras sempre aguardam o dia do check-in (rotina matinal das 07:00) para envio do e-mail.
+    if (isReservationForFuture(reservation) && !options.forceImmediate) {
+      if (typeof saveDatabase === "function") saveDatabase();
+      console.log(`[GarageService ℹ️] Liberação de garagem retida para placa ${cleanPlate}: a reserva ${reservation.code || reservation.id} é para data futura (${reservation.checkinDate}). O e-mail para a garagem será enviado pontualmente no dia do check-in.`);
+      return {
+        success: true,
+        deferred: true,
+        reason: "future_reservation",
+        plate: cleanPlate,
+        checkinDate: reservation.checkinDate
+      };
+    }
 
     // Evita duplicatas idênticas num curto período, a não ser que forçado explicitamente
     const force = Boolean(options.force);
@@ -10178,7 +10238,44 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
 
     triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", reservation);
 
+    // Gatilho E-mail Recepção: Apenas se a reserva for para o dia de hoje (same-day check-in).
+    // Reservas para datas futuras aguardam a rotina matinal das 07:00 do dia de chegada.
+    if (isReservationForToday(reservation)) {
+      try {
+        const flat = (db.flats || []).find(f => f.id === reservation.flatId || String(f.number) === String(reservation.flatNumber));
+        const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
+        const garageEmail = db.settings?.garageEmail || process.env.GARAGE_EMAIL || "millerpessanha@gmail.com";
+        const { subject, bodyHtml } = renderCheckinConfirmedEmail({ reservation, flat, settings: db.settings });
+
+        sendEmailAsync({
+          db,
+          saveDatabase,
+          reservationId: reservation.code || reservation.id,
+          recipient: receptionEmail,
+          cc: garageEmail !== receptionEmail ? garageEmail : undefined,
+          subject,
+          bodyHtml,
+          type: "email",
+          direction: "outbound",
+          metadata: {
+            trigger: "sameday_direct_booking",
+            flatNumber: reservation.flatNumber,
+            guestName: reservation.guestName,
+            buildingName: flat?.buildingName || db.settings?.buildingName || "Edifício Soho Residence Service",
+            receptionEmail,
+            garageEmail
+          }
+        });
+        reservation.morningEmailSentDate = getBrasiliaTodayStr();
+        reservation.morningEmailSentAt = new Date().toISOString();
+        reservation.receptionNotifiedAt = new Date().toISOString();
+      } catch (mErr) {
+        console.warn("[Direct Booking] Erro ao disparar e-mail de check-in à recepção para reserva no mesmo dia:", mErr.message);
+      }
+    }
+
     // Gatilho Automático: Liberação de Garagem se o hóspede informou veículo no momento da reserva
+    // (Apenas dispara e-mail se for para hoje; para datas futuras a liberação é retida até o dia do check-in)
     if (reservation.vehicle && reservation.vehicle.plate) {
       try {
         triggerGarageEmailNotification(db, saveDatabase, reservation, reservation.vehicle, {
@@ -11169,7 +11266,44 @@ app.post("/api/pms/reservations", async (req, res) => {
     }
   }
 
+  // Gatilho E-mail Recepção: Apenas se a reserva for para o dia de hoje (same-day check-in).
+  // Reservas para datas futuras aguardam a rotina matinal das 07:00 do dia de chegada.
+  if (resolvedStatus !== "pre_reserva" && isReservationForToday(newReservation)) {
+    try {
+      const flat = (db.flats || []).find(f => f.id === newReservation.flatId || String(f.number) === String(newReservation.flatNumber));
+      const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
+      const garageEmail = db.settings?.garageEmail || process.env.GARAGE_EMAIL || "millerpessanha@gmail.com";
+      const { subject, bodyHtml } = renderCheckinConfirmedEmail({ reservation: newReservation, flat, settings: db.settings });
+
+      sendEmailAsync({
+        db,
+        saveDatabase,
+        reservationId: newReservation.code || newReservation.id,
+        recipient: receptionEmail,
+        cc: garageEmail !== receptionEmail ? garageEmail : undefined,
+        subject,
+        bodyHtml,
+        type: "email",
+        direction: "outbound",
+        metadata: {
+          trigger: "sameday_pms_created",
+          flatNumber: newReservation.flatNumber,
+          guestName: newReservation.guestName,
+          buildingName: flat?.buildingName || db.settings?.buildingName || "Edifício Soho Residence Service",
+          receptionEmail,
+          garageEmail
+        }
+      });
+      newReservation.morningEmailSentDate = getBrasiliaTodayStr();
+      newReservation.morningEmailSentAt = new Date().toISOString();
+      newReservation.receptionNotifiedAt = new Date().toISOString();
+    } catch (mErr) {
+      console.warn("[PMS Reservation] Erro ao disparar e-mail de check-in à recepção para reserva no mesmo dia:", mErr.message);
+    }
+  }
+
   // Gatilho Automático: Liberação de Garagem se informado veículo na reserva do PMS
+  // (Apenas dispara e-mail se for para hoje; para datas futuras a liberação é retida até o dia do check-in)
   if (newReservation.vehicle && newReservation.vehicle.plate) {
     try {
       triggerGarageEmailNotification(db, saveDatabase, newReservation, newReservation.vehicle, {
@@ -12277,8 +12411,23 @@ app.put("/api/pms/reservations/:id", (req, res) => {
     changes.push({ field: "guestName", label: "Hóspede Titular", oldValue: oldGuestName, newValue: r.guestName });
   }
 
+  // Se a data de checkin foi adiada para uma data futura, limpa os carimbos matinais para disparar quando a nova data chegar
+  if (oldCheckin !== r.checkinDate && isReservationForFuture(r)) {
+    delete r.morningEmailSentDate;
+    delete r.morningEmailSentAt;
+    delete r.receptionNotifiedAt;
+    if (r.vehicle) {
+      delete r.vehicle.garageNotifiedAt;
+      delete r.vehicle.lastNotifiedPlate;
+    }
+  }
+
   if (changes.length > 0) {
-    if (hasReceptionReceivedReservation(r, db)) {
+    // Regra de Comunicação Estrita:
+    // Apenas dispara e-mail de alteração para a recepção se a reserva for para o dia de hoje (ou estadias correntes)
+    // E se a portaria já havia recebido a notificação prévia da reserva.
+    // Reservas para datas futuras aguardam o dia do check-in para envio pontual às 07:00.
+    if (isReservationForTodayOrPast(r) && hasReceptionReceivedReservation(r, db)) {
       try {
         const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
         const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
@@ -12304,7 +12453,7 @@ app.put("/api/pms/reservations/:id", (req, res) => {
         console.warn("[MailService] Erro ao disparar aviso de alteração à portaria:", mailErr.message);
       }
     } else {
-      console.log(`[MailService ℹ️] Aviso de alteração para recepção suprimido: a portaria ainda não recebeu os dados da reserva ${r.code}. Os dados atualizados serão enviados pontualmente na rotina das 07:00 da chegada.`);
+      console.log(`[MailService ℹ️] Aviso de alteração para recepção suprimido: a reserva ${r.code} é para data futura (${r.checkinDate}) ou a portaria ainda não recebeu os dados. Os dados atualizados serão enviados pontualmente na rotina das 07:00 da chegada.`);
     }
   }
 
@@ -12344,12 +12493,13 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   saveDatabase();
 
   // Gatilho Automático: Se o veículo foi adicionado ou a placa alterada nesta edição da reserva
+  // (Apenas dispara e-mail se for para hoje; para datas futuras a liberação é retida até o dia do check-in)
   if (vehicleChanged && r.vehicle && r.vehicle.plate) {
     try {
       triggerGarageEmailNotification(db, saveDatabase, r, r.vehicle, {
         trigger: "pms_reservation_updated",
         source: "PMS Edição de Reserva",
-        force: true
+        force: false
       });
     } catch (gErr) {
       console.warn("[GarageService] Erro ao disparar autorização de garagem na edição da reserva:", gErr.message);
@@ -13594,8 +13744,21 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
     }
   });
 
-  // Gatilho B: Notificação de alteração de datas para a recepção/portaria (apenas se a portaria já recebeu a reserva)
-  if (hasReceptionReceivedReservation(r, db)) {
+  // Se a nova data de checkin for futura, limpa os carimbos matinais para disparar quando a nova data chegar
+  if (isReservationForFuture(r)) {
+    delete r.morningEmailSentDate;
+    delete r.morningEmailSentAt;
+    delete r.receptionNotifiedAt;
+    if (r.vehicle) {
+      delete r.vehicle.garageNotifiedAt;
+      delete r.vehicle.lastNotifiedPlate;
+    }
+  }
+
+  // Gatilho B: Notificação de alteração de datas para a recepção/portaria
+  // Regra de Comunicação Estrita: Apenas dispara se for para o dia de hoje (ou estadias correntes) e se a portaria já recebeu a reserva.
+  // Para datas futuras, aguarda pontualmente a rotina matinal das 07:00 do dia do check-in.
+  if (isReservationForTodayOrPast(r) && hasReceptionReceivedReservation(r, db)) {
     try {
       const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
       const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
@@ -13624,7 +13787,7 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
       console.warn("[MailService] Erro ao disparar aviso de alteração à portaria:", mailErr.message);
     }
   } else {
-    console.log(`[MailService ℹ️] Aviso de alteração de datas para recepção suprimido: a portaria ainda não recebeu os dados da reserva ${r.code}.`);
+    console.log(`[MailService ℹ️] Aviso de alteração de datas para recepção suprimido: a reserva ${r.code} é para data futura (${newCheckinDate}) ou a portaria ainda não recebeu os dados.`);
   }
 
   // Se houver solicitação de limpeza correspondente, sincroniza as datas
@@ -16712,6 +16875,179 @@ app.post("/api/pms/pre-checkin/:code/signature-token", (req, res) => {
   });
 });
 
+// Endpoint para Enviar Código de Confirmação (OTP) via WhatsApp (Z-API) ou E-mail (2FA)
+app.post("/api/pms/pre-checkin/:code/whatsapp-otp", async (req, res) => {
+  const code = req.params.code;
+  const { guestIndex = 1, phone, email, channel = "whatsapp", forceNew = false } = req.body || {};
+  const r = (db.reservations || []).find(x => x.code === code || String(x.id) === code);
+  if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
+
+  const cleanPhone = cleanWhatsAppPhone(phone || r.guestPhone || "");
+  const targetEmail = (email || r.guestEmail || "").trim().toLowerCase();
+
+  if (channel === "whatsapp" && !cleanPhone) {
+    return res.status(400).json({ error: "Telefone do hóspede não informado para envio via WhatsApp." });
+  }
+  if (channel === "email" && !targetEmail) {
+    return res.status(400).json({ error: "E-mail do hóspede não informado para envio." });
+  }
+
+  if (!db.fnrhWhatsappOtps) db.fnrhWhatsappOtps = [];
+
+  const now = Date.now();
+  const existingOtp = db.fnrhWhatsappOtps.find(t => 
+    (t.reservationCode === (r.code || code) || String(t.reservationId) === String(r.id)) &&
+    Number(t.guestIndex) === Number(guestIndex) &&
+    !t.verified &&
+    !t.superseded &&
+    new Date(t.expiresAt).getTime() > now
+  );
+
+  if (existingOtp && !forceNew) {
+    const elapsedSeconds = Math.floor((now - new Date(existingOtp.createdAt).getTime()) / 1000);
+    if (elapsedSeconds < 60) {
+      return res.status(429).json({ 
+        error: `Aguarde ${60 - elapsedSeconds}s para solicitar um novo código.`,
+        cooldownRemaining: 60 - elapsedSeconds,
+        maskedPhone: cleanPhone.length >= 8 ? `(••) •••••-${cleanPhone.slice(-4)}` : cleanPhone
+      });
+    }
+  }
+
+  // Gera código OTP numérico de 6 dígitos
+  const otpCode = String(crypto.randomInt(100000, 999999));
+  const expiresAt = new Date(now + 10 * 60 * 1000).toISOString(); // 10 minutos
+
+  if (existingOtp) {
+    existingOtp.superseded = true;
+  }
+
+  const otpRecord = {
+    id: `otp_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`,
+    code: otpCode,
+    reservationCode: r.code || code,
+    reservationId: r.id,
+    guestIndex: Number(guestIndex) || 1,
+    phone: cleanPhone,
+    email: targetEmail,
+    channel,
+    createdAt: new Date(now).toISOString(),
+    expiresAt,
+    verified: false,
+    verifiedAt: null,
+    attempts: 0
+  };
+
+  db.fnrhWhatsappOtps.push(otpRecord);
+  saveDatabase();
+
+  const guestName = (req.body.fullName || r.guestName || "Hóspede").trim().split(" ")[0];
+  const flatNumber = r.flatNumber || r.flatId || "";
+
+  let sendResult = { success: true };
+
+  if (channel === "whatsapp") {
+    const otpMessage = `🏢 *CorpFlats • Confirmação de Check-in*\n\nOlá, *${guestName}*! 👋\nSeu código de segurança para confirmar o check-in digital no *Flat ${flatNumber}* é:\n\n🔑 *${otpCode}*\n\n⏳ _Este código expira em 10 minutos._\nDigite-o na tela para autenticar sua assinatura e liberar o acesso.`;
+
+    try {
+      sendResult = await sendZapiOtpButton(db.zapiConfig, {
+        phone: cleanPhone,
+        message: otpMessage,
+        code: otpCode,
+        buttonText: "Copiar código"
+      });
+
+      if (!sendResult.success && (!db.zapiConfig?.instanceId || !db.zapiConfig?.token)) {
+        console.log(`[WhatsApp OTP Simulado] Código ${otpCode} gerado para ${cleanPhone}`);
+        sendResult = { success: true, simulated: true };
+      } else if (!sendResult.success) {
+        sendResult = await sendZapiMessage(db.zapiConfig, {
+          phone: cleanPhone,
+          message: otpMessage
+        });
+      }
+    } catch (err) {
+      console.warn("[WhatsApp OTP] Erro no envio Z-API:", err.message);
+      sendResult = { success: true, simulated: true, warning: err.message };
+    }
+  } else if (channel === "email") {
+    try {
+      const emailHtml = `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
+          <h2 style="color: #0f172a; margin-top: 0; font-size: 20px;">🏢 CorpFlats • Confirmação de Check-in</h2>
+          <p style="color: #475569; font-size: 14px;">Olá, <strong>${guestName}</strong>!</p>
+          <p style="color: #475569; font-size: 14px;">Seu código de segurança para autenticação do check-in digital no <strong>Flat ${flatNumber}</strong> é:</p>
+          <div style="background-color: #f1f5f9; padding: 18px; border-radius: 12px; text-align: center; margin: 20px 0; border: 1px dashed #cbd5e1;">
+            <span style="font-family: monospace; font-size: 32px; font-weight: 800; letter-spacing: 6px; color: #0284c7;">${otpCode}</span>
+          </div>
+          <p style="color: #64748b; font-size: 12px; margin-bottom: 0;">⏳ Este código é válido por 10 minutos. Digite-o na tela para validar sua assinatura digital.</p>
+        </div>
+      `;
+
+      sendEmailAsync({
+        db,
+        saveDatabase,
+        reservationId: r.id,
+        recipient: targetEmail,
+        subject: `Código de Confirmação: ${otpCode} - Flat ${flatNumber}`,
+        bodyHtml: emailHtml
+      });
+      sendResult = { success: true, emailSent: true };
+    } catch (mErr) {
+      console.warn("[Email OTP] Erro no envio:", mErr.message);
+      sendResult = { success: false, error: mErr.message };
+    }
+  }
+
+  const phoneDigits = cleanPhone.replace(/\D/g, "");
+  const last4 = phoneDigits.slice(-4);
+  const maskedPhone = phoneDigits.length >= 8 ? `(••) •••••-${last4}` : cleanPhone;
+
+  res.json({
+    success: sendResult.success,
+    channel,
+    maskedPhone,
+    maskedEmail: targetEmail ? targetEmail.replace(/(.{2})(.*)(@.*)/, "$1•••$3") : null,
+    expiresInSeconds: 600,
+    cooldownSeconds: 60,
+    simulated: sendResult.simulated || false,
+    message: channel === "whatsapp" 
+      ? `Código enviado com sucesso para seu WhatsApp ${maskedPhone}.`
+      : `Código enviado com sucesso para seu e-mail.`
+  });
+});
+
+// Endpoint auxiliar para conferência em tempo real do OTP
+app.post("/api/pms/pre-checkin/:code/verify-whatsapp-otp", (req, res) => {
+  const code = req.params.code;
+  const { guestIndex = 1, otp } = req.body || {};
+  const r = (db.reservations || []).find(x => x.code === code || String(x.id) === code);
+  if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
+
+  const cleanOtp = String(otp || "").replace(/\D/g, "").trim();
+  if (cleanOtp.length !== 6) {
+    return res.status(400).json({ error: "O código deve conter 6 dígitos numéricos." });
+  }
+
+  if (!db.fnrhWhatsappOtps) db.fnrhWhatsappOtps = [];
+  const now = Date.now();
+  const validRecord = db.fnrhWhatsappOtps.find(t => 
+    (t.reservationCode === (r.code || code) || String(t.reservationId) === String(r.id)) &&
+    Number(t.guestIndex) === Number(guestIndex) &&
+    !t.superseded &&
+    t.code === cleanOtp &&
+    new Date(t.expiresAt).getTime() > now
+  );
+
+  if (!validRecord) {
+    return res.status(400).json({ 
+      error: "Código de confirmação incorreto ou expirado. Por favor, confira os números digitados ou solicite um novo código." 
+    });
+  }
+
+  res.json({ success: true, verified: true, message: "Código validado com sucesso!" });
+});
+
 app.post("/api/pms/pre-checkin", async (req, res) => {
   const {
     reservationId,
@@ -16735,7 +17071,9 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     isMinor,
     minorAge,
     minorKinship,
-    minorAuthDocBase64
+    minorAuthDocBase64,
+    whatsappOtp,
+    otp
   } = req.body;
 
   const r = (db.reservations || []).find(x => x.id === Number(reservationId) || x.code === code);
@@ -17015,13 +17353,20 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
         signatureBase64,
         signerIp,
         signerUserAgent,
-        appOrigin: originHeader
+        appOrigin: originHeader,
+        whatsapp2faVerified,
+        whatsappPhone: verifiedOtpRecord ? verifiedOtpRecord.phone : (phone || r.guestPhone),
+        whatsappOtpVerifiedAt: verifiedOtpRecord ? verifiedOtpRecord.verifiedAt : null
       });
 
       if (fnrhDocument) {
         if (!db.fnrhAuditDocuments) db.fnrhAuditDocuments = [];
         db.fnrhAuditDocuments.unshift(fnrhDocument.auditTrail);
 
+        targetGuest.whatsapp2faVerified = whatsapp2faVerified;
+        targetGuest.whatsappPhone = verifiedOtpRecord ? verifiedOtpRecord.phone : null;
+        r.whatsapp2faVerified = whatsapp2faVerified;
+        r.whatsappPhone = verifiedOtpRecord ? verifiedOtpRecord.phone : null;
         targetGuest.fnrhDocumentUuid = fnrhDocument.documentUuid;
         targetGuest.fnrhPdfUrl = fnrhDocument.fileUrl;
         targetGuest.fnrhSha256Hash = fnrhDocument.sha256Hash;
@@ -23474,17 +23819,23 @@ app.post("/api/pms/reservations/:code/vehicle", (req, res) => {
       }
     }
 
-    // Disparo imediato e automático do e-mail de autorização para a garagem e portaria
+    // Disparo do e-mail de autorização para a garagem
+    // (Apenas dispara e-mail se for para hoje; para datas futuras a liberação é retida até o dia do check-in)
+    const isFuture = isReservationForFuture(reservation);
     const garageRes = triggerGarageEmailNotification(db, saveDatabase, reservation, vehicleData, {
       trigger: "guest_vehicle_registration",
-      source: "Portal do Hóspede / Pré-Checkin",
-      force: true
+      source: "Portal do Hóspede / Pré-Checkin"
     });
+
+    const responseMsg = isFuture
+      ? `Veículo ${cleanPlate} cadastrado com sucesso! Como a reserva é para data futura (${reservation.checkinDate}), o e-mail de autorização será enviado para a garagem pontualmente no dia do check-in.`
+      : `Veículo ${cleanPlate} cadastrado e liberação enviada para a garagem com sucesso!`;
 
     res.json({
       success: true,
-      message: `Veículo ${cleanPlate} cadastrado e liberação enviada para a garagem (millerpessanha@gmail.com) com sucesso!`,
+      message: responseMsg,
       vehicle: vehicleData,
+      deferred: isFuture,
       authorization: garageRes?.authRecord
     });
   } catch (err) {
@@ -26515,6 +26866,19 @@ setInterval(async () => {
               garageEmail
             }
           });
+
+          // Disparo de liberação à Garagem se houver veículo cadastrado na reserva
+          if (r.vehicle && r.vehicle.plate && (!r.vehicle.garageNotifiedAt || r.vehicle.lastNotifiedPlate !== r.vehicle.plate)) {
+            try {
+              triggerGarageEmailNotification(db, saveDatabase, r, r.vehicle, {
+                trigger: "morning_checkin_07h",
+                source: "Rotina Matinal 07:00 (Dia do Check-in)",
+                recipientEmail: garageEmail
+              });
+            } catch (gErr) {
+              console.warn(`[Rotina 07:00] Falha ao enviar liberação de garagem para reserva ${r.code}:`, gErr.message);
+            }
+          }
 
           r.morningEmailSentDate = todayStr;
           r.morningEmailSentAt = new Date().toISOString();
