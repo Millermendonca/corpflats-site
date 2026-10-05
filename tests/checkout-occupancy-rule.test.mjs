@@ -196,6 +196,19 @@ describe('Regra de Ocupação Padrão em Check-outs', () => {
     const grfdCode = extractFunction(serverCode, 'getRequestsForDate');
     const ruiCode = extractFunction(serverCode, 'reconcileUniversalIntegrity');
     const db = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+    db.reservations.push({
+      id: 9903,
+      code: 'RES-509-0302',
+      flatId: 10,
+      flatNumber: '509',
+      guestName: 'Hóspede 29/09',
+      checkinDate: '2026-09-29',
+      checkoutDate: '2026-10-02',
+      status: 'confirmada',
+      twinBeds: true,
+      extraMattress: true,
+      specialRequests: 'Separar as camas, colocar como 2 solteiras • Colocar 1 colchão extra'
+    });
     const fn = new Function('db', 'getTodayStr', 'getOffsetDateStr', 'saveDatabase', grfdCode + '\n' + ruiCode + '\n return { getRequestsForDate, reconcileUniversalIntegrity };');
     const scope = fn(db, () => '2026-09-29', (d, off) => '2026-09-29', () => {});
     scope.reconcileUniversalIntegrity();

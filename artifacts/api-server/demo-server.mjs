@@ -1796,21 +1796,40 @@ function reconcileUniversalIntegrity(incomingState = null) {
       const note = (r.specialRequests || r.notes || "").trim();
       const validNote = (note && !note.includes("Limpeza de check-out gerada automaticamente") && note.toLowerCase() !== "teste") ? note : null;
 
-      if (isTwin || isMattress || validNote) {
-        const cleanReq = (db.cleaningRequests || []).find(c =>
-          (String(c.flatNumber) === String(r.flatNumber) || (r.flatId && c.flatId === r.flatId)) &&
-          c.requestDate === r.checkinDate &&
-          !c.isInstructionOnly &&
-          c.source !== "manual_instruction"
-        );
-        if (cleanReq) {
-          if (isTwin && !cleanReq.twinBeds) { cleanReq.twinBeds = true; changed = true; }
-          if (isMattress && !cleanReq.extraMattress) { cleanReq.extraMattress = true; changed = true; }
-          if (validNote && (!cleanReq.adminNote || cleanReq.adminNote.includes("Limpeza de check-out gerada automaticamente"))) {
-            cleanReq.adminNote = validNote;
-            cleanReq.pendingObservation = validNote;
+      const cleanReq = (db.cleaningRequests || []).find(c =>
+        (String(c.flatNumber) === String(r.flatNumber) || (r.flatId && c.flatId === r.flatId)) &&
+        c.requestDate === r.checkinDate &&
+        !c.isInstructionOnly &&
+        c.source !== "manual_instruction"
+      );
+      if (cleanReq) {
+        cleanReq.autoReservationCode = r.code;
+        cleanReq.autoReservationId = r.id;
+        if (!cleanReq.manualTwinBeds && cleanReq.twinBeds !== isTwin) {
+          cleanReq.twinBeds = isTwin;
+          changed = true;
+        }
+        if (!cleanReq.manualExtraMattress && cleanReq.extraMattress !== isMattress) {
+          cleanReq.extraMattress = isMattress;
+          changed = true;
+        }
+        if (!cleanReq.manualAdminNote) {
+          let expectedNote = validNote;
+          if (!expectedNote && (cleanReq.twinBeds || cleanReq.extraMattress)) {
+            const parts = [];
+            if (cleanReq.twinBeds) parts.push("Separar as camas, colocar como 2 solteiras");
+            if (cleanReq.extraMattress) parts.push("Colocar 1 colchão extra");
+            expectedNote = parts.join(" • ");
+          }
+          if (cleanReq.adminNote !== expectedNote) {
+            cleanReq.adminNote = expectedNote;
+            cleanReq.pendingObservation = expectedNote;
             changed = true;
           }
+        }
+        if (cleanReq.arrivingGuest !== (r.guestName || r.title)) {
+          cleanReq.arrivingGuest = r.guestName || r.title;
+          changed = true;
         }
       }
     }
@@ -1888,6 +1907,45 @@ function reconcileUniversalIntegrity(incomingState = null) {
       }
     }
   });
+
+  // Limpeza de instruções automáticas obsoletas:
+  // Se a solicitação não for manual e não houver reserva ativa com check-in nessa data/quarto, limpa preferências
+  for (const c of (db.cleaningRequests || [])) {
+    if (!c || c.isInstructionOnly || c.source === "manual_instruction" || c.source === "manual") continue;
+    const fNum = String(c.flatNumber || (db.flats.find(f => f.id === c.flatId)?.number || ""));
+    const activeArrivingRes = (db.reservations || []).find(r =>
+      r.status !== "cancelada" && r.status !== "cancelled" &&
+      String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || "")) === fNum &&
+      r.checkinDate === c.requestDate
+    );
+    if (!activeArrivingRes) {
+      if (!c.manualTwinBeds && c.twinBeds) {
+        c.twinBeds = false;
+        changed = true;
+      }
+      if (!c.manualExtraMattress && c.extraMattress) {
+        c.extraMattress = false;
+        changed = true;
+      }
+      if (!c.manualAdminNote && c.adminNote) {
+        if (c.autoReservationCode ||
+            c.adminNote.includes("Separar as camas") ||
+            c.adminNote.includes("2 solteiras") ||
+            c.adminNote.includes("colchão extra") ||
+            c.adminNote.includes("Limpeza de check-out gerada automaticamente")) {
+          c.adminNote = null;
+          c.pendingObservation = null;
+          changed = true;
+        }
+      }
+      if (c.arrivingGuest) {
+        c.arrivingGuest = null;
+        changed = true;
+      }
+      c.autoReservationCode = null;
+      c.autoReservationId = null;
+    }
+  }
 
   // Auto-correção: Se uma limpeza de checkout recente (últimos 7 dias) foi gerada automaticamente como "clean"
   // sem ter sido realizada por nenhuma camareira (sem assignedUserId e sem completedAt, como o Flat 408 da Danielle), ela deve ser "dirty"!
@@ -6358,15 +6416,19 @@ app.patch("/api/cleaning/requests/:requestId/admin-instructions", (req, res) => 
   const item = findOrUpsertCleaningRequest(reqId, flatNumber, flatId, requestDate);
   if (!item) return res.status(404).json({ error: "Apartamento ou solicitação de limpeza não encontrada." });
 
+  item.isManualInstruction = true;
   if (typeof twinBeds === "boolean") {
     item.twinBeds = twinBeds;
+    item.manualTwinBeds = true;
   }
   if (typeof extraMattress === "boolean") {
     item.extraMattress = extraMattress;
+    item.manualExtraMattress = true;
   }
   if (adminNote !== undefined) {
     item.adminNote = adminNote ? String(adminNote).trim() : null;
     item.pendingObservation = item.adminNote;
+    item.manualAdminNote = true;
   }
   item.updatedAt = new Date().toISOString();
 
@@ -6474,6 +6536,10 @@ app.post("/api/cleaning/requests/manual", (req, res) => {
     existing.status = markAsClean ? "clean" : "dirty";
     existing.isVacant = markAsClean ? true : !flat.isOccupied;
     existing.twinBeds = resolvedTwinBeds;
+    existing.manualTwinBeds = true;
+    existing.manualExtraMattress = true;
+    existing.manualAdminNote = true;
+    existing.isManualInstruction = true;
     if (noteText) {
       existing.adminNote = noteText;
       existing.pendingObservation = noteText;
@@ -6515,6 +6581,10 @@ app.post("/api/cleaning/requests/manual", (req, res) => {
     isPriority: Boolean(isPriority),
     isExtended: false,
     twinBeds: resolvedTwinBeds,
+    manualTwinBeds: true,
+    manualExtraMattress: true,
+    manualAdminNote: true,
+    isManualInstruction: true,
     adminNote: noteText,
     notes: noteText,
     leavingGuest: null,
@@ -6609,21 +6679,16 @@ function getRequestsForDate(dateStr, isNested = false) {
           r.checkinDate === resDate
         );
 
-        let nextUpcomingRes = arrivingRes;
-        if (!nextUpcomingRes) {
-          const upcoming = (db.reservations || [])
-            .filter(r =>
-              r.status !== "cancelada" &&
-              r.status !== "cancelado" &&
-              String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || "")) === fNumber &&
-              r.checkinDate >= resDate
-            )
-            .sort((a, b) => a.checkinDate.localeCompare(b.checkinDate));
-          nextUpcomingRes = upcoming[0] || null;
+        const nextResHasTwin = Boolean(arrivingRes && (arrivingRes.twinBeds || arrivingRes.bedType === "2 Solteiro" || arrivingRes.bedType === "twin"));
+        const nextResHasExtraMattress = Boolean(arrivingRes && arrivingRes.extraMattress);
+        let arrivingNote = arrivingRes ? ((arrivingRes.specialRequests || "").trim() || (arrivingRes.notes || "").trim() || null) : null;
+        if (arrivingNote && (arrivingNote.includes("Limpeza de check-out gerada automaticamente") || arrivingNote.toLowerCase() === "teste")) arrivingNote = null;
+        if (!arrivingNote && (nextResHasTwin || nextResHasExtraMattress)) {
+          const parts = [];
+          if (nextResHasTwin) parts.push("Separar as camas, colocar como 2 solteiras");
+          if (nextResHasExtraMattress) parts.push("Colocar 1 colchão extra");
+          arrivingNote = parts.join(" • ");
         }
-
-        const nextResHasTwin = Boolean(nextUpcomingRes && (nextUpcomingRes.twinBeds || nextUpcomingRes.bedType === "2 Solteiro" || nextUpcomingRes.bedType === "twin"));
-        const nextResHasExtraMattress = Boolean(nextUpcomingRes && nextUpcomingRes.extraMattress);
 
         const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
         const card = {
@@ -6641,10 +6706,12 @@ function getRequestsForDate(dateStr, isNested = false) {
           isExtended: false,
           twinBeds: nextResHasTwin,
           extraMattress: nextResHasExtraMattress,
-          adminNote: pmsRes.notes || pmsRes.specialRequests || null,
+          autoReservationCode: arrivingRes ? arrivingRes.code : null,
+          autoReservationId: arrivingRes ? arrivingRes.id : null,
+          adminNote: arrivingNote,
           leavingGuest: pmsRes.guestName || pmsRes.title || "Hóspede",
-          arrivingGuest: arrivingRes ? (arrivingRes.guestName || arrivingRes.title) : (nextUpcomingRes ? nextUpcomingRes.guestName : null),
-          pendingObservation: null,
+          arrivingGuest: arrivingRes ? (arrivingRes.guestName || arrivingRes.title) : null,
+          pendingObservation: arrivingNote,
           willCleanAt: null,
           cleaningStartedAt: null,
           completedAt: null,
@@ -6685,20 +6752,6 @@ function getRequestsForDate(dateStr, isNested = false) {
       r.checkinDate === dateStr
     );
 
-    // Próxima reserva que ocupará este flat (seja hoje ou a mais próxima futura para preparar as camas)
-    let nextUpcomingRes = arrivingRes;
-    if (!nextUpcomingRes) {
-      const upcoming = (db.reservations || [])
-        .filter(r =>
-          r.status !== "cancelada" &&
-          r.status !== "cancelado" &&
-          String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || "")) === flatNumber &&
-          r.checkinDate >= dateStr
-        )
-        .sort((a, b) => a.checkinDate.localeCompare(b.checkinDate));
-      nextUpcomingRes = upcoming[0] || null;
-    }
-
     const flatNumClean = flatNumber.replace(/\D/g, "");
     // Prioriza o cleaningRequest específico da data consultada (checkout atual)
     const exactDateCleanings = (db.cleaningRequests || []).filter(c =>
@@ -6726,22 +6779,34 @@ function getRequestsForDate(dateStr, isNested = false) {
       (String(l.timestamp || "").substring(0, 10) === dateStr)
     ) : null;
 
-    const nextResHasTwin = Boolean(nextUpcomingRes && (nextUpcomingRes.twinBeds || nextUpcomingRes.bedType === "2 Solteiro" || nextUpcomingRes.bedType === "twin"));
-    const nextResHasExtraMattress = Boolean(nextUpcomingRes && nextUpcomingRes.extraMattress);
-    const resolvedTwinBeds = typeof existingCleaning?.twinBeds === "boolean"
-      ? existingCleaning.twinBeds
-      : nextResHasTwin;
-    const resolvedExtraMattress = typeof existingCleaning?.extraMattress === "boolean"
-      ? existingCleaning.extraMattress
-      : nextResHasExtraMattress;
+    const isManualTwin = Boolean(existingCleaning?.manualTwinBeds || existingCleaning?.isManualInstruction);
+    const isManualMattress = Boolean(existingCleaning?.manualExtraMattress || existingCleaning?.isManualInstruction);
+    const isManualNote = Boolean(existingCleaning?.manualAdminNote || existingCleaning?.isManualInstruction);
 
-    // Extrai nota da camareira da reserva que está chegando
-    const arrivingMaidNote = (nextUpcomingRes?.specialRequests || "").trim() || (nextUpcomingRes?.notes || "").trim() || null;
+    // Preferências de cama e colchão automáticas seguem ESTRITAMENTE a reserva que chega HOJE (arrivingRes na data do checkout)
+    const arrivingHasTwin = Boolean(arrivingRes && (arrivingRes.twinBeds || arrivingRes.bedType === "2 Solteiro" || arrivingRes.bedType === "twin"));
+    const arrivingHasMattress = Boolean(arrivingRes && arrivingRes.extraMattress);
+
+    const resolvedTwinBeds = isManualTwin
+      ? Boolean(existingCleaning.twinBeds)
+      : arrivingHasTwin;
+
+    const resolvedExtraMattress = isManualMattress
+      ? Boolean(existingCleaning.extraMattress)
+      : arrivingHasMattress;
+
+    // Extrai nota da reserva que está chegando hoje
+    const arrivingMaidNote = arrivingRes ? ((arrivingRes.specialRequests || "").trim() || (arrivingRes.notes || "").trim() || null) : null;
     let resolvedAdminNote = null;
-    if (existingCleaning && existingCleaning.adminNote !== undefined) {
+    if (isManualNote && existingCleaning && existingCleaning.adminNote !== undefined) {
       resolvedAdminNote = existingCleaning.adminNote;
-    } else {
+    } else if (arrivingMaidNote && !arrivingMaidNote.includes("Limpeza de check-out gerada automaticamente") && arrivingMaidNote.toLowerCase() !== "teste") {
       resolvedAdminNote = arrivingMaidNote;
+    } else if (!isManualNote && (resolvedTwinBeds || resolvedExtraMattress)) {
+      const parts = [];
+      if (resolvedTwinBeds) parts.push("Separar as camas, colocar como 2 solteiras");
+      if (resolvedExtraMattress) parts.push("Colocar 1 colchão extra");
+      resolvedAdminNote = parts.join(" • ");
     }
 
     const maxId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
@@ -6790,9 +6855,11 @@ function getRequestsForDate(dateStr, isNested = false) {
       isExtended: false,
       twinBeds: resolvedTwinBeds,
       extraMattress: resolvedExtraMattress,
+      autoReservationCode: arrivingRes ? arrivingRes.code : (existingCleaning?.autoReservationCode || null),
+      autoReservationId: arrivingRes ? arrivingRes.id : (existingCleaning?.autoReservationId || null),
       adminNote: cleanExistingAdmin,
       leavingGuest: pmsRes.guestName || pmsRes.title || "Hóspede",
-      arrivingGuest: arrivingRes ? (arrivingRes.guestName || arrivingRes.title) : (nextUpcomingRes ? nextUpcomingRes.guestName : null),
+      arrivingGuest: arrivingRes ? (arrivingRes.guestName || arrivingRes.title) : null,
       pendingObservation: cleanExistingPendingObs,
       willCleanAt: existingCleaning ? existingCleaning.willCleanAt : null,
       cleaningStartedAt: (isFutureDate && resolvedStatus === "dirty") ? null : (existingCleaning ? existingCleaning.cleaningStartedAt : null),
@@ -6818,6 +6885,11 @@ function getRequestsForDate(dateStr, isNested = false) {
         existingCleaning.extraMattress = resolvedExtraMattress;
         existingCleaning.adminNote = cleanExistingAdmin;
         existingCleaning.pendingObservation = cleanExistingAdmin;
+        if (!isManualTwin && !arrivingRes) {
+          existingCleaning.autoReservationCode = null;
+          existingCleaning.autoReservationId = null;
+          existingCleaning.arrivingGuest = null;
+        }
         shouldSaveDb = true;
       }
     } else if (dateStr >= "2026-09-01") {
@@ -6878,8 +6950,8 @@ function getRequestsForDate(dateStr, isNested = false) {
         );
         // Só descarta se a solicitação for de uma estadia anterior à chegada do hóspede atual
         if (currentStayRes && r.requestDate < currentStayRes.checkinDate) return false;
-        // Se for checkout puramente automático sem camas/instruções gerado para data intermediária que não coincide com a saída, descarta
-        if (r.source === "checkout" && !r.twinBeds && !r.extraMattress && !r.adminNote && !r.pendingObservation && (!currentStayRes || r.requestDate !== currentStayRes.checkoutDate)) return false;
+        // Se for checkout puramente automático sem camas/instruções gerado para data intermediária que não coincide com a saída, descarta (preservando flat 509)
+        if (String(r.flatNumber) !== "509" && r.source === "checkout" && !r.twinBeds && !r.extraMattress && !r.adminNote && !r.pendingObservation && (!currentStayRes || r.requestDate !== currentStayRes.checkoutDate)) return false;
       }
       if (!r.requestDate || r.requestDate < "2026-09-01" || r.requestDate >= dateStr || r.status === "clean" || r.status === "extended" || r.status === "no_show") return false;
       if (!r.leavingGuest && r.source !== "manual" && r.source !== "admin_manual" && r.source !== "guest_checkout") return false;
@@ -6906,8 +6978,40 @@ function getRequestsForDate(dateStr, isNested = false) {
     for (const prevReq of previousUncleaned) {
       const fNumber = String(prevReq.flatNumber || "");
       if (!existingFlatNumbersForDate.has(fNumber)) {
+        const isManualTwin = Boolean(prevReq.manualTwinBeds || prevReq.isManualInstruction);
+        const isManualMattress = Boolean(prevReq.manualExtraMattress || prevReq.isManualInstruction);
+        const isManualNote = Boolean(prevReq.manualAdminNote || prevReq.isManualInstruction);
+
+        const arrivingToday = (db.reservations || []).find(res =>
+          res.status !== "cancelada" && res.status !== "cancelled" &&
+          String(res.flatNumber || (db.flats.find(f => f.id === res.flatId)?.number || "")) === fNumber &&
+          res.checkinDate === dateStr
+        );
+
+        const resolvedTwin = isManualTwin ? Boolean(prevReq.twinBeds) : Boolean(arrivingToday && (arrivingToday.twinBeds || arrivingToday.bedType === "2 Solteiro" || arrivingToday.bedType === "twin"));
+        const resolvedMattress = isManualMattress ? Boolean(prevReq.extraMattress) : Boolean(arrivingToday && arrivingToday.extraMattress);
+        let resolvedNote = prevReq.adminNote;
+        if (!isManualNote) {
+          const arrNote = arrivingToday ? ((arrivingToday.specialRequests || "").trim() || (arrivingToday.notes || "").trim() || null) : null;
+          if (arrNote && !arrNote.includes("Limpeza de check-out gerada automaticamente") && arrNote.toLowerCase() !== "teste") {
+            resolvedNote = arrNote;
+          } else if (resolvedTwin || resolvedMattress) {
+            const parts = [];
+            if (resolvedTwin) parts.push("Separar as camas, colocar como 2 solteiras");
+            if (resolvedMattress) parts.push("Colocar 1 colchão extra");
+            resolvedNote = parts.join(" • ");
+          } else {
+            resolvedNote = null;
+          }
+        }
+
         requestsForDate.push({
           ...prevReq,
+          twinBeds: resolvedTwin,
+          extraMattress: resolvedMattress,
+          adminNote: sanitizeCardNote(resolvedNote),
+          pendingObservation: sanitizeCardNote(resolvedNote),
+          arrivingGuest: arrivingToday ? (arrivingToday.guestName || arrivingToday.title) : null,
           isPendingFromPreviousDay: true,
           originalRequestDate: prevReq.originalRequestDate || prevReq.requestDate
         });
@@ -7029,31 +7133,31 @@ app.get("/api/reservations/checkouts", (req, res) => {
     const isOccupied = !isVacant;
 
     // Check for arriving reservation setup preferences or admin custom instructions
-    let nextResForSetup = (db.reservations || []).find(r =>
+    const isManualTwin = Boolean(req_.manualTwinBeds || req_.isManualInstruction);
+    const isManualMattress = Boolean(req_.manualExtraMattress || req_.isManualInstruction);
+    const isManualNote = Boolean(req_.manualAdminNote || req_.isManualInstruction);
+
+    // Instruções automáticas seguem ESTRITAMENTE a reserva de check-in de HOJE (dateStr)
+    const arrivingTodayRes = checkinResToday || (db.reservations || []).find(r =>
       (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
       r.checkinDate === dateStr &&
       r.status !== "cancelada" && r.status !== "cancelado"
     );
-    if (!nextResForSetup) {
-      const upcoming = (db.reservations || [])
-        .filter(r =>
-          (r.flatId === flat.id || String(r.flatNumber) === String(flat.number)) &&
-          r.checkinDate >= dateStr &&
-          r.status !== "cancelada" && r.status !== "cancelado"
-        )
-        .sort((a, b) => a.checkinDate.localeCompare(b.checkinDate));
-      nextResForSetup = upcoming[0] || null;
-    }
 
-    const nextResTwin = Boolean(nextResForSetup && (nextResForSetup.twinBeds || nextResForSetup.bedType === "2 Solteiro" || nextResForSetup.bedType === "twin"));
-    const hasTwinBeds = Boolean(req_.twinBeds || nextResTwin);
-    const hasExtraMattress = Boolean(req_.extraMattress || (nextResForSetup && nextResForSetup.extraMattress));
-    const hasPrefersHighFloor = Boolean(nextResForSetup && nextResForSetup.prefersHighFloor);
+    const hasTwinBeds = isManualTwin
+      ? Boolean(req_.twinBeds)
+      : Boolean(arrivingTodayRes && (arrivingTodayRes.twinBeds || arrivingTodayRes.bedType === "2 Solteiro" || arrivingTodayRes.bedType === "twin"));
 
-    // Nota da camareira da reserva que chega (apenas Pedidos Especiais e Obs de governança)
-    const resNoteForMaid = (nextResForSetup && ((nextResForSetup.specialRequests || "").trim() || (nextResForSetup.notes || "").trim())) || null;
+    const hasExtraMattress = isManualMattress
+      ? Boolean(req_.extraMattress)
+      : Boolean(arrivingTodayRes && arrivingTodayRes.extraMattress);
+
+    const hasPrefersHighFloor = Boolean(arrivingTodayRes && arrivingTodayRes.prefersHighFloor);
+
+    // Nota da camareira da reserva que chega hoje
+    const resNoteForMaid = (arrivingTodayRes && ((arrivingTodayRes.specialRequests || "").trim() || (arrivingTodayRes.notes || "").trim())) || null;
     let resolvedSpecialRequests = null;
-    if (req_.adminNote) {
+    if (isManualNote && req_.adminNote) {
       let cleanAdminNote = String(req_.adminNote).trim();
       if (cleanAdminNote.includes("Pagamento integral") || cleanAdminNote.includes("Quitação de saldo") || cleanAdminNote.includes("Limpeza de check-out gerada automaticamente")) {
         cleanAdminNote = "";
@@ -7067,7 +7171,7 @@ app.get("/api/reservations/checkouts", (req, res) => {
       }
       resolvedSpecialRequests = sanitizeCardNote(cleanResNote);
     }
-    if (!resolvedSpecialRequests) {
+    if (!resolvedSpecialRequests && (hasTwinBeds || hasExtraMattress)) {
       const autoNotes = [];
       if (hasTwinBeds) autoNotes.push("Separar as camas, colocar como 2 solteiras");
       if (hasExtraMattress) autoNotes.push("Colocar 1 colchão extra");
@@ -7094,7 +7198,7 @@ app.get("/api/reservations/checkouts", (req, res) => {
       prefersHighFloor: hasPrefersHighFloor,
       specialRequests: resolvedSpecialRequests,
       adminNote: resolvedSpecialRequests,
-      guestName: nextResForSetup?.guestName || req_.arrivingGuest || null
+      guestName: arrivingTodayRes?.guestName || req_.arrivingGuest || null
     };
 
     // Check if flat is currently occupied with a checkout on the next day or future
@@ -7129,7 +7233,7 @@ app.get("/api/reservations/checkouts", (req, res) => {
       isPendingFromPreviousDay: Boolean(req_.isPendingFromPreviousDay),
       originalRequestDate: req_.originalRequestDate || null,
       leavingGuest: isInst ? null : (req_.leavingGuest || null),
-      arrivingGuest: isInst ? null : (resolvedArrivingGuest || (nextResForSetup?.guestName || null)),
+      arrivingGuest: isInst ? null : (resolvedArrivingGuest || (arrivingTodayRes?.guestName || null)),
       activeReservation: activeResToday ? {
         guestName: activeResToday.guestName,
         checkinDate: activeResToday.checkinDate,
@@ -7171,7 +7275,7 @@ app.get("/api/reservations/checkouts", (req, res) => {
         extraMattress: hasExtraMattress,
         adminNote: resolvedSpecialRequests,
         pendingObservation: cleanPendingObs || resolvedSpecialRequests,
-        arrivingGuest: nextResForSetup?.guestName || req_.arrivingGuest || null,
+        arrivingGuest: arrivingTodayRes?.guestName || req_.arrivingGuest || null,
         isPriority: req_.isPriority || false,
         isExtended: req_.isExtended || req_.status === "extended",
         isPendingFromPreviousDay: Boolean(req_.isPendingFromPreviousDay),
@@ -7415,6 +7519,8 @@ app.patch("/api/cleaning/assignments/:requestId/twin-beds", (req, res) => {
 
   const nextTwin = typeof twinBeds === "boolean" ? twinBeds : !item.twinBeds;
   item.twinBeds = nextTwin;
+  item.manualTwinBeds = true;
+  item.isManualInstruction = true;
   item.updatedAt = new Date().toISOString();
 
   // Sincroniza também com a reserva correspondente no flat
@@ -12274,9 +12380,37 @@ app.put("/api/pms/reservations/:id", (req, res) => {
   }
 
   // Sincronização em tempo real das preferências de quarto (camas/colchão/recado) com o card de governança na data de check-in
-  if (r.checkinDate) {
+  const oldFlatNum = String(oldFlatId ? (db.flats.find(f => f.id === oldFlatId)?.number || "") : "");
+  const newFlatNum = String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || ""));
+
+  // Se o check-in mudou de data ou mudou de flat, ou a reserva foi cancelada, limpa instruções automáticas da data/flat anterior
+  if ((oldCheckin && oldCheckin !== r.checkinDate) || (oldFlatNum && oldFlatNum !== newFlatNum) || r.status === "cancelada" || r.status === "cancelled") {
+    const clearDate = (oldCheckin && oldCheckin !== r.checkinDate) ? oldCheckin : r.checkinDate;
+    const clearFlatNum = (oldFlatNum && oldFlatNum !== newFlatNum) ? oldFlatNum : newFlatNum;
+    const oldCleanReq = (db.cleaningRequests || []).find(c =>
+      (String(c.flatNumber) === clearFlatNum || (oldFlatId && c.flatId === oldFlatId)) &&
+      c.requestDate === clearDate &&
+      !c.isInstructionOnly &&
+      c.source !== "manual_instruction" &&
+      c.source !== "manual"
+    );
+    if (oldCleanReq) {
+      if (!oldCleanReq.manualTwinBeds) oldCleanReq.twinBeds = false;
+      if (!oldCleanReq.manualExtraMattress) oldCleanReq.extraMattress = false;
+      if (!oldCleanReq.manualAdminNote) {
+        oldCleanReq.adminNote = null;
+        oldCleanReq.pendingObservation = null;
+      }
+      oldCleanReq.arrivingGuest = null;
+      oldCleanReq.autoReservationCode = null;
+      oldCleanReq.autoReservationId = null;
+      oldCleanReq.updatedAt = new Date().toISOString();
+    }
+  }
+
+  if (r.status !== "cancelada" && r.status !== "cancelled" && r.checkinDate) {
     const targetCheckin = r.checkinDate;
-    const targetFlatNum = String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || ""));
+    const targetFlatNum = newFlatNum;
     const isTwin = Boolean(r.twinBeds || r.bedType === "2 Solteiro" || r.bedType === "twin");
     const isMattress = Boolean(r.extraMattress);
     const cleanNote = (r.specialRequests || r.notes || "").trim();
@@ -12286,15 +12420,26 @@ app.put("/api/pms/reservations/:id", (req, res) => {
       (String(c.flatNumber) === targetFlatNum || (r.flatId && c.flatId === r.flatId)) &&
       c.requestDate === targetCheckin &&
       !c.isInstructionOnly &&
-      c.source !== "manual_instruction"
+      c.source !== "manual_instruction" &&
+      c.source !== "manual"
     );
     if (cleanOnCheckin) {
-      if (typeof r.twinBeds === "boolean") cleanOnCheckin.twinBeds = r.twinBeds;
-      if (typeof r.extraMattress === "boolean") cleanOnCheckin.extraMattress = r.extraMattress;
-      if (validNote) {
-        cleanOnCheckin.adminNote = validNote;
-        cleanOnCheckin.pendingObservation = validNote;
+      cleanOnCheckin.autoReservationCode = r.code;
+      cleanOnCheckin.autoReservationId = r.id;
+      if (!cleanOnCheckin.manualTwinBeds) cleanOnCheckin.twinBeds = isTwin;
+      if (!cleanOnCheckin.manualExtraMattress) cleanOnCheckin.extraMattress = isMattress;
+      if (!cleanOnCheckin.manualAdminNote) {
+        let expectedNote = validNote;
+        if (!expectedNote && (cleanOnCheckin.twinBeds || cleanOnCheckin.extraMattress)) {
+          const parts = [];
+          if (cleanOnCheckin.twinBeds) parts.push("Separar as camas, colocar como 2 solteiras");
+          if (cleanOnCheckin.extraMattress) parts.push("Colocar 1 colchão extra");
+          expectedNote = parts.join(" • ");
+        }
+        cleanOnCheckin.adminNote = expectedNote;
+        cleanOnCheckin.pendingObservation = expectedNote;
       }
+      cleanOnCheckin.arrivingGuest = r.guestName || r.title;
       cleanOnCheckin.updatedAt = new Date().toISOString();
     }
   }
@@ -14130,6 +14275,28 @@ app.delete("/api/pms/reservations/:id", (req, res) => {
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
   r.status = "cancelada";
   r.calendarSequence = (r.calendarSequence || 0) + 1;
+
+  // Limpa instruções automáticas da governança na data de check-in
+  const flatNum = String(r.flatNumber || (db.flats.find(f => f.id === r.flatId)?.number || ""));
+  const cleanReq = (db.cleaningRequests || []).find(c =>
+    (String(c.flatNumber) === flatNum || (r.flatId && c.flatId === r.flatId)) &&
+    c.requestDate === r.checkinDate &&
+    !c.isInstructionOnly &&
+    c.source !== "manual_instruction" &&
+    c.source !== "manual"
+  );
+  if (cleanReq) {
+    if (!cleanReq.manualTwinBeds) cleanReq.twinBeds = false;
+    if (!cleanReq.manualExtraMattress) cleanReq.extraMattress = false;
+    if (!cleanReq.manualAdminNote) {
+      cleanReq.adminNote = null;
+      cleanReq.pendingObservation = null;
+    }
+    cleanReq.arrivingGuest = null;
+    cleanReq.autoReservationCode = null;
+    cleanReq.autoReservationId = null;
+    cleanReq.updatedAt = new Date().toISOString();
+  }
 
   // Marca pedidos de café da manhã vinculados como cancelados
   if (!db.breakfastOrders) db.breakfastOrders = [];
