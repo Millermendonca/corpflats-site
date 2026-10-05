@@ -2,6 +2,13 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+// Guardas de processo globais — previnem crash com Status 1 em exceções não tratadas
+process.on("uncaughtException", (err, origin) => {
+  console.error(`[Process Crash Guard] Exceção não capturada (origem: ${origin}):`, err?.stack || err?.message || err);
+});
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[Process Crash Guard] Rejeição de Promise não tratada:", reason?.stack || reason?.message || reason);
+});
 
 if (!crypto.hash) {
   crypto.hash = function (algorithm, data, outputEncoding) {

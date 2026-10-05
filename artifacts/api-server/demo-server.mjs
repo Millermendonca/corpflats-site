@@ -1,4 +1,33 @@
 const APP_BUILD_ID = process.env.RENDER_GIT_COMMIT || `build_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+// ── Process-Level Crash Guards — Previne saídas com Status 1 ──────────────────
+process.on("uncaughtException", (err, origin) => {
+  console.error(`[Node Crash Guard] Exceção não capturada (${origin}):`, err?.stack || err?.message || err);
+  try {
+    if (typeof logAuditEvent === "function") {
+      logAuditEvent({
+        level: "critical",
+        category: "system",
+        action: "NODE_UNCAUGHT_EXCEPTION",
+        details: { message: err?.message, stack: err?.stack, origin: String(origin) }
+      });
+    }
+  } catch (_) {}
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[Node Crash Guard] Rejeição de Promise não tratada:", reason?.stack || reason?.message || reason);
+  try {
+    if (typeof logAuditEvent === "function") {
+      logAuditEvent({
+        level: "critical",
+        category: "system",
+        action: "NODE_UNHANDLED_REJECTION",
+        details: { reason: String(reason), stack: reason?.stack || null }
+      });
+    }
+  } catch (_) {}
+});
 const DEFAULT_FLATS = [
   { id: 1, number: "113", colName: "113 solteiro", isOccupied: true },
   { id: 2, number: "114", colName: "114 Solteiro", isOccupied: true },
@@ -174,9 +203,21 @@ if (process.env.DATABASE_URL) {
   try {
     pgPool = new Pool({
       connectionString: process.env.DATABASE_URL,
-      ssl: process.env.DATABASE_URL.includes("localhost") ? false : { rejectUnauthorized: false }
+      ssl: process.env.DATABASE_URL.includes("localhost") ? false : { rejectUnauthorized: false },
+      max: 10,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 10000,
     });
-    console.log("[PostgreSQL] Conexão com banco em nuvem inicializada.");
+
+    // CRÍTICO: Em nuvem (Render/Supabase/Neon), conexões inativas sofrem timeout/reset da rede.
+    // Sem esse listener de 'error', o EventEmitter do pg lança exceção não tratada e encerra com Status 1.
+    pgPool.on("error", (err, client) => {
+      console.error("[PostgreSQL Pool] Erro recuperável em conexão inativa:", err?.message || err);
+    });
+
+    console.log("[PostgreSQL] Conexão com banco em nuvem inicializada com guard de conexões inativas e keepAlive.");
   } catch (err) {
     console.error("[PostgreSQL] Falha ao configurar pool:", err.message);
   }
@@ -4155,11 +4196,12 @@ function pruneDatabase() {
 
   for (const [key, max] of Object.entries(LIMITS)) {
     if (Array.isArray(db[key]) && db[key].length > max) {
-      // Ordena por data mais recente primeiro e mantém os N mais recentes
+      // Ordena por data mais recente primeiro e mantém os N mais recentes (null-safe)
       db[key] = db[key]
+        .filter(Boolean)
         .sort((a, b) => {
-          const dateA = a.createdAt || a.sentAt || a.date || a.updatedAt || "";
-          const dateB = b.createdAt || b.sentAt || b.date || b.updatedAt || "";
+          const dateA = String(a?.createdAt || a?.sentAt || a?.date || a?.updatedAt || "");
+          const dateB = String(b?.createdAt || b?.sentAt || b?.date || b?.updatedAt || "");
           return dateB.localeCompare(dateA);
         })
         .slice(0, max);
@@ -25255,16 +25297,6 @@ app.use((err, req, res, next) => {
   }
 });
 
-// Captura de Rejeições Globais
-process.on("unhandledRejection", (reason, promise) => {
-  console.error("[NODE UNHANDLED REJECTION]", reason);
-  logAuditEvent({
-    level: "critical",
-    category: "system",
-    action: "NODE_UNHANDLED_REJECTION",
-    details: { reason: String(reason), stack: reason?.stack || null }
-  });
-});
 
 const distPath = path.resolve(__dirname, "../limpeza/dist/public");
 const fallbackDistPath = path.resolve(__dirname, "../limpeza/dist");
@@ -26498,8 +26530,11 @@ setInterval(async () => {
   }
 }, 300000); // 5 minutos (era 30s — rotina matinal não precisa de polling agressivo)
 
-app.listen(PORT, "0.0.0.0", () => {
+const httpServer = app.listen(PORT, "0.0.0.0", () => {
   console.log(`[Demo Server] API rodando em http://0.0.0.0:${PORT}`);
+});
+httpServer.on("error", (err) => {
+  console.error("[HTTP Server Error]", err?.message || err);
 });
 
 export { app };
