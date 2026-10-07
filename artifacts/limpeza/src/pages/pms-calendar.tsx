@@ -2392,7 +2392,16 @@ export default function PmsCalendar() {
     setFormDocPhotoUrl(docUrl)
     setFormDocFileName(docUrl ? "documento_anexado" : "")
     setFormHasMinor(Boolean(resItem.hasMinor))
-    setFormIsCamposResident(Boolean(resItem.isCamposResident))
+    const isCamposRes = Boolean(
+      resItem.isCamposResident ||
+      matchedGuest?.isCamposResident ||
+      (resItem.guestCity && (resItem.guestCity.toLowerCase().includes("campos") || resItem.guestCity.toLowerCase().includes("goytacazes"))) ||
+      (resItem.city && (resItem.city.toLowerCase().includes("campos") || resItem.city.toLowerCase().includes("goytacazes"))) ||
+      (matchedGuest?.city && (matchedGuest.city.toLowerCase().includes("campos") || matchedGuest.city.toLowerCase().includes("goytacazes"))) ||
+      (resItem.guestAddress && resItem.guestAddress.toLowerCase().includes("campos")) ||
+      (resItem.riskAttentionReason && resItem.riskAttentionReason.toLowerCase().includes("campos"))
+    )
+    setFormIsCamposResident(isCamposRes)
     setResModalTab("reservation")
     setAuditLogs(Array.isArray(resItem.auditLogs) ? resItem.auditLogs : [])
     fetchAuditLogs(resItem.code || resItem.id)
@@ -3184,7 +3193,7 @@ export default function PmsCalendar() {
   }, [data.reservations])
 
   const riskAttentionCount = useMemo(() => {
-    return data.reservations.filter(r => r.status !== "cancelada" && r.riskAttentionAlert).length
+    return data.reservations.filter(r => r.status !== "cancelada" && (r.riskAttentionAlert || r.isCamposResident)).length
   }, [data.reservations])
 
   const displayedFlats = data.flats.filter(f => {
@@ -3205,7 +3214,7 @@ export default function PmsCalendar() {
       const hasRiskInFlat = data.reservations.some(r => 
         (r.flatId === f.id || String(r.flatNumber) === String(f.number)) &&
         r.status !== "cancelada" &&
-        r.riskAttentionAlert
+        (r.riskAttentionAlert || r.isCamposResident)
       )
       if (!hasRiskInFlat) return false
     }
@@ -3506,13 +3515,13 @@ export default function PmsCalendar() {
                   onClick={() => setSpecialFilter(prev => prev === "risk" ? "all" : "risk")}
                   className={`px-2 py-1 rounded-md text-[11px] font-bold transition-all flex items-center gap-1 ${
                     specialFilter === "risk" 
-                      ? "bg-amber-500 text-slate-950 shadow-xs" 
-                      : "text-amber-600 dark:text-amber-400 hover:bg-amber-500/10"
+                      ? "bg-purple-700 text-white shadow-xs" 
+                      : "text-purple-700 dark:text-purple-300 hover:bg-purple-500/10"
                   }`}
-                  title="Filtrar reservas com alerta de atenção (< 30a de Campos dos Goytacazes)"
+                  title="Filtrar reservas com radar operacional (Campos dos Goytacazes / Atenção local)"
                 >
-                  <AlertTriangle className="w-3 h-3 text-amber-500" />
-                  <span>Locais &lt;30a ({riskAttentionCount})</span>
+                  <span className="text-xs">📍</span>
+                  <span>Radar Campos ({riskAttentionCount})</span>
                 </button>
               </div>
             </div>
@@ -3835,6 +3844,16 @@ export default function PmsCalendar() {
                         const cinTime = resItem.checkinTime || defaultCheckinTime || "14:00";
                         const coutTime = resItem.checkoutTime || defaultCheckoutTime || "12:00";
 
+                        const isCamposCard = Boolean(
+                          resItem.isCamposResident ||
+                          matchedGuest?.isCamposResident ||
+                          (resItem.guestCity && (resItem.guestCity.toLowerCase().includes("campos") || resItem.guestCity.toLowerCase().includes("goytacazes"))) ||
+                          (resItem.city && (resItem.city.toLowerCase().includes("campos") || resItem.city.toLowerCase().includes("goytacazes"))) ||
+                          (matchedGuest?.city && (matchedGuest.city.toLowerCase().includes("campos") || matchedGuest.city.toLowerCase().includes("goytacazes"))) ||
+                          (resItem.guestAddress && resItem.guestAddress.toLowerCase().includes("campos")) ||
+                          (resItem.riskAttentionReason && resItem.riskAttentionReason.toLowerCase().includes("campos"))
+                        );
+
                         const isLongPressActive = longPressActiveResId === resItem.id;
                         const isSingleNight = nightsCount <= 1;
 
@@ -3880,7 +3899,7 @@ export default function PmsCalendar() {
                               } ${
                                 resItem.hasMinor 
                                   ? 'border-2 border-rose-500 ring-2 ring-rose-400 animate-pulse' 
-                                  : resItem.isCamposResident
+                                  : (resItem.isCamposResident || isCamposCard)
                                   ? 'border-2 border-purple-500 ring-1 ring-purple-400'
                                   : resItem.riskAttentionAlert
                                   ? 'border-2 border-amber-400 ring-1 ring-amber-300'
@@ -3947,12 +3966,12 @@ export default function PmsCalendar() {
                                     👶 Menor
                                   </span>
                                 )}
-                                {resItem.riskAttentionAlert && !resItem.hasMinor && (
+                                {resItem.riskAttentionAlert && !resItem.hasMinor && !(resItem.isCamposResident || isCamposCard) && (
                                   <span title={resItem.riskAttentionReason || "Atenção: Hóspede jovem < 30 anos (Campos dos Goytacazes)"} className="shrink-0 text-xs px-1 py-0.2 bg-amber-400 text-slate-950 rounded font-black shadow-xs">
                                     ⚠️ &lt;30a
                                   </span>
                                 )}
-                                {resItem.isCamposResident && (
+                                {(resItem.isCamposResident || isCamposCard) && (
                                   <span title="Radar Operacional: Hóspede com documento ou endereço de Campos dos Goytacazes/RJ" className="shrink-0 text-[10px] px-1.5 py-0.2 bg-purple-700 text-white rounded font-black shadow-xs flex items-center gap-0.5">
                                     📍 Campos/RJ
                                   </span>
@@ -4272,11 +4291,18 @@ export default function PmsCalendar() {
                   <CalendarDays className="w-5 h-5 text-primary shrink-0" />
                   <span className="truncate">{selectedRes ? `Editar Reserva: ${selectedRes.code}` : "Nova Reserva"}</span>
                 </DialogTitle>
-                {selectedRes && (
-                  <Badge variant="outline" className="text-xs font-mono font-bold text-amber-700 dark:text-amber-300 border-amber-300 shrink-0">
-                    Flat {selectedRes.flatNumber}
-                  </Badge>
-                )}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {selectedRes && (
+                    <Badge variant="outline" className="text-xs font-mono font-bold text-amber-700 dark:text-amber-300 border-amber-300 shrink-0">
+                      Flat {selectedRes.flatNumber}
+                    </Badge>
+                  )}
+                  {(formIsCamposResident || selectedRes?.isCamposResident) && (
+                    <Badge className="text-xs font-bold bg-purple-700 hover:bg-purple-800 text-white shrink-0 gap-1 shadow-xs">
+                      📍 Campos/RJ
+                    </Badge>
+                  )}
+                </div>
               </div>
               <DialogDescription className="text-xs text-muted-foreground">
                 {selectedRes 
@@ -4347,6 +4373,27 @@ export default function PmsCalendar() {
                 {(resModalTab === "reservation" || resModalTab === "details") && (
 
               <div className="py-2.5 space-y-3">
+                {/* Banner de Radar Operacional: Hóspede de Campos dos Goytacazes/RJ */}
+                {(formIsCamposResident || selectedRes?.isCamposResident) && (
+                  <div className="p-3 bg-purple-50 dark:bg-purple-950/40 border-2 border-purple-300 dark:border-purple-800 rounded-2xl flex items-center justify-between gap-3 text-xs shadow-xs">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-8 h-8 rounded-xl bg-purple-500/20 text-purple-700 dark:text-purple-300 flex items-center justify-center shrink-0 text-base">
+                        📍
+                      </div>
+                      <div className="min-w-0">
+                        <div className="font-bold text-purple-950 dark:text-purple-100 flex items-center gap-1.5">
+                          <span>Radar Operacional: Hóspede de Campos dos Goytacazes/RJ</span>
+                        </div>
+                        <div className="text-[11px] text-purple-700/90 dark:text-purple-300/90 truncate">
+                          {selectedRes?.riskAttentionReason || "Identificado morador/origem de Campos dos Goytacazes pelo documento ou formulário de pré-checkin."}
+                        </div>
+                      </div>
+                    </div>
+                    <Badge className="bg-purple-700 text-white font-bold text-[10px] shrink-0">
+                      Atenção Operacional
+                    </Badge>
+                  </div>
+                )}
                 {/* Banner de Acesso Rápido aos Links da Reserva */}
                 {selectedRes && (
                   <div className="p-3 bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/80 dark:border-emerald-800/60 rounded-2xl flex items-center justify-between gap-2.5 text-xs shadow-2xs">

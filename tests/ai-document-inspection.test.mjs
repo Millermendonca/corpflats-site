@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { inspectDocumentWithAI } from '../artifacts/api-server/demo-server.mjs';
+import { inspectDocumentWithAI, isCamposDosGoytacazes, checkYouthLocalRisk } from '../artifacts/api-server/demo-server.mjs';
 
 describe('Inspeção de Documentos com Foto por Inteligência Artificial', () => {
   const serverPath = path.resolve('artifacts/api-server/demo-server.mjs');
@@ -152,7 +152,67 @@ describe('Inspeção de Documentos com Foto por Inteligência Artificial', () =>
     assert.ok(serverCode.includes('hasDocFile'), 'Deve validar anexo obrigatório de documento no backend');
   });
 
-  it('10. Limpeza de processo pós-testes', () => {
+  it('10. Função isCamposDosGoytacazes valida variações locais e rejeita homônimos externos', () => {
+    // Casos positivos
+    assert.strictEqual(isCamposDosGoytacazes('Campos dos Goytacazes'), true);
+    assert.strictEqual(isCamposDosGoytacazes('campos dos goytacazes'), true);
+    assert.strictEqual(isCamposDosGoytacazes('CAMPOS DOS GOYTACAZES'), true);
+    assert.strictEqual(isCamposDosGoytacazes('Campos dos Goitacazes'), true);
+    assert.strictEqual(isCamposDosGoytacazes('Campos', '', 'RJ'), true);
+    assert.strictEqual(isCamposDosGoytacazes('Campos - RJ'), true);
+    assert.strictEqual(isCamposDosGoytacazes('', 'Av. Pelinca, 100, Campos dos Goytacazes - RJ'), true);
+    assert.strictEqual(isCamposDosGoytacazes('Campos'), true);
+
+    // Casos negativos (homônimos fora de Campos dos Goytacazes)
+    assert.strictEqual(isCamposDosGoytacazes('Campos do Jordão'), false);
+    assert.strictEqual(isCamposDosGoytacazes('Campos Novos'), false);
+    assert.strictEqual(isCamposDosGoytacazes('Campos Altos'), false);
+    assert.strictEqual(isCamposDosGoytacazes('Campos Verdes'), false);
+    assert.strictEqual(isCamposDosGoytacazes('Campos Lindos'), false);
+    assert.strictEqual(isCamposDosGoytacazes('São Paulo'), false);
+    assert.strictEqual(isCamposDosGoytacazes('Rio de Janeiro'), false);
+    assert.strictEqual(isCamposDosGoytacazes(''), false);
+  });
+
+  it('11. checkYouthLocalRisk aciona radar para qualquer morador de Campos independente da idade', () => {
+    // Morador de Campos com 45 anos (acima de 30) -> Deve acionar radar de morador local
+    const riskAdult = checkYouthLocalRisk({
+      birthDate: '1981-05-10',
+      city: 'Campos dos Goytacazes',
+      address: 'Rua Formosa, Centro',
+      phone: '22998877665',
+      state: 'RJ'
+    });
+    assert.strictEqual(riskAdult.isTriggered, true, 'Deve acionar alerta para morador local');
+    assert.strictEqual(riskAdult.isCampos, true);
+    assert.strictEqual(riskAdult.isUnder30, false);
+    assert.ok(riskAdult.reason.includes('Campos dos Goytacazes'));
+
+    // Morador de Campos jovem com 21 anos -> Deve acionar alerta de jovem local
+    const riskYouth = checkYouthLocalRisk({
+      birthDate: '2005-02-15',
+      city: 'Campos dos Goytacazes',
+      address: 'Pelinca',
+      phone: '22991122334',
+      state: 'RJ'
+    });
+    assert.strictEqual(riskYouth.isTriggered, true);
+    assert.strictEqual(riskYouth.isCampos, true);
+    assert.strictEqual(riskYouth.isUnder30, true);
+    assert.ok(riskYouth.reason.includes('jovem'));
+
+    // Hóspede de fora com 25 anos -> NÃO aciona
+    const riskExternal = checkYouthLocalRisk({
+      birthDate: '2001-08-20',
+      city: 'Belo Horizonte',
+      address: 'Savassi',
+      phone: '31988887777',
+      state: 'MG'
+    });
+    assert.strictEqual(riskExternal.isTriggered, false);
+  });
+
+  it('12. Limpeza de processo pós-testes', () => {
     setTimeout(() => { process.exit(0); }, 50);
   });
 });

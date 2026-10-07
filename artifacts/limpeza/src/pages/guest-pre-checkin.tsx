@@ -135,6 +135,21 @@ export default function GuestPreCheckin() {
 
   // Photos, Signature, Terms & Vehicle
   const [docPhoto, setDocPhoto] = useState<string | null>(null)
+  const [aiInspectingDoc, setAiInspectingDoc] = useState(false)
+  const [aiDocResult, setAiDocResult] = useState<{
+    isOfficialDocument?: boolean
+    isLegible?: boolean
+    legibilityReason?: string
+    isCamposResident?: boolean
+    isMinor?: boolean
+    calculatedAge?: number | null
+    extractedName?: string
+    extractedCpf?: string
+    extractedCity?: string
+    extractedState?: string
+    extractedBirthDate?: string
+    summary?: string
+  } | null>(null)
   const [selfiePhoto, setSelfiePhoto] = useState<string | null>(null)
   const [signatureData, setSignatureData] = useState<string | null>(null)
   const [acceptedHouseRules, setAcceptedHouseRules] = useState(false)
@@ -401,6 +416,7 @@ export default function GuestPreCheckin() {
 
     // Limpeza completa para evitar vazamento de estado entre hóspedes
     setDocPhoto(null)
+    setAiDocResult(null)
     setSelfiePhoto(null)
     setSignatureData(null)
     setMinorAuthDocPhoto(null)
@@ -732,6 +748,51 @@ export default function GuestPreCheckin() {
     }
   }
 
+  const runAiDocInspection = async (base64String: string, fileNameStr: string) => {
+    setAiInspectingDoc(true)
+    try {
+      const res = await fetch("/api/ai/inspect-document", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fileBase64: base64String,
+          fileName: fileNameStr,
+          providedName: fullName,
+          providedCpf: document,
+          providedCity: city,
+          providedAddress: address,
+          providedBirthDate: birthDate
+        })
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setAiDocResult(data)
+        if (data.isCamposResident) {
+          if (!city || city.trim() === "") setCity("Campos dos Goytacazes")
+          if (!originCity || originCity.trim() === "" || originCity === "Não informada") setOriginCity("Campos dos Goytacazes")
+          if (!state || state.trim() === "") setState("RJ")
+          if (!originState || originState.trim() === "") setOriginState("RJ")
+        } else if (data.extractedCity && (!city || city.trim() === "")) {
+          setCity(data.extractedCity)
+        }
+        if (data.extractedName && (!fullName || fullName.trim() === "" || fullName.startsWith("Hóspede"))) {
+          setFullName(data.extractedName)
+        }
+        if (data.extractedCpf && (!document || document.trim() === "")) {
+          setDocument(data.extractedCpf)
+        }
+        if (data.extractedBirthDate && (!birthDate || birthDate.trim() === "")) {
+          setBirthDate(toIsoDate(data.extractedBirthDate))
+          setBirthDateInput(toDisplayDate(data.extractedBirthDate))
+        }
+      }
+    } catch (err) {
+      console.warn("Falha ao analisar documento com IA:", err)
+    } finally {
+      setAiInspectingDoc(false)
+    }
+  }
+
   // Handle file uploads with automatic client-side WebP compression
   const handleFileUpload = async (
     e: React.ChangeEvent<HTMLInputElement>, 
@@ -748,11 +809,20 @@ export default function GuestPreCheckin() {
     }
 
     setCompressing(true)
+    let payloadBase64 = ""
     try {
       if (file.type === "application/pdf") {
         const reader = new FileReader()
-        reader.onload = () => setter(reader.result as string)
+        reader.onload = async () => {
+          const b64 = reader.result as string
+          setter(b64)
+          setCompressing(false)
+          if (type === "doc") {
+            await runAiDocInspection(b64, file.name)
+          }
+        }
         reader.readAsDataURL(file)
+        return
       } else {
         const result = await compressImage(file, {
           maxWidth: 1400,
@@ -760,15 +830,27 @@ export default function GuestPreCheckin() {
           quality: 0.8,
           preferredFormat: "image/webp"
         })
-        setter(result.base64)
+        payloadBase64 = result.base64
+        setter(payloadBase64)
       }
     } catch (err) {
       console.warn("Erro ao processar imagem, usando fallback FileReader:", err)
       const reader = new FileReader()
-      reader.onload = () => setter(reader.result as string)
+      reader.onload = async () => {
+        const b64 = reader.result as string
+        setter(b64)
+        if (type === "doc") {
+          await runAiDocInspection(b64, file.name)
+        }
+      }
       reader.readAsDataURL(file)
+      return
     } finally {
       setCompressing(false)
+    }
+
+    if (type === "doc" && payloadBase64) {
+      await runAiDocInspection(payloadBase64, file.name)
     }
   }
 
@@ -828,6 +910,7 @@ export default function GuestPreCheckin() {
           minorAge: calculatedAge,
           minorKinship: (calculatedAge !== null && calculatedAge < 18) ? minorKinship : null,
           minorAuthDocBase64: (calculatedAge !== null && calculatedAge < 18 && minorKinship !== "filho") ? minorAuthDocPhoto : null,
+          isCamposResident: Boolean(aiDocResult?.isCamposResident || (city && (city.toLowerCase().includes("campos") || city.toLowerCase().includes("goytacazes")))),
           vehiclePlate: cleanPlate,
           vehicleBrand: cleanBrand,
           vehicleModel: cleanModel,
@@ -2384,12 +2467,69 @@ export default function GuestPreCheckin() {
                         type="button" 
                         variant="outline" 
                         size="sm" 
-                        onClick={() => setDocPhoto(null)}
+                        onClick={() => {
+                          setDocPhoto(null)
+                          setAiDocResult(null)
+                        }}
                         className="border-slate-200 text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 rounded-xl"
                       >
                         Trocar Foto do Documento
                       </Button>
                     </div>
+
+                    {/* Feedback e Análise por Inteligência Artificial */}
+                    {aiInspectingDoc && (
+                      <div className="p-3 bg-sky-50 border border-sky-200 rounded-xl flex items-center justify-center gap-2 text-xs text-sky-800 animate-pulse">
+                        <RefreshCw className="w-4 h-4 animate-spin text-sky-600 shrink-0" />
+                        <span className="font-semibold">Robô pericial CorpFlats analisando documento e dados cadastrais...</span>
+                      </div>
+                    )}
+
+                    {aiDocResult && !aiInspectingDoc && (
+                      <div className="space-y-2 text-left pt-1">
+                        {aiDocResult.isLegible === false && (
+                          <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl space-y-1 text-xs text-rose-900">
+                            <div className="font-bold flex items-center gap-1.5 text-rose-800">
+                              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                              <span>Atenção à Legibilidade</span>
+                            </div>
+                            <p className="text-[11px] leading-relaxed">
+                              {aiDocResult.legibilityReason || "Documento com pouca nitidez ou dados cortados. Se preferir, envie outra foto bem iluminada ou o arquivo original em PDF."}
+                            </p>
+                          </div>
+                        )}
+
+                        {aiDocResult.isCamposResident && (
+                          <div className="p-3 bg-purple-50 border border-purple-200 rounded-xl flex items-center justify-between gap-2 text-xs text-purple-900 shadow-2xs">
+                            <div className="flex items-center gap-2.5">
+                              <span className="text-base shrink-0">📍</span>
+                              <div>
+                                <div className="font-bold">Residência / Documento de Campos dos Goytacazes/RJ</div>
+                                <div className="text-[11px] text-purple-700">Origem local confirmada e sincronizada com seu cadastro.</div>
+                              </div>
+                            </div>
+                            <Badge className="bg-purple-700 text-white font-bold text-[10px] shrink-0">Campos/RJ</Badge>
+                          </div>
+                        )}
+
+                        {aiDocResult.isMinor && (
+                          <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2.5 text-xs text-amber-900">
+                            <span className="text-base shrink-0">👶</span>
+                            <div>
+                              <div className="font-bold">Hóspede Menor de 18 Anos</div>
+                              <div className="text-[11px] text-amber-700">Lembre-se da autorização em cartório conforme o ECA Art. 82.</div>
+                            </div>
+                          </div>
+                        )}
+
+                        {aiDocResult.isLegible !== false && !aiDocResult.isCamposResident && !aiDocResult.isMinor && (
+                          <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2 text-xs text-emerald-800">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                            <span className="font-medium">Documento oficial analisado com sucesso pela Inteligência Artificial.</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <label className="cursor-pointer flex flex-col items-center gap-2 py-4">

@@ -4116,11 +4116,45 @@ function calculateGuestAge(birthDate) {
   return Math.max(0, Math.floor(diffMs / (365.25 * 24 * 60 * 60 * 1000)));
 }
 
-function checkYouthLocalRisk({ birthDate, city, address, phone }) {
+export function isCamposDosGoytacazes(cityStr = "", addressStr = "", stateStr = "") {
+  const c = String(cityStr || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  const a = String(addressStr || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  const s = String(stateStr || "").toLowerCase().trim();
+  
+  const text = `${c} ${a}`;
+  if (text.includes("goytacazes") || text.includes("goitacazes")) return true;
+  
+  if (/\bcampos\b/.test(c)) {
+    if (c.includes("jordao") || c.includes("novos") || c.includes("altos") || c.includes("lindos") || c.includes("verdes") || c.includes("belos") || c.includes("julio")) {
+      return false;
+    }
+    if (
+      s === "rj" || 
+      s.includes("rio de janeiro") || 
+      text.includes("rj") || 
+      text.includes("rio de janeiro") || 
+      c === "campos" || 
+      c.startsWith("campos ") || 
+      c.endsWith(" campos") || 
+      c.includes("campos/rj") || 
+      c.includes("campos-rj") || 
+      c.includes("campos, rj")
+    ) {
+      return true;
+    }
+  }
+
+  if (/\bcampos\b/.test(a) && (text.includes("rj") || text.includes("rio de janeiro") || a.includes("campos dos goytacazes") || a.includes("campos dos goitacazes"))) {
+    return true;
+  }
+
+  return false;
+}
+
+export function checkYouthLocalRisk({ birthDate, city, address, phone, state }) {
   const age = calculateGuestAge(birthDate);
   const isUnder30 = age !== null && age < 30;
-  const locStr = `${city || ""} ${address || ""}`.toLowerCase();
-  const isCampos = locStr.includes("campos") || locStr.includes("goytacazes");
+  const isCampos = isCamposDosGoytacazes(city, address, state);
   const cleanPhone = String(phone || "").replace(/\D/g, "");
   let ddd = "";
   if (cleanPhone.startsWith("55") && cleanPhone.length >= 12) {
@@ -4129,12 +4163,26 @@ function checkYouthLocalRisk({ birthDate, city, address, phone }) {
     ddd = cleanPhone.substring(0, 2);
   }
   const isTargetDDD = ["22", "21", "11"].includes(ddd);
-  const isTriggered = Boolean(isUnder30 && isCampos && isTargetDDD);
+  
+  // Regra CorpFlats: Qualquer pessoa de Campos dos Goytacazes deve entrar no radar da equipe (independente de idade).
+  const isTriggered = Boolean(isCampos || (isUnder30 && isTargetDDD));
+  
+  let reason = "";
+  if (isCampos && isUnder30 && age !== null) {
+    reason = `Radar Operacional: Hóspede jovem < 30 anos (${age} anos) de Campos dos Goytacazes/RJ${ddd ? ` (DDD ${ddd})` : ""}`;
+  } else if (isCampos) {
+    reason = `Radar Operacional: Hóspede com documento ou residência em Campos dos Goytacazes/RJ${ddd ? ` (DDD ${ddd})` : ""}`;
+  } else if (isUnder30 && isTargetDDD) {
+    reason = `Atenção: Hóspede jovem < 30 anos (${age} anos) com DDD regional (${ddd})`;
+  }
+
   return {
     isTriggered,
+    isCampos,
+    isUnder30,
     age,
     ddd,
-    reason: isTriggered ? `Hóspede < 30 anos (${age} anos) de Campos dos Goytacazes (DDD ${ddd})` : ""
+    reason
   };
 }
 
@@ -4465,17 +4513,10 @@ export async function inspectDocumentWithAI({
   const initialCalculatedAge = parsedAgeFromInput !== null ? parsedAgeFromInput : (isMinorFromFileName ? 16 : 28);
   const initialIsMinor = parsedAgeFromInput !== null ? (parsedAgeFromInput < 18) : isMinorFromFileName;
 
-  const lowCity = effectiveCity.toLowerCase();
-  const lowAddress = effectiveAddress.toLowerCase();
   const lowFileName = String(fileName || "").toLowerCase();
 
   const isCamposFromInput =
-    lowCity.includes("campos dos goytacazes") ||
-    lowCity.includes("campos/rj") ||
-    lowCity.includes("campos-rj") ||
-    lowCity === "campos" ||
-    lowAddress.includes("campos dos goytacazes") ||
-    lowAddress.includes("campos/rj") ||
+    isCamposDosGoytacazes(effectiveCity, effectiveAddress) ||
     lowFileName.includes("campos_dos_goytacazes") ||
     lowFileName.includes("cnh_campos") ||
     lowFileName.includes("rg_campos") ||
@@ -4541,7 +4582,11 @@ Responda ESTRITAMENTE em formato JSON puro (sem markdown, sem blocos de código 
           const parsed = JSON.parse(jsonMatch[0]);
           const aiCalculatedAge = typeof parsed.calculatedAge === "number" ? parsed.calculatedAge : initialCalculatedAge;
           const aiIsMinor = typeof parsed.isMinor === "boolean" ? parsed.isMinor : initialIsMinor;
-          const aiIsCampos = Boolean(parsed.isCamposResident || isCamposFromInput);
+          const aiIsCampos = Boolean(
+            parsed.isCamposResident ||
+            isCamposFromInput ||
+            isCamposDosGoytacazes(parsed.extractedCity, parsed.extractedAddress || "", parsed.extractedState || "")
+          );
 
           return {
             success: true,
@@ -4558,7 +4603,9 @@ Responda ESTRITAMENTE em formato JSON puro (sem markdown, sem blocos de código 
             extractedCity: parsed.extractedCity || (aiIsCampos ? "Campos dos Goytacazes" : effectiveCity),
             extractedState: parsed.extractedState || (aiIsCampos ? "RJ" : ""),
             isCamposResident: aiIsCampos,
-            summary: parsed.summary || "Documento analisado com sucesso por Inteligência Artificial.",
+            summary: parsed.summary || (aiIsCampos 
+              ? "Radar Operacional: Hóspede com documento ou endereço de Campos dos Goytacazes/RJ identificado." 
+              : "Documento analisado com sucesso por Inteligência Artificial."),
             status: "ai_evaluated"
           };
         }
@@ -4588,9 +4635,11 @@ Responda ESTRITAMENTE em formato JSON puro (sem markdown, sem blocos de código 
     extractedCity: isCamposFromInput ? "Campos dos Goytacazes" : effectiveCity,
     extractedState: "RJ",
     isCamposResident: isCamposFromInput,
-    summary: isMinorFromFileName 
-      ? "Documento analisado: Atenção à hospedagem de menor de idade (ECA Art. 82)." 
-      : "Validação estrutural realizada com sucesso. Documento pronto para conferência da equipe.",
+    summary: isCamposFromInput
+      ? "Radar Operacional: Hóspede com documento ou endereço de Campos dos Goytacazes/RJ identificado."
+      : (isMinorFromFileName 
+        ? "Documento analisado: Atenção à hospedagem de menor de idade (ECA Art. 82)." 
+        : "Validação estrutural realizada com sucesso. Documento pronto para conferência da equipe."),
     status: "heuristic_fallback"
   };
 }
@@ -18259,7 +18308,7 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   // Cálculos de Menor de Idade & Filtro de Risco Local
   const calculatedAge = calculateGuestAge(normalizedBirthDate);
   const isMinorCalculated = calculatedAge !== null ? calculatedAge < 18 : Boolean(isMinor);
-  const riskAssessment = checkYouthLocalRisk({ birthDate: normalizedBirthDate, city, address, phone });
+  const riskAssessment = checkYouthLocalRisk({ birthDate: normalizedBirthDate, city, address, phone, state });
 
   // Salva imagens no Storage Seguro (Cloudflare R2 ou disco) isoladas por hóspede
   const nowTs = Date.now();
@@ -18268,7 +18317,7 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   const signatureUrl = signatureBase64 ? await uploadImageToStorage(signatureBase64, `sig_g${guest.id}_${nowTs}`, db) : guest.signatureUrl;
   const minorAuthDocUrl = minorAuthDocBase64 ? await uploadImageToStorage(minorAuthDocBase64, `minor_auth_g${guest.id}_${nowTs}`, db) : (guest.minorAuthDocUrl || null);
 
-  // Executa Validação com Inteligência Artificial
+  // Executa Validação com Inteligência Artificial (Biometria Facial / Selfie vs Documento)
   const aiVerification = await evaluateGuestIdentityWithAI({
     fullName: validName,
     document: document || guest.document,
@@ -18278,6 +18327,38 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     selfieUrl,
     docPhotoUrl
   });
+
+  // Executa Inspeção Pericial de Documento Oficial com IA (Extração de Dados, Cidade, Legibilidade e Idade)
+  let aiDocInspection = null;
+  const docToInspect = docPhotoBase64 || guest.docPhotoUrl;
+  if (docToInspect) {
+    try {
+      aiDocInspection = await inspectDocumentWithAI({
+        fileBase64: docToInspect,
+        fileName: `doc_pre_checkin_g${guest.id}`,
+        providedName: validName,
+        providedCpf: cleanDoc,
+        providedCity: city || guest.city,
+        providedAddress: address || guest.address,
+        providedBirthDate: normalizedBirthDate || guest.birthDate
+      });
+    } catch (docAiErr) {
+      console.warn("[POST /api/pms/pre-checkin] Erro na inspeção IA de documento:", docAiErr.message);
+    }
+  }
+
+  // Avaliação Consolidada de Morador de Campos dos Goytacazes e Menor de Idade
+  const isCamposFromDocOrInput = Boolean(
+    req.body.isCamposResident ||
+    aiDocInspection?.isCamposResident ||
+    isCamposDosGoytacazes(city || guest.city, address || guest.address, state || guest.state) ||
+    riskAssessment.isCampos
+  );
+
+  const effectiveIsMinor = Boolean(aiDocInspection?.isMinor || isMinorCalculated);
+  const effectiveAge = (aiDocInspection?.calculatedAge !== null && aiDocInspection?.calculatedAge !== undefined) 
+    ? aiDocInspection.calculatedAge 
+    : calculatedAge;
 
   // Atualiza cadastro mestre no CRM do hóspede
   if (validName) {
@@ -18312,14 +18393,21 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     guest.vehicleColor = (req.body.vehicleColor || "").trim();
   }
 
-  guest.isMinor = isMinorCalculated;
-  guest.minorAge = calculatedAge;
+  guest.isMinor = effectiveIsMinor;
+  guest.minorAge = effectiveAge;
   guest.minorKinship = minorKinship || guest.minorKinship || "";
-  guest.riskAttentionAlert = riskAssessment.isTriggered;
-  if (riskAssessment.isTriggered) {
+  guest.isCamposResident = Boolean(isCamposFromDocOrInput || guest.isCamposResident);
+  if (isCamposFromDocOrInput) {
+    guest.riskAttentionAlert = true;
+    guest.riskAttentionReason = riskAssessment.reason || "Radar Operacional: Hóspede com documento ou residência em Campos dos Goytacazes/RJ";
+  } else if (riskAssessment.isTriggered) {
+    guest.riskAttentionAlert = true;
     guest.riskAttentionReason = riskAssessment.reason;
   }
   guest.aiVerification = aiVerification;
+  if (aiDocInspection) {
+    guest.aiDocInspection = aiDocInspection;
+  }
   guest.fnhrCompleted = true;
   guest.fnhrCompletedAt = new Date().toISOString();
   if (!guest.guestCode) {
@@ -18372,12 +18460,18 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   targetGuest.docPhotoUrl = docPhotoUrl;
   targetGuest.signatureUrl = signatureUrl;
   targetGuest.minorAuthDocUrl = minorAuthDocUrl;
-  targetGuest.isMinor = isMinorCalculated;
-  targetGuest.minorAge = calculatedAge;
+  targetGuest.isMinor = effectiveIsMinor;
+  targetGuest.minorAge = effectiveAge;
   targetGuest.minorKinship = minorKinship || "";
-  targetGuest.riskAttentionAlert = riskAssessment.isTriggered;
-  targetGuest.riskAttentionReason = riskAssessment.reason;
+  targetGuest.isCamposResident = Boolean(isCamposFromDocOrInput || targetGuest.isCamposResident);
+  targetGuest.riskAttentionAlert = Boolean(isCamposFromDocOrInput || riskAssessment.isTriggered);
+  targetGuest.riskAttentionReason = isCamposFromDocOrInput
+    ? (riskAssessment.reason || "Radar Operacional: Hóspede com documento ou residência em Campos dos Goytacazes/RJ")
+    : (riskAssessment.reason || "");
   targetGuest.aiVerification = aiVerification;
+  if (aiDocInspection) {
+    targetGuest.aiDocInspection = aiDocInspection;
+  }
   targetGuest.hasCompletedCheckin = true;
   targetGuest.checkinCompletedAt = now;
 
@@ -18400,6 +18494,17 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     if (selfieUrl) r.selfieUrl = selfieUrl;
     if (docPhotoUrl) r.docPhotoUrl = docPhotoUrl;
     if (signatureUrl) r.signatureUrl = signatureUrl;
+    r.isCamposResident = Boolean(isCamposFromDocOrInput || r.isCamposResident);
+    if (isCamposFromDocOrInput) {
+      r.riskAttentionAlert = true;
+      r.riskAttentionReason = riskAssessment.reason || "Radar Operacional: Hóspede com documento ou residência em Campos dos Goytacazes/RJ";
+    }
+    if (effectiveIsMinor) {
+      r.hasMinor = true;
+    }
+    if (aiDocInspection) {
+      r.aiDocInspection = aiDocInspection;
+    }
   }
 
   // Atualiza flags agregadas da reserva
@@ -18408,10 +18513,13 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     r.preCheckinCompleted = true;
   }
   r.fnhrCompleted = r.guests.every(g => g.hasCompletedCheckin);
-  r.hasMinor = r.guests.some(g => g.isMinor);
-  r.riskAttentionAlert = r.guests.some(g => g.riskAttentionAlert);
-  if (r.riskAttentionAlert) {
-    r.riskAttentionReason = r.guests.find(g => g.riskAttentionAlert)?.riskAttentionReason || "";
+  r.hasMinor = Boolean(effectiveIsMinor || r.hasMinor || r.guests.some(g => g.isMinor));
+  r.isCamposResident = Boolean(isCamposFromDocOrInput || r.isCamposResident || r.guests.some(g => g.isCamposResident));
+  r.riskAttentionAlert = Boolean(r.isCamposResident || r.guests.some(g => g.riskAttentionAlert) || riskAssessment.isTriggered);
+  if (r.isCamposResident && !r.riskAttentionReason) {
+    r.riskAttentionReason = riskAssessment.reason || "Radar Operacional: Hóspede com documento ou residência em Campos dos Goytacazes/RJ";
+  } else if (r.riskAttentionAlert && !r.riskAttentionReason) {
+    r.riskAttentionReason = r.guests.find(g => g.riskAttentionAlert)?.riskAttentionReason || riskAssessment.reason || "";
   }
 
   if (req.body.vehiclePlate) {
@@ -18427,18 +18535,27 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   r.updatedAt = now;
 
   // Notificações e Alertas Automáticos
-  if (isMinorCalculated) {
+  if (effectiveIsMinor) {
     createNotification({
       category: "system_error",
       title: `🚨 Menor de Idade em Reserva - Flat ${r.flatNumber}`,
-      message: `Hóspede menor de idade (${validName}, ${calculatedAge} anos) registrado. Parentesco: ${minorKinship || 'Não informado'}. Requer avaliação manual dos documentos na portaria.`,
+      message: `Hóspede menor de idade (${validName}, ${effectiveAge} anos) registrado. Parentesco: ${minorKinship || 'Não informado'}. Requer avaliação manual dos documentos na portaria.`,
       severity: "warning",
-      metadata: { reservationId: r.id, flatNumber: r.flatNumber, guestName: validName, minorAge: calculatedAge, minorKinship },
+      metadata: { reservationId: r.id, flatNumber: r.flatNumber, guestName: validName, minorAge: effectiveAge, minorKinship },
       targetUrl: "/portaria"
     });
   }
 
-  if (riskAssessment.isTriggered) {
+  if (isCamposFromDocOrInput) {
+    createNotification({
+      category: "cleaning_alert",
+      title: `📍 Radar Operacional: Morador de Campos/RJ - Flat ${r.flatNumber}`,
+      message: `Hóspede ${validName} possui documento/residência em Campos dos Goytacazes/RJ. Registro incluído no radar operacional da equipe.`,
+      severity: "warning",
+      metadata: { reservationId: r.id, flatNumber: r.flatNumber, guestName: validName, isCamposResident: true },
+      targetUrl: "/pms-calendar"
+    });
+  } else if (riskAssessment.isTriggered) {
     createNotification({
       category: "cleaning_alert",
       title: `⚠️ Perfil Local < 30 Anos - Flat ${r.flatNumber}`,
