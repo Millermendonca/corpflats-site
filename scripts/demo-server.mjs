@@ -2082,12 +2082,192 @@ function reconcileUniversalIntegrity(incomingState = null) {
     }
   });
 
+  // Regularização automática de preventivas das camareiras anteriores a hoje
+  if (regularizeHousekeepingPreventiveTasks()) {
+    changed = true;
+  }
+
   return changed;
 }
 
 // Alias de retrocompatibilidade
 function ensureRestoredSeptReservations() {
   return reconcileUniversalIntegrity();
+}
+
+// ── Helpers de Tarefas Preventivas & Periodicidade (Dias de Locação vs Dias Corridos) ──
+
+export function getFlatOccupiedDays(flatId, flatNumber, sinceDateStr, upToDateStr) {
+  const reservations = (db.reservations || []).filter(r => 
+    (Number(r.flatId) === Number(flatId) || String(r.flatNumber) === String(flatNumber)) &&
+    r.status !== 'cancelada' && r.status !== 'cancelado' && r.status !== 'cancelled'
+  );
+
+  const occupiedDates = new Set();
+  for (const r of reservations) {
+    if (!r.checkinDate || !r.checkoutDate) continue;
+    let cur = new Date(r.checkinDate + 'T12:00:00Z');
+    const end = new Date(r.checkoutDate + 'T12:00:00Z');
+    while (cur < end) {
+      const dStr = cur.toISOString().substring(0, 10);
+      if (dStr >= sinceDateStr && dStr < upToDateStr) {
+        occupiedDates.add(dStr);
+      }
+      cur.setUTCDate(cur.getUTCDate() + 1);
+    }
+  }
+  return occupiedDates.size;
+}
+
+export function computePeriodicTaskStatus(task, flat, referenceDateStr) {
+  const flatId = Number(flat.id || flat.flatId);
+  const flatNumber = String(flat.number || flat.flatNumber);
+  const periodDays = Number(task.periodDays) || 1;
+  const periodType = task.periodType || "calendar_days";
+
+  const executions = (db.periodicExecutions || []).filter(e => 
+    Number(e.periodicTaskId) === Number(task.id) && Number(e.flatId) === flatId
+  );
+  executions.sort((a, b) => new Date(b.executedAt).getTime() - new Date(a.executedAt).getTime());
+  const lastExec = executions[0] || null;
+
+  let sinceDateStr;
+  if (lastExec) {
+    sinceDateStr = getExecutionDateStr(lastExec.executedAt);
+  } else {
+    sinceDateStr = task.firstDueDate || (task.createdAt ? getExecutionDateStr(task.createdAt) : referenceDateStr);
+  }
+
+  let nextDueAt = null;
+  let isDue = false;
+  let daysOverdue = 0;
+  let currentOccupiedDays = 0;
+
+  if (periodType === "occupied_days") {
+    currentOccupiedDays = getFlatOccupiedDays(flatId, flatNumber, sinceDateStr, referenceDateStr);
+    if (currentOccupiedDays >= periodDays) {
+      isDue = true;
+      daysOverdue = currentOccupiedDays - periodDays;
+      nextDueAt = referenceDateStr;
+    } else {
+      isDue = false;
+      const remainingOccupied = periodDays - currentOccupiedDays;
+      daysOverdue = -remainingOccupied;
+
+      let needed = remainingOccupied;
+      const futureReservations = (db.reservations || [])
+        .filter(r => 
+          (Number(r.flatId) === flatId || String(r.flatNumber) === flatNumber) &&
+          r.status !== 'cancelada' && r.status !== 'cancelado' && r.status !== 'cancelled' &&
+          r.checkoutDate > referenceDateStr
+        )
+        .sort((a, b) => a.checkinDate.localeCompare(b.checkinDate));
+
+      for (const r of futureReservations) {
+        let cur = new Date(Math.max(new Date(r.checkinDate + 'T12:00:00Z').getTime(), new Date(referenceDateStr + 'T12:00:00Z').getTime()));
+        const end = new Date(r.checkoutDate + 'T12:00:00Z');
+        while (cur < end && needed > 0) {
+          needed--;
+          if (needed === 0) {
+            nextDueAt = cur.toISOString().substring(0, 10);
+            break;
+          }
+          cur.setUTCDate(cur.getUTCDate() + 1);
+        }
+        if (needed === 0) break;
+      }
+    }
+  } else {
+    // calendar_days
+    nextDueAt = addDaysToDateStr(sinceDateStr, periodDays);
+    daysOverdue = calcDaysDiff(referenceDateStr, nextDueAt);
+    isDue = (nextDueAt <= referenceDateStr);
+  }
+
+  return {
+    id: task.id,
+    taskId: task.id,
+    name: task.name,
+    taskName: task.name,
+    description: task.description,
+    taskDescription: task.description,
+    flatId: flatId,
+    flatNumber: flatNumber,
+    periodDays: periodDays,
+    periodType: periodType,
+    firstDueDate: task.firstDueDate || null,
+    assignToHousekeeping: task.assignToHousekeeping !== false,
+    lastExecutedAt: lastExec ? lastExec.executedAt : null,
+    nextDueAt: nextDueAt,
+    isDue: isDue,
+    daysOverdue: daysOverdue,
+    currentOccupiedDays: periodType === "occupied_days" ? currentOccupiedDays : undefined,
+    remainingOccupiedDays: periodType === "occupied_days" ? Math.max(0, periodDays - currentOccupiedDays) : undefined,
+  };
+}
+
+export function regularizeHousekeepingPreventiveTasks() {
+  const todayStr = getTodayStr();
+  const yesterdayStr = addDaysToDateStr(todayStr, -1);
+  let changed = false;
+
+  if (!Array.isArray(db.periodicExecutions)) db.periodicExecutions = [];
+  const housekeepingTasks = (db.periodicTasks || []).filter(t => t.isActive && t.assignToHousekeeping !== false);
+  const activeFlats = (db.flats || []).filter(f => f.isActive !== false && String(f.number) !== "502" && f.id !== 9);
+
+  let nextId = db.periodicExecutions.length > 0 ? Math.max(...db.periodicExecutions.map(e => e.id)) + 1 : 1;
+
+  for (const flat of activeFlats) {
+    for (const t of housekeepingTasks) {
+      if (Array.isArray(t.flatIds) && t.flatIds.length > 0 && !t.flatIds.map(Number).includes(Number(flat.id))) {
+        continue;
+      }
+
+      const status = computePeriodicTaskStatus(t, flat, todayStr);
+      let shouldRegularize = false;
+      if (status.periodType === "occupied_days") {
+        if (status.isDue) {
+          shouldRegularize = true;
+        }
+      } else {
+        if (status.nextDueAt && status.nextDueAt < todayStr) {
+          shouldRegularize = true;
+        }
+      }
+
+      if (shouldRegularize) {
+        db.periodicExecutions.push({
+          id: nextId++,
+          periodicTaskId: Number(t.id),
+          flatId: Number(flat.id),
+          executedByUserId: 1,
+          executedAt: `${yesterdayStr}T23:59:00.000Z`,
+          notes: "Concluído na regularização de preventivas pendentes (limpeza de backlog)",
+          createdAt: new Date().toISOString()
+        });
+        changed = true;
+      }
+    }
+  }
+
+  return changed;
+}
+
+export function sanitizePeriodicTasks() {
+  if (!Array.isArray(db.periodicTasks)) db.periodicTasks = [];
+  let changed = false;
+  for (const t of db.periodicTasks) {
+    if (!t.periodType) {
+      const nameLower = (t.name || "").toLowerCase();
+      if (nameLower.includes("filtro") || nameLower.includes("ar-condicionado") || nameLower.includes("edredom") || nameLower.includes("box") || nameLower.includes("colchão") || nameLower.includes("pia")) {
+        t.periodType = "occupied_days";
+      } else {
+        t.periodType = "calendar_days";
+      }
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 // Blindagem e Persistência Garantida dos Dados das Camareiras (Cris e Grazi)
@@ -2541,6 +2721,7 @@ export function repairIncidentSept30(db) {
 
 function sanitizeReservationFlags() {
   sanitizeMaidUsers();
+  sanitizePeriodicTasks();
   if (repairIncidentSept30(db)) {
     try {
       saveDatabase("repair_incident_sept30");
@@ -7359,26 +7540,19 @@ app.get("/api/reservations/checkouts", (req, res) => {
 
     const pendingTasks = [];
     for (const pt of (db.periodicTasks || []).filter(t => t.isActive && t.assignToHousekeeping !== false && (!Array.isArray(t.flatIds) || t.flatIds.length === 0 || t.flatIds.map(Number).includes(Number(flat.id))))) {
-      const executions = (db.periodicExecutions || []).filter(e => Number(e.periodicTaskId) === Number(pt.id) && Number(e.flatId) === Number(flat.id));
-      executions.sort((a, b) => new Date(b.executedAt).getTime() - new Date(a.executedAt).getTime());
-      const lastExec = executions[0] || null;
-
-      let nextDueAt;
-      if (lastExec) {
-        const lastDateStr = getExecutionDateStr(lastExec.executedAt);
-        nextDueAt = addDaysToDateStr(lastDateStr, Number(pt.periodDays) || 1);
-      } else {
-        nextDueAt = pt.firstDueDate || (pt.createdAt ? getExecutionDateStr(pt.createdAt) : dateStr);
-      }
-      // Vence hoje ou ficou pendente de dias anteriores (aguardando a próxima limpeza)
-      if (nextDueAt <= dateStr) {
+      const taskStatus = computePeriodicTaskStatus(pt, flat, dateStr);
+      if (taskStatus.isDue) {
         pendingTasks.push({
           id: pt.id,
           name: pt.name,
           description: pt.description,
           periodDays: pt.periodDays,
+          periodType: pt.periodType || "calendar_days",
           firstDueDate: pt.firstDueDate,
-          nextDueAt
+          nextDueAt: taskStatus.nextDueAt,
+          currentOccupiedDays: taskStatus.currentOccupiedDays,
+          remainingOccupiedDays: taskStatus.remainingOccupiedDays,
+          daysOverdue: taskStatus.daysOverdue
         });
       }
     }
@@ -8124,22 +8298,15 @@ app.patch("/api/cleaning/assignments/:requestId/status", async (req, res) => {
       if (status === "clean" && tasksToExecute.length === 0 && !isInstructionRequest) {
         // Auto-conclui tarefas preventivas pendentes deste quarto para governança caso não passadas explicitamente
         const flatTargetId = Number(item.flatId);
+        const flatObj = db.flats.find(f => Number(f.id) === flatTargetId) || { id: flatTargetId, flatId: flatTargetId, number: item.flatNumber };
         const pendingForFlat = (db.periodicTasks || []).filter(t =>
           t.isActive &&
           t.assignToHousekeeping !== false &&
           (!Array.isArray(t.flatIds) || t.flatIds.length === 0 || t.flatIds.map(Number).includes(flatTargetId))
         );
         for (const pt of pendingForFlat) {
-          const executions = (db.periodicExecutions || []).filter(e => Number(e.periodicTaskId) === Number(pt.id) && Number(e.flatId) === flatTargetId);
-          executions.sort((a, b) => new Date(b.executedAt).getTime() - new Date(a.executedAt).getTime());
-          const lastExec = executions[0] || null;
-          let nextDueAt;
-          if (lastExec) {
-            nextDueAt = addDaysToDateStr(getExecutionDateStr(lastExec.executedAt), Number(pt.periodDays) || 1);
-          } else {
-            nextDueAt = pt.firstDueDate || (pt.createdAt ? getExecutionDateStr(pt.createdAt) : getTodayStr());
-          }
-          if (nextDueAt <= (date || item.requestDate || getTodayStr())) {
+          const taskStatus = computePeriodicTaskStatus(pt, flatObj, date || item.requestDate || getTodayStr());
+          if (taskStatus.isDue) {
             tasksToExecute.push(pt.id);
           }
         }
@@ -8696,7 +8863,7 @@ app.post("/api/periodic-tasks", (req, res) => {
   if (!userAuth || userAuth.role !== "admin") {
     return res.status(403).json({ error: "Apenas administradores podem cadastrar tarefas preventivas." });
   }
-  const { name, description, periodDays = 7, firstDueDate, assignToHousekeeping = true, flatIds = [] } = req.body;
+  const { name, description, periodDays = 7, periodType = "occupied_days", firstDueDate, assignToHousekeeping = true, flatIds = [] } = req.body;
   if (!db.periodicTasks) db.periodicTasks = [];
 
   const todayStr = getTodayStr();
@@ -8705,6 +8872,7 @@ app.post("/api/periodic-tasks", (req, res) => {
     name: name.trim(),
     description: description ? description.trim() : null,
     periodDays: Number(periodDays) || 7,
+    periodType: periodType === "calendar_days" ? "calendar_days" : "occupied_days",
     firstDueDate: firstDueDate ? String(firstDueDate).substring(0, 10) : todayStr,
     assignToHousekeeping: Boolean(assignToHousekeeping),
     isActive: true,
@@ -8726,10 +8894,11 @@ app.put("/api/periodic-tasks/:id", (req, res) => {
   const task = (db.periodicTasks || []).find(t => t.id === id);
   if (!task) return res.status(404).json({ error: "Tarefa preventiva não encontrada" });
 
-  const { name, description, periodDays, firstDueDate, assignToHousekeeping, isActive, flatIds } = req.body;
+  const { name, description, periodDays, periodType, firstDueDate, assignToHousekeeping, isActive, flatIds } = req.body;
   if (name !== undefined) task.name = name.trim();
   if (description !== undefined) task.description = description ? description.trim() : null;
   if (periodDays !== undefined) task.periodDays = Number(periodDays) || task.periodDays;
+  if (periodType !== undefined) task.periodType = periodType === "calendar_days" ? "calendar_days" : "occupied_days";
   if (firstDueDate !== undefined) task.firstDueDate = String(firstDueDate).substring(0, 10);
   if (assignToHousekeeping !== undefined) task.assignToHousekeeping = Boolean(assignToHousekeeping);
   if (isActive !== undefined) task.isActive = Boolean(isActive);
@@ -8745,6 +8914,9 @@ app.patch("/api/periodic-tasks/:id", (req, res) => {
   const task = (db.periodicTasks || []).find(t => t.id === id);
   if (!task) return res.status(404).json({ error: "Tarefa preventiva não encontrada" });
 
+  if (req.body.periodType !== undefined) {
+    req.body.periodType = req.body.periodType === "calendar_days" ? "calendar_days" : "occupied_days";
+  }
   Object.assign(task, req.body);
   task.updatedAt = new Date().toISOString();
   saveDatabase();
@@ -8784,43 +8956,39 @@ app.post("/api/periodic-tasks/:id/execute", (req, res) => {
   res.status(201).json(exec);
 });
 
+const handleRegularizeHousekeeping = (req, res) => {
+  const userAuth = getAuthUser(req);
+  if (!userAuth || userAuth.role !== "admin") {
+    return res.status(403).json({ error: "Apenas administradores podem regularizar tarefas preventivas." });
+  }
+  const didChange = regularizeHousekeepingPreventiveTasks();
+  if (didChange) saveDatabase("manual_regularize_housekeeping_tasks");
+  res.json({
+    success: true,
+    message: didChange
+      ? "Tarefas preventivas atrasadas foram regularizadas com sucesso!"
+      : "Todas as tarefas preventivas já estão em dia!"
+  });
+};
+
+app.post("/api/admin/regularize-housekeeping-tasks", handleRegularizeHousekeeping);
+app.post("/api/periodic-tasks/regularize", handleRegularizeHousekeeping);
+
 app.get("/api/periodic-tasks/pending", (req, res) => {
   const todayStr = getTodayStr();
   const result = [];
 
   for (const task of (db.periodicTasks || []).filter(t => t.isActive)) {
-    const targetFlats = Array.isArray(task.flatIds) && task.flatIds.length > 0 ? task.flatIds.map(Number).filter(id => id !== 9) : (db.flats || []).filter(f => f.isActive !== false && String(f.number) !== "502" && f.id !== 9).map(f => Number(f.id));
+    const targetFlats = Array.isArray(task.flatIds) && task.flatIds.length > 0
+      ? task.flatIds.map(Number).filter(id => id !== 9)
+      : (db.flats || []).filter(f => f.isActive !== false && String(f.number) !== "502" && f.id !== 9).map(f => Number(f.id));
+
     for (const flatId of targetFlats) {
       const flat = db.flats.find(f => Number(f.id) === Number(flatId));
       if (!flat || flat.isActive === false || String(flat.number) === "502" || flat.id === 9) continue;
 
-      const executions = (db.periodicExecutions || []).filter(e => Number(e.periodicTaskId) === Number(task.id) && Number(e.flatId) === Number(flatId));
-      executions.sort((a, b) => new Date(b.executedAt).getTime() - new Date(a.executedAt).getTime());
-      const lastExec = executions[0] || null;
-
-      let nextDueAt;
-      if (lastExec) {
-        const lastDateStr = getExecutionDateStr(lastExec.executedAt);
-        nextDueAt = addDaysToDateStr(lastDateStr, Number(task.periodDays) || 1);
-      } else {
-        nextDueAt = task.firstDueDate || (task.createdAt ? getExecutionDateStr(task.createdAt) : todayStr);
-      }
-
-      const daysDiff = calcDaysDiff(todayStr, nextDueAt);
-
-      result.push({
-        taskId: task.id,
-        taskName: task.name,
-        taskDescription: task.description,
-        flatId: flat.id,
-        flatNumber: flat.number,
-        periodDays: task.periodDays,
-        firstDueDate: task.firstDueDate || null,
-        assignToHousekeeping: task.assignToHousekeeping !== false,
-        lastExecutedAt: lastExec ? lastExec.executedAt : null,
-        nextDueAt,
-        daysOverdue: daysDiff, // > 0: atrasada em X dias; 0: vence hoje; < 0: faltam |daysDiff| dias
-      });
+      const status = computePeriodicTaskStatus(task, flat, todayStr);
+      result.push(status);
     }
   }
   res.json(result);

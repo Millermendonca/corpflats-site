@@ -1501,7 +1501,10 @@ export function FlatCard({
                         </span>
                         {task.periodDays && (
                           <span className="text-[9.5px] text-amber-800 dark:text-amber-300 font-semibold bg-amber-100/80 dark:bg-amber-900/60 px-1.5 py-0.5 rounded shrink-0">
-                            A cada {task.periodDays} dias
+                            A cada {task.periodDays}d {task.periodType === "occupied_days" ? "de locação" : "corridos"}
+                            {task.periodType === "occupied_days" && task.currentOccupiedDays !== undefined && (
+                              <span className="ml-1 opacity-90 font-bold">({task.currentOccupiedDays}d ocupados)</span>
+                            )}
                           </span>
                         )}
                       </div>
@@ -2113,8 +2116,8 @@ export function FlatCard({
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between gap-2">
                             <h4 className="font-black text-xs text-foreground">{t.name}</h4>
-                            <Badge variant="outline" className="text-[10px] font-bold text-amber-600 border-amber-500/30">
-                              Obrigatória
+                            <Badge variant="outline" className="text-[10px] font-bold text-amber-600 border-amber-500/30 shrink-0">
+                              {t.periodDays ? `A cada ${t.periodDays}d ${t.periodType === "occupied_days" ? "locação" : "corridos"}` : "Obrigatória"}
                             </Badge>
                           </div>
                           {t.description && (

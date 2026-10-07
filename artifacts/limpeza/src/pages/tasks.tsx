@@ -44,6 +44,7 @@ function TaskFormDialog({
   const [description, setDescription] = useState(task?.description ?? "")
   const [firstDueDate, setFirstDueDate] = useState(task?.firstDueDate ? String(task.firstDueDate).substring(0, 10) : todayStr)
   const [periodDays, setPeriodDays] = useState<number>(task?.periodDays ?? 30)
+  const [periodType, setPeriodType] = useState<"occupied_days" | "calendar_days">(task?.periodType ?? "occupied_days")
   const [assignToHousekeeping, setAssignToHousekeeping] = useState<boolean>(task?.assignToHousekeeping !== false)
   const [selectedFlats, setSelectedFlats] = useState<number[]>(task?.flatIds ?? [])
   const [isActive, setIsActive] = useState(task?.isActive !== false)
@@ -86,6 +87,7 @@ function TaskFormDialog({
         description: description ? description.trim() : null,
         firstDueDate,
         periodDays: Number(periodDays) || 30,
+        periodType,
         assignToHousekeeping,
         isActive,
         flatIds: selectedFlats.length > 0 ? selectedFlats : flatOptions.map(f => f.id)
@@ -95,12 +97,14 @@ function TaskFormDialog({
         await fetch(`/api/periodic-tasks/${task.id}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
+          credentials: "include",
           body: JSON.stringify(payload)
         })
       } else {
         await fetch("/api/periodic-tasks", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          credentials: "include",
           body: JSON.stringify(payload)
         })
       }
@@ -154,11 +158,55 @@ function TaskFormDialog({
             </span>
           </div>
 
+          {/* ⏱️ Critério de Periodicidade (Dias de Locação vs Dias Corridos) */}
+          <div className="p-3 bg-muted/40 rounded-xl border space-y-2">
+            <Label className="text-xs font-bold block">Critério de Periodicidade *</Label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setPeriodType("occupied_days")}
+                className={`p-2.5 rounded-xl border text-left transition-all ${
+                  periodType === "occupied_days"
+                    ? "bg-amber-500/15 border-amber-500 text-amber-950 dark:text-amber-300 font-bold shadow-2xs"
+                    : "bg-background border-border text-muted-foreground hover:bg-muted/50"
+                }`}
+              >
+                <div className="flex items-center gap-1.5 text-xs">
+                  <span>🛏️ Dias de Locação / Ocupação</span>
+                </div>
+                <div className="text-[10px] opacity-80 mt-1 font-normal leading-tight">
+                  Conta apenas dias com hóspede ocupando o flat. Dias vazios NÃO contam. Recomendado para filtros de AC, troca de edredom, box e colchões.
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setPeriodType("calendar_days")}
+                className={`p-2.5 rounded-xl border text-left transition-all ${
+                  periodType === "calendar_days"
+                    ? "bg-blue-500/15 border-blue-500 text-blue-950 dark:text-blue-300 font-bold shadow-2xs"
+                    : "bg-background border-border text-muted-foreground hover:bg-muted/50"
+                }`}
+              >
+                <div className="flex items-center gap-1.5 text-xs">
+                  <span>📅 Dias Corridos de Calendário</span>
+                </div>
+                <div className="text-[10px] opacity-80 mt-1 font-normal leading-tight">
+                  Conta dias corridos de calendário, mesmo com flat vago. Recomendado para limpeza de janelas, teias de aranha e vistorias prediais.
+                </div>
+              </button>
+            </div>
+          </div>
+
           {/* 🔄 Intervalo de Repetição (Periodicidade) */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <Label className="text-xs font-bold">Intervalo de Repetição (Periodicidade em dias) *</Label>
-              <span className="text-xs font-bold text-primary">A cada {periodDays} dias</span>
+              <Label className="text-xs font-bold">
+                Intervalo de Repetição ({periodType === "occupied_days" ? "dias de locação" : "dias corridos"}) *
+              </Label>
+              <span className="text-xs font-bold text-primary">
+                A cada {periodDays} {periodType === "occupied_days" ? "dias ocupados" : "dias corridos"}
+              </span>
             </div>
             
             <Input 
@@ -269,10 +317,52 @@ function TaskFormDialog({
   )
 }
 
-function overdueBadge(daysOverdue: number, nextDueAt?: string) {
-  if (daysOverdue > 0) return <Badge className="bg-destructive/15 text-destructive border-0 text-xs font-bold">{daysOverdue}d atrasada</Badge>
-  if (daysOverdue === 0) return <Badge className="bg-amber-100 text-amber-700 border-0 text-xs font-bold">Vence hoje</Badge>
-  return <Badge variant="outline" className="text-xs font-medium text-emerald-600 dark:text-emerald-400">Próx: {nextDueAt ? nextDueAt.split('-').reverse().join('/') : `Em ${Math.abs(daysOverdue)}d`}</Badge>
+function overdueBadge(item: any) {
+  const daysOverdue = item.daysOverdue ?? 0
+  const isOccupied = item.periodType === "occupied_days"
+
+  if (daysOverdue > 0) {
+    return (
+      <div className="text-right">
+        <Badge className="bg-destructive/15 text-destructive border-0 text-xs font-bold">
+          {daysOverdue}d {isOccupied ? "locação " : ""}atrasada
+        </Badge>
+        {isOccupied && item.currentOccupiedDays !== undefined && (
+          <div className="text-[10px] text-muted-foreground mt-0.5 font-medium">
+            {item.currentOccupiedDays}/{item.periodDays}d de uso
+          </div>
+        )}
+      </div>
+    )
+  }
+  if (daysOverdue === 0) {
+    return (
+      <div className="text-right">
+        <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300 border-0 text-xs font-bold">
+          Vence hoje
+        </Badge>
+        {isOccupied && item.currentOccupiedDays !== undefined && (
+          <div className="text-[10px] text-muted-foreground mt-0.5 font-medium">
+            {item.currentOccupiedDays}/{item.periodDays}d de uso
+          </div>
+        )}
+      </div>
+    )
+  }
+  return (
+    <div className="text-right">
+      <Badge variant="outline" className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
+        {isOccupied
+          ? `Faltam ${item.remainingOccupiedDays ?? Math.abs(daysOverdue)}d locação`
+          : (item.nextDueAt ? `Próx: ${item.nextDueAt.split('-').reverse().join('/')}` : `Em ${Math.abs(daysOverdue)}d`)}
+      </Badge>
+      {isOccupied && item.currentOccupiedDays !== undefined && (
+        <div className="text-[10px] text-muted-foreground mt-0.5 font-medium">
+          {item.currentOccupiedDays}/{item.periodDays}d ocupados
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function Tasks() {
@@ -300,16 +390,27 @@ export default function Tasks() {
   const handleRegularize = async () => {
     setRegularizing(true)
     try {
-      const res = await fetch("/api/admin/regularize-housekeeping-tasks", { method: "POST" })
+      const res = await fetch("/api/admin/regularize-housekeeping-tasks", { 
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include"
+      })
       const data = await res.json()
+      if (!res.ok) {
+        throw new Error(data.error || "Erro ao regularizar tarefas preventivas")
+      }
       toast({
         title: "Regularização de Preventivas",
         description: data.message || "Preventivas passadas regularizadas com sucesso!",
       })
       qc.invalidateQueries({ queryKey: getListPendingPeriodicTasksQueryKey() })
       qc.invalidateQueries({ queryKey: ["/api/reservations/checkouts"] })
-    } catch {
-      toast({ title: "Erro ao regularizar", variant: "destructive" })
+    } catch (err: any) {
+      toast({ 
+        title: "Erro ao regularizar", 
+        description: err?.message || "Ocorreu um erro ao processar a regularização.",
+        variant: "destructive" 
+      })
     } finally {
       setRegularizing(false)
     }
@@ -504,9 +605,11 @@ export default function Tasks() {
                           )}
                         </div>
                         <p className="font-bold text-sm text-slate-900 dark:text-slate-100">{item.taskName}</p>
-                        <p className="text-xs text-muted-foreground">Flat {item.flatNumber} · a cada {item.periodDays}d</p>
+                        <p className="text-xs text-muted-foreground">
+                          Flat {item.flatNumber} · a cada {item.periodDays}d {item.periodType === "occupied_days" ? "de locação" : "corridos"}
+                        </p>
                       </div>
-                      {overdueBadge(item.daysOverdue, item.nextDueAt)}
+                      {overdueBadge(item)}
                     </div>
                     {item.taskDescription && (
                       <p className="text-xs text-muted-foreground line-clamp-2">{item.taskDescription}</p>
@@ -549,9 +652,11 @@ export default function Tasks() {
                           )}
                         </div>
                         <p className="font-semibold text-sm">{item.taskName}</p>
-                        <p className="text-xs text-muted-foreground">Flat {item.flatNumber} · a cada {item.periodDays}d</p>
+                        <p className="text-xs text-muted-foreground">
+                          Flat {item.flatNumber} · a cada {item.periodDays}d {item.periodType === "occupied_days" ? "de locação" : "corridos"}
+                        </p>
                       </div>
-                      {overdueBadge(item.daysOverdue, item.nextDueAt)}
+                      {overdueBadge(item)}
                     </div>
                   </CardContent>
                 </Card>
@@ -587,7 +692,9 @@ export default function Tasks() {
                           </Badge>
                         )}
                         {!task.isActive && <Badge variant="outline" className="text-xs">Inativa</Badge>}
-                        <Badge variant="secondary" className="text-xs font-bold">a cada {task.periodDays}d</Badge>
+                        <Badge variant="secondary" className="text-xs font-bold">
+                          a cada {task.periodDays}d {task.periodType === "occupied_days" ? "de locação" : "corridos"}
+                        </Badge>
                         {task.firstDueDate && (
                           <Badge variant="outline" className="text-xs text-muted-foreground">
                             📅 1ª Execução: {task.firstDueDate.split('-').reverse().join('/')}
