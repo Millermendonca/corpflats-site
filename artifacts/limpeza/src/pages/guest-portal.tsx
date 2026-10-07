@@ -586,8 +586,30 @@ export default function GuestPortal() {
     if (!reservation.pixCopiaECola) return
     navigator.clipboard.writeText(reservation.pixCopiaECola)
     setCopiedPix(true)
-    setTimeout(() => setCopiedPix(false), 2500)
+    setTimeout(() => setCopiedPix(false), 3500)
   }
+
+  useEffect(() => {
+    if (reservation?.pixCopiaECola && typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search)
+      if (sp.get("action") === "copiar_pix" || sp.get("action") === "pix" || sp.get("pix") === "1" || window.location.hash === "#pix") {
+        if (navigator.clipboard?.writeText) {
+          navigator.clipboard.writeText(reservation.pixCopiaECola)
+            .then(() => {
+              setCopiedPix(true)
+              setTimeout(() => setCopiedPix(false), 4000)
+            })
+            .catch(() => {})
+        }
+        setTimeout(() => {
+          const pixEl = document.getElementById("secao-pix-pagamento")
+          if (pixEl) {
+            pixEl.scrollIntoView({ behavior: "smooth", block: "center" })
+          }
+        }, 300)
+      }
+    }
+  }, [reservation?.pixCopiaECola])
 
   const handleCopyCafeLink = () => {
     const url = `${window.location.origin}/minha-reserva/${reservation.code || code}/cafe`
@@ -1966,7 +1988,14 @@ export default function GuestPortal() {
 
               {/* Aba PIX */}
               {paymentMethodTab === "pix" && (
-                <div className="p-4 sm:p-6 bg-slate-50 rounded-2xl border border-slate-200 space-y-4 text-center">
+                <div id="secao-pix-pagamento" className="p-4 sm:p-6 bg-slate-50 rounded-2xl border border-slate-200 space-y-4 text-center">
+                  {copiedPix && (
+                    <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 animate-in fade-in slide-in-from-top-1 shadow-sm">
+                      <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>Código PIX copiado com sucesso! Abra o app do seu banco e cole para pagar.</span>
+                    </div>
+                  )}
+
                   <div className="space-y-1">
                     <span className="text-sm font-bold text-slate-900 block">
                       Pague via PIX com Baixa Automática

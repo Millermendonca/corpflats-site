@@ -26887,6 +26887,15 @@ function serveSpaWithMetadata(distFolder, req, res) {
       imageAlt = "CorpFlats • Área do Hóspede";
       imageWidth = "1200";
       imageHeight = "630";
+    } else if (req.path.includes("/copiar-pix") || req.path.includes("/pix")) {
+      title = "📋 Pagamento PIX • CorpFlats";
+      desc = guestFirstName
+        ? `Olá ${guestFirstName}! Copie o código PIX da sua acomodação no CorpFlats para pagamento com confirmação automática.`
+        : "Copie o código PIX da sua acomodação no CorpFlats para pagamento com confirmação automática.";
+      image = "https://corpflats.onrender.com/flat-preview.jpg";
+      imageAlt = "CorpFlats • Pagamento PIX";
+      imageWidth = "1200";
+      imageHeight = "630";
     }
 
     const pageUrl = `https://corpflats.onrender.com${req.originalUrl || req.url || req.path}`;
@@ -26919,6 +26928,184 @@ function serveSpaWithMetadata(distFolder, req, res) {
     return res.sendFile(indexPath);
   }
 }
+
+// ── Página Oficial de Cópia Rápida de PIX (/copiar-pix/:code) ─────────────────
+app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) => {
+  const rawCode = String(req.params.code || req.query.code || req.query.reserva || "").trim();
+  const r = (db.reservations || []).find(x => 
+    (x.code && x.code.toUpperCase() === rawCode.toUpperCase()) || 
+    String(x.id) === rawCode
+  );
+
+  const guestName = r?.guestName || "Hóspede";
+  const flatNumber = r?.flatNumber || r?.flatId || "";
+  const totalAmount = Number(r?.totalAmount) || 0;
+  const paidAmount = Number(r?.paidAmount) || 0;
+  const pendingAmount = Math.max(0, totalAmount - paidAmount) || totalAmount;
+  let pixCode = r?.pixCopiaECola || "";
+
+  if (!pixCode && pendingAmount > 0) {
+    const cleanTxId = (rawCode || "").replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
+    pixCode = generateStaticPixPayload({
+      pixKey: db.settings?.interConfig?.pixKey || db.settings?.pixKey || "47964813000165",
+      amount: pendingAmount,
+      merchantName: db.siteConfig?.branding?.brandName || "CORPFLATS LTDA",
+      merchantCity: "CAMPOS DOS GOYTACAZES",
+      txid: cleanTxId || "***"
+    });
+    if (r) {
+      r.pixCopiaECola = pixCode;
+      saveDatabase();
+    }
+  }
+
+  const formattedValue = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(pendingAmount);
+  const qrCodeUrl = pixCode ? `https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(pixCode)}` : "";
+  const portalUrl = rawCode ? `/minha-reserva/${encodeURIComponent(rawCode)}` : "/minha-reserva";
+  const adminWhatsApp = db.settings?.adminWhatsApp || "5522997124021";
+  const whatsappUrl = `https://wa.me/${adminWhatsApp}?text=${encodeURIComponent(`Olá! Estou com uma dúvida sobre o pagamento PIX da reserva ${rawCode}.`)}`;
+
+  const pageHtml = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>📋 Copiar Código PIX • CorpFlats</title>
+  <meta name="theme-color" content="#0f172a">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    body { background-color: #0f172a; color: #f8fafc; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px; }
+    .card { background-color: #1e293b; border: 1px solid #334155; border-radius: 20px; width: 100%; max-width: 440px; padding: 24px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5); text-align: center; }
+    .brand { font-size: 13px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #10b981; margin-bottom: 8px; }
+    .title { font-size: 20px; font-weight: 800; color: #ffffff; margin-bottom: 6px; }
+    .subtitle { font-size: 13px; color: #94a3b8; margin-bottom: 20px; line-height: 1.4; }
+    .badge-copied { background: rgba(16, 185, 129, 0.15); border: 1px solid #10b981; color: #34d399; font-size: 13px; font-weight: 700; padding: 10px 16px; border-radius: 12px; margin-bottom: 20px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+    .details { background-color: #0f172a; border: 1px solid #334155; border-radius: 14px; padding: 14px 16px; margin-bottom: 20px; text-align: left; }
+    .detail-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; padding: 4px 0; }
+    .detail-label { color: #94a3b8; }
+    .detail-val { color: #ffffff; font-weight: 600; }
+    .detail-val.price { color: #34d399; font-size: 15px; font-weight: 800; }
+    .btn-main { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; background: #10b981; color: #ffffff; font-size: 15px; font-weight: 700; padding: 14px; border-radius: 12px; border: none; cursor: pointer; text-decoration: none; transition: all 0.2s ease; margin-bottom: 12px; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3); }
+    .btn-main:active { transform: scale(0.98); }
+    .btn-main.copied { background: #059669; }
+    .btn-sec { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; background: #334155; color: #f8fafc; font-size: 14px; font-weight: 600; padding: 12px; border-radius: 12px; border: none; cursor: pointer; text-decoration: none; margin-bottom: 10px; transition: background 0.2s; }
+    .btn-sec:hover { background: #475569; }
+    .pix-box { position: relative; margin-bottom: 16px; }
+    .pix-input { width: 100%; background: #0f172a; border: 1px dashed #475569; border-radius: 10px; color: #cbd5e1; font-family: monospace; font-size: 11px; padding: 10px; resize: none; outline: none; }
+    .qr-container { background: #ffffff; border-radius: 14px; padding: 12px; display: inline-block; margin-bottom: 16px; }
+    .qr-img { width: 180px; height: 180px; display: block; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">CORPFLATS • PAGAMENTO PIX</div>
+    <div class="title">Código PIX da Reserva</div>
+    <div class="subtitle">Abra o app do seu banco e selecione <strong>PIX Copia e Cola</strong> para efetuar o pagamento.</div>
+
+    <div id="status-badge" class="badge-copied">
+      <span>✅ Código PIX Copiado com Sucesso!</span>
+    </div>
+
+    <div class="details">
+      <div class="detail-row">
+        <span class="detail-label">Reserva:</span>
+        <span class="detail-val">${rawCode || "---"}</span>
+      </div>
+      ${flatNumber ? `
+      <div class="detail-row">
+        <span class="detail-label">Acomodação:</span>
+        <span class="detail-val">Flat ${flatNumber}</span>
+      </div>` : ""}
+      <div class="detail-row">
+        <span class="detail-label">Hóspede:</span>
+        <span class="detail-val">${guestName}</span>
+      </div>
+      <div class="detail-row" style="border-top: 1px solid #334155; margin-top: 6px; padding-top: 8px;">
+        <span class="detail-label">Valor a Quitar:</span>
+        <span class="detail-val price">${formattedValue}</span>
+      </div>
+    </div>
+
+    ${pixCode ? `
+    <button id="btn-copy" class="btn-main" onclick="copyPix()">
+      <span>📋 Copiar Código PIX Novamente</span>
+    </button>
+
+    <div class="pix-box">
+      <textarea id="pix-code" class="pix-input" rows="3" readonly onclick="this.select()">${pixCode}</textarea>
+    </div>
+
+    ${qrCodeUrl ? `
+    <div style="margin-bottom: 8px; font-size: 12px; color: #94a3b8;">Ou pague escaneando o QR Code abaixo:</div>
+    <div class="qr-container">
+      <img src="${qrCodeUrl}" alt="QR Code PIX" class="qr-img">
+    </div>` : ""}
+    ` : `
+    <div style="padding: 20px; color: #f87171; font-size: 13px;">
+      Nenhum código PIX ativo no momento ou a reserva já se encontra quitada.
+    </div>
+    `}
+
+    <a href="${portalUrl}" class="btn-sec">
+      🏨 Acessar Portal da Minha Reserva
+    </a>
+
+    <a href="${whatsappUrl}" class="btn-sec" style="background: #1e3a2b; border: 1px solid #065f46; color: #6ee7b7;">
+      💬 Voltar para o WhatsApp
+    </a>
+  </div>
+
+  <script>
+    function copyPix() {
+      const el = document.getElementById('pix-code');
+      if (!el) return;
+      const text = el.value;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(notify).catch(fallback);
+      } else {
+        fallback();
+      }
+    }
+
+    function fallback() {
+      const el = document.getElementById('pix-code');
+      el.select();
+      el.setSelectionRange(0, 99999);
+      try {
+        document.execCommand('copy');
+        notify();
+      } catch (e) {}
+    }
+
+    function notify() {
+      const btn = document.getElementById('btn-copy');
+      const badge = document.getElementById('status-badge');
+      if (badge) {
+        badge.innerHTML = '<span>✅ Código PIX Copiado com Sucesso!</span>';
+        badge.style.display = 'flex';
+      }
+      if (btn) {
+        btn.classList.add('copied');
+        btn.innerHTML = '<span>✅ Código Copiado!</span>';
+        setTimeout(() => {
+          btn.classList.remove('copied');
+          btn.innerHTML = '<span>📋 Copiar Código PIX Novamente</span>';
+        }, 3000);
+      }
+    }
+
+    // Executa cópia automática imediatamente ao carregar
+    window.addEventListener('DOMContentLoaded', () => {
+      copyPix();
+    });
+  </script>
+</body>
+</html>`;
+
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  return res.send(pageHtml);
+});
 
 if (fs.existsSync(distPath)) {
   app.use(express.static(distPath, {

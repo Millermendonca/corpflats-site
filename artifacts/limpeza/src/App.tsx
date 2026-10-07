@@ -182,6 +182,10 @@ function Router() {
         <Route path="/guest-portal/:code/cafe" component={GuestBreakfast} />
         <Route path="/minha-reserva/:code" component={GuestPortal} />
         <Route path="/minha-reserva" component={GuestPortal} />
+        <Route path="/copiar-pix/:code" component={GuestPortal} />
+        <Route path="/copiar-pix" component={GuestPortal} />
+        <Route path="/pix/:code" component={GuestPortal} />
+        <Route path="/pix" component={GuestPortal} />
         <Route path="/portal-hospede/:code" component={GuestPortal} />
         <Route path="/portal-hospede" component={GuestPortal} />
         <Route path="/guest-portal/:code" component={GuestPortal} />

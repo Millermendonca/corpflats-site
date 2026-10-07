@@ -107,7 +107,7 @@ Recebemos o pedido de *Pré-Reserva* no *{{nome_hotel}}*!
 {{instrucao_pagamento}}`,
     buttons: [
       { label: "💳 Ver Reserva & Pagar", type: "URL", url: "{{link_portal_hospede}}" },
-      { label: "📋 Copiar Código PIX", type: "COPY", url: "https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code={{pix_copia_e_cola}}" },
+      { label: "📋 Copiar Código PIX", type: "COPY", url: "{{link_copiar_pix}}" },
       { label: "📞 Falar com Atendimento", type: "CALL", url: "{{telefone_hotel}}" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_pre_reserva",
@@ -138,7 +138,7 @@ Para garantir sua acomodação antes que as datas sejam liberadas, efetue o paga
 👉 {{link_portal_hospede}}`,
     buttons: [
       { label: "💳 Ver Reserva & Pagar", type: "URL", url: "{{link_portal_hospede}}" },
-      { label: "📋 Copiar Código PIX", type: "COPY", url: "https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code={{pix_copia_e_cola}}" },
+      { label: "📋 Copiar Código PIX", type: "COPY", url: "{{link_copiar_pix}}" },
       { label: "🏨 Ver Minha Reserva", type: "URL", url: "{{link_portal_hospede}}" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_payment_pending",
@@ -174,7 +174,7 @@ Você também pode consultar o extrato detalhado e efetuar o pagamento via PIX o
 👉 {{link_portal_hospede}}`,
     buttons: [
       { label: "💳 Ver Detalhes & Pagar", type: "URL", url: "{{link_portal_hospede}}" },
-      { label: "📋 Copiar Código PIX", type: "COPY", url: "https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code={{pix_copia_e_cola}}" },
+      { label: "📋 Copiar Código PIX", type: "COPY", url: "{{link_copiar_pix}}" },
       { label: "🏨 Ver Reserva Atualizada", type: "URL", url: "{{link_portal_hospede}}" }
     ],
     editUrl: "/whatsapp?tab=rules&tpl=tpl_additional_daily_pending",

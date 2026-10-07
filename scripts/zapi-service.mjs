@@ -225,7 +225,7 @@ Recebemos o pedido de *Pré-Reserva* no *{{nome_hotel}}*!
     footer: "CorpFlats • Hospedagem Contemporânea",
     buttons: [
       { id: "btn_portal", type: "URL", label: "💳 Ver Reserva & Pagar", url: "{{link_portal_hospede}}" },
-      { id: "btn_pix", type: "COPY", label: "📋 Copiar Código PIX", copyCode: "{{pix_copia_e_cola}}", url: "https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code={{pix_copia_e_cola}}" },
+      { id: "btn_pix", type: "COPY", label: "📋 Copiar Código PIX", copyCode: "{{pix_copia_e_cola}}", url: "{{link_copiar_pix}}" },
       { id: "btn_admin", type: "CALL", label: "📞 Falar com Atendimento", phone: "{{telefone_hotel}}" }
     ]
   },
@@ -756,7 +756,7 @@ Para garantir sua acomodação antes que as datas sejam liberadas, efetue o paga
     footer: "CorpFlats • Pagamento Seguro",
     buttons: [
       { id: "btn_pagar", type: "URL", label: "💳 Ver Reserva & Pagar", url: "{{link_portal_hospede}}" },
-      { id: "btn_pix", type: "COPY", label: "📋 Copiar Código PIX", copyCode: "{{pix_copia_e_cola}}", url: "https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code={{pix_copia_e_cola}}" },
+      { id: "btn_pix", type: "COPY", label: "📋 Copiar Código PIX", copyCode: "{{pix_copia_e_cola}}", url: "{{link_copiar_pix}}" },
       { id: "btn_chk", type: "URL", label: "🏨 Ver Minha Reserva", url: "{{link_portal_hospede}}" }
     ]
   },
@@ -788,7 +788,7 @@ Você também pode consultar o extrato detalhado e efetuar o pagamento via PIX o
     footer: "CorpFlats • Alteração Confirmada",
     buttons: [
       { id: "btn_pagar", type: "URL", label: "💳 Ver Detalhes & Pagar", url: "{{link_portal_hospede}}" },
-      { id: "btn_pix", type: "COPY", label: "📋 Copiar Código PIX", copyCode: "{{pix_copia_e_cola}}", url: "https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code={{pix_copia_e_cola}}" },
+      { id: "btn_pix", type: "COPY", label: "📋 Copiar Código PIX", copyCode: "{{pix_copia_e_cola}}", url: "{{link_copiar_pix}}" },
       { id: "btn_admin", type: "CALL", label: "📞 Falar com Atendimento", phone: "{{telefone_hotel}}" }
     ]
   },
@@ -1434,6 +1434,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const linkCheckinDigital = getCheckinUrlSync(reservation, 1, appOrigin, db);
   const linkPortalHospede = `${appOrigin}/minha-reserva/${resCode}`;
   const linkPagamento = `${appOrigin}/minha-reserva/${resCode}`;
+  const linkCopiarPix = `${appOrigin}/copiar-pix/${resCode}`;
   const linkCafeManha = (hasBreakfast || isBreakfastExplicitTemplate) && !isCancelled ? `${appOrigin}/cafe/${resCode}` : "";
   const linkCheckout = `${appOrigin}/checkout/${resCode}`;
 
@@ -1619,6 +1620,8 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{link_checkin_digital}}": linkCheckinDigital,
     "{{link_portal_hospede}}": linkPortalHospede,
     "{{link_pagamento}}": linkPagamento,
+    "{{link_copiar_pix}}": linkCopiarPix,
+    "{{link_pix}}": linkCopiarPix,
     "{{link_cafe_manha}}": linkCafeManha,
     "{{link_checkout}}": linkCheckout,
     "{{link_avaliacao_google}}": googleReviewUrl,
@@ -1948,12 +1951,19 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     return true;
   });
 
-  return list.map(b => ({
-    ...b,
-    url: b.url ? resolveWhatsAppTags(b.url, reservation, db, baseUrl, targetRecipient, templateObj || templateOrEvent) : undefined,
-    phone: b.phone ? resolveWhatsAppTags(b.phone, reservation, db, baseUrl, targetRecipient, templateObj || templateOrEvent) : undefined,
-    copyCode: b.copyCode ? resolveWhatsAppTags(b.copyCode, reservation, db, baseUrl, targetRecipient, templateObj || templateOrEvent) : undefined
-  }));
+  return list.map(b => {
+    let finalUrl = b.url ? resolveWhatsAppTags(b.url, reservation, db, baseUrl, targetRecipient, templateObj || templateOrEvent) : undefined;
+    // Sanitização anti-falha: Se a URL apontar para o antigo link do whatsapp.com/otp/code/ ou for vazia com botão PIX, substitui pela URL oficial do portal/copiar-pix
+    if ((finalUrl && finalUrl.includes("whatsapp.com/otp")) || (!finalUrl && (b.type === "COPY" || b.id === "btn_pix"))) {
+      finalUrl = `${appOrigin}/copiar-pix/${resCode}`;
+    }
+    return {
+      ...b,
+      url: finalUrl,
+      phone: b.phone ? resolveWhatsAppTags(b.phone, reservation, db, baseUrl, targetRecipient, templateObj || templateOrEvent) : undefined,
+      copyCode: b.copyCode ? resolveWhatsAppTags(b.copyCode, reservation, db, baseUrl, targetRecipient, templateObj || templateOrEvent) : undefined
+    };
+  });
 }
 
 export const buildTemplateActionButtons = renderTemplateButtons;
@@ -2256,8 +2266,10 @@ export async function sendZapiMessage(config, {
       if (type === "URL") {
         let rawUrl = String(b.url || "").trim();
         const codeToCopy = b.copyCode || b.code || (b.type === "COPY" && rawUrl.startsWith("000201") ? rawUrl : "");
-        if (codeToCopy) {
-          rawUrl = `https://www.whatsapp.com/otp/code/?otp_type=COPY_CODE&code=${encodeURIComponent(codeToCopy)}`;
+        // Se a URL apontar para o antigo link do whatsapp.com/otp/code/ ou for vazia/código puro, redireciona para a página oficial do portal para copiar o PIX
+        if (!rawUrl || rawUrl.startsWith("000201") || rawUrl.includes("whatsapp.com/otp")) {
+          const hostBase = (baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com").replace(/\/+$/, "");
+          rawUrl = `${hostBase}/copiar-pix`;
         } else if (!rawUrl.startsWith("http://") && !rawUrl.startsWith("https://")) {
           rawUrl = "https://" + rawUrl;
         }
@@ -2353,6 +2365,50 @@ export async function sendZapiMessage(config, {
     } catch (docErr) {
       console.warn(`[Z-API] Erro ao disparar documento anexo:`, docErr.message);
       primaryResult.documentError = docErr.message;
+    }
+  }
+
+  // Se a mensagem enviada contém botão ou código PIX de cópia, despacha imediatamente o código PIX no chat
+  const pixBtn = validButtons.find(b => b && (b.copyCode || (b.type === "COPY" && (b.code || b.url)) || (b.url && String(b.url).startsWith("000201"))));
+  const pixCodeToCopy = pixBtn ? (pixBtn.copyCode || pixBtn.code || (String(pixBtn.url).startsWith("000201") ? pixBtn.url : "")) : "";
+
+  if (pixCodeToCopy && typeof pixCodeToCopy === "string" && pixCodeToCopy.startsWith("000201") && (primaryResult?.success || primaryResult?.simulated)) {
+    try {
+      console.log(`[Z-API PIX Companion] Enviando código PIX para cópia em 1 toque para ${cleanPhone}...`);
+      await new Promise(r => setTimeout(r, 800)); // Pequena pausa para garantir ordem cronológica no WhatsApp
+
+      // 1. Tenta botão OTP nativo da Z-API (/send-button-otp)
+      let otpSent = false;
+      try {
+        const otpRes = await sendZapiOtpButton(config, {
+          phone: cleanPhone,
+          message: `📋 *PIX Copia e Cola:*\nToque no botão abaixo para copiar o código e pagar no app do seu banco:`,
+          code: pixCodeToCopy,
+          buttonText: "Copiar Código PIX"
+        });
+        if (otpRes?.success) {
+          otpSent = true;
+          console.log(`[Z-API PIX Companion ✓] Botão OTP entregue com sucesso para ${cleanPhone}`);
+        }
+      } catch (otpErr) {
+        console.warn(`[Z-API PIX Companion] Botão OTP falhou:`, otpErr.message);
+      }
+
+      // 2. Se o botão OTP não foi aceito, envia o código puro em texto para cópia garantida com toque longo
+      if (!otpSent) {
+        const rawPixUrl = `${baseUrl}/instances/${instanceId}/token/${token}/send-text`;
+        await fetch(rawPixUrl, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            phone: cleanPhone,
+            message: `${pixCodeToCopy}`
+          })
+        }).catch(() => {});
+        console.log(`[Z-API PIX Companion ✓] Código PIX puro entregue para ${cleanPhone}`);
+      }
+    } catch (pixErr) {
+      console.warn(`[Z-API PIX Companion] Erro ao enviar código PIX complementar:`, pixErr.message);
     }
   }
 
@@ -4019,7 +4075,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         if (tpl.id === "tpl_pre_reserva") {
           tpl.recipientTarget = "requester";
           tpl.channels = ["site", "whatsapp", "outros"];
-          if (tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.message.includes("Para agilizar sua estadia") || tpl.message.includes("sem filas") || !tpl.message.includes("status_cafe")) {
+          if (tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.buttons?.some(b => b.url && b.url.includes("whatsapp.com/otp")) || tpl.message.includes("Para agilizar sua estadia") || tpl.message.includes("sem filas") || !tpl.message.includes("status_cafe")) {
             const defPre = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_pre_reserva");
             if (defPre) {
               tpl.title = defPre.title;
@@ -4035,7 +4091,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           tpl.offsetValue = 1;
           tpl.offsetUnit = "hours";
           tpl.channels = ["site", "whatsapp", "outros"];
-          if (tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix")) {
+          if (tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.buttons?.some(b => b.url && b.url.includes("whatsapp.com/otp"))) {
             const defPend = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_payment_pending");
             if (defPend) {
               tpl.title = defPend.title;
@@ -4046,13 +4102,21 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           }
         }
         if (tpl.id === "tpl_additional_daily_pending") {
-          if (tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix")) {
+          if (tpl.message.includes("{{chave_pix}}") || tpl.message.includes("Confirmação Automática") || !tpl.buttons?.some(b => b.copyCode || b.id === "btn_pix") || tpl.buttons?.some(b => b.url && b.url.includes("whatsapp.com/otp"))) {
             const defAdd = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_additional_daily_pending");
             if (defAdd) {
               tpl.title = defAdd.title;
               tpl.description = defAdd.description;
               tpl.message = defAdd.message;
               tpl.buttons = defAdd.buttons;
+            }
+          }
+        }
+        // Sanitização geral de botões: erradica qualquer resquício do link quebrado do whatsapp.com/otp/code/
+        if (Array.isArray(tpl.buttons)) {
+          for (const b of tpl.buttons) {
+            if (b.url && b.url.includes("whatsapp.com/otp")) {
+              b.url = "{{link_copiar_pix}}";
             }
           }
         }
