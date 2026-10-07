@@ -103,7 +103,7 @@ export async function uploadImageToStorage(base64Data, filenamePrefix = "doc", d
   const rawBase64 = matches ? matches[2] : base64Data;
   const buffer = Buffer.from(rawBase64, "base64");
 
-  const ext = mimeType.includes("png") ? "png" : mimeType.includes("jpeg") || mimeType.includes("jpg") ? "jpg" : "webp";
+  const ext = mimeType.includes("pdf") ? "pdf" : mimeType.includes("png") ? "png" : mimeType.includes("jpeg") || mimeType.includes("jpg") ? "jpg" : "webp";
   const uniqueName = `${filenamePrefix}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${ext}`;
   const key = `${folder}/${uniqueName}`;
 

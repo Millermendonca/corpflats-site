@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useLocation } from "wouter"
 import { useGetMe } from "@workspace/api-client-react"
+import { compressImage } from "@/lib/image-compression"
 import { Shell } from "@/components/layout"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -61,6 +62,62 @@ export default function CrmGuests() {
   const [formIsMonthlyGuest, setFormIsMonthlyGuest] = useState(false)
   const [formAutoInvoice, setFormAutoInvoice] = useState(false)
   const [savingGuest, setSavingGuest] = useState(false)
+
+  // Documento Oficial do Hóspede (Imagem ou PDF)
+  const [formDocPhotoUrl, setFormDocPhotoUrl] = useState("")
+  const [formDocFileName, setFormDocFileName] = useState("")
+  const [uploadingGuestDoc, setUploadingGuestDoc] = useState(false)
+  const guestDocInputRef = useRef<HTMLInputElement>(null)
+  const detailDocInputRef = useRef<HTMLInputElement>(null)
+
+  const handleGuestDocSelect = async (e: React.ChangeEvent<HTMLInputElement>, isForDetail = false) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setUploadingGuestDoc(true)
+    try {
+      const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")
+      let base64String = ""
+      if (isPdf) {
+        base64String = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(reader.result as string)
+          reader.onerror = reject
+          reader.readAsDataURL(file)
+        })
+      } else {
+        const compressed = await compressImage(file, {
+          maxWidth: 1400,
+          maxHeight: 1400,
+          quality: 0.82,
+          preferredFormat: "image/webp"
+        })
+        base64String = compressed.base64
+      }
+
+      if (isForDetail && activeGuest) {
+        const res = await fetch(`/api/pms/guests/${activeGuest.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ docPhotoBase64: base64String }),
+          credentials: "include"
+        })
+        if (res.ok) {
+          const updated = await res.json()
+          setActiveGuest((prev: any) => ({ ...prev, docPhotoUrl: updated.docPhotoUrl || base64String }))
+          fetchGuests()
+          alert("Documento oficial anexado com sucesso ao cadastro do hóspede!")
+        }
+      } else {
+        setFormDocPhotoUrl(base64String)
+        setFormDocFileName(file.name)
+      }
+    } catch (err: any) {
+      alert("Erro ao processar documento: " + err.message)
+    } finally {
+      setUploadingGuestDoc(false)
+    }
+  }
 
   // Modal de Exclusão Definitiva de Hóspede e Todos os Dados
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
@@ -197,6 +254,8 @@ export default function CrmGuests() {
     setFormDocument("")
     setFormCity("")
     setFormCompanyId("")
+    setFormDocPhotoUrl("")
+    setFormDocFileName("")
     setFormIsMonthlyGuest(false)
     setFormAutoInvoice(false)
     setFormNotes("")
@@ -218,6 +277,8 @@ export default function CrmGuests() {
     setFormDocument(g.documentNumber || g.document || "")
     setFormCity(g.city || "")
     setFormCompanyId(g.companyId ? String(g.companyId) : "")
+    setFormDocPhotoUrl(g.docPhotoUrl || "")
+    setFormDocFileName(g.docPhotoUrl ? "documento_anexado" : "")
     setFormIsMonthlyGuest(Boolean(g.isMonthlyGuest || g.clientType === "mensalista"))
     setFormAutoInvoice(Boolean(g.autoEmitInvoice))
     setFormNotes(g.notes || "")
@@ -237,7 +298,7 @@ export default function CrmGuests() {
 
     setSavingGuest(true)
     try {
-      const payload = {
+      const payload: any = {
         fullName: formName.trim(),
         name: formName.trim(),
         phone: formPhone.trim(),
@@ -251,6 +312,13 @@ export default function CrmGuests() {
         autoEmitInvoice: Boolean(formAutoInvoice),
         notes: formNotes.trim(),
         preferences: formPreferences
+      }
+
+      if (formDocPhotoUrl) {
+        payload.docPhotoUrl = formDocPhotoUrl;
+        if (formDocPhotoUrl.startsWith("data:")) {
+          payload.docPhotoBase64 = formDocPhotoUrl;
+        }
       }
 
       if (editingGuest) {
@@ -1017,29 +1085,79 @@ export default function CrmGuests() {
                       </div>
 
                       {activeGuest.docPhotoUrl ? (
-                        <div 
-                          onClick={() => setLightboxMedia({ 
-                            url: activeGuest.docPhotoUrl, 
-                            title: `Documento de Identidade Oficial - ${activeGuest.fullName || activeGuest.name}`,
-                            subtitle: `CPF: ${activeGuest.documentNumber || activeGuest.document || 'Oficial'}`
-                          })}
-                          className="relative group cursor-pointer rounded-xl overflow-hidden bg-background border border-border h-36 flex items-center justify-center shadow-inner"
-                        >
-                          <img
-                            src={activeGuest.docPhotoUrl}
-                            alt="Documento"
-                            className="w-full h-full object-contain p-1 group-hover:scale-105 transition-transform"
-                          />
-                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-1.5 text-white font-bold text-xs transition-opacity">
-                            <ZoomIn className="w-4 h-4" /> Ampliar
-                          </div>
-                        </div>
+                        (() => {
+                          const isPdf = activeGuest.docPhotoUrl.toLowerCase().includes(".pdf") || activeGuest.docPhotoUrl.startsWith("data:application/pdf");
+                          if (isPdf) {
+                            return (
+                              <div className="relative rounded-xl overflow-hidden bg-background border border-border h-36 flex flex-col items-center justify-center p-3 gap-2 shadow-inner text-center">
+                                <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-950/60 flex items-center justify-center text-red-600 font-bold shrink-0">
+                                  <FileText className="w-5 h-5" />
+                                </div>
+                                <span className="text-[11px] font-bold text-foreground">Documento PDF Oficial</span>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    if (activeGuest.docPhotoUrl.startsWith("data:")) {
+                                      const win = window.open();
+                                      win?.document.write(`<iframe src="${activeGuest.docPhotoUrl}" frameborder="0" style="border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;" allowfullscreen></iframe>`);
+                                    } else {
+                                      window.open(activeGuest.docPhotoUrl, "_blank");
+                                    }
+                                  }}
+                                  className="text-xs h-7 px-2.5 rounded-lg flex items-center gap-1 font-bold"
+                                >
+                                  <ExternalLink className="w-3 h-3" /> Visualizar PDF
+                                </Button>
+                              </div>
+                            );
+                          }
+                          return (
+                            <div 
+                              onClick={() => setLightboxMedia({ 
+                                url: activeGuest.docPhotoUrl, 
+                                title: `Documento de Identidade Oficial - ${activeGuest.fullName || activeGuest.name}`,
+                                subtitle: `CPF: ${activeGuest.documentNumber || activeGuest.document || 'Oficial'}`
+                              })}
+                              className="relative group cursor-pointer rounded-xl overflow-hidden bg-background border border-border h-36 flex items-center justify-center shadow-inner"
+                            >
+                              <img
+                                src={activeGuest.docPhotoUrl}
+                                alt="Documento"
+                                className="w-full h-full object-contain p-1 group-hover:scale-105 transition-transform"
+                              />
+                              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-1.5 text-white font-bold text-xs transition-opacity">
+                                <ZoomIn className="w-4 h-4" /> Ampliar Foto
+                              </div>
+                            </div>
+                          );
+                        })()
                       ) : (
                         <div className="h-36 rounded-xl border border-dashed border-border bg-muted/20 flex flex-col items-center justify-center text-muted-foreground text-center p-3">
                           <FileText className="w-6 h-6 mb-1 opacity-40" />
                           <span className="text-[11px]">Documento não anexado</span>
                         </div>
                       )}
+
+                      <input
+                        ref={detailDocInputRef}
+                        type="file"
+                        accept="application/pdf,image/png,image/jpeg,image/webp,image/jpg"
+                        onChange={(e) => handleGuestDocSelect(e, true)}
+                        className="hidden"
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={uploadingGuestDoc}
+                        onClick={() => detailDocInputRef.current?.click()}
+                        className="w-full text-xs h-7 rounded-xl font-bold flex items-center justify-center gap-1.5 mt-1"
+                      >
+                        <Camera className="w-3.5 h-3.5" />
+                        <span>{uploadingGuestDoc ? "Enviando..." : (activeGuest.docPhotoUrl ? "Substituir Documento" : "Anexar Documento")}</span>
+                      </Button>
                     </div>
 
                     {/* Card 3: Assinatura Digital */}
@@ -1407,6 +1525,72 @@ export default function CrmGuests() {
               <div className="space-y-1">
                 <Label className="font-bold">Observações / Preferências</Label>
                 <Textarea value={formNotes} onChange={e => setFormNotes(e.target.value)} rows={2} className="text-xs rounded-xl" />
+              </div>
+
+              {/* Anexo de Documento Oficial */}
+              <div className="p-3 bg-muted/20 border border-border rounded-2xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="font-bold flex items-center gap-1.5 text-xs">
+                    <ShieldCheck className="w-3.5 h-3.5 text-primary" />
+                    <span>Documento Oficial (RG, CNH, Passaporte)</span>
+                  </Label>
+                  {formDocPhotoUrl && (
+                    <Badge className="bg-emerald-600 text-white text-[9px] py-0 px-1 font-bold">
+                      ✓ Anexado
+                    </Badge>
+                  )}
+                </div>
+
+                <input
+                  ref={guestDocInputRef}
+                  type="file"
+                  accept="application/pdf,image/png,image/jpeg,image/webp,image/jpg"
+                  onChange={(e) => handleGuestDocSelect(e, false)}
+                  className="hidden"
+                />
+
+                {!formDocPhotoUrl ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={uploadingGuestDoc}
+                    onClick={() => guestDocInputRef.current?.click()}
+                    className="w-full text-xs h-8 rounded-xl font-bold flex items-center justify-center gap-1.5"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>{uploadingGuestDoc ? "Processando..." : "Anexar Foto ou PDF do Documento"}</span>
+                  </Button>
+                ) : (
+                  <div className="flex items-center justify-between p-2 bg-background border border-border rounded-xl text-xs">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <FileText className="w-4 h-4 text-primary shrink-0" />
+                      <span className="truncate text-[11px] font-medium">{formDocFileName || "documento_anexado"}</span>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => guestDocInputRef.current?.click()}
+                        className="text-[10px] h-6 px-1.5"
+                      >
+                        Trocar
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setFormDocPhotoUrl("");
+                          setFormDocFileName("");
+                        }}
+                        className="text-[10px] h-6 px-1.5 text-rose-600 hover:text-rose-700"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <DialogFooter className="gap-2 pt-2">

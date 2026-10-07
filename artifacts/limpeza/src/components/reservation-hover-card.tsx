@@ -437,10 +437,16 @@ export function ReservationHoverCard({
           {resItem.hasMinor && (
             <div className="mt-1.5 flex items-center gap-1.5 px-2 py-1 bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 rounded-lg text-rose-800 dark:text-rose-200 text-[10.5px] font-bold shadow-2xs">
               <span className="text-xs">👶</span>
-              <span>Menor de Idade Registrado (ECA Art. 82)</span>
+              <span>Menor de Idade Registrado (ECA Art. 82 - Conferir Autorização em Cartório)</span>
             </div>
           )}
-          {resItem.riskAttentionAlert && (
+          {resItem.isCamposResident && (
+            <div className="mt-1.5 flex items-center gap-1.5 px-2 py-1 bg-purple-50 dark:bg-purple-950/60 border border-purple-200 dark:border-purple-800 rounded-lg text-purple-800 dark:text-purple-200 text-[10.5px] font-bold shadow-2xs">
+              <span className="text-xs">📍</span>
+              <span>Radar Operacional: Hóspede de Campos dos Goytacazes/RJ</span>
+            </div>
+          )}
+          {resItem.riskAttentionAlert && !resItem.isCamposResident && (
             <div className="mt-1.5 flex items-start gap-1.5 px-2 py-1 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 rounded-lg text-amber-800 dark:text-amber-200 text-[10.5px] font-bold shadow-2xs">
               <span className="text-xs shrink-0">⚠️</span>
               <span className="leading-tight">{resItem.riskAttentionReason || "Atenção da Gestão: Hóspede local menor de 30 anos (Campos dos Goytacazes)"}</span>

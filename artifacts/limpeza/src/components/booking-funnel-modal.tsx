@@ -9,7 +9,7 @@ import {
   Calendar, Coffee, Building2, Sparkles, User, ShieldCheck, Check, ArrowRight, ArrowLeft,
   QrCode, CreditCard, Copy, ExternalLink, Clock, Car, Heart, AlertTriangle, MessageCircle,
   Lock, CheckCircle2, Shield, Flame, Zap, HelpCircle, PhoneCall, RefreshCw,
-  MapPin, FileText, Home
+  MapPin, FileText, Home, Camera, X
 } from "lucide-react"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
@@ -18,6 +18,7 @@ import { calculateCancellationPolicy } from "@/lib/cancellation-helper"
 import { RoomConfig } from "@/pages/booking-engine"
 import { loginWithGooglePopup, updateAccountProfile, saveSessionLocally } from "@/lib/auth-client"
 import { maskPhone, maskCpf } from "@/components/complete-profile-modal"
+import { compressImage } from "@/lib/image-compression"
 
 export function formatDisplayDate(dateStr: string): string {
   if (!dateStr) return ""
@@ -113,6 +114,80 @@ export function BookingFunnelModal({
   const [loadingFunnelCep, setLoadingFunnelCep] = useState(false)
   const [isSavingPostRegistration, setIsSavingPostRegistration] = useState(false)
   const [postRegistrationSaved, setPostRegistrationSaved] = useState(false)
+
+  // Anexo de Documento Oficial Obrigatório & Inspeção de IA
+  const [docFileBase64, setDocFileBase64] = useState<string>("")
+  const [docFileName, setDocFileName] = useState<string>("")
+  const [docFileType, setDocFileType] = useState<"pdf" | "image">("image")
+  const [isInspectingDoc, setIsInspectingDoc] = useState(false)
+  const [aiInspectionResult, setAiInspectionResult] = useState<any | null>(null)
+  const [docInspectionError, setDocInspectionError] = useState<string | null>(null)
+  const [showMinorNoticeModal, setShowMinorNoticeModal] = useState(false)
+  const [minorNoticeAcknowledged, setMinorNoticeAcknowledged] = useState(false)
+  const docFileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleDocFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setDocFileName(file.name)
+    setDocInspectionError(null)
+
+    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")
+    setDocFileType(isPdf ? "pdf" : "image")
+
+    try {
+      let base64String = ""
+      if (isPdf) {
+        base64String = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(reader.result as string)
+          reader.onerror = reject
+          reader.readAsDataURL(file)
+        })
+      } else {
+        const compressed = await compressImage(file, {
+          maxWidth: 1400,
+          maxHeight: 1400,
+          quality: 0.82,
+          preferredFormat: "image/webp"
+        })
+        base64String = compressed.base64
+      }
+
+      setDocFileBase64(base64String)
+
+      // Dispara imediatamente inspeção preliminar de IA
+      setIsInspectingDoc(true)
+      try {
+        const res = await fetch("/api/ai/inspect-document", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fileBase64: base64String,
+            fileName: file.name,
+            providedName: guestName,
+            providedCpf: guestDocument
+          })
+        })
+        if (res.ok) {
+          const data = await res.json()
+          setAiInspectionResult(data)
+          if (data.isLegible === false) {
+            setDocInspectionError(data.legibilityReason || "Documento ilegível. Por favor, tire outra foto mais nítida ou anexe o PDF oficial.")
+          } else if (data.isMinor) {
+            setShowMinorNoticeModal(true)
+          }
+        }
+      } catch (err: any) {
+        console.warn("Falha na chamada da IA de documentos:", err)
+      } finally {
+        setIsInspectingDoc(false)
+      }
+    } catch (err: any) {
+      alert("Erro ao processar arquivo: " + err.message)
+    }
+  }
 
   // PJ Corporate Billing
   const [isWorkTrip, setIsWorkTrip] = useState(false)
@@ -473,8 +548,28 @@ export function BookingFunnelModal({
         alert("Por favor, informe um WhatsApp válido com DDD.")
         return
       }
-      if (!guestEmail.trim() || !guestEmail.includes("@")) {
+      if (!guestEmail.trim() || !guestEmail.includes("@") || !guestEmail.includes(".")) {
         alert("Por favor, informe um e-mail válido para envio do voucher.")
+        return
+      }
+      if (!guestDocument.trim() || guestDocument.replace(/\D/g, "").length !== 11) {
+        alert("Por favor, informe um CPF válido com 11 dígitos para registro da reserva.")
+        return
+      }
+      if (!docFileBase64) {
+        alert("O anexo do documento oficial com foto (RG, CNH, Passaporte em PDF ou Imagem) é obrigatório para finalizar a reserva.")
+        return
+      }
+      if (isInspectingDoc) {
+        alert("Aguarde a análise do documento oficial por Inteligência Artificial...")
+        return
+      }
+      if (aiInspectionResult && aiInspectionResult.isLegible === false) {
+        alert(`O documento anexado não pôde ser aceito: ${aiInspectionResult.legibilityReason || "Documento ilegível"}. Por favor, anexe uma foto mais nítida ou o PDF original.`)
+        return
+      }
+      if (aiInspectionResult?.isMinor && !minorNoticeAcknowledged) {
+        setShowMinorNoticeModal(true)
         return
       }
 
@@ -517,6 +612,13 @@ export function BookingFunnelModal({
         guestCity: guestCity.trim(),
         guestState: guestState.trim(),
         guestCep: guestCep.trim(),
+        guestDocumentFile: docFileBase64,
+        docPhotoBase64: docFileBase64,
+        hasMinor: Boolean(aiInspectionResult?.isMinor),
+        minorAge: aiInspectionResult?.calculatedAge || null,
+        isCamposResident: Boolean(aiInspectionResult?.isCamposResident),
+        riskAttentionAlert: Boolean(aiInspectionResult?.isCamposResident),
+        riskAttentionReason: aiInspectionResult?.isCamposResident ? "Radar Operacional: Hóspede com documento ou endereço de Campos dos Goytacazes/RJ" : "",
         checkinDate: checkin,
         checkoutDate: checkout,
         numGuests: rooms.reduce((acc, r) => acc + (Number(r.adults) || 2), 0),
@@ -633,6 +735,7 @@ export function BookingFunnelModal({
   )}`
 
   return (
+    <>
     <Dialog open={open} onOpenChange={(isOpen) => {
       if (!isOpen) handleCloseModal();
       else onOpenChange(true);
@@ -1269,6 +1372,156 @@ export function BookingFunnelModal({
                   className="text-xs h-9 rounded-xl bg-slate-50 dark:bg-slate-800"
                 />
               </div>
+            </div>
+
+            {/* Anexo Obrigatório de Documento Oficial com Foto (IA Multimodal) */}
+            <div className="p-3.5 rounded-2xl border-2 border-dashed border-sky-300 dark:border-sky-700 bg-sky-50/50 dark:bg-sky-950/20 space-y-3">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <Label className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4 text-sky-600 shrink-0" />
+                    <span>Documento Oficial com Foto (RG, CNH ou Passaporte) *</span>
+                  </Label>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                    Obrigatório para segurança da estadia. Aceitamos arquivo PDF ou foto legível (PNG, JPG, WEBP).
+                  </p>
+                </div>
+                <Badge variant="outline" className="text-[9px] font-bold border-sky-400 text-sky-700 dark:text-sky-300 shrink-0">
+                  Obrigatório
+                </Badge>
+              </div>
+
+              <input
+                ref={docFileInputRef}
+                type="file"
+                accept="application/pdf,image/png,image/jpeg,image/webp,image/jpg"
+                onChange={handleDocFileSelect}
+                className="hidden"
+              />
+
+              {!docFileBase64 ? (
+                <div 
+                  onClick={() => docFileInputRef.current?.click()}
+                  className="p-4 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-white/80 dark:bg-slate-900/60 hover:bg-sky-50/80 dark:hover:bg-slate-800/80 cursor-pointer flex flex-col items-center justify-center gap-2 text-center transition-all group"
+                >
+                  <div className="w-10 h-10 rounded-full bg-sky-100 dark:bg-sky-900/50 flex items-center justify-center text-sky-600 dark:text-sky-400 group-hover:scale-110 transition-transform">
+                    <Camera className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">
+                      Clique para Fotografar ou Selecionar Arquivo
+                    </span>
+                    <span className="text-[11px] text-slate-500">
+                      PDF, CNH Digital, RG ou Passaporte
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 shadow-2xs">
+                    <div className="flex items-center gap-3 min-w-0">
+                      {docFileType === "pdf" ? (
+                        <div className="w-10 h-10 rounded-lg bg-red-100 dark:bg-red-950/60 flex items-center justify-center text-red-600 font-bold shrink-0">
+                          <FileText className="w-5 h-5" />
+                        </div>
+                      ) : (
+                        <div className="w-10 h-10 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 shrink-0 bg-slate-100">
+                          <img src={docFileBase64} alt="Prévia" className="w-full h-full object-cover" />
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <span className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate block">
+                          {docFileName || "documento_oficial"}
+                        </span>
+                        <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                          <Badge className="bg-emerald-600 text-white text-[9px] py-0 px-1 font-bold">
+                            ✓ Anexado ({docFileType.toUpperCase()})
+                          </Badge>
+                          {aiInspectionResult?.isLegible && (
+                            <Badge className="bg-sky-600 text-white text-[9px] py-0 px-1 font-bold">
+                              ✓ Legível
+                            </Badge>
+                          )}
+                          {aiInspectionResult?.isMinor && (
+                            <Badge className="bg-rose-600 text-white text-[9px] py-0 px-1 font-bold">
+                              👶 Menor ({aiInspectionResult.calculatedAge}a)
+                            </Badge>
+                          )}
+                          {aiInspectionResult?.isCamposResident && (
+                            <Badge className="bg-purple-600 text-white text-[9px] py-0 px-1 font-bold">
+                              📍 Campos/RJ
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => docFileInputRef.current?.click()}
+                        className="text-xs h-8 px-2.5 rounded-lg"
+                      >
+                        Trocar
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setDocFileBase64("");
+                          setDocFileName("");
+                          setAiInspectionResult(null);
+                          setDocInspectionError(null);
+                        }}
+                        className="text-xs h-8 px-2 text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded-lg"
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Feedback em tempo real da Análise de IA */}
+                  {isInspectingDoc && (
+                    <div className="p-2.5 bg-sky-50 dark:bg-sky-950/50 border border-sky-200 dark:border-sky-800 rounded-xl flex items-center gap-2 text-xs text-sky-800 dark:text-sky-200 animate-pulse">
+                      <RefreshCw className="w-4 h-4 animate-spin text-sky-600 shrink-0" />
+                      <span>Analisando legibilidade, CPF e titularidade com Inteligência Artificial...</span>
+                    </div>
+                  )}
+
+                  {docInspectionError && (
+                    <div className="p-3 bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 rounded-xl flex items-start gap-2.5 text-xs text-rose-800 dark:text-rose-200">
+                      <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <span className="font-bold block">Documento Não Aceito</span>
+                        <p>{docInspectionError}</p>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => docFileInputRef.current?.click()}
+                          className="bg-rose-600 hover:bg-rose-700 text-white text-[11px] h-7 px-2.5 mt-1 rounded-lg"
+                        >
+                          Enviar Outra Foto Mais Nítida
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {!isInspectingDoc && !docInspectionError && aiInspectionResult?.isLegible && (
+                    <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl flex items-start gap-2 text-xs text-emerald-800 dark:text-emerald-200">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-bold block">Documento Aprovado pela IA</span>
+                        <p className="text-[11px] text-emerald-700 dark:text-emerald-300">
+                          {aiInspectionResult.summary || "Documento oficial legível e dados validados para o check-in."}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Veículo & Portaria */}
@@ -1944,5 +2197,58 @@ export function BookingFunnelModal({
         )}
       </DialogContent>
     </Dialog>
+
+    {/* Modal Informativo: Menor de Idade (ECA Art. 82) */}
+    <Dialog open={showMinorNoticeModal} onOpenChange={setShowMinorNoticeModal}>
+      <DialogContent className="max-w-md p-6 rounded-3xl z-[100]">
+        <DialogHeader>
+          <div className="w-12 h-12 rounded-2xl bg-amber-100 dark:bg-amber-900/50 flex items-center justify-center text-amber-600 text-2xl mb-2">
+            👶
+          </div>
+          <DialogTitle className="text-base font-black text-slate-900 dark:text-slate-100">
+            Atenção: Hospedagem de Menores de Idade
+          </DialogTitle>
+          <DialogDescription className="text-xs text-slate-600 dark:text-slate-400">
+            Legislação Federal - Estatuto da Criança e do Adolescente (ECA - Art. 82)
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3 text-xs text-slate-700 dark:text-slate-300 leading-relaxed py-2">
+          <p>
+            Identificamos que o hóspede possui <strong>menos de 18 anos</strong>.
+          </p>
+          <div className="p-3 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 rounded-2xl space-y-2">
+            <p className="font-bold text-amber-900 dark:text-amber-200">
+              Conforme o Artigo 82 da Lei Federal nº 8.069/1990:
+            </p>
+            <ul className="list-disc pl-4 space-y-1.5 text-amber-800 dark:text-amber-300 text-[11px]">
+              <li>
+                A hospedagem só é permitida caso o menor esteja acompanhado dos pais ou de um responsável maior expressamente autorizado;
+              </li>
+              <li>
+                Caso desacompanhado dos pais, é <strong>estritamente obrigatória</strong> a apresentação na recepção da <strong>autorização formal por escrito assinada pelos pais com firma reconhecida em cartório</strong>.
+              </li>
+            </ul>
+          </div>
+          <p className="text-[11px] text-slate-500">
+            Nossa equipe no Edifício Soho realizará a conferência desta documentação no momento da entrega das chaves.
+          </p>
+        </div>
+
+        <div className="pt-2 flex justify-end gap-2">
+          <Button
+            type="button"
+            onClick={() => {
+              setMinorNoticeAcknowledged(true)
+              setShowMinorNoticeModal(false)
+            }}
+            className="w-full bg-slate-900 hover:bg-slate-800 dark:bg-white dark:text-slate-900 text-white font-bold text-xs h-10 rounded-xl"
+          >
+            Estou Ciente e Apresentarei a Autorização com Firma Reconhecida
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+    </>
   )
 }

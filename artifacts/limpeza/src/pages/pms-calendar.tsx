@@ -17,8 +17,9 @@ import {
   Calendar as CalendarIcon, User, Users, Phone, Mail, ShieldAlert, CheckCircle2,
   Clock, DollarSign, BedDouble, AlertTriangle, Lock, Trash2, Edit3, MessageCircle, KeyRound, Sparkles, FileText, Tag, Coffee, Building2, Wind, Zap, Bed, Check, RotateCcw, AlertCircle, RefreshCw, SlidersHorizontal, Copy,
   LogIn, LogOut, TrendingUp, Send, ChevronDown, ChevronUp, History, ArrowRight, CreditCard, ExternalLink, QrCode, Link2, DoorOpen, Car,
-  Download, Upload, FileSpreadsheet, Wrench
+  Download, Upload, FileSpreadsheet, Wrench, Camera
 } from "lucide-react"
+import { compressImage } from "@/lib/image-compression"
 import { useToast } from "@/hooks/use-toast"
 import { 
   format, addDays, subDays, startOfMonth, endOfMonth, eachDayOfInterval, 
@@ -286,6 +287,89 @@ export default function PmsCalendar() {
   const [formExtraMattress, setFormExtraMattress] = useState(false)
   const [formIncludeBreakfast, setFormIncludeBreakfast] = useState(false)
   const [formSpecialRequests, setFormSpecialRequests] = useState("")
+
+  // Documento Oficial e Alertas Operacionais
+  const [formDocPhotoUrl, setFormDocPhotoUrl] = useState("")
+  const [formDocFileName, setFormDocFileName] = useState("")
+  const [uploadingDoc, setUploadingDoc] = useState(false)
+  const [formHasMinor, setFormHasMinor] = useState(false)
+  const [formIsCamposResident, setFormIsCamposResident] = useState(false)
+  const pmsDocInputRef = useRef<HTMLInputElement>(null)
+
+  const handleDocSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setUploadingDoc(true)
+    try {
+      const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")
+      let base64String = ""
+      if (isPdf) {
+        base64String = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(reader.result as string)
+          reader.onerror = reject
+          reader.readAsDataURL(file)
+        })
+      } else {
+        const compressed = await compressImage(file, {
+          maxWidth: 1400,
+          maxHeight: 1400,
+          quality: 0.82,
+          preferredFormat: "image/webp"
+        })
+        base64String = compressed.base64
+      }
+
+      setFormDocPhotoUrl(base64String)
+      setFormDocFileName(file.name)
+
+      try {
+        const aiRes = await fetch("/api/ai/inspect-document", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            documentFile: base64String,
+            declaredName: formGuestName,
+            declaredCpf: formGuest1Cpf
+          })
+        })
+        if (aiRes.ok) {
+          const aiData = await aiRes.json()
+          if (aiData.isMinor) {
+            setFormHasMinor(true)
+            toast({
+              title: "👶 Alerta: Menor de Idade",
+              description: `A IA detectou idade ${aiData.extractedAge || "menor"}. Exija autorização em cartório conforme ECA Art. 82.`,
+              variant: "destructive"
+            })
+          }
+          if (aiData.isCamposResident) {
+            setFormIsCamposResident(true)
+            toast({
+              title: "📍 Alerta: Morador de Campos/RJ",
+              description: "Hóspede de Campos dos Goytacazes/RJ incluído no radar operacional da recepção."
+            })
+          }
+        }
+      } catch (aiErr) {
+        console.warn("AI inspect doc error:", aiErr)
+      }
+
+      toast({
+        title: "Documento Carregado",
+        description: `${file.name} anexado com sucesso.`
+      })
+    } catch (err: any) {
+      toast({
+        title: "Erro ao processar documento",
+        description: err.message,
+        variant: "destructive"
+      })
+    } finally {
+      setUploadingDoc(false)
+    }
+  }
 
   // Modal Tabs, Audit Logs & Communications State
   const [resModalTab, setResModalTab] = useState<"reservation" | "payments" | "audit" | "communications" | "links" | "details">("reservation")
@@ -1965,6 +2049,10 @@ export default function PmsCalendar() {
     setFormIncludeBreakfast(false)
     setFormSpecialRequests("")
     setFormIsMonthlyGuest(false)
+    setFormDocPhotoUrl("")
+    setFormDocFileName("")
+    setFormHasMinor(false)
+    setFormIsCamposResident(false)
     setMobileRangeStart(null)
     setResModalTab("reservation")
     setResModalOpen(true)
@@ -2137,6 +2225,10 @@ export default function PmsCalendar() {
     setFormIncludeBreakfast(false)
     setFormSpecialRequests("")
     setFormIsMonthlyGuest(false)
+    setFormDocPhotoUrl("")
+    setFormDocFileName("")
+    setFormHasMinor(false)
+    setFormIsCamposResident(false)
     setPhoneVerification(null)
     setAuditLogs([])
     setCommunications([])
@@ -2294,6 +2386,11 @@ export default function PmsCalendar() {
     setFormIncludeBreakfast(Boolean(resItem.includeBreakfast || resItem.hasBreakfast))
     setFormSpecialRequests(resItem.specialRequests || resItem.notes || "")
     setFormIsMonthlyGuest(Boolean(resItem.isMonthlyGuest || resItem.clientType === "mensalista" || matchedGuest?.isMonthlyGuest || matchedGuest?.clientType === "mensalista"))
+    const docUrl = resItem.docPhotoUrl || resItem.documentPhotoUrl || resItem.docPhotoPath || matchedGuest?.docPhotoUrl || ""
+    setFormDocPhotoUrl(docUrl)
+    setFormDocFileName(docUrl ? "documento_anexado" : "")
+    setFormHasMinor(Boolean(resItem.hasMinor))
+    setFormIsCamposResident(Boolean(resItem.isCamposResident))
     setResModalTab("reservation")
     setAuditLogs(Array.isArray(resItem.auditLogs) ? resItem.auditLogs : [])
     fetchAuditLogs(resItem.code || resItem.id)
@@ -2335,6 +2432,13 @@ export default function PmsCalendar() {
         setFormCompanyId(String(g.companyId))
         const comp = companies.find(c => c.id === Number(g.companyId))
         if (comp) setFormCompanyName(comp.tradeName || comp.corporateName)
+      }
+      if (g.docPhotoUrl && !formDocPhotoUrl) {
+        setFormDocPhotoUrl(g.docPhotoUrl)
+        setFormDocFileName("documento_crm")
+      }
+      if (g.city && g.city.toLowerCase().includes("campos")) {
+        setFormIsCamposResident(true)
       }
       toast({
         title: "Hóspede Selecionado do CRM",
@@ -2879,6 +2983,9 @@ export default function PmsCalendar() {
         isMonthlyGuest: Boolean(formIsMonthlyGuest),
         clientType: formIsMonthlyGuest ? "mensalista" : "avulso",
         source: selectedRes ? "PMS Calendário (Edição Manual)" : "PMS Calendário (Nova Reserva)",
+        docPhotoUrl: formDocPhotoUrl || undefined,
+        hasMinor: formHasMinor,
+        isCamposResident: formIsCamposResident,
         vehicle: formVehiclePlate.trim() ? {
           plate: formVehiclePlate.trim().toUpperCase(),
           brand: formVehicleBrand.trim(),
@@ -3771,6 +3878,8 @@ export default function PmsCalendar() {
                               } ${
                                 resItem.hasMinor 
                                   ? 'border-2 border-rose-500 ring-2 ring-rose-400 animate-pulse' 
+                                  : resItem.isCamposResident
+                                  ? 'border-2 border-purple-500 ring-1 ring-purple-400'
                                   : resItem.riskAttentionAlert
                                   ? 'border-2 border-amber-400 ring-1 ring-amber-300'
                                   : ''
@@ -3839,6 +3948,11 @@ export default function PmsCalendar() {
                                 {resItem.riskAttentionAlert && !resItem.hasMinor && (
                                   <span title={resItem.riskAttentionReason || "Atenção: Hóspede jovem < 30 anos (Campos dos Goytacazes)"} className="shrink-0 text-xs px-1 py-0.2 bg-amber-400 text-slate-950 rounded font-black shadow-xs">
                                     ⚠️ &lt;30a
+                                  </span>
+                                )}
+                                {resItem.isCamposResident && (
+                                  <span title="Radar Operacional: Hóspede com documento ou endereço de Campos dos Goytacazes/RJ" className="shrink-0 text-[10px] px-1.5 py-0.2 bg-purple-700 text-white rounded font-black shadow-xs flex items-center gap-0.5">
+                                    📍 Campos/RJ
                                   </span>
                                 )}
                                 <span className="truncate font-black text-white text-[11px] min-w-0 drop-shadow-xs">
@@ -5246,6 +5360,138 @@ export default function PmsCalendar() {
                         )}
                       </div>
                       <Input type="email" value={formGuestEmail} onChange={e => setFormGuestEmail(e.target.value)} placeholder="E-mail" className="text-xs h-8" />
+                    </div>
+                  </div>
+
+                  {/* Documento com Foto do Hóspede Oficial (Foto / PDF) */}
+                  <div className="p-3 bg-muted/40 border border-border/80 rounded-xl space-y-2 animate-in fade-in">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                        <FileText className="w-3.5 h-3.5 text-primary" />
+                        <span>Documento com Foto (RG, CNH, Passaporte - Foto ou PDF)</span>
+                      </Label>
+                      <div className="flex items-center gap-1.5">
+                        {formHasMinor && (
+                          <Badge className="text-[10px] bg-rose-600 text-white font-black hover:bg-rose-700">
+                            👶 Menor de Idade
+                          </Badge>
+                        )}
+                        {formIsCamposResident && (
+                          <Badge className="text-[10px] bg-purple-700 text-white font-black hover:bg-purple-800">
+                            📍 Campos/RJ
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+
+                    <input
+                      ref={pmsDocInputRef}
+                      type="file"
+                      accept="image/*,application/pdf"
+                      onChange={handleDocSelect}
+                      className="hidden"
+                    />
+
+                    {!formDocPhotoUrl ? (
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={uploadingDoc}
+                          onClick={() => pmsDocInputRef.current?.click()}
+                          className="w-full text-xs h-8 rounded-xl font-bold flex items-center justify-center gap-1.5 border-dashed border-primary/40 hover:bg-primary/5"
+                        >
+                          <Camera className="w-3.5 h-3.5 text-primary" />
+                          <span>{uploadingDoc ? "Processando e Analisando..." : "Anexar Foto ou PDF do Documento"}</span>
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between p-2 bg-background border border-border rounded-xl text-xs">
+                        <div className="flex items-center gap-2 min-w-0">
+                          {formDocPhotoUrl.startsWith("data:application/pdf") || formDocPhotoUrl.toLowerCase().endsWith(".pdf") ? (
+                            <div className="w-8 h-8 rounded bg-rose-500/10 border border-rose-500/30 flex items-center justify-center shrink-0">
+                              <FileText className="w-4 h-4 text-rose-600" />
+                            </div>
+                          ) : (
+                            <img
+                              src={formDocPhotoUrl}
+                              alt="Documento Hóspede"
+                              className="w-8 h-8 object-cover rounded border border-border shrink-0"
+                            />
+                          )}
+                          <div className="min-w-0 flex flex-col">
+                            <span className="truncate text-[11px] font-bold text-foreground">
+                              {formDocFileName || (formDocPhotoUrl.includes(".pdf") ? "documento_oficial.pdf" : "documento_oficial.jpg")}
+                            </span>
+                            <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-0.5">
+                              <CheckCircle2 className="w-3 h-3 inline" /> Anexado (enviado à recepção por e-mail)
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1 shrink-0">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              if (formDocPhotoUrl.startsWith("data:application/pdf")) {
+                                const win = window.open()
+                                win?.document.write(`<iframe src="${formDocPhotoUrl}" frameborder="0" style="border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;" allowfullscreen></iframe>`)
+                              } else {
+                                window.open(formDocPhotoUrl, "_blank")
+                              }
+                            }}
+                            className="text-[10px] h-6 px-1.5"
+                          >
+                            <ExternalLink className="w-3 h-3 mr-0.5" /> Ver
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => pmsDocInputRef.current?.click()}
+                            className="text-[10px] h-6 px-1.5"
+                          >
+                            Trocar
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              setFormDocPhotoUrl("")
+                              setFormDocFileName("")
+                            }}
+                            className="text-[10px] h-6 px-1 text-rose-500 hover:text-rose-600"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Toggles manuais para Menor de Idade e Residente de Campos/RJ */}
+                    <div className="flex items-center justify-between pt-1 border-t border-border/50 text-[11px]">
+                      <label className="flex items-center gap-1.5 cursor-pointer font-medium text-muted-foreground select-none">
+                        <input
+                          type="checkbox"
+                          checked={formHasMinor}
+                          onChange={(e) => setFormHasMinor(e.target.checked)}
+                          className="rounded border-border text-rose-600 focus:ring-rose-500 w-3.5 h-3.5"
+                        />
+                        <span>👶 Menor de Idade (ECA Art. 82)</span>
+                      </label>
+                      <label className="flex items-center gap-1.5 cursor-pointer font-medium text-muted-foreground select-none">
+                        <input
+                          type="checkbox"
+                          checked={formIsCamposResident}
+                          onChange={(e) => setFormIsCamposResident(e.target.checked)}
+                          className="rounded border-border text-purple-600 focus:ring-purple-500 w-3.5 h-3.5"
+                        />
+                        <span>📍 Morador de Campos/RJ (Radar)</span>
+                      </label>
                     </div>
                   </div>
 

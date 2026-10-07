@@ -817,3 +817,142 @@ export async function resendEmailAsync({ db, saveDatabase, communicationId }) {
     return { ok: false, error: err.message };
   }
 }
+
+/**
+ * Resolve todos os anexos oficiais de uma reserva para envio à recepção:
+ * 1. Ficha Nacional de Registro de Hóspedes (FNRH em PDF), se gerada no pré-check-in digital.
+ * 2. Documento(s) oficial(is) com foto anexado(s) pelo hóspede (no motor de reservas, CRM ou PMS).
+ *    Mesmo se a pessoa NÃO fizer o check-in digital, o documento oficial anexado na reserva é enviado!
+ */
+export function resolveReservationAttachments({ reservation, guest = null, db = null }) {
+  if (!reservation) return [];
+  const attachments = [];
+  const resCode = reservation.code || reservation.id || "RES";
+  const primaryName = (reservation.guestName || guest?.name || "Hospede").replace(/[^\w\s-]/gi, "").trim().replace(/\s+/g, "_");
+
+  // Helper para resolver caminho físico da FNRH
+  const secureFnrhDir = path.join(__dirname, "secure_fnrh");
+  const legacyFnrhDir = path.join(__dirname, "fnrh_docs");
+
+  // 1. FNRH em PDF (se pré-checkin digital tiver sido concluído)
+  if (reservation.fnrhDocumentUuid) {
+    const p1 = path.join(secureFnrhDir, `FNRH_${reservation.fnrhDocumentUuid}.pdf`);
+    const p2 = path.join(legacyFnrhDir, `FNRH_${reservation.fnrhDocumentUuid}.pdf`);
+    let fnrhPath = null;
+    if (fs.existsSync(p1)) fnrhPath = p1;
+    else if (fs.existsSync(p2)) fnrhPath = p2;
+
+    if (fnrhPath) {
+      attachments.push({
+        filename: `FNRH_${resCode}_${primaryName}.pdf`,
+        path: fnrhPath
+      });
+    }
+  }
+
+  // 2. Documentos Oficiais anexados (Titular e Co-hóspedes)
+  const docSources = [];
+
+  // Documento gravado diretamente na reserva
+  if (reservation.docPhotoPath) {
+    docSources.push({ raw: reservation.docPhotoPath, name: primaryName, isPath: true });
+  }
+  if (reservation.docPhotoUrl) {
+    docSources.push({ raw: reservation.docPhotoUrl, name: primaryName });
+  } else if (reservation.documentPhotoUrl) {
+    docSources.push({ raw: reservation.documentPhotoUrl, name: primaryName });
+  }
+
+  // Documento gravado no hóspede titular
+  const titularGuest = guest || (db?.guests || []).find(g => 
+    (reservation.guestId && g.id === reservation.guestId) ||
+    (reservation.guestDocument && (g.documentNumber || g.document) === reservation.guestDocument)
+  );
+  if (titularGuest?.docPhotoUrl) {
+    docSources.push({ raw: titularGuest.docPhotoUrl, name: primaryName });
+  }
+
+  // Documentos de hóspedes cadastrados no array reservation.guests
+  if (Array.isArray(reservation.guests)) {
+    reservation.guests.forEach((g, idx) => {
+      const gName = (g.name || `Hospede_${idx + 1}`).replace(/[^\w\s-]/gi, "").trim().replace(/\s+/g, "_");
+      if (g.docPhotoPath) {
+        docSources.push({ raw: g.docPhotoPath, name: gName, isPath: true });
+      }
+      if (g.docPhotoUrl) {
+        docSources.push({ raw: g.docPhotoUrl, name: gName });
+      }
+    });
+  }
+
+  // Deduplica por valor do arquivo/URL para não enviar repetido
+  const seenRaw = new Set();
+  let docCount = 0;
+
+  for (const src of docSources) {
+    if (!src.raw || typeof src.raw !== "string") continue;
+    const trimmed = src.raw.trim();
+    if (!trimmed || seenRaw.has(trimmed)) continue;
+    seenRaw.add(trimmed);
+    docCount++;
+
+    const docSuffix = docCount > 1 ? `_${docCount}` : "";
+
+    // Caso A: Arquivo em disco
+    if (src.isPath || ((trimmed.startsWith("/") || trimmed.match(/^[a-zA-Z]:[\\\/]/)) && fs.existsSync(trimmed))) {
+      const ext = path.extname(trimmed).replace(".", "") || "pdf";
+      attachments.push({
+        filename: `Documento_${src.name}${docSuffix}.${ext}`,
+        path: trimmed
+      });
+      continue;
+    }
+
+    // Checa se é arquivo relativo à pasta uploads
+    const uploadsDir = path.join(__dirname, "uploads");
+    const localUploadPath = path.join(uploadsDir, path.basename(trimmed));
+    if (fs.existsSync(localUploadPath)) {
+      const ext = path.extname(localUploadPath).replace(".", "") || "pdf";
+      attachments.push({
+        filename: `Documento_${src.name}${docSuffix}.${ext}`,
+        path: localUploadPath
+      });
+      continue;
+    }
+
+    // Caso B: Base64 data URI
+    if (trimmed.startsWith("data:")) {
+      const match = trimmed.match(/^data:([^;]+);base64,(.+)$/);
+      if (match) {
+        const mime = match[1];
+        const rawB64 = match[2];
+        const ext = mime.includes("pdf") ? "pdf" : mime.includes("png") ? "png" : mime.includes("jpeg") || mime.includes("jpg") ? "jpg" : "webp";
+        attachments.push({
+          filename: `Documento_${src.name}${docSuffix}.${ext}`,
+          content: Buffer.from(rawB64, "base64"),
+          contentType: mime
+        });
+        continue;
+      }
+    }
+
+    // Caso C: URL Web (Cloudflare R2 ou CDN externa)
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+      let ext = "pdf";
+      const cleanUrl = trimmed.split("?")[0].toLowerCase();
+      if (cleanUrl.endsWith(".png")) ext = "png";
+      else if (cleanUrl.endsWith(".jpg") || cleanUrl.endsWith(".jpeg")) ext = "jpg";
+      else if (cleanUrl.endsWith(".webp")) ext = "webp";
+      else if (cleanUrl.endsWith(".pdf")) ext = "pdf";
+
+      attachments.push({
+        filename: `Documento_${src.name}${docSuffix}.${ext}`,
+        path: trimmed
+      });
+      continue;
+    }
+  }
+
+  return attachments;
+}
+
