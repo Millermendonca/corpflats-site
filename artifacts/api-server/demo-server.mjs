@@ -13017,16 +13017,37 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
         console.warn("[WhatsApp Trigger] Erro ao disparar additional_daily_pending:", err.message);
       });
     } else {
-      // Filtra apenas as alterações voltadas ao hóspede (ex: quarto, datas, valor, hóspedes, café, cama)
-      const guestFacingDiffs = filterGuestFacingDiffs(diffs);
-      if (guestFacingDiffs.length > 0) {
-        console.log(`[WhatsApp Trigger] Disparando aviso de alteração de reserva (${r.code} - ${r.guestName}) com ${guestFacingDiffs.length} itens modificados.`);
-        const resvForTrigger = { ...r, _changesContext: guestFacingDiffs };
-        triggerImmediateWhatsApp(db, saveDatabase, "reservation_updated", resvForTrigger).catch(err => {
-          console.warn("[WhatsApp Trigger] Erro ao disparar reservation_updated:", err.message);
+      const now = new Date();
+      const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
+      const brDate = new Date(nowUtc - (3 * 3600000));
+      const todayStr = brDate.toISOString().substring(0, 10);
+      const isSameDay = r.checkinDate === todayStr;
+      const isAfter0701 = isSameDay && (brDate.getHours() > 7 || (brDate.getHours() === 7 && brDate.getMinutes() >= 1));
+
+      // Se a reserva tem check-in HOJE e ainda não recebeu as instruções do dia
+      const hasReceivedTodayInstructions = (db.whatsappHistory || []).some(h =>
+        (h.reservationCode === r.code || h.reservationId === r.id) &&
+        (h.triggerEvent === "sameday_reservation" || h.triggerEvent === "checkin_day_instructions" || h.triggerEvent === "room_ready") &&
+        (h.status === "sent" || h.status === "delivered")
+      );
+
+      if (isAfter0701 && !hasReceivedTodayInstructions) {
+        console.log(`[WhatsApp Trigger] Reserva ${r.code} (${r.guestName}) com check-in HOJE (${todayStr}) após 07:01 sem instruções prévias: disparando sameday_reservation.`);
+        triggerImmediateWhatsApp(db, saveDatabase, "sameday_reservation", r).catch(err => {
+          console.warn("[WhatsApp Trigger] Erro ao disparar sameday_reservation:", err.message);
         });
       } else {
-        console.log(`[WhatsApp Trigger] Edição da reserva ${r.code} (${r.guestName}) não teve alterações de itens voltados ao hóspede. Disparo ao WhatsApp suprimido.`);
+        // Filtra apenas as alterações voltadas ao hóspede (ex: quarto, datas, valor, hóspedes, café, cama)
+        const guestFacingDiffs = filterGuestFacingDiffs(diffs);
+        if (guestFacingDiffs.length > 0) {
+          console.log(`[WhatsApp Trigger] Disparando aviso de alteração de reserva (${r.code} - ${r.guestName}) com ${guestFacingDiffs.length} itens modificados.`);
+          const resvForTrigger = { ...r, _changesContext: guestFacingDiffs };
+          triggerImmediateWhatsApp(db, saveDatabase, "reservation_updated", resvForTrigger).catch(err => {
+            console.warn("[WhatsApp Trigger] Erro ao disparar reservation_updated:", err.message);
+          });
+        } else {
+          console.log(`[WhatsApp Trigger] Edição da reserva ${r.code} (${r.guestName}) não teve alterações de itens voltados ao hóspede. Disparo ao WhatsApp suprimido.`);
+        }
       }
     }
   }

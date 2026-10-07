@@ -62,6 +62,10 @@ export function isTemplateAllowedForChannel(template, rawChannel) {
   }
   const norm = normalizeReservationChannel(rawChannel);
   const rawLower = String(rawChannel || "").toLowerCase().trim();
+  return template.channels.some(c => {
+    const cLower = String(c || "").toLowerCase().trim();
+    return cLower === "all" || cLower === norm || cLower === rawLower || (cLower === "outros" && norm === "outros");
+  });
 }
 
 /**
@@ -6538,6 +6542,12 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
     } else if (templates.length === 0 && (eventName === "checkout_completed" || eventName === "on_checkout")) {
       const defCheckout = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_checkout_completed" || t.triggerEvent === "checkout_completed");
       if (defCheckout) templates = [defCheckout];
+    } else if (templates.length === 0 && eventName === "reservation_updated") {
+      const defUpdated = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_reservation_updated" || t.triggerEvent === "reservation_updated");
+      if (defUpdated) templates = [defUpdated];
+    } else if (templates.length === 0 && eventName === "sameday_reservation") {
+      const defSameday = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_sameday_reservation_instructions" || t.triggerEvent === "sameday_reservation");
+      if (defSameday) templates = [defSameday];
     }
 
     // Se o evento for cancelamento de reserva, descarta automaticamente disparos pendentes na fila
