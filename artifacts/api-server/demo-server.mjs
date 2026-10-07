@@ -4080,7 +4080,14 @@ function ensureGuestCodes() {
 
 function calculateGuestAge(birthDate) {
   if (!birthDate) return null;
-  const bDate = new Date(String(birthDate).substring(0, 10) + "T12:00:00");
+  let str = String(birthDate).trim();
+  if (str.includes("/")) {
+    const parts = str.split("/");
+    if (parts.length >= 3 && parts[2].length === 4) {
+      str = `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
+    }
+  }
+  const bDate = new Date(str.substring(0, 10) + "T12:00:00");
   if (isNaN(bDate.getTime())) return null;
   const diffMs = new Date().getTime() - bDate.getTime();
   return Math.max(0, Math.floor(diffMs / (365.25 * 24 * 60 * 60 * 1000)));
@@ -17910,10 +17917,19 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     if (!guest.guestCode) guest.guestCode = `HOSP-${String(guest.id).padStart(5, "0")}`;
   }
 
+  // Normalização de Data de Nascimento (suporta DD/MM/AAAA ou AAAA-MM-DD)
+  let normalizedBirthDate = birthDate;
+  if (typeof birthDate === "string" && birthDate.includes("/")) {
+    const parts = birthDate.trim().split("/");
+    if (parts.length === 3 && parts[2].length === 4) {
+      normalizedBirthDate = `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
+    }
+  }
+
   // Cálculos de Menor de Idade & Filtro de Risco Local
-  const calculatedAge = calculateGuestAge(birthDate);
+  const calculatedAge = calculateGuestAge(normalizedBirthDate);
   const isMinorCalculated = calculatedAge !== null ? calculatedAge < 18 : Boolean(isMinor);
-  const riskAssessment = checkYouthLocalRisk({ birthDate, city, address, phone });
+  const riskAssessment = checkYouthLocalRisk({ birthDate: normalizedBirthDate, city, address, phone });
 
   // Salva imagens no Storage Seguro (Cloudflare R2 ou disco) isoladas por hóspede
   const nowTs = Date.now();
@@ -17926,7 +17942,7 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   const aiVerification = await evaluateGuestIdentityWithAI({
     fullName: validName,
     document: document || guest.document,
-    birthDate: birthDate || guest.birthDate,
+    birthDate: normalizedBirthDate || guest.birthDate,
     selfieBase64,
     docPhotoBase64,
     selfieUrl,
@@ -17944,7 +17960,7 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     guest.document = document;
     guest.documentNumber = document;
   }
-  if (birthDate) guest.birthDate = birthDate;
+  if (normalizedBirthDate) guest.birthDate = normalizedBirthDate;
   if (gender) guest.gender = gender;
   if (address) guest.address = address;
   if (city) guest.city = city;

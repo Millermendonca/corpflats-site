@@ -195,9 +195,13 @@ export async function generateFnrhPdf({
   const guestFullName = (g.fullName || g.name || reservation.guestName || "Hóspede").trim();
   const guestDoc = g.document || g.cpf || reservation.guestDocument || "-";
   const guestPhone = g.phone || reservation.guestPhone || "-";
-  const guestEmail = g.email || reservation.guestEmail || "-";
-  const guestBirth = g.birthDate || "-";
-  const guestGender = g.gender ? (g.gender === "feminino" ? "Feminino" : (g.gender === "masculino" ? "Masculino" : "Outro")) : "Não informado";
+  let guestBirth = g.birthDate || "-";
+  if (guestBirth && guestBirth.includes("-")) {
+    const bp = guestBirth.substring(0, 10).split("-");
+    if (bp.length === 3 && bp[0].length === 4) {
+      guestBirth = `${bp[2]}/${bp[1]}/${bp[0]}`;
+    }
+  }
   const guestCep = g.cep || reservation.guestCep || "";
   const guestAddress = [
     g.address || reservation.guestAddress || "",

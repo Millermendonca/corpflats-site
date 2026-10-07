@@ -15,6 +15,43 @@ import {
 import { getCurrentSession, saveSessionLocally } from "@/lib/auth-client"
 import { compressImage } from "@/lib/image-compression"
 
+const toDisplayDate = (val?: string | null): string => {
+  if (!val) return ""
+  const s = String(val).trim()
+  if (s.includes("/")) return s
+  if (s.includes("-")) {
+    const parts = s.substring(0, 10).split("-")
+    if (parts.length === 3 && parts[0].length === 4) {
+      return `${parts[2].padStart(2, "0")}/${parts[1].padStart(2, "0")}/${parts[0]}`
+    }
+  }
+  return s
+}
+
+const toIsoDate = (val?: string | null): string => {
+  if (!val) return ""
+  const s = String(val).trim()
+  if (s.includes("-") && s.split("-")[0].length === 4) {
+    return s.substring(0, 10)
+  }
+  if (s.includes("/")) {
+    const parts = s.split("/")
+    if (parts.length === 3 && parts[2].length === 4) {
+      return `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`
+    }
+  }
+  return s
+}
+
+const isValidBirthDate = (day: number, month: number, year: number): boolean => {
+  const currentYear = new Date().getFullYear()
+  if (year < 1900 || year > currentYear) return false
+  if (month < 1 || month > 12) return false
+  if (day < 1 || day > 31) return false
+  const d = new Date(year, month - 1, day)
+  return d.getFullYear() === year && d.getMonth() === month - 1 && d.getDate() === day
+}
+
 export default function GuestPreCheckin() {
   const [, params] = useRoute("/pre-checkin/:code")
   const [, setLocation] = useLocation()
@@ -67,6 +104,8 @@ export default function GuestPreCheckin() {
   const [email, setEmail] = useState("")
   const [document, setDocument] = useState("")
   const [birthDate, setBirthDate] = useState("")
+  const [birthDateInput, setBirthDateInput] = useState("")
+  const datePickerRef = useRef<HTMLInputElement>(null)
   const [gender, setGender] = useState("masculino")
   const [cep, setCep] = useState("")
   const [loadingCep, setLoadingCep] = useState(false)
@@ -135,23 +174,69 @@ export default function GuestPreCheckin() {
   // Cálculo de idade e detecção de menor de idade (ECA Art. 82)
   const calculatedAge = useMemo(() => {
     if (!birthDate) return null
-    const parts = birthDate.split("-")
-    if (parts.length < 3) return null
-    const bYear = parseInt(parts[0], 10)
-    const bMonth = parseInt(parts[1], 10) - 1
-    const bDay = parseInt(parts[2], 10)
-    if (isNaN(bYear) || isNaN(bMonth) || isNaN(bDay)) return null
-    const bDate = new Date(bYear, bMonth, bDay)
+    let y: number, m: number, d: number
+    if (birthDate.includes("-")) {
+      const parts = birthDate.split("-")
+      if (parts.length < 3) return null
+      y = parseInt(parts[0], 10)
+      m = parseInt(parts[1], 10) - 1
+      d = parseInt(parts[2], 10)
+    } else if (birthDate.includes("/")) {
+      const parts = birthDate.split("/")
+      if (parts.length < 3) return null
+      d = parseInt(parts[0], 10)
+      m = parseInt(parts[1], 10) - 1
+      y = parseInt(parts[2], 10)
+    } else {
+      return null
+    }
+    if (isNaN(y) || isNaN(m) || isNaN(d)) return null
+    const bDate = new Date(y, m, d)
     const now = new Date()
     let age = now.getFullYear() - bDate.getFullYear()
-    const m = now.getMonth() - bDate.getMonth()
-    if (m < 0 || (m === 0 && now.getDate() < bDate.getDate())) {
+    const monthDiff = now.getMonth() - bDate.getMonth()
+    if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < bDate.getDate())) {
       age--
     }
     return age >= 0 ? age : null
   }, [birthDate])
 
   const isMinorGuest = calculatedAge !== null && calculatedAge < 18
+
+  const handleBirthDateInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value.replace(/\D/g, "").slice(0, 8)
+    let masked = raw
+    if (raw.length > 2 && raw.length <= 4) {
+      masked = `${raw.slice(0, 2)}/${raw.slice(2)}`
+    } else if (raw.length > 4) {
+      masked = `${raw.slice(0, 2)}/${raw.slice(2, 4)}/${raw.slice(4, 8)}`
+    }
+    setBirthDateInput(masked)
+
+    if (raw.length === 8) {
+      const day = parseInt(raw.slice(0, 2), 10)
+      const month = parseInt(raw.slice(2, 4), 10)
+      const year = parseInt(raw.slice(4, 8), 10)
+      if (isValidBirthDate(day, month, year)) {
+        const iso = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`
+        setBirthDate(iso)
+      } else {
+        setBirthDate("")
+      }
+    } else {
+      setBirthDate("")
+    }
+  }
+
+  const handleNativeDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const iso = e.target.value
+    setBirthDate(iso)
+    if (iso) {
+      setBirthDateInput(toDisplayDate(iso))
+    } else {
+      setBirthDateInput("")
+    }
+  }
 
   // Temporizador regressivo de reenvio do OTP (60s)
   useEffect(() => {
@@ -300,7 +385,9 @@ export default function GuestPreCheckin() {
     setEmail(gEmail)
     setDocument(gDoc)
 
-    setBirthDate(currentG?.birthDate || (isTitular ? (guest.birthDate || res.birthDate || "") : ""))
+    const rawBirth = currentG?.birthDate || (isTitular ? (guest.birthDate || res.birthDate || "") : "")
+    setBirthDate(toIsoDate(rawBirth))
+    setBirthDateInput(toDisplayDate(rawBirth))
     setGender(currentG?.gender || (isTitular ? (guest.gender || res.gender || "masculino") : "masculino"))
     setAddress(currentG?.address || (isTitular ? (guest.address || res.guestAddress || "") : ""))
     setCity(currentG?.city || (isTitular ? (guest.city || res.guestCity || "") : ""))
@@ -318,7 +405,8 @@ export default function GuestPreCheckin() {
         if (!gPhone && sessionUser.phone) setPhone(sessionUser.phone)
         if (!gDoc && sessionUser.document) setDocument(sessionUser.document)
         if (!currentG?.birthDate && !guest.birthDate && !res.birthDate && sessionUser.birthDate) {
-          setBirthDate(sessionUser.birthDate)
+          setBirthDate(toIsoDate(sessionUser.birthDate))
+          setBirthDateInput(toDisplayDate(sessionUser.birthDate))
         }
         if (!currentG?.address && !guest.address && !res.guestAddress && sessionUser.address) {
           setAddress(sessionUser.address)
@@ -1184,7 +1272,7 @@ export default function GuestPreCheckin() {
                 </div>
                 <div>
                   <span className="text-slate-400 block text-[10px] uppercase font-bold">Data de Nascimento</span>
-                  <span className="font-medium text-slate-700">{birthDate || "Não informada"}</span>
+                  <span className="font-medium text-slate-700">{toDisplayDate(birthDate) || "Não informada"}</span>
                 </div>
                 <div>
                   <span className="text-slate-400 block text-[10px] uppercase font-bold">Gênero</span>
@@ -1843,6 +1931,11 @@ export default function GuestPreCheckin() {
                   ) : (
                     <Button
                       onClick={() => {
+                        if (!birthDate) {
+                          alert("Por favor, informe a Data de Nascimento antes de prosseguir.")
+                          setIsEditingProfile(true)
+                          return
+                        }
                         if (isMinorGuest) {
                           if (!minorKinship) {
                             alert("Por favor, selecione o grau de parentesco do menor acompanhado.")
@@ -1864,7 +1957,7 @@ export default function GuestPreCheckin() {
                 </div>
               ) : null}
 
-              {(!Boolean(fullName.trim() && document.trim() && phone.trim() && email.trim() && address.trim()) || isEditingProfile) && (
+              {(!Boolean(fullName.trim() && document.trim() && phone.trim() && email.trim() && address.trim() && birthDate.trim()) || isEditingProfile) && (
               <div className="space-y-3 sm:space-y-4">
                 <div className="space-y-1.5">
                   <Label className="text-xs font-bold text-slate-700">Nome Completo *</Label>
@@ -1889,14 +1982,51 @@ export default function GuestPreCheckin() {
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-xs font-bold text-slate-700">Data de Nascimento *</Label>
-                    <Input 
-                      type="date" 
-                      value={birthDate} 
-                      onChange={e => setBirthDate(e.target.value)} 
-                      required 
-                      className="bg-white border-slate-200 text-slate-900 text-xs sm:text-sm font-semibold rounded-xl h-11 focus-visible:ring-sky-500" 
-                    />
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs font-bold text-slate-700">Data de Nascimento *</Label>
+                      <span className="text-[10px] text-slate-400 font-medium">Digite ou use o calendário</span>
+                    </div>
+                    <div className="relative flex items-center">
+                      <Input 
+                        type="text" 
+                        inputMode="numeric"
+                        placeholder="DD/MM/AAAA"
+                        value={birthDateInput} 
+                        onChange={handleBirthDateInputChange} 
+                        maxLength={10}
+                        required 
+                        className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-semibold rounded-xl h-11 pr-11 focus-visible:ring-sky-500 font-mono" 
+                      />
+                      <div className="absolute right-1 top-1 bottom-1 flex items-center">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            try {
+                              datePickerRef.current?.showPicker?.()
+                            } catch {
+                              datePickerRef.current?.focus()
+                            }
+                          }}
+                          className="relative w-9 h-9 flex items-center justify-center rounded-lg text-slate-500 hover:text-sky-600 hover:bg-sky-50 transition-colors"
+                          title="Abrir calendário"
+                          aria-label="Abrir calendário"
+                        >
+                          <Calendar className="w-4 h-4 pointer-events-none text-sky-600" />
+                          <input 
+                            ref={datePickerRef}
+                            type="date" 
+                            value={birthDate || ""} 
+                            onChange={handleNativeDateChange} 
+                            max={new Date().toISOString().split("T")[0]}
+                            min="1900-01-01"
+                            tabIndex={-1}
+                            className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" 
+                            title="Selecionar data no calendário"
+                            aria-label="Selecionar data no calendário"
+                          />
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -2206,6 +2336,10 @@ export default function GuestPreCheckin() {
                   onClick={() => {
                     if (!fullName.trim() || !document.trim() || !phone.trim() || !email.trim() || !address.trim()) {
                       alert("Por favor, preencha todos os campos obrigatórios: Nome Completo, CPF, Telefone, Endereço e E-mail.")
+                      return
+                    }
+                    if (!birthDate) {
+                      alert("Por favor, informe uma data de nascimento válida (DD/MM/AAAA) ou selecione no calendário.")
                       return
                     }
                     if (!travelReason) {
