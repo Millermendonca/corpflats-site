@@ -4116,10 +4116,15 @@ function calculateGuestAge(birthDate) {
   return Math.max(0, Math.floor(diffMs / (365.25 * 24 * 60 * 60 * 1000)));
 }
 
-export function isCamposDosGoytacazes(cityStr = "", addressStr = "", stateStr = "") {
+export function isCamposDosGoytacazes(cityStr = "", addressStr = "", stateStr = "", cepStr = "") {
   const c = String(cityStr || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
   const a = String(addressStr || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
   const s = String(stateStr || "").toLowerCase().trim();
+  const cleanCep = String(cepStr || "").replace(/\D/g, "");
+
+  if (cleanCep.length >= 5 && (cleanCep.startsWith("280") || cleanCep.startsWith("281"))) {
+    return true;
+  }
   
   const text = `${c} ${a}`;
   if (text.includes("goytacazes") || text.includes("goitacazes")) return true;
@@ -4144,17 +4149,26 @@ export function isCamposDosGoytacazes(cityStr = "", addressStr = "", stateStr = 
     }
   }
 
-  if (/\bcampos\b/.test(a) && (text.includes("rj") || text.includes("rio de janeiro") || a.includes("campos dos goytacazes") || a.includes("campos dos goitacazes"))) {
+  if (/\bcampos\b/.test(a) && (
+    s === "rj" ||
+    s.includes("rio de janeiro") ||
+    text.includes("rj") || 
+    text.includes("rio de janeiro") || 
+    a.includes("campos dos goytacazes") || 
+    a.includes("campos dos goitacazes") ||
+    a.includes("campos/rj") ||
+    a.includes("campos-rj")
+  )) {
     return true;
   }
 
   return false;
 }
 
-export function checkYouthLocalRisk({ birthDate, city, address, phone, state }) {
+export function checkYouthLocalRisk({ birthDate, city, address, phone, state, originCity, cep }) {
   const age = calculateGuestAge(birthDate);
   const isUnder30 = age !== null && age < 30;
-  const isCampos = isCamposDosGoytacazes(city, address, state);
+  const isCampos = isCamposDosGoytacazes(city, address, state, cep) || isCamposDosGoytacazes(originCity, "", state, cep);
   const cleanPhone = String(phone || "").replace(/\D/g, "");
   let ddd = "";
   if (cleanPhone.startsWith("55") && cleanPhone.length >= 12) {
@@ -4408,22 +4422,36 @@ export async function inspectDocumentWithAI({
   providedCity = "",
   providedAddress = "",
   providedBirthDate = "",
+  providedOriginCity = "",
+  providedOriginState = "",
+  providedState = "",
+  providedCep = "",
   documentFile = "",
   declaredName = "",
   declaredCpf = "",
   declaredCity = "",
   declaredAddress = "",
   declaredBirthDate = "",
+  declaredOriginCity = "",
+  declaredOriginState = "",
   city = "",
   address = "",
-  birthDate = ""
+  birthDate = "",
+  originCity = "",
+  originState = "",
+  state = "",
+  cep = "",
+  fileUrl = ""
 }) {
-  const effectiveFile = fileBase64 || documentFile;
+  let effectiveFile = fileBase64 || documentFile || fileUrl || "";
   const effectiveName = providedName || declaredName;
   const effectiveCpf = providedCpf || declaredCpf;
   const effectiveCity = String(providedCity || declaredCity || city || "").trim();
   const effectiveAddress = String(providedAddress || declaredAddress || address || "").trim();
   const effectiveBirthDate = String(providedBirthDate || declaredBirthDate || birthDate || "").trim();
+  const effectiveOrigin = String(providedOriginCity || declaredOriginCity || originCity || "").trim();
+  const effectiveState = String(providedState || state || providedOriginState || declaredOriginState || originState || "RJ").trim();
+  const effectiveCep = String(providedCep || cep || "").trim();
 
   const cleanProvidedCpf = String(effectiveCpf || "").replace(/\D/g, "");
   const cleanProvidedName = String(effectiveName || "").trim();
@@ -4472,16 +4500,39 @@ export async function inspectDocumentWithAI({
     };
   }
 
-  // 2. Extração de MIME type e payload base64
+  // 2. Extração de MIME type e payload base64 (suporta base64, data URI, URL HTTP/HTTPS ou caminho local)
   let mimeType = "image/jpeg";
   let rawBase64 = effectiveFile;
-  if (effectiveFile.startsWith("data:")) {
+
+  if (typeof effectiveFile === "string" && (effectiveFile.startsWith("http://") || effectiveFile.startsWith("https://"))) {
+    try {
+      const resp = await fetch(effectiveFile);
+      if (resp.ok) {
+        const cType = resp.headers.get("content-type") || "";
+        if (cType) mimeType = cType.split(";")[0].trim().toLowerCase();
+        const ab = await resp.arrayBuffer();
+        rawBase64 = Buffer.from(ab).toString("base64");
+      }
+    } catch (urlErr) {
+      console.warn("[inspectDocumentWithAI] Falha ao baixar arquivo via URL:", urlErr.message);
+    }
+  } else if (typeof effectiveFile === "string" && effectiveFile.startsWith("data:")) {
     const match = effectiveFile.match(/^data:([^;]+);base64,(.+)$/);
     if (match) {
       mimeType = match[1].toLowerCase();
       rawBase64 = match[2];
     }
-  } else if (fileName && fileName.toLowerCase().endsWith(".pdf")) {
+  } else if (typeof effectiveFile === "string" && (effectiveFile.startsWith("/") || effectiveFile.startsWith("./")) && fs.existsSync(effectiveFile)) {
+    try {
+      const buf = fs.readFileSync(effectiveFile);
+      rawBase64 = buf.toString("base64");
+      if (effectiveFile.endsWith(".pdf")) mimeType = "application/pdf";
+      else if (effectiveFile.endsWith(".png")) mimeType = "image/png";
+      else if (effectiveFile.endsWith(".webp")) mimeType = "image/webp";
+    } catch {}
+  }
+
+  if (fileName && fileName.toLowerCase().endsWith(".pdf")) {
     mimeType = "application/pdf";
   }
 
@@ -4507,6 +4558,23 @@ export async function inspectDocumentWithAI({
     };
   }
 
+  // Inspeção pericial do stream de texto (decodificação de streams de PDF / metadados para busca de cidades locais)
+  let textStreamMentionsCampos = false;
+  if (rawBase64 && rawBase64.length > 100) {
+    try {
+      const decodedBuf = Buffer.from(rawBase64, "base64");
+      const latinText = decodedBuf.toString("latin1").toLowerCase();
+      if (
+        latinText.includes("goytacazes") || 
+        latinText.includes("goitacazes") || 
+        /campos\s*(\/|-|,)?\s*rj\b/.test(latinText) ||
+        /\bcampos dos goytacazes\b/.test(latinText)
+      ) {
+        textStreamMentionsCampos = true;
+      }
+    } catch {}
+  }
+
   // Cálculo heurístico de suporte prévio
   const parsedAgeFromInput = calculateAge(effectiveBirthDate);
   const isMinorFromFileName = /menor|underage|1[0-7]anos|_menor/i.test(fileName || "");
@@ -4515,12 +4583,16 @@ export async function inspectDocumentWithAI({
 
   const lowFileName = String(fileName || "").toLowerCase();
 
-  const isCamposFromInput =
-    isCamposDosGoytacazes(effectiveCity, effectiveAddress) ||
+  const isCamposFromInput = Boolean(
+    isCamposDosGoytacazes(effectiveCity, effectiveAddress, effectiveState, effectiveCep) ||
+    isCamposDosGoytacazes(effectiveOrigin, "", effectiveState, effectiveCep) ||
+    textStreamMentionsCampos ||
     lowFileName.includes("campos_dos_goytacazes") ||
     lowFileName.includes("cnh_campos") ||
     lowFileName.includes("rg_campos") ||
-    lowFileName.includes("campos_rj");
+    lowFileName.includes("campos_rj") ||
+    (lowFileName.includes("campos") && !lowFileName.includes("jordao") && !lowFileName.includes("novos"))
+  );
 
   const apiKey = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY;
 
@@ -4530,7 +4602,8 @@ export async function inspectDocumentWithAI({
 Analise com rigor o documento oficial fornecido (${mimeType}) e compare com os dados informados pelo hóspede:
 - Nome completo informado: "${cleanProvidedName || 'Não informado'}"
 - CPF informado: "${cleanProvidedCpf || 'Não informado'}"
-- Cidade / Endereço informado: "${effectiveCity || effectiveAddress || 'Não informado'}"
+- Cidade / Endereço informado: "${effectiveCity || effectiveOrigin || effectiveAddress || 'Não informado'}"
+- Origem / Procedência informada: "${effectiveOrigin || 'Não informada'}"
 
 Diretrizes Estritas de Análise:
 1. 'isOfficialDocument': Confirme se o arquivo é de fato um documento oficial de identificação com foto (RG, CNH, Passaporte, Carteira de Trabalho física ou digital, Carteira de Ordem OAB/CRM/etc, DNI). Caso seja uma foto genérica, selfie sem documento, comprovante de residência, foto de paisagem ou objeto, defina 'isOfficialDocument': false e 'isLegible': false.
@@ -4655,33 +4728,55 @@ app.post("/api/ai/inspect-document", async (req, res) => {
       providedCity,
       providedAddress,
       providedBirthDate,
+      providedOriginCity,
+      providedOriginState,
+      providedState,
+      providedCep,
       documentFile, 
       declaredName, 
       declaredCpf,
       declaredCity,
       declaredAddress,
       declaredBirthDate,
+      declaredOriginCity,
+      declaredOriginState,
       city,
       address,
-      birthDate
+      birthDate,
+      originCity,
+      originState,
+      state,
+      cep,
+      fileUrl
     } = req.body || {};
     const result = await inspectDocumentWithAI({ 
       fileBase64, 
       fileName, 
       providedName, 
-      providedCpf,
+      providedCpf, 
       providedCity,
       providedAddress,
       providedBirthDate,
+      providedOriginCity,
+      providedOriginState,
+      providedState,
+      providedCep,
       documentFile, 
       declaredName, 
       declaredCpf,
       declaredCity,
       declaredAddress,
       declaredBirthDate,
+      declaredOriginCity,
+      declaredOriginState,
       city,
       address,
-      birthDate
+      birthDate,
+      originCity,
+      originState,
+      state,
+      cep,
+      fileUrl
     });
     res.json(result);
   } catch (err) {
@@ -17800,6 +17895,11 @@ export function syncBidirectionalGuestProfile(db, accountOrGuest, updates = {}) 
       if (guest.gender) g0.gender = guest.gender;
       if (guest.docPhotoUrl && !g0.docPhotoUrl) g0.docPhotoUrl = guest.docPhotoUrl;
       if (guest.signatureUrl && !g0.signatureUrl) g0.signatureUrl = guest.signatureUrl;
+      if (guest.isCamposResident !== undefined) g0.isCamposResident = guest.isCamposResident;
+      if (guest.riskAttentionAlert !== undefined) g0.riskAttentionAlert = guest.riskAttentionAlert;
+      if (guest.riskAttentionReason !== undefined) g0.riskAttentionReason = guest.riskAttentionReason;
+      if (guest.originCity) g0.originCity = guest.originCity;
+      if (guest.originState) g0.originState = guest.originState;
     }
   }
 
@@ -17862,6 +17962,9 @@ app.get("/api/pms/pre-checkin/:code", (req, res) => {
         minorAuthDocUrl: guest?.minorAuthDocUrl || null,
         riskAttentionAlert: Boolean(guest?.riskAttentionAlert || r.riskAttentionAlert),
         riskAttentionReason: guest?.riskAttentionReason || r.riskAttentionReason || "",
+        isCamposResident: Boolean(guest?.isCamposResident || r.isCamposResident),
+        originCity: guest?.originCity || r.originCity || "",
+        originState: guest?.originState || r.originState || "RJ",
         aiVerification: guest?.aiVerification || null,
         hasCompletedCheckin: titularDone,
         checkinCompletedAt: titularDone ? (guest?.fnhrCompletedAt || r.updatedAt || new Date().toISOString()) : null
@@ -17909,8 +18012,11 @@ app.get("/api/pms/pre-checkin/:code", (req, res) => {
         r.guests[0].minorAge = guest.minorAge || null;
         r.guests[0].minorKinship = guest.minorKinship || "";
         r.guests[0].minorAuthDocUrl = guest.minorAuthDocUrl || null;
-        r.guests[0].riskAttentionAlert = Boolean(guest.riskAttentionAlert);
-        r.guests[0].riskAttentionReason = guest.riskAttentionReason || "";
+        r.guests[0].riskAttentionAlert = Boolean(guest.riskAttentionAlert || r.riskAttentionAlert);
+        r.guests[0].riskAttentionReason = guest.riskAttentionReason || r.riskAttentionReason || "";
+        r.guests[0].isCamposResident = Boolean(guest.isCamposResident || r.isCamposResident);
+        if (guest.originCity) r.guests[0].originCity = guest.originCity;
+        if (guest.originState) r.guests[0].originState = guest.originState;
         r.guests[0].aiVerification = guest.aiVerification || null;
         r.guests[0].hasCompletedCheckin = true;
         r.guests[0].checkinCompletedAt = guest.fnhrCompletedAt || new Date().toISOString();
@@ -18189,6 +18295,10 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     city,
     state,
     country = "Brasil",
+    originCity,
+    originState,
+    destinationCity,
+    destinationState,
     transportMethod = "carro",
     travelReason = "lazer",
     selfieBase64,
@@ -18308,7 +18418,15 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   // Cálculos de Menor de Idade & Filtro de Risco Local
   const calculatedAge = calculateGuestAge(normalizedBirthDate);
   const isMinorCalculated = calculatedAge !== null ? calculatedAge < 18 : Boolean(isMinor);
-  const riskAssessment = checkYouthLocalRisk({ birthDate: normalizedBirthDate, city, address, phone, state });
+  const riskAssessment = checkYouthLocalRisk({ 
+    birthDate: normalizedBirthDate, 
+    city: city || originCity || req.body.originCity, 
+    address, 
+    phone, 
+    state: state || originState || req.body.originState,
+    originCity: originCity || req.body.originCity || guest?.originCity,
+    cep: cep || req.body.cep || guest?.cep
+  });
 
   // Salva imagens no Storage Seguro (Cloudflare R2 ou disco) isoladas por hóspede
   const nowTs = Date.now();
@@ -18340,7 +18458,15 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
         providedCpf: cleanDoc,
         providedCity: city || guest.city,
         providedAddress: address || guest.address,
-        providedBirthDate: normalizedBirthDate || guest.birthDate
+        providedBirthDate: normalizedBirthDate || guest.birthDate,
+        providedOriginCity: originCity || req.body.originCity || guest.originCity,
+        providedOriginState: originState || req.body.originState || guest.originState,
+        providedState: state || req.body.state || guest.state,
+        providedCep: cep || req.body.cep || guest.cep,
+        originCity: originCity || req.body.originCity || guest.originCity,
+        originState: originState || req.body.originState || guest.originState,
+        state: state || req.body.state || guest.state,
+        cep: cep || req.body.cep || guest.cep
       });
     } catch (docAiErr) {
       console.warn("[POST /api/pms/pre-checkin] Erro na inspeção IA de documento:", docAiErr.message);
@@ -18351,7 +18477,8 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   const isCamposFromDocOrInput = Boolean(
     req.body.isCamposResident ||
     aiDocInspection?.isCamposResident ||
-    isCamposDosGoytacazes(city || guest.city, address || guest.address, state || guest.state) ||
+    isCamposDosGoytacazes(city || guest.city, address || guest.address, state || guest.state, cep || guest.cep) ||
+    isCamposDosGoytacazes(originCity || req.body.originCity || guest.originCity, "", state || guest.state, cep || guest.cep) ||
     riskAssessment.isCampos
   );
 
@@ -18382,6 +18509,10 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   if (city) guest.city = city;
   if (state) guest.state = state;
   if (country) guest.country = country;
+  if (originCity || req.body.originCity) guest.originCity = originCity || req.body.originCity;
+  if (originState || req.body.originState) guest.originState = originState || req.body.originState;
+  if (destinationCity || req.body.destinationCity) guest.destinationCity = destinationCity || req.body.destinationCity;
+  if (destinationState || req.body.destinationState) guest.destinationState = destinationState || req.body.destinationState;
   if (selfieUrl) guest.photoUrl = selfieUrl;
   if (docPhotoUrl) guest.docPhotoUrl = docPhotoUrl;
   if (signatureUrl) guest.signatureUrl = signatureUrl;
@@ -18456,6 +18587,10 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   targetGuest.cep = cep || req.body.cep || targetGuest.cep || "";
   targetGuest.city = city || targetGuest.city || "";
   targetGuest.state = state || targetGuest.state || "RJ";
+  targetGuest.originCity = originCity || req.body.originCity || targetGuest.originCity || "";
+  targetGuest.originState = originState || req.body.originState || targetGuest.originState || "RJ";
+  targetGuest.destinationCity = destinationCity || req.body.destinationCity || targetGuest.destinationCity || "";
+  targetGuest.destinationState = destinationState || req.body.destinationState || targetGuest.destinationState || "RJ";
   targetGuest.selfieUrl = selfieUrl;
   targetGuest.docPhotoUrl = docPhotoUrl;
   targetGuest.signatureUrl = signatureUrl;
@@ -18491,6 +18626,8 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     if (city) r.guestCity = city;
     if (state) r.guestState = state;
     if (cep || req.body.cep) r.guestCep = cep || req.body.cep;
+    if (originCity || req.body.originCity) r.originCity = originCity || req.body.originCity;
+    if (originState || req.body.originState) r.originState = originState || req.body.originState;
     if (selfieUrl) r.selfieUrl = selfieUrl;
     if (docPhotoUrl) r.docPhotoUrl = docPhotoUrl;
     if (signatureUrl) r.signatureUrl = signatureUrl;

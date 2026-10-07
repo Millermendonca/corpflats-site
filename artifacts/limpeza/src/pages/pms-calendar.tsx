@@ -240,6 +240,32 @@ export default function PmsCalendar() {
     return fallbackResult;
   };
 
+  const isResCamposResident = (r: any, g?: any) => {
+    if (!r) return false;
+    if (r.isCamposResident || r.riskAttentionAlert) return true;
+    if (g?.isCamposResident) return true;
+    const checkStr = (s?: string) => {
+      if (!s) return false;
+      const l = s.toLowerCase();
+      return l.includes("campos") || l.includes("goytacazes") || l.includes("goitacazes");
+    };
+    if (checkStr(r.originCity) || checkStr(r.guestCity) || checkStr(r.city) || checkStr(r.guestAddress)) return true;
+    if (checkStr(g?.city) || checkStr(g?.originCity) || checkStr(g?.address)) return true;
+    if (r.riskAttentionReason && checkStr(r.riskAttentionReason)) return true;
+    if (Array.isArray(r.guests) && r.guests.some((guest: any) => 
+      guest?.isCamposResident || 
+      guest?.riskAttentionAlert || 
+      checkStr(guest?.city) || 
+      checkStr(guest?.originCity) || 
+      checkStr(guest?.address)
+    )) {
+      return true;
+    }
+    const cleanCep = String(r.guestCep || r.cep || g?.cep || "").replace(/\D/g, "");
+    if (cleanCep.length >= 5 && (cleanCep.startsWith("280") || cleanCep.startsWith("281"))) return true;
+    return false;
+  };
+
   const [formGuestEmail, setFormGuestEmail] = useState("")
   const [formCheckin, setFormCheckin] = useState(format(new Date(), "yyyy-MM-dd"))
   const [formCheckout, setFormCheckout] = useState(format(addDays(new Date(), 1), "yyyy-MM-dd"))
@@ -2392,15 +2418,7 @@ export default function PmsCalendar() {
     setFormDocPhotoUrl(docUrl)
     setFormDocFileName(docUrl ? "documento_anexado" : "")
     setFormHasMinor(Boolean(resItem.hasMinor))
-    const isCamposRes = Boolean(
-      resItem.isCamposResident ||
-      matchedGuest?.isCamposResident ||
-      (resItem.guestCity && (resItem.guestCity.toLowerCase().includes("campos") || resItem.guestCity.toLowerCase().includes("goytacazes"))) ||
-      (resItem.city && (resItem.city.toLowerCase().includes("campos") || resItem.city.toLowerCase().includes("goytacazes"))) ||
-      (matchedGuest?.city && (matchedGuest.city.toLowerCase().includes("campos") || matchedGuest.city.toLowerCase().includes("goytacazes"))) ||
-      (resItem.guestAddress && resItem.guestAddress.toLowerCase().includes("campos")) ||
-      (resItem.riskAttentionReason && resItem.riskAttentionReason.toLowerCase().includes("campos"))
-    )
+    const isCamposRes = isResCamposResident(resItem, matchedGuest)
     setFormIsCamposResident(isCamposRes)
     setResModalTab("reservation")
     setAuditLogs(Array.isArray(resItem.auditLogs) ? resItem.auditLogs : [])
@@ -3193,8 +3211,12 @@ export default function PmsCalendar() {
   }, [data.reservations])
 
   const riskAttentionCount = useMemo(() => {
-    return data.reservations.filter(r => r.status !== "cancelada" && (r.riskAttentionAlert || r.isCamposResident)).length
-  }, [data.reservations])
+    return data.reservations.filter(r => {
+      if (r.status === "cancelada") return false
+      const matched = data.guests.find(g => g.id === r.guestId)
+      return isResCamposResident(r, matched)
+    }).length
+  }, [data.reservations, data.guests])
 
   const displayedFlats = data.flats.filter(f => {
     if (cleaningFilter === "dirty") {
@@ -3214,7 +3236,7 @@ export default function PmsCalendar() {
       const hasRiskInFlat = data.reservations.some(r => 
         (r.flatId === f.id || String(r.flatNumber) === String(f.number)) &&
         r.status !== "cancelada" &&
-        (r.riskAttentionAlert || r.isCamposResident)
+        isResCamposResident(r, data.guests.find(g => g.id === r.guestId))
       )
       if (!hasRiskInFlat) return false
     }
@@ -3844,15 +3866,7 @@ export default function PmsCalendar() {
                         const cinTime = resItem.checkinTime || defaultCheckinTime || "14:00";
                         const coutTime = resItem.checkoutTime || defaultCheckoutTime || "12:00";
 
-                        const isCamposCard = Boolean(
-                          resItem.isCamposResident ||
-                          matchedGuest?.isCamposResident ||
-                          (resItem.guestCity && (resItem.guestCity.toLowerCase().includes("campos") || resItem.guestCity.toLowerCase().includes("goytacazes"))) ||
-                          (resItem.city && (resItem.city.toLowerCase().includes("campos") || resItem.city.toLowerCase().includes("goytacazes"))) ||
-                          (matchedGuest?.city && (matchedGuest.city.toLowerCase().includes("campos") || matchedGuest.city.toLowerCase().includes("goytacazes"))) ||
-                          (resItem.guestAddress && resItem.guestAddress.toLowerCase().includes("campos")) ||
-                          (resItem.riskAttentionReason && resItem.riskAttentionReason.toLowerCase().includes("campos"))
-                        );
+                        const isCamposCard = isResCamposResident(resItem, matchedGuest);
 
                         const isLongPressActive = longPressActiveResId === resItem.id;
                         const isSingleNight = nightsCount <= 1;
@@ -4297,7 +4311,7 @@ export default function PmsCalendar() {
                       Flat {selectedRes.flatNumber}
                     </Badge>
                   )}
-                  {(formIsCamposResident || selectedRes?.isCamposResident) && (
+                  {(formIsCamposResident || selectedRes?.isCamposResident || isResCamposResident(selectedRes, data.guests.find(g => g.id === selectedRes?.guestId))) && (
                     <Badge className="text-xs font-bold bg-purple-700 hover:bg-purple-800 text-white shrink-0 gap-1 shadow-xs">
                       📍 Campos/RJ
                     </Badge>
@@ -4374,7 +4388,7 @@ export default function PmsCalendar() {
 
               <div className="py-2.5 space-y-3">
                 {/* Banner de Radar Operacional: Hóspede de Campos dos Goytacazes/RJ */}
-                {(formIsCamposResident || selectedRes?.isCamposResident) && (
+                {(formIsCamposResident || selectedRes?.isCamposResident || isResCamposResident(selectedRes, data.guests.find(g => g.id === selectedRes?.guestId))) && (
                   <div className="p-3 bg-purple-50 dark:bg-purple-950/40 border-2 border-purple-300 dark:border-purple-800 rounded-2xl flex items-center justify-between gap-3 text-xs shadow-xs">
                     <div className="flex items-center gap-2.5 min-w-0">
                       <div className="w-8 h-8 rounded-xl bg-purple-500/20 text-purple-700 dark:text-purple-300 flex items-center justify-center shrink-0 text-base">

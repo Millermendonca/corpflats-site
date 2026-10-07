@@ -212,7 +212,76 @@ describe('Inspeção de Documentos com Foto por Inteligência Artificial', () =>
     assert.strictEqual(riskExternal.isTriggered, false);
   });
 
-  it('12. Limpeza de processo pós-testes', () => {
+  it('12. isCamposDosGoytacazes valida CEPs de Campos (280xx / 281xx) e rejeita outros CEPs', () => {
+    assert.strictEqual(isCamposDosGoytacazes('', '', 'RJ', '28010-000'), true);
+    assert.strictEqual(isCamposDosGoytacazes('', '', 'RJ', '28110000'), true);
+    assert.strictEqual(isCamposDosGoytacazes('', '', 'RJ', '28035-100'), true);
+    assert.strictEqual(isCamposDosGoytacazes('', '', 'RJ', '27910-000'), false); // Macaé
+    assert.strictEqual(isCamposDosGoytacazes('', '', 'RJ', '20000-000'), false); // Rio Capital
+    assert.strictEqual(isCamposDosGoytacazes('', '', 'SP', '01310-100'), false); // SP
+  });
+
+  it('13. inspectDocumentWithAI detecta Campos via originCity e CEP', async () => {
+    const sampleImageBase64 = 'data:image/jpeg;base64,' + Buffer.alloc(350, 0xEE).toString('base64');
+    
+    // Detecção por originCity
+    const resOrigin = await inspectDocumentWithAI({
+      fileBase64: sampleImageBase64,
+      fileName: 'documento.jpg',
+      providedName: 'Miller Mendonça',
+      providedCpf: '11122233344',
+      originCity: 'Campos dos Goytacazes'
+    });
+    assert.strictEqual(resOrigin.success, true);
+    assert.strictEqual(resOrigin.isCamposResident, true, 'Deve detectar Campos através de originCity');
+
+    // Detecção por CEP
+    const resCep = await inspectDocumentWithAI({
+      fileBase64: sampleImageBase64,
+      fileName: 'doc_identidade.jpg',
+      providedName: 'Hóspede Teste',
+      providedCpf: '22233344455',
+      cep: '28035-100'
+    });
+    assert.strictEqual(resCep.success, true);
+    assert.strictEqual(resCep.isCamposResident, true, 'Deve detectar Campos através de CEP 280xx');
+  });
+
+  it('14. inspectDocumentWithAI detecta Campos inspecionando stream de texto de PDF', async () => {
+    const pdfContentWithCampos = '%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\nstream\nNaturalidade: Campos dos Goytacazes - RJ\nendstream\n%%EOF';
+    const pdfBase64 = 'data:application/pdf;base64,' + Buffer.from(pdfContentWithCampos).toString('base64');
+
+    const resPdf = await inspectDocumentWithAI({
+      fileBase64: pdfBase64,
+      fileName: 'cnh_digital.pdf',
+      providedName: 'Miller Mendonça',
+      providedCpf: '11122233344'
+    });
+    assert.strictEqual(resPdf.success, true);
+    assert.strictEqual(resPdf.isCamposResident, true, 'Deve extrair e identificar menção a Campos no stream do PDF');
+  });
+
+  it('15. checkYouthLocalRisk aciona com originCity e cep de Campos', () => {
+    const riskOrigin = checkYouthLocalRisk({
+      birthDate: '1990-01-01',
+      originCity: 'Campos dos Goytacazes',
+      phone: '22999998888',
+      state: 'RJ'
+    });
+    assert.strictEqual(riskOrigin.isTriggered, true);
+    assert.strictEqual(riskOrigin.isCampos, true);
+
+    const riskCep = checkYouthLocalRisk({
+      birthDate: '1985-06-15',
+      cep: '28020-000',
+      phone: '21988887777',
+      state: 'RJ'
+    });
+    assert.strictEqual(riskCep.isTriggered, true);
+    assert.strictEqual(riskCep.isCampos, true);
+  });
+
+  it('16. Limpeza de processo pós-testes', () => {
     setTimeout(() => { process.exit(0); }, 50);
   });
 });

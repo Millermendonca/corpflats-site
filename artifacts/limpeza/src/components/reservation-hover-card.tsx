@@ -180,10 +180,19 @@ export function ReservationHoverCard({
   const flatNumber = resItem.flatNumber || flat?.number || "Flat"
   const isCampos = Boolean(
     resItem.isCamposResident ||
+    (resItem.originCity && (resItem.originCity.toLowerCase().includes("campos") || resItem.originCity.toLowerCase().includes("goytacazes"))) ||
     (resItem.guestCity && (resItem.guestCity.toLowerCase().includes("campos") || resItem.guestCity.toLowerCase().includes("goytacazes"))) ||
     (resItem.city && (resItem.city.toLowerCase().includes("campos") || resItem.city.toLowerCase().includes("goytacazes"))) ||
     (resItem.guestAddress && resItem.guestAddress.toLowerCase().includes("campos")) ||
-    (resItem.riskAttentionReason && resItem.riskAttentionReason.toLowerCase().includes("campos"))
+    (resItem.riskAttentionReason && resItem.riskAttentionReason.toLowerCase().includes("campos")) ||
+    (Array.isArray(resItem.guests) && resItem.guests.some((g: any) =>
+      g?.isCamposResident ||
+      (g?.originCity && (g.originCity.toLowerCase().includes("campos") || g.originCity.toLowerCase().includes("goytacazes"))) ||
+      (g?.city && (g.city.toLowerCase().includes("campos") || g.city.toLowerCase().includes("goytacazes"))) ||
+      (g?.address && g.address.toLowerCase().includes("campos"))
+    )) ||
+    (String(resItem.guestCep || resItem.cep || "").replace(/\D/g, "").startsWith("280") ||
+     String(resItem.guestCep || resItem.cep || "").replace(/\D/g, "").startsWith("281"))
   )
   const nightsCount = differenceInDays(parseISO(resItem.checkoutDate), parseISO(resItem.checkinDate)) || 1
   const checkinStr = format(parseISO(resItem.checkinDate), "dd/MM")

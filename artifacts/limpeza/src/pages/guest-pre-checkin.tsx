@@ -761,7 +761,15 @@ export default function GuestPreCheckin() {
           providedCpf: document,
           providedCity: city,
           providedAddress: address,
-          providedBirthDate: birthDate
+          providedBirthDate: birthDate,
+          providedOriginCity: originCity,
+          providedOriginState: originState,
+          providedState: state,
+          providedCep: cep,
+          originCity,
+          originState,
+          state,
+          cep
         })
       })
       if (res.ok) {
@@ -792,6 +800,13 @@ export default function GuestPreCheckin() {
       setAiInspectingDoc(false)
     }
   }
+
+  // Disparo automático da inspeção do documento ao navegar para a etapa de documento se a foto já existir
+  useEffect(() => {
+    if (step === 2 && docPhoto && !aiDocResult && !aiInspectingDoc) {
+      runAiDocInspection(docPhoto, "documento_hospede")
+    }
+  }, [step, docPhoto, aiDocResult, aiInspectingDoc])
 
   // Handle file uploads with automatic client-side WebP compression
   const handleFileUpload = async (
@@ -910,7 +925,13 @@ export default function GuestPreCheckin() {
           minorAge: calculatedAge,
           minorKinship: (calculatedAge !== null && calculatedAge < 18) ? minorKinship : null,
           minorAuthDocBase64: (calculatedAge !== null && calculatedAge < 18 && minorKinship !== "filho") ? minorAuthDocPhoto : null,
-          isCamposResident: Boolean(aiDocResult?.isCamposResident || (city && (city.toLowerCase().includes("campos") || city.toLowerCase().includes("goytacazes")))),
+          isCamposResident: Boolean(
+            aiDocResult?.isCamposResident ||
+            (city && (city.toLowerCase().includes("campos") || city.toLowerCase().includes("goytacazes"))) ||
+            (originCity && (originCity.toLowerCase().includes("campos") || originCity.toLowerCase().includes("goytacazes"))) ||
+            (address && (address.toLowerCase().includes("campos") || address.toLowerCase().includes("goytacazes"))) ||
+            (cep && (cep.replace(/\D/g, "").startsWith("280") || cep.replace(/\D/g, "").startsWith("281")))
+          ),
           vehiclePlate: cleanPlate,
           vehicleBrand: cleanBrand,
           vehicleModel: cleanModel,
@@ -2102,7 +2123,7 @@ export default function GuestPreCheckin() {
                             <span>Tirar Foto ou Anexar Autorização</span>
                             <input
                               type="file"
-                              accept="image/*"
+                              accept="image/*,application/pdf"
                               capture="environment"
                               onChange={e => handleFileUpload(e, setMinorAuthDocPhoto, "auth")}
                               className="hidden"
@@ -2542,7 +2563,7 @@ export default function GuestPreCheckin() {
                     <span className="text-xs text-slate-400">Foto nítida da frente ou verso do seu documento</span>
                     <input 
                       type="file" 
-                      accept="image/*" 
+                      accept="image/*,application/pdf" 
                       capture="environment"
                       onChange={e => handleFileUpload(e, setDocPhoto, "doc")} 
                       className="hidden" 
