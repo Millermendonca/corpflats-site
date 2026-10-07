@@ -1120,24 +1120,129 @@ export function resolveReservationAttachments({ reservation, guest = null, db = 
   const resCode = reservation.code || reservation.id || "RES";
   const primaryName = (reservation.guestName || guest?.name || "Hospede").replace(/[^\w\s-]/gi, "").trim().replace(/\s+/g, "_");
 
-  // Helper para resolver caminho físico da FNRH
-  const secureFnrhDir = path.join(__dirname, "secure_fnrh");
-  const legacyFnrhDir = path.join(__dirname, "fnrh_docs");
+  // Helper para resolver caminho físico da FNRH nos diretórios seguros e legados
+  const candidateFnrhDirs = [
+    path.join(__dirname, "secure_uploads", "fnrh_documents"),
+    path.join(__dirname, "uploads", "fnrh_documents"),
+    path.join(__dirname, "secure_fnrh"),
+    path.join(__dirname, "fnrh_docs"),
+    path.resolve(process.cwd(), "artifacts/api-server/secure_uploads/fnrh_documents"),
+    path.resolve(process.cwd(), "scripts/secure_uploads/fnrh_documents"),
+    path.resolve(process.cwd(), "secure_uploads/fnrh_documents"),
+    path.resolve(process.cwd(), "uploads/fnrh_documents"),
+    path.resolve(process.cwd(), "artifacts/api-server/secure_fnrh"),
+    path.resolve(process.cwd(), "scripts/secure_fnrh")
+  ].filter((d, i, arr) => arr.indexOf(d) === i);
 
-  // 1. FNRH em PDF (se pré-checkin digital tiver sido concluído)
-  if (reservation.fnrhDocumentUuid) {
-    const p1 = path.join(secureFnrhDir, `FNRH_${reservation.fnrhDocumentUuid}.pdf`);
-    const p2 = path.join(legacyFnrhDir, `FNRH_${reservation.fnrhDocumentUuid}.pdf`);
-    let fnrhPath = null;
-    if (fs.existsSync(p1)) fnrhPath = p1;
-    else if (fs.existsSync(p2)) fnrhPath = p2;
-
-    if (fnrhPath) {
-      attachments.push({
-        filename: `FNRH_${resCode}_${primaryName}.pdf`,
-        path: fnrhPath
-      });
+  function findFnrhPath({ filePath, fileName, uuid, code, id }) {
+    // A. Caminho explícito existente
+    if (filePath && typeof filePath === "string" && fs.existsSync(filePath)) {
+      return filePath;
     }
+
+    // B. Nomes de arquivo candidatos
+    const candidateNames = [];
+    if (fileName && typeof fileName === "string") candidateNames.push(path.basename(fileName));
+    if (uuid && typeof uuid === "string") {
+      candidateNames.push(`FNRH_${uuid}.pdf`);
+      candidateNames.push(`fnrh_${uuid}.pdf`);
+    }
+    if (code) {
+      candidateNames.push(`FNRH_${code}.pdf`);
+      candidateNames.push(`fnrh_${code}.pdf`);
+    }
+    if (id) {
+      candidateNames.push(`FNRH_${id}.pdf`);
+      candidateNames.push(`fnrh_${id}.pdf`);
+    }
+
+    // Checa nomes diretos em cada diretório candidato
+    for (const dir of candidateFnrhDirs) {
+      if (!fs.existsSync(dir)) continue;
+      for (const name of candidateNames) {
+        const full = path.join(dir, name);
+        if (fs.existsSync(full)) return full;
+      }
+    }
+
+    // C. Varredura por padrão de arquivo nos diretórios (UUID ou código/ID da reserva)
+    for (const dir of candidateFnrhDirs) {
+      if (!fs.existsSync(dir)) continue;
+      try {
+        const files = fs.readdirSync(dir);
+        if (uuid && typeof uuid === "string") {
+          const matchUuid = files.find(f => f.includes(uuid) && f.endsWith(".pdf"));
+          if (matchUuid) return path.join(dir, matchUuid);
+        }
+        const cleanId = id ? String(id).toLowerCase() : null;
+        const cleanCode = code ? String(code).toLowerCase() : null;
+        const matchPrefix = files.find(f => {
+          if (!f.endsWith(".pdf")) return false;
+          const lower = f.toLowerCase();
+          if (cleanId && (lower.startsWith(`fnrh_${cleanId}_`) || lower.startsWith(`fnrh_${cleanId}.`))) return true;
+          if (cleanCode && (lower.startsWith(`fnrh_${cleanCode}_`) || lower.startsWith(`fnrh_${cleanCode}.`))) return true;
+          return false;
+        });
+        if (matchPrefix) return path.join(dir, matchPrefix);
+      } catch (_) {}
+    }
+
+    return null;
+  }
+
+  // 1. FNRH em PDF do Titular (se pré-checkin digital concluído)
+  const titularUuid = reservation.fnrhDocumentUuid || guest?.fnrhDocumentUuid || (Array.isArray(reservation.guests) ? reservation.guests[0]?.fnrhDocumentUuid : null);
+  let titularAuditFileName = reservation.fnrhFileName || reservation.fnrhAuditTrail?.fileName || guest?.fnrhAuditTrail?.fileName;
+  if (!titularAuditFileName && titularUuid && Array.isArray(db?.fnrhAuditDocuments)) {
+    const auditDoc = db.fnrhAuditDocuments.find(a => a.documentUuid === titularUuid || String(a.reservationId) === String(reservation.id) || a.reservationCode === resCode);
+    if (auditDoc?.fileName) titularAuditFileName = auditDoc.fileName;
+  }
+
+  const titularFnrhPath = findFnrhPath({
+    filePath: reservation.fnrhFilePath || guest?.fnrhFilePath,
+    fileName: titularAuditFileName,
+    uuid: titularUuid,
+    code: resCode,
+    id: reservation.id
+  });
+
+  if (titularFnrhPath) {
+    attachments.push({
+      filename: `FNRH_${resCode}_${primaryName}.pdf`,
+      path: titularFnrhPath
+    });
+  }
+
+  // FNRHs de Co-hóspedes (se houverem concluído pré-checkin digital)
+  if (Array.isArray(reservation.guests)) {
+    reservation.guests.forEach((g, idx) => {
+      if (idx === 0 && titularFnrhPath) return;
+      const gUuid = g.fnrhDocumentUuid;
+      let gAuditFileName = g.fnrhFileName || g.fnrhAuditTrail?.fileName;
+      if (!gAuditFileName && gUuid && Array.isArray(db?.fnrhAuditDocuments)) {
+        const auditDoc = db.fnrhAuditDocuments.find(a => a.documentUuid === gUuid);
+        if (auditDoc?.fileName) gAuditFileName = auditDoc.fileName;
+      }
+      const coGuestFnrhPath = findFnrhPath({
+        filePath: g.fnrhFilePath,
+        fileName: gAuditFileName,
+        uuid: gUuid,
+        code: resCode,
+        id: reservation.id
+      });
+      if (coGuestFnrhPath && !attachments.some(a => a.path === coGuestFnrhPath)) {
+        const gName = (g.name || `Hospede_${idx + 1}`)
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .replace(/[^\w\s-]/gi, "")
+          .trim()
+          .replace(/\s+/g, "_");
+        attachments.push({
+          filename: `FNRH_${resCode}_${gName}.pdf`,
+          path: coGuestFnrhPath
+        });
+      }
+    });
   }
 
   // 2. Documentos Oficiais anexados (Titular e Co-hóspedes)
@@ -1165,7 +1270,12 @@ export function resolveReservationAttachments({ reservation, guest = null, db = 
   // Documentos de hóspedes cadastrados no array reservation.guests
   if (Array.isArray(reservation.guests)) {
     reservation.guests.forEach((g, idx) => {
-      const gName = (g.name || `Hospede_${idx + 1}`).replace(/[^\w\s-]/gi, "").trim().replace(/\s+/g, "_");
+      const gName = (g.name || `Hospede_${idx + 1}`)
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^\w\s-]/gi, "")
+        .trim()
+        .replace(/\s+/g, "_");
       if (g.docPhotoPath) {
         docSources.push({ raw: g.docPhotoPath, name: gName, isPath: true });
       }

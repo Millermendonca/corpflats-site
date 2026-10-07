@@ -18472,70 +18472,83 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
 
   // ── Geração do PDF da Ficha com Trilha Forense, Hash SHA-256 e QR Code ──────
   let fnrhDocument = null;
-  if (signatureBase64) {
-    try {
-      const signerIp = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || req.connection?.remoteAddress || "127.0.0.1";
-      const signerUserAgent = req.headers["user-agent"] || "Dispositivo Pessoal do Hóspede";
-      const originHeader = req.headers.origin || (req.headers.host ? `${req.protocol || "https"}://${req.headers.host}` : "https://corpflats.onrender.com");
+  const effectiveSignature = signatureBase64 || signatureUrl || r.signatureUrl || guest?.signatureUrl || targetGuest.signatureUrl || null;
+  try {
+    const signerIp = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || req.connection?.remoteAddress || "127.0.0.1";
+    const signerUserAgent = req.headers["user-agent"] || "Dispositivo Pessoal do Hóspede";
+    const originHeader = req.headers.origin || (req.headers.host ? `${req.protocol || "https"}://${req.headers.host}` : "https://corpflats.onrender.com");
 
-      fnrhDocument = await generateFnrhPdf({
-        reservation: r,
-        guestData: {
-          fullName: validName,
-          document: document || targetGuest.cpf,
-          phone: phone || targetGuest.phone,
-          email: cleanEmail || targetGuest.email,
-          address: address || targetGuest.address,
-          city: city || targetGuest.city,
-          state: state || targetGuest.state
-        },
-        signatureBase64,
-        signerIp,
-        signerUserAgent,
-        appOrigin: originHeader,
-        whatsapp2faVerified,
-        whatsappPhone: verifiedOtpRecord ? verifiedOtpRecord.phone : (phone || r.guestPhone),
-        whatsappOtpVerifiedAt: verifiedOtpRecord ? verifiedOtpRecord.verifiedAt : null
-      });
+    fnrhDocument = await generateFnrhPdf({
+      reservation: r,
+      guestData: {
+        fullName: validName,
+        document: document || targetGuest.cpf,
+        phone: phone || targetGuest.phone,
+        email: cleanEmail || targetGuest.email,
+        birthDate: normalizedBirthDate || birthDate || targetGuest.birthDate || guest?.birthDate,
+        gender: gender || targetGuest.gender || guest?.gender || "Não informado",
+        cep: cep || req.body.cep || targetGuest.cep || guest?.cep || "",
+        address: address || targetGuest.address || guest?.address,
+        city: city || targetGuest.city || guest?.city,
+        state: state || targetGuest.state || guest?.state,
+        country: country || targetGuest.country || guest?.country || "Brasil",
+        travelReason: travelReason || req.body.travelReason || targetGuest.travelReason || "Lazer / Férias",
+        transportMethod: transportMethod || req.body.transportMethod || targetGuest.transportMethod || "Carro próprio",
+        originCity: req.body.originCity || targetGuest.originCity || "",
+        originState: req.body.originState || targetGuest.originState || "",
+        destinationCity: req.body.destinationCity || targetGuest.destinationCity || "",
+        destinationState: req.body.destinationState || targetGuest.destinationState || ""
+      },
+      signatureBase64: effectiveSignature,
+      signerIp,
+      signerUserAgent,
+      appOrigin: originHeader,
+      whatsapp2faVerified,
+      whatsappPhone: verifiedOtpRecord ? verifiedOtpRecord.phone : (phone || r.guestPhone),
+      whatsappOtpVerifiedAt: verifiedOtpRecord ? verifiedOtpRecord.verifiedAt : null
+    });
 
-      if (fnrhDocument) {
-        if (!db.fnrhAuditDocuments) db.fnrhAuditDocuments = [];
-        db.fnrhAuditDocuments.unshift(fnrhDocument.auditTrail);
+    if (fnrhDocument) {
+      if (!db.fnrhAuditDocuments) db.fnrhAuditDocuments = [];
+      db.fnrhAuditDocuments.unshift(fnrhDocument.auditTrail);
 
-        targetGuest.whatsapp2faVerified = whatsapp2faVerified;
-        targetGuest.whatsappPhone = verifiedOtpRecord ? verifiedOtpRecord.phone : null;
-        r.whatsapp2faVerified = whatsapp2faVerified;
-        r.whatsappPhone = verifiedOtpRecord ? verifiedOtpRecord.phone : null;
-        targetGuest.fnrhDocumentUuid = fnrhDocument.documentUuid;
-        targetGuest.fnrhPdfUrl = fnrhDocument.fileUrl;
-        targetGuest.fnrhSha256Hash = fnrhDocument.sha256Hash;
-        targetGuest.fnrhVerifyUrl = fnrhDocument.verifyUrl;
-        targetGuest.fnrhSignedAt = fnrhDocument.signedAt;
-        targetGuest.fnrhAuditTrail = fnrhDocument.auditTrail;
-        targetGuest.status = "CHECKED_IN";
+      targetGuest.whatsapp2faVerified = whatsapp2faVerified;
+      targetGuest.whatsappPhone = verifiedOtpRecord ? verifiedOtpRecord.phone : null;
+      r.whatsapp2faVerified = whatsapp2faVerified;
+      r.whatsappPhone = verifiedOtpRecord ? verifiedOtpRecord.phone : null;
+      targetGuest.fnrhDocumentUuid = fnrhDocument.documentUuid;
+      targetGuest.fnrhPdfUrl = fnrhDocument.fileUrl;
+      targetGuest.fnrhSha256Hash = fnrhDocument.sha256Hash;
+      targetGuest.fnrhVerifyUrl = fnrhDocument.verifyUrl;
+      targetGuest.fnrhSignedAt = fnrhDocument.signedAt;
+      targetGuest.fnrhAuditTrail = fnrhDocument.auditTrail;
+      targetGuest.fnrhFileName = fnrhDocument.fileName;
+      targetGuest.fnrhFilePath = fnrhDocument.filePath;
+      targetGuest.status = "CHECKED_IN";
 
-        // Reserva marcada como CHECKED_IN no sistema
-        r.status = "CHECKED_IN";
-        r.checkedInAt = fnrhDocument.signedAt;
-        r.fnrhPdfUrl = fnrhDocument.fileUrl;
-        r.fnrhDocumentUuid = fnrhDocument.documentUuid;
-        r.fnrhSha256Hash = fnrhDocument.sha256Hash;
-        r.fnrhVerifyUrl = fnrhDocument.verifyUrl;
-        r.fnrhSignedAt = fnrhDocument.signedAt;
-        r.fnrhAuditTrail = fnrhDocument.auditTrail;
+      // Reserva marcada como CHECKED_IN no sistema
+      r.status = "CHECKED_IN";
+      r.checkedInAt = fnrhDocument.signedAt;
+      r.fnrhPdfUrl = fnrhDocument.fileUrl;
+      r.fnrhDocumentUuid = fnrhDocument.documentUuid;
+      r.fnrhSha256Hash = fnrhDocument.sha256Hash;
+      r.fnrhVerifyUrl = fnrhDocument.verifyUrl;
+      r.fnrhSignedAt = fnrhDocument.signedAt;
+      r.fnrhAuditTrail = fnrhDocument.auditTrail;
+      r.fnrhFileName = fnrhDocument.fileName;
+      r.fnrhFilePath = fnrhDocument.filePath;
 
-        // Se a assinatura foi realizada com token temporário de 2 horas, registra uso
-        if (req.body.token && Array.isArray(db.fnrhSignatureTokens)) {
-          const tRec = db.fnrhSignatureTokens.find(t => t.token === req.body.token);
-          if (tRec) {
-            tRec.usedAt = new Date().toISOString();
-            tRec.documentUuid = fnrhDocument.documentUuid;
-          }
+      // Se a assinatura foi realizada com token temporário de 2 horas, registra uso
+      if (req.body.token && Array.isArray(db.fnrhSignatureTokens)) {
+        const tRec = db.fnrhSignatureTokens.find(t => t.token === req.body.token);
+        if (tRec) {
+          tRec.usedAt = new Date().toISOString();
+          tRec.documentUuid = fnrhDocument.documentUuid;
         }
       }
-    } catch (pdfErr) {
-      console.error("[FNRH PDF] Erro ao compilar ficha e auditoria forense:", pdfErr);
     }
+  } catch (pdfErr) {
+    console.error("[FNRH PDF] Erro ao compilar ficha e auditoria forense:", pdfErr);
   }
 
   // Gatilho A & D: Envio Automático de Notificação à Recepção/Portaria e Garagem com FNRH PDF Anexo
@@ -18553,7 +18566,7 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
       const { subject, bodyHtml } = renderCheckinConfirmedEmail({ reservation: r, flat, settings: db.settings });
 
       const emailAttachments = resolveReservationAttachments({ reservation: r, guest, db });
-      if (fnrhDocument?.filePath && fs.existsSync(fnrhDocument.filePath) && !emailAttachments.some(a => a.path === fnrhDocument.filePath)) {
+      if (fnrhDocument?.filePath && fs.existsSync(fnrhDocument.filePath) && !emailAttachments.some(a => a.path === fnrhDocument.filePath || (a.filename && a.filename.startsWith("FNRH_")))) {
         emailAttachments.unshift({
           filename: `FNRH_${r.code || r.id}_${validName.replace(/\s+/g, '_')}.pdf`,
           path: fnrhDocument.filePath
