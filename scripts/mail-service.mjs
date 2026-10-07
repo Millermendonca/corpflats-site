@@ -317,6 +317,33 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings }) {
       </div>
     ` : ""}
 
+    ${Boolean(reservation?.hasMinor || guests.some(g => g.isMinor)) ? `
+      <!-- Alerta de Menor de Idade (ECA Art. 82) -->
+      <div style="background: #fff1f2; border: 1px solid #fecdd3; border-left: 4px solid #e11d48; border-radius: 8px; padding: 12px 14px; margin-bottom: 16px;">
+        <strong style="color: #9f1239; font-size: 13px;">👶 ATENÇÃO RECEPÇÃO: HÓSPEDE MENOR DE IDADE REGISTRADO (ECA Art. 82)</strong>
+        <p style="color: #881337; font-size: 12px; margin: 4px 0 0 0; line-height: 1.4;">
+          Identificado hóspede menor de 18 anos nesta estadia. <strong>Conforme a Lei nº 8.069/1990 (ECA), é obrigatória a presença dos pais ou responsável maior portando autorização formal por escrito com firma reconhecida em cartório para liberação de chaves.</strong>
+        </p>
+      </div>
+    ` : ""}
+
+    ${Boolean(reservation?.isCamposResident || reservation?.riskAttentionReason?.toLowerCase()?.includes("campos")) ? `
+      <!-- Alerta de Radar Local (Campos dos Goytacazes/RJ) -->
+      <div style="background: #f5f3ff; border: 1px solid #ddd6fe; border-left: 4px solid #7c3aed; border-radius: 8px; padding: 12px 14px; margin-bottom: 16px;">
+        <strong style="color: #5b21b6; font-size: 13px;">📍 RADAR OPERACIONAL: HÓSPEDE DE CAMPOS DOS GOYTACAZES/RJ</strong>
+        <p style="color: #4c1d95; font-size: 12px; margin: 4px 0 0 0; line-height: 1.4;">
+          Hóspede residente ou com documento emitido em Campos dos Goytacazes/RJ. Reserva incluída no radar de atenção operacional da equipe.
+        </p>
+      </div>
+    ` : ""}
+
+    ${Boolean(reservation?.docPhotoUrl || reservation?.docPhotoPath || reservation?.documentPhotoUrl || guests.some(g => g.docPhotoUrl || g.docPhotoPath)) ? `
+      <!-- Aviso de Documento Oficial Anexado -->
+      <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-left: 4px solid #16a34a; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 12px; color: #166534; line-height: 1.4;">
+        <strong>📎 Documento Oficial do Hóspede Anexado:</strong> O documento com foto (PDF ou imagem) anexado à reserva foi incluído como anexo a este e-mail para conferência na recepção.
+      </div>
+    ` : ""}
+
     <div style="margin-bottom: 20px;">
       <h2 style="font-size: 17px; font-weight: 800; color: #0f172a; margin: 0 0 6px 0;">Olá, Equipe de Recepção & Portaria!</h2>
       <p style="font-size: 13px; color: #475569; margin: 0; line-height: 1.5;">
@@ -899,23 +926,23 @@ export function resolveReservationAttachments({ reservation, guest = null, db = 
     const docSuffix = docCount > 1 ? `_${docCount}` : "";
 
     // Caso A: Arquivo em disco
-    if (src.isPath || ((trimmed.startsWith("/") || trimmed.match(/^[a-zA-Z]:[\\\/]/)) && fs.existsSync(trimmed))) {
-      const ext = path.extname(trimmed).replace(".", "") || "pdf";
-      attachments.push({
-        filename: `Documento_${src.name}${docSuffix}.${ext}`,
-        path: trimmed
-      });
-      continue;
+    const isExplicitPath = Boolean(src.isPath || trimmed.startsWith("/") || trimmed.match(/^[a-zA-Z]:[\\\/]/));
+    let resolvedDiskPath = null;
+    if (isExplicitPath && fs.existsSync(trimmed)) {
+      resolvedDiskPath = trimmed;
+    } else {
+      const uploadsDir = path.join(__dirname, "uploads");
+      const localUploadPath = path.join(uploadsDir, path.basename(trimmed));
+      if (fs.existsSync(localUploadPath)) {
+        resolvedDiskPath = localUploadPath;
+      }
     }
 
-    // Checa se é arquivo relativo à pasta uploads
-    const uploadsDir = path.join(__dirname, "uploads");
-    const localUploadPath = path.join(uploadsDir, path.basename(trimmed));
-    if (fs.existsSync(localUploadPath)) {
-      const ext = path.extname(localUploadPath).replace(".", "") || "pdf";
+    if (resolvedDiskPath) {
+      const ext = path.extname(resolvedDiskPath).replace(".", "") || "pdf";
       attachments.push({
         filename: `Documento_${src.name}${docSuffix}.${ext}`,
-        path: localUploadPath
+        path: resolvedDiskPath
       });
       continue;
     }

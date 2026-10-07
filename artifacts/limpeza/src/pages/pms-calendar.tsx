@@ -340,7 +340,7 @@ export default function PmsCalendar() {
             setFormHasMinor(true)
             toast({
               title: "👶 Alerta: Menor de Idade",
-              description: `A IA detectou idade ${aiData.extractedAge || "menor"}. Exija autorização em cartório conforme ECA Art. 82.`,
+              description: `A IA detectou idade ${aiData.calculatedAge ? `${aiData.calculatedAge} anos` : (aiData.extractedAge || "menor de 18 anos")}. Exija autorização em cartório conforme ECA Art. 82.`,
               variant: "destructive"
             })
           }

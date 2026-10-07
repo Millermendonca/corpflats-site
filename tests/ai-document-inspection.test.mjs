@@ -70,21 +70,68 @@ describe('Inspeção de Documentos com Foto por Inteligência Artificial', () =>
     assert.strictEqual(res.cpfMatches, true);
   });
 
-  it('6. Detecção de morador de Campos dos Goytacazes/RJ (Radar Operacional)', async () => {
+  it('6. Detecção precisa de morador de Campos dos Goytacazes/RJ (sem falso positivo por sobrenome)', async () => {
     const sampleImageBase64 = 'data:image/jpeg;base64,' + Buffer.alloc(350, 0xBB).toString('base64');
-    const res = await inspectDocumentWithAI({
+    
+    // Hóspede com cidade declarada em Campos dos Goytacazes
+    const resCampos = await inspectDocumentWithAI({
       fileBase64: sampleImageBase64,
-      fileName: 'cnh_campos.jpg',
-      providedName: 'Lucas Campos Peçanha',
-      providedCpf: '99988877766'
+      fileName: 'cnh_lucas.jpg',
+      providedName: 'Lucas Peçanha Silva',
+      providedCpf: '99988877766',
+      providedCity: 'Campos dos Goytacazes'
     });
+    assert.strictEqual(resCampos.success, true);
+    assert.strictEqual(resCampos.isCamposResident, true, 'Deve marcar isCamposResident quando cidade for Campos');
+    assert.strictEqual(resCampos.extractedCity, 'Campos dos Goytacazes');
 
-    assert.strictEqual(res.success, true);
-    assert.strictEqual(res.isCamposResident, true, 'Deve marcar isCamposResident quando vinculado a Campos dos Goytacazes');
-    assert.strictEqual(res.extractedCity, 'Campos dos Goytacazes');
+    // Hóspede com sobrenome "Campos", mas residente em São Paulo (NÃO deve dar falso positivo)
+    const resSp = await inspectDocumentWithAI({
+      fileBase64: sampleImageBase64,
+      fileName: 'cnh_juliana.jpg',
+      providedName: 'Juliana Campos de Oliveira',
+      providedCpf: '11122233344',
+      providedCity: 'São Paulo'
+    });
+    assert.strictEqual(resSp.isCamposResident, false, 'Sobrenome Campos NÃO deve marcar erroneamente como residente local');
   });
 
-  it('7. Suporte a parâmetros alternativos (aliases documentFile, declaredName, declaredCpf)', async () => {
+  it('7. Detecção de menor de idade e cálculo de idade a partir de data de nascimento e nome de arquivo', async () => {
+    const sampleImageBase64 = 'data:image/jpeg;base64,' + Buffer.alloc(350, 0xDD).toString('base64');
+
+    // 16 anos (nascido em 2010 com referência 2026) -> Menor de idade
+    const resMinor = await inspectDocumentWithAI({
+      fileBase64: sampleImageBase64,
+      fileName: 'rg_pedro.pdf',
+      providedName: 'Pedro Alvares',
+      providedCpf: '12345678900',
+      providedBirthDate: '2010-06-15'
+    });
+    assert.strictEqual(resMinor.isMinor, true, 'Deve marcar isMinor para idade < 18');
+    assert.strictEqual(resMinor.calculatedAge, 16, 'Deve calcular 16 anos');
+
+    // 31 anos (nascido em 1995) -> Maior de idade
+    const resAdult = await inspectDocumentWithAI({
+      fileBase64: sampleImageBase64,
+      fileName: 'cnh_rodrigo.jpg',
+      providedName: 'Rodrigo Medeiros',
+      providedCpf: '98765432100',
+      providedBirthDate: '1995-03-20'
+    });
+    assert.strictEqual(resAdult.isMinor, false, 'Deve marcar isMinor=false para maior de idade');
+    assert.strictEqual(resAdult.calculatedAge, 31);
+
+    // Detecção por arquivo contendo indicador de menor
+    const resMinorFile = await inspectDocumentWithAI({
+      fileBase64: sampleImageBase64,
+      fileName: 'doc_menor_autorizacao.pdf',
+      providedName: 'Lucas Menor',
+      providedCpf: '33322211100'
+    });
+    assert.strictEqual(resMinorFile.isMinor, true, 'Deve identificar menoridade por arquivo indicador');
+  });
+
+  it('8. Suporte a parâmetros alternativos (aliases documentFile, declaredName, declaredCpf)', async () => {
     const sampleImageBase64 = 'data:image/jpeg;base64,' + Buffer.alloc(350, 0xCC).toString('base64');
     const res = await inspectDocumentWithAI({
       documentFile: sampleImageBase64,
@@ -99,7 +146,13 @@ describe('Inspeção de Documentos com Foto por Inteligência Artificial', () =>
     assert.strictEqual(res.extractedCpf, '33344455566');
   });
 
-  it('8. Limpeza de processo pós-testes', () => {
+  it('9. Validação estrita obrigatória no endpoint de reserva direta (demo-server.mjs)', () => {
+    const serverCode = fs.readFileSync(serverPath, 'utf8');
+    assert.ok(serverCode.includes('cleanDoc.length !== 11'), 'Deve validar 11 dígitos do CPF no backend');
+    assert.ok(serverCode.includes('hasDocFile'), 'Deve validar anexo obrigatório de documento no backend');
+  });
+
+  it('10. Limpeza de processo pós-testes', () => {
     setTimeout(() => { process.exit(0); }, 50);
   });
 });

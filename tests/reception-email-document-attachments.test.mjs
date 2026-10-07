@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-import { resolveReservationAttachments } from '../artifacts/api-server/mail-service.mjs';
+import { resolveReservationAttachments, renderCheckinConfirmedEmail } from '../artifacts/api-server/mail-service.mjs';
 
 describe('Anexos de Documentos Oficiais em E-mails para a Recepção', () => {
   const mailServerFile = path.resolve('artifacts/api-server/mail-service.mjs');
@@ -165,11 +165,48 @@ describe('Anexos de Documentos Oficiais em E-mails para a Recepção', () => {
   it('7. demo-server.mjs deve integrar resolveReservationAttachments na rotina matinal 07:00 e direct booking', () => {
     const code = fs.readFileSync(demoServerFile, 'utf8');
     assert.ok(code.includes('resolveReservationAttachments({ reservation: r, guest: titularGuest, db })'), 'Rotina das 07:00 deve usar resolveReservationAttachments');
-    assert.ok(code.includes('resolveReservationAttachments({ reservation: newReservation, guest, db })'), 'Reserva direta deve usar resolveReservationAttachments');
-    assert.ok(code.includes('resolveReservationAttachments({ reservation, guest, db })'), 'PMS nova reserva deve usar resolveReservationAttachments');
+    assert.ok(code.includes('resolveReservationAttachments({ reservation, guest, db })'), 'Reserva direta deve usar resolveReservationAttachments');
+    assert.ok(code.includes('resolveReservationAttachments({ reservation: newReservation, guest, db })'), 'PMS nova reserva deve usar resolveReservationAttachments');
   });
 
-  it('8. Limpeza de processo pós-testes', () => {
+  it('8. Resolução segura de caminhos em disco: ignora arquivos inexistentes para não derrubar o Nodemailer', () => {
+    const resWithBrokenPath = {
+      code: 'RES_BROKEN_PATH_08',
+      guestName: 'Arquivo Fantasma',
+      docPhotoPath: '/caminho/completamente/inexistente/documento.pdf'
+    };
+
+    const attachments = resolveReservationAttachments({
+      reservation: resWithBrokenPath
+    });
+
+    assert.strictEqual(attachments.length, 0, 'Caminho inexistente em disco NÃO deve ser repassado ao Nodemailer para evitar erro ENOENT');
+  });
+
+  it('9. renderCheckinConfirmedEmail deve exibir alertas de Menor (ECA Art. 82), Radar Campos/RJ e Documento Anexado', () => {
+    const resWithAlerts = {
+      code: 'CORP-101-0001',
+      flatNumber: '101',
+      guestName: 'Gabriel Menor de Campos',
+      checkinDate: '2026-10-10',
+      checkoutDate: '2026-10-12',
+      hasMinor: true,
+      isCamposResident: true,
+      docPhotoUrl: 'data:image/jpeg;base64,QUJDREVGR0g='
+    };
+
+    const { bodyHtml } = renderCheckinConfirmedEmail({
+      reservation: resWithAlerts,
+      flat: { number: '101', buildingName: 'Edifício Soho Residence' },
+      settings: {}
+    });
+
+    assert.ok(bodyHtml.includes('HÓSPEDE MENOR DE IDADE REGISTRADO (ECA Art. 82)'), 'E-mail para recepção deve destacar alerta de menor de idade');
+    assert.ok(bodyHtml.includes('RADAR OPERACIONAL: HÓSPEDE DE CAMPOS DOS GOYTACAZES/RJ'), 'E-mail para recepção deve destacar radar de morador local');
+    assert.ok(bodyHtml.includes('Documento Oficial do Hóspede Anexado'), 'E-mail para recepção deve avisar que o documento oficial está anexado');
+  });
+
+  it('10. Limpeza de processo pós-testes', () => {
     setTimeout(() => { process.exit(0); }, 50);
   });
 });

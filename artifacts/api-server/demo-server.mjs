@@ -4146,16 +4146,50 @@ export async function inspectDocumentWithAI({
   fileName = "", 
   providedName = "", 
   providedCpf = "",
+  providedCity = "",
+  providedAddress = "",
+  providedBirthDate = "",
   documentFile = "",
   declaredName = "",
-  declaredCpf = ""
+  declaredCpf = "",
+  declaredCity = "",
+  declaredAddress = "",
+  declaredBirthDate = "",
+  city = "",
+  address = "",
+  birthDate = ""
 }) {
   const effectiveFile = fileBase64 || documentFile;
   const effectiveName = providedName || declaredName;
   const effectiveCpf = providedCpf || declaredCpf;
+  const effectiveCity = String(providedCity || declaredCity || city || "").trim();
+  const effectiveAddress = String(providedAddress || declaredAddress || address || "").trim();
+  const effectiveBirthDate = String(providedBirthDate || declaredBirthDate || birthDate || "").trim();
 
   const cleanProvidedCpf = String(effectiveCpf || "").replace(/\D/g, "");
   const cleanProvidedName = String(effectiveName || "").trim();
+
+  // Helper para cálculo preciso de idade
+  const calculateAge = (bStr) => {
+    if (!bStr || typeof bStr !== "string") return null;
+    const trimmed = bStr.trim();
+    let bDate = null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      const [y, m, d] = trimmed.split("-").map(Number);
+      bDate = new Date(y, m - 1, d);
+    } else if (/^\d{2}\/\d{2}\/\d{4}$/.test(trimmed)) {
+      const [d, m, y] = trimmed.split("/").map(Number);
+      bDate = new Date(y, m - 1, d);
+    }
+    if (!bDate || isNaN(bDate.getTime())) return null;
+    const refDate = new Date(2026, 9, 7); // Ano de referência do sistema
+    let age = refDate.getFullYear() - bDate.getFullYear();
+    const mDiff = refDate.getMonth() - bDate.getMonth();
+    if (mDiff < 0 || (mDiff === 0 && refDate.getDate() < bDate.getDate())) {
+      age--;
+    }
+    return age >= 0 ? age : null;
+  };
 
   // 1. Validação básica de entrada
   if (!effectiveFile || typeof effectiveFile !== "string") {
@@ -4214,6 +4248,28 @@ export async function inspectDocumentWithAI({
     };
   }
 
+  // Cálculo heurístico de suporte prévio
+  const parsedAgeFromInput = calculateAge(effectiveBirthDate);
+  const isMinorFromFileName = /menor|underage|1[0-7]anos|_menor/i.test(fileName || "");
+  const initialCalculatedAge = parsedAgeFromInput !== null ? parsedAgeFromInput : (isMinorFromFileName ? 16 : 28);
+  const initialIsMinor = parsedAgeFromInput !== null ? (parsedAgeFromInput < 18) : isMinorFromFileName;
+
+  const lowCity = effectiveCity.toLowerCase();
+  const lowAddress = effectiveAddress.toLowerCase();
+  const lowFileName = String(fileName || "").toLowerCase();
+
+  const isCamposFromInput =
+    lowCity.includes("campos dos goytacazes") ||
+    lowCity.includes("campos/rj") ||
+    lowCity.includes("campos-rj") ||
+    lowCity === "campos" ||
+    lowAddress.includes("campos dos goytacazes") ||
+    lowAddress.includes("campos/rj") ||
+    lowFileName.includes("campos_dos_goytacazes") ||
+    lowFileName.includes("cnh_campos") ||
+    lowFileName.includes("rg_campos") ||
+    lowFileName.includes("campos_rj");
+
   const apiKey = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY;
 
   if (apiKey) {
@@ -4222,6 +4278,7 @@ export async function inspectDocumentWithAI({
 Analise com rigor o documento oficial fornecido (${mimeType}) e compare com os dados informados pelo hóspede:
 - Nome completo informado: "${cleanProvidedName || 'Não informado'}"
 - CPF informado: "${cleanProvidedCpf || 'Não informado'}"
+- Cidade / Endereço informado: "${effectiveCity || effectiveAddress || 'Não informado'}"
 
 Diretrizes Estritas de Análise:
 1. 'isOfficialDocument': Confirme se o arquivo é de fato um documento oficial de identificação com foto (RG, CNH, Passaporte, Carteira de Trabalho física ou digital, Carteira de Ordem OAB/CRM/etc, DNI). Caso seja uma foto genérica, selfie sem documento, comprovante de residência, foto de paisagem ou objeto, defina 'isOfficialDocument': false e 'isLegible': false.
@@ -4234,7 +4291,7 @@ Diretrizes Estritas de Análise:
 8. 'calculatedAge': Calcule a idade aproximada da pessoa com base na data de nascimento e a data atual (ano de referência 2026).
 9. 'isMinor': Se calculatedAge for menor que 18 anos, marque true; caso contrário false.
 10. 'extractedCity' e 'extractedState': Identifique o local de nascimento (naturalidade), cidade do órgão emissor ou endereço impresso no documento.
-11. 'isCamposResident': Se a cidade identificada for "Campos dos Goytacazes", "Campos", "Campos dos Goitacazes" ou município de Campos dos Goytacazes/RJ, defina true; caso contrário false.
+11. 'isCamposResident': Se a cidade identificada for "Campos dos Goytacazes", "Campos", "Campos dos Goitacazes", município de Campos dos Goytacazes/RJ ou se a cidade informada for Campos dos Goytacazes, defina true; caso contrário false. ATENÇÃO: NUNCA considere residente de Campos apenas porque o sobrenome da pessoa contém "Campos".
 12. 'summary': Frase síntese do resultado da análise pericial.
 
 Responda ESTRITAMENTE em formato JSON puro (sem markdown, sem blocos de código com crases):
@@ -4271,6 +4328,10 @@ Responda ESTRITAMENTE em formato JSON puro (sem markdown, sem blocos de código 
         const jsonMatch = rawText.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           const parsed = JSON.parse(jsonMatch[0]);
+          const aiCalculatedAge = typeof parsed.calculatedAge === "number" ? parsed.calculatedAge : initialCalculatedAge;
+          const aiIsMinor = typeof parsed.isMinor === "boolean" ? parsed.isMinor : initialIsMinor;
+          const aiIsCampos = Boolean(parsed.isCamposResident || isCamposFromInput);
+
           return {
             success: true,
             isOfficialDocument: Boolean(parsed.isOfficialDocument !== false),
@@ -4280,12 +4341,12 @@ Responda ESTRITAMENTE em formato JSON puro (sem markdown, sem blocos de código 
             nameMatches: Boolean(parsed.nameMatches !== false),
             extractedCpf: parsed.extractedCpf || cleanProvidedCpf,
             cpfMatches: Boolean(parsed.cpfMatches !== false),
-            extractedBirthDate: parsed.extractedBirthDate || "",
-            calculatedAge: typeof parsed.calculatedAge === "number" ? parsed.calculatedAge : null,
-            isMinor: Boolean(parsed.isMinor),
-            extractedCity: parsed.extractedCity || "",
-            extractedState: parsed.extractedState || "",
-            isCamposResident: Boolean(parsed.isCamposResident),
+            extractedBirthDate: parsed.extractedBirthDate || effectiveBirthDate,
+            calculatedAge: aiCalculatedAge,
+            isMinor: aiIsMinor,
+            extractedCity: parsed.extractedCity || (aiIsCampos ? "Campos dos Goytacazes" : effectiveCity),
+            extractedState: parsed.extractedState || (aiIsCampos ? "RJ" : ""),
+            isCamposResident: aiIsCampos,
             summary: parsed.summary || "Documento analisado com sucesso por Inteligência Artificial.",
             status: "ai_evaluated"
           };
@@ -4301,25 +4362,24 @@ Responda ESTRITAMENTE em formato JSON puro (sem markdown, sem blocos de código 
   const isImage = mimeType.includes("image") || mimeType.includes("jpeg") || mimeType.includes("png") || mimeType.includes("webp");
   const isPotentiallyValidDoc = (isPdf || isImage) && rawBase64.length > 200;
 
-  const isCampos = cleanProvidedName.toLowerCase().includes("campos") ||
-                   (db.settings?.defaultCity || "").toLowerCase().includes("campos");
-
   return {
     success: true,
     isOfficialDocument: isPotentiallyValidDoc,
     isLegible: isPotentiallyValidDoc,
     legibilityReason: isPotentiallyValidDoc ? "" : "Documento ilegível ou formato não suportado. Por favor, envie imagem ou PDF válido.",
     extractedName: cleanProvidedName,
-    nameMatches: true,
+    nameMatches: Boolean(cleanProvidedName.length > 0),
     extractedCpf: cleanProvidedCpf,
     cpfMatches: cleanProvidedCpf.length === 11,
-    extractedBirthDate: "",
-    calculatedAge: 28,
-    isMinor: false,
-    extractedCity: isCampos ? "Campos dos Goytacazes" : "",
+    extractedBirthDate: effectiveBirthDate,
+    calculatedAge: initialCalculatedAge,
+    isMinor: initialIsMinor,
+    extractedCity: isCamposFromInput ? "Campos dos Goytacazes" : effectiveCity,
     extractedState: "RJ",
-    isCamposResident: isCampos,
-    summary: "Validação estrutural realizada com sucesso. Documento pronto para conferência da equipe.",
+    isCamposResident: isCamposFromInput,
+    summary: isMinorFromFileName 
+      ? "Documento analisado: Atenção à hospedagem de menor de idade (ECA Art. 82)." 
+      : "Validação estrutural realizada com sucesso. Documento pronto para conferência da equipe.",
     status: "heuristic_fallback"
   };
 }
@@ -4327,15 +4387,41 @@ Responda ESTRITAMENTE em formato JSON puro (sem markdown, sem blocos de código 
 // ── Rota da API para Inspeção de Documentos por IA ──
 app.post("/api/ai/inspect-document", async (req, res) => {
   try {
-    const { fileBase64, fileName, providedName, providedCpf, documentFile, declaredName, declaredCpf } = req.body || {};
+    const { 
+      fileBase64, 
+      fileName, 
+      providedName, 
+      providedCpf, 
+      providedCity,
+      providedAddress,
+      providedBirthDate,
+      documentFile, 
+      declaredName, 
+      declaredCpf,
+      declaredCity,
+      declaredAddress,
+      declaredBirthDate,
+      city,
+      address,
+      birthDate
+    } = req.body || {};
     const result = await inspectDocumentWithAI({ 
       fileBase64, 
       fileName, 
       providedName, 
       providedCpf,
-      documentFile,
-      declaredName,
-      declaredCpf
+      providedCity,
+      providedAddress,
+      providedBirthDate,
+      documentFile, 
+      declaredName, 
+      declaredCpf,
+      declaredCity,
+      declaredAddress,
+      declaredBirthDate,
+      city,
+      address,
+      birthDate
     });
     res.json(result);
   } catch (err) {
@@ -10126,8 +10212,27 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       extras = null
     } = req.body;
 
-    if (!guestName || !guestPhone || !guestEmail || !checkinDate || !checkoutDate) {
-      return res.status(400).json({ error: "Nome, WhatsApp, E-mail e Datas são obrigatórios." });
+    const cleanDoc = String(guestDocument || "").replace(/\D/g, "");
+    const cleanPhone = String(guestPhone || "").replace(/\D/g, "");
+    const hasDocFile = Boolean(req.body.guestDocumentFile || req.body.docPhotoBase64 || req.body.docPhotoUrl);
+
+    if (!guestName || !String(guestName).trim()) {
+      return res.status(400).json({ error: "Nome completo é obrigatório para finalizar a reserva." });
+    }
+    if (!cleanDoc || cleanDoc.length !== 11) {
+      return res.status(400).json({ error: "CPF válido com 11 dígitos é obrigatório para finalizar a reserva." });
+    }
+    if (!guestEmail || !String(guestEmail).includes("@") || !String(guestEmail).includes(".")) {
+      return res.status(400).json({ error: "E-mail válido é obrigatório para emissão do voucher da reserva." });
+    }
+    if (!cleanPhone || cleanPhone.length < 10) {
+      return res.status(400).json({ error: "Telefone / WhatsApp válido com DDD é obrigatório para finalizar a reserva." });
+    }
+    if (!hasDocFile) {
+      return res.status(400).json({ error: "O anexo do documento oficial com foto (RG, CNH ou Passaporte em PDF ou Imagem) é obrigatório para finalizar a reserva." });
+    }
+    if (!checkinDate || !checkoutDate) {
+      return res.status(400).json({ error: "Datas de check-in e check-out são obrigatórias." });
     }
 
     const siteCfg = db.siteConfig || DEFAULT_SITE_CONFIG;
@@ -10314,8 +10419,6 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
 
     // Salva ou recupera o hóspede no CRM com identificador único intransferível
     if (!db.guests) db.guests = [];
-    const cleanDoc = (guestDocument || "").replace(/\D/g, "");
-    const cleanPhone = (guestPhone || "").replace(/\D/g, "");
     const cleanEmail = (guestEmail || "").trim().toLowerCase();
 
     let guest = db.guests.find(g =>
@@ -15194,14 +15297,26 @@ const handleUpdateGuest = async (req, res) => {
     }
   }
 
-  // Sincroniza docPhotoUrl com as reservas ativas do hóspede
+  // Sincroniza docPhotoUrl, hasMinor e isCamposResident com as reservas do hóspede
   if (guest.docPhotoUrl) {
     const cleanDoc = (guest.document || guest.documentNumber || "").replace(/\D/g, "");
     (db.reservations || []).forEach(r => {
       const resDoc = (r.guestDocument || r.document || "").replace(/\D/g, "");
       if ((cleanDoc && resDoc === cleanDoc) || r.guestId === guest.id) {
-        if (!r.docPhotoUrl) r.docPhotoUrl = guest.docPhotoUrl;
-        if (r.guests?.[0] && !r.guests[0].docPhotoUrl) r.guests[0].docPhotoUrl = guest.docPhotoUrl;
+        if (!r.docPhotoUrl || req.body.docPhotoBase64 || req.body.docPhotoUrl) {
+          r.docPhotoUrl = guest.docPhotoUrl;
+        }
+        if (r.guests?.[0] && (!r.guests[0].docPhotoUrl || req.body.docPhotoBase64 || req.body.docPhotoUrl)) {
+          r.guests[0].docPhotoUrl = guest.docPhotoUrl;
+        }
+        if (guest.hasMinor !== undefined) r.hasMinor = Boolean(guest.hasMinor);
+        if (guest.isCamposResident !== undefined) {
+          r.isCamposResident = Boolean(guest.isCamposResident);
+          if (guest.isCamposResident) {
+            r.riskAttentionAlert = true;
+            r.riskAttentionReason = guest.riskAttentionReason || "Radar Operacional: Hóspede com documento ou endereço de Campos dos Goytacazes/RJ";
+          }
+        }
       }
     });
   }

@@ -167,13 +167,17 @@ export function BookingFunnelModal({
             fileBase64: base64String,
             fileName: file.name,
             providedName: guestName,
-            providedCpf: guestDocument
+            providedCpf: guestDocument,
+            providedCity: guestCity,
+            providedAddress: guestAddress
           })
         })
         if (res.ok) {
           const data = await res.json()
           setAiInspectionResult(data)
-          if (data.isLegible === false) {
+          if (data.isOfficialDocument === false) {
+            setDocInspectionError("O arquivo enviado não foi identificado como um documento oficial de identificação com foto (RG, CNH, Passaporte). Por favor, anexe seu documento oficial.")
+          } else if (data.isLegible === false) {
             setDocInspectionError(data.legibilityReason || "Documento ilegível. Por favor, tire outra foto mais nítida ou anexe o PDF oficial.")
           } else if (data.isMinor) {
             setShowMinorNoticeModal(true)
@@ -562,6 +566,10 @@ export function BookingFunnelModal({
       }
       if (isInspectingDoc) {
         alert("Aguarde a análise do documento oficial por Inteligência Artificial...")
+        return
+      }
+      if (aiInspectionResult && aiInspectionResult.isOfficialDocument === false) {
+        alert("O arquivo anexado não foi reconhecido como documento oficial de identificação com foto. Por favor, envie foto ou PDF de um documento oficial (RG, CNH ou Passaporte).")
         return
       }
       if (aiInspectionResult && aiInspectionResult.isLegible === false) {
@@ -1516,6 +1524,20 @@ export function BookingFunnelModal({
                         <span className="font-bold block">Documento Aprovado pela IA</span>
                         <p className="text-[11px] text-emerald-700 dark:text-emerald-300">
                           {aiInspectionResult.summary || "Documento oficial legível e dados validados para o check-in."}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {!isInspectingDoc && !docInspectionError && aiInspectionResult && (aiInspectionResult.nameMatches === false || aiInspectionResult.cpfMatches === false) && (
+                    <div className="p-2.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl flex items-start gap-2 text-xs text-amber-800 dark:text-amber-200">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-bold block">Atenção: Conferência de Titularidade</span>
+                        <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                          {aiInspectionResult.nameMatches === false 
+                            ? "O nome extraído do documento parece divergir do titular informado. A equipe da recepção fará a conferência na portaria." 
+                            : "O CPF constante no documento parece divergir do informado. A equipe da portaria realizará a conferência."}
                         </p>
                       </div>
                     </div>
