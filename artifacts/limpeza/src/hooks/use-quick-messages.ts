@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { format, parseISO, differenceInDays } from "date-fns"
 import { useToast } from "@/hooks/use-toast"
+import { getCheckinUrl } from "@/lib/checkin-url"
 
 export interface ButtonAction {
   id: string
@@ -365,7 +366,7 @@ export function renderQuickMessage(
   const statusConfirmacao = resItem.status === "pre_reserva" ? "Pré-Reserva" : "Confirmada"
 
   const linkPortal = `${origin}/minha-reserva/${resCode}`
-  const linkCheckin = `${origin}/pre-checkin/${resCode}`
+  const linkCheckin = getCheckinUrl(resItem, 1, origin)
   const linkCafe = `${origin}/minha-reserva/${resCode}/cafe`
   const linkCheckout = `${origin}/checkout/${resCode}`
   const linkMaps = "https://share.google/LHu3541d5lhkdvbL2"

@@ -1,24 +1,25 @@
-## 2026-09-30T22:09:00Z
-You are Challenger 1 for Milestone 1 (Backend Data & API).
-Your working directory is: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m1_1
+## 2026-10-07T16:34:37Z
 
-You MUST read:
-1. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-2. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_1\PROJECT.md
-3. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md
+You are teamwork_preview_challenger (Challenger M1_1).
+Your working directory: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/challenger_m1_1
+Parent conversation ID: 0a1ba31b-b6bc-466b-8394-2ba72ae85fb5
 
-Your mission:
-Empirically challenge the Milestone 1 backend endpoints and logic with adversarial edge cases and boundary stress tests.
-Write and run independent test scripts (e.g. in tests/ or temporary test scripts) that stress-test:
-- Max simultaneous flats limits enforcement when concurrent/multiple attempts happen.
-- Max flats per day limits across day boundaries / midnight transitions / different dates.
-- Unauthorized access attempts to admin endpoints.
-- Invalid token formats, non-existent tokens, injection payloads.
-- Starting a flat when unverified vs verified worker.
-- Finishing a clean flat without needsCleaning vs with needsCleaning.
-- Finishing with requirePhotos=true with empty photos vs valid photos.
+MANDATORY: Read the authoritative request at:
+c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/ORIGINAL_REQUEST.md (specifically the latest entry from 2026-10-07T15:33:29Z).
 
-Output:
-Write your findings and test execution logs to c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m1_1\handoff.md.
-State your clear verdict: APPROVE or REQUEST_CHANGES.
-Send a message with your verdict and empirical test results.
+Read:
+- Project Plan: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/orchestrator_2/PROJECT.md
+- Worker M1 handoff: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/worker_m1_backend_2/handoff.md
+
+YOUR MISSION:
+Empirically stress-test and challenge Milestone 1:
+1. Write and run stress/adversarial test scripts testing:
+   - Provider toggling: 'proprio' -> 'gov_fnrh' -> invalid ('xyz') -> 'proprio'.
+   - SERPRO API simulation: simulated HTTP 500, network error, 401 unauthorized.
+   - Timeout condition: simulate SERPRO hanging for > 5000ms. Verify `getCheckinUrl` aborts and triggers immediate fallback returning internal URL within ~5s without throwing.
+   - Verify audit log entry `FNRH_SERPRO_FALLBACK` is appended.
+   - Verify reception alert notification is created.
+   - Check multi-guest URL resolution (`guestIndex = 2`).
+2. Document all results and give your verdict: APPROVE or REQUEST_CHANGES.
+3. Write your report and `handoff.md` in your working directory.
+4. Send a message to parent (0a1ba31b-b6bc-466b-8394-2ba72ae85fb5) with your findings and verdict.

@@ -7,7 +7,7 @@ import {
   useGetMe,
   getGetSettingsQueryKey
 } from "@workspace/api-client-react"
-import { useQueryClient } from "@tanstack/react-query"
+import { useQueryClient, useQuery } from "@tanstack/react-query"
 import { Shell } from "@/components/layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -24,8 +24,9 @@ import { Switch } from "@/components/ui/switch"
 import { 
   RefreshCw, Check, Users, Key, ShieldCheck, UserPlus, AlertCircle, Cloud, 
   HardDrive, Zap, Sparkles, Database, Lock, Trash2, Edit2, Edit3, CreditCard,
-  Smartphone, ChevronRight, Mail, Send, Phone
+  Smartphone, ChevronRight, Mail, Send, Phone, Building2, CheckCircle2, AlertTriangle, ExternalLink
 } from "lucide-react"
+import { cn } from "@/lib/utils"
 
 import { AccessDenied } from "@/components/access-denied"
 
@@ -37,6 +38,48 @@ export default function SystemSettings() {
 
   const [saved, setSaved] = useState(false)
   const [newShareUrl, setNewShareUrl] = useState("")
+
+  // SERPRO FNRH Provider & Health Status
+  const [togglingProvider, setTogglingProvider] = useState(false)
+  const { data: serproStatus, isLoading: loadingSerpro, isFetching: fetchingSerpro, refetch: refetchSerpro } = useQuery({
+    queryKey: ["/api/fnrh-serpro/status"],
+    queryFn: async () => {
+      const res = await fetch("/api/fnrh-serpro/status")
+      if (!res.ok) {
+        try {
+          return await res.json()
+        } catch {
+          return { ok: false, status: "internal_error", error: "Falha de comunicação" }
+        }
+      }
+      return res.json()
+    },
+    refetchInterval: 30000,
+    staleTime: 10000
+  })
+
+  const currentCheckinProvider = (settings as any)?.checkinProvider || "proprio"
+  const isGovActive = currentCheckinProvider === "gov_fnrh"
+
+  const handleToggleCheckinProvider = async (nextIsGov: boolean) => {
+    const nextProvider = nextIsGov ? "gov_fnrh" : "proprio"
+    setTogglingProvider(true)
+    try {
+      await updateSettings.mutateAsync({
+        data: {
+          checkinProvider: nextProvider
+        } as any
+      })
+      queryClient.invalidateQueries({ queryKey: getGetSettingsQueryKey() })
+      queryClient.invalidateQueries({ queryKey: ["/api/pms/reservations"] })
+      queryClient.invalidateQueries({ queryKey: ["/api/fnrh-serpro/status"] })
+    } catch (err: any) {
+      console.error("Erro ao alterar provedor de check-in:", err)
+      alert(`Erro ao alterar provedor: ${err.message || 'Erro desconhecido'}`)
+    } finally {
+      setTogglingProvider(false)
+    }
+  }
 
   const updateSettings = useUpdateSettings({
     mutation: {
@@ -565,6 +608,189 @@ export default function SystemSettings() {
             </div>
           </div>
         </div>
+
+        {/* ── HERO CARD: PROVEDOR GLOBAL DE CHECK-IN & FNRH DIGITAL ── */}
+        <Card className="rounded-3xl border-2 border-emerald-500/20 bg-gradient-to-br from-card via-card to-emerald-500/5 shadow-md overflow-hidden">
+          <CardHeader className="p-6 border-b border-border/60 pb-5">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div className="space-y-1.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="w-9 h-9 rounded-xl bg-emerald-600/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold">
+                    <ShieldCheck className="w-5 h-5" />
+                  </div>
+                  <CardTitle className="text-base sm:text-lg font-black text-foreground">
+                    Provedor Global de Check-in & FNRH Digital
+                  </CardTitle>
+                  <span className="text-xs text-muted-foreground font-semibold">
+                    (Ministério do Turismo / SERPRO v2.4.2)
+                  </span>
+                </div>
+                <CardDescription className="text-xs text-muted-foreground max-w-3xl leading-relaxed">
+                  Defina o fluxo oficial de recepção dos hóspedes. A alternância atualiza dinamicamente as mensagens de WhatsApp, e-mails e botões do sistema sem necessidade de reinicialização.
+                </CardDescription>
+              </div>
+
+              {/* Status Badges Header */}
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                {/* Active Mode Badge */}
+                {isGovActive ? (
+                  <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-1.5 px-3.5 gap-1.5 shadow-xs">
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                    <span>✓ Check-in Gov.br (FNRH) Ativo</span>
+                  </Badge>
+                ) : (
+                  <Badge className="bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs py-1.5 px-3.5 gap-1.5 shadow-xs">
+                    <Building2 className="w-3.5 h-3.5" />
+                    <span>✓ Check-in Próprio (CorpFlats) Ativo</span>
+                  </Badge>
+                )}
+
+                {/* Connection Health Badge */}
+                {loadingSerpro ? (
+                  <Badge variant="outline" className="text-xs py-1.5 px-3 gap-1.5 bg-muted/50 text-muted-foreground border-border">
+                    <RefreshCw className="w-3 h-3 animate-spin" />
+                    <span>Consultando SERPRO...</span>
+                  </Badge>
+                ) : serproStatus?.ok ? (
+                  <Badge variant="outline" className="text-xs py-1.5 px-3 gap-1.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 font-bold">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                    <span>Operacional ({serproStatus.latencyMs || 0}ms • {serproStatus.env || "homologacao"})</span>
+                  </Badge>
+                ) : (serproStatus?.status === "unreachable" || serproStatus?.error?.includes("ETIMEDOUT") || serproStatus?.error?.includes("timeout")) ? (
+                  <Badge variant="outline" className="text-xs py-1.5 px-3 gap-1.5 bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/40 font-bold animate-pulse">
+                    <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+                    <span>Em Contingência (Fallback Automático Ativo)</span>
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="text-xs py-1.5 px-3 gap-1.5 bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/40 font-bold">
+                    <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Instável ({serproStatus?.message || serproStatus?.error || "Atenção"})</span>
+                  </Badge>
+                )}
+
+                {/* Refresh Health Button */}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => refetchSerpro()}
+                  disabled={fetchingSerpro}
+                  className="h-8 w-8 p-0 rounded-xl hover:bg-muted"
+                  title="Testar Conexão SERPRO"
+                >
+                  <RefreshCw className={cn("w-3.5 h-3.5 text-muted-foreground", fetchingSerpro && "animate-spin text-primary")} />
+                </Button>
+              </div>
+            </div>
+          </CardHeader>
+
+          <CardContent className="p-6 space-y-6">
+            {/* Toggle Switch Bar */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 rounded-2xl bg-muted/40 border border-border/60">
+              <div className="flex items-center gap-3">
+                <span 
+                  className={cn("text-xs sm:text-sm font-bold transition-colors cursor-pointer select-none", !isGovActive ? "text-sky-600 dark:text-sky-400" : "text-muted-foreground hover:text-foreground")}
+                  onClick={() => !togglingProvider && handleToggleCheckinProvider(false)}
+                >
+                  Check-in Próprio (CorpFlats)
+                </span>
+                <Switch
+                  checked={isGovActive}
+                  disabled={togglingProvider || updateSettings.isPending}
+                  onCheckedChange={handleToggleCheckinProvider}
+                  className="data-[state=checked]:bg-emerald-600"
+                  aria-label="Alternar Provedor de Check-in"
+                />
+                <span 
+                  className={cn("text-xs sm:text-sm font-bold transition-colors cursor-pointer select-none", isGovActive ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground hover:text-foreground")}
+                  onClick={() => !togglingProvider && handleToggleCheckinProvider(true)}
+                >
+                  Check-in Gov.br (FNRH Digital - Ministério do Turismo)
+                </span>
+              </div>
+
+              {togglingProvider && (
+                <div className="flex items-center gap-2 text-xs font-semibold text-primary animate-pulse">
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <span>Salvando alteração em tempo real...</span>
+                </div>
+              )}
+            </div>
+
+            {/* Two Selectable Provider Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Opção 1: Check-in Próprio */}
+              <div
+                onClick={() => (!togglingProvider && isGovActive) && handleToggleCheckinProvider(false)}
+                className={cn(
+                  "relative p-5 rounded-2xl border-2 transition-all cursor-pointer flex flex-col justify-between space-y-3",
+                  !isGovActive
+                    ? "border-sky-500 bg-sky-50/40 dark:bg-sky-950/20 shadow-xs"
+                    : "border-border/70 hover:border-border bg-card/60 opacity-80 hover:opacity-100"
+                )}
+              >
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center font-bold", !isGovActive ? "bg-sky-600 text-white" : "bg-muted text-muted-foreground")}>
+                        <Building2 className="w-4 h-4" />
+                      </div>
+                      <h4 className="text-sm font-black text-foreground">Check-in Próprio (CorpFlats)</h4>
+                    </div>
+                    {!isGovActive ? (
+                      <Badge className="bg-sky-600 text-white font-bold text-[10px]">Ativo no Sistema</Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-[10px] text-muted-foreground">Inativo</Badge>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Experiência personalizada e integrada: formulário com fotos de RG/CNH dos hóspedes, assinatura touch na tela, validação de integridade SHA-256 e gravação de dossiê em PDF no Cloudflare R2.
+                  </p>
+                </div>
+
+                <div className="text-[11px] font-semibold text-sky-700 dark:text-sky-300 pt-1 border-t border-sky-200/40 dark:border-sky-800/40 flex items-center justify-between">
+                  <span>URL gerada: /pre-checkin/:codigo</span>
+                  {!isGovActive && <span className="font-bold">✓ Selecionado</span>}
+                </div>
+              </div>
+
+              {/* Opção 2: Check-in Gov.br FNRH */}
+              <div
+                onClick={() => (!togglingProvider && !isGovActive) && handleToggleCheckinProvider(true)}
+                className={cn(
+                  "relative p-5 rounded-2xl border-2 transition-all cursor-pointer flex flex-col justify-between space-y-3",
+                  isGovActive
+                    ? "border-emerald-500 bg-emerald-50/40 dark:bg-emerald-950/20 shadow-xs"
+                    : "border-border/70 hover:border-border bg-card/60 opacity-80 hover:opacity-100"
+                )}
+              >
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center font-bold", isGovActive ? "bg-emerald-600 text-white" : "bg-muted text-muted-foreground")}>
+                        <ShieldCheck className="w-4 h-4" />
+                      </div>
+                      <h4 className="text-sm font-black text-foreground">Check-in Gov.br (FNRH Digital Oficial)</h4>
+                    </div>
+                    {isGovActive ? (
+                      <Badge className="bg-emerald-600 text-white font-bold text-[10px]">Ativo no Sistema</Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-[10px] text-muted-foreground">Inativo</Badge>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Integração com a API SERPRO v2.4.2 do Ministério do Turismo. Cadastra reservas automaticamente e gera o link oficial com autenticação Gov.br para os hóspedes, com contingência automática inteligente.
+                  </p>
+                </div>
+
+                <div className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 pt-1 border-t border-emerald-200/40 dark:border-emerald-800/40 flex items-center justify-between">
+                  <span>URL gerada: fnrh.turismo.gov.br</span>
+                  {isGovActive && <span className="font-bold">✓ Selecionado</span>}
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* ── SEÇÃO 1: NUVEM E SINCRONIZAÇÃO ── */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-4 gap-5">

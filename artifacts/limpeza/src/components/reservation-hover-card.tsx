@@ -10,6 +10,8 @@ import {
 import { format, parseISO, differenceInDays } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage, getReservationRecipients } from "@/hooks/use-quick-messages"
+import { useGetSettings } from "@workspace/api-client-react"
+import { getCheckinUrl } from "@/lib/checkin-url"
 
 interface ReservationHoverCardProps {
   resItem: any
@@ -66,8 +68,10 @@ export function ReservationHoverCard({
   children
 }: ReservationHoverCardProps) {
   const { toast } = useToast()
+  const { data: settings } = useGetSettings()
   const [isOpen, setIsOpen] = useState(false)
   const [copiedLink, setCopiedLink] = useState(false)
+  const [copiedCheckinLink, setCopiedCheckinLink] = useState(false)
 
   // Mensagens Rápidas (Manuais) e Janelinha Flutuante de Prévia
   const { activeQuickMessages, dispatchQuickMessage } = useQuickMessages()
@@ -193,7 +197,7 @@ export function ReservationHoverCard({
   const portalUrl = `${originUrl}/minha-reserva/${resItem.code || resItem.id}`
   const breakfastUrl = `${originUrl}/minha-reserva/${resItem.code || resItem.id}/cafe`
   const checkoutUrl = `${originUrl}/checkout/${resItem.code || resItem.id}`
-  const preCheckinUrl = `${originUrl}/pre-checkin/${resItem.code || resItem.id}`
+  const preCheckinUrl = getCheckinUrl(resItem, 1, originUrl, settings)
 
   const waMessage = `Olá ${guestName}, tudo bem? Falamos da CorpFlats a respeito da sua estadia no Flat ${flatNumber} (${checkinStr} a ${checkoutStr}). Como podemos ajudar?`
   const waLink = finalWaPhone ? `https://wa.me/${finalWaPhone}?text=${encodeURIComponent(waMessage)}` : null
@@ -207,6 +211,17 @@ export function ReservationHoverCard({
       description: "Link da página do hóspede copiado para a área de transferência."
     })
     setTimeout(() => setCopiedLink(false), 2000)
+  }
+
+  const handleCopyCheckinLink = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    navigator.clipboard.writeText(preCheckinUrl)
+    setCopiedCheckinLink(true)
+    toast({
+      title: "Link de Check-in copiado! 📋",
+      description: "Link para check-in copiado para a área de transferência."
+    })
+    setTimeout(() => setCopiedCheckinLink(false), 2000)
   }
 
   return (
@@ -778,16 +793,32 @@ export function ReservationHoverCard({
               </a>
             )}
 
-            <a
-              href={preCheckinUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="h-7 px-2 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/80 hover:bg-indigo-100 dark:bg-indigo-950/40 text-indigo-800 dark:text-indigo-300 font-bold text-[11px] inline-flex items-center gap-1 transition-colors shrink-0 shadow-2xs"
-              title="Abrir Link de Pré-Check-in Digital"
-            >
-              <FileText className="w-3 h-3 text-indigo-600" />
-              <span>Check-in</span>
-            </a>
+            {/* Grupo Check-in + Copiar Link */}
+            <div className="inline-flex items-center rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/80 dark:bg-indigo-950/40 overflow-hidden shadow-2xs">
+              <a
+                href={preCheckinUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 h-7 px-2 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-800 dark:text-indigo-300 font-bold text-[11px] transition-colors"
+                title="Abrir Link de Pré-Check-in Digital"
+              >
+                <FileText className="w-3 h-3 text-indigo-600" />
+                <span>Check-in</span>
+              </a>
+              <div className="w-[1px] h-4 bg-indigo-200 dark:bg-indigo-800" />
+              <button
+                type="button"
+                onClick={handleCopyCheckinLink}
+                className="h-7 px-1.5 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 transition-colors"
+                title="Copiar Link de Check-in"
+              >
+                {copiedCheckinLink ? (
+                  <Check className="w-3 h-3 text-emerald-600" />
+                ) : (
+                  <Copy className="w-3 h-3" />
+                )}
+              </button>
+            </div>
 
             <a
               href={checkoutUrl}

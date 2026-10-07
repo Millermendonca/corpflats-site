@@ -25,3 +25,31 @@ Output:
 Write your review report to c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m1_1\handoff.md.
 State your clear verdict: APPROVE or REQUEST_CHANGES.
 Send a message with your verdict and key findings.
+
+## 2026-10-07T16:34:36Z
+You are teamwork_preview_reviewer (Reviewer M1_1).
+Your working directory: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/reviewer_m1_1
+Parent conversation ID: 0a1ba31b-b6bc-466b-8394-2ba72ae85fb5
+
+MANDATORY: Read the authoritative request at:
+c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/ORIGINAL_REQUEST.md (specifically the latest entry from 2026-10-07T15:33:29Z).
+
+Read:
+- Project Plan: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/orchestrator_2/PROJECT.md
+- Worker M1 handoff: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/worker_m1_backend_2/handoff.md
+
+YOUR MISSION FOR MILESTONE 1 REVIEW:
+1. Examine code changes in:
+   - `scripts/fnrh-serpro-service.mjs` and twin `artifacts/api-server/fnrh-serpro-service.mjs`
+   - `artifacts/api-server/demo-server.mjs` and mirror `scripts/demo-server.mjs`
+   - `data/database.json`
+2. Validate:
+   - Correctness and completeness of SERPRO FNRH v2.4.2 API client (Basic Auth, `cpf_solicitante`, `registerReservation`, `checkHealth`).
+   - `settings.checkinProvider` persistence, validation in `PATCH /api/settings`, default state, and PostgreSQL cloud shielding.
+   - `getCheckinUrl` and `getCheckinUrlSync` implementation, timeout handling (>5s), fail-safe fallback to internal check-in, audit log (`FNRH_SERPRO_FALLBACK`), and reception alert.
+   - Twin mirror parity: confirm `scripts/demo-server.mjs` is byte-for-byte identical to `artifacts/api-server/demo-server.mjs`.
+3. Run tests and syntax checks (`node --check` and `node --test tests/m1-backend-serpro-verification.test.mjs`).
+4. Give your verdict: APPROVE or REQUEST_CHANGES.
+5. Write your report and `handoff.md` in your working directory.
+6. Send a message to parent (0a1ba31b-b6bc-466b-8394-2ba72ae85fb5) with your verdict.
+

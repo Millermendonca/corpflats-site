@@ -3,6 +3,45 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { fileURLToPath } from "url";
+import {
+  getCheckinUrlSync as getSerproCheckinUrlSync,
+  getCheckinUrl as getSerproCheckinUrl
+} from "./fnrh-serpro-service.mjs";
+
+/**
+ * Resolução dinâmica e unificada de URL de check-in para disparos de e-mail.
+ */
+export function getCheckinUrlSync(reservation, guestIndex = 1, baseUrl = "", dbInstance = null) {
+  if (typeof globalThis.getCheckinUrlSync === "function") {
+    return globalThis.getCheckinUrlSync(reservation, guestIndex, baseUrl, dbInstance);
+  }
+  if (typeof getSerproCheckinUrlSync === "function") {
+    return getSerproCheckinUrlSync(reservation, guestIndex, baseUrl, dbInstance);
+  }
+  const activeDb = dbInstance || (typeof globalThis.db !== "undefined" ? globalThis.db : null);
+  const activeSettings = activeDb?.settings || activeDb || {};
+  const currentProvider = activeSettings.checkinProvider || "proprio";
+  const hostBase = (baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com").replace(/\/$/, "");
+  const safeGuestIndex = Number(guestIndex) || 1;
+  const resCode = reservation?.code || reservation?.id || "";
+  const internalCheckinUrl = `${hostBase}/pre-checkin/${resCode}?guest=${safeGuestIndex}`;
+
+  if (currentProvider === "gov_fnrh" && (reservation?.serproPrecheckinUrl || reservation?.link_precheckin)) {
+    return reservation.serproPrecheckinUrl || reservation.link_precheckin;
+  }
+
+  return internalCheckinUrl;
+}
+
+export async function getCheckinUrl(reservation, guestIndex = 1, baseUrl = "", dbInstance = null) {
+  if (typeof globalThis.getCheckinUrl === "function") {
+    return globalThis.getCheckinUrl(reservation, guestIndex, baseUrl, dbInstance);
+  }
+  if (typeof getSerproCheckinUrl === "function") {
+    return getSerproCheckinUrl(reservation, guestIndex, baseUrl, dbInstance);
+  }
+  return getCheckinUrlSync(reservation, guestIndex, baseUrl, dbInstance);
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -235,7 +274,7 @@ function wrapEmailTemplate({ title, badge, contentHtml }) {
 /**
  * Gatilho A: Template de Aviso de Check-in Concluído à Recepção/Portaria
  */
-export function renderCheckinConfirmedEmail({ reservation, flat, settings }) {
+export function renderCheckinConfirmedEmail({ reservation, flat, settings, baseUrl = "", db = null }) {
   const rawFlat = flat?.number || reservation?.flatNumber || "Não informado";
   const cleanFlat = String(rawFlat).replace(/^flat\s*/i, "").trim();
   const flatDisplay = cleanFlat ? `Flat ${cleanFlat}` : "Flat Não informado";
@@ -244,6 +283,10 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings }) {
   const guestName = reservation?.guestName || "Hóspede Titular";
   const checkinDateBr = formatDateBr(reservation?.checkinDate);
   const checkoutDateBr = formatDateBr(reservation?.checkoutDate);
+
+  const hostBase = baseUrl || settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com";
+  const checkinUrl = getCheckinUrlSync(reservation, 1, hostBase, db || settings);
+  const checkinUrlGuest2 = getCheckinUrlSync(reservation, 2, hostBase, db || settings);
 
   const subject = `${flatDisplay} - ${guestName} (${checkinDateBr} a ${checkoutDateBr})`;
 
@@ -314,6 +357,11 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings }) {
         <p style="color: #78350f; font-size: 12px; margin: 4px 0 0 0; line-height: 1.4;">
           <strong>Apenas o 1º hóspede (${guestName}) que preencheu a ficha digital está LIBERADO para check-in.</strong> O segundo hóspede AINDA NÃO ESTÁ LIBERADO; estamos aguardando o preenchimento digital de sua ficha para autorização de acesso ao flat.
         </p>
+        <div style="margin-top: 8px;">
+          <a href="${checkinUrlGuest2}" style="color: #b45309; font-weight: 700; font-size: 12px; text-decoration: underline;">
+            🔗 Link de Check-in para o 2º Hóspede
+          </a>
+        </div>
       </div>
     ` : ""}
 
@@ -357,6 +405,7 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings }) {
         <tr><td class="label">Edifício:</td><td class="val">${buildingName}</td></tr>
         <tr><td class="label">Apartamento:</td><td class="val" style="font-size: 15px; color: #d97706;">Flat ${flatNumber}</td></tr>
         <tr><td class="label">Código da Reserva:</td><td class="val" style="font-family: monospace;">#${reservation?.code || reservation?.id}</td></tr>
+        <tr><td class="label">Check-in Digital:</td><td class="val"><a href="${checkinUrl}" style="color: #059669; font-weight: 700; text-decoration: none;">Abrir Ficha de Check-in</a></td></tr>
       </table>
     </div>
 
@@ -390,16 +439,19 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings }) {
   const badge = `<span class="badge badge-checkin">✓ Check-in Confirmado</span>`;
   const bodyHtml = wrapEmailTemplate({ title: subject, badge, contentHtml });
 
-  return { subject, bodyHtml, html: bodyHtml };
+  return { subject, bodyHtml, html: bodyHtml, checkinUrl };
 }
 
 /**
  * Gatilho B: Template de Alteração de Reserva à Recepção/Portaria
  */
-export function renderReservationUpdateEmail({ reservation, flat, changes = [], changesSummary = [], actionType, settings }) {
+export function renderReservationUpdateEmail({ reservation, flat, changes = [], changesSummary = [], actionType, settings, baseUrl = "", db = null }) {
   const flatNumber = flat?.number || reservation?.flatNumber || "Não informado";
   const buildingName = flat?.buildingName || flat?.building || settings?.buildingName || "Edifício Soho Residence Service";
   const guestName = reservation?.guestName || "Hóspede Titular";
+
+  const hostBase = baseUrl || settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com";
+  const checkinUrl = getCheckinUrlSync(reservation, 1, hostBase, db || settings);
   
   const allChanges = [...changes, ...changesSummary];
   const isCancelled = actionType === "cancelled" || 
@@ -455,6 +507,7 @@ export function renderReservationUpdateEmail({ reservation, flat, changes = [], 
         <tr><td class="label">Entrada (Check-in):</td><td class="val">${formatDateBr(reservation?.checkinDate)}</td></tr>
         <tr><td class="label">Saída (Check-out):</td><td class="val">${formatDateBr(reservation?.checkoutDate)}</td></tr>
         <tr><td class="label">Status Atual:</td><td class="val" style="text-transform: uppercase; color: ${isCancelled ? '#dc2626' : '#059669'}; font-weight: 800;">${reservation?.status || "Confirmada"}</td></tr>
+        <tr><td class="label">Check-in Digital:</td><td class="val"><a href="${checkinUrl}" style="color: #059669; font-weight: 700; text-decoration: none;">Acessar Ficha de Check-in</a></td></tr>
       </table>
     </div>
   `;
@@ -464,7 +517,7 @@ export function renderReservationUpdateEmail({ reservation, flat, changes = [], 
     : `<span class="badge badge-update">⚡ Reserva Alterada</span>`;
 
   const bodyHtml = wrapEmailTemplate({ title: subject, badge, contentHtml });
-  return { subject, bodyHtml, html: bodyHtml };
+  return { subject, bodyHtml, html: bodyHtml, checkinUrl };
 }
 
 /**
@@ -590,6 +643,216 @@ export function renderGarageAuthorizationEmail({ reservation, flat, vehicle, set
 
   return { subject, bodyHtml, html: bodyHtml };
 }
+
+/**
+ * Gatilho D: Template de Confirmação de Reserva ao Hóspede com Link Dinâmico de Check-in
+ */
+export function renderReservationConfirmationEmail({ reservation, flat, settings, baseUrl = "", db = null }) {
+  const rawFlat = flat?.number || reservation?.flatNumber || "Não informado";
+  const cleanFlat = String(rawFlat).replace(/^flat\s*/i, "").trim();
+  const flatDisplay = cleanFlat ? `Flat ${cleanFlat}` : "Flat Não informado";
+  const buildingName = flat?.buildingName || flat?.building || settings?.buildingName || "Edifício Soho Residence Service";
+  const guestName = reservation?.guestName || "Hóspede Titular";
+  const checkinDateBr = formatDateBr(reservation?.checkinDate);
+  const checkoutDateBr = formatDateBr(reservation?.checkoutDate);
+  const checkinTime = settings?.checkinTime || reservation?.checkinTime || "14:00";
+  const checkoutTime = settings?.checkoutTime || reservation?.checkoutTime || "12:00";
+  const resCode = reservation?.code || reservation?.id || "-";
+  const hostBase = baseUrl || settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com";
+
+  const checkinUrl = getCheckinUrlSync(reservation, 1, hostBase, db || settings);
+  const isGov = checkinUrl.includes("turismo.gov.br");
+  const buttonLabel = isGov ? "🇧🇷 Fazer Check-in Oficial Gov.br (FNRH)" : "📝 Realizar Pré-Check-in Digital";
+
+  const subject = `[CONFIRMAÇÃO DE RESERVA] ${flatDisplay} - ${guestName} (${checkinDateBr} a ${checkoutDateBr})`;
+
+  const contentHtml = `
+    <div style="margin-bottom: 20px;">
+      <h2 style="font-size: 18px; font-weight: 800; color: #0f172a; margin: 0 0 6px 0;">Sua Reserva está Confirmada! 🎉</h2>
+      <p style="font-size: 13px; color: #475569; margin: 0; line-height: 1.5;">
+        Olá, <strong>${guestName}</strong>! É uma satisfação receber você no <strong>${buildingName}</strong>. Abaixo estão os detalhes da sua estadia:
+      </p>
+    </div>
+
+    <!-- Chamada para Pré Check-in Digital Dinâmico -->
+    <div style="background: linear-gradient(135deg, #064e3b 0%, #047857 100%); border-radius: 12px; padding: 20px; margin-bottom: 22px; color: #ffffff; text-align: center; border: 1px solid #059669; box-shadow: 0 4px 12px rgba(4,120,87,0.15);">
+      <div style="font-size: 11px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: #a7f3d0; margin-bottom: 6px;">Agilidade na Portaria</div>
+      <div style="font-size: 16px; font-weight: 800; color: #ffffff; margin-bottom: 8px;">Realize seu Check-in Digital Antecipado</div>
+      <p style="font-size: 12px; color: #d1fae5; margin: 0 0 14px 0; line-height: 1.4;">
+        Para liberar seu acesso na portaria 24h sem filas, preencha os dados dos hóspedes pelo link seguro abaixo:
+      </p>
+      <a href="${checkinUrl}" style="display: inline-block; background: #ffffff; color: #065f46 !important; font-weight: 800; font-size: 14px; padding: 11px 24px; border-radius: 8px; text-decoration: none; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
+        ${buttonLabel}
+      </a>
+      <div style="font-size: 11px; color: #a7f3d0; margin-top: 10px; word-break: break-all;">
+        Ou copie o link: <span style="text-decoration: underline;">${checkinUrl}</span>
+      </div>
+    </div>
+
+    <div class="section-title">🏢 Identificação da Unidade</div>
+    <div class="info-card">
+      <table class="info-table">
+        <tr><td class="label">Edifício:</td><td class="val">${buildingName}</td></tr>
+        <tr><td class="label">Acomodação:</td><td class="val" style="font-size: 15px; color: #d97706; font-weight: 800;">${flatDisplay}</td></tr>
+        <tr><td class="label">Código da Reserva:</td><td class="val" style="font-family: monospace;">#${resCode}</td></tr>
+      </table>
+    </div>
+
+    <div class="section-title">📅 Período da Hospedagem</div>
+    <div class="info-card">
+      <table class="info-table">
+        <tr><td class="label">Entrada (Check-in):</td><td class="val">${checkinDateBr} (a partir das ${checkinTime})</td></tr>
+        <tr><td class="label">Saída (Check-out):</td><td class="val">${checkoutDateBr} (até às ${checkoutTime})</td></tr>
+      </table>
+    </div>
+  `;
+
+  const badge = `<span class="badge badge-checkin">✓ Reserva Confirmada</span>`;
+  const bodyHtml = wrapEmailTemplate({ title: subject, badge, contentHtml });
+  return { subject, bodyHtml, html: bodyHtml, checkinUrl };
+}
+export const renderConfirmationEmail = renderReservationConfirmationEmail;
+
+/**
+ * Gatilho E: Template de Lembrete de Pré-Check-in Pendente com Link Dinâmico
+ */
+export function renderPreCheckinReminderEmail({ reservation, flat, settings, baseUrl = "", db = null }) {
+  const rawFlat = flat?.number || reservation?.flatNumber || "Não informado";
+  const cleanFlat = String(rawFlat).replace(/^flat\s*/i, "").trim();
+  const flatDisplay = cleanFlat ? `Flat ${cleanFlat}` : "Flat Não informado";
+  const buildingName = flat?.buildingName || flat?.building || settings?.buildingName || "Edifício Soho Residence Service";
+  const guestName = reservation?.guestName || "Hóspede Titular";
+  const checkinDateBr = formatDateBr(reservation?.checkinDate);
+  const checkinTime = settings?.checkinTime || reservation?.checkinTime || "14:00";
+  const resCode = reservation?.code || reservation?.id || "-";
+  const hostBase = baseUrl || settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com";
+
+  const checkinUrl = getCheckinUrlSync(reservation, 1, hostBase, db || settings);
+  const checkinUrlGuest2 = getCheckinUrlSync(reservation, 2, hostBase, db || settings);
+  const isGov = checkinUrl.includes("turismo.gov.br");
+  const buttonLabel = isGov ? "🇧🇷 Preencher Ficha Oficial Gov.br (FNRH)" : "📝 Preencher Pré-Check-in Digital";
+
+  const isMultiGuest = (Number(reservation?.guestCount || reservation?.adults || 1) > 1);
+  const firstGuestDone = Boolean(reservation?.guests?.[0]?.hasCompletedCheckin || reservation?.guests?.[0]?.status === "CHECKED_IN");
+
+  const subject = `[LEMBRETE DE CHECK-IN] ${flatDisplay} - ${guestName} (Entrada: ${checkinDateBr})`;
+
+  const contentHtml = `
+    <div style="margin-bottom: 20px;">
+      <h2 style="font-size: 18px; font-weight: 800; color: #0f172a; margin: 0 0 6px 0;">Lembrete de Pré-Check-in Digital 🏨</h2>
+      <p style="font-size: 13px; color: #475569; margin: 0; line-height: 1.5;">
+        Olá, <strong>${guestName}</strong>! Sua entrada no <strong>${flatDisplay}</strong> está próxima (${checkinDateBr} a partir das ${checkinTime}).
+      </p>
+    </div>
+
+    ${isMultiGuest && firstGuestDone ? `
+      <div style="background: #fffbeb; border: 1px solid #fde68a; border-left: 4px solid #f59e0b; border-radius: 8px; padding: 14px 16px; margin-bottom: 18px;">
+        <strong style="color: #92400e; font-size: 13px;">⚠️ Cadastro Pendente do 2º Hóspede</strong>
+        <p style="color: #78350f; font-size: 12px; margin: 4px 0 10px 0; line-height: 1.4;">
+          A ficha do titular foi recebida com sucesso! Falta apenas o preenchimento do segundo acompanhante para liberação de crachá na portaria:
+        </p>
+        <a href="${checkinUrlGuest2}" style="display: inline-block; background: #f59e0b; color: #ffffff !important; font-weight: 800; font-size: 13px; padding: 8px 18px; border-radius: 6px; text-decoration: none;">
+          Preencher Check-in do 2º Hóspede
+        </a>
+      </div>
+    ` : `
+      <div style="background: linear-gradient(135deg, #1e3a8a 0%, #1d4ed8 100%); border-radius: 12px; padding: 20px; margin-bottom: 22px; color: #ffffff; text-align: center; border: 1px solid #2563eb; box-shadow: 0 4px 12px rgba(29,78,216,0.15);">
+        <div style="font-size: 11px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: #93c5fd; margin-bottom: 6px;">Liberação Antecipada</div>
+        <div style="font-size: 16px; font-weight: 800; color: #ffffff; margin-bottom: 8px;">Sua Ficha de Check-in ainda está pendente</div>
+        <p style="font-size: 12px; color: #bfdbfe; margin: 0 0 14px 0; line-height: 1.4;">
+          Preencha antecipadamente para que a portaria autorize sua entrada sem burocracia na chegada:
+        </p>
+        <a href="${checkinUrl}" style="display: inline-block; background: #ffffff; color: #1e40af !important; font-weight: 800; font-size: 14px; padding: 11px 24px; border-radius: 8px; text-decoration: none; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
+          ${buttonLabel}
+        </a>
+        <div style="font-size: 11px; color: #93c5fd; margin-top: 10px; word-break: break-all;">
+          Ou acesse: <span style="text-decoration: underline;">${checkinUrl}</span>
+        </div>
+      </div>
+    `}
+
+    <div class="section-title">🏢 Dados da Estadia</div>
+    <div class="info-card">
+      <table class="info-table">
+        <tr><td class="label">Apartamento:</td><td class="val" style="color: #d97706; font-weight: 800;">${flatDisplay} (${buildingName})</td></tr>
+        <tr><td class="label">Código da Reserva:</td><td class="val" style="font-family: monospace;">#${resCode}</td></tr>
+        <tr><td class="label">Data de Entrada:</td><td class="val">${checkinDateBr} (a partir das ${checkinTime})</td></tr>
+      </table>
+    </div>
+  `;
+
+  const badge = `<span class="badge badge-update">⚡ Lembrete de Check-in</span>`;
+  const bodyHtml = wrapEmailTemplate({ title: subject, badge, contentHtml });
+  return { subject, bodyHtml, html: bodyHtml, checkinUrl };
+}
+export const renderReminderEmail = renderPreCheckinReminderEmail;
+
+/**
+ * Gatilho F: Template de Instruções de Acesso ao Flat com Link Dinâmico de Check-in
+ */
+export function renderAccessInstructionsEmail({ reservation, flat, settings, baseUrl = "", db = null }) {
+  const rawFlat = flat?.number || reservation?.flatNumber || "Não informado";
+  const cleanFlat = String(rawFlat).replace(/^flat\s*/i, "").trim();
+  const flatDisplay = cleanFlat ? `Flat ${cleanFlat}` : "Flat Não informado";
+  const buildingName = flat?.buildingName || flat?.building || settings?.buildingName || "Edifício Soho Residence Service";
+  const guestName = reservation?.guestName || "Hóspede Titular";
+  const checkinDateBr = formatDateBr(reservation?.checkinDate);
+  const checkinTime = settings?.checkinTime || reservation?.checkinTime || "14:00";
+  const resCode = reservation?.code || reservation?.id || "-";
+  const hostBase = baseUrl || settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com";
+
+  const checkinUrl = getCheckinUrlSync(reservation, 1, hostBase, db || settings);
+  const wifiNetwork = flat?.wifiNetwork || settings?.wifiNetwork || "CorpFlats";
+  const wifiPassword = flat?.wifiPassword || settings?.wifiPassword || "corpflats2026";
+
+  const subject = `[INSTRUÇÕES DE ACESSO] ${flatDisplay} - ${guestName} (${buildingName})`;
+
+  const contentHtml = `
+    <div style="margin-bottom: 20px;">
+      <h2 style="font-size: 18px; font-weight: 800; color: #0f172a; margin: 0 0 6px 0;">Instruções para sua Chegada e Acesso 🔑</h2>
+      <p style="font-size: 13px; color: #475569; margin: 0; line-height: 1.5;">
+        Olá, <strong>${guestName}</strong>! Seguem todas as informações necessárias para sua entrada no <strong>${flatDisplay}</strong>:
+      </p>
+    </div>
+
+    <!-- Passos de Entrada -->
+    <div class="info-card" style="background: #f8fafc; border-left: 4px solid #3b82f6;">
+      <div style="font-weight: 800; color: #1e293b; font-size: 14px; margin-bottom: 8px;">📋 Passo a Passo para Entrada:</div>
+      <ol style="margin: 0 0 0 16px; padding: 0; font-size: 13px; color: #334155; line-height: 1.6;">
+        <li>Dirija-se à <strong>portaria 24h</strong> do condomínio <strong>${buildingName}</strong>.</li>
+        <li>Identifique-se informando seu nome e o <strong>${flatDisplay}</strong>.</li>
+        <li>Certifique-se de que seu <strong>Pré-Check-in Digital</strong> está concluído no link abaixo para autorização imediata da chave.</li>
+      </ol>
+      <div style="margin-top: 14px; text-align: center;">
+        <a href="${checkinUrl}" style="display: inline-block; background: #2563eb; color: #ffffff !important; font-weight: 800; font-size: 13px; padding: 10px 22px; border-radius: 8px; text-decoration: none;">
+          📝 Acessar / Conferir Ficha de Check-in
+        </a>
+      </div>
+    </div>
+
+    <div class="section-title">📶 Conexão Wi-Fi</div>
+    <div class="info-card">
+      <table class="info-table">
+        <tr><td class="label">Rede:</td><td class="val" style="font-weight: 800; color: #0369a1;">${wifiNetwork}</td></tr>
+        <tr><td class="label">Senha:</td><td class="val" style="font-family: monospace; font-size: 14px; color: #0f172a;">${wifiPassword}</td></tr>
+      </table>
+    </div>
+
+    <div class="section-title">🏢 Detalhes da Reserva</div>
+    <div class="info-card">
+      <table class="info-table">
+        <tr><td class="label">Acomodação:</td><td class="val" style="color: #d97706; font-weight: 800;">${flatDisplay} (${buildingName})</td></tr>
+        <tr><td class="label">Código da Reserva:</td><td class="val" style="font-family: monospace;">#${resCode}</td></tr>
+        <tr><td class="label">Horário de Entrada:</td><td class="val">${checkinDateBr} a partir das ${checkinTime}</td></tr>
+      </table>
+    </div>
+  `;
+
+  const badge = `<span class="badge badge-general">🔑 Instruções de Acesso</span>`;
+  const bodyHtml = wrapEmailTemplate({ title: subject, badge, contentHtml });
+  return { subject, bodyHtml, html: bodyHtml, checkinUrl };
+}
+export const renderAccessInstructionEmail = renderAccessInstructionsEmail;
 
 /**
  * Retorna a data atual no fuso horário oficial de Brasília (America/Sao_Paulo) no formato YYYY-MM-DD.

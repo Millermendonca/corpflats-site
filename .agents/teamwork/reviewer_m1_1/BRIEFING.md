@@ -1,7 +1,7 @@
-# BRIEFING — 2026-09-30T22:13:30Z
+# BRIEFING — 2026-10-07T16:45:00Z
 
 ## Mission
-Review Milestone 1 (Backend Data & API) implementation against requirements R1, R2, R3, perform security, integrity, and adversarial checks, and issue verdict.
+Review Milestone 1 (Backend Engine, SERPRO Client & Fallback Helper) implementation against requirements R1, R2, R3, perform security, integrity, and adversarial checks, and issue verdict.
 
 ## 🔒 My Identity
 - Archetype: reviewer_critic
@@ -10,6 +10,7 @@ Review Milestone 1 (Backend Data & API) implementation against requirements R1, 
 - Original parent: 2a43f791-5cc7-4933-bdd2-688af9234cb1
 - Milestone: Milestone 1 (Backend Data & API)
 - Instance: 1 of 2
+- Current Milestone: Milestone 1 - SERPRO FNRH v2.4.2 & Check-in Provider Toggle (2026-10-07)
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
@@ -17,54 +18,53 @@ Review Milestone 1 (Backend Data & API) implementation against requirements R1, 
 - Write only to my folder: .agents/teamwork/reviewer_m1_1/
 
 ## Current Parent
-- Conversation ID: 2a43f791-5cc7-4933-bdd2-688af9234cb1
-- Updated: 2026-09-30T22:13:30Z
+- Conversation ID: 0a1ba31b-b6bc-466b-8394-2ba72ae85fb5
+- Updated: 2026-10-07T16:45:00Z
 
 ## Review Scope
-- **Files to review**:
-  - data/database.json
-  - artifacts/api-server/demo-server.mjs
-  - scripts/demo-server.mjs
-  - tests/service-orders.test.mjs
-  - tests/service-orders-api-live.test.mjs
-  - tests/checkout-occupancy-rule.test.mjs
-- **Interface contracts**: ORIGINAL_REQUEST.md, orchestrator_1/PROJECT.md, worker_m1/handoff.md
+- **Files reviewed**:
+  - `scripts/fnrh-serpro-service.mjs` and twin `artifacts/api-server/fnrh-serpro-service.mjs`
+  - `artifacts/api-server/demo-server.mjs` and mirror `scripts/demo-server.mjs`
+  - `data/database.json`
+  - `tests/m1-backend-serpro-verification.test.mjs`
+  - `tests/service-orders-api-live.test.mjs`
+- **Interface contracts**:
+  - `ORIGINAL_REQUEST.md` (2026-10-07 §R1, §R2, §R3)
+  - `orchestrator_2/PROJECT.md` (M1: F1, F2, F3)
+  - `worker_m1_backend_2/handoff.md`
 - **Review criteria**: correctness, style, security/auth, integrity, edge cases, failure modes, conformance to R1, R2, R3.
 
 ## Review Checklist
 - **Items reviewed**:
-  - `data/database.json`: `serviceOrders` and `serviceWorkers` root keys confirmed.
-  - `artifacts/api-server/demo-server.mjs`: lines 475-476, 2638-2639, 2812-2813, 5194-5382, 6294-6475, 7776-8330, 9883-10007.
-  - `scripts/demo-server.mjs`: full byte-by-byte mirror match confirmed.
-  - Auth checks on all 7 admin endpoints (`GET/POST/PATCH/DELETE /api/service-orders*`) confirmed.
-  - Public endpoints token verification confirmed.
-  - Start/finish validation logic confirmed.
-  - Injected routes (`/api/flats`, `/api/reservations/checkouts`, `/api/pms/calendar`) confirmed.
-  - Multi-channel notification pipeline confirmed.
+  - SERPRO FNRH v2.4.2 API client (`FnrhSerproClient`) in `scripts/fnrh-serpro-service.mjs` and twin `artifacts/api-server/fnrh-serpro-service.mjs`.
+  - Basic Auth generation, `cpf_solicitante` cleaning, `registerReservation`, and `checkHealth` diagnostic.
+  - `data/database.json`: `settings.checkinProvider = "proprio"`, `settings.serproConfig` initialized.
+  - `artifacts/api-server/demo-server.mjs`: `PATCH /api/settings` validation ('proprio' | 'gov_fnrh', serproConfig.env), `GET /api/fnrh-serpro/status`.
+  - Fallback engine: `getCheckinUrl` and `getCheckinUrlSync`, 5s timeout guard via AbortController and Promise.race, `FNRH_SERPRO_FALLBACK` audit log, reception notification.
+  - PostgreSQL cloud shielding in `loadDatabase()` preserving `checkinProvider` and `serproConfig`.
+  - Reservation hooks in `POST /api/pms/reservations` and `POST /api/reservations/direct-booking`.
+  - Twin mirror parity: 100% byte-for-byte identical across both twin pairs.
 - **Verdict**: APPROVE
-- **Unverified claims**: None. All 141 tests across all test suites verified independently.
+- **Unverified claims**: None. All claims verified independently via live tests, syntax checks, SHA256 hashes, and stress tests.
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Unauthenticated access to admin endpoints: rejected (401/403).
-  - Unregistered worker starting flat: rejected (403).
-  - Exceeding maxSimultaneousFlats: rejected (400).
-  - Exceeding maxFlatsPerDay: rejected (400).
-  - Starting clean flat when dirty flats exist under priority mode: rejected (400).
-  - Finishing clean flat without needsCleaning: rejected (400).
-  - Finishing requirePhotos without photos: rejected (400).
-  - Starting flat on closed order: allowed (vulnerability surfaced as Challenge 1).
-  - Late-night finishedAt date comparison across UTC/BRT: boundary gap surfaced as Challenge 2.
-  - Whitespace-only photo strings in finish payload: edge case surfaced as Challenge 3.
+  - Null / undefined reservation input: handled safely, falls back to internal pre-checkin URL.
+  - Invalid date format in reservation: rejected cleanly with validation error before calling SERPRO.
+  - SERPRO connection timeout (>5s): caught by AbortController and Promise.race, triggers fallback, logs audit event, creates notification, returns internal URL without throwing.
+  - SERPRO HTTP 500 error: caught, records `reservation.serproError`, triggers fallback transparently.
+  - Invalid `checkinProvider` in `PATCH /api/settings`: returns HTTP 400.
+  - Invalid `serproConfig.env` in `PATCH /api/settings`: returns HTTP 400.
+  - Switch provider dynamically: reflects immediately in memory and in subsequent link queries without server restart.
+  - Cloud PostgreSQL snapshot reload: shields `checkinProvider` and `serproConfig` from being erased.
 - **Vulnerabilities found**:
-  - Challenge 1 (Medium): Starting flat on `closed` order does not check order status.
-  - Challenge 2 (Minor): UTC substring vs Brasilia timezone in daily limit check.
-  - Challenge 3 (Minor): Empty/whitespace photo string validation.
-- **Untested angles**: Hardware failure during synchronous saveDatabase.
+  - None critical. Surfaced 2 minor optimization notes (concurrency deduplication for lazy registration; lazy registration on OTA import).
+- **Untested angles**: Hardware-level network disconnect during streaming HTTP response (mitigated by AbortController signal).
 
 ## Key Decisions Made
-- Confirmed zero integrity violations (no mocks, no facades, no faked results).
-- Issued APPROVE verdict with recommendations.
+- Confirmed zero integrity violations (no mock facades in production, no hardcoded outputs).
+- Verified 100% byte-for-byte twin parity.
+- Issued APPROVE verdict for Milestone 1 Backend.
 
 ## Artifact Index
 - DISPATCH.md — incoming task dispatch

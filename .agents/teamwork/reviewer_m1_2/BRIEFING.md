@@ -1,58 +1,67 @@
-# BRIEFING — 2026-09-30T22:15:30Z
+# BRIEFING — 2026-10-07T16:41:00Z
 
 ## Mission
-Independently review and stress-test Milestone 1 backend data & API implementation.
+Conduct an independent, rigorous quality and adversarial review of Milestone 1 backend code (FNRH Serpro status endpoint, reservation hooks, polymorphic audit/notification, mirror parity).
 
 ## 🔒 My Identity
 - Archetype: reviewer_critic
 - Roles: reviewer, critic
-- Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m1_2
-- Original parent: 2a43f791-5cc7-4933-bdd2-688af9234cb1
+- Working directory: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/reviewer_m1_2
+- Original parent: 0a1ba31b-b6bc-466b-8394-2ba72ae85fb5
 - Milestone: Milestone 1
-- Instance: 2 of 2
+- Instance: 1 of 1
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
-- Adversarial critic & reviewer: check integrity violations, failure modes, error handling, parity, persistence
+- Check for integrity violations (hardcoded values, facade logic, bypasses)
+- Provide rigorous verification with runnable reproduction/test commands
+- Issue clear verdict: APPROVE or REQUEST_CHANGES
 
 ## Current Parent
-- Conversation ID: 2a43f791-5cc7-4933-bdd2-688af9234cb1
+- Conversation ID: 0a1ba31b-b6bc-466b-8394-2ba72ae85fb5
 - Updated: not yet
 
 ## Review Scope
-- **Files to review**: artifacts/api-server/demo-server.mjs, scripts/demo-server.mjs, data/database.json, test suites
-- **Interface contracts**: PROJECT.md, ORIGINAL_REQUEST.md, worker_m1/handoff.md
-- **Review criteria**: Robustness, error handling, persistence reliability, byte parity, verification test execution
+- **Files to review**:
+  - `artifacts/api-server/demo-server.mjs`
+  - `scripts/demo-server.mjs`
+  - `artifacts/api-server/fnrh-serpro-service.mjs`
+  - `scripts/fnrh-serpro-service.mjs`
+  - `data/database.json`
+  - upstream handoff from `worker_m1_backend_2`
+- **Interface contracts**:
+  - `.agents/teamwork/ORIGINAL_REQUEST.md` (2026-10-07T15:33:29Z)
+  - `.agents/teamwork/orchestrator_2/PROJECT.md`
+- **Review criteria**: correctness, error handling, mirror parity, resilience, audit logging, notification generation.
 
 ## Review Checklist
 - **Items reviewed**:
-  - `artifacts/api-server/demo-server.mjs` & `scripts/demo-server.mjs` (mirror parity, endpoints, helper functions, PMS calendar, flats & checkout endpoints)
-  - `data/database.json` (schema initialization)
-  - `tests/service-orders.test.mjs` (static & contract tests: 12/12 pass)
-  - `tests/service-orders-api-live.test.mjs` (live HTTP API tests: 16/16 pass)
-  - `tests/checkout-occupancy-rule.test.mjs` (regression tests: 22/22 pass)
-  - `tests/governance-integrity.test.mjs` (90/90 pass)
-  - `tests/surveys-reformed.test.mjs` (1/1 pass)
+  - `GET /api/fnrh-serpro/status`: VERIFIED (returns health, provider, env, latency, status without throwing).
+  - `POST /api/pms/reservations`: VERIFIED (hooks into SERPRO when `gov_fnrh` active, handles errors, logs audit and alert).
+  - `POST /api/reservations/direct-booking`: VERIFIED (same robust SERPRO hook).
+  - `getCheckinUrl` & `getCheckinUrlSync`: VERIFIED (timeout ≤5000ms, fallback to internal URL, cached link shortcut).
+  - Polymorphic `logAuditEvent` & `createNotification`: VERIFIED (supports both positional and object arguments).
+  - Twin Parity: VERIFIED (byte-for-byte identical across both twins).
 - **Verdict**: APPROVE
 - **Unverified claims**: None. All claims independently verified.
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Integrity violation checks (hardcoding, facades, cheats): PASSED (no violations)
-  - Byte-for-byte mirror parity: PASSED (identical hashes)
-  - Concurrency & race conditions: PASSED (synchronous event loop execution before saveDatabase)
-  - Boundary conditions (empty inputs, missing fields, CPF formatting, limits): PASSED
-  - Late-night timezone edge case: FOUND (UTC ISO substring vs America/Sao_Paulo date string after 21:00 BRT)
-- **Vulnerabilities found**:
-  - Minor: Timezone discrepancy when using `isoString.substring(0, 10)` vs `getExecutionDateStr(isoString)` for daily counter and calendar blocks between 21:00 and 23:59 BRT.
-- **Untested angles**: None within Milestone 1 scope.
+  - SERPRO API timeout >5000ms: PASS (guarded by Promise.race and AbortController).
+  - Malformed/incomplete reservation data (null, missing dates): PASS (safe fallback).
+  - Pre-cached Gov.br link: PASS (immediate return, zero latency).
+  - Invalid settings PATCH inputs: PASS (returns HTTP 400).
+- **Vulnerabilities found**: None.
+- **Untested angles**: Full production network call to SERPRO Gov.br production servers (out of scope, pending production credentials).
 
 ## Key Decisions Made
 - Confirmed zero integrity violations.
-- Verified 100% test passage on official test suites.
-- Verdict issued: APPROVE with constructive recommendations for timezone polish.
+- Issued verdict: APPROVE.
+- Generated `review.md` and `handoff.md`.
 
 ## Artifact Index
-- handoff.md — Independent Review Report
-- progress.md — Liveness heartbeat and milestone tracking
-- DISPATCH.md — Initial dispatch instruction log
+- `DISPATCH.md` — incoming dispatch instructions
+- `progress.md` — heartbeat and task status
+- `BRIEFING.md` — persistent memory index
+- `review.md` — quality and adversarial review report
+- `handoff.md` — 5-component handoff report

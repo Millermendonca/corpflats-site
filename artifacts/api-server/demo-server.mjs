@@ -5156,6 +5156,9 @@ export function getCheckinUrlSync(reservation, guestIndex = 1, baseUrl = "", dbI
   return internalCheckinUrl;
 }
 
+globalThis.getCheckinUrl = getCheckinUrl;
+globalThis.getCheckinUrlSync = getCheckinUrlSync;
+
 await loadDatabase();
 ensureUniqueRequestIds();
 reconcileCleaningRequests();
@@ -10984,6 +10987,35 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       }
     }
 
+    // ── Integração Automática SERPRO FNRH se Modo Gov.br Estiver Ativo ────────
+    if (db.settings?.checkinProvider === "gov_fnrh") {
+      try {
+        const serproRes = await fnrhSerproService.registerReservation(reservation, db.settings);
+        if (serproRes && (serproRes.link_precheckin || serproRes.serproPrecheckinUrl)) {
+          reservation.serproReservaId = serproRes.reserva_id || serproRes.serproReservaId;
+          reservation.serproPrecheckinUrl = serproRes.link_precheckin || serproRes.serproPrecheckinUrl;
+          reservation.link_precheckin = serproRes.link_precheckin || serproRes.serproPrecheckinUrl;
+          reservation.serproStatus = serproRes.situacao_reserva_id || serproRes.serproStatus || "CRIADA";
+          reservation.serproCreatedAt = new Date().toISOString();
+          console.log(`[FNRH SERPRO Direct] Reserva ${reservation.code} registrada com sucesso: ${reservation.serproPrecheckinUrl}`);
+        }
+      } catch (serproErr) {
+        console.warn(`[FNRH SERPRO Fallback Direct] Falha ao registrar reserva ${reservation.code}:`, serproErr.message);
+        reservation.serproError = serproErr.message;
+        try {
+          logAuditEvent("FNRH_SERPRO_FALLBACK", {
+            reservationId: reservation.id,
+            reservationCode: reservation.code,
+            reason: serproErr.message
+          });
+          createNotification("alerta", `Falha ao registrar reserva ${reservation.code} no SERPRO FNRH: ${serproErr.message}. Check-in próprio ativado automaticamente.`, {
+            reservationCode: reservation.code,
+            error: serproErr.message
+          });
+        } catch (_) {}
+      }
+    }
+
     if (!db.reservations) db.reservations = [];
     db.reservations.push(reservation);
 
@@ -12071,6 +12103,35 @@ app.post("/api/pms/reservations", async (req, res) => {
       }
     } catch (cleanSyncErr) {
       console.warn("[PMS] Erro ao sincronizar limpeza no checkin:", cleanSyncErr.message);
+    }
+  }
+
+  // ── Integração Automática SERPRO FNRH se Modo Gov.br Estiver Ativo ────────
+  if (db.settings?.checkinProvider === "gov_fnrh") {
+    try {
+      const serproRes = await fnrhSerproService.registerReservation(newReservation, db.settings);
+      if (serproRes && (serproRes.link_precheckin || serproRes.serproPrecheckinUrl)) {
+        newReservation.serproReservaId = serproRes.reserva_id || serproRes.serproReservaId;
+        newReservation.serproPrecheckinUrl = serproRes.link_precheckin || serproRes.serproPrecheckinUrl;
+        newReservation.link_precheckin = serproRes.link_precheckin || serproRes.serproPrecheckinUrl;
+        newReservation.serproStatus = serproRes.situacao_reserva_id || serproRes.serproStatus || "CRIADA";
+        newReservation.serproCreatedAt = new Date().toISOString();
+        console.log(`[FNRH SERPRO PMS] Reserva ${newReservation.code} registrada com sucesso: ${newReservation.serproPrecheckinUrl}`);
+      }
+    } catch (serproErr) {
+      console.warn(`[FNRH SERPRO Fallback PMS] Falha ao registrar reserva ${newReservation.code}:`, serproErr.message);
+      newReservation.serproError = serproErr.message;
+      try {
+        logAuditEvent("FNRH_SERPRO_FALLBACK", {
+          reservationId: newReservation.id,
+          reservationCode: newReservation.code,
+          reason: serproErr.message
+        });
+        createNotification("alerta", `Falha ao registrar reserva ${newReservation.code} no SERPRO FNRH: ${serproErr.message}. Check-in próprio ativado automaticamente.`, {
+          reservationCode: newReservation.code,
+          error: serproErr.message
+        });
+      } catch (_) {}
     }
   }
 
@@ -14044,7 +14105,7 @@ app.post(["/api/pms/reservations/:id/resend-checkin-link", "/api/reception/reser
   }
 
   const baseUrl = `${req.protocol}://${req.get("host")}`;
-  const preCheckinUrl = `${baseUrl}/pre-checkin/${reservation.code || reservation.id}?guest=${guestIndex || 1}`;
+  const preCheckinUrl = await getCheckinUrl(reservation, guestIndex, baseUrl, db);
 
   const template = (db.whatsappTemplates || []).find(t => t.id === "tpl_pre_checkin_reminder");
   let msgText = "";

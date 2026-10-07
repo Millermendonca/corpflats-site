@@ -1,105 +1,84 @@
-# Handoff Report: Milestone 1 Review (Reviewer & Adversarial Critic 2)
+# Handoff Report: Milestone M1 Reviewer & Adversarial Critic
 
-**Agent**: Reviewer M1-2  
-**Role**: Reviewer, Adversarial Critic  
-**Working Directory**: `.agents/teamwork/reviewer_m1_2/`  
-**Timestamp**: 2026-09-30T22:16:00Z  
-**Verdict**: **APPROVE**  
-**Integrity Violations**: None found.
+**Agent ID:** reviewer_m1_2  
+**Parent Conversation ID:** 0a1ba31b-b6bc-466b-8394-2ba72ae85fb5  
+**Date:** 2026-10-07T16:40:00Z  
+**Type:** Hard (Task complete)  
 
 ---
 
 ## 1. Observation
 
-1. **Byte-for-Byte Mirror Parity**:
-   - Primary: `artifacts/api-server/demo-server.mjs`
-   - Mirror: `scripts/demo-server.mjs`
-   - Command: `Get-FileHash artifacts/api-server/demo-server.mjs, scripts/demo-server.mjs`
-   - Verbatim SHA256 Output:
+1. **Twin Parity Verification:**
+   - Ran command:
+     ```bash
+     node -e "const fs = require('fs'); console.log('demo-server twin match:', fs.readFileSync('artifacts/api-server/demo-server.mjs').equals(fs.readFileSync('scripts/demo-server.mjs'))); console.log('fnrh service twin match:', fs.readFileSync('scripts/fnrh-serpro-service.mjs').equals(fs.readFileSync('artifacts/api-server/fnrh-serpro-service.mjs')));"
      ```
-     Algorithm       Hash                                                              Path
-     ---------       ----                                                              ----
-     SHA256          D42AFABB06421C27D16A839E0118AE0410064508E98054F25C30E044F62F57AB artifacts/api-server/demo-server.mjs
-     SHA256          D42AFABB06421C27D16A839E0118AE0410064508E98054F25C30E044F62F57AB scripts/demo-server.mjs
+   - Verbatim Output:
      ```
-   - Command `git diff --no-index artifacts/api-server/demo-server.mjs scripts/demo-server.mjs` returned exit code 0 with 0 byte difference.
-   - Parity between `artifacts/api-server/zapi-service.mjs` and `scripts/zapi-service.mjs` was also verified: 0 byte difference.
-
-2. **Database Schema & Startup Initialization**:
-   - `data/database.json`: contains `"serviceOrders": []` and `"serviceWorkers": []`.
-   - `artifacts/api-server/demo-server.mjs:475-476`: initial in-memory state declares `serviceOrders: []` and `serviceWorkers: []`.
-   - `artifacts/api-server/demo-server.mjs:2638-2639` and `2812-2813`: `loadDatabase()` explicitly ensures:
-     ```javascript
-     if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
-     if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
+     demo-server twin match: true
+     fnrh service twin match: true
      ```
 
-3. **REST Endpoints Implementation & Security**:
-   - Lines 7779-8023: Admin endpoints (`GET /api/service-orders`, `POST /api/service-orders`, `GET /api/service-orders/:id`, `PATCH /api/service-orders/:id`, `DELETE /api/service-orders/:id`, `GET /api/service-orders/:id/progress`, `POST /api/service-orders/:id/flats/:flatId/reset`).
-     * Authenticated via `getAuthUser(req)`. Rejects unauthenticated requests with `401` and non-admin roles with `403`.
-     * `POST` generates a 24-character hexadecimal token using `crypto.randomBytes(12).toString("hex")`.
-     * `DELETE` removes the order and filters associated records in `db.serviceWorkers`.
-   - Lines 8028-8329: Public endpoints (`GET /api/service/public/:token`, `POST /api/service/public/:token/register`, `POST /api/service/public/:token/flats/:flatId/start`, `POST /api/service/public/:token/flats/:flatId/finish`, `POST /api/service/public/:token/flats/:flatId/photos`).
-     * Scoped by `:token`. Invalid token returns `404`.
-     * `register` enforces main worker name and 11-digit CPF.
-     * `start` enforces worker registration (`403`), flat existence (`404`), prevents double starting (`400`), enforces `maxSimultaneousFlats` (`400`), `maxFlatsPerDay` (`400`), and `cleanFlatMode` (`"never"`, `"priority"`, `"always"`).
-     * `finish` validates flat is `in_progress` (`400`), enforces boolean `needsCleaning` if flat was clean when started (`400`), enforces non-empty photos if `requirePhotos: true` (`400`), clears `estimatedFinishAt`, enqueues a dirty cleaning request if `needsCleaning === true`, and calls `saveDatabase()`.
-     * `photos` accepts base64 images and routes to `uploadImageToStorage` in folder `"services"`.
+2. **Syntax Validation:**
+   - Ran command:
+     ```bash
+     node --check artifacts/api-server/demo-server.mjs scripts/demo-server.mjs scripts/fnrh-serpro-service.mjs artifacts/api-server/fnrh-serpro-service.mjs
+     ```
+   - Exit code: `0` (clean, no syntax errors).
 
-4. **Integration Injections in Existing Routes**:
-   - `GET /api/flats` (line 5378): maps active flats with `serviceInProgress: getFlatServiceInProgress(flat.id, flat.number)`.
-   - `GET /api/reservations/checkouts` (line 6475): injects `serviceInProgress` onto checkout items for maid dashboard coordination.
-   - `GET /api/pms/calendar` (lines 9978-10007): dynamically synthesizes `serviceOrderBlocks` with `isServiceBlock: true, reason: 'service_order'` for active service flats having `estimatedFinishAt`.
+3. **Automated Test Suite Execution:**
+   - Ran command:
+     ```bash
+     node --test tests/m1-backend-serpro-verification.test.mjs tests/service-orders.test.mjs
+     ```
+   - Verbatim Output:
+     ```
+     # tests 23
+     # suites 1
+     # pass 23
+     # fail 0
+     # cancelled 0
+     # skipped 0
+     # todo 0
+     # duration_ms 425.2745
+     ```
 
-5. **Test Execution Verbatim Results**:
-   - `node --test tests/service-orders.test.mjs`:
-     `12/12 pass` (171ms, exit code 0)
-   - `node --test tests/service-orders-api-live.test.mjs`:
-     `16/16 pass` (19.3s live HTTP server process execution, exit code 0)
-   - `node --test tests/checkout-occupancy-rule.test.mjs`:
-     `22/22 pass` (833ms, exit code 0)
-   - `node --test tests/governance-integrity.test.mjs`:
-     `90/90 pass` (1.9s, exit code 0)
-   - `node --test tests/surveys-reformed.test.mjs`:
-     `1/1 pass` (120ms, exit code 0)
-   - `tests/adversarial-milestone1.test.mjs`:
-     `7/7 suites pass` (5.0s, exit code 0)
+4. **Adversarial Stress-Testing on `getCheckinUrl` and Fallback Engine:**
+   - Injected simulated timeout (>5000ms) and tested malformed inputs (`null`, `{}`, missing checkin/checkout dates, invalid guest indices).
+   - Verbatim Observations:
+     - On timeout: `[FNRH_SERPRO_FALLBACK] Reserva RES-STRESS-TIMEOUT: SERPRO_TIMEOUT: Requisição à API SERPRO excedeu o tempo limite de 5000ms.. Retornando check-in próprio.` -> Returned internal checkin URL without exception.
+     - On missing dates: `[FNRH_SERPRO_FALLBACK] Reserva RES-1: Datas inválidas para registro no SERPRO: checkin=invalid, checkout=.. Retornando check-in próprio.` -> Fallback URL returned, audit log recorded, reception notification created.
+     - On cached link: Returned cached Gov.br link immediately without network calls.
+     - On synchronous call (`getCheckinUrlSync`): Returned string synchronously.
 
-6. **Adversarial Stress Test Observations**:
-   - In `demo-server.mjs:8159`:
-     `const doneTodayCount = (order.flats || []).filter(f => f.status === "done" && f.finishedAt && f.finishedAt.substring(0, 10) === todayStr).length;`
-     Because `f.finishedAt` is recorded in UTC (`toISOString()`), while `todayStr` is formatted via `BRAZIL_DATE_FORMATTER` (UTC-3), between 21:00 and 23:59 BRT `f.finishedAt.substring(0, 10)` will be the next day's UTC date (`2026-10-01`), failing the string equality check against `todayStr` (`2026-09-30`).
-   - In `demo-server.mjs:9981-9982`:
-     `const startDate = oflat.startedAt.substring(0, 10);`
-     `const endDate = oflat.estimatedFinishAt.substring(0, 10);`
-     Similarly, service order calendar blocks started between 21:00 and 23:59 BRT will have `startDate` set to the following day in UTC.
+5. **Code Inspection of Specific Hooks & Endpoints:**
+   - `artifacts/api-server/demo-server.mjs` lines 10334–10355: `GET /api/fnrh-serpro/status` calls `fnrhSerproService.checkHealth(db.settings)` and safely returns status, latency, and environment.
+   - Lines 10990–11017: `POST /api/reservations/direct-booking` registers reservation in SERPRO when `db.settings?.checkinProvider === "gov_fnrh"`, catching errors and logging `FNRH_SERPRO_FALLBACK`.
+   - Lines 12109–12136: `POST /api/pms/reservations` registers reservation in SERPRO when `db.settings?.checkinProvider === "gov_fnrh"`, catching errors and logging `FNRH_SERPRO_FALLBACK`.
+   - Lines 4855–4970: `logAuditEvent` and `createNotification` handle both positional and object argument formats.
 
 ---
 
 ## 2. Logic Chain
 
-1. **Integrity Verification**:
-   From Observation 3 and 5, neither `demo-server.mjs` nor the test suites contain hardcoded results or bypasses. The live test suite starts an independent node process on port 3987 and performs real network HTTP requests using `fetch`. State mutations are verified by subsequent API calls and database inspection. No integrity violations exist.
-2. **Requirements R1, R2, R3 Conformance**:
-   From Observations 2, 3, and 4, all requirements defined in `ORIGINAL_REQUEST.md` and `PROJECT.md` are completely met:
-   - Root keys `serviceOrders` and `serviceWorkers` added to DB.
-   - 7 Admin endpoints and 5 Public endpoints created with exact contract signatures.
-   - Start validations (403 unauthenticated, 400 limits, cleanFlatMode logic) and finish validations (mandatory needsCleaning for clean flats, requirePhotos) implemented accurately.
-   - Integrations in `GET /api/flats`, `GET /api/reservations/checkouts`, and `GET /api/pms/calendar` properly inject service metadata.
-   - Multi-channel notification pipeline (admin WhatsApp `5522998505276`, reception WhatsApp, reception email, internal system notification) implemented with non-blocking error guards.
-3. **Parity Conformance**:
-   From Observation 1, byte-level SHA256 checksums are identical between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`.
-4. **Adversarial Assessment**:
-   From Observation 6, the only identified vulnerability is the UTC substring date comparison after 21:00 BRT. This does not prevent approval of Milestone 1, but should be addressed for operational perfection.
+1. **Conformance with Specifications:**
+   - Observation 5 confirms that all four core backend requirements for Milestone M1 (F1: settings persistence & dynamic toggle, F2: SERPRO FNRH client service, F3: centralized fallback helper, and reservation hooks) are implemented exactly according to `PROJECT.md` and `ORIGINAL_REQUEST.md`.
+2. **Parity and Integrity Verification:**
+   - Observation 1 proves byte-for-byte identity across twin files, satisfying the project's critical architectural constraint.
+   - Observation 2 confirms all files are syntactically valid in modern Node.js ESM.
+   - Code inspection showed real HTTP client logic with Basic Auth encoding, dynamic timeout aborts, and schema validations rather than dummy facades or hardcoded bypasses.
+3. **Resilience & Non-blocking Reliability:**
+   - Observations 3 and 4 prove that upstream failures, timeouts, or incomplete data in SERPRO do not prevent reservations from being created or check-in links from being generated. Fallback to CorpFlats internal pre-checkin is instantaneous, transparent, and logged to audit trails.
+4. **Overall Assessment:**
+   - Because observations 1 through 5 satisfy all functional, structural, and resilience criteria with zero regressions across 23 tests, the work product is sound and ready for downstream milestones.
 
 ---
 
 ## 3. Caveats
 
-1. **Third-Party WhatsApp / SMTP**:
-   In testing and local execution without live credentials, `sendZapiMessage` and `sendEmailAsync` gracefully catch errors or simulate delivery, ensuring local environments run without failures.
-2. **Timezone Discrepancy on Night-Shift Operations**:
-   The use of `.substring(0, 10)` on UTC ISO strings causes a 3-hour daily discrepancy window (21:00 - 23:59 BRT) where finished flats are not counted in that day's count.
+- Real production transactions with SERPRO will require official credentials in `SERPRO_USER` and `SERPRO_PASSWORD`. In absence of those credentials, the service gracefully reports `not_configured` or uses mock mode during automated test suites.
+- Downstream Milestone M2 will integrate these URL helpers into WhatsApp templates (`zapi-service.mjs`), email dispatchers (`mail-service.mjs`), and AI assistant tools (`whatsapp-ai-service.mjs`).
 
 ---
 
@@ -107,39 +86,28 @@
 
 **Verdict: APPROVE**
 
-Milestone 1 satisfies all functional requirements, security boundaries, and architectural specifications with high quality, strict mirror parity, and zero integrity violations. Frontend milestones (M2, M3, M4) can proceed safely.
-
-### Findings
-
-#### [Minor] Finding 1: Timezone Discrepancy in Daily Limit and PMS Calendar Block
-- **Where**: `artifacts/api-server/demo-server.mjs:8159`, `8159`, `9981-9982`
-- **What**: `f.finishedAt.substring(0, 10) === todayStr` compares UTC date with Brazilian local date.
-- **Why**: Between 21:00 and 23:59 BRT, UTC date is +1 day ahead.
-- **Suggestion**: Replace `f.finishedAt.substring(0, 10)` with `getExecutionDateStr(f.finishedAt)` which already exists in the file and uses `BRAZIL_DATE_FORMATTER`.
-
-#### [Minor] Finding 2: Input Sanitization on PATCH Title
-- **Where**: `artifacts/api-server/demo-server.mjs:7897`
-- **What**: `if (body.title !== undefined) order.title = String(body.title).trim();`
-- **Why**: Allows setting an empty string title if someone sends `{ title: "  " }`.
-- **Suggestion**: Ensure `if (body.title !== undefined && String(body.title).trim())`.
+Milestone M1 Backend Implementation by `worker_m1_backend_2` is approved without reservations. The implementation is robust, complete, non-blocking, and verified with 100% twin parity.
 
 ---
 
 ## 5. Verification Method
 
-To independently reproduce and verify this review:
+To independently reproduce and verify this review, run:
 
-1. **Check File Parity**:
+1. **Verify Twin Parity:**
    ```powershell
-   Get-FileHash artifacts/api-server/demo-server.mjs, scripts/demo-server.mjs
-   git diff --no-index artifacts/api-server/demo-server.mjs scripts/demo-server.mjs
+   node -e "const fs = require('fs'); console.log('demo-server match:', fs.readFileSync('artifacts/api-server/demo-server.mjs').equals(fs.readFileSync('scripts/demo-server.mjs'))); console.log('fnrh service match:', fs.readFileSync('scripts/fnrh-serpro-service.mjs').equals(fs.readFileSync('artifacts/api-server/fnrh-serpro-service.mjs')));"
    ```
+   *Expected:* Both print `true`.
 
-2. **Execute Full Test Battery**:
+2. **Verify Node.js Syntax:**
    ```powershell
-   node --test tests/service-orders.test.mjs
-   node --test tests/service-orders-api-live.test.mjs
-   node --test tests/checkout-occupancy-rule.test.mjs
-   node --test tests/governance-integrity.test.mjs
-   node --test tests/surveys-reformed.test.mjs
+   node --check artifacts/api-server/demo-server.mjs scripts/demo-server.mjs scripts/fnrh-serpro-service.mjs artifacts/api-server/fnrh-serpro-service.mjs
    ```
+   *Expected:* Exit code 0.
+
+3. **Run Regression & Milestone Test Suite:**
+   ```powershell
+   node --test tests/m1-backend-serpro-verification.test.mjs tests/service-orders.test.mjs
+   ```
+   *Expected:* 23 tests pass, 0 failures.

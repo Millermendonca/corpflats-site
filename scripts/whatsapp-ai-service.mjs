@@ -10,6 +10,32 @@
  */
 
 import { cleanWhatsAppPhone } from "./zapi-service.mjs";
+import { getCheckinUrlSync as getSerproCheckinUrlSync } from "./fnrh-serpro-service.mjs";
+
+/**
+ * Resolução dinâmica e unificada de URL de check-in para o agente de IA WhatsApp
+ */
+export function getCheckinUrlSync(reservation, guestIndex = 1, baseUrl = "", dbInstance = null) {
+  if (typeof globalThis.getCheckinUrlSync === "function") {
+    return globalThis.getCheckinUrlSync(reservation, guestIndex, baseUrl, dbInstance);
+  }
+  if (typeof getSerproCheckinUrlSync === "function") {
+    return getSerproCheckinUrlSync(reservation, guestIndex, baseUrl, dbInstance);
+  }
+  const activeDb = dbInstance || (typeof globalThis.db !== "undefined" ? globalThis.db : null);
+  const activeSettings = activeDb?.settings || activeDb || {};
+  const currentProvider = activeSettings.checkinProvider || "proprio";
+  const hostBase = (baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com").replace(/\/$/, "");
+  const safeGuestIndex = Number(guestIndex) || 1;
+  const resCode = reservation?.code || reservation?.id || "";
+  const internalCheckinUrl = `${hostBase}/pre-checkin/${resCode}?guest=${safeGuestIndex}`;
+
+  if (currentProvider === "gov_fnrh" && (reservation?.serproPrecheckinUrl || reservation?.link_precheckin)) {
+    return reservation.serproPrecheckinUrl || reservation.link_precheckin;
+  }
+
+  return internalCheckinUrl;
+}
 
 export const DEFAULT_AI_CONFIG = {
   enabled: true,
@@ -225,12 +251,16 @@ export function buildGuestContext(db, phone) {
     }
   }
 
+  const appOrigin = db?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com";
+  const checkinUrl = matchedReservation ? getCheckinUrlSync(matchedReservation, 1, appOrigin, db) : null;
+
   return {
     todayStr,
     timeStr,
     phone: cleanPhone,
     guestName,
     hasReservation: Boolean(matchedReservation),
+    checkinUrl,
     reservation: matchedReservation ? {
       code: matchedReservation.code || matchedReservation.reservationCode || `RES-${flatNumber}`,
       guestName: matchedReservation.guestName,
@@ -240,7 +270,8 @@ export function buildGuestContext(db, phone) {
       status: matchedReservation.status,
       paymentStatus: matchedReservation.paymentStatus,
       channel: matchedReservation.channel,
-      totalAmount: matchedReservation.totalAmount
+      totalAmount: matchedReservation.totalAmount,
+      checkinUrl
     } : null,
     stayStatus,
     flatNumber,
@@ -309,6 +340,13 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
   // 7. Cotação / Nova Reserva / Preço
   if (/reserva|diaria|diária|preco|preço|valor|alugar|vaga|disponibilidade/i.test(text)) {
     return `Olá${name}! ✨ Será um enorme prazer receber você no CorpFlats!\n\nDispomos de 19 flats executivos finamente decorados, equipados com ar-condicionado Split, cozinha completa, Wi-Fi veloz e vaga de garagem no melhor ponto de Campos/RJ.\n\nPara consultar disponibilidade exata e garantir a melhor tarifa direta sem taxas de intermediários, acesse nosso site oficial:\n👉 ${kb.siteUrl}\n\nOu me informe as datas desejadas (entrada e saída) que posso te ajudar! 🏨`;
+  }
+
+  // 7.5 Pré-Check-in / Link de Check-in
+  if (/check-?in\s+online|pr[eé]-?check-?in|ficha(?:\s+de\s+check-?in)?|link(?:\s+do|\s+de)?\s+check-?in/i.test(text)) {
+    if (guestContext.checkinUrl) {
+      return `Olá${name}! Você pode realizar o seu Pré-Check-in Digital pelo link seguro abaixo:\n👉 ${guestContext.checkinUrl}\n\nO preenchimento antecipado garante a liberação rápida da portaria na sua chegada! Qualquer dúvida, conte conosco. 🏨✨`;
+    }
   }
 
   // 8. Saudação Genérica
@@ -415,6 +453,7 @@ export async function generateAiWhatsAppResponse({ db, phone, messageText, histo
 ${guestContext.hasReservation ? `- Flat atribuído: ${guestContext.flatNumber || "A definir"}
 - Período da reserva: ${guestContext.reservation?.checkinDate} até ${guestContext.reservation?.checkoutDate}
 - Status da reserva: ${guestContext.reservation?.status}
+- Link do Pré-Check-in Digital: ${guestContext.checkinUrl || "Não aplicável"}
 - Status da higienização/limpeza hoje: ${guestContext.cleaningStatus.toUpperCase()} (Liberado/Pronto: ${guestContext.isRoomReady ? "SIM" : "NÃO"})` : "- Modo: Atendimento a novo cliente / Cotação"}
 
 [BASE DE CONHECIMENTO OFICIAL CORPFLATS]

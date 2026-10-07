@@ -219,3 +219,63 @@ Após todas as implementações:
 - [ ] `npm run build` na pasta `artifacts/limpeza` conclui sem erros
 - [ ] Arquivos em `artifacts/limpeza/dist/` atualizados e incluídos no commit
 - [ ] `git push origin main` executado com sucesso
+
+## 2026-10-07T15:33:29Z
+
+Implementar uma chave seletora global e dinâmica no CorpFlats (Guest-Flow-Manager) que permite alternar a experiência de check-in entre o formulário próprio do sistema e o check-in oficial da FNRH (Gov.br/Serpro). Quando ativo o modo Gov.br, o sistema cadastra a reserva na API Serpro (POST /reservas) para obter o link_precheckin oficial do Governo Federal, enviando-o em todas as mensagens de WhatsApp, e-mails e botões de interface, contando com fallback automático e transparente para o check-in próprio caso o Gov.br apresente lentidão ou indisponibilidade.
+
+Working directory: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager
+Integrity mode: development
+
+## Requirements
+
+### R1. Chave Seletora de Provedor de Check-in no Painel Administrativo
+- Adicionar configuração no sistema (`settings.checkinProvider`: `'proprio'` | `'gov_fnrh'`) com persistência imediata no banco de dados (SQLite/PostgreSQL) e atualização em tempo real sem restart do servidor.
+- Criar componente visual de alternância (Toggle Switch) no painel administrativo (Aba de Configurações / Geral) exibindo claramente o provedor ativo:
+  - **Check-in Próprio (CorpFlats)**
+  - **Check-in Gov.br (FNRH Digital - Ministério do Turismo)**
+- Incluir na interface um badge de status indicando o modo ativo e a saúde da conexão com a API do SERPRO.
+
+### R2. Serviço de Integração com API SERPRO FNRH v2.4.2 e Obtenção do Link Oficial
+- Criar cliente HTTP (`scripts/fnrh-serpro-service.mjs` e importado no `demo-server.mjs`) configurado com Basic Auth (`usuario:senha` gerados no portal Serpro), ambiente (`homologacao` / `producao`) e cabeçalho `cpf_solicitante`.
+- Ao criar ou selecionar uma reserva com o modo Gov.br ativo, invocar `POST /reservas` na API SERPRO enviando os dados da reserva (`numero_reserva`, `data_entrada`, `data_saida`, `quantidade_hospede_adulto`, `quantidade_hospede_menor`, `origem_reserva_id: 'MEIOHOSPEDAGEM'`).
+- Capturar e persistir no objeto da reserva o `serproReservaId` e o `link_precheckin` oficial retornado pelo Ministério do Turismo.
+
+### R3. Função Helper Centralizada e Fallback Resiliente de URLs
+- Implementar a função utilitária global `getCheckinUrl(reservation, guestIndex, baseUrl)`:
+  - Se `checkinProvider === 'gov_fnrh'`: retornar o `reservation.serproPrecheckinUrl`.
+  - Se o link do Gov.br ainda não estiver gerado ou se a chamada à API SERPRO falhar/sofrer timeout (> 5 segundos), ativar o **fallback inteligente**: retornar imediatamente o link do check-in próprio (`${baseUrl}/pre-checkin/${reservation.code}?guest=${guestIndex || 1}`) e registrar log de auditoria com alerta no painel administrativo para a recepção.
+  - Se `checkinProvider === 'proprio'`: retornar sempre o link interno (`${baseUrl}/pre-checkin/${reservation.code}?guest=${guestIndex || 1}`).
+
+### R4. Unificação Universal de Links em Disparos e Interface
+- **WhatsApp**:
+  - Atualizar a rota e gatilhos de envio de WhatsApp (ex: lembrete de pré-checkin pendente `tpl_pre_checkin_reminder`, confirmação de nova reserva `tpl_reserva_site_confirmada`, mensagens automáticas do agente IA) para utilizar exclusivamente o link retornado por `getCheckinUrl`.
+- **E-mails**:
+  - Atualizar os templates de e-mail (confirmação ao hóspede, lembretes de pré-check-in, e-mails de instrução de acesso) para incorporar a URL dinâmica.
+- **Painel Administrativo & Portais**:
+  - Botão "Copiar Link de Check-in" na listagem de reservas e no modal de detalhes da reserva deve copiar a URL ativa resolvida por `getCheckinUrl`.
+  - Botão de envio manual de WhatsApp e teste de check-in devem seguir a mesma resolução.
+
+## Acceptance Criteria
+
+### Alternância e Persistência
+- [ ] O toggle no painel de configurações alterna entre `'proprio'` e `'gov_fnrh'` com persistência imediata no banco de dados e resposta JSON confirmando o estado.
+- [ ] A alteração reflete instantaneamente em todas as rotas subsequentes de geração de link sem reinicialização do servidor.
+
+### Geração de Links Dinâmicos
+- [ ] No modo `'proprio'`, `getCheckinUrl` retorna uma URL contendo `/pre-checkin/:code`.
+- [ ] No modo `'gov_fnrh'` com reserva registrada no SERPRO, `getCheckinUrl` retorna a URL oficial do Gov.br (`https://fnrh.turismo.gov.br/precheckin/...`).
+- [ ] Em caso de falha simulada ou timeout da API SERPRO, `getCheckinUrl` aplica o fallback sem lançar exceção, retornando a URL própria e registrando aviso.
+
+### Canais de Comunicação
+- [ ] Disparo de mensagem de lembrete de pré-check-in via WhatsApp envia o link correto conforme a chave ativa.
+- [ ] Disparo de e-mail de confirmação e lembrete envia o link correto conforme a chave ativa.
+- [ ] Ação de "Copiar Link" no painel copia a URL condizente com a chave ativa.
+
+### Testes Automatizados
+- [ ] Teste unitário e de integração em `tests/fnrh-checkin-toggle.test.mjs` validando:
+  1. Alternância de provedor via API de configurações.
+  2. Resolução de links no modo Próprio e no modo Gov.br.
+  3. Resiliência do fallback inteligente quando o SERPRO falha.
+  4. Formatação de mensagens de WhatsApp e e-mails contendo a URL resolvida.
+

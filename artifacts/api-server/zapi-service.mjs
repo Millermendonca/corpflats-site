@@ -20,6 +20,45 @@ import {
   processAiInboundMessage,
   DEFAULT_AI_CONFIG
 } from "./whatsapp-ai-service.mjs";
+import {
+  getCheckinUrlSync as getSerproCheckinUrlSync,
+  getCheckinUrl as getSerproCheckinUrl
+} from "./fnrh-serpro-service.mjs";
+
+/**
+ * Resolução dinâmica e unificada de URL de check-in conforme o provedor ativo (proprio ou gov_fnrh).
+ */
+export function getCheckinUrlSync(reservation, guestIndex = 1, baseUrl = "", dbInstance = null) {
+  if (typeof globalThis.getCheckinUrlSync === "function") {
+    return globalThis.getCheckinUrlSync(reservation, guestIndex, baseUrl, dbInstance);
+  }
+  if (typeof getSerproCheckinUrlSync === "function") {
+    return getSerproCheckinUrlSync(reservation, guestIndex, baseUrl, dbInstance);
+  }
+  const activeDb = dbInstance || (typeof globalThis.db !== "undefined" ? globalThis.db : null);
+  const activeSettings = activeDb?.settings || activeDb || {};
+  const currentProvider = activeSettings.checkinProvider || "proprio";
+  const hostBase = (baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com").replace(/\/$/, "");
+  const safeGuestIndex = Number(guestIndex) || 1;
+  const resCode = reservation?.code || reservation?.id || "";
+  const internalCheckinUrl = `${hostBase}/pre-checkin/${resCode}?guest=${safeGuestIndex}`;
+
+  if (currentProvider === "gov_fnrh" && (reservation?.serproPrecheckinUrl || reservation?.link_precheckin)) {
+    return reservation.serproPrecheckinUrl || reservation.link_precheckin;
+  }
+
+  return internalCheckinUrl;
+}
+
+export async function getCheckinUrl(reservation, guestIndex = 1, baseUrl = "", dbInstance = null) {
+  if (typeof globalThis.getCheckinUrl === "function") {
+    return globalThis.getCheckinUrl(reservation, guestIndex, baseUrl, dbInstance);
+  }
+  if (typeof getSerproCheckinUrl === "function") {
+    return getSerproCheckinUrl(reservation, guestIndex, baseUrl, dbInstance);
+  }
+  return getCheckinUrlSync(reservation, guestIndex, baseUrl, dbInstance);
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1392,7 +1431,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const hasBreakfast = Boolean(reservation.includeBreakfast || reservation.hasBreakfast || reservation.ratePlan === "with_breakfast" || isBreakfastExplicitTemplate);
 
   // Links inteligentes com autenticação por código de reserva
-  const linkCheckinDigital = `${appOrigin}/pre-checkin/${resCode}`;
+  const linkCheckinDigital = getCheckinUrlSync(reservation, 1, appOrigin, db);
   const linkPortalHospede = `${appOrigin}/minha-reserva/${resCode}`;
   const linkPagamento = `${appOrigin}/minha-reserva/${resCode}`;
   const linkCafeManha = (hasBreakfast || isBreakfastExplicitTemplate) && !isCancelled ? `${appOrigin}/cafe/${resCode}` : "";
@@ -1526,7 +1565,8 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const firstGuestDone = Boolean(reservation.guests?.[0]?.hasCompletedCheckin || reservation.guests?.[0]?.status === "CHECKED_IN");
   let mensagemPendenciaHospedes = "Para que a portaria do condomínio libere sua entrada imediatamente na chegada, pedimos que adiante o cadastro dos hóspedes pelo link abaixo:";
   if (isMultiGuest && firstGuestDone) {
-    mensagemPendenciaHospedes = `Recebemos com sucesso a ficha de Check-in Digital do(a) *${guest.firstName || guest.name}*, porém ainda está pendente o cadastro do *2º hóspede* para autorização na portaria.\n\nPor favor, repasse este link ao segundo acompanhante para preenchimento:\n👉 ${linkCheckinDigital}\n\n💡 _Caso vá viajar sozinho(a), basta confirmar em seu portal ou responder por aqui para atualizarmos sua reserva para 1 hóspede sem pendências._`;
+    const linkCheckinDigitalGuest2 = getCheckinUrlSync(reservation, 2, appOrigin, db);
+    mensagemPendenciaHospedes = `Recebemos com sucesso a ficha de Check-in Digital do(a) *${guest.firstName || guest.name}*, porém ainda está pendente o cadastro do *2º hóspede* para autorização na portaria.\n\nPor favor, repasse este link ao segundo acompanhante para preenchimento:\n👉 ${linkCheckinDigitalGuest2}\n\n💡 _Caso vá viajar sozinho(a), basta confirmar em seu portal ou responder por aqui para atualizarmos sua reserva para 1 hóspede sem pendências._`;
   }
 
   // Tag: {{aviso_checkin_pendente}}
@@ -1753,17 +1793,30 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
   );
 
   const linkPortalHospede = `${appOrigin}/minha-reserva/${resCode}`;
-  const linkCheckinDigital = `${appOrigin}/pre-checkin/${resCode}`;
+  const linkCheckinDigital = getCheckinUrlSync(reservation, 1, appOrigin, db);
   const linkAutocheckin = `${appOrigin}/api/pms/guest-portal/${resCode}/self-checkin`;
+
+  // Predicado para identificar botões de check-in por ID (btn_chk, btn_pre, btn_chk_digital) ou URLs (pre-checkin, turismo.gov.br)
+  const isCheckinBtn = b => 
+    Boolean(b) && (
+      b.id === "btn_chk" || 
+      b.id === "btn_pre" || 
+      b.id === "btn_chk_digital" || 
+      (b.url && (
+        String(b.url).includes("/pre-checkin") || 
+        String(b.url).includes("/precheckin") || 
+        String(b.url).includes("turismo.gov.br")
+      ))
+    );
 
   // ── Lógica Dinâmica de Botões de Check-in e Chegada ────────────────────────
   // Se o hóspede já entrou no flat:
   if (hasEnteredFlat) {
     // Remove botões de pré-checkin e de auto-declaração de chegada
     list = list.filter(b => 
-      b.id !== "btn_chk" && 
+      !isCheckinBtn(b) && 
       b.id !== "btn_cheguei" && 
-      (!b.url || (!String(b.url).includes("/pre-checkin") && !String(b.url).includes("/self-checkin")))
+      (!b.url || !String(b.url).includes("/self-checkin"))
     );
     // Garante que o Portal do Hóspede está presente
     if (!list.some(b => b.id === "btn_portal" || (b.url && String(b.url).includes("/minha-reserva")))) {
@@ -1776,8 +1829,8 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     }
   } else if (isPreCheckinDone) {
     // Pré-check-in já preenchido, mas ainda NÃO entrou no flat:
-    // Remove botão de pré-checkin (btn_chk) e assegura "Já Cheguei no Flat" (btn_cheguei)
-    list = list.filter(b => b.id !== "btn_chk" && (!b.url || !String(b.url).includes("/pre-checkin")));
+    // Remove botão de pré-checkin e assegura "Já Cheguei no Flat" (btn_cheguei)
+    list = list.filter(b => !isCheckinBtn(b));
 
     const existingChegueiIdx = list.findIndex(b => b.id === "btn_cheguei" || (b.url && String(b.url).includes("/self-checkin")));
     const chegueiBtn = {
@@ -1813,7 +1866,7 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     ].includes(triggerEvent);
 
     if (isArrivalOrCheckinTemplate) {
-      const existingChkIdx = list.findIndex(b => b.id === "btn_chk" || (b.url && String(b.url).includes("/pre-checkin")));
+      const existingChkIdx = list.findIndex(b => isCheckinBtn(b));
       const chkBtn = {
         id: "btn_chk",
         type: "URL",
@@ -1902,6 +1955,8 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     copyCode: b.copyCode ? resolveWhatsAppTags(b.copyCode, reservation, db, baseUrl, targetRecipient, templateObj || templateOrEvent) : undefined
   }));
 }
+
+export const buildTemplateActionButtons = renderTemplateButtons;
 
 // ── Disparo Oficial de Documento / PDF via Z-API (/send-document/{extension}) ─
 export async function sendZapiDocument(config, {

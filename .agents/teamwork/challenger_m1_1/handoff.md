@@ -1,192 +1,134 @@
-# Handoff Report: Milestone 1 — Adversarial Challenge (Challenger 1)
+# Handoff Report: Empirical Challenger M1_1 (Adversarial Stress Test)
 
-**Agent**: Challenger M1_1 (Empirical Challenger)  
-**Role**: critic, specialist  
-**Working Directory**: `.agents/teamwork/challenger_m1_1/`  
-**Verdict**: **REQUEST_CHANGES**  
-**Timestamp**: 2026-09-30T22:15:00Z  
-**Recipient**: Orchestrator / Worker M1 (Backend Data & API)  
+**Agent ID:** challenger_m1_1  
+**Parent Conversation ID:** 0a1ba31b-b6bc-466b-8394-2ba72ae85fb5  
+**Date:** 2026-10-07T16:47:00Z  
+**Verdict:** **APPROVE**  
+**Type:** Hard (Task complete)  
 
 ---
 
 ## 1. Observation
 
-1. **Daily Limit Calculation in `demo-server.mjs:8157-8162` (and mirror `scripts/demo-server.mjs:8157-8162`)**:
-   ```javascript
-   // 3. Contar flats com status: "done" finalizados hoje pelo prestador → deve ser < maxFlatsPerDay (400 if reached)
-   const maxPerDay = Number(order.maxFlatsPerDay) || 4;
-   const todayStr = getTodayStr();
-   const doneTodayCount = (order.flats || []).filter(f => f.status === "done" && f.finishedAt && f.finishedAt.substring(0, 10) === todayStr).length;
-   if (doneTodayCount >= maxPerDay) {
-     return res.status(400).json({ error: `Limite diário de apartamentos atingido para hoje (máximo: ${maxPerDay}).` });
-   }
-   ```
+1. **Adversarial Test Suite Execution (`tests/challenger-m1-adversarial.test.mjs`):**
+   - Created and executed a dedicated adversarial test harness with 16 automated tests across 7 test suites.
+   - Command:
+     ```bash
+     node --test tests/challenger-m1-adversarial.test.mjs
+     ```
+   - Verbatim Output:
+     ```
+     # Subtest: Adversarial Stress Test: Milestone M1 Backend Implementation
+         # Subtest: Suite 1: Provider Toggling Lifecycle & Boundary Validation
+             ok 1 - 1.1 Initial settings have checkinProvider === 'proprio'
+             ok 2 - 1.2 Toggling 'proprio' -> 'gov_fnrh' succeeds (200) and persists immediately
+             ok 3 - 1.3 Toggling to invalid 'xyz' is rejected with HTTP 400 and state remains 'gov_fnrh'
+             ok 4 - 1.4 Malformed and edge-case values for checkinProvider are all rejected with 400
+             ok 5 - 1.5 Toggling back to 'proprio' succeeds (200) and persists
+         ok 1 - Suite 1: Provider Toggling Lifecycle & Boundary Validation
+         # Subtest: Suite 2: SERPRO API Error Simulations (HTTP 500, Network Error, 401)
+             ok 1 - 2.1 Simulated HTTP 500 triggers graceful fallback without throwing
+             ok 2 - 2.2 Simulated Network Error (ECONNREFUSED) triggers graceful fallback
+             ok 3 - 2.3 Simulated 401 Unauthorized triggers graceful fallback and checkHealth reflects auth_error
+         ok 2 - Suite 2: SERPRO API Error Simulations (HTTP 500, Network Error, 401)
+         # Subtest: Suite 3: Timeout Condition & Hanging Server Stress Test
+             ok 1 - 3.1 When SERPRO hangs for >5000ms (7000ms), getCheckinUrl aborts and falls back within ~5s
+             ok 2 - 3.2 Mock timeout flag (setMockTimeout) triggers immediate ETIMEDOUT fallback
+         ok 3 - Suite 3: Timeout Condition & Hanging Server Stress Test
+         # Subtest: Suite 4: Audit Log (FNRH_SERPRO_FALLBACK) Verification
+             ok 1 - 4.1 FNRH_SERPRO_FALLBACK audit log is appended when fallback occurs
+         ok 4 - Suite 4: Audit Log (FNRH_SERPRO_FALLBACK) Verification
+         # Subtest: Suite 5: Reception Alert Notification Verification
+             ok 1 - 5.1 Reception alert notification is created in notifications central upon fallback
+         ok 5 - Suite 5: Reception Alert Notification Verification
+         # Subtest: Suite 6: Multi-Guest URL Resolution (guestIndex = 2)
+             ok 1 - 6.1 In 'proprio' mode, guestIndex = 2 resolves to ?guest=2
+             ok 2 - 6.2 In 'gov_fnrh' fallback mode, guestIndex = 2 resolves to ?guest=2
+             ok 3 - 6.3 Guest index boundary values (string '2', undefined, 0, null) coerced correctly
+             ok 4 - 6.4 When official SERPRO link is available, returns Gov.br link directly
+         ok 6 - Suite 6: Multi-Guest URL Resolution (guestIndex = 2)
+     # tests 16 # suites 7 # pass 16 # fail 0 # duration_ms 8033.9022
+     ```
 
-2. **Finish Timestamp Generation in `demo-server.mjs:8240-8242`**:
-   ```javascript
-   const now = new Date();
-   flat.status = "done";
-   flat.finishedAt = now.toISOString();
-   ```
+2. **Provider Toggling & Validation (`artifacts/api-server/demo-server.mjs:10290-10298`):**
+   - `PATCH /api/settings` with `{ checkinProvider: 'gov_fnrh' }` returns HTTP 200 and immediately persists.
+   - `PATCH /api/settings` with `{ checkinProvider: 'xyz' }` returns HTTP 400 `{ error: "checkinProvider inválido. Deve ser 'proprio' ou 'gov_fnrh'." }` without altering state.
+   - Additional invalid values (`""`, `null`, `123`, `true`, `false`, `{}`, `[]`, `"PROPRIO"`, `"gov_fnrh "`) are all rejected with HTTP 400.
+   - Reverting to `'proprio'` succeeds with HTTP 200 and reflects instantaneously in `GET /api/settings`.
 
-3. **Date Helper Implementations in `demo-server.mjs:60-76`**:
-   ```javascript
-   const BRAZIL_DATE_FORMATTER = new Intl.DateTimeFormat("en-CA", {
-     timeZone: "America/Sao_Paulo",
-     year: "numeric",
-     month: "2-digit",
-     day: "2-digit"
-   });
+3. **SERPRO API Failure Simulations:**
+   - **HTTP 500 Simulation:** When SERPRO returns HTTP 500, `getCheckinUrl` catches the error, sets `reservation.serproError = "SERPRO_API_ERROR [HTTP 500]: ..."`, and returns `${baseUrl}/pre-checkin/${code}?guest=1` without throwing.
+   - **Network Error (ECONNREFUSED) Simulation:** Connecting to an unused port (`54329`) triggers `fetch failed` which is safely caught, returning the internal pre-checkin URL.
+   - **401 Unauthorized Simulation:** Mock server returning HTTP 401 causes `fnrhSerproService.checkHealth()` to report `{ ok: false, status: "auth_error", statusCode: 401 }` and `getCheckinUrl` to fall back cleanly to internal URL.
 
-   function getTodayStr() {
-     return BRAZIL_DATE_FORMATTER.format(new Date());
-   }
+4. **Strict Timeout Abort & Hanging Server Stress:**
+   - Simulated remote SERPRO hanging for 7000ms.
+   - `Promise.race` in `demo-server.mjs:5061-5072` aborted at `5029ms` (within the strict ~5000ms budget).
+   - Returned internal pre-checkin URL cleanly without unhandled rejection or thread stalling.
 
-   function getExecutionDateStr(isoString) {
-     if (!isoString) return getTodayStr();
-     try {
-       return BRAZIL_DATE_FORMATTER.format(new Date(isoString));
-     } catch {
-       return isoString.substring(0, 10);
-     }
-   }
-   ```
+5. **Audit Logging & Reception Alert Verification:**
+   - Entry appended to `db.auditLogs` and queryable via `GET /api/audit-logs`:
+     - `action: "FNRH_SERPRO_FALLBACK"`
+     - `category: "integration"`, `level: "warning"`
+     - `details: { reservationCode: "RES-AUDIT-VERIF", guestIndex: 2, error: "..." }`
+   - Entry created in `db.notifications` and queryable via `GET /api/notifications`:
+     - `title: "⚠️ Contingência FNRH SERPRO"`
+     - `category: "system_error"`, `severity: "warning"`
+     - `message: "Falha SERPRO FNRH: Check-in fallback ativado para reserva ..."`
+     - `targetUrl: "/reservas?code=..."`
 
-4. **PMS Calendar Block Date Extraction in `demo-server.mjs:9980-9983`**:
-   ```javascript
-   if (oflat.status === "in_progress" && oflat.startedAt && oflat.estimatedFinishAt) {
-     const startDate = oflat.startedAt.substring(0, 10);
-     const endDate = oflat.estimatedFinishAt.substring(0, 10);
-     if (startDate <= end && endDate >= start) {
-   ```
+6. **Multi-Guest Resolution:**
+   - In `'proprio'` mode: `guestIndex = 2` resolves to `${baseUrl}/pre-checkin/${code}?guest=2`.
+   - In `'gov_fnrh'` fallback mode: `guestIndex = 2` resolves to `${baseUrl}/pre-checkin/${code}?guest=2`.
+   - String coercion: `"2"` coerces to `guest=2`.
+   - Edge cases: `undefined`, `null`, `0` default cleanly to `guest=1`.
+   - Official link: returns `https://fnrh.turismo.gov.br/precheckin/...`.
 
-5. **Empirical Test Execution — Timezone & Midnight Boundary Audit (`node tests/test-midnight-logic-audit.mjs`)**:
-   ```
-   === TIMEZONE & MIDNIGHT BOUNDARY AUDIT ===
-   1. FinishedAt UTC ISO: 2026-10-01T00:30:00.000Z
-   2. Naive substring(0, 10): 2026-10-01
-   3. Brazil local date at time of check: 2026-09-30
-   4. Server's line 8159 match result: false
-   ❌ VULNERABILITY CONFIRMED: Line 8159 fails to count flats finished between 21:00 and 23:59:59 Brazil time towards today's daily limit!
-   5. Next day Brazil date: 2026-10-01
-   6. Next day match result with yesterday's 21:30 flat: true
-   ❌ QUOTA THEFT CONFIRMED: Yesterday's late-night flat is erroneously counted against TODAY's daily limit on October 1st!
-   7. Correct check with getExecutionDateStr on same day: true
-   8. Correct check with getExecutionDateStr on next day: false
-   ```
-
-6. **Empirical Test Execution — Calendar Timezone Block Shift (`node tests/test-calendar-timezone-audit.mjs`)**:
-   ```
-   Naive start date in calendar: 2026-10-01
-   Actual Brazil local start date: 2026-09-30
-   Does naive block appear in today's PMS calendar? false
-   ❌ VULNERABILITY CONFIRMED: A service block active right now (between 21:00 and 23:59 Brazil time) is INVISIBLE in today's PMS calendar!
-   Does correct block appear in today's PMS calendar? true
-   ```
-
-7. **Empirical Test Execution — 19 Adversarial Live Scenarios (`node --test tests/adversarial-milestone1.test.mjs`)**:
-   ```
-   TAP version 13
-   # Subtest: Adversarial Edge-Case & Boundary Stress Test Suite — Milestone 1 Backend API
-       ok 1 - Suite 1: Admin Endpoint Security & Authentication Barriers (401 unauthenticated, 401 malformed tokens/sessions, 403 non-admin roles)
-       ok 2 - Suite 2: Token Validation & Injection Attack Resistance (404 invalid/malformed tokens, 400 registration injection/validation, 404 bad flatIds)
-       ok 3 - Suite 3: Worker Verification Status Enforcement (403 unverified, 403 cross-order token, 200 verified)
-       ok 4 - Suite 4: Concurrency & Max Simultaneous Flats Limits (4.1 limit=1 strictly permits 1; 4.2 limit=2 strictly permits 2; 4.3 duplicate start on same flat strictly permits 1)
-       ok 5 - Suite 5: Max Flats Per Day Limits & Day/Midnight Boundary Mechanics
-       ok 6 - Suite 6: cleanFlatMode Evaluation & Mandatory needsCleaning Validation (never blocks clean; priority enforces dirty first; clean flat requires boolean needsCleaning)
-       ok 7 - Suite 7: Photo Attachment Validation on Finish (requirePhotos=true rejects empty; requirePhotos=false allows empty)
-   # tests 19
-   # suites 8
-   # pass 19
-   # fail 0
-   ```
+7. **Regression and Peer Test Verification:**
+   - `tests/m1-backend-serpro-verification.test.mjs` + `tests/service-orders.test.mjs`: 23/23 passed.
+   - `tests/challenger-m1-2-serpro-integrity.test.mjs`: 25/25 passed.
 
 ---
 
 ## 2. Logic Chain
 
-1. From Observation 1, the backend determines whether `maxFlatsPerDay` has been exceeded by evaluating:
-   `f.finishedAt && f.finishedAt.substring(0, 10) === todayStr`.
-2. From Observation 2, `f.finishedAt` is generated using `now.toISOString()`, which produces a UTC timestamp ending in `Z`.
-3. From Observation 3, `todayStr` is computed from `getTodayStr()`, which formats the current moment in the Brazilian timezone `America/Sao_Paulo` (UTC-3).
-4. Between 21:00:00 and 23:59:59 local Brazil time (UTC-3), UTC time is already between 00:00:00 and 02:59:59 of the next calendar day (`YYYY-MM-(DD+1)`).
-5. For any flat completed during those 3 hours, `f.finishedAt.substring(0, 10)` evaluates to `YYYY-MM-(DD+1)`, while `todayStr` in Brazil evaluates to `YYYY-MM-DD`.
-6. Since `YYYY-MM-(DD+1) === YYYY-MM-DD` evaluates to `false`, `doneTodayCount` returns `0` (Observation 5).
-7. Consequently, the worker can start and finish an unlimited number of flats during those 3 evening hours without tripping `maxFlatsPerDay`, creating a severe business logic bypass.
-8. On the following day in Brazil, `todayStr` transitions to `YYYY-MM-(DD+1)`. At this point, the flat finished the previous evening at 21:30 now has `f.finishedAt.substring(0, 10)` matching `todayStr`, so it is counted as finished *today*, prematurely consuming the worker's quota for the new day before they even begin working (Observation 5).
-9. From Observation 4, the exact same UTC date slicing flaw occurs in `GET /api/pms/calendar`:
-   `const startDate = oflat.startedAt.substring(0, 10)` extracts the UTC date instead of the Brazil date. Any service flat started between 21:00 and 23:59:59 BRT is placed on tomorrow's calendar, leaving the flat completely unblocked on today's calendar (Observation 6).
-10. The project already has a dedicated function `getExecutionDateStr(isoString)` at line 71 of `demo-server.mjs` designed specifically to convert UTC ISO timestamps into `America/Sao_Paulo` date strings (`YYYY-MM-DD`). Using `getExecutionDateStr` in both locations fixes both vulnerabilities cleanly and completely.
-11. From Observation 7, all other Milestone 1 endpoints and security measures (admin authentication, token isolation, input injection handling, concurrency limits with `Promise.all`, cleanFlatMode rules, needsCleaning validation, photo requirements) passed all 19 adversarial tests.
+1. **Observation 1 & 2** prove that provider switching is strictly validated against allowed enum values (`'proprio'`, `'gov_fnrh'`), resists injection/fuzzing, updates state in-memory and on disk, and reflects instantaneously without requiring a server reboot.
+2. **Observation 3** proves that all major HTTP and network failure scenarios (server errors, connection refused, authentication failures) are safely trapped and fail-safe fallback is applied without crashing or exposing errors to guests.
+3. **Observation 4** proves that the timeout guard implemented via `Promise.race` enforces a 5000ms ceiling against unresponsive external SERPRO endpoints, returning within 5029ms without hanging the event loop.
+4. **Observation 5** proves that the fallback event is audited via `FNRH_SERPRO_FALLBACK` and proactively alerts reception personnel via the notification center.
+5. **Observation 6** proves that URL resolution accurately preserves multi-guest targeting (`?guest=2`) both during standard operations and during fallback contingency.
+6. **Observation 7** proves that existing external service orders and peer challenger suites remain 100% green with zero regressions.
+7. Therefore, all requirements for Milestone M1 Backend Implementation are fully satisfied and resilient under empirical adversarial pressure.
 
 ---
 
 ## 3. Caveats
 
-1. Concurrency enforcement relies on the single-threaded nature of the Node.js event loop: because the `start` handler performs all checks and sets `flat.status = "in_progress"` synchronously without intermediate `await` expressions, concurrent requests are serialized safely within the process. If multi-instance horizontal scaling were introduced in the future, database-level locking would be required.
-2. In the local development environment, Cloudflare R2 and Z-API operate in fallback/sandbox mode as expected.
+- **ESM Twin Instance Scope:** The standalone utility function `getCheckinUrl` in `scripts/fnrh-serpro-service.mjs` handles basic URL resolution and fallback but does not directly access server-scoped `db.auditLogs` or `db.notifications`. Downstream modules (Milestone M2) executing inside the server process should reference `globalThis.getCheckinUrl` or import from `demo-server.mjs` to ensure audit logging and reception notifications trigger as expected.
+- No other caveats.
 
 ---
 
 ## 4. Conclusion
 
-**Verdict: REQUEST_CHANGES**
-
-Milestone 1 satisfies the vast majority of its requirements with high fidelity, but suffers from two related timezone boundary defects that violate requirements R3 and R7:
-
-### Actionable Fixes Required by Worker M1:
-
-1. **Fix Daily Limit Timezone Boundary in `demo-server.mjs:8159` (and `scripts/demo-server.mjs:8159`)**:
-   Replace:
-   ```javascript
-   const doneTodayCount = (order.flats || []).filter(f => f.status === "done" && f.finishedAt && f.finishedAt.substring(0, 10) === todayStr).length;
-   ```
-   With:
-   ```javascript
-   const doneTodayCount = (order.flats || []).filter(f => f.status === "done" && f.finishedAt && getExecutionDateStr(f.finishedAt) === todayStr).length;
-   ```
-
-2. **Fix PMS Calendar Service Block Date Timezone in `demo-server.mjs:9981-9982` (and `scripts/demo-server.mjs:9981-9982`)**:
-   Replace:
-   ```javascript
-   const startDate = oflat.startedAt.substring(0, 10);
-   const endDate = oflat.estimatedFinishAt.substring(0, 10);
-   ```
-   With:
-   ```javascript
-   const startDate = getExecutionDateStr(oflat.startedAt);
-   const endDate = getExecutionDateStr(oflat.estimatedFinishAt);
-   ```
-
-3. **Synchronize Mirror**:
-   Ensure `scripts/demo-server.mjs` is byte-for-byte identical to `artifacts/api-server/demo-server.mjs`.
+**Verdict: APPROVE**.
+Milestone 1 backend implementation meets all architectural, functional, and resilience criteria specified in the authoritative request and PROJECT.md. The system is ready to proceed to Milestone M2 (Universal Communication Channels & Triggers).
 
 ---
 
 ## 5. Verification Method
 
-To independently reproduce the bugs and verify the fixes:
+Execute the automated test suite in powershell or bash:
 
-1. **Reproduce Daily Limit Timezone Flaw**:
-   ```powershell
-   node tests/test-midnight-logic-audit.mjs
-   ```
-   *Pass Condition*: Output demonstrates that `getExecutionDateStr` accurately links the same-day finish while naive `substring(0, 10)` fails.
+```bash
+# 1. Run Challenger M1_1 Adversarial Stress Test
+node --test tests/challenger-m1-adversarial.test.mjs
 
-2. **Reproduce PMS Calendar Block Shift**:
-   ```powershell
-   node tests/test-calendar-timezone-audit.mjs
-   ```
-   *Pass Condition*: Output demonstrates that `getExecutionDateStr` keeps the block on today's calendar while naive `substring(0, 10)` displaces it to tomorrow.
+# 2. Run Challenger M1_2 Integrity Test
+node --test tests/challenger-m1-2-serpro-integrity.test.mjs
 
-3. **Run Full Adversarial Test Suite**:
-   ```powershell
-   node --test tests/adversarial-milestone1.test.mjs
-   ```
-   *Pass Condition*: All 19 tests pass (TAP 13 format, exit code 0).
+# 3. Run Worker M1 Verification & Regression Tests
+node --test tests/m1-backend-serpro-verification.test.mjs tests/service-orders.test.mjs
+```
 
-4. **Verify Mirror Parity**:
-   ```powershell
-   git diff --no-index artifacts/api-server/demo-server.mjs scripts/demo-server.mjs
-   ```
-   *Pass Condition*: 0 bytes difference between files.
+*Expected Result:* All tests pass with 0 failures.

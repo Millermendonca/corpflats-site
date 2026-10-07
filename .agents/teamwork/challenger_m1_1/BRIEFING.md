@@ -1,59 +1,57 @@
-# BRIEFING — 2026-09-30T22:15:00Z
+# BRIEFING — 2026-10-07T16:46:00Z
 
 ## Mission
-Adversarially challenge and stress-test Milestone 1 Backend Data & API implementation with empirical test execution.
+Empirically stress-test and challenge Milestone 1 (FNRH/SERPRO integration, provider toggling, timeout/fallback, audit logging, reception alert, multi-guest URL resolution).
 
 ## 🔒 My Identity
-- Archetype: empirical_challenger
+- Archetype: teamwork_preview_challenger
 - Roles: critic, specialist
-- Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m1_1
-- Original parent: 2a43f791-5cc7-4933-bdd2-688af9234cb1
-- Milestone: Milestone 1 (Backend Data & API)
+- Working directory: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/challenger_m1_1
+- Original parent: 0a1ba31b-b6bc-466b-8394-2ba72ae85fb5
+- Milestone: Milestone 1 (M1_1)
 - Instance: 1 of 1
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
-- Write only to .agents/teamwork/challenger_m1_1/ for agent metadata
-- Tests should be placed in tests/ (never in .agents/teamwork/)
-- Empirically verify everything: run code and capture outputs
-- Provide explicit verdict: APPROVE or REQUEST_CHANGES
+- Stress-test assumptions, find failure modes, propose counter-examples
+- Run verification code empirically — do not trust worker's claims or logs
+- Never place source code, tests, or data files in .agents/teamwork/ (only metadata)
+- Must communicate verdict and handoff via send_message to parent (0a1ba31b-b6bc-466b-8394-2ba72ae85fb5)
 
 ## Current Parent
-- Conversation ID: 2a43f791-5cc7-4933-bdd2-688af9234cb1
-- Updated: 2026-09-30T22:15:00Z
+- Conversation ID: 0a1ba31b-b6bc-466b-8394-2ba72ae85fb5
+- Updated: 2026-10-07T16:35:00Z
 
 ## Review Scope
-- **Files to review**: `artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, `data/database.json`
-- **Interface contracts**: ORIGINAL_REQUEST.md, PROJECT.md, worker_m1/handoff.md
-- **Review criteria**: Concurrency enforcement, daily limits & midnight transitions, authentication & admin protection, token validation & injection resilience, worker verification enforcement, clean flat state transitions, photo validation.
+- **Files to review**: Backend FNRH/SERPRO services, config, fallback logic, reception alert, audit log
+- **Interface contracts**: .agents/teamwork/orchestrator_2/PROJECT.md, .agents/teamwork/ORIGINAL_REQUEST.md
+- **Review criteria**: Robustness against provider toggling, HTTP 500/network error/401, >5000ms timeout abort and fallback, audit logging, reception alerts, multi-guest index
 
 ## Key Decisions Made
-- Created independent automated adversarial test suite in `tests/adversarial-milestone1.test.mjs` (19 tests across 7 suites).
-- Executed empirical timezone & midnight boundary audit in `tests/test-midnight-logic-audit.mjs` and `tests/test-calendar-timezone-audit.mjs`.
-- Discovered high-severity flaw in daily limit calculation (`substring(0, 10)` UTC vs `America/Sao_Paulo` `todayStr`) causing limit bypass between 21:00-23:59 BRT and next-day quota theft, plus calendar block date shift.
-- Verdict decided: REQUEST_CHANGES.
+- Authored and executed dedicated adversarial test suite `tests/challenger-m1-adversarial.test.mjs` covering all 6 mandatory challenge areas.
+- Confirmed strict 5000ms timeout abort via `Promise.race` during hanging simulation (measured 5029ms).
+- Verified `FNRH_SERPRO_FALLBACK` audit log generation and `/api/notifications` reception alerts.
+- Verified multi-guest URL resolution (`guestIndex = 2`) and boundary coercions.
+- Verdict: APPROVE Milestone 1.
 
 ## Artifact Index
-- handoff.md — Final handoff report with verdict REQUEST_CHANGES and 5 required sections
-- progress.md — Liveness & task execution log
-- tests/adversarial-milestone1.test.mjs — 19 live adversarial test scenarios
-- tests/test-midnight-logic-audit.mjs — Empirical test reproducing daily limit timezone boundary flaw
-- tests/test-calendar-timezone-audit.mjs — Empirical test reproducing PMS calendar block shift flaw
+- DISPATCH.md — Received dispatch instructions
+- BRIEFING.md — Situational awareness
+- progress.md — Liveness heartbeat
+- handoff.md — Final challenge handoff report
+- tests/challenger-m1-adversarial.test.mjs — Authored adversarial test harness (16 tests, 7 suites, 100% pass)
 
 ## Attack Surface
 - **Hypotheses tested**:
-  1. Concurrency bypass on maxSimultaneousFlats: Tested with 4-5 parallel requests. PASS (strictly enforced).
-  2. Unauthorized admin access: Tested with no auth, malformed tokens, role camareira, role recepcao. PASS (401/403).
-  3. Token injection / traversal / XSS / fuzzing: Tested. PASS (404/400).
-  4. Worker verification enforcement: Tested. PASS (403 for unverified and cross-order).
-  5. Clean flat mode & needsCleaning validation: Tested. PASS (400 without boolean, 200 with boolean, enqueues dirty cleaning).
-  6. Photo requirements: Tested. PASS (400 when empty on requirePhotos=true).
-  7. Timezone / midnight boundary on maxFlatsPerDay & PMS calendar: Tested. **FAIL (VULNERABILITY FOUND)**.
+  1. Provider toggle boundary validation & persistence without server restart: CONFIRMED ROBUST.
+  2. Simulated SERPRO HTTP 500, ECONNREFUSED, and 401 Unauthorized handling: CONFIRMED RESILIENT (fallback without throwing).
+  3. Server hang > 5000ms: CONFIRMED ABORT at ~5000ms (5029ms) with clean internal fallback.
+  4. Audit logging & Reception alert creation: CONFIRMED APPRENDED to `db.auditLogs` and `db.notifications`.
+  5. Multi-guest URL index resolution: CONFIRMED ?guest=2 in proprio and fallback modes.
 - **Vulnerabilities found**:
-  - `artifacts/api-server/demo-server.mjs:8159` uses naive `f.finishedAt.substring(0, 10) === todayStr` which compares UTC date slice to America/Sao_Paulo todayStr. Between 21:00 and 23:59:59 BRT, completed flats are not counted in today's daily limit, allowing unlimited flats to be completed; next morning, yesterday's flats are counted against the new day.
-  - `artifacts/api-server/demo-server.mjs:9981-9982` uses `startedAt.substring(0, 10)` which places late evening service blocks on tomorrow's date in PMS calendar.
+  - Twin instance note: `scripts/fnrh-serpro-service.mjs` and `artifacts/api-server/fnrh-serpro-service.mjs` are separate ESM modules; runtime demo-server imports from `artifacts/api-server/` and exposes `globalThis.getCheckinUrl`. Downstream modules must use `demo-server` or `globalThis` to access audit logs and reception notifications.
 - **Untested angles**:
-  - Clustering with multiple server processes (out of scope for this monolith setup).
+  - Milestone 2 communication dispatch channels (WhatsApp Z-API and Email templates) - scheduled for M2.
 
 ## Loaded Skills
-None
+- None

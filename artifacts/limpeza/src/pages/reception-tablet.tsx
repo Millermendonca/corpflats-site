@@ -8,13 +8,18 @@ import {
   Building2, User, Phone, CheckCircle2, AlertTriangle, Lock, Unlock, 
   LogOut, Clock, RefreshCw, FileText, ArrowRight, ShieldCheck, Undo2, 
   Sparkles, BedDouble, Calendar, UserCheck, KeyRound, AlertCircle, MessageSquare,
-  ZoomIn, Eye, ExternalLink, X, Gift, MessageCircle, Download, QrCode, Send, Loader2
+  ZoomIn, Eye, ExternalLink, X, Gift, MessageCircle, Download, QrCode, Send, Loader2,
+  Copy, Check
 } from "lucide-react"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
+import { useGetSettings } from "@workspace/api-client-react"
+import { getCheckinUrl } from "@/lib/checkin-url"
 
 export default function ReceptionTablet() {
   const [, setLocation] = useLocation()
+  const { data: settings } = useGetSettings()
+  const [copiedCheckinKey, setCopiedCheckinKey] = useState<string | null>(null)
   const [data, setData] = useState<{
     today: string
     arrivals: any[]
@@ -769,7 +774,7 @@ export default function ReceptionTablet() {
                                         size="sm"
                                         variant="outline"
                                         onClick={() => {
-                                          const preCheckinUrl = `${window.location.origin}/pre-checkin/${item.code || item.id}?guest=${g.index || gIdx + 1}`
+                                          const preCheckinUrl = getCheckinUrl(item, g.index || gIdx + 1, window.location.origin, settings)
                                           const phone = (g.phone || item.guestPhone || "").replace(/\D/g, "")
                                           const msg = encodeURIComponent(
                                             `Olá, ${g.name || 'Hóspede'}! 🏨\n\nPor favor, realize seu Check-in Digital para liberação da sua entrada no Apt ${item.flatNumber}:\n${preCheckinUrl}\n\nObrigado e boa estadia!`
@@ -780,6 +785,25 @@ export default function ReceptionTablet() {
                                         title="Enviar WhatsApp"
                                       >
                                         <MessageCircle className="w-3 h-3 text-emerald-400" />
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => {
+                                          const preCheckinUrl = getCheckinUrl(item, g.index || gIdx + 1, window.location.origin, settings)
+                                          navigator.clipboard.writeText(preCheckinUrl)
+                                          const key = `${item.code || item.id}-${g.index || gIdx + 1}`
+                                          setCopiedCheckinKey(key)
+                                          setTimeout(() => setCopiedCheckinKey(null), 2000)
+                                        }}
+                                        className="h-6 w-6 p-0 bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-300"
+                                        title="Copiar Link de Check-in"
+                                      >
+                                        {copiedCheckinKey === `${item.code || item.id}-${g.index || gIdx + 1}` ? (
+                                          <Check className="w-3 h-3 text-emerald-400" />
+                                        ) : (
+                                          <Copy className="w-3 h-3 text-sky-400" />
+                                        )}
                                       </Button>
                                     </div>
                                   )}

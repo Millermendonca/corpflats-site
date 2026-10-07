@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react"
 import { useLocation } from "wouter"
-import { useGetMe } from "@workspace/api-client-react"
+import { useGetMe, useGetSettings } from "@workspace/api-client-react"
+import { getCheckinUrl } from "@/lib/checkin-url"
 import { Shell } from "@/components/layout"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -142,6 +143,7 @@ export default function PmsCalendar() {
   const [, setLocation] = useLocation()
   const { toast } = useToast()
   const { data: user, isLoading: loadingUser } = useGetMe()
+  const { data: settings } = useGetSettings()
   const isAdmin = user?.role === "admin"
 
   const [currentDate, setCurrentDate] = useState(new Date())
@@ -7338,6 +7340,8 @@ export default function PmsCalendar() {
               const guestPhone = (selectedRes.guestPhone || "").replace(/\D/g, "")
               const waPhone = guestPhone.length >= 10 ? (guestPhone.startsWith("55") ? guestPhone : `55${guestPhone}`) : ""
 
+              const checkinUrl = getCheckinUrl(selectedRes, 1, origin, settings)
+
               const linksList = [
                 {
                   id: "portal",
@@ -7352,7 +7356,7 @@ export default function PmsCalendar() {
                 {
                   id: "precheckin",
                   title: "Pré Check-in Digital",
-                  url: `${origin}/pre-checkin/${resCode}`,
+                  url: checkinUrl,
                   desc: "Formulário para o hóspede preencher os dados dos acompanhantes, fotos de documentos e assinatura antecipada.",
                   icon: FileText,
                   badge: "Entrada Ágil",
@@ -7414,7 +7418,7 @@ export default function PmsCalendar() {
               const handleCopyAllFormatted = () => {
                 const text = `🏨 *CorpFlats - Links da sua Estadia*\n🔑 *Reserva:* #${resCode}${flatNum ? ` (Flat ${flatNum})` : ""}\n👤 *Hóspede:* ${guestName}\n\n` +
                   `🌐 *Portal Minha Reserva:*\n${origin}/minha-reserva/${resCode}\n\n` +
-                  `📝 *Pré Check-in Digital:*\n${origin}/pre-checkin/${resCode}\n\n` +
+                  `📝 *Pré Check-in Digital:*\n${checkinUrl}\n\n` +
                   `☕ *Cardápio de Café da Manhã:*\n${origin}/cafe/${resCode}\n\n` +
                   `🚪 *Check-out Expresso:*\n${origin}/checkout/${resCode}\n\n` +
                   `📍 *Localização no Google Maps:*\nhttps://share.google/LHu3541d5lhkdvbL2`
