@@ -110,6 +110,11 @@ export default function GuestPreCheckin() {
   const [cep, setCep] = useState("")
   const [loadingCep, setLoadingCep] = useState(false)
   const [address, setAddress] = useState("")
+  const [street, setStreet] = useState("")
+  const [streetNumber, setStreetNumber] = useState("")
+  const [complement, setComplement] = useState("")
+  const [neighborhood, setNeighborhood] = useState("")
+  const numberInputRef = useRef<HTMLInputElement>(null)
   const [city, setCity] = useState("")
   const [state, setState] = useState("RJ")
   const [transportMethod, setTransportMethod] = useState("")
@@ -135,7 +140,6 @@ export default function GuestPreCheckin() {
   const [acceptedHouseRules, setAcceptedHouseRules] = useState(false)
   const [acceptedContract, setAcceptedContract] = useState(false)
   const [legalDeclarationAccepted, setLegalDeclarationAccepted] = useState(false)
-  const [isEditingProfile, setIsEditingProfile] = useState(false)
   const [generatedPdfInfo, setGeneratedPdfInfo] = useState<any | null>(null)
   const [tokenInfo, setTokenInfo] = useState<{ valid: boolean, message?: string } | null>(null)
   // Token temporário de assinatura de 2 horas (MP 2.200-2/2001 e Lei 14.063/2020)
@@ -318,6 +322,36 @@ export default function GuestPreCheckin() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [isDrawing, setIsDrawing] = useState(false)
 
+  const syncAddress = (st: string, num: string, comp: string, neigh: string) => {
+    const parts: string[] = []
+    const cleanSt = st.trim()
+    const cleanNum = num.trim()
+    const cleanComp = comp.trim()
+    const cleanNeigh = neigh.trim()
+
+    let line1 = cleanSt
+    if (cleanNum) {
+      line1 = line1 ? `${line1}, ${cleanNum}` : cleanNum
+    }
+    if (cleanComp) {
+      line1 = line1 ? `${line1} - ${cleanComp}` : cleanComp
+    }
+    if (line1) parts.push(line1)
+    if (cleanNeigh) parts.push(cleanNeigh)
+
+    const finalAddr = parts.join(" - ")
+    setAddress(finalAddr)
+    return finalAddr
+  }
+
+  const formatCep = (raw: string) => {
+    const digits = raw.replace(/\D/g, "").slice(0, 8)
+    if (digits.length > 5) {
+      return `${digits.slice(0, 5)}-${digits.slice(5)}`
+    }
+    return digits
+  }
+
   const handleLookupPreCheckinCep = async (val: string) => {
     const clean = val.replace(/\D/g, "")
     if (clean.length === 8) {
@@ -326,8 +360,21 @@ export default function GuestPreCheckin() {
         const res = await fetch(`/api/lookup-cep/${clean}`)
         if (res.ok) {
           const data = await res.json()
-          if (data.logradouro) setAddress(`${data.logradouro}, ${data.bairro || ''}`.trim())
-          if (data.cidade && data.uf) setCity(`${data.cidade} / ${data.uf}`)
+          const logradouro = data.logradouro || ""
+          const bairro = data.bairro || ""
+          const cidade = data.cidade || ""
+          const uf = data.uf || ""
+
+          if (logradouro) setStreet(logradouro)
+          if (bairro) setNeighborhood(bairro)
+          if (cidade && uf) {
+            setCity(`${cidade} / ${uf}`)
+            setState(uf)
+          }
+          syncAddress(logradouro, streetNumber, complement, bairro)
+          setTimeout(() => {
+            numberInputRef.current?.focus()
+          }, 150)
         }
       } catch {}
       finally {
@@ -389,9 +436,15 @@ export default function GuestPreCheckin() {
     setBirthDate(toIsoDate(rawBirth))
     setBirthDateInput(toDisplayDate(rawBirth))
     setGender(currentG?.gender || (isTitular ? (guest.gender || res.gender || "masculino") : "masculino"))
-    setAddress(currentG?.address || (isTitular ? (guest.address || res.guestAddress || "") : ""))
+    const rawAddress = currentG?.address || (isTitular ? (guest.address || res.guestAddress || "") : "")
+    setAddress(rawAddress)
+    setStreet(currentG?.street || (isTitular ? (guest.street || res.guestStreet || "") : "") || rawAddress || "")
+    setStreetNumber(currentG?.streetNumber || (isTitular ? (guest.streetNumber || res.guestStreetNumber || "") : "") || currentG?.number || "")
+    setComplement(currentG?.complement || (isTitular ? (guest.complement || res.guestComplement || "") : "") || "")
+    setNeighborhood(currentG?.neighborhood || (isTitular ? (guest.neighborhood || res.guestNeighborhood || "") : "") || currentG?.bairro || "")
     setCity(currentG?.city || (isTitular ? (guest.city || res.guestCity || "") : ""))
     setState(currentG?.state || (isTitular ? (guest.state || res.guestState || "RJ") : "RJ"))
+    setCep(currentG?.cep || (isTitular ? (guest.cep || res.guestCep || "") : ""))
 
     setMinorKinship(currentG?.minorKinship || "filho")
     setMinorAuthDocPhoto(currentG?.minorAuthDocUrl || null)
@@ -410,6 +463,10 @@ export default function GuestPreCheckin() {
         }
         if (!currentG?.address && !guest.address && !res.guestAddress && sessionUser.address) {
           setAddress(sessionUser.address)
+          setStreet(sessionUser.street || sessionUser.address)
+          if (sessionUser.streetNumber) setStreetNumber(sessionUser.streetNumber)
+          if (sessionUser.complement) setComplement(sessionUser.complement)
+          if (sessionUser.neighborhood) setNeighborhood(sessionUser.neighborhood)
         }
         if (!currentG?.city && !guest.city && !res.guestCity && sessionUser.city) {
           setCity(sessionUser.city)
@@ -744,6 +801,10 @@ export default function GuestPreCheckin() {
           gender,
           cep,
           address,
+          street,
+          streetNumber,
+          complement,
+          neighborhood,
           city,
           state,
           transportMethod: transportMethod || "Carro próprio",
@@ -807,6 +868,10 @@ export default function GuestPreCheckin() {
               document: document || currentProf.document,
               birthDate: birthDate || currentProf.birthDate,
               address: address || currentProf.address,
+              street: street || currentProf.street,
+              streetNumber: streetNumber || currentProf.streetNumber,
+              complement: complement || currentProf.complement,
+              neighborhood: neighborhood || currentProf.neighborhood,
               city: city || currentProf.city,
               state: state || currentProf.state,
               cep: cep || currentProf.cep,
@@ -1811,153 +1876,13 @@ export default function GuestPreCheckin() {
                   <User className="w-4 h-4 text-sky-600" />
                   <span>1. Dados Cadastrais do Hóspede</span>
                 </h3>
-                {Boolean(fullName.trim() && document.trim() && phone.trim() && email.trim() && address.trim()) && (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setIsEditingProfile(!isEditingProfile)}
-                    className="h-8 text-xs font-bold text-sky-700 bg-sky-50 border-sky-200 hover:bg-sky-100 rounded-xl flex items-center gap-1.5"
-                  >
-                    <Edit3 className="w-3.5 h-3.5" />
-                    <span>{isEditingProfile ? "Concluir Edição" : "Editar Dados"}</span>
-                  </Button>
+                {(guestCode || reservation?.guestCode) && (
+                  <Badge className="bg-slate-100 text-slate-800 border-slate-200 text-[10px] font-mono font-bold">
+                    {guestCode || reservation?.guestCode}
+                  </Badge>
                 )}
               </div>
 
-              {/* Card de Dados Cadastrais Salvos */}
-              {Boolean(fullName.trim() && document.trim() && phone.trim() && email.trim() && address.trim()) && !isEditingProfile ? (
-                <div className="space-y-4">
-                  <div className="p-4 sm:p-5 rounded-2xl space-y-3 shadow-2xs border bg-slate-50/90 border-slate-200">
-                    <div className="flex items-center justify-between flex-wrap gap-2">
-                      <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                        Dados Cadastrais Salvos
-                      </span>
-                      <div className="flex items-center gap-1.5">
-                        {(guestCode || reservation?.guestCode) && (
-                          <Badge className="bg-slate-100 text-slate-800 border-slate-200 text-[10px] font-mono font-bold">
-                            {guestCode || reservation?.guestCode}
-                          </Badge>
-                        )}
-                        <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-bold">
-                          Verificado
-                        </Badge>
-                      </div>
-                    </div>
-
-                    <p className="text-xs text-slate-600 leading-relaxed">
-                      Confira seus dados antes de prosseguir para o envio do documento.
-                    </p>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1 text-xs">
-                      <div className="bg-white p-2.5 rounded-xl border border-slate-200/70">
-                        <span className="text-[10px] font-semibold text-slate-400 block uppercase tracking-wider">Nome Completo</span>
-                        <span className="font-bold text-slate-900 text-xs sm:text-sm">{fullName}</span>
-                      </div>
-                      <div className="bg-white p-2.5 rounded-xl border border-slate-200/70">
-                        <span className="text-[10px] font-semibold text-slate-400 block uppercase tracking-wider">CPF / Documento</span>
-                        <span className="font-bold text-slate-900 font-mono text-xs sm:text-sm">{document}</span>
-                      </div>
-                      <div className="bg-white p-2.5 rounded-xl border border-slate-200/70">
-                        <span className="text-[10px] font-semibold text-slate-400 block uppercase tracking-wider">Telefone / WhatsApp</span>
-                        <span className="font-medium text-slate-800">{phone}</span>
-                      </div>
-                      <div className="bg-white p-2.5 rounded-xl border border-slate-200/70">
-                        <span className="text-[10px] font-semibold text-slate-400 block uppercase tracking-wider">E-mail</span>
-                        <span className="font-medium text-slate-800">{email}</span>
-                      </div>
-                      <div className="bg-white p-2.5 rounded-xl border border-slate-200/70 sm:col-span-2">
-                        <span className="text-[10px] font-semibold text-slate-400 block uppercase tracking-wider">Endereço Residencial</span>
-                        <span className="font-medium text-slate-800">{[address, city, state].filter(Boolean).join(" - ")}</span>
-                      </div>
-                      {vehiclePlate && (
-                        <div className="bg-sky-50/80 p-2.5 rounded-xl border border-sky-200 sm:col-span-2 flex items-center justify-between gap-2">
-                          <div>
-                            <span className="text-[10px] font-semibold text-sky-700 block uppercase tracking-wider">Veículo para Garagem</span>
-                            <span className="font-bold text-slate-900 font-mono text-xs sm:text-sm">{vehiclePlate} • {vehicleBrand} {vehicleModel}</span>
-                          </div>
-                          <Badge className="bg-sky-200/80 text-sky-900 text-[10px] border-0 font-bold">1 Vaga Soho</Badge>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Ação para Hóspede com Documentos & Assinatura Já Salvos: Confirmação Rápida de 1 Toque */}
-                  {isReturningGuest && (docPhoto || reservation?.docPhotoUrl) && (signatureData || reservation?.signatureUrl) ? (
-                    <div className="space-y-2.5 pt-1">
-                      <Button
-                        type="button"
-                        disabled={loading}
-                        onClick={async () => {
-                          if (isMinorGuest) {
-                            if (!minorKinship) {
-                              alert("Por favor, selecione o grau de parentesco do menor acompanhado.")
-                              return
-                            }
-                            if (minorKinship !== "filho" && !minorAuthDocPhoto) {
-                              alert("Atenção: Para hóspede menor de idade desacompanhado dos pais, é obrigatório anexar a autorização de cartório (Art. 82 do ECA).")
-                              return
-                            }
-                          }
-                          setLegalDeclarationAccepted(true)
-                          setAcceptedHouseRules(true)
-                          setAcceptedContract(true)
-                          await handleSubmit()
-                        }}
-                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm h-12 rounded-xl gap-2 shadow-md shadow-emerald-600/20"
-                      >
-                        <CheckCircle2 className="w-5 h-5" />
-                        <span>{loading ? "Validando Entrada..." : `Confirmar Check-in no Flat ${reservation?.flatNumber || ''}`}</span>
-                      </Button>
-
-                      <div className="flex items-center justify-between text-xs px-1 text-slate-500">
-                        <button
-                          type="button"
-                          onClick={() => setIsEditingProfile(true)}
-                          className="hover:text-slate-900 font-semibold underline"
-                        >
-                          Alterar telefone, veículo ou endereço
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setStep(2)}
-                          className="text-sky-700 hover:text-sky-900 font-bold"
-                        >
-                          Rever fotos e assinatura →
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <Button
-                      onClick={() => {
-                        if (!birthDate) {
-                          alert("Por favor, informe a Data de Nascimento antes de prosseguir.")
-                          setIsEditingProfile(true)
-                          return
-                        }
-                        if (isMinorGuest) {
-                          if (!minorKinship) {
-                            alert("Por favor, selecione o grau de parentesco do menor acompanhado.")
-                            return
-                          }
-                          if (minorKinship !== "filho" && !minorAuthDocPhoto) {
-                            alert("Atenção: Para hóspede menor de idade desacompanhado dos pais, é obrigatório anexar a autorização de cartório (Art. 82 do ECA).")
-                            return
-                          }
-                        }
-                        setStep(2)
-                      }}
-                      className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm h-12 rounded-xl gap-2 shadow-md"
-                    >
-                      <span>Avançar para Foto do Documento</span>
-                      <ArrowRight className="w-4 h-4" />
-                    </Button>
-                  )}
-                </div>
-              ) : null}
-
-              {(!Boolean(fullName.trim() && document.trim() && phone.trim() && email.trim() && address.trim() && birthDate.trim()) || isEditingProfile) && (
               <div className="space-y-3 sm:space-y-4">
                 <div className="space-y-1.5">
                   <Label className="text-xs font-bold text-slate-700">Nome Completo *</Label>
@@ -2143,43 +2068,95 @@ export default function GuestPreCheckin() {
                   />
                 </div>
 
-                {/* CEP com Auto-Preenchimento */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <Label className="text-xs font-bold text-slate-700">CEP</Label>
-                      {loadingCep && <span className="text-[10px] text-sky-600 animate-pulse font-bold">Buscando...</span>}
-                    </div>
-                    <Input 
-                      value={cep} 
-                      onChange={e => {
-                        setCep(e.target.value)
-                        handleLookupPreCheckinCep(e.target.value)
-                      }} 
-                      onBlur={e => handleLookupPreCheckinCep(e.target.value)}
-                      placeholder="00000-000" 
-                      className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-mono rounded-xl h-11 focus-visible:ring-sky-500" 
-                    />
+                {/* Endereço Residencial com Auto-Preenchimento e Campos Estruturados */}
+                <div className="space-y-3 p-4 bg-slate-50/70 border border-slate-200/80 rounded-2xl">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <MapPin className="w-4 h-4 text-sky-600" />
+                      <span>Endereço Residencial *</span>
+                    </span>
+                    {loadingCep && <span className="text-[10px] text-sky-600 animate-pulse font-bold">Buscando CEP...</span>}
                   </div>
-                  <div className="space-y-1.5 sm:col-span-2">
-                    <Label className="text-xs font-bold text-slate-700">Endereço Residencial (Rua, Nº, Bairro)</Label>
-                    <Input 
-                      value={address} 
-                      onChange={e => setAddress(e.target.value)} 
-                      placeholder="Ex: Av. Pelinca, 100 - Centro" 
-                      className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-medium rounded-xl h-11 focus-visible:ring-sky-500" 
-                    />
-                  </div>
-                </div>
 
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-bold text-slate-700">Cidade / Estado Residencial</Label>
-                  <Input 
-                    value={city} 
-                    onChange={e => setCity(e.target.value)} 
-                    placeholder="Ex: Campos dos Goytacazes / RJ" 
-                    className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-medium rounded-xl h-11 focus-visible:ring-sky-500" 
-                  />
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                    <div className="space-y-1.5 sm:col-span-1">
+                      <Label className="text-xs font-bold text-slate-700">CEP</Label>
+                      <Input 
+                        value={cep} 
+                        onChange={e => {
+                          const v = formatCep(e.target.value)
+                          setCep(v)
+                          handleLookupPreCheckinCep(v)
+                        }} 
+                        onBlur={e => handleLookupPreCheckinCep(e.target.value)}
+                        placeholder="00000-000" 
+                        maxLength={9}
+                        inputMode="numeric"
+                        className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-mono rounded-xl h-11 focus-visible:ring-sky-500" 
+                      />
+                    </div>
+                    <div className="space-y-1.5 sm:col-span-3">
+                      <Label className="text-xs font-bold text-slate-700">Rua / Logradouro *</Label>
+                      <Input 
+                        value={street} 
+                        onChange={e => {
+                          setStreet(e.target.value)
+                          syncAddress(e.target.value, streetNumber, complement, neighborhood)
+                        }} 
+                        placeholder="Ex: Av. Pelinca" 
+                        className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-medium rounded-xl h-11 focus-visible:ring-sky-500" 
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="space-y-1.5 sm:col-span-1">
+                      <Label className="text-xs font-bold text-slate-700">Número *</Label>
+                      <Input 
+                        ref={numberInputRef}
+                        value={streetNumber} 
+                        onChange={e => {
+                          setStreetNumber(e.target.value)
+                          syncAddress(street, e.target.value, complement, neighborhood)
+                        }} 
+                        placeholder="Ex: 100 ou S/N" 
+                        className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-bold rounded-xl h-11 focus-visible:ring-sky-500 font-mono" 
+                      />
+                    </div>
+                    <div className="space-y-1.5 sm:col-span-1">
+                      <Label className="text-xs font-bold text-slate-700">Complemento</Label>
+                      <Input 
+                        value={complement} 
+                        onChange={e => {
+                          setComplement(e.target.value)
+                          syncAddress(street, streetNumber, e.target.value, neighborhood)
+                        }} 
+                        placeholder="Ex: Apto 402, Bl. B" 
+                        className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-medium rounded-xl h-11 focus-visible:ring-sky-500" 
+                      />
+                    </div>
+                    <div className="space-y-1.5 sm:col-span-1">
+                      <Label className="text-xs font-bold text-slate-700">Bairro</Label>
+                      <Input 
+                        value={neighborhood} 
+                        onChange={e => {
+                          setNeighborhood(e.target.value)
+                          syncAddress(street, streetNumber, complement, e.target.value)
+                        }} 
+                        placeholder="Ex: Centro" 
+                        className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-medium rounded-xl h-11 focus-visible:ring-sky-500" 
+                      />
+                    </div>
+                    <div className="space-y-1.5 sm:col-span-1">
+                      <Label className="text-xs font-bold text-slate-700">Cidade / Estado</Label>
+                      <Input 
+                        value={city} 
+                        onChange={e => setCity(e.target.value)} 
+                        placeholder="Ex: Campos / RJ" 
+                        className="bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-medium rounded-xl h-11 focus-visible:ring-sky-500" 
+                      />
+                    </div>
+                  </div>
                 </div>
 
                 {/* ── Seção Obrigatória MTur: Informações da Estadia Atual (NUNCA pré-preenchidas) ── */}
@@ -2334,8 +2311,13 @@ export default function GuestPreCheckin() {
 
                 <Button 
                   onClick={() => {
-                    if (!fullName.trim() || !document.trim() || !phone.trim() || !email.trim() || !address.trim()) {
+                    if (!fullName.trim() || !document.trim() || !phone.trim() || !email.trim() || (!address.trim() && !street.trim())) {
                       alert("Por favor, preencha todos os campos obrigatórios: Nome Completo, CPF, Telefone, Endereço e E-mail.")
+                      return
+                    }
+                    if (!streetNumber.trim() && !address.includes(",")) {
+                      alert("Por favor, informe o Número do endereço residencial (ou S/N se não houver).")
+                      numberInputRef.current?.focus()
                       return
                     }
                     if (!birthDate) {
@@ -2368,7 +2350,6 @@ export default function GuestPreCheckin() {
                         return
                       }
                     }
-                    setIsEditingProfile(false)
                     setStep(2)
                   }}
                   className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm h-12 rounded-xl mt-4 gap-2 shadow-md"
@@ -2377,7 +2358,6 @@ export default function GuestPreCheckin() {
                   <ArrowRight className="w-4 h-4" />
                 </Button>
               </div>
-              )}
             </div>
           )}
 

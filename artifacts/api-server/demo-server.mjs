@@ -85,6 +85,13 @@ import {
   resolveReservationAttachments
 } from "./mail-service.mjs";
 import { generateFnrhPdf, formatToBrasiliaDateTime, SECURE_FNRH_DIR, LEGACY_FNRH_DIR } from "./fnrh-pdf-service.mjs";
+import {
+  fnrhSerproService,
+  registerSerproReservation,
+  checkSerproHealth,
+  isSerproConfigured,
+  getSerproConfig
+} from "./fnrh-serpro-service.mjs";
 
 const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
@@ -562,6 +569,11 @@ let db = {
     checkinTime: "14:00",
     checkoutTime: "12:00",
     autoEarlyCheckinForSite: true,
+    checkinProvider: "proprio",
+    serproConfig: {
+      env: process.env.SERPRO_ENV || "homologacao",
+      cpfSolicitante: process.env.SERPRO_CPF_SOLICITANTE || "12585736792"
+    },
     googleMapsUrl: "https://share.google/LHu3541d5lhkdvbL2",
     buildingName: "Edifício Soho Residence Service",
     receptionEmail: "millerpessanha@gmail.com",
@@ -3499,6 +3511,15 @@ async function loadDatabase() {
           const pgGarageEmail = pgLoaded.settings?.garageEmail;
           const preservedGarageEmail = pgGarageEmail || localGarageEmail || "millerpessanha@gmail.com";
 
+          // Blindagem da Chave Seletora de Check-in e Configurações SERPRO
+          const localCheckinProvider = db.settings?.checkinProvider;
+          const pgCheckinProvider = pgLoaded.settings?.checkinProvider;
+          const preservedCheckinProvider = pgCheckinProvider || localCheckinProvider || "proprio";
+
+          const localSerproConfig = db.settings?.serproConfig;
+          const pgSerproConfig = pgLoaded.settings?.serproConfig;
+          const preservedSerproConfig = pgSerproConfig || localSerproConfig || null;
+
           Object.assign(db, pgLoaded);
 
           if (!db.settings) db.settings = {};
@@ -3507,6 +3528,8 @@ async function loadDatabase() {
           }
           if (preservedReceptionEmail) db.settings.receptionEmail = preservedReceptionEmail;
           if (preservedGarageEmail) db.settings.garageEmail = preservedGarageEmail;
+          if (preservedCheckinProvider) db.settings.checkinProvider = preservedCheckinProvider;
+          if (preservedSerproConfig) db.settings.serproConfig = preservedSerproConfig;
 
           if (!Array.isArray(db.periodicTasks)) db.periodicTasks = [];
           if (!Array.isArray(db.periodicExecutions)) db.periodicExecutions = [];
@@ -4829,18 +4852,33 @@ function saveDatabase(reason = "auto_save") {
 // ── Fail-Safe Audit Log Engine ───────────────────────────────────────────────
 const AUDIT_LOG_FILE = path.join(__dirname, "audit_logs.jsonl");
 
-async function logAuditEvent({
-  level = "info",
-  category = "system",
-  action,
-  actor = null,
-  details = {},
-  source = "server",
-  ip = "",
-  userAgent = ""
-}) {
+async function logAuditEvent(arg1, arg2) {
   try {
     if (!db.auditLogs) db.auditLogs = [];
+
+    let payload = {};
+    if (typeof arg1 === "string") {
+      // Suporte à chamada posicional: logAuditEvent("FNRH_SERPRO_FALLBACK", details)
+      payload = {
+        action: arg1,
+        details: arg2 || {},
+        category: "integration",
+        level: "warning"
+      };
+    } else if (arg1 && typeof arg1 === "object") {
+      payload = arg1;
+    }
+
+    const {
+      level = "info",
+      category = "system",
+      action = "EVENT",
+      actor = null,
+      details = {},
+      source = "server",
+      ip = "",
+      userAgent = ""
+    } = payload;
 
     const now = new Date().toISOString();
     const id = db.auditLogs.length > 0 ? (db.auditLogs[0].id || db.auditLogs.length) + 1 : 1;
@@ -4887,10 +4925,28 @@ async function logAuditEvent({
 }
 
 // ── Central Notification Engine ─────────────────────────────────────────────
-function createNotification({ category, title, message, severity = "info", metadata = {}, targetUrl = "" }) {
+function createNotification(arg1, arg2, arg3) {
   try {
     if (!db.notifications) db.notifications = [];
     const settings = db.notificationSettings || {};
+
+    let payload = {};
+    if (typeof arg1 === "string") {
+      // Suporte à chamada posicional: createNotification("alerta", "Mensagem...", { metadata })
+      const cat = arg1 === "alerta" ? "system_error" : arg1;
+      payload = {
+        category: cat,
+        title: "⚠️ Contingência FNRH SERPRO",
+        message: String(arg2 || ""),
+        severity: "warning",
+        metadata: typeof arg3 === "object" ? (arg3 || {}) : {},
+        targetUrl: arg3?.reservationCode ? `/reservas?code=${arg3.reservationCode}` : "/reservas"
+      };
+    } else if (arg1 && typeof arg1 === "object") {
+      payload = arg1;
+    }
+
+    const { category = "system_error", title = "Notificação", message = "", severity = "info", metadata = {}, targetUrl = "" } = payload;
 
     const categoryMap = {
       breakfast: settings.notifyOnBreakfast !== false,
@@ -4906,7 +4962,7 @@ function createNotification({ category, title, message, severity = "info", metad
     logAuditEvent({
       level: severity === "danger" || severity === "error" ? "error" : (severity === "warning" ? "warning" : (severity === "success" ? "success" : "info")),
       category: category === "checkout" || category === "abandoned_cart" ? "reservation" : (category === "system_error" ? "system" : "cleaning"),
-      action: `NOTIFICATION_${category.toUpperCase()}`,
+      action: `NOTIFICATION_${String(category).toUpperCase()}`,
       details: { title, message, metadata, targetUrl }
     });
 
@@ -4952,6 +5008,152 @@ function createNotification({ category, title, message, severity = "info", metad
     console.error("[Notification] Erro ao criar notificação:", err);
     return null;
   }
+}
+
+// ── Centralized Check-in URL Resolver & Resilient Fallback Engine ─────────────
+/**
+ * Resolve de forma centralizada e resiliente a URL de check-in para uma reserva.
+ * No modo 'gov_fnrh', busca o link oficial do Ministério do Turismo no SERPRO.
+ * Em caso de falha ou timeout (> 5000ms), ativa fallback automático para o check-in próprio.
+ * 
+ * @param {Object} reservation - Objeto da reserva
+ * @param {number|string} [guestIndex=1] - Índice do hóspede (1 ou 2)
+ * @param {string} [baseUrl=""] - Host base da aplicação
+ * @param {Object} [dbInstance=null] - Instância opcional do db para injeção
+ * @returns {Promise<string>} URL de check-in resolvida
+ */
+export async function getCheckinUrl(reservation, guestIndex = 1, baseUrl = "", dbInstance = null) {
+  const activeDb = dbInstance || (typeof db !== "undefined" ? db : null);
+  const hostBase = (baseUrl || process.env.SERVER_BASE_URL || "https://corpflats.onrender.com").replace(/\/$/, "");
+  const safeGuestIndex = Number(guestIndex) || 1;
+  const resCode = reservation?.code || reservation?.id || "";
+  const internalCheckinUrl = `${hostBase}/pre-checkin/${resCode}?guest=${safeGuestIndex}`;
+
+  const currentProvider = activeDb?.settings?.checkinProvider || "proprio";
+
+  // 1. Provedor Próprio: resolução imediata sem I/O
+  if (currentProvider !== "gov_fnrh") {
+    return internalCheckinUrl;
+  }
+
+  // 2. Modo Gov.br ativo e link já previamente armazenado na reserva
+  if (reservation?.serproPrecheckinUrl || reservation?.link_precheckin) {
+    return reservation.serproPrecheckinUrl || reservation.link_precheckin;
+  }
+
+  // 3. Modo Gov.br ativo mas link não gerado: tenta registrar na API SERPRO com timeout de 5 segundos
+  try {
+    if (!reservation || (!reservation.code && !reservation.id)) {
+      throw new Error("Reserva inválida ou sem identificador.");
+    }
+
+    // Promessa de registro SERPRO
+    const registrationTask = (async () => {
+      if (typeof fnrhSerproService?.registerReservation === "function") {
+        return await fnrhSerproService.registerReservation(reservation, activeDb?.settings);
+      } else if (typeof registerSerproReservation === "function") {
+        return await registerSerproReservation(reservation, activeDb?.settings);
+      }
+      throw new Error("Cliente SERPRO FNRH não inicializado.");
+    })();
+
+    // Guarda de timeout estrito de 5000ms via Promise.race
+    let timeoutHandle;
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        const timeoutErr = new Error("Timeout de 5000ms excedido na comunicação com a API SERPRO FNRH");
+        timeoutErr.code = "ETIMEDOUT";
+        reject(timeoutErr);
+      }, 5000);
+      if (timeoutHandle?.unref) timeoutHandle.unref();
+    });
+
+    const serproResult = await Promise.race([registrationTask, timeoutPromise]);
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+
+    const linkPrecheckin = serproResult?.link_precheckin || serproResult?.serproPrecheckinUrl;
+    const reservaId = serproResult?.reserva_id || serproResult?.serproReservaId;
+
+    if (!linkPrecheckin) {
+      throw new Error(serproResult?.error || "link_precheckin não retornado pela API SERPRO");
+    }
+
+    // Atualiza a reserva em memória
+    reservation.serproReservaId = reservaId;
+    reservation.serproPrecheckinUrl = linkPrecheckin;
+    reservation.link_precheckin = linkPrecheckin; // alias retrocompatível
+    reservation.serproStatus = serproResult.situacao_reserva_id || "CRIADA";
+    reservation.serproCreatedAt = new Date().toISOString();
+    reservation.serproError = null;
+
+    // Persiste no banco de dados se disponível
+    if (typeof saveDatabase === "function") {
+      try {
+        saveDatabase("serpro_reservation_created");
+      } catch (saveErr) {
+        console.warn("[getCheckinUrl] Aviso ao salvar database:", saveErr.message);
+      }
+    }
+
+    return linkPrecheckin;
+  } catch (err) {
+    // ── Ativação do Fallback Inteligente e Transparente (< 5s ou erro) ────────
+    console.warn(`[FNRH_SERPRO_FALLBACK] Reserva ${reservation?.code || reservation?.id}: ${err.message}. Retornando check-in próprio.`);
+
+    if (reservation) {
+      reservation.serproError = err.message;
+      reservation.serproLastFallbackAt = new Date().toISOString();
+    }
+
+    // 1. Registro no Audit Log
+    if (typeof logAuditEvent === "function") {
+      try {
+        logAuditEvent("FNRH_SERPRO_FALLBACK", {
+          reservationCode: reservation?.code || String(reservation?.id || ""),
+          guestIndex: safeGuestIndex,
+          error: err.message
+        });
+      } catch (auditErr) {
+        console.error("[FNRH Fallback] Erro ao registrar log de auditoria:", auditErr.message);
+      }
+    }
+
+    // 2. Alerta na central de notificações da recepção
+    if (typeof createNotification === "function") {
+      try {
+        createNotification("alerta", `Falha SERPRO FNRH: Check-in fallback ativado para reserva ${reservation?.code || reservation?.id || ""}`, {
+          reservationId: reservation?.id,
+          reservationCode: reservation?.code,
+          error: err.message
+        });
+      } catch (notifErr) {
+        console.error("[FNRH Fallback] Erro ao criar notificação:", notifErr.message);
+      }
+    }
+
+    // 3. Retorna URL interna SEM lançar exceção
+    return internalCheckinUrl;
+  }
+}
+
+/**
+ * Versão síncrona do resolvedor para locais onde async/await não é viável
+ * (ex.: tags dinâmicas de templates, renderização de botões e mapas de listas).
+ */
+export function getCheckinUrlSync(reservation, guestIndex = 1, baseUrl = "", dbInstance = null) {
+  const activeDb = dbInstance || (typeof db !== "undefined" ? db : null);
+  const hostBase = (baseUrl || process.env.SERVER_BASE_URL || "https://corpflats.onrender.com").replace(/\/$/, "");
+  const safeGuestIndex = Number(guestIndex) || 1;
+  const resCode = reservation?.code || reservation?.id || "";
+  const internalCheckinUrl = `${hostBase}/pre-checkin/${resCode}?guest=${safeGuestIndex}`;
+
+  const currentProvider = activeDb?.settings?.checkinProvider || "proprio";
+
+  if (currentProvider === "gov_fnrh" && (reservation?.serproPrecheckinUrl || reservation?.link_precheckin)) {
+    return reservation.serproPrecheckinUrl || reservation.link_precheckin;
+  }
+
+  return internalCheckinUrl;
 }
 
 await loadDatabase();
@@ -10051,6 +10253,11 @@ app.get("/api/settings", (req, res) => {
   res.json({
     garageEmail: db.settings?.garageEmail || "millerpessanha@gmail.com",
     ...db.settings,
+    checkinProvider: db.settings?.checkinProvider || "proprio",
+    serproConfig: db.settings?.serproConfig || {
+      env: process.env.SERPRO_ENV || "homologacao",
+      cpfSolicitante: process.env.SERPRO_CPF_SOLICITANTE || "12585736792"
+    },
     petPolicy,
     houseRules: db.settings.houseRules || DEFAULT_HOUSE_RULES,
     contractTerms: db.settings.contractTerms || DEFAULT_CONTRACT_TERMS,
@@ -10059,7 +10266,7 @@ app.get("/api/settings", (req, res) => {
 });
 
 app.patch("/api/settings", (req, res) => {
-  const { onedriveShareUrl, syncIntervalMinutes, sheetName, alertHour, termsAndRules, houseRules, contractTerms, adminWhatsApp, autoEarlyCheckinForSite, checkinTime, checkoutTime, hotelAddress, googleMapsUrl, receptionEmail, garageEmail, buildingName, petPolicy } = req.body;
+  const { onedriveShareUrl, syncIntervalMinutes, sheetName, alertHour, termsAndRules, houseRules, contractTerms, adminWhatsApp, autoEarlyCheckinForSite, checkinTime, checkoutTime, hotelAddress, googleMapsUrl, receptionEmail, garageEmail, buildingName, petPolicy, checkinProvider, serproConfig } = req.body;
   if (onedriveShareUrl !== undefined) db.settings.onedriveShareUrl = onedriveShareUrl;
   if (syncIntervalMinutes !== undefined) db.settings.syncIntervalMinutes = syncIntervalMinutes;
   if (sheetName !== undefined) db.settings.sheetName = sheetName;
@@ -10076,6 +10283,31 @@ app.patch("/api/settings", (req, res) => {
   if (receptionEmail !== undefined) db.settings.receptionEmail = receptionEmail;
   if (garageEmail !== undefined) db.settings.garageEmail = garageEmail ? String(garageEmail).trim() : "millerpessanha@gmail.com";
   if (buildingName !== undefined) db.settings.buildingName = buildingName;
+
+  // Validação e persistência do checkinProvider
+  if (checkinProvider !== undefined) {
+    if (checkinProvider !== "proprio" && checkinProvider !== "gov_fnrh") {
+      return res.status(400).json({
+        error: "checkinProvider inválido. Deve ser 'proprio' ou 'gov_fnrh'."
+      });
+    }
+    db.settings.checkinProvider = checkinProvider;
+  }
+
+  // Validação e mesclagem de serproConfig
+  if (serproConfig !== undefined) {
+    if (typeof serproConfig !== "object" || serproConfig === null) {
+      return res.status(400).json({ error: "serproConfig deve ser um objeto válido." });
+    }
+    if (serproConfig.env && !["homologacao", "producao"].includes(serproConfig.env)) {
+      return res.status(400).json({ error: "serproConfig.env inválido. Deve ser 'homologacao' ou 'producao'." });
+    }
+    db.settings.serproConfig = {
+      ...(db.settings.serproConfig || {}),
+      ...serproConfig
+    };
+  }
+
   if (petPolicy !== undefined) {
     if (!db.siteConfig) db.siteConfig = {};
     db.siteConfig.petPolicy = {
@@ -10084,14 +10316,41 @@ app.patch("/api/settings", (req, res) => {
     };
     db.settings.petPolicy = db.siteConfig.petPolicy;
   }
-  saveDatabase();
+  saveDatabase("settings_update");
   const currentPetPolicy = db.siteConfig?.petPolicy || db.settings?.petPolicy || DEFAULT_SITE_CONFIG.petPolicy;
   res.json({
     ...db.settings,
+    checkinProvider: db.settings.checkinProvider || "proprio",
     petPolicy: currentPetPolicy,
     houseRules: db.settings.houseRules || DEFAULT_HOUSE_RULES,
     contractTerms: db.settings.contractTerms || DEFAULT_CONTRACT_TERMS
   });
+});
+
+// ── Health Check da Conexão SERPRO FNRH Digital v2.4.2 ────────────────────────
+app.get("/api/fnrh-serpro/status", async (req, res) => {
+  try {
+    const provider = db.settings?.checkinProvider || "proprio";
+    const health = await fnrhSerproService.checkHealth(db.settings);
+    return res.json({
+      ok: Boolean(health.ok),
+      provider,
+      env: health.env || db.settings?.serproConfig?.env || process.env.SERPRO_ENV || "homologacao",
+      latencyMs: Number(health.latencyMs) || 0,
+      status: health.status || (health.ok ? "healthy" : "unreachable"),
+      message: health.message || (health.ok ? "Conexão operacional com SERPRO FNRH" : health.error || "Falha de conexão"),
+      error: health.error || null
+    });
+  } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      provider: db.settings?.checkinProvider || "proprio",
+      env: db.settings?.serproConfig?.env || process.env.SERPRO_ENV || "homologacao",
+      latencyMs: 0,
+      status: "internal_error",
+      error: err.message
+    });
+  }
 });
 
 app.all(["/api/sync/upload-sheet-json", "/api/reservations/sync"], (req, res) => {
@@ -17526,6 +17785,11 @@ app.get("/api/pms/pre-checkin/:code", (req, res) => {
         r.guests[0].birthDate = guest.birthDate || r.guests[0].birthDate || "";
         r.guests[0].gender = guest.gender || r.guests[0].gender || "masculino";
         r.guests[0].address = guest.address || r.guests[0].address || "";
+        r.guests[0].street = guest.street || r.guests[0].street || "";
+        r.guests[0].streetNumber = guest.streetNumber || r.guests[0].streetNumber || "";
+        r.guests[0].complement = guest.complement || r.guests[0].complement || "";
+        r.guests[0].neighborhood = guest.neighborhood || r.guests[0].neighborhood || "";
+        r.guests[0].cep = guest.cep || r.guests[0].cep || "";
         r.guests[0].city = guest.city || r.guests[0].city || "";
         r.guests[0].state = guest.state || r.guests[0].state || "RJ";
         r.guests[0].docPhotoUrl = guest.docPhotoUrl || r.guests[0].docPhotoUrl || null;
@@ -17807,6 +18071,11 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     birthDate,
     gender,
     address,
+    street,
+    streetNumber,
+    complement,
+    neighborhood,
+    cep,
     city,
     state,
     country = "Brasil",
@@ -17963,6 +18232,11 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   if (normalizedBirthDate) guest.birthDate = normalizedBirthDate;
   if (gender) guest.gender = gender;
   if (address) guest.address = address;
+  if (street || req.body.street) guest.street = street || req.body.street;
+  if (streetNumber || req.body.streetNumber) guest.streetNumber = streetNumber || req.body.streetNumber;
+  if (complement || req.body.complement) guest.complement = complement || req.body.complement;
+  if (neighborhood || req.body.neighborhood) guest.neighborhood = neighborhood || req.body.neighborhood;
+  if (cep || req.body.cep) guest.cep = cep || req.body.cep;
   if (city) guest.city = city;
   if (state) guest.state = state;
   if (country) guest.country = country;
@@ -18026,6 +18300,11 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   targetGuest.birthDate = birthDate || targetGuest.birthDate || "";
   targetGuest.gender = gender || targetGuest.gender || "masculino";
   targetGuest.address = address || targetGuest.address || "";
+  targetGuest.street = street || req.body.street || targetGuest.street || "";
+  targetGuest.streetNumber = streetNumber || req.body.streetNumber || targetGuest.streetNumber || "";
+  targetGuest.complement = complement || req.body.complement || targetGuest.complement || "";
+  targetGuest.neighborhood = neighborhood || req.body.neighborhood || targetGuest.neighborhood || "";
+  targetGuest.cep = cep || req.body.cep || targetGuest.cep || "";
   targetGuest.city = city || targetGuest.city || "";
   targetGuest.state = state || targetGuest.state || "RJ";
   targetGuest.selfieUrl = selfieUrl;
@@ -18050,9 +18329,13 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     r.guestEmail = cleanEmail || r.guestEmail;
     r.guestDocument = document || r.guestDocument;
     if (address) r.guestAddress = address;
+    if (street || req.body.street) r.guestStreet = street || req.body.street;
+    if (streetNumber || req.body.streetNumber) r.guestStreetNumber = streetNumber || req.body.streetNumber;
+    if (complement || req.body.complement) r.guestComplement = complement || req.body.complement;
+    if (neighborhood || req.body.neighborhood) r.guestNeighborhood = neighborhood || req.body.neighborhood;
     if (city) r.guestCity = city;
     if (state) r.guestState = state;
-    if (req.body.cep) r.guestCep = req.body.cep;
+    if (cep || req.body.cep) r.guestCep = cep || req.body.cep;
     if (selfieUrl) r.selfieUrl = selfieUrl;
     if (docPhotoUrl) r.docPhotoUrl = docPhotoUrl;
     if (signatureUrl) r.signatureUrl = signatureUrl;
