@@ -154,6 +154,8 @@ export function FlatCard({
   const [isSubmittingExtend, setIsSubmittingExtend] = useState(false)
   const [extendErrorMessage, setExtendErrorMessage] = useState<string | null>(null)
   const [amountManuallyEdited, setAmountManuallyEdited] = useState(false)
+  const [isTogglingBeds, setIsTogglingBeds] = useState(false)
+  const [isTogglingPriority, setIsTogglingPriority] = useState(false)
 
   const currentCheckoutStr = flat.reservation?.checkoutDate || flat.checkoutDate || date
   const currentTotalAmount = Number(flat.reservation?.totalAmount || 0)
@@ -747,7 +749,6 @@ export function FlatCard({
   }
 
   // Toggle Bed Setup (Admin only: Alterna entre 1 Cama Casal e 2 Camas Solteiro no mesmo botão)
-  const [isTogglingBeds, setIsTogglingBeds] = useState(false)
   const toggleBedSetup = async (e: React.MouseEvent) => {
     e.stopPropagation()
     const nextTwinValue = !isTwinBeds
@@ -773,7 +774,6 @@ export function FlatCard({
   }
 
   // Toggle Priority (Admin only: Desativado como padrão, clique no ícone para alternar)
-  const [isTogglingPriority, setIsTogglingPriority] = useState(false)
   const togglePriority = async (e: React.MouseEvent) => {
     e.stopPropagation()
     const nextPriorityValue = !isPriority

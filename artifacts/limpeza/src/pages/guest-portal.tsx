@@ -416,6 +416,28 @@ export default function GuestPortal() {
     }
   }, [reservation?.paymentMethod])
 
+  useEffect(() => {
+    if (reservation?.pixCopiaECola && typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search)
+      if (sp.get("action") === "copiar_pix" || sp.get("action") === "pix" || sp.get("pix") === "1" || window.location.hash === "#pix") {
+        if (navigator.clipboard?.writeText) {
+          navigator.clipboard.writeText(reservation.pixCopiaECola)
+            .then(() => {
+              setCopiedPix(true)
+              setTimeout(() => setCopiedPix(false), 4000)
+            })
+            .catch(() => {})
+        }
+        setTimeout(() => {
+          const pixEl = document.getElementById("secao-pix-pagamento")
+          if (pixEl) {
+            pixEl.scrollIntoView({ behavior: "smooth", block: "center" })
+          }
+        }, 300)
+      }
+    }
+  }, [reservation?.pixCopiaECola])
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50/70 text-slate-800 flex flex-col items-center justify-center p-4">
@@ -588,28 +610,6 @@ export default function GuestPortal() {
     setCopiedPix(true)
     setTimeout(() => setCopiedPix(false), 3500)
   }
-
-  useEffect(() => {
-    if (reservation?.pixCopiaECola && typeof window !== "undefined") {
-      const sp = new URLSearchParams(window.location.search)
-      if (sp.get("action") === "copiar_pix" || sp.get("action") === "pix" || sp.get("pix") === "1" || window.location.hash === "#pix") {
-        if (navigator.clipboard?.writeText) {
-          navigator.clipboard.writeText(reservation.pixCopiaECola)
-            .then(() => {
-              setCopiedPix(true)
-              setTimeout(() => setCopiedPix(false), 4000)
-            })
-            .catch(() => {})
-        }
-        setTimeout(() => {
-          const pixEl = document.getElementById("secao-pix-pagamento")
-          if (pixEl) {
-            pixEl.scrollIntoView({ behavior: "smooth", block: "center" })
-          }
-        }, 300)
-      }
-    }
-  }, [reservation?.pixCopiaECola])
 
   const handleCopyCafeLink = () => {
     const url = `${window.location.origin}/minha-reserva/${reservation.code || code}/cafe`

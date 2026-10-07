@@ -385,6 +385,13 @@ export function renderCheckinConfirmedEmail({ reservation, flat, settings, baseU
       </div>
     ` : ""}
 
+    ${Boolean(reservation?.fnrhDocumentUuid || reservation?.fnrhFilePath || guests.some(g => g.fnrhDocumentUuid || g.fnrhFilePath)) ? `
+      <!-- Aviso de FNRH PDF Anexada -->
+      <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-left: 4px solid #059669; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 12px; color: #065f46; line-height: 1.4;">
+        <strong>📄 Ficha Digital FNRH Anexada em PDF:</strong> A Ficha Nacional de Registro de Hóspedes (FNRH) assinada digitalmente com trilha forense e QR Code foi anexada a este e-mail em formato PDF.
+      </div>
+    ` : ""}
+
     ${Boolean(reservation?.docPhotoUrl || reservation?.docPhotoPath || reservation?.documentPhotoUrl || guests.some(g => g.docPhotoUrl || g.docPhotoPath)) ? `
       <!-- Aviso de Documento Oficial Anexado -->
       <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-left: 4px solid #16a34a; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 12px; color: #166534; line-height: 1.4;">
@@ -1092,6 +1099,17 @@ export async function resendEmailAsync({ db, saveDatabase, communicationId }) {
       html: comm.body
     };
 
+    // Re-resolve anexos caso seja uma comunicação vinculada a reserva
+    if (comm.reservation_id && String(comm.reservation_id) !== "0") {
+      const resItem = (db?.reservations || []).find(r => String(r.id) === String(comm.reservation_id) || r.code === comm.reservation_id);
+      if (resItem) {
+        const atts = resolveReservationAttachments({ reservation: resItem, db });
+        if (Array.isArray(atts) && atts.length > 0) {
+          mailOptions.attachments = atts;
+        }
+      }
+    }
+
     const info = await transporter.sendMail(mailOptions);
     comm.status = "sent";
     comm.metadata.messageId = info.messageId;
@@ -1118,7 +1136,12 @@ export function resolveReservationAttachments({ reservation, guest = null, db = 
   if (!reservation) return [];
   const attachments = [];
   const resCode = reservation.code || reservation.id || "RES";
-  const primaryName = (reservation.guestName || guest?.name || "Hospede").replace(/[^\w\s-]/gi, "").trim().replace(/\s+/g, "_");
+  const primaryName = (reservation.guestName || guest?.name || "Hospede")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w\s-]/gi, "")
+    .trim()
+    .replace(/\s+/g, "_");
 
   // Helper para resolver caminho físico da FNRH nos diretórios seguros e legados
   const candidateFnrhDirs = [
@@ -1134,7 +1157,7 @@ export function resolveReservationAttachments({ reservation, guest = null, db = 
     path.resolve(process.cwd(), "scripts/secure_fnrh")
   ].filter((d, i, arr) => arr.indexOf(d) === i);
 
-  function findFnrhPath({ filePath, fileName, uuid, code, id }) {
+  function findFnrhPath({ filePath, fileName, uuid, code, id, cpf }) {
     // A. Caminho explícito existente
     if (filePath && typeof filePath === "string" && fs.existsSync(filePath)) {
       return filePath;
@@ -1142,6 +1165,7 @@ export function resolveReservationAttachments({ reservation, guest = null, db = 
 
     // B. Nomes de arquivo candidatos
     const candidateNames = [];
+    if (filePath && typeof filePath === "string") candidateNames.push(path.basename(filePath));
     if (fileName && typeof fileName === "string") candidateNames.push(path.basename(fileName));
     if (uuid && typeof uuid === "string") {
       candidateNames.push(`FNRH_${uuid}.pdf`);
@@ -1176,14 +1200,50 @@ export function resolveReservationAttachments({ reservation, guest = null, db = 
         }
         const cleanId = id ? String(id).toLowerCase() : null;
         const cleanCode = code ? String(code).toLowerCase() : null;
-        const matchPrefix = files.find(f => {
+        const cleanCpf = cpf ? String(cpf).replace(/\D/g, "") : null;
+
+        // Se CPF estiver disponível, tenta primeiro casamento estrito com id + cpf
+        if (cleanCpf && (cleanId || cleanCode)) {
+          const cpfMatches = files.filter(f => {
+            if (!f.endsWith(".pdf")) return false;
+            const lower = f.toLowerCase();
+            if (cleanId && lower.startsWith(`fnrh_${cleanId}_${cleanCpf}_`)) return true;
+            if (cleanCode && lower.startsWith(`fnrh_${cleanCode}_${cleanCpf}_`)) return true;
+            return false;
+          });
+          if (cpfMatches.length > 0) {
+            cpfMatches.sort((a, b) => {
+              try {
+                return fs.statSync(path.join(dir, b)).mtimeMs - fs.statSync(path.join(dir, a)).mtimeMs;
+              } catch {
+                return 0;
+              }
+            });
+            return path.join(dir, cpfMatches[0]);
+          }
+        }
+
+        const matchingFiles = files.filter(f => {
           if (!f.endsWith(".pdf")) return false;
           const lower = f.toLowerCase();
           if (cleanId && (lower.startsWith(`fnrh_${cleanId}_`) || lower.startsWith(`fnrh_${cleanId}.`))) return true;
           if (cleanCode && (lower.startsWith(`fnrh_${cleanCode}_`) || lower.startsWith(`fnrh_${cleanCode}.`))) return true;
           return false;
         });
-        if (matchPrefix) return path.join(dir, matchPrefix);
+
+        if (matchingFiles.length > 0) {
+          // Ordena pelo mtime mais recente para garantir a versão mais recente gerada
+          matchingFiles.sort((a, b) => {
+            try {
+              const statA = fs.statSync(path.join(dir, a)).mtimeMs;
+              const statB = fs.statSync(path.join(dir, b)).mtimeMs;
+              return statB - statA;
+            } catch {
+              return 0;
+            }
+          });
+          return path.join(dir, matchingFiles[0]);
+        }
       } catch (_) {}
     }
 
@@ -1191,19 +1251,21 @@ export function resolveReservationAttachments({ reservation, guest = null, db = 
   }
 
   // 1. FNRH em PDF do Titular (se pré-checkin digital concluído)
-  const titularUuid = reservation.fnrhDocumentUuid || guest?.fnrhDocumentUuid || (Array.isArray(reservation.guests) ? reservation.guests[0]?.fnrhDocumentUuid : null);
-  let titularAuditFileName = reservation.fnrhFileName || reservation.fnrhAuditTrail?.fileName || guest?.fnrhAuditTrail?.fileName;
+  const titularGuestRecord = Array.isArray(reservation.guests) ? reservation.guests.find(g => Number(g.index) === 1) || reservation.guests[0] : null;
+  const titularUuid = titularGuestRecord?.fnrhDocumentUuid || reservation.fnrhDocumentUuid || guest?.fnrhDocumentUuid;
+  let titularAuditFileName = titularGuestRecord?.fnrhFileName || reservation.fnrhFileName || titularGuestRecord?.fnrhAuditTrail?.fileName || reservation.fnrhAuditTrail?.fileName || guest?.fnrhAuditTrail?.fileName;
   if (!titularAuditFileName && titularUuid && Array.isArray(db?.fnrhAuditDocuments)) {
     const auditDoc = db.fnrhAuditDocuments.find(a => a.documentUuid === titularUuid || String(a.reservationId) === String(reservation.id) || a.reservationCode === resCode);
     if (auditDoc?.fileName) titularAuditFileName = auditDoc.fileName;
   }
 
   const titularFnrhPath = findFnrhPath({
-    filePath: reservation.fnrhFilePath || guest?.fnrhFilePath,
+    filePath: titularGuestRecord?.fnrhFilePath || reservation.fnrhFilePath || guest?.fnrhFilePath,
     fileName: titularAuditFileName,
     uuid: titularUuid,
     code: resCode,
-    id: reservation.id
+    id: reservation.id,
+    cpf: titularGuestRecord?.cpf || titularGuestRecord?.document || reservation.guestDocument || guest?.document
   });
 
   if (titularFnrhPath) {
@@ -1216,7 +1278,7 @@ export function resolveReservationAttachments({ reservation, guest = null, db = 
   // FNRHs de Co-hóspedes (se houverem concluído pré-checkin digital)
   if (Array.isArray(reservation.guests)) {
     reservation.guests.forEach((g, idx) => {
-      if (idx === 0 && titularFnrhPath) return;
+      if (Number(g.index) === 1 || (idx === 0 && !g.index)) return;
       const gUuid = g.fnrhDocumentUuid;
       let gAuditFileName = g.fnrhFileName || g.fnrhAuditTrail?.fileName;
       if (!gAuditFileName && gUuid && Array.isArray(db?.fnrhAuditDocuments)) {
@@ -1228,7 +1290,8 @@ export function resolveReservationAttachments({ reservation, guest = null, db = 
         fileName: gAuditFileName,
         uuid: gUuid,
         code: resCode,
-        id: reservation.id
+        id: reservation.id,
+        cpf: g.cpf || g.document
       });
       if (coGuestFnrhPath && !attachments.some(a => a.path === coGuestFnrhPath)) {
         const gName = (g.name || `Hospede_${idx + 1}`)

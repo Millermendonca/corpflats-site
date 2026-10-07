@@ -18529,14 +18529,16 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
       // Reserva marcada como CHECKED_IN no sistema
       r.status = "CHECKED_IN";
       r.checkedInAt = fnrhDocument.signedAt;
-      r.fnrhPdfUrl = fnrhDocument.fileUrl;
-      r.fnrhDocumentUuid = fnrhDocument.documentUuid;
-      r.fnrhSha256Hash = fnrhDocument.sha256Hash;
-      r.fnrhVerifyUrl = fnrhDocument.verifyUrl;
-      r.fnrhSignedAt = fnrhDocument.signedAt;
-      r.fnrhAuditTrail = fnrhDocument.auditTrail;
-      r.fnrhFileName = fnrhDocument.fileName;
-      r.fnrhFilePath = fnrhDocument.filePath;
+      if (Number(guestIndex) === 1) {
+        r.fnrhPdfUrl = fnrhDocument.fileUrl;
+        r.fnrhDocumentUuid = fnrhDocument.documentUuid;
+        r.fnrhSha256Hash = fnrhDocument.sha256Hash;
+        r.fnrhVerifyUrl = fnrhDocument.verifyUrl;
+        r.fnrhSignedAt = fnrhDocument.signedAt;
+        r.fnrhAuditTrail = fnrhDocument.auditTrail;
+        r.fnrhFileName = fnrhDocument.fileName;
+        r.fnrhFilePath = fnrhDocument.filePath;
+      }
 
       // Se a assinatura foi realizada com token temporário de 2 horas, registra uso
       if (req.body.token && Array.isArray(db.fnrhSignatureTokens)) {
@@ -18554,9 +18556,8 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   // Gatilho A & D: Envio Automático de Notificação à Recepção/Portaria e Garagem com FNRH PDF Anexo
   // Apenas despacha imediatamente se a data de check-in for hoje (ou anterior).
   // Se for reserva com check-in futuro, a FNRH fica salva e o disparo à recepção ocorrerá pontualmente às 07:00 do dia de chegada.
-  const nowUtc = Date.now() + (new Date().getTimezoneOffset() * 60000);
-  const brToday = new Date(nowUtc - (3 * 3600000)).toISOString().substring(0, 10);
-  const isCheckinTodayOrPast = r.checkinDate <= brToday;
+  const brToday = getBrasiliaTodayStr();
+  const isCheckinTodayOrPast = isReservationForTodayOrPast(r);
 
   if (isCheckinTodayOrPast) {
     try {
@@ -18566,9 +18567,16 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
       const { subject, bodyHtml } = renderCheckinConfirmedEmail({ reservation: r, flat, settings: db.settings });
 
       const emailAttachments = resolveReservationAttachments({ reservation: r, guest, db });
-      if (fnrhDocument?.filePath && fs.existsSync(fnrhDocument.filePath) && !emailAttachments.some(a => a.path === fnrhDocument.filePath || (a.filename && a.filename.startsWith("FNRH_")))) {
+      const safeValidName = validName
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^\w\s-]/gi, "")
+        .trim()
+        .replace(/\s+/g, "_");
+      const currentFnrhFilename = `FNRH_${r.code || r.id}_${safeValidName}.pdf`;
+      if (fnrhDocument?.filePath && fs.existsSync(fnrhDocument.filePath) && !emailAttachments.some(a => a.path === fnrhDocument.filePath || a.filename === currentFnrhFilename)) {
         emailAttachments.unshift({
-          filename: `FNRH_${r.code || r.id}_${validName.replace(/\s+/g, '_')}.pdf`,
+          filename: currentFnrhFilename,
           path: fnrhDocument.filePath
         });
       }
@@ -18819,6 +18827,10 @@ function handleFnrhServe(isDownload) {
   };
 }
 
+// ── Rotas Públicas e Seguras para Visualização e Download da FNRH ──────────
+app.get("/api/pms/fnrh/:documentUuid/view", handleFnrhServe(false));
+app.get("/api/pms/fnrh/:documentUuid/download", handleFnrhServe(true));
+
 app.get("/api/public/verify-fnrh/:uuid", (req, res) => {
   const uuid = req.params.uuid;
   if (!uuid) return res.status(400).json({ error: "UUID não fornecido" });
@@ -18847,6 +18859,10 @@ app.get("/api/public/verify-fnrh/:uuid", (req, res) => {
     });
   }
 
+  const downloadToken = generateSignedFnrhToken(uuid, 60);
+  const baseFileUrl = docRecord.fileUrl || `/api/pms/fnrh/${uuid}/view`;
+  const baseDownloadUrl = docRecord.downloadUrl || `/api/pms/fnrh/${uuid}/download`;
+
   res.json({
     isValid: true,
     status: "DOCUMENTO_AUTENTICO",
@@ -18862,7 +18878,8 @@ app.get("/api/public/verify-fnrh/:uuid", (req, res) => {
       signerUserAgent: docRecord.signerUserAgent,
       sha256Hash: docRecord.sha256Hash,
       canonicalHash: docRecord.canonicalHash,
-      fileUrl: docRecord.fileUrl
+      fileUrl: `${baseFileUrl}${baseFileUrl.includes('?') ? '&' : '?'}token=${downloadToken}`,
+      downloadUrl: `${baseDownloadUrl}${baseDownloadUrl.includes('?') ? '&' : '?'}token=${downloadToken}`
     }
   });
 });

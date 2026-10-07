@@ -40,7 +40,7 @@ The system consists of three coordinated tiers:
 | M1 | Backend Engine, SERPRO Client & Fallback Helper | F1, F2, F3 (`database.json`, `demo-server.mjs`, `fnrh-serpro-service.mjs`, `scripts/demo-server.mjs`) | M0 | DONE |
 | M2 | Universal Communication Channels & Triggers | F4, F5, F6 (`zapi-service.mjs`, `mail-service.mjs`, `whatsapp-ai-service.mjs`, `scripts/`) | M1 | DONE |
 | M3 | Admin UI Toggle, Health Badge & Frontend Links | F7, F8, F9 (`settings.tsx`, `checkin-url.ts`, hover cards, modals, `dist/public`) | M1 | DONE |
-| M4 | Comprehensive E2E Testing, Production Build & Git Push | F10, F11 (`tests/fnrh-checkin-toggle.test.mjs`, full test run, build, commit, push, audit) | M1, M2, M3 | IN_PROGRESS |
+| M4 | Comprehensive E2E Testing, Production Build & Git Push | F10, F11 (`tests/fnrh-checkin-toggle.test.mjs`, full test run, build, commit, push, audit) | M1, M2, M3 | DONE |
 
 ## Interface Contracts
 ### Backend Settings ↔ Admin Frontend

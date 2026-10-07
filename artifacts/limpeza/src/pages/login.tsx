@@ -28,13 +28,6 @@ export default function Login() {
     return `${yyyy}-${mm}-${dd}`
   }
 
-  if (user) {
-    setTimeout(() => {
-      setLocation(`/dashboard?date=${getRedirectDateStr()}`)
-    }, 0)
-    return null
-  }
-
   const login = useLogin({
     mutation: {
       onSuccess: (data) => {
@@ -46,6 +39,13 @@ export default function Login() {
       }
     }
   })
+
+  if (user) {
+    setTimeout(() => {
+      setLocation(`/dashboard?date=${getRedirectDateStr()}`)
+    }, 0)
+    return null
+  }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()

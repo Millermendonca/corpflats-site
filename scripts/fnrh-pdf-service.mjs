@@ -116,6 +116,12 @@ export async function generateFnrhPdf({
     }
   });
 
+  if (!fs.existsSync(SECURE_FNRH_DIR)) {
+    try {
+      fs.mkdirSync(SECURE_FNRH_DIR, { recursive: true });
+    } catch {}
+  }
+
   const writeStream = fs.createWriteStream(filePath);
   doc.pipe(writeStream);
 
