@@ -1324,8 +1324,11 @@ export function getReservationRecipients(reservation = {}, db = {}) {
 }
 
 // ── Motor de Resolução de Tags Dinâmicas ───────────────────────────────────────
-export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "", targetRecipient = "guest") {
+export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "", targetRecipient = "guest", templateOrEvent = null) {
   if (!text) return "";
+
+  const templateId = String(templateOrEvent?.id || (typeof templateOrEvent === "string" ? templateOrEvent : "")).trim();
+  const triggerEvent = String(templateOrEvent?.triggerEvent || (typeof templateOrEvent === "string" ? templateOrEvent : "")).trim();
 
   const recipients = getReservationRecipients(reservation, db);
   const guest = recipients.guest;
@@ -1894,9 +1897,9 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
 
   return list.map(b => ({
     ...b,
-    url: b.url ? resolveWhatsAppTags(b.url, reservation, db, baseUrl, targetRecipient) : undefined,
-    phone: b.phone ? resolveWhatsAppTags(b.phone, reservation, db, baseUrl, targetRecipient) : undefined,
-    copyCode: b.copyCode ? resolveWhatsAppTags(b.copyCode, reservation, db, baseUrl, targetRecipient) : undefined
+    url: b.url ? resolveWhatsAppTags(b.url, reservation, db, baseUrl, targetRecipient, templateObj || templateOrEvent) : undefined,
+    phone: b.phone ? resolveWhatsAppTags(b.phone, reservation, db, baseUrl, targetRecipient, templateObj || templateOrEvent) : undefined,
+    copyCode: b.copyCode ? resolveWhatsAppTags(b.copyCode, reservation, db, baseUrl, targetRecipient, templateObj || templateOrEvent) : undefined
   }));
 }
 
@@ -4806,7 +4809,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     if (!db.whatsappHistory) db.whatsappHistory = [];
 
     for (const d of dispatches) {
-      const renderedMessage = resolveWhatsAppTags(template.message, reservation, db, baseUrl, d.type);
+      const renderedMessage = resolveWhatsAppTags(template.message, reservation, db, baseUrl, d.type, template);
       const renderedButtons = renderTemplateButtons(template.buttons, reservation, db, baseUrl, d.type, template);
 
       // Disparo manual intencional pelo operador (PMS ou CRM): sempre bypassTestMode para enviar via Z-API
