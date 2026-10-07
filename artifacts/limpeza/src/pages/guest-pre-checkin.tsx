@@ -103,6 +103,10 @@ export default function GuestPreCheckin() {
   const [signatureToken, setSignatureToken] = useState<string>("")
   const [tokenExpiresAt, setTokenExpiresAt] = useState<string | null>(null)
   const [tokenSecondsRemaining, setTokenSecondsRemaining] = useState<number | null>(null)
+  const isTokenSessionExpired = Boolean(
+    (tokenSecondsRemaining !== null && tokenSecondsRemaining <= 0) ||
+    (tokenInfo && !tokenInfo.valid)
+  )
   const [isRefreshingToken, setIsRefreshingToken] = useState(false)
   const [copiedLink, setCopiedLink] = useState(false)
   const [termsModalOpen, setTermsModalOpen] = useState(false)
@@ -157,13 +161,6 @@ export default function GuestPreCheckin() {
     }
   }, [otpCooldown])
 
-  // Disparo automático do código OTP no WhatsApp ao chegar no Passo 3 (Assinatura)
-  useEffect(() => {
-    if (step === 3 && !otpSent && (phone || reservation?.guestPhone) && !isTokenSessionExpired) {
-      handleSendOtp("whatsapp")
-    }
-  }, [step, isTokenSessionExpired])
-
   const handleSendOtp = async (channel: "whatsapp" | "email" = "whatsapp", forceNew = false) => {
     setOtpLoading(true)
     setOtpError(null)
@@ -202,6 +199,13 @@ export default function GuestPreCheckin() {
       setOtpLoading(false)
     }
   }
+
+  // Disparo automático do código OTP no WhatsApp ao chegar no Passo 3 (Assinatura)
+  useEffect(() => {
+    if (step === 3 && !otpSent && (phone || reservation?.guestPhone) && !isTokenSessionExpired) {
+      handleSendOtp("whatsapp")
+    }
+  }, [step, otpSent, phone, reservation?.guestPhone, isTokenSessionExpired])
 
   // Canvas for signature
 
@@ -528,11 +532,6 @@ export default function GuestPreCheckin() {
       setTimeout(() => setCopiedLink(false), 3000)
     }
   }
-
-  const isTokenSessionExpired = Boolean(
-    (tokenSecondsRemaining !== null && tokenSecondsRemaining <= 0) ||
-    (tokenInfo && !tokenInfo.valid)
-  )
 
   // Branding & Contacts
   const brandName = siteConfig?.branding?.brandName && !siteConfig.branding.brandName.includes("Macaé") 
