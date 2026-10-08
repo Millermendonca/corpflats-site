@@ -10407,8 +10407,7 @@ app.get("/api/settings", (req, res) => {
       user: db.settings?.serproConfig?.user || process.env.SERPRO_USER || "",
       hasPassword: Boolean(db.settings?.serproConfig?.password || process.env.SERPRO_PASSWORD),
       cpfSolicitante: db.settings?.serproConfig?.cpfSolicitante || process.env.SERPRO_CPF_SOLICITANTE || "12585736792",
-      env: db.settings?.serproConfig?.env || process.env.SERPRO_ENV || "homologacao",
-      ...(db.settings?.serproConfig || {})
+      env: db.settings?.serproConfig?.env || process.env.SERPRO_ENV || "homologacao"
     },
     petPolicy,
     houseRules: db.settings.houseRules || DEFAULT_HOUSE_RULES,
