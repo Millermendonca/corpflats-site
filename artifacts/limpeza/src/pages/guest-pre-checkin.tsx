@@ -878,6 +878,9 @@ export default function GuestPreCheckin() {
       return
     }
     setLoading(true)
+    const abortController = new AbortController()
+    const timeoutId = setTimeout(() => abortController.abort(), 25000)
+
     try {
       const cleanPlate = (transportMethod === "Carro próprio" || transportMethod === "Carro alugado" || transportMethod === "carro") ? vehiclePlate.trim().toUpperCase() : ""
       const cleanBrand = transportMethod === "carro" ? vehicleBrand.trim() : ""
@@ -887,6 +890,7 @@ export default function GuestPreCheckin() {
       const res = await fetch("/api/pms/pre-checkin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: abortController.signal,
         body: JSON.stringify({
           code: code || reservation?.code,
           reservationId: reservation?.id,
@@ -928,6 +932,7 @@ export default function GuestPreCheckin() {
           minorAge: calculatedAge,
           minorKinship: (calculatedAge !== null && calculatedAge < 18) ? minorKinship : null,
           minorAuthDocBase64: (calculatedAge !== null && calculatedAge < 18 && minorKinship !== "filho") ? minorAuthDocPhoto : null,
+          aiDocResult: aiDocResult || null,
           isCamposResident: Boolean(
             aiDocResult?.isCamposResident ||
             (city && (city.toLowerCase().includes("campos") || city.toLowerCase().includes("goytacazes"))) ||
@@ -959,8 +964,16 @@ export default function GuestPreCheckin() {
         }
       }
 
-      const resData = await res.json()
-      if (res.ok) {
+      let resData: any = null
+      try {
+        resData = await res.json()
+      } catch (parseErr) {
+        if (!res.ok) {
+          throw new Error(`Falha no servidor (HTTP ${res.status}). Por favor, tente novamente.`)
+        }
+      }
+
+      if (res.ok && resData) {
         // Atualiza perfil permanente local em cache para sincronização imediata
         try {
           if (typeof window !== "undefined") {
@@ -1009,9 +1022,17 @@ export default function GuestPreCheckin() {
         setIsEditing(false)
         setSuccess(true)
       } else {
-        alert(resData.error || "Erro ao registrar check-in.")
+        alert(resData?.error || "Erro ao registrar check-in. Por favor, tente novamente.")
+      }
+    } catch (err: any) {
+      console.error("[Check-in Digital Error]", err)
+      if (err.name === "AbortError") {
+        alert("O envio demorou mais que o esperado devido à conexão. Por favor, clique novamente em Concluir Check-in.")
+      } else {
+        alert(err.message || "Erro de conexão ao registrar check-in. Por favor, verifique sua internet e tente novamente.")
       }
     } finally {
+      clearTimeout(timeoutId)
       setLoading(false)
     }
   }

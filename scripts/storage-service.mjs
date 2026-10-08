@@ -79,6 +79,10 @@ function uploadToCloudflareR2Direct(buffer, mimeType, key, r2Config) {
       });
     });
 
+    req.setTimeout(4000, () => {
+      req.destroy(new Error("Timeout de conexão com Cloudflare R2 (4s)"));
+    });
+
     req.on("error", (e) => reject(e));
     req.write(buffer);
     req.end();
