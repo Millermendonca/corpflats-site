@@ -100,7 +100,7 @@ export async function generateFnrhPdf({
   const cleanCpf = (g.document || g.cpf || reservation.guestDocument || "00000000000").replace(/\D/g, "");
   const reservationId = reservation.id || reservation.code || "res";
   const timestamp = Date.now();
-  const fileName = "fnrh_" + reservationId + "_" + cleanCpf + "_" + timestamp + ".pdf";
+  const fileName = "Ficha_Checkin_" + reservationId + "_" + cleanCpf + "_" + timestamp + ".pdf";
   const filePath = path.join(SECURE_FNRH_DIR, fileName);
 
   const verifyUrl = origin.replace(/\/$/, "") + "/verificar-ficha/" + documentUuid;
@@ -172,8 +172,8 @@ export async function generateFnrhPdf({
   const badgeRightX = leftX + 355;
   doc.roundedRect(badgeRightX, topY + 7, 176, 46, 5).fill("#f1f5f9").stroke("#cbd5e1");
   doc.fillColor("#0284c7").fontSize(7).font("Helvetica-Bold").text("CHECK-IN DIGITAL REGISTRADO", badgeRightX + 8, topY + 12);
-  doc.fillColor("#0f172a").fontSize(9.5).font("Helvetica-Bold").text("Ficha de Hospedagem", badgeRightX + 8, topY + 22);
-  doc.fillColor("#64748b").fontSize(6.5).font("Helvetica").text("Check-in Digital • CorpFlats", badgeRightX + 8, topY + 34);
+  doc.fillColor("#0f172a").fontSize(9.5).font("Helvetica-Bold").text("FICHA DE HOSPEDAGEM", badgeRightX + 8, topY + 22);
+  doc.fillColor("#64748b").fontSize(6.5).font("Helvetica").text("(CHECK-IN DIGITAL) • CORPFLATS", badgeRightX + 8, topY + 34);
   doc.fillColor("#0369a1").fontSize(7).font("Helvetica-Bold").text("Reserva: " + (reservation.code || reservationId), badgeRightX + 8, topY + 43);
 
   let currentY = topY + 58;
@@ -476,7 +476,7 @@ export async function generateFnrhPdf({
   let r2Url = null;
   try {
     const { uploadImageToStorage } = await import("./storage-service.mjs");
-    const rPrefix = `fnrh_${(reservation.code || reservationId).toString().replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+    const rPrefix = `Ficha_Checkin_${(reservation.code || reservationId).toString().replace(/[^a-zA-Z0-9_-]/g, "_")}`;
     r2Url = await uploadImageToStorage(fileBuffer, rPrefix, null, "fnrh_documents");
   } catch (r2Err) {
     console.warn("[FNRH PDF] Falha ao fazer upload R2 (usando disco local):", r2Err.message);

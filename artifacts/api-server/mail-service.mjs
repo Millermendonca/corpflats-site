@@ -1450,7 +1450,11 @@ export async function ensureReservationAttachmentsReady({ reservation, guest = n
 
   // 1. Titular
   const titularGuestRecord = Array.isArray(reservation.guests) ? reservation.guests.find(g => Number(g.index) === 1) || reservation.guests[0] : null;
-  const isTitularDone = Boolean(reservation.fnhrCompleted || titularGuestRecord?.hasCompletedCheckin || reservation.fnrhDocumentUuid || titularGuestRecord?.fnrhDocumentUuid);
+  const isTitularDone = Boolean(
+    !reservation.needsReSignature &&
+    !titularGuestRecord?.needsReSignature &&
+    (reservation.fnhrCompleted || titularGuestRecord?.hasCompletedCheckin || reservation.fnrhDocumentUuid || titularGuestRecord?.fnrhDocumentUuid)
+  );
 
   if (isTitularDone) {
     const hasDisk = titularGuestRecord?.fnrhFilePath && fs.existsSync(titularGuestRecord.fnrhFilePath);
@@ -1482,7 +1486,7 @@ export async function ensureReservationAttachmentsReady({ reservation, guest = n
     for (let idx = 0; idx < reservation.guests.length; idx++) {
       const g = reservation.guests[idx];
       if (Number(g.index) === 1 || (idx === 0 && !g.index)) continue;
-      const isCoGuestDone = Boolean(g.hasCompletedCheckin || g.fnrhDocumentUuid);
+      const isCoGuestDone = Boolean(!g.needsReSignature && (g.hasCompletedCheckin || g.fnrhDocumentUuid));
       if (isCoGuestDone) {
         const hasDisk = g.fnrhFilePath && fs.existsSync(g.fnrhFilePath);
         const hasR2 = Boolean(g.r2Url || g.fnrhR2Url || (typeof g.fnrhPdfUrl === "string" && g.fnrhPdfUrl.startsWith("http")));

@@ -522,22 +522,25 @@ export default function GuestPreCheckin() {
     // Hóspede 2+: lê SOMENTE de currentG (NUNCA herda fotos do hóspede 1!)
     const selfie = currentG?.selfieUrl || (isTitular ? (res.selfieUrl || guest.photoUrl || null) : null)
     const doc = currentG?.docPhotoUrl || (isTitular ? (res.docPhotoUrl || guest.docPhotoUrl || null) : null)
-    const sig = currentG?.signatureUrl || (isTitular ? (res.signatureUrl || guest.signatureUrl || null) : null)
+    const isReSignatureNeeded = Boolean(res.needsReSignature || currentG?.needsReSignature)
+    const sig = isReSignatureNeeded ? null : (currentG?.signatureUrl || (isTitular ? res.signatureUrl : null))
 
     setSelfiePhoto(selfie || null)
     setDocPhoto(doc || null)
     setSignatureData(sig || null)
 
-    // O Hóspede só é considerado concluído se ELE MESMO (currentG) tiver check-in feito!
+    // O Hóspede só é considerado concluído se ELE MESMO (currentG) tiver check-in feito nesta reserva!
     const fnhrDone = Boolean(
-      currentG?.hasCompletedCheckin || 
-      (isTitular && (res.fnhrCompleted || guest.fnhrCompleted) && selfie && sig)
+      !isReSignatureNeeded && (
+        currentG?.hasCompletedCheckin || 
+        (isTitular && res.fnhrCompleted && res.signatureUrl && selfie)
+      )
     )
 
     // Detecção de cadastro prévio / hóspede frequente salvo
     const hasPreviousProfile = Boolean(
-      (isTitular && guest.fnhrCompleted) ||
-      (doc && sig && gName && gDoc) ||
+      (isTitular && (guest.fnhrCompleted || guest.id)) ||
+      (doc && gName && gDoc) ||
       currentG?.hasCompletedCheckin
     )
     setIsReturningGuest(hasPreviousProfile)
@@ -1955,7 +1958,20 @@ export default function GuestPreCheckin() {
           </Card>
         )}
 
-        
+        {Boolean(reservation?.needsReSignature || guestList[selectedGuestIndex - 1]?.needsReSignature) && (
+          <div className="p-4 sm:p-5 bg-amber-50 border-2 border-amber-300 rounded-2xl space-y-2 shadow-sm">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-100 text-amber-900 rounded-full text-xs font-bold">
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-700" />
+              <span>Reserva Atualizada • Nova Assinatura Necessária</span>
+            </div>
+            <h3 className="text-sm sm:text-base font-bold text-amber-950">
+              {reservation?.reSignatureReason || "Sua acomodação ou período da estadia foi atualizado."}
+            </h3>
+            <p className="text-xs text-amber-800 leading-relaxed">
+              Todos os seus dados cadastrais e documentos foram preservados com total segurança. Por favor, confira os novos dados do flat e período acima e assine ao final da página para confirmar sua nova Ficha de Hospedagem.
+            </p>
+          </div>
+        )}
 
         {/* Alerta de Token Expirado (Link de 2 horas) com Botão de Renovação */}
         {tokenInfo && !tokenInfo.valid && (

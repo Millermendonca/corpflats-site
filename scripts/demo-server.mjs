@@ -16554,7 +16554,7 @@ app.get("/api/reception/today", (req, res) => {
             cpf: guest.document || "",
             phone: r.guestPhone || guest.phone || "",
             email: r.guestEmail || guest.email || "",
-            hasCompletedCheckin: Boolean(r.fnhrCompleted || guest.fnhrCompleted),
+            hasCompletedCheckin: Boolean(r.fnhrCompleted && !r.needsReSignature),
             checkinCompletedAt: r.fnhrCompleted ? r.updatedAt : null
           });
           for (let i = 2; i <= count; i++) {
@@ -16657,8 +16657,32 @@ app.get("/api/reception/today", (req, res) => {
           entryBadgeType = "warning";
         }
 
+        let safePdfUrl = r.fnrhPdfUrl;
+        let safeDownloadUrl = r.fnrhDownloadUrl;
+        if (r.fnrhDocumentUuid) {
+          const tkn = generateSignedFnrhToken(r.fnrhDocumentUuid, 60 * 24 * 30);
+          safePdfUrl = `/api/pms/fnrh/${r.fnrhDocumentUuid}/view?token=${tkn}`;
+          safeDownloadUrl = `/api/pms/fnrh/${r.fnrhDocumentUuid}/download?token=${tkn}`;
+        }
+        const enrichedGuests = guestList.map(g => {
+          let gPdfUrl = g.fnrhPdfUrl;
+          let gDownloadUrl = g.fnrhDownloadUrl;
+          if (g.fnrhDocumentUuid) {
+            const tkn = generateSignedFnrhToken(g.fnrhDocumentUuid, 60 * 24 * 30);
+            gPdfUrl = `/api/pms/fnrh/${g.fnrhDocumentUuid}/view?token=${tkn}`;
+            gDownloadUrl = `/api/pms/fnrh/${g.fnrhDocumentUuid}/download?token=${tkn}`;
+          }
+          return {
+            ...g,
+            fnrhPdfUrl: gPdfUrl,
+            fnrhDownloadUrl: gDownloadUrl
+          };
+        });
+
         return {
           ...r,
+          fnrhPdfUrl: safePdfUrl,
+          fnrhDownloadUrl: safeDownloadUrl,
           flatNumber: flat.number,
           cleaningStatus,
           cleaningLabel,
@@ -16670,7 +16694,7 @@ app.get("/api/reception/today", (req, res) => {
           earlyCheckinReason,
           isFirstStayCourtesy,
           guestCount: count,
-          guests: guestList,
+          guests: enrichedGuests,
           allCheckinDone,
           someCheckinDone,
           canAuthorizeEntry,
@@ -16680,8 +16704,8 @@ app.get("/api/reception/today", (req, res) => {
           receptionNotes: r.receptionNotes || "",
           guestPhoto: r.selfieUrl || guest.photoUrl || null,
           docPhoto: r.docPhotoUrl || guest.docPhotoUrl || null,
-          signatureUrl: r.signatureUrl || guest.signatureUrl || null,
-          hasPreCheckin: Boolean(r.fnhrCompleted || guest.fnhrCompleted || someCheckinDone)
+          signatureUrl: r.signatureUrl || null,
+          hasPreCheckin: Boolean((r.fnhrCompleted && !r.needsReSignature) || someCheckinDone)
         };
       });
 

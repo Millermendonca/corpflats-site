@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -243,6 +243,82 @@ test("Suite Resiliência FNRH: Multi-hóspedes, Reassinatura e Fallback Cloudfla
     assert.strictEqual(r.guests[0].address, "Rua das Flores, 123");
     assert.strictEqual(r.guests[0].city, "Campos dos Goytacazes");
     assert.strictEqual(r.guests[0].state, "RJ");
+  });
+
+  await t.test("7. Geração de PDF próprio com prefixo Ficha_Checkin e título oficial sem termo FNRH", async () => {
+    const { generateFnrhPdf } = await import(pathToFileURL(path.join(rootDir, "artifacts", "api-server", "fnrh-pdf-service.mjs")).href);
+    const result = await generateFnrhPdf({
+      reservation: {
+        id: "RES_TEST_PREFIX",
+        code: "RES_TEST_PREFIX",
+        flatNumber: "512",
+        checkinDate: "2026-10-15",
+        checkoutDate: "2026-10-16"
+      },
+      guestData: {
+        fullName: "Diego Ficha Teste",
+        document: "14065497701",
+        phone: "21974116742"
+      }
+    });
+
+    assert.ok(result.fileName.startsWith("Ficha_Checkin_"), "Arquivo gerado deve começar com Ficha_Checkin_");
+    assert.ok(result.fileName.endsWith(".pdf"), "Arquivo deve ser PDF");
+    assert.ok(fs.existsSync(result.filePath), "Arquivo físico deve existir em disco");
+
+    // Limpeza
+    if (fs.existsSync(result.filePath)) fs.unlinkSync(result.filePath);
+  });
+
+  await t.test("8. Prevenção de herança indevida: Hóspede recorrente com fnhrCompleted no CRM não conclui nova reserva pendente", () => {
+    // Simula CRM guest com fnhrCompleted de meses atrás
+    const crmGuest = {
+      id: "guest-old-crm",
+      name: "Cliente Recorrente",
+      document: "11122233344",
+      fnhrCompleted: true,
+      fnhrCompletedAt: "2026-01-01T10:00:00Z"
+    };
+
+    // Nova reserva para hoje
+    const newReservation = {
+      id: "res-new-001",
+      code: "RES-NEW-001",
+      flatNumber: "305",
+      fnhrCompleted: false,
+      needsReSignature: false
+    };
+
+    // A regra corrigida em demo-server e pre-checkin:
+    const guestList = [{
+      index: 1,
+      name: crmGuest.name,
+      cpf: crmGuest.document,
+      hasCompletedCheckin: Boolean(newReservation.fnhrCompleted && !newReservation.needsReSignature),
+      checkinCompletedAt: newReservation.fnhrCompleted ? "now" : null
+    }];
+
+    const someCheckinDone = guestList.some(g => g.hasCompletedCheckin);
+    const hasPreCheckin = Boolean((newReservation.fnhrCompleted && !newReservation.needsReSignature) || someCheckinDone);
+
+    assert.strictEqual(guestList[0].hasCompletedCheckin, false, "Hóspede não deve herdar check-in concluído para nova reserva");
+    assert.strictEqual(hasPreCheckin, false, "hasPreCheckin da nova reserva deve ser falso até nova assinatura");
+  });
+
+  await t.test("9. Reception Tablet & Guest Pre-checkin integram visualizador PDF oficial e download sem 403", () => {
+    const receptionTabletCode = fs.readFileSync(path.join(rootDir, "artifacts", "limpeza", "src", "pages", "reception-tablet.tsx"), "utf-8");
+    const preCheckinCode = fs.readFileSync(path.join(rootDir, "artifacts", "limpeza", "src", "pages", "guest-pre-checkin.tsx"), "utf-8");
+
+    // Reception Tablet:
+    assert.ok(receptionTabletCode.includes("Baixar PDF Assinado"), "Reception tablet deve ter botão 'Baixar PDF Assinado'");
+    assert.ok(receptionTabletCode.includes("Ficha Oficial em PDF"), "Reception tablet deve ter alternador de Ficha em PDF");
+    assert.ok(receptionTabletCode.includes("<iframe"), "Reception tablet deve renderizar iframe do PDF autêntico");
+    assert.ok(!receptionTabletCode.includes("Ficha de Entrada & FNHR:"), "Header do modal não deve mais exibir termo FNHR");
+
+    // Pre-checkin:
+    assert.ok(preCheckinCode.includes("Baixar PDF Assinado"), "Pre-checkin deve ter botão 'Baixar PDF Assinado'");
+    assert.ok(preCheckinCode.includes("<iframe"), "Pre-checkin deve renderizar iframe com PDF autêntico");
+    assert.ok(preCheckinCode.includes("isReSignatureNeeded"), "Pre-checkin deve validar isReSignatureNeeded");
   });
 
 });

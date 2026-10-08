@@ -40,10 +40,11 @@ export default function ReceptionTablet() {
   const [loading, setLoading] = useState(true)
   const [currentTime, setCurrentTime] = useState(new Date())
 
-  // Modal Ficha FNHR
+  // Modal Ficha FNHR / Check-in Digital
   const [selectedItem, setSelectedItem] = useState<any | null>(null)
   const [fnhrModalOpen, setFnhrModalOpen] = useState(false)
   const [modalGuestIndex, setModalGuestIndex] = useState(1)
+  const [modalViewMode, setModalViewMode] = useState<"pdf" | "data">("pdf")
 
   // Visualizador Ampliado de Fotos (Zoom / Lightbox)
   const [zoomedPhoto, setZoomedPhoto] = useState<{ url: string; title: string } | null>(null)
@@ -377,7 +378,7 @@ export default function ReceptionTablet() {
                 <Clock className="w-4 h-4 text-primary" />
                 Check-ins Previstos para Hoje
               </h2>
-              <span className="text-xs text-slate-400 font-medium">Toque no card para ver detalhes da FNHR e fotos</span>
+              <span className="text-xs text-slate-400 font-medium">Toque no card para ver a Ficha de Check-in e fotos</span>
             </div>
 
             {(data?.arrivals || []).length === 0 ? (
@@ -911,13 +912,13 @@ export default function ReceptionTablet() {
         )}
       </main>
 
-      {/* Modal: Ficha Completa do Hóspede (FNHR, Selfie, Documento) */}
+      {/* Modal: Ficha Completa do Hóspede (Check-in Digital, Selfie, Documento) */}
       <Dialog open={fnhrModalOpen} onOpenChange={setFnhrModalOpen}>
-        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto bg-slate-900 border-slate-800 text-white">
+        <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto bg-slate-900 border-slate-800 text-white">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-white">
               <ShieldCheck className="w-5 h-5 text-primary" />
-              Ficha de Entrada & FNHR: Apt {selectedItem?.flatNumber}
+              Ficha de Entrada & Check-in Digital: Apt {selectedItem?.flatNumber}
             </DialogTitle>
             <DialogDescription className="text-slate-400">
               Dados oficiais coletados no Pré-Checkin Digital.
@@ -942,6 +943,28 @@ export default function ReceptionTablet() {
             const activeSelfie = currentGuest.selfieUrl || (currentGuest.index === 1 ? selectedItem.guestPhoto : null)
             const activeDoc = currentGuest.docPhotoUrl || (currentGuest.index === 1 ? selectedItem.docPhoto : null)
             const activeSig = currentGuest.signatureUrl || (currentGuest.index === 1 ? selectedItem.signatureUrl : null)
+
+            const resCode = selectedItem.code || selectedItem.id || ""
+            const resCodeParam = encodeURIComponent(resCode)
+            const targetUuid = currentGuest.fnrhDocumentUuid || (modalGuestIndex === 1 ? selectedItem.fnrhDocumentUuid : null)
+
+            let targetViewUrl = currentGuest.fnrhPdfUrl || (modalGuestIndex === 1 ? selectedItem.fnrhPdfUrl : "")
+            if (targetViewUrl) {
+              if (!targetViewUrl.includes("code=")) {
+                targetViewUrl += (targetViewUrl.includes("?") ? "&" : "?") + `code=${resCodeParam}`
+              }
+            } else if (targetUuid) {
+              targetViewUrl = `/api/pms/fnrh/${targetUuid}/view?code=${resCodeParam}`
+            }
+
+            let targetDownloadUrl = currentGuest.fnrhDownloadUrl || (modalGuestIndex === 1 ? selectedItem.fnrhDownloadUrl : "")
+            if (targetDownloadUrl) {
+              if (!targetDownloadUrl.includes("code=")) {
+                targetDownloadUrl += (targetDownloadUrl.includes("?") ? "&" : "?") + `code=${resCodeParam}`
+              }
+            } else if (targetUuid) {
+              targetDownloadUrl = `/api/pms/fnrh/${targetUuid}/download?code=${resCodeParam}`
+            }
 
             return (
               <div className="py-3 space-y-4 text-xs">
@@ -973,6 +996,78 @@ export default function ReceptionTablet() {
                   </div>
                 )}
 
+                {/* Alternador de Visualização: Ficha em PDF Oficial vs Dados & Fotos */}
+                {currentGuest.hasCompletedCheckin && targetViewUrl && (
+                  <div className="flex items-center gap-2 p-1 bg-slate-950 rounded-xl border border-slate-800">
+                    <button
+                      type="button"
+                      onClick={() => setModalViewMode("pdf")}
+                      className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                        modalViewMode === "pdf" ? "bg-primary text-primary-foreground shadow-xs" : "text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                      <span>Ficha Oficial em PDF</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setModalViewMode("data")}
+                      className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                        modalViewMode === "data" ? "bg-primary text-primary-foreground shadow-xs" : "text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      <User className="w-3.5 h-3.5" />
+                      <span>Dados Cadastrais & Fotos</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* Exibição Direta do PDF Oficial Autêntico */}
+                {currentGuest.hasCompletedCheckin && targetViewUrl && modalViewMode === "pdf" ? (
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-950 border border-slate-800">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <div>
+                          <span className="font-bold text-white block">Documento Oficial Assinado Digitalmente</span>
+                          <span className="text-[10px] text-slate-400 block">Autenticidade e Trilha Forense Certificada</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {targetDownloadUrl && (
+                          <Button
+                            size="sm"
+                            type="button"
+                            onClick={() => window.open(targetDownloadUrl, "_blank")}
+                            className="h-8 text-xs bg-slate-800 hover:bg-slate-700 text-white font-bold gap-1 rounded-lg"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            <span>Baixar PDF</span>
+                          </Button>
+                        )}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          type="button"
+                          onClick={() => window.open(targetViewUrl, "_blank")}
+                          className="h-8 text-xs bg-slate-900 border-slate-700 text-slate-300 hover:text-white font-bold gap-1 rounded-lg"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          <span>Nova Aba</span>
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="w-full h-[520px] rounded-xl overflow-hidden border border-slate-800 bg-slate-950 shadow-inner">
+                      <iframe
+                        src={targetViewUrl}
+                        title="Ficha Oficial de Hospedagem"
+                        className="w-full h-full border-0"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <>
                 {/* Alerta de Menor de Idade (ECA Art. 82) se aplicável */}
                 {currentGuest.isMinor && (
                   <div className="p-3 bg-rose-950/60 border border-rose-800/80 rounded-xl space-y-1.5 text-rose-300">
@@ -1216,52 +1311,91 @@ export default function ReceptionTablet() {
                     </div>
                   </div>
                 )}
+                  </>
+                )}
               </div>
             )
           })()}
 
           <DialogFooter className="gap-2 sm:gap-0">
-            <Button 
-              type="button" 
-              onClick={() => {
-                if (selectedItem) {
-                  handleResendCheckinLink(selectedItem, modalGuestIndex)
+            {selectedItem && (() => {
+              const rawGuests = selectedItem.guests && selectedItem.guests.length > 0
+                ? selectedItem.guests
+                : [{ index: 1, hasCompletedCheckin: selectedItem.hasPreCheckin }]
+              const currentGuest = rawGuests.find((g: any) => g.index === modalGuestIndex) || rawGuests[0]
+              const resCode = selectedItem.code || selectedItem.id || ""
+              const resCodeParam = encodeURIComponent(resCode)
+              const targetUuid = currentGuest.fnrhDocumentUuid || (modalGuestIndex === 1 ? selectedItem.fnrhDocumentUuid : null)
+              let targetDownloadUrl = currentGuest.fnrhDownloadUrl || (modalGuestIndex === 1 ? selectedItem.fnrhDownloadUrl : "")
+              if (targetDownloadUrl) {
+                if (!targetDownloadUrl.includes("code=")) {
+                  targetDownloadUrl += (targetDownloadUrl.includes("?") ? "&" : "?") + `code=${resCodeParam}`
                 }
-              }}
-              disabled={sendingLinkKey === `${selectedItem?.id || selectedItem?.code}-${modalGuestIndex}`}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5"
-            >
-              {sendingLinkKey === `${selectedItem?.id || selectedItem?.code}-${modalGuestIndex}` ? (
+              } else if (targetUuid) {
+                targetDownloadUrl = `/api/pms/fnrh/${targetUuid}/download?code=${resCodeParam}`
+              }
+              let targetViewUrl = currentGuest.fnrhPdfUrl || (modalGuestIndex === 1 ? selectedItem.fnrhPdfUrl : "")
+              if (targetViewUrl && !targetViewUrl.includes("code=")) {
+                targetViewUrl += (targetViewUrl.includes("?") ? "&" : "?") + `code=${resCodeParam}`
+              }
+
+              return (
                 <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Enviando...</span>
+                  {currentGuest.hasCompletedCheckin && targetDownloadUrl && (
+                    <Button 
+                      type="button" 
+                      onClick={() => window.open(targetDownloadUrl, "_blank")}
+                      className="bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs gap-1.5"
+                    >
+                      <Download className="w-4 h-4" />
+                      <span>Baixar PDF Assinado</span>
+                    </Button>
+                  )}
+                  <Button 
+                    type="button" 
+                    onClick={() => {
+                      if (selectedItem) {
+                        handleResendCheckinLink(selectedItem, modalGuestIndex)
+                      }
+                    }}
+                    disabled={sendingLinkKey === `${selectedItem?.id || selectedItem?.code}-${modalGuestIndex}`}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5"
+                  >
+                    {sendingLinkKey === `${selectedItem?.id || selectedItem?.code}-${modalGuestIndex}` ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Enviando...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Send className="w-4 h-4" />
+                        <span>Reenviar via WhatsApp (Z-API)</span>
+                      </>
+                    )}
+                  </Button>
+                  <Button 
+                    type="button" 
+                    onClick={() => {
+                      if (selectedItem) {
+                        const directUrl = targetViewUrl || `/pre-checkin/${selectedItem.code || selectedItem.id}?guest=${modalGuestIndex}&readonly=true&view=document`
+                        window.open(directUrl, "_blank")
+                      }
+                    }}
+                    className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-xs gap-1.5"
+                  >
+                    <FileText className="w-4 h-4" />
+                    <span>Abrir Ficha Digital no Tablet</span>
+                  </Button>
+                  <Button 
+                    type="button" 
+                    onClick={() => setFnhrModalOpen(false)}
+                    className="bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs"
+                  >
+                    Fechar
+                  </Button>
                 </>
-              ) : (
-                <>
-                  <Send className="w-4 h-4" />
-                  <span>Reenviar via WhatsApp (Z-API)</span>
-                </>
-              )}
-            </Button>
-            <Button 
-              type="button" 
-              onClick={() => {
-                if (selectedItem) {
-                  window.open(`/pre-checkin/${selectedItem.code || selectedItem.id}?guest=${modalGuestIndex}&readonly=true&view=document`, "_blank")
-                }
-              }}
-              className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-xs gap-1.5"
-            >
-              <FileText className="w-4 h-4" />
-              <span>Abrir Ficha Digital no Tablet</span>
-            </Button>
-            <Button 
-              type="button" 
-              onClick={() => setFnhrModalOpen(false)}
-              className="bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs"
-            >
-              Fechar
-            </Button>
+              )
+            })()}
           </DialogFooter>
         </DialogContent>
       </Dialog>
