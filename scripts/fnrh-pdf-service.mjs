@@ -42,6 +42,29 @@ export function formatToBrasiliaDateTime(isoDateString) {
   }
 }
 
+export const FNRH_HMAC_SECRET = process.env.SESSION_SECRET || "corpflats-fnrh-hmac-secret-2026";
+
+export function generateSignedFnrhToken(documentUuid, expiresInMinutes = 60 * 24 * 30) {
+  const expiresAt = Date.now() + expiresInMinutes * 60 * 1000;
+  const payload = `${documentUuid}:${expiresAt}`;
+  const hmac = crypto.createHmac("sha256", FNRH_HMAC_SECRET).update(payload).digest("hex");
+  return `${expiresAt}.${hmac}`;
+}
+
+export function verifySignedFnrhToken(documentUuid, token) {
+  if (!token || typeof token !== "string" || !token.includes(".")) return false;
+  const [expiresAtStr, hmac] = token.split(".");
+  const expiresAt = Number(expiresAtStr);
+  if (isNaN(expiresAt) || Date.now() > expiresAt) return false;
+  const payload = `${documentUuid}:${expiresAt}`;
+  const expectedHmac = crypto.createHmac("sha256", FNRH_HMAC_SECRET).update(payload).digest("hex");
+  try {
+    return crypto.timingSafeEqual(Buffer.from(hmac, "hex"), Buffer.from(expectedHmac, "hex"));
+  } catch {
+    return hmac === expectedHmac;
+  }
+}
+
 /**
  * Compila a Ficha Nacional de Registro de Hóspedes (FNRH) com Trilha Forense
  */
@@ -108,10 +131,10 @@ export async function generateFnrhPdf({
     size: "A4",
     margins: { top: 26, bottom: 26, left: 32, right: 32 },
     info: {
-      Title: "FNRH Oficial - " + (g.fullName || g.name || "Hóspede"),
+      Title: "Ficha de Hospedagem - " + (g.fullName || g.name || "Hóspede"),
       Author: "CORP FLATS HOSPEDAGEM LTDA",
-      Subject: "Ficha Nacional de Registro de Hóspedes e Trilha de Auditoria Forense",
-      Keywords: "FNRH, Check-in, Assinatura Eletrônica, CorpFlats, Cadastur, MTur",
+      Subject: "Ficha de Hospedagem (Check-in Digital) e Trilha de Auditoria Forense",
+      Keywords: "Ficha de Hospedagem, Check-in Digital, Assinatura Eletrônica, CorpFlats, Cadastur",
       CreationDate: new Date()
     }
   });
@@ -148,9 +171,9 @@ export async function generateFnrhPdf({
   // Título do Documento Oficial à Direita
   const badgeRightX = leftX + 355;
   doc.roundedRect(badgeRightX, topY + 7, 176, 46, 5).fill("#f1f5f9").stroke("#cbd5e1");
-  doc.fillColor("#0284c7").fontSize(7).font("Helvetica-Bold").text("DOCUMENTO REGULATÓRIO OFICIAL", badgeRightX + 8, topY + 12);
-  doc.fillColor("#0f172a").fontSize(9.5).font("Helvetica-Bold").text("Ficha Nacional de Registro (FNRH)", badgeRightX + 8, topY + 22);
-  doc.fillColor("#64748b").fontSize(6.5).font("Helvetica").text("Lei 11.771/2008 & Decreto 7.381/2010 (MTur)", badgeRightX + 8, topY + 34);
+  doc.fillColor("#0284c7").fontSize(7).font("Helvetica-Bold").text("CHECK-IN DIGITAL REGISTRADO", badgeRightX + 8, topY + 12);
+  doc.fillColor("#0f172a").fontSize(9.5).font("Helvetica-Bold").text("Ficha de Hospedagem", badgeRightX + 8, topY + 22);
+  doc.fillColor("#64748b").fontSize(6.5).font("Helvetica").text("Check-in Digital • CorpFlats", badgeRightX + 8, topY + 34);
   doc.fillColor("#0369a1").fontSize(7).font("Helvetica-Bold").text("Reserva: " + (reservation.code || reservationId), badgeRightX + 8, topY + 43);
 
   let currentY = topY + 58;
@@ -282,7 +305,7 @@ export async function generateFnrhPdf({
     currentY + 6
   );
   doc.text(
-    "cumprimento legal da FNRH e execução da hospedagem (Art. 7º, II e V da LGPD).",
+    "cumprimento legal e execução da hospedagem (Art. 7º, II e V da LGPD).",
     leftX + 24,
     currentY + 15
   );
@@ -444,15 +467,28 @@ export async function generateFnrhPdf({
   const fileBuffer = fs.readFileSync(filePath);
   const finalFileSha256 = crypto.createHash("sha256").update(fileBuffer).digest("hex");
 
-  // URLs seguras de visualização e download
-  const viewUrl = "/api/pms/fnrh/" + documentUuid + "/view";
-  const downloadUrl = "/api/pms/fnrh/" + documentUuid + "/download";
+  // URLs seguras de visualização e download com token assinado
+  const downloadToken = generateSignedFnrhToken(documentUuid, 60 * 24 * 30);
+  const viewUrl = `/api/pms/fnrh/${documentUuid}/view?token=${downloadToken}`;
+  const downloadUrl = `/api/pms/fnrh/${documentUuid}/download?token=${downloadToken}`;
+
+  // Upload resiliente para Cloudflare R2 (preserva arquivo após reinício do servidor Render)
+  let r2Url = null;
+  try {
+    const { uploadImageToStorage } = await import("./storage-service.mjs");
+    const rPrefix = `fnrh_${(reservation.code || reservationId).toString().replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+    r2Url = await uploadImageToStorage(fileBuffer, rPrefix, null, "fnrh_documents");
+  } catch (r2Err) {
+    console.warn("[FNRH PDF] Falha ao fazer upload R2 (usando disco local):", r2Err.message);
+  }
 
   return {
     filePath,
     fileName,
     fileUrl: viewUrl,
     downloadUrl,
+    r2Url,
+    token: downloadToken,
     documentUuid,
     sha256Hash: finalFileSha256,
     canonicalHash,
@@ -490,7 +526,57 @@ export async function generateFnrhPdf({
       verifyUrl,
       fileName,
       fileUrl: viewUrl,
-      downloadUrl
+      downloadUrl,
+      r2Url,
+      token: downloadToken
     }
   };
+}
+
+/**
+ * Recompila dinamicamente a Ficha de Hospedagem sob demanda (on-the-fly)
+ * caso o arquivo físico em disco do Render tenha sido perdido após reinício do container.
+ */
+export async function rebuildFnrhPdfOnTheFly({
+  reservation = {},
+  guest = null,
+  guestData = null,
+  auditTrail = null,
+  appOrigin = "https://corpflats.onrender.com",
+  db = null
+}) {
+  const targetGuest = guestData || guest || (Array.isArray(reservation.guests) ? reservation.guests[0] : null) || {};
+  const sig = targetGuest.signatureUrl || reservation.signatureUrl || auditTrail?.signatureUrl || null;
+
+  return await generateFnrhPdf({
+    reservation,
+    guestData: {
+      fullName: targetGuest.fullName || targetGuest.name || reservation.guestName || auditTrail?.guestName || "Hóspede",
+      document: targetGuest.document || targetGuest.cpf || reservation.guestDocument || auditTrail?.guestCpf || "",
+      phone: targetGuest.phone || reservation.guestPhone || auditTrail?.guestPhone || "",
+      email: targetGuest.email || reservation.guestEmail || auditTrail?.guestEmail || "",
+      birthDate: targetGuest.birthDate || auditTrail?.birthDate || "",
+      gender: targetGuest.gender || auditTrail?.gender || "Não informado",
+      cep: targetGuest.cep || reservation.guestCep || "",
+      address: targetGuest.address || reservation.guestAddress || auditTrail?.guestAddress || "",
+      city: targetGuest.city || reservation.guestCity || auditTrail?.originCity || "",
+      state: targetGuest.state || reservation.guestState || auditTrail?.originState || "RJ",
+      country: targetGuest.country || reservation.guestCountry || "Brasil",
+      travelReason: targetGuest.travelReason || auditTrail?.travelReason || "Lazer / Férias",
+      transportMethod: targetGuest.transportMethod || auditTrail?.transportMethod || "Carro próprio",
+      originCity: targetGuest.originCity || auditTrail?.originCity || "",
+      originState: targetGuest.originState || auditTrail?.originState || "",
+      destinationCity: targetGuest.destinationCity || auditTrail?.destinationCity || "",
+      destinationState: targetGuest.destinationState || auditTrail?.destinationState || ""
+    },
+    signatureBase64: sig,
+    signerIp: auditTrail?.signerIp || "127.0.0.1",
+    signerUserAgent: auditTrail?.signerUserAgent || "Navegador Web",
+    appOrigin: appOrigin || "https://corpflats.onrender.com",
+    geolocation: auditTrail?.geolocation || null,
+    optInMarketing: Boolean(targetGuest.optInMarketing || auditTrail?.optInMarketing),
+    whatsapp2faVerified: Boolean(targetGuest.whatsapp2faVerified || auditTrail?.whatsapp2faVerified),
+    whatsappPhone: targetGuest.whatsappPhone || auditTrail?.whatsappPhone || null,
+    whatsappOtpVerifiedAt: auditTrail?.whatsappOtpVerifiedAt || null
+  });
 }

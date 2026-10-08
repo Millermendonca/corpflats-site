@@ -491,6 +491,7 @@ Confira o que foi atualizado:
 {{resumo_alteracoes}}`,
     footer: "CorpFlats • Central de Atendimento",
     buttons: [
+      { id: "btn_checkin", type: "URL", label: "📝 Assinar Ficha Atualizada", url: "{{link_checkin_digital}}" },
       { id: "btn_portal", type: "URL", label: "🏨 Ver Detalhes da Reserva", url: "{{link_portal_hospede}}" },
       { id: "btn_admin", type: "CALL", label: "📞 Falar com Atendimento", phone: "{{telefone_hotel}}" }
     ]
@@ -4244,9 +4245,13 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         }
         if (tpl.id === "tpl_reservation_updated") {
           const defUpdated = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_reservation_updated");
-          if (defUpdated && tpl.message.includes("permanecem inalterados")) {
-            tpl.message = defUpdated.message;
-            tpl.buttons = defUpdated.buttons;
+          if (defUpdated) {
+            if (tpl.message.includes("permanecem inalterados")) {
+              tpl.message = defUpdated.message;
+            }
+            if (!tpl.buttons?.some(b => b.id === "btn_checkin" || b.url === "{{link_checkin_digital}}")) {
+              tpl.buttons = defUpdated.buttons;
+            }
           }
         }
       }

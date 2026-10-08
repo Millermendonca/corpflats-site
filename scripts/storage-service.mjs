@@ -90,18 +90,29 @@ function uploadToCloudflareR2Direct(buffer, mimeType, key, r2Config) {
  * Supports Cloudflare R2 with Native SigV4 and Optimized Local Storage Fallback
  */
 export async function uploadImageToStorage(base64Data, filenamePrefix = "doc", db, folder = "guests") {
-  if (!base64Data || typeof base64Data !== "string") return null;
+  if (!base64Data) return null;
 
   // Se já for uma URL HTTP/HTTPS, retorna diretamente
-  if (base64Data.startsWith("http://") || base64Data.startsWith("https://")) {
+  if (typeof base64Data === "string" && (base64Data.startsWith("http://") || base64Data.startsWith("https://"))) {
     return base64Data;
   }
 
-  // Extract mime type and raw buffer
-  const matches = base64Data.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-  const mimeType = matches ? matches[1] : "image/webp";
-  const rawBase64 = matches ? matches[2] : base64Data;
-  const buffer = Buffer.from(rawBase64, "base64");
+  let buffer;
+  let mimeType = "image/webp";
+  let rawBase64 = null;
+
+  if (Buffer.isBuffer(base64Data)) {
+    buffer = base64Data;
+    mimeType = folder === "fnrh_documents" ? "application/pdf" : "image/webp";
+  } else if (typeof base64Data === "string") {
+    // Extract mime type and raw buffer
+    const matches = base64Data.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+    mimeType = matches ? matches[1] : "image/webp";
+    rawBase64 = matches ? matches[2] : base64Data;
+    buffer = Buffer.from(rawBase64, "base64");
+  } else {
+    return null;
+  }
 
   const ext = mimeType.includes("pdf") ? "pdf" : mimeType.includes("png") ? "png" : mimeType.includes("jpeg") || mimeType.includes("jpg") ? "jpg" : "webp";
   const uniqueName = `${filenamePrefix}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${ext}`;
@@ -126,5 +137,12 @@ export async function uploadImageToStorage(base64Data, filenamePrefix = "doc", d
   }
 
   // 2. Fallback Permanente: Salva em Base64 no PostgreSQL caso R2 não esteja ativo
+  if (Buffer.isBuffer(base64Data)) {
+    return `data:${mimeType};base64,${buffer.toString("base64")}`;
+  }
   return base64Data.startsWith("data:") ? base64Data : `data:${mimeType};base64,${rawBase64}`;
+}
+
+export async function uploadBufferToStorage(buffer, filenamePrefix = "doc", db, folder = "fnrh_documents", mimeType = "application/pdf") {
+  return uploadImageToStorage(buffer, filenamePrefix, db, folder);
 }

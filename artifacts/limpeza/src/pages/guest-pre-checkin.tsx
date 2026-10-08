@@ -991,6 +991,12 @@ export default function GuestPreCheckin() {
         if (resData.fnrhDocument) {
           setGeneratedPdfInfo(resData.fnrhDocument)
         }
+        if (resData.reservation) {
+          setReservation(resData.reservation)
+          if (Array.isArray(resData.reservation.guests) && resData.reservation.guests.length > 0) {
+            setGuestList(resData.reservation.guests)
+          }
+        }
         if (resData.guest?.guestCode) {
           setGuestCode(resData.guest.guestCode)
         } else if (resData.reservation?.guestCode) {
@@ -1153,6 +1159,30 @@ export default function GuestPreCheckin() {
   // MODO 1: FICHA DIGITAL DE HOSPEDAGEM (FNHR) CONCLUÍDA & CERTIFICADA
   // ══════════════════════════════════════════════════════════════════════════════
   if (isCompleted && !isEditing) {
+    const currentGuestRecord = guestList[selectedGuestIndex - 1] || guestList[0] || {}
+    const targetUuid = generatedPdfInfo?.documentUuid || currentGuestRecord?.fnrhDocumentUuid || reservation?.fnrhDocumentUuid
+    const resCodeParam = encodeURIComponent(reservation?.code || code || "")
+
+    let targetViewUrl = generatedPdfInfo?.fileUrl || currentGuestRecord?.fnrhPdfUrl || reservation?.fnrhPdfUrl || ""
+    if (targetViewUrl) {
+      if (!targetViewUrl.includes("code=")) {
+        targetViewUrl += (targetViewUrl.includes("?") ? "&" : "?") + `code=${resCodeParam}`
+      }
+    } else if (targetUuid) {
+      targetViewUrl = `/api/pms/fnrh/${targetUuid}/view?code=${resCodeParam}`
+    }
+
+    let targetDownloadUrl = generatedPdfInfo?.downloadUrl || currentGuestRecord?.fnrhDownloadUrl || reservation?.fnrhDownloadUrl || ""
+    if (targetDownloadUrl) {
+      if (!targetDownloadUrl.includes("code=")) {
+        targetDownloadUrl += (targetDownloadUrl.includes("?") ? "&" : "?") + `code=${resCodeParam}`
+      }
+    } else if (targetUuid) {
+      targetDownloadUrl = `/api/pms/fnrh/${targetUuid}/download?code=${resCodeParam}`
+    } else if (targetViewUrl) {
+      targetDownloadUrl = targetViewUrl.replace("/view", "/download")
+    }
+
     return (
       <div className="min-h-screen bg-slate-50/70 text-slate-900 flex flex-col font-sans selection:bg-sky-500 selection:text-white w-full max-w-full overflow-x-hidden">
         {/* Top Navigation Bar */}
@@ -1178,7 +1208,7 @@ export default function GuestPreCheckin() {
                   {brandName}
                 </span>
                 <span className="text-[10px] text-slate-500 font-mono font-medium block mt-0.5">
-                  FNHR Certificada • Apt {reservation?.flatNumber}
+                  Check-in Digital Registrado • Apt {reservation?.flatNumber}
                 </span>
               </div>
             </div>
@@ -1227,7 +1257,7 @@ export default function GuestPreCheckin() {
               <span>Check-in Digital Concluído & Autenticado</span>
             </div>
             <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight drop-shadow-md text-white">
-              Ficha de Hospedagem (FNHR)
+              Ficha de Hospedagem (Check-in Digital)
             </h1>
             <p className="text-xs sm:text-sm font-normal text-white/90 drop-shadow-sm">
               Apartamento {reservation?.flatNumber} • Edifício Soho Residence Service
@@ -1257,10 +1287,10 @@ export default function GuestPreCheckin() {
             </div>
 
             <div className="flex items-center gap-2">
-              {(generatedPdfInfo?.fileUrl || reservation?.fnrhPdfUrl || guestList[selectedGuestIndex - 1]?.fnrhPdfUrl) && (
+              {targetDownloadUrl && (
                 <Button
                   size="sm"
-                  onClick={() => window.open(generatedPdfInfo?.fileUrl || reservation?.fnrhPdfUrl || guestList[selectedGuestIndex - 1]?.fnrhPdfUrl, "_blank")}
+                  onClick={() => window.open(targetDownloadUrl, "_blank")}
                   className="h-9 text-xs bg-slate-900 hover:bg-slate-800 text-white font-bold gap-1.5 rounded-xl shadow-2xs"
                 >
                   <Download className="w-3.5 h-3.5" />
@@ -1268,11 +1298,11 @@ export default function GuestPreCheckin() {
                 </Button>
               )}
 
-              {(generatedPdfInfo?.documentUuid || reservation?.fnrhDocumentUuid || guestList[selectedGuestIndex - 1]?.fnrhDocumentUuid) && (
+              {targetUuid && (
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => window.open(`/verificar-ficha/${generatedPdfInfo?.documentUuid || reservation?.fnrhDocumentUuid || guestList[selectedGuestIndex - 1]?.fnrhDocumentUuid}`, "_blank")}
+                  onClick={() => window.open(`/verificar-ficha/${targetUuid}`, "_blank")}
                   className="h-9 text-xs bg-sky-50 text-sky-800 border-sky-200 hover:bg-sky-100 font-bold gap-1.5 rounded-xl shadow-2xs"
                 >
                   <ShieldCheck className="w-3.5 h-3.5 text-sky-600" />
@@ -1313,7 +1343,7 @@ export default function GuestPreCheckin() {
                   const phoneClean = (phone || reservation?.guestPhone || "").replace(/\D/g, "")
                   const url = window.location.href
                   const msg = encodeURIComponent(
-                    `Olá, ${fullName}! 🏨 Sua Ficha Digital de Hospedagem (FNHR) do Apt ${reservation?.flatNumber} está confirmada e assinada:\n${url}`
+                    `Olá, ${fullName}! 🏨 Sua Ficha Digital de Hospedagem do Apt ${reservation?.flatNumber} está confirmada e assinada:\n${url}`
                   )
                   window.open(phoneClean ? `https://wa.me/55${phoneClean}?text=${msg}` : `https://wa.me/?text=${msg}`, "_blank")
                 }}
@@ -1365,8 +1395,72 @@ export default function GuestPreCheckin() {
             </div>
           )}
 
-          {/* Ficha Oficial FNHR Certificada */}
-          <Card className="bg-white border border-slate-200/80 text-slate-900 rounded-3xl p-6 sm:p-8 shadow-xl space-y-6">
+          {/* Visualizador Oficial do PDF da Ficha Assinada */}
+          {targetViewUrl && (
+            <Card className="bg-white border border-slate-200/80 text-slate-900 rounded-3xl p-4 sm:p-6 shadow-xl space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-slate-900 text-white flex items-center justify-center font-black text-sm shadow-xs shrink-0">
+                    PDF
+                  </div>
+                  <div>
+                    <h2 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight leading-tight">
+                      Ficha de Hospedagem (Check-in Digital)
+                    </h2>
+                    <span className="text-[11px] text-emerald-600 font-bold uppercase tracking-wider block">
+                      Documento Oficial Registrado • Studio Apt {reservation?.flatNumber}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() => window.open(targetDownloadUrl, "_blank")}
+                    className="h-9 text-xs bg-slate-900 hover:bg-slate-800 text-white font-bold gap-1.5 rounded-xl shadow-xs"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Baixar PDF</span>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => window.open(targetViewUrl, "_blank")}
+                    className="h-9 text-xs bg-white border-slate-200 hover:bg-slate-50 text-slate-700 font-bold gap-1.5 rounded-xl shadow-xs"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5 text-slate-500" />
+                    <span className="hidden sm:inline">Nova Aba</span>
+                  </Button>
+                </div>
+              </div>
+
+              {/* PDF Viewer Iframe */}
+              <div className="w-full h-[750px] sm:h-[950px] rounded-2xl overflow-hidden border border-slate-200 bg-slate-100 shadow-inner">
+                <iframe
+                  src={targetViewUrl}
+                  title="Ficha Oficial de Hospedagem"
+                  className="w-full h-full border-0"
+                />
+              </div>
+
+              <div className="text-center pt-2 text-[11px] text-slate-400 border-t border-slate-100">
+                {brandName} • Edifício Soho Residence Service • Centro, Campos dos Goytacazes - RJ
+              </div>
+            </Card>
+          )}
+
+          {/* Resumo Cadastral */}
+          <details className="bg-white border border-slate-200/80 rounded-3xl p-6 sm:p-8 shadow-sm space-y-6 text-slate-900 group" open={!targetViewUrl}>
+            <summary className="font-bold text-slate-800 cursor-pointer list-none flex items-center justify-between pb-2 border-b border-slate-100">
+              <span className="flex items-center gap-2 text-sm sm:text-base">
+                <FileText className="w-4 h-4 text-sky-600" />
+                <span>Resumo dos Dados Cadastrais Digitados</span>
+              </span>
+              <span className="text-xs text-sky-600 font-bold bg-sky-50 px-2.5 py-1 rounded-lg">
+                {targetViewUrl ? "Alternar Visualização" : "Dados Registrados"}
+              </span>
+            </summary>
+            <div className="mt-4 space-y-6">
             {/* Cabeçalho da Ficha */}
             <div className="border-b border-slate-100 pb-5 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1671,7 +1765,8 @@ export default function GuestPreCheckin() {
             <div className="text-center pt-3 text-[11px] text-slate-400 border-t border-slate-100">
               {brandName} • Edifício Soho Residence Service • Centro, Campos dos Goytacazes - RJ
             </div>
-          </Card>
+            </div>
+          </details>
         </main>
 
         {/* Modal: Lightbox Zoom de Fotos */}

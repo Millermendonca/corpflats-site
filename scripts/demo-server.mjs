@@ -82,9 +82,10 @@ import {
   isReservationForToday,
   isReservationForFuture,
   isReservationForTodayOrPast,
-  resolveReservationAttachments
+  resolveReservationAttachments,
+  ensureReservationAttachmentsReady
 } from "./mail-service.mjs";
-import { generateFnrhPdf, formatToBrasiliaDateTime, SECURE_FNRH_DIR, LEGACY_FNRH_DIR } from "./fnrh-pdf-service.mjs";
+import { generateFnrhPdf, formatToBrasiliaDateTime, SECURE_FNRH_DIR, LEGACY_FNRH_DIR, rebuildFnrhPdfOnTheFly } from "./fnrh-pdf-service.mjs";
 import {
   fnrhSerproService,
   registerSerproReservation,
@@ -11073,9 +11074,9 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
     reservation.guestCode = guest.guestCode;
     reservation.guestDocument = (guestDocument || "").trim() || guest.document || "";
 
-    // Inicializa estrutura isolada de múltiplos hóspedes
+    // Inicializa estrutura isolada de múltiplos hóspedes com dados cadastrais preenchidos,
+    // exigindo nova assinatura/check-in digital para cada nova hospedagem contratada.
     const totalCount = Math.min(Math.max(Number(totalGuestsCount) || 1, 1), 3);
-    const titularAlreadyDone = Boolean(guest.fnhrCompleted && guest.photoUrl && (guest.docPhotoUrl || docPhotoUrl));
     reservation.guests = [
       {
         index: 1,
@@ -11093,7 +11094,7 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
         cep: guest.cep || (guestCep || "").trim(),
         docPhotoUrl: docPhotoUrl || guest.docPhotoUrl || null,
         selfieUrl: guest.photoUrl || null,
-        signatureUrl: guest.signatureUrl || null,
+        signatureUrl: null,
         isMinor: Boolean(reservation.hasMinor || guest.isMinor),
         minorAge: reservation.minorAge || guest.minorAge || null,
         minorKinship: guest.minorKinship || "",
@@ -11101,8 +11102,8 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
         riskAttentionAlert: Boolean(reservation.riskAttentionAlert || guest.riskAttentionAlert),
         riskAttentionReason: reservation.riskAttentionReason || guest.riskAttentionReason || "",
         aiVerification: guest.aiVerification || null,
-        hasCompletedCheckin: titularAlreadyDone,
-        checkinCompletedAt: titularAlreadyDone ? (guest.fnhrCompletedAt || new Date().toISOString()) : null
+        hasCompletedCheckin: false,
+        checkinCompletedAt: null
       }
     ];
 
@@ -11122,14 +11123,10 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
       });
     }
 
-    if (titularAlreadyDone) {
-      reservation.selfieUrl = guest.photoUrl;
-      reservation.docPhotoUrl = guest.docPhotoUrl;
-      reservation.signatureUrl = guest.signatureUrl;
-      if (reservation.guests.every(g => g.hasCompletedCheckin)) {
-        reservation.fnhrCompleted = true;
-      }
-    }
+    reservation.selfieUrl = guest.photoUrl || null;
+    reservation.docPhotoUrl = guest.docPhotoUrl || docPhotoUrl || null;
+    reservation.signatureUrl = null;
+    reservation.fnhrCompleted = false;
 
     // ── Integração Automática SERPRO FNRH se Modo Gov.br Estiver Ativo ────────
     if (db.settings?.checkinProvider === "gov_fnrh") {
@@ -11267,6 +11264,7 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
         const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
         const garageEmail = db.settings?.garageEmail || process.env.GARAGE_EMAIL || "millerpessanha@gmail.com";
         const { subject, bodyHtml } = renderCheckinConfirmedEmail({ reservation, flat, settings: db.settings });
+        await ensureReservationAttachmentsReady({ reservation, guest, db });
         const emailAttachments = resolveReservationAttachments({ reservation, guest, db });
 
         sendEmailAsync({
@@ -12335,6 +12333,7 @@ app.post("/api/pms/reservations", async (req, res) => {
       const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
       const garageEmail = db.settings?.garageEmail || process.env.GARAGE_EMAIL || "millerpessanha@gmail.com";
       const { subject, bodyHtml } = renderCheckinConfirmedEmail({ reservation: newReservation, flat, settings: db.settings });
+      await ensureReservationAttachmentsReady({ reservation: newReservation, guest, db });
       const emailAttachments = resolveReservationAttachments({ reservation: newReservation, guest, db });
 
       sendEmailAsync({
@@ -13041,6 +13040,67 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   }
   if (req.body.checkoutDate && oldCheckout && oldCheckout !== req.body.checkoutDate) {
     r.previousCheckoutDate = oldCheckout;
+  }
+
+  // Se datas ou flat mudarem em reserva já assinada, invalida assinatura para nova assinatura,
+  // preservando 100% dos dados cadastrais do hóspede no cadastro e na reserva.
+  const isDatesOrFlatChanged = Boolean(
+    (req.body.checkinDate && oldCheckin && req.body.checkinDate !== oldCheckin) ||
+    (req.body.checkoutDate && oldCheckout && req.body.checkoutDate !== oldCheckout) ||
+    (req.body.flatId !== undefined && oldFlatId !== undefined && Number(req.body.flatId) !== Number(oldFlatId))
+  );
+
+  if (isDatesOrFlatChanged) {
+    const hadSignedCheckin = Boolean(
+      r.fnhrCompleted ||
+      r.signatureUrl ||
+      r.checkedInAt ||
+      r.fnrhDocumentUuid ||
+      (Array.isArray(r.guests) && r.guests.some(g => g.hasCompletedCheckin || g.signatureUrl || g.fnrhDocumentUuid))
+    );
+    if (hadSignedCheckin) {
+      console.log(`[PMS Edição] Reserva ${r.code || r.id} teve alteração de flat/datas após check-in digital. Invalidando assinatura para nova conferência e preservando 100% dos dados cadastrais.`);
+      r.fnhrCompleted = false;
+      r.signatureUrl = null;
+      r.checkedInAt = null;
+      r.needsReSignature = true;
+      r.reSignatureReason = "Alteração de acomodação (flat) ou período da estadia";
+      delete r.fnrhPdfUrl;
+      delete r.fnrhDownloadUrl;
+      delete r.fnrhDocumentUuid;
+      delete r.fnrhSha256Hash;
+      delete r.fnrhVerifyUrl;
+      delete r.fnrhSignedAt;
+      delete r.fnrhAuditTrail;
+      delete r.fnrhFileName;
+      delete r.fnrhFilePath;
+      delete r.r2Url;
+      delete r.fnrhR2Url;
+      if (r.status === "CHECKED_IN" || r.status === "checkin") {
+        r.status = "confirmada";
+      }
+      if (Array.isArray(r.guests)) {
+        r.guests.forEach(g => {
+          if (g.hasCompletedCheckin || g.signatureUrl || g.fnrhDocumentUuid) {
+            g.hasCompletedCheckin = false;
+            g.checkinCompletedAt = null;
+            g.signatureUrl = null;
+            g.needsReSignature = true;
+            delete g.fnrhPdfUrl;
+            delete g.fnrhDownloadUrl;
+            delete g.fnrhDocumentUuid;
+            delete g.fnrhSha256Hash;
+            delete g.fnrhVerifyUrl;
+            delete g.fnrhSignedAt;
+            delete g.fnrhAuditTrail;
+            delete g.fnrhFileName;
+            delete g.fnrhFilePath;
+            delete g.r2Url;
+            delete g.fnrhR2Url;
+          }
+        });
+      }
+    }
   }
 
   const oldVehiclePlate = r.vehicle?.plate;
@@ -17938,7 +17998,7 @@ app.get("/api/pms/pre-checkin/:code", (req, res) => {
 
   // Garante a lista de hóspedes com slots isolados
   if (!r.guests || r.guests.length === 0) {
-    const titularDone = Boolean((guest && guest.fnhrCompleted) || r.fnhrCompleted);
+    const titularDone = Boolean(r.fnhrCompleted && !r.needsReSignature);
     r.guests = [
       {
         index: 1,
@@ -17953,9 +18013,10 @@ app.get("/api/pms/pre-checkin/:code", (req, res) => {
         address: guest?.address || "",
         city: guest?.city || "",
         state: guest?.state || "RJ",
+        cep: guest?.cep || "",
         docPhotoUrl: guest?.docPhotoUrl || r.docPhotoUrl || null,
         selfieUrl: guest?.photoUrl || r.selfieUrl || null,
-        signatureUrl: guest?.signatureUrl || r.signatureUrl || null,
+        signatureUrl: r.needsReSignature ? null : (r.signatureUrl || null),
         isMinor: Boolean(guest?.isMinor),
         minorAge: guest?.minorAge || null,
         minorKinship: guest?.minorKinship || "",
@@ -17967,7 +18028,7 @@ app.get("/api/pms/pre-checkin/:code", (req, res) => {
         originState: guest?.originState || r.originState || "RJ",
         aiVerification: guest?.aiVerification || null,
         hasCompletedCheckin: titularDone,
-        checkinCompletedAt: titularDone ? (guest?.fnhrCompletedAt || r.updatedAt || new Date().toISOString()) : null
+        checkinCompletedAt: titularDone ? (r.updatedAt || new Date().toISOString()) : null
       }
     ];
     for (let i = 2; i <= guestCount; i++) {
@@ -17986,40 +18047,34 @@ app.get("/api/pms/pre-checkin/:code", (req, res) => {
       });
     }
   } else {
-    // Garante que o slot 1 sempre contenha os dados da reserva do site se estiverem vazios
+    // Garante que o slot 1 sempre contenha os dados cadastrais do hóspede
     if (r.guests[0]) {
       if (!r.guests[0].name || r.guests[0].name.startsWith("Hóspede")) r.guests[0].name = r.guestName || guest?.fullName || guest?.name || "Hóspede 1";
       if (!r.guests[0].cpf) r.guests[0].cpf = r.guestDocument || guest?.document || "";
       if (!r.guests[0].phone) r.guests[0].phone = r.guestPhone || guest?.phone || "";
       if (!r.guests[0].email) r.guests[0].email = r.guestEmail || guest?.email || "";
-      if (guest && guest.fnhrCompleted && !r.guests[0].hasCompletedCheckin) {
-        r.guests[0].guestId = guest.id;
-        r.guests[0].guestCode = guest.guestCode;
-        r.guests[0].birthDate = guest.birthDate || r.guests[0].birthDate || "";
-        r.guests[0].gender = guest.gender || r.guests[0].gender || "masculino";
-        r.guests[0].address = guest.address || r.guests[0].address || "";
-        r.guests[0].street = guest.street || r.guests[0].street || "";
-        r.guests[0].streetNumber = guest.streetNumber || r.guests[0].streetNumber || "";
-        r.guests[0].complement = guest.complement || r.guests[0].complement || "";
-        r.guests[0].neighborhood = guest.neighborhood || r.guests[0].neighborhood || "";
-        r.guests[0].cep = guest.cep || r.guests[0].cep || "";
-        r.guests[0].city = guest.city || r.guests[0].city || "";
-        r.guests[0].state = guest.state || r.guests[0].state || "RJ";
-        r.guests[0].docPhotoUrl = guest.docPhotoUrl || r.guests[0].docPhotoUrl || null;
-        r.guests[0].selfieUrl = guest.photoUrl || r.guests[0].selfieUrl || null;
-        r.guests[0].signatureUrl = guest.signatureUrl || r.guests[0].signatureUrl || null;
-        r.guests[0].isMinor = Boolean(guest.isMinor);
-        r.guests[0].minorAge = guest.minorAge || null;
-        r.guests[0].minorKinship = guest.minorKinship || "";
-        r.guests[0].minorAuthDocUrl = guest.minorAuthDocUrl || null;
-        r.guests[0].riskAttentionAlert = Boolean(guest.riskAttentionAlert || r.riskAttentionAlert);
-        r.guests[0].riskAttentionReason = guest.riskAttentionReason || r.riskAttentionReason || "";
-        r.guests[0].isCamposResident = Boolean(guest.isCamposResident || r.isCamposResident);
-        if (guest.originCity) r.guests[0].originCity = guest.originCity;
-        if (guest.originState) r.guests[0].originState = guest.originState;
-        r.guests[0].aiVerification = guest.aiVerification || null;
-        r.guests[0].hasCompletedCheckin = true;
-        r.guests[0].checkinCompletedAt = guest.fnhrCompletedAt || new Date().toISOString();
+      if (guest) {
+        if (!r.guests[0].guestId) r.guests[0].guestId = guest.id;
+        if (!r.guests[0].guestCode) r.guests[0].guestCode = guest.guestCode;
+        if (!r.guests[0].birthDate) r.guests[0].birthDate = guest.birthDate || "";
+        if (!r.guests[0].gender) r.guests[0].gender = guest.gender || "masculino";
+        if (!r.guests[0].address) r.guests[0].address = guest.address || "";
+        if (!r.guests[0].street) r.guests[0].street = guest.street || "";
+        if (!r.guests[0].streetNumber) r.guests[0].streetNumber = guest.streetNumber || "";
+        if (!r.guests[0].complement) r.guests[0].complement = guest.complement || "";
+        if (!r.guests[0].neighborhood) r.guests[0].neighborhood = guest.neighborhood || "";
+        if (!r.guests[0].cep) r.guests[0].cep = guest.cep || "";
+        if (!r.guests[0].city) r.guests[0].city = guest.city || "";
+        if (!r.guests[0].state) r.guests[0].state = guest.state || "RJ";
+        if (!r.guests[0].docPhotoUrl) r.guests[0].docPhotoUrl = guest.docPhotoUrl || null;
+        if (!r.guests[0].selfieUrl) r.guests[0].selfieUrl = guest.photoUrl || null;
+        if (guest.isMinor !== undefined && r.guests[0].isMinor === undefined) r.guests[0].isMinor = Boolean(guest.isMinor);
+        if (guest.minorAge && !r.guests[0].minorAge) r.guests[0].minorAge = guest.minorAge;
+        if (guest.minorKinship && !r.guests[0].minorKinship) r.guests[0].minorKinship = guest.minorKinship;
+        if (guest.minorAuthDocUrl && !r.guests[0].minorAuthDocUrl) r.guests[0].minorAuthDocUrl = guest.minorAuthDocUrl;
+        if (guest.originCity && !r.guests[0].originCity) r.guests[0].originCity = guest.originCity;
+        if (guest.originState && !r.guests[0].originState) r.guests[0].originState = guest.originState;
+        if (guest.aiVerification && !r.guests[0].aiVerification) r.guests[0].aiVerification = guest.aiVerification;
       }
     }
   }
@@ -18053,6 +18108,22 @@ app.get("/api/pms/pre-checkin/:code", (req, res) => {
         usedAt: tokenRecord.usedAt || null
       };
     }
+  }
+
+  // Garante tokens assinados válidos nas URLs da FNRH de visualização e download
+  if (r.fnrhDocumentUuid) {
+    const tkn = generateSignedFnrhToken(r.fnrhDocumentUuid, 60 * 24 * 30);
+    r.fnrhPdfUrl = `/api/pms/fnrh/${r.fnrhDocumentUuid}/view?token=${tkn}`;
+    r.fnrhDownloadUrl = `/api/pms/fnrh/${r.fnrhDocumentUuid}/download?token=${tkn}`;
+  }
+  if (Array.isArray(r.guests)) {
+    r.guests.forEach(g => {
+      if (g.fnrhDocumentUuid) {
+        const tkn = generateSignedFnrhToken(g.fnrhDocumentUuid, 60 * 24 * 30);
+        g.fnrhPdfUrl = `/api/pms/fnrh/${g.fnrhDocumentUuid}/view?token=${tkn}`;
+        g.fnrhDownloadUrl = `/api/pms/fnrh/${g.fnrhDocumentUuid}/download?token=${tkn}`;
+      }
+    });
   }
 
   res.json({
@@ -18772,6 +18843,8 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
       r.whatsappPhone = verifiedOtpRecord ? verifiedOtpRecord.phone : null;
       targetGuest.fnrhDocumentUuid = fnrhDocument.documentUuid;
       targetGuest.fnrhPdfUrl = fnrhDocument.fileUrl;
+      targetGuest.fnrhDownloadUrl = fnrhDocument.downloadUrl;
+      targetGuest.r2Url = fnrhDocument.r2Url;
       targetGuest.fnrhSha256Hash = fnrhDocument.sha256Hash;
       targetGuest.fnrhVerifyUrl = fnrhDocument.verifyUrl;
       targetGuest.fnrhSignedAt = fnrhDocument.signedAt;
@@ -18785,6 +18858,8 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
       r.checkedInAt = fnrhDocument.signedAt;
       if (Number(guestIndex) === 1) {
         r.fnrhPdfUrl = fnrhDocument.fileUrl;
+        r.fnrhDownloadUrl = fnrhDocument.downloadUrl;
+        r.r2Url = fnrhDocument.r2Url;
         r.fnrhDocumentUuid = fnrhDocument.documentUuid;
         r.fnrhSha256Hash = fnrhDocument.sha256Hash;
         r.fnrhVerifyUrl = fnrhDocument.verifyUrl;
@@ -18820,6 +18895,7 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
       const garageEmail = db.settings?.garageEmail || process.env.GARAGE_EMAIL || "millerpessanha@gmail.com";
       const { subject, bodyHtml } = renderCheckinConfirmedEmail({ reservation: r, flat, settings: db.settings });
 
+      await ensureReservationAttachmentsReady({ reservation: r, guest, db, appOrigin: originHeader });
       const emailAttachments = resolveReservationAttachments({ reservation: r, guest, db });
       const safeValidName = validName
         .normalize("NFD")
@@ -18879,6 +18955,9 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
     fnrhDocument: fnrhDocument ? {
       documentUuid: fnrhDocument.documentUuid,
       fileUrl: fnrhDocument.fileUrl,
+      downloadUrl: fnrhDocument.downloadUrl,
+      r2Url: fnrhDocument.r2Url,
+      token: fnrhDocument.token,
       sha256Hash: fnrhDocument.sha256Hash,
       verifyUrl: fnrhDocument.verifyUrl,
       signedAtBrasilia: fnrhDocument.signedAtBrasilia
@@ -18971,7 +19050,7 @@ function verifySignedFnrhToken(documentUuid, token) {
 }
 
 function handleFnrhServe(isDownload) {
-  return (req, res) => {
+  return async (req, res) => {
     const documentUuid = req.params.documentUuid;
     if (!documentUuid) return res.status(400).json({ error: "UUID do documento não fornecido." });
 
@@ -19005,28 +19084,45 @@ function handleFnrhServe(isDownload) {
       }
     }
 
-    if (!isAuthorized) {
-      return res.status(403).json({
-        error: "Acesso não autorizado ou link assinado expirado (validade de 30 minutos)."
-      });
-    }
-
-    // Localizar registro do documento
+    // Localizar registro do documento e reserva associada
     let docRecord = (db.fnrhAuditDocuments || []).find(d => d.documentUuid === documentUuid);
-    if (!docRecord) {
-      for (const r of (db.reservations || [])) {
-        if (r.fnrhDocumentUuid === documentUuid) {
-          docRecord = r.fnrhAuditTrail;
+    let targetReservation = null;
+    let targetGuest = null;
+
+    for (const r of (db.reservations || [])) {
+      if (r.fnrhDocumentUuid === documentUuid) {
+        if (!docRecord) docRecord = r.fnrhAuditTrail;
+        targetReservation = r;
+        targetGuest = r.guests?.[0] || null;
+        break;
+      }
+      if (Array.isArray(r.guests)) {
+        const g = r.guests.find(x => x.fnrhDocumentUuid === documentUuid);
+        if (g) {
+          if (!docRecord) docRecord = g.fnrhAuditTrail;
+          targetReservation = r;
+          targetGuest = g;
           break;
         }
-        if (Array.isArray(r.guests)) {
-          const g = r.guests.find(x => x.fnrhDocumentUuid === documentUuid);
-          if (g) {
-            docRecord = g.fnrhAuditTrail;
-            break;
-          }
-        }
       }
+    }
+
+    // Autorização complementar via código da reserva (ex: link do hóspede ?code=...)
+    if (!isAuthorized && req.query.code) {
+      const codeQuery = String(req.query.code).trim().toUpperCase();
+      if (
+        (targetReservation && (String(targetReservation.code || "").toUpperCase() === codeQuery || String(targetReservation.id) === codeQuery)) ||
+        (docRecord?.reservationCode && String(docRecord.reservationCode).toUpperCase() === codeQuery)
+      ) {
+        isAuthorized = true;
+        authContext = "GUEST_CODE";
+      }
+    }
+
+    if (!isAuthorized) {
+      return res.status(403).json({
+        error: "Acesso não autorizado ou link assinado expirado."
+      });
     }
 
     // Localizar arquivo no disco
@@ -19048,6 +19144,27 @@ function handleFnrhServe(isDownload) {
             targetFilePath = path.join(d, foundFile);
             break;
           }
+        }
+      }
+    }
+
+    // Fallback on-the-fly: Recompilar ficha caso o Render tenha reiniciado o container e limpado o disco efêmero
+    if (!targetFilePath || !fs.existsSync(targetFilePath)) {
+      if (targetReservation) {
+        try {
+          const originHeader = req.headers.origin || (req.headers.host ? `${req.protocol || "https"}://${req.headers.host}` : "https://corpflats.onrender.com");
+          const rebuilt = await rebuildFnrhPdfOnTheFly({
+            reservation: targetReservation,
+            guest: targetGuest,
+            auditTrail: docRecord,
+            appOrigin: originHeader,
+            db
+          });
+          if (rebuilt?.filePath && fs.existsSync(rebuilt.filePath)) {
+            targetFilePath = rebuilt.filePath;
+          }
+        } catch (rebuildErr) {
+          console.warn("[FNRH Serve] Falha ao reconstruir PDF on-the-fly:", rebuildErr.message);
         }
       }
     }
@@ -28441,6 +28558,7 @@ setInterval(async () => {
 
           // Anexa a FNRH em PDF e/ou Documento Oficial do Hóspede (mesmo sem check-in digital)
           const titularGuest = (db.guests || []).find(g => (r.guestId && g.id === r.guestId) || (r.guestDocument && (g.documentNumber || g.document) === r.guestDocument));
+          await ensureReservationAttachmentsReady({ reservation: r, guest: titularGuest, db });
           const emailAttachments = resolveReservationAttachments({ reservation: r, guest: titularGuest, db });
 
           console.log(`[Rotina 07:00] Disparando e-mail matinal de check-in para Recepção e Garagem: Flat ${r.flatNumber} - ${r.guestName} (${r.code}) [Anexos: ${emailAttachments.length}]...`);

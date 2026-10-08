@@ -7,6 +7,7 @@ import {
   getCheckinUrlSync as getSerproCheckinUrlSync,
   getCheckinUrl as getSerproCheckinUrl
 } from "./fnrh-serpro-service.mjs";
+import { rebuildFnrhPdfOnTheFly } from "./fnrh-pdf-service.mjs";
 
 /**
  * Resolução dinâmica e unificada de URL de check-in para disparos de e-mail.
@@ -1170,14 +1171,20 @@ export function resolveReservationAttachments({ reservation, guest = null, db = 
     if (uuid && typeof uuid === "string") {
       candidateNames.push(`FNRH_${uuid}.pdf`);
       candidateNames.push(`fnrh_${uuid}.pdf`);
+      candidateNames.push(`Ficha_Checkin_${uuid}.pdf`);
+      candidateNames.push(`ficha_checkin_${uuid}.pdf`);
     }
     if (code) {
       candidateNames.push(`FNRH_${code}.pdf`);
       candidateNames.push(`fnrh_${code}.pdf`);
+      candidateNames.push(`Ficha_Checkin_${code}.pdf`);
+      candidateNames.push(`ficha_checkin_${code}.pdf`);
     }
     if (id) {
       candidateNames.push(`FNRH_${id}.pdf`);
       candidateNames.push(`fnrh_${id}.pdf`);
+      candidateNames.push(`Ficha_Checkin_${id}.pdf`);
+      candidateNames.push(`ficha_checkin_${id}.pdf`);
     }
 
     // Checa nomes diretos em cada diretório candidato
@@ -1207,8 +1214,8 @@ export function resolveReservationAttachments({ reservation, guest = null, db = 
           const cpfMatches = files.filter(f => {
             if (!f.endsWith(".pdf")) return false;
             const lower = f.toLowerCase();
-            if (cleanId && lower.startsWith(`fnrh_${cleanId}_${cleanCpf}_`)) return true;
-            if (cleanCode && lower.startsWith(`fnrh_${cleanCode}_${cleanCpf}_`)) return true;
+            if (cleanId && (lower.startsWith(`fnrh_${cleanId}_${cleanCpf}_`) || lower.startsWith(`ficha_checkin_${cleanId}_${cleanCpf}_`) || lower.startsWith(`ficha_${cleanId}_`))) return true;
+            if (cleanCode && (lower.startsWith(`fnrh_${cleanCode}_${cleanCpf}_`) || lower.startsWith(`ficha_checkin_${cleanCode}_${cleanCpf}_`) || lower.startsWith(`ficha_${cleanCode}_`))) return true;
             return false;
           });
           if (cpfMatches.length > 0) {
@@ -1226,8 +1233,8 @@ export function resolveReservationAttachments({ reservation, guest = null, db = 
         const matchingFiles = files.filter(f => {
           if (!f.endsWith(".pdf")) return false;
           const lower = f.toLowerCase();
-          if (cleanId && (lower.startsWith(`fnrh_${cleanId}_`) || lower.startsWith(`fnrh_${cleanId}.`))) return true;
-          if (cleanCode && (lower.startsWith(`fnrh_${cleanCode}_`) || lower.startsWith(`fnrh_${cleanCode}.`))) return true;
+          if (cleanId && (lower.startsWith(`fnrh_${cleanId}_`) || lower.startsWith(`fnrh_${cleanId}.`) || lower.startsWith(`ficha_checkin_${cleanId}_`) || lower.startsWith(`ficha_${cleanId}_`))) return true;
+          if (cleanCode && (lower.startsWith(`fnrh_${cleanCode}_`) || lower.startsWith(`fnrh_${cleanCode}.`) || lower.startsWith(`ficha_checkin_${cleanCode}_`) || lower.startsWith(`ficha_${cleanCode}_`))) return true;
           return false;
         });
 
@@ -1253,11 +1260,11 @@ export function resolveReservationAttachments({ reservation, guest = null, db = 
   // 1. FNRH em PDF do Titular (se pré-checkin digital concluído)
   const titularGuestRecord = Array.isArray(reservation.guests) ? reservation.guests.find(g => Number(g.index) === 1) || reservation.guests[0] : null;
   const titularUuid = titularGuestRecord?.fnrhDocumentUuid || reservation.fnrhDocumentUuid || guest?.fnrhDocumentUuid;
-  let titularAuditFileName = titularGuestRecord?.fnrhFileName || reservation.fnrhFileName || titularGuestRecord?.fnrhAuditTrail?.fileName || reservation.fnrhAuditTrail?.fileName || guest?.fnrhAuditTrail?.fileName;
-  if (!titularAuditFileName && titularUuid && Array.isArray(db?.fnrhAuditDocuments)) {
-    const auditDoc = db.fnrhAuditDocuments.find(a => a.documentUuid === titularUuid || String(a.reservationId) === String(reservation.id) || a.reservationCode === resCode);
-    if (auditDoc?.fileName) titularAuditFileName = auditDoc.fileName;
+  let titularAuditDoc = null;
+  if (Array.isArray(db?.fnrhAuditDocuments) && (titularUuid || reservation.id || resCode)) {
+    titularAuditDoc = db.fnrhAuditDocuments.find(a => (titularUuid && a.documentUuid === titularUuid) || String(a.reservationId) === String(reservation.id) || a.reservationCode === resCode);
   }
+  let titularAuditFileName = titularGuestRecord?.fnrhFileName || reservation.fnrhFileName || titularGuestRecord?.fnrhAuditTrail?.fileName || reservation.fnrhAuditTrail?.fileName || guest?.fnrhAuditTrail?.fileName || titularAuditDoc?.fileName;
 
   const titularFnrhPath = findFnrhPath({
     filePath: titularGuestRecord?.fnrhFilePath || reservation.fnrhFilePath || guest?.fnrhFilePath,
@@ -1268,10 +1275,17 @@ export function resolveReservationAttachments({ reservation, guest = null, db = 
     cpf: titularGuestRecord?.cpf || titularGuestRecord?.document || reservation.guestDocument || guest?.document
   });
 
+  const titularR2Url = titularGuestRecord?.r2Url || titularGuestRecord?.fnrhR2Url || (typeof titularGuestRecord?.fnrhPdfUrl === "string" && titularGuestRecord.fnrhPdfUrl.startsWith("http") ? titularGuestRecord.fnrhPdfUrl : null) || reservation?.r2Url || reservation?.fnrhR2Url || (typeof reservation?.fnrhPdfUrl === "string" && reservation.fnrhPdfUrl.startsWith("http") ? reservation.fnrhPdfUrl : null) || titularAuditDoc?.r2Url;
+
   if (titularFnrhPath) {
     attachments.push({
       filename: `FNRH_${resCode}_${primaryName}.pdf`,
       path: titularFnrhPath
+    });
+  } else if (titularR2Url) {
+    attachments.push({
+      filename: `FNRH_${resCode}_${primaryName}.pdf`,
+      path: titularR2Url
     });
   }
 
@@ -1280,11 +1294,11 @@ export function resolveReservationAttachments({ reservation, guest = null, db = 
     reservation.guests.forEach((g, idx) => {
       if (Number(g.index) === 1 || (idx === 0 && !g.index)) return;
       const gUuid = g.fnrhDocumentUuid;
-      let gAuditFileName = g.fnrhFileName || g.fnrhAuditTrail?.fileName;
-      if (!gAuditFileName && gUuid && Array.isArray(db?.fnrhAuditDocuments)) {
-        const auditDoc = db.fnrhAuditDocuments.find(a => a.documentUuid === gUuid);
-        if (auditDoc?.fileName) gAuditFileName = auditDoc.fileName;
+      let coAuditDoc = null;
+      if (Array.isArray(db?.fnrhAuditDocuments) && gUuid) {
+        coAuditDoc = db.fnrhAuditDocuments.find(a => a.documentUuid === gUuid);
       }
+      let gAuditFileName = g.fnrhFileName || g.fnrhAuditTrail?.fileName || coAuditDoc?.fileName;
       const coGuestFnrhPath = findFnrhPath({
         filePath: g.fnrhFilePath,
         fileName: gAuditFileName,
@@ -1293,16 +1307,24 @@ export function resolveReservationAttachments({ reservation, guest = null, db = 
         id: reservation.id,
         cpf: g.cpf || g.document
       });
+      const coGuestR2Url = g.r2Url || g.fnrhR2Url || (typeof g.fnrhPdfUrl === "string" && g.fnrhPdfUrl.startsWith("http") ? g.fnrhPdfUrl : null) || coAuditDoc?.r2Url;
+
+      const gName = (g.name || `Hospede_${idx + 1}`)
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^\w\s-]/gi, "")
+        .trim()
+        .replace(/\s+/g, "_");
+
       if (coGuestFnrhPath && !attachments.some(a => a.path === coGuestFnrhPath)) {
-        const gName = (g.name || `Hospede_${idx + 1}`)
-          .normalize("NFD")
-          .replace(/[\u0300-\u036f]/g, "")
-          .replace(/[^\w\s-]/gi, "")
-          .trim()
-          .replace(/\s+/g, "_");
         attachments.push({
           filename: `FNRH_${resCode}_${gName}.pdf`,
           path: coGuestFnrhPath
+        });
+      } else if (coGuestR2Url && !attachments.some(a => a.path === coGuestR2Url)) {
+        attachments.push({
+          filename: `FNRH_${resCode}_${gName}.pdf`,
+          path: coGuestR2Url
         });
       }
     });
@@ -1417,5 +1439,71 @@ export function resolveReservationAttachments({ reservation, guest = null, db = 
   }
 
   return attachments;
+}
+
+/**
+ * Garante que os arquivos físicos ou URLs R2 da FNRH estejam disponíveis antes do disparo do e-mail.
+ * Caso o arquivo tenha sido apagado pelo reinício do Render e não haja URL R2, recompila on-the-fly.
+ */
+export async function ensureReservationAttachmentsReady({ reservation, guest = null, db = null, appOrigin = "https://corpflats.onrender.com" }) {
+  if (!reservation) return resolveReservationAttachments({ reservation, guest, db });
+
+  // 1. Titular
+  const titularGuestRecord = Array.isArray(reservation.guests) ? reservation.guests.find(g => Number(g.index) === 1) || reservation.guests[0] : null;
+  const isTitularDone = Boolean(reservation.fnhrCompleted || titularGuestRecord?.hasCompletedCheckin || reservation.fnrhDocumentUuid || titularGuestRecord?.fnrhDocumentUuid);
+
+  if (isTitularDone) {
+    const hasDisk = titularGuestRecord?.fnrhFilePath && fs.existsSync(titularGuestRecord.fnrhFilePath);
+    const hasR2 = Boolean(titularGuestRecord?.r2Url || titularGuestRecord?.fnrhR2Url || (typeof titularGuestRecord?.fnrhPdfUrl === "string" && titularGuestRecord.fnrhPdfUrl.startsWith("http")) || reservation.r2Url || reservation.fnrhR2Url || (typeof reservation.fnrhPdfUrl === "string" && reservation.fnrhPdfUrl.startsWith("http")));
+    if (!hasDisk && !hasR2) {
+      try {
+        console.log(`[MailService 🔄] Arquivo FNRH do titular ausente em disco e sem R2. Reconstruindo on-the-fly para ${reservation.code || reservation.id}...`);
+        const rebuilt = await rebuildFnrhPdfOnTheFly({ reservation, guest: titularGuestRecord || guest, appOrigin, db });
+        if (rebuilt) {
+          if (titularGuestRecord) {
+            titularGuestRecord.fnrhFilePath = rebuilt.filePath;
+            titularGuestRecord.fnrhFileName = rebuilt.fileName;
+            titularGuestRecord.fnrhPdfUrl = rebuilt.fileUrl;
+            if (rebuilt.r2Url) titularGuestRecord.r2Url = rebuilt.r2Url;
+          }
+          reservation.fnrhFilePath = rebuilt.filePath;
+          reservation.fnrhFileName = rebuilt.fileName;
+          reservation.fnrhPdfUrl = rebuilt.fileUrl;
+          if (rebuilt.r2Url) reservation.r2Url = rebuilt.r2Url;
+        }
+      } catch (err) {
+        console.warn("[MailService] Falha ao reconstruir FNRH do titular on-the-fly:", err.message);
+      }
+    }
+  }
+
+  // 2. Co-hóspedes
+  if (Array.isArray(reservation.guests)) {
+    for (let idx = 0; idx < reservation.guests.length; idx++) {
+      const g = reservation.guests[idx];
+      if (Number(g.index) === 1 || (idx === 0 && !g.index)) continue;
+      const isCoGuestDone = Boolean(g.hasCompletedCheckin || g.fnrhDocumentUuid);
+      if (isCoGuestDone) {
+        const hasDisk = g.fnrhFilePath && fs.existsSync(g.fnrhFilePath);
+        const hasR2 = Boolean(g.r2Url || g.fnrhR2Url || (typeof g.fnrhPdfUrl === "string" && g.fnrhPdfUrl.startsWith("http")));
+        if (!hasDisk && !hasR2) {
+          try {
+            console.log(`[MailService 🔄] Arquivo FNRH do co-hóspede ${g.name} ausente em disco e sem R2. Reconstruindo on-the-fly...`);
+            const rebuilt = await rebuildFnrhPdfOnTheFly({ reservation, guest: g, appOrigin, db });
+            if (rebuilt) {
+              g.fnrhFilePath = rebuilt.filePath;
+              g.fnrhFileName = rebuilt.fileName;
+              g.fnrhPdfUrl = rebuilt.fileUrl;
+              if (rebuilt.r2Url) g.r2Url = rebuilt.r2Url;
+            }
+          } catch (err) {
+            console.warn(`[MailService] Falha ao reconstruir FNRH do co-hóspede ${g.name} on-the-fly:`, err.message);
+          }
+        }
+      }
+    }
+  }
+
+  return resolveReservationAttachments({ reservation, guest, db });
 }
 
