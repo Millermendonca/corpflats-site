@@ -10403,9 +10403,12 @@ app.get("/api/settings", (req, res) => {
     garageEmail: db.settings?.garageEmail || "millerpessanha@gmail.com",
     ...db.settings,
     checkinProvider: db.settings?.checkinProvider || "proprio",
-    serproConfig: db.settings?.serproConfig || {
-      env: process.env.SERPRO_ENV || "homologacao",
-      cpfSolicitante: process.env.SERPRO_CPF_SOLICITANTE || "12585736792"
+    serproConfig: {
+      user: db.settings?.serproConfig?.user || process.env.SERPRO_USER || "",
+      hasPassword: Boolean(db.settings?.serproConfig?.password || process.env.SERPRO_PASSWORD),
+      cpfSolicitante: db.settings?.serproConfig?.cpfSolicitante || process.env.SERPRO_CPF_SOLICITANTE || "12585736792",
+      env: db.settings?.serproConfig?.env || process.env.SERPRO_ENV || "homologacao",
+      ...(db.settings?.serproConfig || {})
     },
     petPolicy,
     houseRules: db.settings.houseRules || DEFAULT_HOUSE_RULES,
@@ -10451,10 +10454,16 @@ app.patch("/api/settings", (req, res) => {
     if (serproConfig.env && !["homologacao", "producao"].includes(serproConfig.env)) {
       return res.status(400).json({ error: "serproConfig.env inválido. Deve ser 'homologacao' ou 'producao'." });
     }
-    db.settings.serproConfig = {
-      ...(db.settings.serproConfig || {}),
-      ...serproConfig
-    };
+    const cleanSerpro = { ...(db.settings.serproConfig || {}) };
+    if (serproConfig.user !== undefined) cleanSerpro.user = String(serproConfig.user).trim();
+    if (serproConfig.password !== undefined && String(serproConfig.password).trim() !== "") {
+      cleanSerpro.password = String(serproConfig.password).trim();
+    }
+    if (serproConfig.cpfSolicitante !== undefined) {
+      cleanSerpro.cpfSolicitante = String(serproConfig.cpfSolicitante).replace(/\D/g, "");
+    }
+    if (serproConfig.env !== undefined) cleanSerpro.env = serproConfig.env;
+    db.settings.serproConfig = cleanSerpro;
   }
 
   if (petPolicy !== undefined) {

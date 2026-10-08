@@ -202,6 +202,16 @@ export default function SystemSettings() {
   const [testingGemini, setTestingGemini] = useState(false)
   const [geminiMsg, setGeminiMsg] = useState<{ type: "success" | "error"; text: string } | null>(null)
 
+  // SERPRO FNRH Digital states
+  const [serproModalOpen, setSerproModalOpen] = useState(false)
+  const [serproUser, setSerproUser] = useState("")
+  const [serproPassword, setSerproPassword] = useState("")
+  const [serproCpfSolicitante, setSerproCpfSolicitante] = useState("12585736792")
+  const [serproEnv, setSerproEnv] = useState<"homologacao" | "producao">("homologacao")
+  const [serproHasPassword, setSerproHasPassword] = useState(false)
+  const [savingSerpro, setSavingSerpro] = useState(false)
+  const [serproStatusMsg, setSerproStatusMsg] = useState<{ type: "success" | "error"; text: string } | null>(null)
+
   const fetchUsers = async () => {
     try {
       const res = await fetch("/api/admin/users")
@@ -321,7 +331,56 @@ export default function SystemSettings() {
   if (loadingUser) return null
   if (user?.role !== "admin") return <Shell><AccessDenied /></Shell>
 
+  useEffect(() => {
+    if (settings?.serproConfig) {
+      if (settings.serproConfig.user) setSerproUser(settings.serproConfig.user)
+      if (settings.serproConfig.cpfSolicitante) setSerproCpfSolicitante(settings.serproConfig.cpfSolicitante)
+      if (settings.serproConfig.env) setSerproEnv(settings.serproConfig.env as "homologacao" | "producao")
+      if (settings.serproConfig.hasPassword) setSerproHasPassword(true)
+    }
+  }, [settings])
+
   // Handlers de Ações Técnicas
+  const handleSaveSerpro = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setSavingSerpro(true)
+    setSerproStatusMsg(null)
+    try {
+      const payload: any = {
+        serproConfig: {
+          user: serproUser.trim(),
+          cpfSolicitante: serproCpfSolicitante.replace(/\D/g, ""),
+          env: serproEnv
+        }
+      }
+      if (serproPassword.trim()) {
+        payload.serproConfig.password = serproPassword.trim()
+      }
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      })
+      if (res.ok) {
+        setSerproStatusMsg({ type: "success", text: "Credenciais SERPRO FNRH salvas com sucesso!" })
+        queryClient.invalidateQueries({ queryKey: getGetSettingsQueryKey() })
+        refetchSerpro()
+        setTimeout(() => {
+          setSerproModalOpen(false)
+          setSerproPassword("")
+          setSerproStatusMsg(null)
+        }, 1500)
+      } else {
+        const d = await res.json().catch(() => ({}))
+        setSerproStatusMsg({ type: "error", text: d.error || "Erro ao salvar credenciais SERPRO." })
+      }
+    } catch {
+      setSerproStatusMsg({ type: "error", text: "Erro de conexão ao salvar." })
+    } finally {
+      setSavingSerpro(false)
+    }
+  }
+
   const handleSaveStorage = async (e: React.FormEvent) => {
     e.preventDefault()
     setSavingStorage(true)
@@ -783,9 +842,25 @@ export default function SystemSettings() {
                   </p>
                 </div>
 
-                <div className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 pt-1 border-t border-emerald-200/40 dark:border-emerald-800/40 flex items-center justify-between">
-                  <span>URL gerada: fnrh.turismo.gov.br</span>
-                  {isGovActive && <span className="font-bold">✓ Selecionado</span>}
+                <div className="pt-2 border-t border-emerald-200/40 dark:border-emerald-800/40 flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                    <span>URL gerada: fnrh.turismo.gov.br</span>
+                    {isGovActive && <span className="font-bold ml-1.5">✓ Selecionado</span>}
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSerproStatusMsg(null);
+                      setSerproModalOpen(true);
+                    }}
+                    className="h-7 text-[11px] font-bold gap-1.5 rounded-xl border-emerald-300 dark:border-emerald-700 bg-white/90 dark:bg-emerald-950/70 hover:bg-emerald-50 dark:hover:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 shadow-xs"
+                  >
+                    <Key className="w-3 h-3 text-emerald-600" />
+                    <span>Configurar Credenciais FNRH</span>
+                  </Button>
                 </div>
               </div>
             </div>
@@ -1763,6 +1838,135 @@ export default function SystemSettings() {
                 </Button>
                 <Button type="submit" disabled={savingGemini || !geminiApiKey.trim()} className="rounded-xl h-9 text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white">
                   {savingGemini ? "Salvando..." : "Salvar Chave"}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+
+        {/* ── Modal: Configurar Credenciais SERPRO FNRH (Gov.br) ── */}
+        <Dialog open={serproModalOpen} onOpenChange={setSerproModalOpen}>
+          <DialogContent className="sm:max-w-lg bg-card border-border rounded-3xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-foreground font-black text-base">
+                <ShieldCheck className="w-5 h-5 text-emerald-600" />
+                <span>Credenciais da API SERPRO FNRH Digital (Gov.br)</span>
+              </DialogTitle>
+              <DialogDescription className="text-xs text-muted-foreground leading-relaxed">
+                Integração oficial com a API do Ministério do Turismo (v2.4.2) para geração automática de links de check-in autenticados no Gov.br.
+              </DialogDescription>
+            </DialogHeader>
+
+            <form onSubmit={handleSaveSerpro} className="space-y-4 pt-2">
+              <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl text-[11px] text-emerald-800 dark:text-emerald-300 space-y-1.5 leading-relaxed">
+                <p className="font-bold flex items-center gap-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>Autenticação HTTP Basic & Cadastur</span>
+                </p>
+                <p>
+                  As credenciais fornecidas pelo SERPRO são enviadas nos cabeçalhos autenticados das requisições para cadastro de reservas e emissão do link oficial.
+                </p>
+              </div>
+
+              {/* Ambiente */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold">Ambiente da API *</Label>
+                <Select value={serproEnv} onValueChange={(val: "homologacao" | "producao") => setSerproEnv(val)}>
+                  <SelectTrigger className="rounded-xl h-10 text-xs bg-background border-border">
+                    <SelectValue placeholder="Selecione o ambiente" />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl">
+                    <SelectItem value="homologacao">Homologação (Ambiente de Testes / Sandbox)</SelectItem>
+                    <SelectItem value="producao">Produção (Ambiente Oficial Ministério do Turismo)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-[10px] text-muted-foreground">
+                  {serproEnv === "producao" 
+                    ? "Produção: fnrh.turismo.gov.br (Reservas reais enviadas ao Ministério do Turismo)" 
+                    : "Homologação: hom.fnrh.turismo.gov.br (Permite testes sem valor legal)"}
+                </p>
+              </div>
+
+              {/* Usuário da API */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold">Usuário da API SERPRO (SERPRO_USER) *</Label>
+                <div className="relative">
+                  <Key className="w-4 h-4 absolute left-3 top-3 text-muted-foreground" />
+                  <Input 
+                    type="text"
+                    value={serproUser}
+                    onChange={(e) => setSerproUser(e.target.value)}
+                    placeholder="Ex: identificador ou usuário fornecido pelo SERPRO"
+                    required
+                    className="pl-9 text-xs rounded-xl h-10 bg-background border-border"
+                  />
+                </div>
+              </div>
+
+              {/* Senha / Chave API */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold">Senha / Chave API (SERPRO_PASSWORD) *</Label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 absolute left-3 top-3 text-muted-foreground" />
+                  <Input 
+                    type="password"
+                    value={serproPassword}
+                    onChange={(e) => setSerproPassword(e.target.value)}
+                    placeholder={serproHasPassword ? "•••••••• (Senha já salva - deixe em branco para manter)" : "Digite a senha ou chave da API"}
+                    required={!serproHasPassword}
+                    className="pl-9 text-xs rounded-xl h-10 bg-background border-border"
+                  />
+                </div>
+                {serproHasPassword && !serproPassword && (
+                  <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">
+                    ✓ Uma senha/chave já está configurada e segura no servidor. Preencha apenas se desejar alterá-la.
+                  </p>
+                )}
+              </div>
+
+              {/* CPF do Solicitante */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold">CPF do Solicitante Cadastur (SERPRO_CPF_SOLICITANTE) *</Label>
+                <Input 
+                  type="text"
+                  value={serproCpfSolicitante}
+                  onChange={(e) => setSerproCpfSolicitante(e.target.value)}
+                  placeholder="Ex: 12585736792 (apenas números)"
+                  required
+                  className="text-xs rounded-xl h-10 bg-background border-border"
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  CPF cadastrado no Cadastur do estabelecimento responsável pela assinatura da requisição.
+                </p>
+              </div>
+
+              {/* Mensagem de Feedback */}
+              {serproStatusMsg && (
+                <div className={`p-2.5 rounded-xl flex items-center gap-2 text-xs font-bold ${
+                  serproStatusMsg.type === "success"
+                    ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+                    : "bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400"
+                }`}>
+                  {serproStatusMsg.type === "success" ? <Check className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
+                  <span>{serproStatusMsg.text}</span>
+                </div>
+              )}
+
+              <DialogFooter className="gap-2 pt-2">
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  onClick={() => setSerproModalOpen(false)} 
+                  className="rounded-xl h-9 text-xs font-bold"
+                >
+                  Cancelar
+                </Button>
+                <Button 
+                  type="submit" 
+                  disabled={savingSerpro || (!serproUser.trim() && !serproHasPassword)} 
+                  className="rounded-xl h-9 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white"
+                >
+                  {savingSerpro ? "Salvando..." : "Salvar Credenciais FNRH"}
                 </Button>
               </DialogFooter>
             </form>
