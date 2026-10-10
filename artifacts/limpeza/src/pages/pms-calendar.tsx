@@ -2306,12 +2306,15 @@ export default function PmsCalendar() {
     const chan = resItem.channel || "whatsapp"
     const isOtaRes = (chan === "booking" || chan === "airbnb")
     const isGatewayPaid = Boolean(resItem.pixEndToEndId || resItem.mpPaymentId || resItem.paidAt);
-    const isResCurrentlyPaid = 
+    // Regra: Pré-Reserva (canal direto) sem comprovação real de PIX/cartão nunca é considerada paga,
+    // mesmo que o banco tenha um paymentStatus inconsistente (ex.: pagamento integral pré-preenchido)
+    const isUnpaidPreReserva = resItem.status === "pre_reserva" && !isOtaRes && !isGatewayPaid;
+    const isResCurrentlyPaid = !isUnpaidPreReserva && (
       isOtaRes || 
       isGatewayPaid || 
       resItem.paymentStatus === "pago_total" || 
       resItem.paymentStatus === "pago" || 
-      (Number(resItem.paidAmount) >= Number(resItem.totalAmount) && Number(resItem.totalAmount) > 0);
+      (Number(resItem.paidAmount) >= Number(resItem.totalAmount) && Number(resItem.totalAmount) > 0));
     const nights = differenceInDays(parseISO(resItem.checkoutDate), parseISO(resItem.checkinDate)) || 1;
 
     setFormChannel(chan);
@@ -2339,7 +2342,7 @@ export default function PmsCalendar() {
     setFormTotalAmount(totCalculated > 0 ? String(totCalculated) : "");
 
     // 2. Real Paid Amount: se quitada ou comprovante existe, garante o valor total
-    const rawPaid = Number(resItem.paidAmount) || 0;
+    const rawPaid = isUnpaidPreReserva ? 0 : (Number(resItem.paidAmount) || 0);
     const effectivePaid = isResCurrentlyPaid
       ? (rawPaid > 0 ? rawPaid : totCalculated)
       : rawPaid;
@@ -2347,7 +2350,7 @@ export default function PmsCalendar() {
 
     // 3. Pagamentos individuais carregados e reconciliados
     let loadedPayments: ReservationPaymentItem[] = [];
-    if (Array.isArray(resItem.payments) && resItem.payments.length > 0) {
+    if (!isUnpaidPreReserva && Array.isArray(resItem.payments) && resItem.payments.length > 0) {
       loadedPayments = resItem.payments.map((p: any, idx: number) => ({
         id: p.id || `pay_${resItem.id}_${idx}`,
         amount: Number(p.amount) || 0,
@@ -2390,7 +2393,7 @@ export default function PmsCalendar() {
     setFormCharges(loadedCharges);
     setPackageTotalInput(totCalculated > 0 ? String(totCalculated) : "");
 
-    setFormPaymentStatus(isResCurrentlyPaid ? "pago_total" : (resItem.paymentStatus || "pendente"))
+    setFormPaymentStatus(isResCurrentlyPaid ? "pago_total" : (isUnpaidPreReserva ? "pendente" : (resItem.paymentStatus || "pendente")))
     setFormStatus((resItem.status === "confirmada" || isResCurrentlyPaid) ? "confirmada" : (resItem.status || "pre_reserva"))
     setFormNotes(resItem.notes || "")
     const matchedGuest = crmGuests.find(g => 
@@ -2639,6 +2642,14 @@ export default function PmsCalendar() {
       setFormPaymentStatus("pago_total");
     }
 
+    // Pré-Reserva (canal direto) nunca tem valor pago: atualiza apenas o total
+    if (formStatus === "pre_reserva" && !isBooking && targetChannel !== "airbnb") {
+      setFormPaidAmount("0");
+      setFormPayments([]);
+      setFormPaymentStatus("pendente");
+      return newTot;
+    }
+
     // O valor pago deve ser SEMPRE pré-preenchido com o mesmo valor total composto
     setFormPaidAmount(String(newTot));
 
@@ -2724,6 +2735,47 @@ export default function PmsCalendar() {
     });
   };
 
+  // ── Regra oficial de Status x Pagamento (canais diretos) ──
+  // Pré-Reserva = nenhum valor pago. Confirmada = quitada por padrão (mantém sinal já lançado).
+  const handleSelectPreReserva = () => {
+    const isOta = formChannel === "booking" || formChannel === "airbnb"
+    if (isOta) {
+      toast({
+        title: "Reserva de OTA",
+        description: "Reservas Booking/Airbnb são sempre confirmadas e pagas pela plataforma."
+      })
+      return
+    }
+    const hasManualPayments = Boolean(selectedRes) && formPayments.some(p => Number(p.amount) > 0)
+    if (hasManualPayments && !confirm("Pré-reserva não pode ter valor pago.\n\nOs pagamentos lançados nesta reserva serão removidos. Deseja continuar?")) {
+      return
+    }
+    setFormStatus("pre_reserva")
+    setFormPayments([])
+    setFormPaidAmount("0")
+    setFormPaymentStatus("pendente")
+  }
+
+  const handleSelectConfirmada = () => {
+    setFormStatus("confirmada")
+    const curPaid = formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
+    if (curPaid > 0) return // mantém sinal/quitação já lançados
+    const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal()
+    if (curTot <= 0) return
+    const isBooking = formChannel === "booking"
+    const isAirbnb = formChannel === "airbnb"
+    setFormPayments([{
+      id: `pay_${Date.now()}`,
+      amount: curTot,
+      method: isBooking ? "booking" : (isAirbnb ? "airbnb" : (formPaymentMethod || "pix")),
+      category: "quitacao",
+      date: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+      notes: isBooking ? "Pagamento integral Booking.com" : (isAirbnb ? "Pagamento integral Airbnb" : "Pagamento integral")
+    }])
+    setFormPaidAmount(String(curTot))
+    setFormPaymentStatus("pago_total")
+  }
+
   const handleAddPayment = (customAmount?: number, customMethod?: string, customNotes?: string) => {
     const curTot = Number(formTotalAmount) > 0 ? Number(formTotalAmount) : calculateTotal()
     const curPaid = formPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
@@ -2747,6 +2799,8 @@ export default function PmsCalendar() {
     } else {
       setFormPaymentStatus("pendente")
     }
+    // Regra: qualquer valor pago (sinal ou quitação) confirma a reserva
+    if (newPaidSum > 0) setFormStatus("confirmada")
   }
 
   const handleRemovePayment = (payId: string) => {
@@ -2762,6 +2816,8 @@ export default function PmsCalendar() {
     } else {
       setFormPaymentStatus("pendente")
     }
+    // Regra: qualquer valor pago (sinal ou quitação) confirma a reserva
+    if (newPaidSum > 0) setFormStatus("confirmada")
   }
 
   const handleUpdatePayment = (payId: string, field: keyof ReservationPaymentItem, value: any) => {
@@ -2782,6 +2838,8 @@ export default function PmsCalendar() {
     } else {
       setFormPaymentStatus("pendente")
     }
+    // Regra: qualquer valor pago (sinal ou quitação) confirma a reserva
+    if (newPaidSum > 0) setFormStatus("confirmada")
   }
 
   const handleAddExtraNight = () => {
@@ -2939,6 +2997,20 @@ export default function PmsCalendar() {
         resolvedPaymentStatus = "pendente"
       }
 
+      // Regra oficial Pré-Reserva x Confirmada (canais diretos):
+      // - Pré-Reserva: nenhum valor pago (pagamentos zerados, status pendente)
+      // - Qualquer valor pago > 0: reserva é Confirmada (sinal ou quitada)
+      let statusToSave: string = formStatus
+      if (!isOta) {
+        if (formStatus === "pre_reserva") {
+          normalizedPayments = []
+          resolvedPaidAmount = 0
+          resolvedPaymentStatus = "pendente"
+        } else if (resolvedPaidAmount > 0) {
+          statusToSave = "confirmada"
+        }
+      }
+
       const numG = Number(formGuestCount) || 1
       const guestsPayload = [
         { index: 1, name: formGuestName.trim(), cpf: formGuest1Cpf.trim(), phone: formGuestPhone.trim(), email: formGuestEmail.trim() }
@@ -2988,7 +3060,7 @@ export default function PmsCalendar() {
         checkoutDate: formCheckout,
         checkinTime: formCheckinTime || defaultCheckinTime || "14:00",
         checkoutTime: formCheckoutTime || defaultCheckoutTime || "12:00",
-        status: formStatus,
+        status: statusToSave,
         channel: formChannel || (formDailyRates.length > 0 && formDailyRates[0].channel) || "whatsapp",
         paymentMethod: resolvedMethod,
         dailyRate: formDailyRates.length > 0 
@@ -5630,7 +5702,7 @@ export default function PmsCalendar() {
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
-                      onClick={() => setFormStatus("pre_reserva")}
+                      onClick={handleSelectPreReserva}
                       className={`p-2.5 rounded-xl border text-left transition-all text-xs font-bold flex items-center justify-between ${
                         formStatus === "pre_reserva"
                           ? "bg-amber-500 text-white border-amber-500 shadow-xs"
@@ -5646,7 +5718,7 @@ export default function PmsCalendar() {
 
                     <button
                       type="button"
-                      onClick={() => setFormStatus("confirmada")}
+                      onClick={handleSelectConfirmada}
                       className={`p-2.5 rounded-xl border text-left transition-all text-xs font-bold flex items-center justify-between ${
                         formStatus === "confirmada"
                           ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
@@ -5978,6 +6050,7 @@ export default function PmsCalendar() {
                                 setFormPayments(updated);
                                 setFormPaidAmount(String(curTot));
                                 setFormPaymentStatus("pago_total");
+                                setFormStatus("confirmada");
                                 toast({ title: "Quitação Lançada", description: `Lançamento de R$ ${remaining.toFixed(2)} registrado.` });
                               }}
                               className="h-7 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 shadow-xs cursor-pointer"
@@ -6004,6 +6077,7 @@ export default function PmsCalendar() {
                                 setFormPayments([newPay]);
                                 setFormPaidAmount(String(half));
                                 setFormPaymentStatus("sinal_pago");
+                                setFormStatus("confirmada");
                                 toast({ title: "Sinal de 50% Lançado", description: `Lançamento de R$ ${half.toFixed(2)} registrado.` });
                               }}
                               className="h-7 text-xs font-semibold text-amber-700 dark:text-amber-300 border-amber-300 px-2 cursor-pointer"

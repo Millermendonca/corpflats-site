@@ -12017,8 +12017,16 @@ app.post("/api/pms/reservations", async (req, res) => {
   let resolvedStatus = "pre_reserva";
   if (status) {
     resolvedStatus = String(status).trim();
-  } else if (isOta || resolvedPaymentStatus === "pago_total") {
+  } else if (isOta || resolvedPaymentStatus === "pago_total" || resolvedPaidAmount > 0) {
     resolvedStatus = "confirmada";
+  }
+
+  // Regra oficial (canais diretos): Pré-Reserva nunca tem valor pago — o pagamento só entra via PIX/cartão real
+  // ou lançamento posterior (que confirma a reserva).
+  if (resolvedStatus === "pre_reserva" && !isOta) {
+    normalizedPayments = [];
+    resolvedPaidAmount = 0;
+    resolvedPaymentStatus = "pendente";
   }
 
   const flat = db.flats.find(f => f.id === Number(flatId));
@@ -13279,6 +13287,23 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     }
   }
 
+  // Regra oficial Pré-Reserva x Confirmada (canais diretos):
+  // - status pré-reserva => nenhum valor pago
+  // - qualquer valor pago lançado em uma pré-reserva => reserva confirmada (sinal ou quitada)
+  {
+    const ruleChan = String(r.channel || "").toLowerCase();
+    const ruleIsOta = ruleChan.includes("booking") || ruleChan.includes("airbnb");
+    if (!ruleIsOta) {
+      if (req.body.status === "pre_reserva") {
+        r.payments = [];
+        r.paidAmount = 0;
+        r.paymentStatus = "pendente";
+      } else if (req.body.status === undefined && r.status === "pre_reserva" && Number(r.paidAmount) > 0) {
+        r.status = "confirmada";
+      }
+    }
+  }
+
   if (r.paymentMethod) {
     ensurePaymentMethodExists(r.paymentMethod);
   }
@@ -14160,7 +14185,8 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   const isCancelledRes = r.status === "cancelada" || r.status === "cancelled";
   const chanLower = String(r.channel || "").toLowerCase();
   const isOta = chanLower.includes("booking") || chanLower.includes("airbnb");
-  let isPaid = !isCancelledRes && (isOta || Boolean(
+  const isUnpaidPre = isUnverifiedPreReservation(r);
+  let isPaid = !isCancelledRes && !isUnpaidPre && (isOta || Boolean(
     r.paymentStatus === "pago_total" ||
     r.paymentStatus === "pago" ||
     (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0)
@@ -14189,7 +14215,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   }
 
   const resolvedTotal = Number(r.totalAmount) || 0;
-  const resolvedPaid = isPaid ? (resolvedTotal > 0 ? resolvedTotal : (isOta ? 0 : (Number(r.paidAmount) || 0))) : (Number(r.paidAmount) || 0);
+  const resolvedPaid = isPaid ? (resolvedTotal > 0 ? resolvedTotal : (isOta ? 0 : (Number(r.paidAmount) || 0))) : (isUnpaidPre && !isPaid ? 0 : (Number(r.paidAmount) || 0));
 
   if (isPaid && resolvedTotal > 0 && r.paidAmount !== resolvedTotal) {
     r.paidAmount = resolvedTotal;
@@ -26105,8 +26131,24 @@ function isConfirmationAlreadyDispatched(r) {
   });
 }
 
+// Regra oficial Pré-Reserva x Confirmada:
+// Pré-reserva (canal direto) só é considerada paga com evidência real de pagamento (PIX Inter / Mercado Pago).
+function hasRealPaymentEvidence(r) {
+  return Boolean(r && (r.pixEndToEndId || r.mpPaymentId || r.paidAt));
+}
+
+function isUnverifiedPreReservation(r) {
+  if (!r) return false;
+  const chan = String(r.channel || "").toLowerCase();
+  const isOtaChan = chan.includes("booking") || chan.includes("airbnb");
+  return !isOtaChan && r.status === "pre_reserva" && !hasRealPaymentEvidence(r);
+}
+
 async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } = {}) {
   if (!r || !r.guestPhone) return;
+  // Nunca confirma nem dispara confirmação para pré-reserva sem pagamento real comprovado
+  const isPreStatus = r.status === "pre_reserva" || r.status === "pendente" || !r.status;
+  if (isPreStatus && !hasRealPaymentEvidence(r)) return;
   if (isConfirmationAlreadyDispatched(r)) return;
 
   const isPreOrWasPre = wasPreReserva || r.status === "pre_reserva" || r.status === "pendente" || !r.status || r.isPreReservation || (db.whatsappHistory || []).some(h => {
@@ -26245,7 +26287,7 @@ app.get("/api/pms/reservations/:code/payment-status", async (req, res) => {
     const isOta = chanLower.includes("booking") || chanLower.includes("airbnb");
 
     // Se já está marcado como pago ou canal OTA (Booking/Airbnb), retorna de imediato
-    if (isOta || r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0)) {
+    if (!isUnverifiedPreReservation(r) && (isOta || r.paymentStatus === "pago_total" || r.paymentStatus === "pago" || (Number(r.paidAmount) >= Number(r.totalAmount) && Number(r.totalAmount) > 0))) {
       if (!isOta && r.guestPhone) {
         ensurePaymentConfirmationDispatched(r);
       }
@@ -28612,12 +28654,17 @@ setInterval(async () => {
     const pendingReservations = db.reservations.filter(r =>
       r.status !== "cancelada" &&
       r.status !== "cancelled" &&
-      r.paymentStatus !== "pago_total" &&
-      r.paymentStatus !== "pago" &&
       r.checkoutDate &&
       r.checkoutDate >= todayStr &&
       Number(r.totalAmount) > 0 &&
-      (!r.paidAmount || Number(r.paidAmount) < Number(r.totalAmount))
+      (
+        isUnverifiedPreReservation(r) ||
+        (
+          r.paymentStatus !== "pago_total" &&
+          r.paymentStatus !== "pago" &&
+          (!r.paidAmount || Number(r.paidAmount) < Number(r.totalAmount))
+        )
+      )
     );
 
     for (const r of pendingReservations) {
