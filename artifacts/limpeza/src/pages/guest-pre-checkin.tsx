@@ -119,6 +119,8 @@ export default function GuestPreCheckin() {
   const [state, setState] = useState("RJ")
   const [transportMethod, setTransportMethod] = useState("")
   const [travelReason, setTravelReason] = useState("")
+  // Qualquer opção de carro (inclui o valor legado "carro") habilita o cadastro completo do veículo
+  const isCarTransport = ["carro", "Carro próprio", "Carro alugado"].includes(transportMethod)
   const [originCity, setOriginCity] = useState("")
   const [originState, setOriginState] = useState("RJ")
   const [originCountry, setOriginCountry] = useState("Brasil")
@@ -498,7 +500,7 @@ export default function GuestPreCheckin() {
           setVehicleModel(sessionUser.vehicle.model || "")
           setVehicleBrand(sessionUser.vehicle.brand || "")
           setVehicleColor(sessionUser.vehicle.color || "")
-          setTransportMethod("carro")
+          setTransportMethod(prev => (prev === "Carro próprio" || prev === "Carro alugado") ? prev : "Carro próprio")
         }
       }).catch(() => {})
     }
@@ -514,7 +516,7 @@ export default function GuestPreCheckin() {
       setVehicleModel(v.model || "")
       setVehicleBrand(v.brand || "")
       setVehicleColor(v.color || "")
-      setTransportMethod("carro")
+      setTransportMethod(prev => (prev === "Carro próprio" || prev === "Carro alugado") ? prev : "Carro próprio")
     }
 
     // Isolamento estrito de fotos e biometria:
@@ -882,10 +884,10 @@ export default function GuestPreCheckin() {
     const timeoutId = setTimeout(() => abortController.abort(), 25000)
 
     try {
-      const cleanPlate = (transportMethod === "Carro próprio" || transportMethod === "Carro alugado" || transportMethod === "carro") ? vehiclePlate.trim().toUpperCase() : ""
-      const cleanBrand = transportMethod === "carro" ? vehicleBrand.trim() : ""
-      const cleanModel = transportMethod === "carro" ? vehicleModel.trim() : ""
-      const cleanColor = transportMethod === "carro" ? vehicleColor.trim() : ""
+      const cleanPlate = isCarTransport ? vehiclePlate.trim().toUpperCase() : ""
+      const cleanBrand = isCarTransport ? vehicleBrand.trim() : ""
+      const cleanModel = isCarTransport ? vehicleModel.trim() : ""
+      const cleanColor = isCarTransport ? vehicleColor.trim() : ""
 
       const res = await fetch("/api/pms/pre-checkin", {
         method: "POST",
@@ -948,7 +950,7 @@ export default function GuestPreCheckin() {
       })
 
       // Se informou carro, garante registro na autorização de portaria e garagem
-      if (transportMethod === "carro" && cleanPlate) {
+      if (isCarTransport && cleanPlate) {
         const resCode = code || reservation?.code
         if (resCode) {
           fetch(`/api/pms/reservations/${resCode}/vehicle`, {
@@ -2487,7 +2489,7 @@ export default function GuestPreCheckin() {
                 </div>
 
                 {/* 🚗 Garagem & Veículo Soho */}
-                {transportMethod === "carro" && (
+                {isCarTransport && (
                   <div className="p-4 bg-sky-50/70 border border-sky-200/80 rounded-2xl space-y-3">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold text-sky-900 flex items-center gap-1.5">
@@ -2563,6 +2565,10 @@ export default function GuestPreCheckin() {
                     if (!travelReason) {
                       alert("Por favor, selecione o Motivo da Viagem (exigência legal do Ministério do Turismo).")
                       return
+                    if (isCarTransport && !vehiclePlate.trim()) {
+                      alert("Por favor, informe a Placa do Veículo para liberarmos sua entrada na garagem.")
+                      return
+                    }
                     }
                     if (!transportMethod) {
                       alert("Por favor, selecione o Meio de Transporte utilizado (exigência legal do Ministério do Turismo).")

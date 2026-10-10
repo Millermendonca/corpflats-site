@@ -38,6 +38,7 @@ export default function MyAccount() {
   const [state, setState] = useState("RJ")
   const [loadingCep, setLoadingCep] = useState(false)
   const [vehiclePlate, setVehiclePlate] = useState("")
+  const [vehicleBrand, setVehicleBrand] = useState("")
   const [vehicleModel, setVehicleModel] = useState("")
   const [vehicleColor, setVehicleColor] = useState("")
   const [companyCnpj, setCompanyCnpj] = useState("")
@@ -149,6 +150,7 @@ export default function MyAccount() {
     setDocument(data.document || "")
     if (data.vehicle) {
       setVehiclePlate(data.vehicle.plate || "")
+      setVehicleBrand(data.vehicle.brand || "")
       setVehicleModel(data.vehicle.model || "")
       setVehicleColor(data.vehicle.color || "")
     }
@@ -167,7 +169,7 @@ export default function MyAccount() {
         name,
         phone,
         document,
-        vehicle: vehiclePlate ? { plate: vehiclePlate, model: vehicleModel, color: vehicleColor } : null,
+        vehicle: vehiclePlate ? { plate: vehiclePlate, brand: vehicleBrand, model: vehicleModel, color: vehicleColor } : null,
         companyData: companyCnpj ? { cnpj: companyCnpj, companyName, companyEmail } : null
       }
       const res = await updateAccountProfile(payload)
@@ -481,7 +483,7 @@ export default function MyAccount() {
                         Veículo & Estacionamento (Liberação de Portaria)
                       </h4>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                       <div className="space-y-1">
                         <Label className="text-[11px] font-bold">Placa do Carro</Label>
                         <Input
@@ -489,6 +491,15 @@ export default function MyAccount() {
                           onChange={e => setVehiclePlate(e.target.value.toUpperCase())}
                           placeholder="ABC-1234 ou ABC1D23"
                           className="rounded-xl h-8 text-xs font-mono uppercase"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-[11px] font-bold">Marca</Label>
+                        <Input
+                          value={vehicleBrand}
+                          onChange={e => setVehicleBrand(e.target.value)}
+                          placeholder="Ex: Toyota, Honda, VW"
+                          className="rounded-xl h-8 text-xs"
                         />
                       </div>
                       <div className="space-y-1">

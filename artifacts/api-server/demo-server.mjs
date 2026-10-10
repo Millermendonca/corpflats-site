@@ -5726,6 +5726,32 @@ export function filterGuestFacingDiffs(diffs = []) {
   return diffs.filter(d => GUEST_FACING_RESERVATION_FIELDS.has(d.field));
 }
 
+// ── Helpers de Veículo ───────────────────────────────────────────────────────
+// Mescla dados do veículo: campos novos não-vazios prevalecem; campos vazios preservam
+// o valor anterior apenas quando a placa é a mesma (placa nova = veículo novo, não herda dados).
+export function mergeVehicleData(oldVehicle, input) {
+  const plate = String(input?.plate || "").toUpperCase().trim();
+  if (!plate) return null;
+  const oldPlate = String(oldVehicle?.plate || "").toUpperCase().trim();
+  const samePlate = Boolean(oldPlate) && oldPlate === plate;
+  const pick = (k) => {
+    const v = String(input?.[k] ?? "").trim();
+    return v || (samePlate ? String(oldVehicle?.[k] || "").trim() : "");
+  };
+  return { plate, brand: pick("brand"), model: pick("model"), color: pick("color") };
+}
+
+export function getVehicleSignature(v) {
+  if (!v) return "";
+  return ["plate", "brand", "model", "color"]
+    .map(k => String(v[k] || "").trim().toUpperCase())
+    .join("|");
+}
+
+export function vehicleDetailsDiffer(a, b) {
+  return getVehicleSignature(a) !== getVehicleSignature(b);
+}
+
 // ── Serviço de Notificação & Autorização Automática de Garagem ───────────────
 export function triggerGarageEmailNotification(db, saveDatabase, reservation, vehicleInput = null, options = {}) {
   try {
@@ -5739,15 +5765,14 @@ export function triggerGarageEmailNotification(db, saveDatabase, reservation, ve
     const cleanPlate = String(vehicle.plate).toUpperCase().trim();
     if (!cleanPlate) return null;
 
-    // Normaliza os dados do veículo
+    // Normaliza os dados do veículo (sem apagar marca/modelo/cor já salvos para a mesma placa)
+    const merged = mergeVehicleData(reservation.vehicle, vehicle);
     const vehicleData = {
-      plate: cleanPlate,
-      brand: (vehicle.brand || "").trim(),
-      model: (vehicle.model || "").trim(),
-      color: (vehicle.color || "").trim(),
+      ...merged,
       updatedAt: vehicle.updatedAt || new Date().toISOString()
     };
-    reservation.vehicle = { ...(reservation.vehicle || {}), ...vehicleData };
+    const previousPlate = String(reservation.vehicle?.plate || "").toUpperCase().trim();
+    reservation.vehicle = { ...(previousPlate === cleanPlate ? (reservation.vehicle || {}) : {}), ...vehicleData };
 
     // Regra de Comunicação Estrita:
     // Não disparar e-mail de reservas criadas ou alteradas para datas futuras para a garagem.
@@ -5765,9 +5790,13 @@ export function triggerGarageEmailNotification(db, saveDatabase, reservation, ve
       };
     }
 
-    // Evita duplicatas idênticas num curto período, a não ser que forçado explicitamente
+    // Evita duplicatas idênticas (mesma placa E mesmos marca/modelo/cor), a não ser que forçado explicitamente.
+    // Se os detalhes do veículo mudaram para a mesma placa, reenviamos com os dados completos.
     const force = Boolean(options.force);
-    if (!force && reservation.vehicle?.garageNotifiedAt && reservation.vehicle?.lastNotifiedPlate === cleanPlate) {
+    const currentSignature = getVehicleSignature(vehicleData);
+    const lastSignature = reservation.vehicle?.lastNotifiedSignature
+      ?? (reservation.vehicle?.lastNotifiedPlate ? `${String(reservation.vehicle.lastNotifiedPlate).toUpperCase().trim()}|||` : "");
+    if (!force && reservation.vehicle?.garageNotifiedAt && lastSignature === currentSignature) {
       console.log(`[GarageService] Notificação já enviada para placa ${cleanPlate} da reserva ${reservation.code || reservation.id}. Ignorando duplicata.`);
       return null;
     }
@@ -5847,6 +5876,7 @@ export function triggerGarageEmailNotification(db, saveDatabase, reservation, ve
     // Carimbo de envio na reserva
     reservation.vehicle.garageNotifiedAt = new Date().toISOString();
     reservation.vehicle.lastNotifiedPlate = cleanPlate;
+    reservation.vehicle.lastNotifiedSignature = currentSignature;
 
     // Registro na trilha de auditoria da reserva
     if (typeof addReservationAuditLog === "function") {
@@ -13123,12 +13153,19 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   let vehicleChanged = false;
   if (vehicleBody && vehicleBody.plate) {
     const cleanPlate = String(vehicleBody.plate).toUpperCase().trim();
-    if (cleanPlate && cleanPlate !== oldVehiclePlate) {
+    // O formulário do PMS envia o veículo completo: usamos os valores informados (permite limpar campos)
+    const nextVehicle = {
+      plate: cleanPlate,
+      brand: String(vehicleBody.brand || "").trim(),
+      model: String(vehicleBody.model || "").trim(),
+      color: String(vehicleBody.color || "").trim()
+    };
+    // Atualiza se a placa mudou OU se marca/modelo/cor mudaram para a mesma placa
+    if (cleanPlate && vehicleDetailsDiffer(r.vehicle, nextVehicle)) {
+      const samePlate = String(oldVehiclePlate || "").toUpperCase().trim() === cleanPlate;
       r.vehicle = {
-        plate: cleanPlate,
-        brand: (vehicleBody.brand || "").trim(),
-        model: (vehicleBody.model || "").trim(),
-        color: (vehicleBody.color || "").trim(),
+        ...(samePlate ? (r.vehicle || {}) : {}),
+        ...nextVehicle,
         updatedAt: new Date().toISOString()
       };
       vehicleChanged = true;
@@ -18643,10 +18680,16 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   if (signatureUrl) guest.signatureUrl = signatureUrl;
   if (minorAuthDocUrl) guest.minorAuthDocUrl = minorAuthDocUrl;
   if (req.body.vehiclePlate) {
-    guest.vehiclePlate = String(req.body.vehiclePlate).toUpperCase().trim();
-    guest.vehicleBrand = (req.body.vehicleBrand || "").trim();
-    guest.vehicleModel = (req.body.vehicleModel || "").trim();
-    guest.vehicleColor = (req.body.vehicleColor || "").trim();
+    const mergedGuestVehicle = mergeVehicleData(
+      { plate: guest.vehiclePlate, brand: guest.vehicleBrand, model: guest.vehicleModel, color: guest.vehicleColor },
+      { plate: req.body.vehiclePlate, brand: req.body.vehicleBrand, model: req.body.vehicleModel, color: req.body.vehicleColor }
+    );
+    if (mergedGuestVehicle) {
+      guest.vehiclePlate = mergedGuestVehicle.plate;
+      guest.vehicleBrand = mergedGuestVehicle.brand;
+      guest.vehicleModel = mergedGuestVehicle.model;
+      guest.vehicleColor = mergedGuestVehicle.color;
+    }
   }
 
   guest.isMinor = effectiveIsMinor;
@@ -18785,13 +18828,20 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   }
 
   if (req.body.vehiclePlate) {
-    r.vehicle = {
-      plate: String(req.body.vehiclePlate).toUpperCase().trim(),
-      brand: (req.body.vehicleBrand || "").trim(),
-      model: (req.body.vehicleModel || "").trim(),
-      color: (req.body.vehicleColor || "").trim(),
-      updatedAt: now
-    };
+    const mergedVehicle = mergeVehicleData(r.vehicle, {
+      plate: req.body.vehiclePlate,
+      brand: req.body.vehicleBrand,
+      model: req.body.vehicleModel,
+      color: req.body.vehicleColor
+    });
+    if (mergedVehicle) {
+      const samePlate = String(r.vehicle?.plate || "").toUpperCase().trim() === mergedVehicle.plate;
+      r.vehicle = {
+        ...(samePlate ? (r.vehicle || {}) : {}),
+        ...mergedVehicle,
+        updatedAt: now
+      };
+    }
   }
 
   r.updatedAt = now;
@@ -23560,9 +23610,11 @@ app.patch("/api/guest-auth/profile", (req, res) => {
           r.checkoutDate >= today
         );
         for (const resItem of activeReservations) {
-          if (!resItem.vehicle || resItem.vehicle.plate !== vehicle.plate) {
-            resItem.vehicle = vehicle;
-            triggerGarageEmailNotification(db, saveDatabase, resItem, vehicle, {
+          const mergedVehicle = mergeVehicleData(resItem.vehicle, vehicle);
+          if (mergedVehicle && vehicleDetailsDiffer(resItem.vehicle, mergedVehicle)) {
+            const samePlate = String(resItem.vehicle?.plate || "").toUpperCase().trim() === mergedVehicle.plate;
+            resItem.vehicle = { ...(samePlate ? (resItem.vehicle || {}) : {}), ...mergedVehicle, updatedAt: new Date().toISOString() };
+            triggerGarageEmailNotification(db, saveDatabase, resItem, resItem.vehicle, {
               trigger: "guest_profile_update",
               source: "Perfil do Hóspede",
               force: true
@@ -23902,9 +23954,11 @@ app.patch("/api/v2/auth/profile", (req, res) => {
           r.checkoutDate >= today
         );
         for (const resItem of activeReservations) {
-          if (!resItem.vehicle || resItem.vehicle.plate !== vehicle.plate) {
-            resItem.vehicle = vehicle;
-            triggerGarageEmailNotification(db, saveDatabase, resItem, vehicle, {
+          const mergedVehicle = mergeVehicleData(resItem.vehicle, vehicle);
+          if (mergedVehicle && vehicleDetailsDiffer(resItem.vehicle, mergedVehicle)) {
+            const samePlate = String(resItem.vehicle?.plate || "").toUpperCase().trim() === mergedVehicle.plate;
+            resItem.vehicle = { ...(samePlate ? (resItem.vehicle || {}) : {}), ...mergedVehicle, updatedAt: new Date().toISOString() };
+            triggerGarageEmailNotification(db, saveDatabase, resItem, resItem.vehicle, {
               trigger: "guest_profile_update_v2",
               source: "Perfil do Hóspede V2",
               force: true
@@ -25398,14 +25452,14 @@ app.post("/api/pms/reservations/:code/vehicle", (req, res) => {
 
     const cleanPlate = plate.toUpperCase().trim();
     const vehicleData = {
-      plate: cleanPlate,
-      brand: (brand || "").trim(),
-      model: (model || "").trim(),
-      color: (color || "").trim(),
+      ...mergedVehicle,
       updatedAt: new Date().toISOString()
     };
 
-    reservation.vehicle = vehicleData;
+    // Preserva carimbos de envio (garageNotifiedAt/lastNotifiedSignature) quando a placa é a mesma,
+    // evitando e-mails duplicados quando o pré-checkin e este endpoint são chamados em paralelo
+    const samePlate = String(reservation.vehicle?.plate || "").toUpperCase().trim() === cleanPlate;
+    reservation.vehicle = { ...(samePlate ? (reservation.vehicle || {}) : {}), ...vehicleData };
 
     // Se o hóspede tem conta cadastrada, atualiza no perfil dele
     if (reservation.guestEmail) {
@@ -25423,6 +25477,7 @@ app.post("/api/pms/reservations/:code/vehicle", (req, res) => {
       source: "Portal do Hóspede / Pré-Checkin"
     });
 
+    const mergedVehicle = mergeVehicleData(reservation.vehicle, { plate: cleanPlate, brand, model, color });
     const responseMsg = isFuture
       ? `Veículo ${cleanPlate} cadastrado com sucesso! Como a reserva é para data futura (${reservation.checkinDate}), o e-mail de autorização será enviado para a garagem pontualmente no dia do check-in.`
       : `Veículo ${cleanPlate} cadastrado e liberação enviada para a garagem com sucesso!`;
