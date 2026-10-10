@@ -5583,6 +5583,14 @@ export default function PmsCalendar() {
                           >
                             <ExternalLink className="w-3 h-3 mr-0.5" /> Ver
                           </Button>
+                          {docPdfViewerOpen && (
+                            <PdfViewerDialog
+                              open={docPdfViewerOpen}
+                              onOpenChange={setDocPdfViewerOpen}
+                              url={formDocPhotoUrl}
+                              title={formDocFileName || "Documento do Hóspede"}
+                            />
+                          )}
                           <Button
                             type="button"
                             size="sm"
@@ -5655,14 +5663,6 @@ export default function PmsCalendar() {
                   {/* Hóspede 3 */}
                   {Number(formGuestCount) === 3 && (
                     <div className="p-3 bg-muted/30 border rounded-xl space-y-2.5 animate-in fade-in">
-                          {docPdfViewerOpen && (
-                            <PdfViewerDialog
-                              open={docPdfViewerOpen}
-                              onOpenChange={setDocPdfViewerOpen}
-                              url={formDocPhotoUrl}
-                              title={formDocFileName || "Documento do Hóspede"}
-                            />
-                          )}
                       <div className="font-bold text-xs text-slate-900 dark:text-slate-100 flex items-center justify-between">
                         <span className="flex items-center gap-1.5">
                           <User className="w-3.5 h-3.5 text-purple-600" />
