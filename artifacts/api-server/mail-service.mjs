@@ -218,7 +218,7 @@ function formatDateBr(dateStr) {
 /**
  * Layout HTML Base CorpFlats
  */
-function wrapEmailTemplate({ title, badge, contentHtml }) {
+function wrapEmailTemplate({ title, badge, contentHtml, footerHtml = "" }) {
   return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -264,8 +264,8 @@ function wrapEmailTemplate({ title, badge, contentHtml }) {
       ${contentHtml}
     </div>
     <div class="footer">
-      Este é um e-mail transacional automatizado gerado pelo sistema CorpFlats.<br/>
-      Para suporte ou dúvidas operacionais, consulte a administração do hotel.
+      ${footerHtml || `Este é um e-mail transacional automatizado gerado pelo sistema CorpFlats.<br/>
+      Para suporte ou dúvidas operacionais, consulte a administração do hotel.`}
     </div>
   </div>
 </body>
@@ -555,6 +555,132 @@ export function renderManualEmail({ subject, message, bodyText, reservation, fla
   const badge = `<span class="badge badge-general">Mensagem Direta</span>`;
   const bodyHtml = wrapEmailTemplate({ title: subject, badge, contentHtml });
   return { subject, bodyHtml, html: bodyHtml };
+}
+
+/**
+ * Escapa caracteres especiais de HTML (uso em textos vindos de templates/reservas).
+ */
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
+ * Converte a formatação do WhatsApp (*negrito*, _itálico_, ~riscado~, links e quebras de linha)
+ * em HTML seguro para e-mail.
+ */
+export function whatsAppTextToEmailHtml(text = "") {
+  let html = escapeHtml(text);
+  // Links soltos → <a> (antes da formatação para não quebrar URLs com "_" ou "*")
+  const urlTokens = [];
+  html = html.replace(/https?:\/\/[^\s<]+/g, (url) => {
+    const cleanUrl = url.replace(/[.,;:!?)]+$/, "");
+    const trailing = url.slice(cleanUrl.length);
+    urlTokens.push(`<a href="${cleanUrl}" style="color: #047857; font-weight: 700; word-break: break-all;">${cleanUrl}</a>`);
+    return `\u0000URL${urlTokens.length - 1}\u0000${trailing}`;
+  });
+  html = html
+    .replace(/\*([^*\n]+)\*/g, "<strong>$1</strong>")
+    .replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s).,!?:;])/gm, "$1<em>$2</em>")
+    .replace(/~([^~\n]+)~/g, "<s>$1</s>")
+    .replace(/\n/g, "<br/>");
+  html = html.replace(/\u0000URL(\d+)\u0000/g, (_, idx) => urlTokens[Number(idx)] || "");
+  return html;
+}
+
+/**
+ * Gatilho F: Espelho por E-mail das mensagens automáticas da régua de WhatsApp
+ * (enviado ao hóspede principal, acompanhantes e solicitante que possuam e-mail).
+ * Botões do WhatsApp viram links clicáveis; respostas rápidas (REPLY) são omitidas.
+ */
+export function renderWhatsAppMirrorEmail({
+  message = "",
+  buttons = [],
+  footer = "",
+  subject = "",
+  documentUrl = "",
+  documentName = "",
+  appOrigin = "",
+  settings = null
+} = {}) {
+  const origin = String(appOrigin || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com").replace(/\/+$/, "");
+  const absolutize = (url) => {
+    const raw = String(url || "").trim();
+    if (!raw) return "";
+    if (/^(https?:|mailto:|tel:)/i.test(raw)) return raw;
+    return `${origin}${raw.startsWith("/") ? "" : "/"}${raw}`;
+  };
+
+  const finalSubject = String(subject || "Informações da sua reserva").trim();
+  const messageHtml = whatsAppTextToEmailHtml(message);
+
+  const buttonsHtml = (Array.isArray(buttons) ? buttons : [])
+    .filter(Boolean)
+    .map(b => {
+      const label = escapeHtml(b.label || b.text || "Abrir");
+      const type = String(b.type || "").toUpperCase();
+      if (type === "COPY" || b.copyCode) {
+        const code = String(b.copyCode || "").trim();
+        const link = absolutize(b.url);
+        return `
+          <div style="background: #f8fafc; border: 1px dashed #94a3b8; border-radius: 10px; padding: 12px 14px; margin: 10px 0; text-align: left;">
+            <div style="font-size: 12px; font-weight: 800; color: #334155; margin-bottom: 6px;">${label}</div>
+            ${code ? `<div style="font-family: monospace; font-size: 12px; color: #0f172a; word-break: break-all; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px;">${escapeHtml(code)}</div>` : ""}
+            ${link ? `<a href="${escapeHtml(link)}" class="btn-action" style="background: #047857;">Abrir página para copiar</a>` : ""}
+          </div>`;
+      }
+      if (type === "CALL" || (b.phone && !b.url)) {
+        const digits = String(b.phone || "").replace(/\D/g, "");
+        if (!digits) return "";
+        return `<a href="https://wa.me/${digits}" class="btn-action" style="margin-right: 8px;">${label}</a>`;
+      }
+      const link = absolutize(b.url);
+      if (!link) return ""; // Respostas rápidas (REPLY) não funcionam por e-mail
+      return `<a href="${escapeHtml(link)}" class="btn-action" style="margin-right: 8px;">${label}</a>`;
+    })
+    .filter(Boolean)
+    .join("\n");
+
+  const docLink = documentUrl ? absolutize(documentUrl) : "";
+  const docHtml = docLink
+    ? `<a href="${escapeHtml(docLink)}" class="btn-action" style="background: #b45309;">📄 Baixar ${escapeHtml(documentName || "documento")}</a>`
+    : "";
+
+  const footerLine = footer ? `<div style="margin-top: 18px; font-size: 12px; color: #64748b;">${escapeHtml(footer)}</div>` : "";
+
+  const contentHtml = `
+    <div style="font-size: 14px; line-height: 1.6; color: #1e293b;">
+      ${messageHtml}
+    </div>
+    ${(buttonsHtml || docHtml) ? `
+      <div style="margin-top: 20px;">
+        ${buttonsHtml}
+        ${docHtml}
+      </div>
+    ` : ""}
+    ${footerLine}
+  `;
+
+  const hotelName = escapeHtml(settings?.hotelName || "CorpFlats");
+  const footerHtml = `Você recebeu este e-mail porque está cadastrado(a) em uma reserva no ${hotelName}.<br/>
+      Esta mensagem também foi enviada pelo nosso WhatsApp. Em caso de dúvidas, responda este e-mail ou fale conosco pelo WhatsApp.`;
+
+  const badge = `<span class="badge badge-general">Sua Reserva</span>`;
+  const bodyHtml = wrapEmailTemplate({ title: escapeHtml(finalSubject), badge, contentHtml, footerHtml });
+
+  const bodyText = [
+    String(message || "").replace(/[*_~]/g, ""),
+    ...(Array.isArray(buttons) ? buttons : [])
+      .filter(b => b && (b.url || b.copyCode))
+      .map(b => `${b.label || "Link"}: ${b.copyCode || absolutize(b.url)}`),
+    docLink ? `${documentName || "Documento"}: ${docLink}` : ""
+  ].filter(Boolean).join("\n\n");
+
+  return { subject: finalSubject, bodyHtml, html: bodyHtml, bodyText };
 }
 
 /**

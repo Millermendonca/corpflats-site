@@ -13,7 +13,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { getSmtpConfig, createTransporter } from "./mail-service.mjs";
+import { getSmtpConfig, createTransporter, sendEmailAsync, renderWhatsAppMirrorEmail } from "./mail-service.mjs";
 import {
   getWhatsAppAiConfig,
   generateAiWhatsAppResponse,
@@ -1090,6 +1090,14 @@ export function setZapiGlobalDbGetter(getter) {
 }
 
 // ── Verificação de Whitelist / Modo de Teste (Sandbox) ─────────────────────────
+// Números sempre liberados no Modo de Teste (além de testAllowedPhones e camareiras):
+// - 22998505276: Miller Mendonça (gestor / desenvolvedor)
+// - 21997142513: hóspede de teste liberado para receber as mensagens programadas
+export const DEFAULT_TEST_ALLOWED_PHONES = [
+  "22998505276", "5522998505276",
+  "21997142513", "5521997142513"
+];
+
 export function isPhoneAllowedInTestMode(phone, config = {}, db = null) {
   // Se testModeOnly for false explicitamente, estamos em produção total (todos permitidos)
   if (config?.testModeOnly === false) {
@@ -1100,8 +1108,8 @@ export function isPhoneAllowedInTestMode(phone, config = {}, db = null) {
   const targetDigits = String(phone).replace(/\D/g, "");
   if (!targetDigits) return false;
 
-  // Miller Mendonça (gestor do hotel / desenvolvedor)
-  const defaultAllowed = ["22998505276", "5522998505276"];
+  // Miller Mendonça (gestor do hotel / desenvolvedor) + hóspedes de teste liberados
+  const defaultAllowed = DEFAULT_TEST_ALLOWED_PHONES;
 
   // Telefones autorizados configurados pelo usuário
   const userConfigured = String(config?.testAllowedPhones || "")
@@ -1294,21 +1302,29 @@ export function formatWhatsAppChangesSummary(changes = []) {
   return lines.join("\n");
 }
 
-// ── Identificação Unificada de Destinatários (Hóspede e Solicitante) ──────────
+// ── Identificação Unificada de Destinatários (Hóspede, Acompanhantes e Solicitante) ──
+function normalizeEmailAddress(raw) {
+  const email = String(raw || "").trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : "";
+}
+
 export function getReservationRecipients(reservation = {}, db = {}) {
   const guestName = (reservation.guestName || reservation.guests?.[0]?.name || "Hóspede").trim();
   const guestFirstName = guestName.split(" ")[0] || guestName;
   const rawGuestPhone = reservation.guestPhone || reservation.guests?.[0]?.phone || "";
   const cleanGuestDigits = String(rawGuestPhone).replace(/\D/g, "");
+  const guestEmail = normalizeEmailAddress(reservation.guestEmail || reservation.guests?.[0]?.email);
 
   let requesterName = "";
   let requesterPhone = "";
+  let requesterEmail = "";
   let requesterType = reservation.requesterType || "guest";
   let requesterCompany = "";
 
   if (requesterType === "other_person" && reservation.requesterInfo) {
     requesterName = (reservation.requesterInfo.name || "").trim();
     requesterPhone = (reservation.requesterInfo.phone || "").trim();
+    requesterEmail = normalizeEmailAddress(reservation.requesterInfo.email);
   } else if (requesterType === "company") {
     requesterCompany = reservation.companyName || "";
     let companyObj = null;
@@ -1324,17 +1340,23 @@ export function getReservationRecipients(reservation = {}, db = {}) {
     if (companyObj) {
       requesterName = (companyObj.contactPerson || companyObj.tradeName || reservation.companyName || "Solicitante Corporativo").trim();
       requesterPhone = (companyObj.phone || "").trim();
+      requesterEmail = normalizeEmailAddress(companyObj.email || companyObj.financialEmail);
       requesterCompany = companyObj.tradeName || companyObj.corporateName || requesterCompany;
     } else {
       requesterName = reservation.companyName || "Solicitante Corporativo";
     }
   }
 
+  const requesterHasOwnPhone = Boolean(requesterPhone);
   if (!requesterName) {
     requesterName = guestName;
   }
   if (!requesterPhone) {
     requesterPhone = rawGuestPhone;
+  }
+  // Mesmo comportamento do telefone: sem contato próprio, o solicitante "é" o hóspede principal
+  if (!requesterEmail && !requesterHasOwnPhone) {
+    requesterEmail = guestEmail;
   }
 
   const requesterFirstName = requesterName.split(" ")[0] || requesterName;
@@ -1344,23 +1366,245 @@ export function getReservationRecipients(reservation = {}, db = {}) {
     (requesterType !== "guest" && requesterName && requesterName.toLowerCase() !== guestName.toLowerCase())
   );
 
+  // Acompanhantes (2º, 3º hóspede...) cadastrados no PMS com WhatsApp e/ou e-mail
+  const companions = [];
+  const guestList = Array.isArray(reservation.guests) ? reservation.guests : [];
+  guestList.forEach((g, idx) => {
+    if (!g || idx === 0) return;
+    const index = Number(g.index) > 1 ? Number(g.index) : idx + 1;
+    const phone = String(g.phone || "").trim();
+    const email = normalizeEmailAddress(g.email);
+    if (!phone && !email) return;
+    const rawName = String(g.name || "").trim();
+    const isPlaceholder = !rawName || /^h[óo]spede\s*\d*$/i.test(rawName);
+    const name = isPlaceholder ? "Hóspede" : rawName;
+    companions.push({
+      index,
+      type: `guest_${index}`,
+      name,
+      firstName: name.split(" ")[0] || name,
+      phone,
+      cleanDigits: phone.replace(/\D/g, ""),
+      email,
+      hasCompletedCheckin: Boolean(g.hasCompletedCheckin || g.status === "CHECKED_IN")
+    });
+  });
+
   return {
     guest: {
       name: guestName,
       firstName: guestFirstName,
       phone: rawGuestPhone,
-      cleanDigits: cleanGuestDigits
+      cleanDigits: cleanGuestDigits,
+      email: guestEmail
     },
+    companions,
     requester: {
       name: requesterName,
       firstName: requesterFirstName,
       phone: requesterPhone,
       cleanDigits: cleanRequesterDigits,
+      email: requesterEmail,
       type: requesterType,
       company: requesterCompany,
       isDifferentFromGuest
     }
   };
+}
+
+// ── Régua de Acompanhantes: eventos financeiros nunca vão para o 2º/3º hóspede ──
+export const COMPANION_EXCLUDED_EVENTS = new Set([
+  "pre_reservation_created",
+  "payment_pending",
+  "additional_daily_pending",
+  "payment_confirmed"
+]);
+
+export function shouldIncludeCompanions(tpl) {
+  if (typeof tpl?.includeCompanions === "boolean") return tpl.includeCompanions;
+  return !COMPANION_EXCLUDED_EVENTS.has(String(tpl?.triggerEvent || ""));
+}
+
+export function shouldMirrorTemplateToEmail(tpl) {
+  return tpl?.sendEmail !== false;
+}
+
+/** Retorna o acompanhante correspondente a um targetRecipient "guest_2" / "guest_3" */
+export function getCompanionForTarget(recipients, targetRecipient) {
+  const match = /^guest_(\d+)$/.exec(String(targetRecipient || ""));
+  if (!match || !recipients) return null;
+  return (recipients.companions || []).find(c => c.index === Number(match[1])) || null;
+}
+
+/**
+ * Monta a lista única de destinatários de um template (hóspede, solicitante e acompanhantes),
+ * cada um com telefone (WhatsApp) e/ou e-mail. Remove contatos repetidos por canal.
+ */
+export function buildTemplateTargets(tpl, recipients, options = {}) {
+  const targetMode = options.targetMode || tpl?.recipientTarget || "guest";
+  const includeEmail = options.includeEmail !== undefined ? options.includeEmail : shouldMirrorTemplateToEmail(tpl);
+  const raw = [];
+  const guest = recipients.guest;
+  const requester = recipients.requester;
+  const guestTarget = () => ({ type: "guest", guestIndex: 1, name: guest.name, phone: guest.phone, email: guest.email });
+
+  if (targetMode === "guest" || targetMode === "both") {
+    if (guest.phone || guest.email) raw.push(guestTarget());
+  }
+
+  if (targetMode === "requester" || targetMode === "both") {
+    if (targetMode === "requester" || requester.isDifferentFromGuest) {
+      if (requester.phone || requester.email) {
+        raw.push({ type: "requester", guestIndex: null, name: requester.name, phone: requester.phone, email: requester.email });
+      } else if (targetMode === "requester" && (guest.phone || guest.email)) {
+        raw.push(guestTarget());
+      }
+    }
+  }
+
+  if (raw.length === 0 && (guest.phone || guest.email)) {
+    raw.push(guestTarget());
+  }
+
+  if ((targetMode === "guest" || targetMode === "both") && shouldIncludeCompanions(tpl)) {
+    for (const c of (recipients.companions || [])) {
+      raw.push({ type: c.type, guestIndex: c.index, name: c.name, phone: c.phone, email: c.email, hasCompletedCheckin: c.hasCompletedCheckin });
+    }
+  }
+
+  const seenPhones = new Set();
+  const seenEmails = new Set();
+  const seenTypes = new Set();
+  const targets = [];
+  for (const t of raw) {
+    if (seenTypes.has(t.type)) continue;
+    const digits = String(t.phone || "").replace(/\D/g, "");
+    const phoneKey = digits ? digits.slice(-8) : "";
+    let phone = t.phone || "";
+    let email = includeEmail ? normalizeEmailAddress(t.email) : "";
+    if (phoneKey && seenPhones.has(phoneKey)) phone = "";
+    if (email && seenEmails.has(email)) email = "";
+    if (!phone && !email) continue;
+    if (phoneKey && phone) seenPhones.add(phoneKey);
+    if (email) seenEmails.add(email);
+    seenTypes.add(t.type);
+    targets.push({ ...t, phone, email });
+  }
+  return targets;
+}
+
+/** Indica se a reserva possui algum contato (WhatsApp ou e-mail) para a régua automática */
+export function reservationHasAnyContact(reservation = {}, db = {}) {
+  if (reservation.guestPhone || reservation.guestEmail) return true;
+  const r = getReservationRecipients(reservation, db);
+  return Boolean(r.guest.phone || r.guest.email || r.requester.email || r.companions.length > 0);
+}
+
+export function getRecipientTypeLabel(type) {
+  if (type === "requester") return "Solicitante";
+  const m = /^guest_(\d+)$/.exec(String(type || ""));
+  if (m) return `${m[1]}º Hóspede`;
+  return "Hóspede";
+}
+
+const EMAIL_SUBJECT_BY_EVENT = {
+  pre_reservation_created: "Pré-reserva recebida • Aguardando pagamento",
+  reservation_created: "Sua reserva está confirmada",
+  payment_confirmed: "Pagamento confirmado",
+  payment_pending: "Pagamento pendente da sua reserva",
+  additional_daily_pending: "Diária adicional pendente",
+  sameday_reservation: "Sua reserva para hoje • Instruções de chegada",
+  room_ready: "Seu flat está pronto",
+  room_ready_ota: "Seu flat está pronto",
+  room_ready_regular: "Seu flat está pronto",
+  checkin_cleaning_delay: "Atualização sobre a liberação do seu flat",
+  reservation_updated: "Sua reserva foi atualizada",
+  reservation_cancelled: "Reserva cancelada",
+  pre_checkin_reminder: "Lembrete: faça seu pré-check-in digital",
+  checkin_day_instructions: "Instruções para o seu check-in",
+  checkin_completed: "Boas-vindas ao seu flat",
+  breakfast_reminder: "Escolha seu café da manhã",
+  checkout_reminder: "Lembrete de check-out",
+  checkout_completed: "Check-out realizado • Obrigado pela estadia",
+  on_checkout: "Check-out realizado • Obrigado pela estadia",
+  post_checkout_review: "Como foi sua estadia?",
+  nps_approved: "Como foi sua estadia?"
+};
+
+/** Assunto do e-mail espelhado: usa o assunto customizado do template ou um assunto amigável por evento */
+export function buildMirrorEmailSubject(tpl, reservation = {}, db = {}, baseUrl = "", targetRecipient = "guest") {
+  const custom = String(tpl?.emailSubject || "").trim();
+  if (custom) {
+    return resolveWhatsAppTags(custom, reservation, db, baseUrl, targetRecipient, tpl).replace(/\s+/g, " ").trim();
+  }
+  const hotelName = db?.siteConfig?.branding?.brandName || "CorpFlats";
+  const event = String(tpl?.triggerEvent || "");
+  const label = EMAIL_SUBJECT_BY_EVENT[event] || "Informações da sua reserva";
+  const resCode = reservation.code || reservation.reservationCode || "";
+  return [hotelName, label, resCode ? `Reserva ${resCode}` : ""].filter(Boolean).join(" • ");
+}
+
+/**
+ * Envia o espelho por e-mail de uma mensagem da régua (texto e botões já renderizados).
+ * Respeita a chave "Motor de e-mails automáticos" (metadata.isAutomated).
+ */
+export function sendMirrorEmail(db, saveDatabase, {
+  reservation = null,
+  reservationCode = null,
+  reservationId = null,
+  email,
+  recipientName = "",
+  recipientType = "guest",
+  templateId = null,
+  triggerEvent = null,
+  subject = "",
+  message = "",
+  buttons = [],
+  footer = "",
+  documentUrl = "",
+  documentName = "",
+  baseUrl = "",
+  source = "auto"
+}) {
+  try {
+    if (!db || !email || !message) return null;
+    const appOrigin = baseUrl || (typeof process !== "undefined" && process.env?.APP_BASE_URL) || "https://corpflats.onrender.com";
+    const rendered = renderWhatsAppMirrorEmail({
+      message,
+      buttons,
+      footer,
+      subject,
+      documentUrl,
+      documentName,
+      appOrigin,
+      settings: { hotelName: db?.siteConfig?.branding?.brandName || "CorpFlats" }
+    });
+    const resRef = reservationCode || reservation?.code || reservation?.reservationCode || reservationId || reservation?.id || "0";
+    return sendEmailAsync({
+      db,
+      saveDatabase,
+      reservationId: resRef,
+      recipient: email,
+      subject: rendered.subject,
+      bodyHtml: rendered.bodyHtml,
+      bodyText: rendered.bodyText,
+      type: "email",
+      direction: "outbound",
+      metadata: {
+        isAutomated: true,
+        channel: "whatsapp_mirror",
+        trigger: triggerEvent,
+        templateId,
+        recipientType,
+        recipientName,
+        guestName: reservation?.guestName || recipientName,
+        source
+      }
+    });
+  } catch (err) {
+    console.error("[E-mail Espelho] Falha ao preparar e-mail:", err.message);
+    return null;
+  }
 }
 
 // ── Motor de Resolução de Tags Dinâmicas ───────────────────────────────────────
@@ -1373,13 +1617,16 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const recipients = getReservationRecipients(reservation, db);
   const guest = recipients.guest;
   const requester = recipients.requester;
+  // Acompanhante (2º/3º hóspede) como destinatário: saudação e link de check-in são dele
+  const companion = getCompanionForTarget(recipients, targetRecipient);
+  const recipientGuestIndex = companion ? companion.index : 1;
 
   const recipientIsRequester = targetRecipient === "requester";
-  const primaryRecipientName = recipientIsRequester ? requester.name : guest.name;
-  const primaryRecipientFirstName = recipientIsRequester ? requester.firstName : guest.firstName;
-  const primaryRecipientPhone = recipientIsRequester ? requester.phone : guest.phone;
+  const primaryRecipientName = companion ? companion.name : (recipientIsRequester ? requester.name : guest.name);
+  const primaryRecipientFirstName = companion ? companion.firstName : (recipientIsRequester ? requester.firstName : guest.firstName);
+  const primaryRecipientPhone = companion ? companion.phone : (recipientIsRequester ? requester.phone : guest.phone);
 
-  const guestName = guest.name;
+  const guestName = companion ? companion.name : guest.name;
   const firstName = primaryRecipientFirstName;
   const flatNumber = reservation.flatNumber || reservation.flatId || "Pendente";
   const resCode = reservation.code || reservation.reservationCode || `RES-${flatNumber}-${reservation.id || "0000"}`;
@@ -1432,7 +1679,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const hasBreakfast = Boolean(reservation.includeBreakfast || reservation.hasBreakfast || reservation.ratePlan === "with_breakfast" || isBreakfastExplicitTemplate);
 
   // Links inteligentes com autenticação por código de reserva
-  const linkCheckinDigital = getCheckinUrlSync(reservation, 1, appOrigin, db);
+  const linkCheckinDigital = getCheckinUrlSync(reservation, recipientGuestIndex, appOrigin, db);
   const linkPortalHospede = `${appOrigin}/minha-reserva/${resCode}`;
   const linkPagamento = `${appOrigin}/minha-reserva/${resCode}`;
   const linkCopiarPix = `${appOrigin}/copiar-pix/${resCode}`;
@@ -1550,7 +1797,7 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     reservation.checkedInAt ||
     reservation.guestSelfCheckin
   );
-  const isPreCheckinDone = allCheckedIn;
+  const isPreCheckinDone = companion ? Boolean(reservation.checkedInAt || companion.hasCompletedCheckin) : allCheckedIn;
 
   // Tag: {{instrucao_checkin_ou_chegada}}
   let instrucaoCheckinOuChegada = "";
@@ -1566,13 +1813,18 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const isMultiGuest = (reservation.guestCount > 1 || reservation.adults > 1);
   const firstGuestDone = Boolean(reservation.guests?.[0]?.hasCompletedCheckin || reservation.guests?.[0]?.status === "CHECKED_IN");
   let mensagemPendenciaHospedes = "Para que a portaria do condomínio libere sua entrada imediatamente na chegada, pedimos que adiante o cadastro dos hóspedes pelo link abaixo:";
-  if (isMultiGuest && firstGuestDone) {
+  if (companion) {
+    // O próprio acompanhante recebe a mensagem: pede apenas a ficha dele
+    mensagemPendenciaHospedes = companion.hasCompletedCheckin
+      ? `Recebemos com sucesso a sua ficha de Check-in Digital, *${companion.firstName}*! Sua entrada já está autorizada na portaria.`
+      : `Para que a portaria do condomínio libere sua entrada imediatamente na chegada, pedimos que adiante o seu cadastro (ficha individual do acompanhante) pelo link abaixo:`;
+  } else if (isMultiGuest && firstGuestDone) {
     const linkCheckinDigitalGuest2 = getCheckinUrlSync(reservation, 2, appOrigin, db);
     mensagemPendenciaHospedes = `Recebemos com sucesso a ficha de Check-in Digital do(a) *${guest.firstName || guest.name}*, porém ainda está pendente o cadastro do *2º hóspede* para autorização na portaria.\n\nPor favor, repasse este link ao segundo acompanhante para preenchimento:\n👉 ${linkCheckinDigitalGuest2}\n\n💡 _Caso vá viajar sozinho(a), basta confirmar em seu portal ou responder por aqui para atualizarmos sua reserva para 1 hóspede sem pendências._`;
   }
 
   // Tag: {{aviso_checkin_pendente}}
-  const avisoCheckinPendente = !allCheckedIn
+  const avisoCheckinPendente = !isPreCheckinDone
     ? `⚠️ *Atenção:* Notamos que sua ficha de Pré-Check-in Digital ainda está pendente. Para liberação imediata na portaria do condomínio, preencha agora pelo botão abaixo.`
     : "";
 
@@ -1781,12 +2033,16 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
   const resCode = reservation?.code || reservation?.reservationCode || `RES-${reservation?.flatNumber || "000"}-${reservation?.id || "0000"}`;
   const linkCafeManha = `${appOrigin}/cafe/${resCode}`;
 
-  const isPreCheckinDone = Boolean(
-    reservation?.checkedInAt ||
-    reservation?.fnhrCompleted ||
-    reservation?.preCheckinCompleted ||
-    (Array.isArray(reservation?.guests) && reservation.guests.length > 0 && reservation.guests.every(g => g.hasCompletedCheckin || g.status === "CHECKED_IN"))
-  );
+  const companionTarget = getCompanionForTarget(getReservationRecipients(reservation || {}, db || {}), targetRecipient);
+
+  const isPreCheckinDone = companionTarget
+    ? Boolean(reservation?.checkedInAt || companionTarget.hasCompletedCheckin)
+    : Boolean(
+      reservation?.checkedInAt ||
+      reservation?.fnhrCompleted ||
+      reservation?.preCheckinCompleted ||
+      (Array.isArray(reservation?.guests) && reservation.guests.length > 0 && reservation.guests.every(g => g.hasCompletedCheckin || g.status === "CHECKED_IN"))
+    );
 
   const hasEnteredFlat = Boolean(
     reservation?.status === "checkin" ||
@@ -1797,7 +2053,7 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
   );
 
   const linkPortalHospede = `${appOrigin}/minha-reserva/${resCode}`;
-  const linkCheckinDigital = getCheckinUrlSync(reservation, 1, appOrigin, db);
+  const linkCheckinDigital = getCheckinUrlSync(reservation, companionTarget ? companionTarget.index : 1, appOrigin, db);
   const linkAutocheckin = `${appOrigin}/api/pms/guest-portal/${resCode}/self-checkin`;
 
   // Predicado para identificar botões de check-in por ID (btn_chk, btn_pre, btn_chk_digital) ou URLs (pre-checkin, turismo.gov.br)
@@ -3688,9 +3944,11 @@ export function findReservationByPhone(db, phone) {
   if (!cleanP) return null;
   const last8 = cleanP.slice(-8);
   const matched = (db.reservations || []).filter(r => {
-    if (!r.guestPhone) return false;
-    const rClean = cleanWhatsAppPhone(r.guestPhone);
-    return rClean === cleanP || (rClean && last8 && rClean.slice(-8) === last8);
+    const candidatePhones = [r.guestPhone, ...(Array.isArray(r.guests) ? r.guests.map(g => g?.phone) : [])].filter(Boolean);
+    return candidatePhones.some(p => {
+      const rClean = cleanWhatsAppPhone(p);
+      return rClean === cleanP || (rClean && last8 && rClean.slice(-8) === last8);
+    });
   });
   if (matched.length === 0) return null;
   matched.sort((a, b) => String(b.checkoutDate || "").localeCompare(String(a.checkoutDate || "")));
@@ -4586,60 +4844,15 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       item.renderedButtons = queueButtons;
     }
 
-    const result = await sendZapiMessage(db.zapiConfig, {
-      phone: item.guestPhone,
-      message: item.renderedMessage,
-      title: item.title,
-      footer: item.footer,
-      buttons: queueButtons,
-      documentUrl: item.documentUrl,
-      documentName: item.documentName
-    });
-
-    item.status = result.success ? "sent" : "failed";
-    item.sentAt = new Date().toISOString();
-    item.error = result.error || null;
-    item.method = result.method || "manual";
-    item.messageId = result.messageId || null;
-
-    if (!db.whatsappHistory) db.whatsappHistory = [];
-    db.whatsappHistory.push({
-      id: `hist_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      reservationCode: item.reservationCode,
-      reservationId: item.reservationId || null,
-      title: item.title || null,
-      guestName: item.guestName,
-      guestPhone: item.guestPhone,
-      triggerEvent: item.triggerEvent,
-      message: item.renderedMessage,
-      buttons: item.renderedButtons,
-      documentUrl: item.documentUrl || null,
-      documentName: item.documentName || null,
-      status: item.status,
-      method: item.method,
-      error: item.error,
-      sentAt: item.sentAt
-    });
-
-    appendMessageToConversation(db, {
-      phone: item.guestPhone,
-      senderName: "CorpFlats",
-      senderPhone: db.zapiConfig?.instanceId || "",
-      fromMe: true,
-      text: item.renderedMessage,
-      type: item.documentUrl ? "document" : "text",
-      mediaUrl: item.documentUrl || null,
-      fileName: item.documentName || null,
-      buttons: item.renderedButtons,
-      triggerEvent: item.triggerEvent,
-      reservationCode: item.reservationCode,
-      status: result.success ? "read" : "failed",
-      timestamp: item.sentAt,
-      messageId: result.messageId || `msg_manual_${Date.now()}`
+    const delivery = await deliverQueueItem(db, saveDatabase, item, {
+      method: "manual",
+      historyPrefix: "hist",
+      includeDocument: true,
+      buttons: queueButtons
     });
 
     saveDatabase();
-    res.json({ success: result.success, result, queueItem: item });
+    res.json({ success: delivery.success, result: delivery.waResult || { success: delivery.success, method: item.method, error: item.error }, emailSent: Boolean(delivery.emailLog), queueItem: item });
   });
 
   // 10. Cancelar Agendamento na Fila
@@ -5068,7 +5281,10 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     const reservation = (db.reservations || []).find(r => {
       const rP = cleanWhatsAppPhone(r.guestPhone || r.phone || "");
       return rP && (cleanP.endsWith(rP.slice(-8)) || rP.endsWith(cleanP.slice(-8)));
-    });
+    }) || (db.reservations || []).find(r => (Array.isArray(r.guests) ? r.guests.slice(1) : []).some(g => {
+      const gP = cleanWhatsAppPhone(g?.phone || "");
+      return gP && (cleanP.endsWith(gP.slice(-8)) || gP.endsWith(cleanP.slice(-8)));
+    }));
     const flatMatch = cleanText.match(/(?:apto|apt|flat|quarto|unidade|su[ií]te)\s*[:#º°]?\s*(\d{2,4}[a-z]?)/i);
     const flatNumber = reservation?.flatNumber || reservation?.flat || updatedConv?.flatNumber || (flatMatch ? flatMatch[1] : null);
 
@@ -6275,13 +6491,19 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         }
 
         // Checagem dinâmica: se for lembrete de pré-checkin e todos os hóspedes já preencheram
+        // (para acompanhantes: se aquele acompanhante já preencheu a própria ficha)
         if (item.triggerEvent === "pre_checkin_reminder") {
+          const companionMatch = /^guest_(\d+)$/.exec(String(item.recipientType || ""));
+          const companionGuest = companionMatch && Array.isArray(resv?.guests)
+            ? resv.guests.find((g, idx) => (Number(g?.index) || idx + 1) === Number(companionMatch[1]))
+            : null;
           const isCheckinDone = resv && (
             resv.checkedInAt || 
+            (companionGuest && (companionGuest.hasCompletedCheckin || companionGuest.status === "CHECKED_IN")) ||
             (Array.isArray(resv.guests) && resv.guests.length > 0 && resv.guests.every(g => g.hasCompletedCheckin))
           );
           if (isCheckinDone) {
-            console.log(`[Auto-WhatsApp] Descartando lembrete de pré-checkin para ${item.guestName}: ficha já preenchida.`);
+            console.log(`[Auto-WhatsApp] Descartando lembrete de pré-checkin para ${item.recipientName || item.guestName}: ficha já preenchida.`);
             item.status = "cancelled";
             item.error = "Cancelado: check-in digital já preenchido";
             item.updatedAt = nowIso;
@@ -6310,11 +6532,14 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           }
         }
 
-        // Trava de Segurança: Modo de Teste / Sandbox
-        if (!isPhoneAllowedInTestMode(item.guestPhone, db.zapiConfig)) {
+        // Trava de Segurança: Modo de Teste / Sandbox (bloqueia apenas o WhatsApp; o e-mail espelho segue)
+        const waBlockedByTestMode = Boolean(item.guestPhone) && !isPhoneAllowedInTestMode(item.guestPhone, db.zapiConfig);
+        if ((!item.guestPhone || waBlockedByTestMode) && !item.guestEmail) {
           console.log(`[Auto-WhatsApp Sandbox] Agendamento para ${item.guestPhone} (${item.recipientName || item.guestName}) CANCELADO da fila: Modo de Teste ativo.`);
           item.status = "cancelled";
-          item.error = "Cancelado pelo Modo de Teste: destinatário não está na lista autorizada.";
+          item.error = item.guestPhone
+            ? "Cancelado pelo Modo de Teste: destinatário não está na lista autorizada."
+            : "Cancelado: destinatário sem WhatsApp ou e-mail.";
           item.updatedAt = nowIso;
           saveDatabase();
           continue;
@@ -6327,52 +6552,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           item.renderedButtons = queueButtons;
         }
 
-        console.log(`[Auto-WhatsApp] Disparando agendamento automático para ${item.recipientName || item.guestName} (${item.recipientType === 'requester' ? 'Solicitante' : 'Hóspede'} / ${item.triggerEvent} / Canal: ${itemChannel || 'Padrão'})...`);
-        const result = await sendZapiMessage(db.zapiConfig, {
-          phone: item.guestPhone,
-          message: item.renderedMessage,
-          title: item.title,
-          footer: item.footer,
+        console.log(`[Auto-WhatsApp] Disparando agendamento automático para ${item.recipientName || item.guestName} (${getRecipientTypeLabel(item.recipientType)} / ${item.triggerEvent} / Canal: ${itemChannel || 'Padrão'}${item.guestEmail ? ' / +E-mail' : ''}${waBlockedByTestMode ? ' / WhatsApp bloqueado pelo Modo de Teste' : ''})...`);
+        await deliverQueueItem(db, saveDatabase, item, {
+          method: "automated",
+          historyPrefix: "cron",
+          skipWhatsApp: waBlockedByTestMode,
           buttons: queueButtons
-        });
-
-        item.status = result.success ? "sent" : "failed";
-        item.sentAt = new Date().toISOString();
-        item.error = result.error || null;
-        item.method = result.method || "automated";
-
-        if (!db.whatsappHistory) db.whatsappHistory = [];
-        db.whatsappHistory.push({
-          id: `cron_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-          reservationCode: item.reservationCode,
-          reservationId: item.reservationId || null,
-          title: item.title || null,
-          guestName: item.guestName,
-          guestPhone: item.guestPhone,
-          recipientType: item.recipientType || "guest",
-          recipientName: item.recipientName || item.guestName,
-          triggerEvent: item.triggerEvent,
-          message: item.renderedMessage,
-          buttons: item.renderedButtons,
-          status: item.status,
-          method: item.method,
-          error: item.error,
-          sentAt: item.sentAt
-        });
-
-        appendMessageToConversation(db, {
-          phone: item.guestPhone,
-          senderName: "CorpFlats",
-          senderPhone: db?.zapiConfig?.instanceId || "",
-          fromMe: true,
-          text: item.renderedMessage,
-          type: "text",
-          buttons: item.renderedButtons,
-          triggerEvent: item.triggerEvent,
-          reservationCode: item.reservationCode,
-          status: result.success ? "read" : "failed",
-          timestamp: item.sentAt,
-          messageId: result.messageId || `msg_cron_${Date.now()}`
         });
 
         saveDatabase();
@@ -6392,6 +6577,232 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
   }, 60 * 1000);
 
   console.log("✓ [Z-API WhatsApp Engine] Inicializado e monitorando réguas de mensagens.");
+}
+
+// ── Disparo Unificado por Destinatário (WhatsApp + Espelho por E-mail) ────────
+/**
+ * Monta um item da fila de agendamentos para um destinatário (hóspede, acompanhante ou solicitante).
+ */
+export function buildQueueItemForTarget(db, { tpl, resv, target, scheduledFor, channel, baseUrl = "https://corpflats.onrender.com", idPrefix = "q", recipientTarget = null }) {
+  const renderedMessage = resolveWhatsAppTags(tpl.message, resv, db, baseUrl, target.type);
+  const renderedButtons = renderTemplateButtons(tpl.buttons, resv, db, baseUrl, target.type, tpl);
+  const hasAttachment = Boolean(tpl.hasAttachment || tpl.documentUrl);
+  return {
+    id: `${idPrefix}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    reservationId: resv.id,
+    reservationCode: resv.code,
+    guestName: resv.guestName,
+    guestPhone: target.phone || "",
+    guestEmail: target.email || "",
+    recipientType: target.type,
+    recipientName: target.name,
+    recipientTarget: recipientTarget || tpl.recipientTarget || "guest",
+    channel,
+    triggerEvent: tpl.triggerEvent,
+    templateId: tpl.id,
+    title: tpl.title,
+    footer: tpl.footer,
+    documentUrl: hasAttachment ? tpl.documentUrl : undefined,
+    documentName: hasAttachment ? (tpl.documentName || db?.zapiConfig?.guestGuidePdfName || "Manual_do_Hospede_CorpFlats.pdf") : undefined,
+    emailSubject: target.email ? buildMirrorEmailSubject(tpl, resv, db, baseUrl, target.type) : undefined,
+    scheduledFor,
+    status: "scheduled",
+    sentAt: null,
+    error: null,
+    renderedMessage,
+    renderedButtons,
+    createdAt: new Date().toISOString()
+  };
+}
+
+/**
+ * Entrega um item da fila: WhatsApp (se houver telefone e não estiver bloqueado) e e-mail espelho (se houver e-mail).
+ */
+export async function deliverQueueItem(db, saveDatabase, item, { method = "automated", historyPrefix = "cron", skipWhatsApp = false, includeDocument = false, buttons = null } = {}) {
+  const sendButtons = buttons || item.renderedButtons || [];
+  const resv = (db.reservations || []).find(r => r.id === item.reservationId || r.code === item.reservationCode) || null;
+  let waResult = null;
+  let emailLog = null;
+
+  if (item.guestPhone && !skipWhatsApp) {
+    waResult = await sendZapiMessage(db.zapiConfig, {
+      phone: item.guestPhone,
+      message: item.renderedMessage,
+      title: item.title,
+      footer: item.footer,
+      buttons: sendButtons,
+      ...(includeDocument ? { documentUrl: item.documentUrl, documentName: item.documentName } : {})
+    });
+
+    const sentAtWa = new Date().toISOString();
+    if (!db.whatsappHistory) db.whatsappHistory = [];
+    db.whatsappHistory.push({
+      id: `${historyPrefix}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      reservationCode: item.reservationCode,
+      reservationId: item.reservationId || null,
+      title: item.title || null,
+      guestName: item.guestName,
+      guestPhone: item.guestPhone,
+      recipientType: item.recipientType || "guest",
+      recipientName: item.recipientName || item.guestName,
+      triggerEvent: item.triggerEvent,
+      message: item.renderedMessage,
+      buttons: item.renderedButtons,
+      ...(includeDocument ? { documentUrl: item.documentUrl || null, documentName: item.documentName || null } : {}),
+      status: waResult.success ? "sent" : "failed",
+      method: waResult.method || method,
+      error: waResult.error || null,
+      sentAt: sentAtWa
+    });
+
+    appendMessageToConversation(db, {
+      phone: item.guestPhone,
+      senderName: "CorpFlats",
+      senderPhone: db?.zapiConfig?.instanceId || "",
+      fromMe: true,
+      text: item.renderedMessage,
+      type: (includeDocument && item.documentUrl) ? "document" : "text",
+      ...(includeDocument ? { mediaUrl: item.documentUrl || null, fileName: item.documentName || null } : {}),
+      buttons: item.renderedButtons,
+      triggerEvent: item.triggerEvent,
+      reservationCode: item.reservationCode,
+      status: waResult.success ? "read" : "failed",
+      timestamp: sentAtWa,
+      messageId: waResult.messageId || `msg_${historyPrefix}_${Date.now()}`
+    });
+  }
+
+  const currentTpl = item.templateId ? (db.whatsappTemplates || []).find(t => t.id === item.templateId) : null;
+  const emailAllowedNow = !currentTpl || shouldMirrorTemplateToEmail(currentTpl);
+  if (item.guestEmail && emailAllowedNow) {
+    emailLog = sendMirrorEmail(db, saveDatabase, {
+      reservation: resv,
+      reservationCode: item.reservationCode,
+      reservationId: item.reservationId,
+      email: item.guestEmail,
+      recipientName: item.recipientName || item.guestName,
+      recipientType: item.recipientType || "guest",
+      templateId: item.templateId,
+      triggerEvent: item.triggerEvent,
+      subject: item.emailSubject || buildMirrorEmailSubject({ triggerEvent: item.triggerEvent }, resv || { code: item.reservationCode }, db),
+      message: item.renderedMessage,
+      buttons: sendButtons,
+      footer: item.footer,
+      documentUrl: item.documentUrl,
+      documentName: item.documentName,
+      source: method
+    });
+  }
+
+  const waSuccess = Boolean(waResult?.success);
+  const anySuccess = waSuccess || Boolean(emailLog);
+  item.whatsappStatus = waResult ? (waSuccess ? "sent" : "failed") : (item.guestPhone ? "skipped" : "no_phone");
+  if (item.guestEmail) item.emailStatus = emailLog ? "sent" : "skipped";
+  item.status = anySuccess ? "sent" : "failed";
+  item.sentAt = new Date().toISOString();
+  item.error = (waResult && !waSuccess)
+    ? (waResult.error || "Falha no envio do WhatsApp")
+    : (anySuccess ? null : (item.guestEmail
+      ? (emailAllowedNow ? "E-mail não enviado (motor de e-mails automáticos pausado)" : "E-mail desativado no template")
+      : "Nenhum canal disponível para envio"));
+  item.method = waResult?.method || (emailLog ? "email" : method);
+  item.messageId = waResult?.messageId || null;
+
+  return { waResult, emailLog, success: anySuccess };
+}
+
+/**
+ * Dispara imediatamente um template para um destinatário: WhatsApp (respeitando o Modo de Teste)
+ * e espelho por e-mail (respeitando a chave do motor de e-mails automáticos).
+ */
+export async function dispatchTemplateToTarget(db, saveDatabase, { tpl, eventName, reservation, target, baseUrl = "" }) {
+  const renderedMessage = resolveWhatsAppTags(tpl.message, reservation, db, baseUrl, target.type);
+  const renderedButtons = renderTemplateButtons(tpl.buttons, reservation, db, baseUrl, target.type, tpl);
+  const hasAttachment = Boolean(tpl.hasAttachment || tpl.documentUrl);
+  const docUrl = hasAttachment ? (tpl.documentUrl || db?.zapiConfig?.guestGuidePdfUrl) : undefined;
+  const docName = hasAttachment ? (tpl.documentName || db?.zapiConfig?.guestGuidePdfName || "Manual_do_Hospede_CorpFlats.pdf") : undefined;
+  const label = `${getRecipientTypeLabel(target.type)}: ${target.name}`;
+
+  let waResult = null;
+  let emailLog = null;
+
+  if (target.phone) {
+    if (db?.zapiConfig?.testModeOnly !== false && !isPhoneAllowedInTestMode(target.phone, db?.zapiConfig)) {
+      console.warn(`[WhatsApp Sandbox] Envio imediato de '${tpl.title}' para ${target.phone} (${target.name}) IGNORADO: Modo de Teste ativo.`);
+    } else {
+      console.log(`[Z-API Instant Trigger] Disparando '${tpl.title}' (${label}) para ${target.phone}...`);
+      waResult = await sendZapiMessage(db.zapiConfig, {
+        phone: target.phone,
+        message: renderedMessage,
+        title: tpl.title,
+        footer: tpl.footer,
+        buttons: renderedButtons,
+        documentUrl: docUrl,
+        documentName: docName,
+        documentCaption: hasAttachment ? tpl.documentCaption : undefined
+      });
+
+      if (!db.whatsappHistory) db.whatsappHistory = [];
+      db.whatsappHistory.push({
+        id: `auto_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        reservationCode: reservation.code || reservation.reservationCode || (reservation.id ? `RES-${reservation.flatNumber || ''}-${String(reservation.id).padStart(4, '0')}` : null),
+        reservationId: reservation.id || null,
+        title: tpl.title || null,
+        guestName: reservation.guestName,
+        guestPhone: target.phone,
+        recipientType: target.type,
+        recipientName: target.name,
+        triggerEvent: eventName,
+        message: renderedMessage,
+        buttons: renderedButtons,
+        documentUrl: docUrl || null,
+        documentName: docName || null,
+        status: waResult.success ? "sent" : "failed",
+        method: waResult.method || "instant_trigger",
+        error: waResult.error || null,
+        sentAt: new Date().toISOString()
+      });
+
+      appendMessageToConversation(db, {
+        phone: target.phone,
+        senderName: "CorpFlats",
+        senderPhone: db?.zapiConfig?.instanceId || "",
+        fromMe: true,
+        text: renderedMessage,
+        type: (docUrl || hasAttachment) ? "document" : "text",
+        mediaUrl: docUrl || null,
+        fileName: docName || null,
+        buttons: renderedButtons,
+        triggerEvent: eventName,
+        reservationCode: reservation.code,
+        status: waResult.success ? "read" : "failed",
+        timestamp: new Date().toISOString(),
+        messageId: waResult.messageId || `msg_auto_${Date.now()}`
+      });
+    }
+  }
+
+  if (target.email) {
+    console.log(`[E-mail Espelho] Enviando '${tpl.title}' (${label}) para ${target.email}...`);
+    emailLog = sendMirrorEmail(db, saveDatabase, {
+      reservation,
+      email: target.email,
+      recipientName: target.name,
+      recipientType: target.type,
+      templateId: tpl.id,
+      triggerEvent: eventName,
+      subject: buildMirrorEmailSubject(tpl, reservation, db, baseUrl, target.type),
+      message: renderedMessage,
+      buttons: renderedButtons,
+      footer: tpl.footer,
+      documentUrl: docUrl,
+      documentName: docName,
+      baseUrl,
+      source: "instant_trigger"
+    });
+  }
+
+  return { waResult, emailLog, renderedMessage, renderedButtons };
 }
 
 // ── Populador de Fila para Reservas Futuras (Regras por Tempo) ─────────────────
@@ -6417,9 +6828,9 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
     r.status !== "cancelada" && 
     r.status !== "cancelled" && 
     r.status !== "CANCELLED" && 
-    r.guestPhone &&
     r.checkoutDate && 
-    r.checkoutDate >= twoDaysAgoStr
+    r.checkoutDate >= twoDaysAgoStr &&
+    reservationHasAnyContact(r, db)
   );
 
   let hasChanges = false;
@@ -6487,49 +6898,17 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
       }
 
       const targetMode = tpl.recipientTarget || "guest";
-      const targetsToSchedule = [];
-
-      if (targetMode === "guest" || targetMode === "both") {
-        if (recipients.guest.phone) {
-          targetsToSchedule.push({
-            type: "guest",
-            name: recipients.guest.name,
-            phone: recipients.guest.phone
-          });
-        }
-      }
-
-      if (targetMode === "requester" || targetMode === "both") {
-        if (targetMode === "requester" || recipients.requester.isDifferentFromGuest) {
-          if (recipients.requester.phone) {
-            targetsToSchedule.push({
-              type: "requester",
-              name: recipients.requester.name,
-              phone: recipients.requester.phone
-            });
-          } else if (targetMode === "requester" && recipients.guest.phone) {
-            targetsToSchedule.push({
-              type: "guest",
-              name: recipients.guest.name,
-              phone: recipients.guest.phone
-            });
-          }
-        }
-      }
-
-      if (targetsToSchedule.length === 0 && recipients.guest.phone) {
-        targetsToSchedule.push({
-          type: "guest",
-          name: recipients.guest.name,
-          phone: recipients.guest.phone
-        });
-      }
+      const targetsToSchedule = buildTemplateTargets(tpl, recipients, { targetMode });
 
       for (const targetItem of targetsToSchedule) {
-        if (!targetItem.phone) continue;
+        // Acompanhante que já preencheu a própria ficha não recebe lembrete de pré-check-in
+        if (tpl.triggerEvent === "pre_checkin_reminder" && targetItem.guestIndex > 1 && targetItem.hasCompletedCheckin) {
+          continue;
+        }
 
-        // Trava de Segurança: Modo de Teste / Sandbox (não agenda na fila se não for número de teste)
-        if (db?.zapiConfig?.testModeOnly !== false && !isPhoneAllowedInTestMode(targetItem.phone, db?.zapiConfig)) {
+        // Trava de Segurança: Modo de Teste / Sandbox (bloqueia só o WhatsApp; sem e-mail, não agenda)
+        const waBlockedByTestMode = Boolean(targetItem.phone) && db?.zapiConfig?.testModeOnly !== false && !isPhoneAllowedInTestMode(targetItem.phone, db?.zapiConfig);
+        if ((!targetItem.phone || waBlockedByTestMode) && !targetItem.email) {
           continue;
         }
 
@@ -6544,6 +6923,7 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
         const alreadySentInHistory = (db.whatsappHistory || []).some(h =>
           (h.reservationCode === resv.code || h.reservationId === resv.id) &&
           h.triggerEvent === tpl.triggerEvent &&
+          (h.recipientType || "guest") === targetItem.type &&
           (h.status === "sent" || h.status === "delivered")
         );
 
@@ -6563,34 +6943,15 @@ export function scheduleUpcomingReservationTriggers(dbOrGetter, saveDatabase) {
 
           // Apenas agenda se for no futuro (> now)
           if (scheduledDate > now) {
-            const baseUrl = "https://corpflats.onrender.com";
-            const renderedMessage = resolveWhatsAppTags(tpl.message, resv, db, baseUrl, targetItem.type);
-            const renderedButtons = renderTemplateButtons(tpl.buttons, resv, db, baseUrl, targetItem.type, tpl);
-
-            db.whatsappQueue.push({
-              id: `q_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-              reservationId: resv.id,
-              reservationCode: resv.code,
-              guestName: resv.guestName,
-              guestPhone: targetItem.phone,
-              recipientType: targetItem.type,
-              recipientName: targetItem.name,
-              recipientTarget: targetMode,
-              channel: resvChannel,
-              triggerEvent: tpl.triggerEvent,
-              templateId: tpl.id,
-              title: tpl.title,
-              footer: tpl.footer,
-              documentUrl: (tpl.hasAttachment || tpl.documentUrl) ? tpl.documentUrl : undefined,
-              documentName: (tpl.hasAttachment || tpl.documentUrl) ? (tpl.documentName || db?.zapiConfig?.guestGuidePdfName || "Manual_do_Hospede_CorpFlats.pdf") : undefined,
+            if (!db.whatsappQueue) db.whatsappQueue = [];
+            db.whatsappQueue.push(buildQueueItemForTarget(db, {
+              tpl,
+              resv,
+              target: targetItem,
               scheduledFor: scheduledTime,
-              status: "scheduled",
-              sentAt: null,
-              error: null,
-              renderedMessage,
-              renderedButtons,
-              createdAt: now.toISOString()
-            });
+              channel: resvChannel,
+              recipientTarget: targetMode
+            }));
 
             hasChanges = true;
           }
@@ -6703,124 +7064,40 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
 
     for (const tpl of templates) {
       const targetMode = tpl.recipientTarget || "guest";
-      const dispatches = [];
-
-      if (targetMode === "guest" || targetMode === "both") {
-        if (recipients.guest.phone) {
-          dispatches.push({
-            type: "guest",
-            name: recipients.guest.name,
-            phone: recipients.guest.phone
-          });
-        }
-      }
-
-      if (targetMode === "requester" || targetMode === "both") {
-        if (targetMode === "requester" || recipients.requester.isDifferentFromGuest) {
-          if (recipients.requester.phone) {
-            dispatches.push({
-              type: "requester",
-              name: recipients.requester.name,
-              phone: recipients.requester.phone
-            });
-          } else if (targetMode === "requester" && recipients.guest.phone) {
-            dispatches.push({
-              type: "guest",
-              name: recipients.guest.name,
-              phone: recipients.guest.phone
-            });
-          }
-        }
-      }
-
-      if (dispatches.length === 0 && recipients.guest.phone) {
-        dispatches.push({
-          type: "guest",
-          name: recipients.guest.name,
-          phone: recipients.guest.phone
-        });
-      }
+      const dispatches = buildTemplateTargets(tpl, recipients, { targetMode });
 
       for (const d of dispatches) {
-        if (!d.phone) continue;
+        let target = { ...d };
 
-        // Trava de Segurança: Modo de Teste / Sandbox
-        if (db?.zapiConfig?.testModeOnly !== false && !isPhoneAllowedInTestMode(d.phone, db?.zapiConfig)) {
-          console.warn(`[WhatsApp Sandbox] Envio imediato de '${tpl.title}' para ${d.phone} (${d.name}) IGNORADO: Modo de Teste ativo.`);
-          continue;
-        }
-
-        // Validação anti-duplicação para checkout_completed
+        // Validação anti-duplicação para checkout_completed (por canal)
         if (eventName === "checkout_completed" || eventName === "on_checkout") {
-          const alreadySent = (db.whatsappHistory || []).some(h =>
-            (h.reservationCode === reservation.code || h.reservationId === reservation.id) &&
-            (h.triggerEvent === "checkout_completed" || h.triggerEvent === "on_checkout") &&
-            h.guestPhone === d.phone &&
-            (h.status === "sent" || h.status === "delivered")
-          );
-          if (alreadySent) {
-            console.log(`[Z-API Instant Trigger] Mensagem de checkout já foi enviada anteriormente para ${d.phone} (Reserva ${reservation.code}). Ignorando duplicação.`);
-            continue;
+          const isCheckoutEvent = (ev) => ev === "checkout_completed" || ev === "on_checkout";
+          if (target.phone) {
+            const alreadySentWa = (db.whatsappHistory || []).some(h =>
+              (h.reservationCode === reservation.code || h.reservationId === reservation.id) &&
+              isCheckoutEvent(h.triggerEvent) &&
+              h.guestPhone === target.phone &&
+              (h.status === "sent" || h.status === "delivered")
+            );
+            if (alreadySentWa) {
+              console.log(`[Z-API Instant Trigger] Mensagem de checkout já foi enviada anteriormente para ${target.phone} (Reserva ${reservation.code}). Ignorando duplicação.`);
+              target.phone = "";
+            }
           }
+          if (target.email) {
+            const alreadySentEmail = (db.reservationCommunications || []).some(c =>
+              (String(c.reservation_id) === String(reservation.code) || String(c.reservation_id) === String(reservation.id)) &&
+              c.metadata?.channel === "whatsapp_mirror" &&
+              isCheckoutEvent(c.metadata?.trigger) &&
+              String(c.recipient || "").toLowerCase() === target.email &&
+              c.status !== "failed"
+            );
+            if (alreadySentEmail) target.email = "";
+          }
+          if (!target.phone && !target.email) continue;
         }
 
-        const renderedMessage = resolveWhatsAppTags(tpl.message, reservation, db, baseUrl, d.type);
-        const renderedButtons = renderTemplateButtons(tpl.buttons, reservation, db, baseUrl, d.type, tpl);
-
-        const hasAttachment = Boolean(tpl.hasAttachment || tpl.documentUrl);
-        const docUrl = hasAttachment ? (tpl.documentUrl || db?.zapiConfig?.guestGuidePdfUrl) : undefined;
-        const docName = hasAttachment ? (tpl.documentName || db?.zapiConfig?.guestGuidePdfName || "Manual_do_Hospede_CorpFlats.pdf") : undefined;
-
-        console.log(`[Z-API Instant Trigger] Disparando '${tpl.title}' (${d.type === 'requester' ? 'Solicitante: ' + d.name : 'Hóspede: ' + d.name}) para ${d.phone}...`);
-
-        const result = await sendZapiMessage(db.zapiConfig, {
-          phone: d.phone,
-          message: renderedMessage,
-          title: tpl.title,
-          footer: tpl.footer,
-          buttons: renderedButtons,
-          documentUrl: docUrl,
-          documentName: docName,
-          documentCaption: hasAttachment ? tpl.documentCaption : undefined
-        });
-
-        if (!db.whatsappHistory) db.whatsappHistory = [];
-        db.whatsappHistory.push({
-          id: `auto_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-          reservationCode: reservation.code || reservation.reservationCode || (reservation.id ? `RES-${reservation.flatNumber || ''}-${String(reservation.id).padStart(4, '0')}` : null),
-          reservationId: reservation.id || null,
-          title: tpl.title || null,
-          guestName: reservation.guestName,
-          guestPhone: d.phone,
-          recipientType: d.type,
-          recipientName: d.name,
-          triggerEvent: eventName,
-          message: renderedMessage,
-          buttons: renderedButtons,
-          documentUrl: docUrl || null,
-          documentName: docName || null,
-          status: result.success ? "sent" : "failed",
-          method: result.method || "instant_trigger",
-          error: result.error || null,
-          sentAt: new Date().toISOString()
-        });
-
-        appendMessageToConversation(db, {
-          phone: d.phone,
-          senderName: "CorpFlats",
-          senderPhone: db?.zapiConfig?.instanceId || "",
-          fromMe: true,
-          text: renderedMessage,
-          type: (docUrl || hasAttachment) ? "document" : "text",
-          mediaUrl: docUrl || null,
-          fileName: docName || null,
-          buttons: renderedButtons,
-          triggerEvent: eventName,
-          reservationCode: reservation.code,
-          status: result.success ? "read" : "failed",
-          timestamp: new Date().toISOString(),
-          messageId: result.messageId || `msg_auto_${Date.now()}`
-        });
+        await dispatchTemplateToTarget(db, saveDatabase, { tpl, eventName, reservation, target, baseUrl });
 
         if (dispatches.length > 1) {
           await new Promise(r => setTimeout(r, 1200));
@@ -6907,7 +7184,7 @@ export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId,
       r.status !== "checkout" &&
       r.checkinDate === todayStr &&
       (r.flatId === flatId || String(r.flatNumber) === String(flatNumber)) &&
-      r.guestPhone
+      reservationHasAnyContact(r, db)
     );
 
     if (arrivingToday.length === 0) return;
@@ -6917,14 +7194,53 @@ export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId,
     const isAtOrAfterCheckin = brHour > checkHour || (brHour === checkHour && brMinute >= checkMin);
 
     for (const resv of arrivingToday) {
-      // Trava de Segurança: Modo de Teste / Sandbox
-      if (db?.zapiConfig?.testModeOnly !== false && !isPhoneAllowedInTestMode(resv.guestPhone, db?.zapiConfig)) {
-        console.log(`[Room Ready Sandbox] Ignorando disparo de quarto pronto para ${resv.guestPhone} (${resv.guestName}): Modo de Teste ativo.`);
-        continue;
+      // Trava de Segurança: Modo de Teste / Sandbox (só ignora se nenhum destinatário for alcançável)
+      if (db?.zapiConfig?.testModeOnly !== false) {
+        const rr = getReservationRecipients(resv, db);
+        const contacts = [rr.guest, ...rr.companions];
+        const reachable = contacts.some(c => c.email || (c.phone && isPhoneAllowedInTestMode(c.phone, db?.zapiConfig)));
+        if (!reachable) {
+          console.log(`[Room Ready Sandbox] Ignorando disparo de quarto pronto para ${resv.guestPhone} (${resv.guestName}): Modo de Teste ativo.`);
+          continue;
+        }
       }
 
       const resvChannel = normalizeReservationChannel(resv.channel || resv.source || "site");
       const isOtaChannel = resvChannel === "booking" || resvChannel === "airbnb";
+
+      // Agenda o "quarto pronto" para um horário fixo, criando um item por destinatário (hóspede + acompanhantes)
+      const enqueueRoomReadyForTargets = (defTpl, eventName, scheduledFor, idPrefix) => {
+        if (!db.whatsappQueue) db.whatsappQueue = [];
+        if (!defTpl) return;
+        const tplForEvent = { ...defTpl, triggerEvent: eventName };
+        const targets = buildTemplateTargets(tplForEvent, getReservationRecipients(resv, db), { targetMode: "guest" });
+        let added = false;
+        for (const target of targets) {
+          const alreadyQueued = db.whatsappQueue.some(q =>
+            (q.reservationCode === resv.code || q.reservationId === resv.id) &&
+            q.triggerEvent === eventName &&
+            (q.recipientType || "guest") === target.type &&
+            (q.status === "scheduled" || q.status === "sent")
+          );
+          if (alreadyQueued) continue;
+          const queueItem = buildQueueItemForTarget(db, {
+            tpl: tplForEvent,
+            resv,
+            target,
+            scheduledFor,
+            channel: resvChannel,
+            baseUrl: baseUrl || "https://corpflats.onrender.com",
+            idPrefix,
+            recipientTarget: "guest"
+          });
+          // Mantém o formato histórico destes agendamentos (sem anexo)
+          delete queueItem.documentUrl;
+          delete queueItem.documentName;
+          db.whatsappQueue.push(queueItem);
+          added = true;
+        }
+        if (added && typeof saveDatabase === "function") saveDatabase();
+      };
 
       // 1. Regra para OTAs (Booking / Airbnb): Liberação a partir das 12:00
       if (isOtaChannel) {
@@ -6934,39 +7250,9 @@ export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId,
 
           if (now < otaEarliest) {
             console.log(`[Room Ready OTA] Flat ${flatNumber} limpo antes das 12:00 (${now.toLocaleTimeString("pt-BR")}). Agendando disparo para as 12:00 pontualmente.`);
-            if (!db.whatsappQueue) db.whatsappQueue = [];
             const defTpl = (db.whatsappTemplates || []).find(t => t.id === "tpl_room_ready_ota") ||
                            DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_room_ready_ota");
-            const alreadyQueued = db.whatsappQueue.some(q =>
-              (q.reservationCode === resv.code || q.reservationId === resv.id) &&
-              q.triggerEvent === "room_ready_ota" &&
-              (q.status === "scheduled" || q.status === "sent")
-            );
-            if (!alreadyQueued && defTpl) {
-              const renderedMessage = resolveWhatsAppTags(defTpl.message, resv, db, baseUrl, "guest");
-              const renderedButtons = renderTemplateButtons(defTpl.buttons, resv, db, baseUrl, "guest", defTpl);
-              db.whatsappQueue.push({
-                id: `q_ota_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-                reservationId: resv.id,
-                reservationCode: resv.code,
-                guestName: resv.guestName,
-                guestPhone: resv.guestPhone,
-                recipientType: "guest",
-                recipientName: resv.guestName,
-                channel: resvChannel,
-                triggerEvent: "room_ready_ota",
-                templateId: defTpl.id,
-                title: defTpl.title,
-                footer: defTpl.footer,
-                scheduledFor: otaEarliest.toISOString(),
-                status: "scheduled",
-                sentAt: null,
-                renderedMessage,
-                renderedButtons,
-                createdAt: now.toISOString()
-              });
-              if (typeof saveDatabase === "function") saveDatabase();
-            }
+            enqueueRoomReadyForTargets(defTpl, "room_ready_ota", otaEarliest.toISOString(), "q_ota");
             continue;
           }
         }
@@ -6978,39 +7264,9 @@ export async function triggerRoomReadyWhatsApp(dbOrGetter, saveDatabase, flatId,
 
           if (now < directEarliest) {
             console.log(`[Room Ready Direct] Flat ${flatNumber} limpo antes das 10:00 (${now.toLocaleTimeString("pt-BR")}). Agendando disparo de early check-in para as 10:00 pontualmente.`);
-            if (!db.whatsappQueue) db.whatsappQueue = [];
             const defTpl = (db.whatsappTemplates || []).find(t => t.id === "tpl_room_ready_direct") ||
                            DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_room_ready_direct");
-            const alreadyQueued = db.whatsappQueue.some(q =>
-              (q.reservationCode === resv.code || q.reservationId === resv.id) &&
-              q.triggerEvent === "room_ready" &&
-              (q.status === "scheduled" || q.status === "sent")
-            );
-            if (!alreadyQueued && defTpl) {
-              const renderedMessage = resolveWhatsAppTags(defTpl.message, resv, db, baseUrl, "guest");
-              const renderedButtons = renderTemplateButtons(defTpl.buttons, resv, db, baseUrl, "guest", defTpl);
-              db.whatsappQueue.push({
-                id: `q_direct_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-                reservationId: resv.id,
-                reservationCode: resv.code,
-                guestName: resv.guestName,
-                guestPhone: resv.guestPhone,
-                recipientType: "guest",
-                recipientName: resv.guestName,
-                channel: resvChannel,
-                triggerEvent: "room_ready",
-                templateId: defTpl.id,
-                title: defTpl.title,
-                footer: defTpl.footer,
-                scheduledFor: directEarliest.toISOString(),
-                status: "scheduled",
-                sentAt: null,
-                renderedMessage,
-                renderedButtons,
-                createdAt: now.toISOString()
-              });
-              if (typeof saveDatabase === "function") saveDatabase();
-            }
+            enqueueRoomReadyForTargets(defTpl, "room_ready", directEarliest.toISOString(), "q_direct");
             continue;
           }
         }

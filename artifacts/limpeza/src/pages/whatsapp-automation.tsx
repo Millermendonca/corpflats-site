@@ -121,6 +121,23 @@ interface WhatsAppTemplate {
   documentUrl?: string
   documentName?: string
   documentCaption?: string
+  sendEmail?: boolean
+  includeCompanions?: boolean
+  emailSubject?: string
+}
+
+type RecipientType = "guest" | "requester" | `guest_${number}`
+
+// Mesma regra do backend: eventos financeiros não vão para acompanhantes por padrão
+const COMPANION_EXCLUDED_EVENTS = ["pre_reservation_created", "payment_pending", "additional_daily_pending", "payment_confirmed"]
+const defaultIncludeCompanions = (tpl: { triggerEvent?: string; includeCompanions?: boolean }) =>
+  typeof tpl.includeCompanions === "boolean" ? tpl.includeCompanions : !COMPANION_EXCLUDED_EVENTS.includes(tpl.triggerEvent || "")
+
+const recipientTypeLabel = (type?: string) => {
+  if (type === "requester") return "Solicitante"
+  const m = /^guest_(\d+)$/.exec(type || "")
+  if (m) return `${m[1]}º Hóspede`
+  return "Hóspede"
 }
 
 interface QueueItem {
@@ -129,7 +146,8 @@ interface QueueItem {
   reservationCode: string
   guestName: string
   guestPhone: string
-  recipientType?: "guest" | "requester"
+  guestEmail?: string
+  recipientType?: RecipientType
   recipientName?: string
   recipientTarget?: "guest" | "requester" | "both"
   channel?: string
@@ -142,6 +160,8 @@ interface QueueItem {
   sentAt?: string | null
   error?: string | null
   method?: string
+  emailStatus?: string
+  whatsappStatus?: string
   renderedMessage: string
   renderedButtons?: ButtonAction[]
   documentUrl?: string
@@ -156,7 +176,7 @@ interface HistoryItem {
   reservationCode?: string
   guestName: string
   guestPhone: string
-  recipientType?: "guest" | "requester"
+  recipientType?: RecipientType
   recipientName?: string
   triggerEvent: string
   message: string
@@ -290,6 +310,9 @@ export default function WhatsappAutomation() {
   const [editingButtons, setEditingButtons] = useState<ButtonAction[]>([])
   const [editingChannels, setEditingChannels] = useState<string[]>(["site", "whatsapp", "booking", "airbnb", "outros"])
   const [editingRecipientTarget, setEditingRecipientTarget] = useState<"guest" | "requester" | "both">("guest")
+  const [editingIncludeCompanions, setEditingIncludeCompanions] = useState<boolean>(true)
+  const [editingSendEmail, setEditingSendEmail] = useState<boolean>(true)
+  const [editingEmailSubject, setEditingEmailSubject] = useState<string>("")
   const [editingEnabled, setEditingEnabled] = useState<boolean>(true)
   const [editingHasAttachment, setEditingHasAttachment] = useState<boolean>(false)
   const [editingDocumentUrl, setEditingDocumentUrl] = useState<string>("")
@@ -646,6 +669,9 @@ export default function WhatsappAutomation() {
       : ["site", "whatsapp", "booking", "airbnb", "outros"]
     setEditingChannels(tplChannels)
     setEditingRecipientTarget(tpl.recipientTarget || "guest")
+    setEditingIncludeCompanions(defaultIncludeCompanions(tpl))
+    setEditingSendEmail(tpl.sendEmail !== false)
+    setEditingEmailSubject(tpl.emailSubject || "")
     setEditingEnabled(tpl.enabled !== false)
     setEditingHasAttachment(Boolean(tpl.hasAttachment || tpl.documentUrl))
     setEditingDocumentUrl(tpl.documentUrl || "")
@@ -795,6 +821,9 @@ export default function WhatsappAutomation() {
       buttons: editingButtons,
       channels: editingChannels,
       recipientTarget: editingRecipientTarget,
+      includeCompanions: editingIncludeCompanions,
+      sendEmail: editingSendEmail,
+      emailSubject: editingEmailSubject.trim(),
       enabled: editingEnabled,
       hasAttachment: editingHasAttachment,
       documentUrl: editingHasAttachment ? editingDocumentUrl : "",
@@ -1986,6 +2015,24 @@ export default function WhatsappAutomation() {
                           >
                             {tpl.recipientTarget === "both" ? "✨ Ambos" : tpl.recipientTarget === "requester" ? "👥 Solicitante" : "👤 Hóspede"}
                           </Badge>
+                          {tpl.recipientTarget !== "requester" && defaultIncludeCompanions(tpl) && (
+                            <Badge
+                              variant="outline"
+                              className="text-[10px] font-bold py-0.5 px-1.5 bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/50 dark:text-amber-300"
+                              title="Também enviado ao 2º/3º hóspede da reserva"
+                            >
+                              👥 +Acomp.
+                            </Badge>
+                          )}
+                          {tpl.sendEmail !== false && (
+                            <Badge
+                              variant="outline"
+                              className="text-[10px] font-bold py-0.5 px-1.5 bg-indigo-50 text-indigo-800 border-indigo-200 dark:bg-indigo-950/50 dark:text-indigo-300"
+                              title="Também enviado por e-mail"
+                            >
+                              ✉️ E-mail
+                            </Badge>
+                          )}
                           {(tpl.hasAttachment || tpl.documentUrl) && (
                             <Badge 
                               variant="secondary" 
@@ -2320,6 +2367,58 @@ export default function WhatsappAutomation() {
                           </div>
                         </button>
                       </div>
+                    </div>
+
+                    {/* ACOMPANHANTES (2º/3º HÓSPEDE) E ESPELHO POR E-MAIL */}
+                    <div className="p-3.5 rounded-xl bg-slate-50/80 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 space-y-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <span className="text-xs font-bold text-foreground uppercase tracking-wider">
+                            🧑‍🤝‍🧑 Incluir acompanhantes (2º/3º hóspede)
+                          </span>
+                          <p className="text-[11px] text-muted-foreground">
+                            {editingRecipientTarget === "requester"
+                              ? "Indisponível quando a mensagem vai só para o solicitante."
+                              : "Os hóspedes adicionais cadastrados na reserva (com WhatsApp e/ou e-mail) também recebem esta mensagem, com o nome e link de check-in de cada um."}
+                          </p>
+                        </div>
+                        <Switch
+                          checked={editingRecipientTarget !== "requester" && editingIncludeCompanions}
+                          disabled={editingRecipientTarget === "requester"}
+                          onCheckedChange={(v) => setEditingIncludeCompanions(Boolean(v))}
+                        />
+                      </div>
+
+                      <div className="border-t border-slate-200 dark:border-slate-800" />
+
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <span className="text-xs font-bold text-foreground uppercase tracking-wider">
+                            ✉️ Também enviar por e-mail
+                          </span>
+                          <p className="text-[11px] text-muted-foreground">
+                            Envia o mesmo texto por e-mail para cada destinatário que tenha e-mail cadastrado (botões viram links). Obedece ao "Motor de e-mails automáticos" das configurações de e-mail.
+                          </p>
+                        </div>
+                        <Switch
+                          checked={editingSendEmail}
+                          onCheckedChange={(v) => setEditingSendEmail(Boolean(v))}
+                        />
+                      </div>
+
+                      {editingSendEmail && (
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-semibold text-muted-foreground">
+                            Assunto do e-mail (opcional — aceita as mesmas tags, ex.: {"{{numero_reserva}}"})
+                          </label>
+                          <Input
+                            value={editingEmailSubject}
+                            onChange={(e) => setEditingEmailSubject(e.target.value)}
+                            placeholder="Padrão: CorpFlats • <tipo da mensagem> • Reserva <código>"
+                            className="h-8 text-xs"
+                          />
+                        </div>
+                      )}
                     </div>
 
                     {/* CANAIS DE RESERVA DESTINATÁRIOS (FILTRO POR CANAL DE ORIGEM) */}
@@ -3219,14 +3318,29 @@ export default function WhatsappAutomation() {
                                 {item.reservationCode}
                               </Badge>
 
-                              {/* Destinatário (Hóspede ou Solicitante) */}
+                              {/* Destinatário (Hóspede, Acompanhante ou Solicitante) */}
                               <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md border ${
                                 item.recipientType === "requester"
                                   ? "bg-sky-50 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300 border-sky-200"
-                                  : "bg-slate-50 text-slate-700 dark:bg-slate-900 dark:text-slate-300 border-slate-200"
+                                  : item.recipientType && item.recipientType.startsWith("guest_")
+                                    ? "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 border-amber-200"
+                                    : "bg-slate-50 text-slate-700 dark:bg-slate-900 dark:text-slate-300 border-slate-200"
                               }`}>
-                                {item.recipientType === "requester" ? `👥 Solicitante: ${item.recipientName || item.guestName}` : `👤 Hóspede: ${item.guestName}`}
+                                {item.recipientType === "requester"
+                                  ? `👥 Solicitante: ${item.recipientName || item.guestName}`
+                                  : item.recipientType && item.recipientType.startsWith("guest_")
+                                    ? `🧑‍🤝‍🧑 ${recipientTypeLabel(item.recipientType)}: ${item.recipientName || item.guestName}`
+                                    : `👤 Hóspede: ${item.guestName}`}
                               </span>
+
+                              {item.guestEmail && (
+                                <span
+                                  className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md border bg-indigo-50 text-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-300 border-indigo-200"
+                                  title={item.guestEmail}
+                                >
+                                  ✉️ E-mail{item.emailStatus ? ` (${item.emailStatus === "sent" ? "enviado" : item.emailStatus === "skipped" ? "não enviado" : item.emailStatus})` : ""}
+                                </span>
+                              )}
 
                               {/* Canal de Origem da Reserva */}
                               {item.channel && (
