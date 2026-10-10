@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
+import { PdfPreview } from "@/components/pdf-preview"
 import { 
   Building2, User, Phone, Mail, Camera, FileText, CheckCircle2, 
   MapPin, ShieldCheck, ArrowRight, ArrowLeft, PenTool, AlertCircle, Zap, Car,
@@ -1455,19 +1456,13 @@ export default function GuestPreCheckin() {
                     className="h-9 text-xs bg-white border-slate-200 hover:bg-slate-50 text-slate-700 font-bold gap-1.5 rounded-xl shadow-xs"
                   >
                     <ExternalLink className="w-3.5 h-3.5 text-slate-500" />
-                    <span className="hidden sm:inline">Nova Aba</span>
+                    <span>Nova Aba</span>
                   </Button>
                 </div>
               </div>
 
-              {/* PDF Viewer Iframe */}
-              <div className="w-full h-[750px] sm:h-[950px] rounded-2xl overflow-hidden border border-slate-200 bg-slate-100 shadow-inner">
-                <iframe
-                  src={targetViewUrl}
-                  title="Ficha Oficial de Hospedagem"
-                  className="w-full h-full border-0"
-                />
-              </div>
+              {/* Preview do PDF renderizado via PDF.js (iframe de PDF não funciona em navegadores mobile) */}
+              <PdfPreview url={targetViewUrl} title="Ficha de Hospedagem (Check-in Digital)" />
 
               <div className="text-center pt-2 text-[11px] text-slate-400 border-t border-slate-100">
                 {brandName} • Edifício Soho Residence Service • Centro, Campos dos Goytacazes - RJ

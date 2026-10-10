@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
+import { PdfPreview } from "@/components/pdf-preview"
 import { 
   Building2, User, Phone, CheckCircle2, AlertTriangle, Lock, Unlock, 
   LogOut, Clock, RefreshCw, FileText, ArrowRight, ShieldCheck, Undo2, 
@@ -1058,13 +1059,8 @@ export default function ReceptionTablet() {
                       </div>
                     </div>
 
-                    <div className="w-full h-[520px] rounded-xl overflow-hidden border border-slate-800 bg-slate-950 shadow-inner">
-                      <iframe
-                        src={targetViewUrl}
-                        title="Ficha Oficial de Hospedagem"
-                        className="w-full h-full border-0"
-                      />
-                    </div>
+                    {/* Preview do PDF via PDF.js (iframe de PDF não renderiza em tablets/celulares) */}
+                    <PdfPreview url={targetViewUrl} title="Ficha Oficial de Hospedagem" dark />
                   </div>
                 ) : (
                   <>

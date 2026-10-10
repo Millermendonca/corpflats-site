@@ -312,13 +312,21 @@ test("Suite Resiliência FNRH: Multi-hóspedes, Reassinatura e Fallback Cloudfla
     // Reception Tablet:
     assert.ok(receptionTabletCode.includes("Baixar PDF Assinado"), "Reception tablet deve ter botão 'Baixar PDF Assinado'");
     assert.ok(receptionTabletCode.includes("Ficha Oficial em PDF"), "Reception tablet deve ter alternador de Ficha em PDF");
-    assert.ok(receptionTabletCode.includes("<iframe"), "Reception tablet deve renderizar iframe do PDF autêntico");
+    // O PDF é renderizado via PDF.js (<PdfPreview>) — <iframe> de PDF fica em branco ("Abrir") em navegadores mobile
+    assert.ok(receptionTabletCode.includes("<PdfPreview"), "Reception tablet deve renderizar o PDF autêntico via PdfPreview");
+    assert.ok(!receptionTabletCode.includes("<iframe"), "Reception tablet não deve usar iframe para o PDF (não funciona no mobile)");
     assert.ok(!receptionTabletCode.includes("Ficha de Entrada & FNHR:"), "Header do modal não deve mais exibir termo FNHR");
 
     // Pre-checkin:
     assert.ok(preCheckinCode.includes("Baixar PDF Assinado"), "Pre-checkin deve ter botão 'Baixar PDF Assinado'");
-    assert.ok(preCheckinCode.includes("<iframe"), "Pre-checkin deve renderizar iframe com PDF autêntico");
+    assert.ok(preCheckinCode.includes("<PdfPreview"), "Pre-checkin deve renderizar o PDF autêntico via PdfPreview");
+    assert.ok(!preCheckinCode.includes("<iframe"), "Pre-checkin não deve usar iframe para o PDF (não funciona no mobile)");
     assert.ok(preCheckinCode.includes("isReSignatureNeeded"), "Pre-checkin deve validar isReSignatureNeeded");
+
+    // Componente de preview usa PDF.js com botão "Ver completo"
+    const pdfPreviewCode = fs.readFileSync(path.join(rootDir, "artifacts", "limpeza", "src", "components", "pdf-preview.tsx"), "utf-8");
+    assert.ok(pdfPreviewCode.includes("pdfjs-dist"), "PdfPreview deve usar pdfjs-dist");
+    assert.ok(pdfPreviewCode.includes("Ver completo"), "PdfPreview deve oferecer botão 'Ver completo'");
   });
 
 });

@@ -38,6 +38,7 @@ const CHANNEL_CONFIG: Record<string, { label: string; bg: string; text: string; 
 }
 
 import { AccessDenied } from "@/components/access-denied"
+import { PdfViewerDialog } from "@/components/pdf-preview"
 import { FLAT_AMENITIES_CATALOG, AMENITY_CATEGORIES, renderAmenityIcon, getFlatActiveAmenities, FlatAmenityDefinition } from "@/lib/flat-amenities"
 import { ReservationHoverCard } from "@/components/reservation-hover-card"
 import { useQuickMessages, renderQuickMessage, WhatsAppQuickMessage, getReservationRecipients } from "@/hooks/use-quick-messages"
@@ -318,6 +319,7 @@ export default function PmsCalendar() {
 
   // Documento Oficial e Alertas Operacionais
   const [formDocPhotoUrl, setFormDocPhotoUrl] = useState("")
+  const [docPdfViewerOpen, setDocPdfViewerOpen] = useState(false)
   const [formDocFileName, setFormDocFileName] = useState("")
   const [uploadingDoc, setUploadingDoc] = useState(false)
   const [formHasMinor, setFormHasMinor] = useState(false)
@@ -5571,9 +5573,8 @@ export default function PmsCalendar() {
                             size="sm"
                             variant="ghost"
                             onClick={() => {
-                              if (formDocPhotoUrl.startsWith("data:application/pdf")) {
-                                const win = window.open()
-                                win?.document.write(`<iframe src="${formDocPhotoUrl}" frameborder="0" style="border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;" allowfullscreen></iframe>`)
+                              if (formDocPhotoUrl.startsWith("data:application/pdf") || formDocPhotoUrl.toLowerCase().includes(".pdf") || formDocFileName.toLowerCase().endsWith(".pdf")) {
+                                setDocPdfViewerOpen(true)
                               } else {
                                 window.open(formDocPhotoUrl, "_blank")
                               }
@@ -5654,6 +5655,14 @@ export default function PmsCalendar() {
                   {/* Hóspede 3 */}
                   {Number(formGuestCount) === 3 && (
                     <div className="p-3 bg-muted/30 border rounded-xl space-y-2.5 animate-in fade-in">
+                          {docPdfViewerOpen && (
+                            <PdfViewerDialog
+                              open={docPdfViewerOpen}
+                              onOpenChange={setDocPdfViewerOpen}
+                              url={formDocPhotoUrl}
+                              title={formDocFileName || "Documento do Hóspede"}
+                            />
+                          )}
                       <div className="font-bold text-xs text-slate-900 dark:text-slate-100 flex items-center justify-between">
                         <span className="flex items-center gap-1.5">
                           <User className="w-3.5 h-3.5 text-purple-600" />

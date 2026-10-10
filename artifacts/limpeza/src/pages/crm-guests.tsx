@@ -22,6 +22,7 @@ import {
 } from "lucide-react"
 
 import { AccessDenied } from "@/components/access-denied"
+import { PdfViewerDialog } from "@/components/pdf-preview"
 
 export default function CrmGuests() {
   const [, setLocation] = useLocation()
@@ -36,6 +37,8 @@ export default function CrmGuests() {
 
   // Lightbox de Mídias (Selfie, Documento, Assinatura)
   const [lightboxMedia, setLightboxMedia] = useState<{ url: string; title: string; subtitle?: string } | null>(null)
+  // Visualizador de PDF (PDF.js) — funciona também no celular
+  const [pdfViewer, setPdfViewer] = useState<{ url: string; title: string } | null>(null)
 
   // Modal Detail 360º
   const [detailModalOpen, setDetailModalOpen] = useState(false)
@@ -1099,12 +1102,10 @@ export default function CrmGuests() {
                                   size="sm"
                                   variant="outline"
                                   onClick={() => {
-                                    if (activeGuest.docPhotoUrl.startsWith("data:")) {
-                                      const win = window.open();
-                                      win?.document.write(`<iframe src="${activeGuest.docPhotoUrl}" frameborder="0" style="border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;" allowfullscreen></iframe>`);
-                                    } else {
-                                      window.open(activeGuest.docPhotoUrl, "_blank");
-                                    }
+                                    setPdfViewer({
+                                      url: activeGuest.docPhotoUrl,
+                                      title: `Documento de Identidade - ${activeGuest.fullName || activeGuest.name || "Hóspede"}`,
+                                    });
                                   }}
                                   className="text-xs h-7 px-2.5 rounded-lg flex items-center gap-1 font-bold"
                                 >
@@ -1662,6 +1663,16 @@ export default function CrmGuests() {
             </form>
           </DialogContent>
         </Dialog>
+
+        {/* ── VISUALIZADOR DE PDF (PDF.js, funciona no celular) ── */}
+        {pdfViewer && (
+          <PdfViewerDialog
+            open={!!pdfViewer}
+            onOpenChange={(open) => !open && setPdfViewer(null)}
+            url={pdfViewer.url}
+            title={pdfViewer.title}
+          />
+        )}
 
         {/* ── LIGHTBOX ZOOM MODAL (EM TELA CHEIA) ── */}
         {lightboxMedia && (
