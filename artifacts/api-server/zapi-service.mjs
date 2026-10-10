@@ -1090,6 +1090,14 @@ export function setZapiGlobalDbGetter(getter) {
 }
 
 // ── Verificação de Whitelist / Modo de Teste (Sandbox) ─────────────────────────
+// Números sempre liberados no Modo de Teste (além de testAllowedPhones e camareiras):
+// - 22998505276: Miller Mendonça (gestor / desenvolvedor)
+// - 21997142513: hóspede de teste liberado para receber as mensagens programadas
+export const DEFAULT_TEST_ALLOWED_PHONES = [
+  "22998505276", "5522998505276",
+  "21997142513", "5521997142513"
+];
+
 export function isPhoneAllowedInTestMode(phone, config = {}, db = null) {
   // Se testModeOnly for false explicitamente, estamos em produção total (todos permitidos)
   if (config?.testModeOnly === false) {
@@ -1100,8 +1108,8 @@ export function isPhoneAllowedInTestMode(phone, config = {}, db = null) {
   const targetDigits = String(phone).replace(/\D/g, "");
   if (!targetDigits) return false;
 
-  // Miller Mendonça (gestor do hotel / desenvolvedor)
-  const defaultAllowed = ["22998505276", "5522998505276"];
+  // Miller Mendonça (gestor do hotel / desenvolvedor) + hóspedes de teste liberados
+  const defaultAllowed = DEFAULT_TEST_ALLOWED_PHONES;
 
   // Telefones autorizados configurados pelo usuário
   const userConfigured = String(config?.testAllowedPhones || "")

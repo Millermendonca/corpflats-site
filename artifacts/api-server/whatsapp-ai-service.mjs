@@ -9,7 +9,7 @@
  * - Base de conhecimento rica sobre o CorpFlats (Wi-Fi, garagem, café, horários, localização, comodidades)
  */
 
-import { cleanWhatsAppPhone } from "./zapi-service.mjs";
+import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES } from "./zapi-service.mjs";
 import { getCheckinUrlSync as getSerproCheckinUrlSync } from "./fnrh-serpro-service.mjs";
 
 /**
@@ -532,8 +532,7 @@ export async function processAiInboundMessage({
 
   // 2. Verifica se está em Modo de Teste
   if (db.zapiConfig?.testModeOnly === true) {
-    const allowed = String(db.zapiConfig.testAllowedPhones || "")
-      .split(/[,\s]+/)
+    const allowed = [...DEFAULT_TEST_ALLOWED_PHONES, ...String(db.zapiConfig.testAllowedPhones || "").split(/[,\s]+/)]
       .map(p => cleanWhatsAppPhone(p))
       .filter(Boolean);
     const targetNorm = cleanWhatsAppPhone(cleanTarget);
