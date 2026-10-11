@@ -1,4 +1,4 @@
-# BRIEFING — 2026-10-11T03:36:00Z
+# BRIEFING — 2026-10-11T03:56:00Z
 
 ## Mission
 Independently review and adversarially challenge E2E synthetic testing suite for Milestone 4 (Matriz Combinatória Pairwise), Milestone 5 (Gemini Chaos Explorer), and Consolidated HTML Report (e2e/reports/index.html).
@@ -40,7 +40,14 @@ Independently review and adversarially challenge E2E synthetic testing suite for
 - **Review criteria**: Correctness, Completeness, Quality, Adversarial Robustness, Integrity Violations Check
 
 ## Key Decisions Made
-- Commencing independent verification of M4 and M5 test suites, codebases, and consolidated HTML report.
+- Executed independent E2E test runs:
+  - `04-chaos-explorer.spec.mjs`: 12/12 passed (100% pass rate in Desktop-1920, Tablet-768, Mobile-375).
+  - `03-pairwise-matrix.spec.mjs`: 12/12 passed (100% pass rate in Desktop-1920, Tablet-768, Mobile-375).
+- Inspected `e2e/reports/index.html`: Verified 100% standalone nature (0 external CDN links), responsive layout, failure gallery, and usability audit highlights.
+- Verified byte-for-byte Twin-Server parity via SHA-256 match between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`.
+- Verified production DB isolation: `data/database.json` remained 100% untampered.
+- Conducted adversarial analysis: Identified port 5056 lingering risk during abnormal aborts and path resolution quirks in `scripts/demo-server.mjs`.
+- Issued verdict: APPROVE.
 
 ## Artifact Index
 - `.agents/teamwork/reviewer_2/DISPATCH.md` — Inbound instructions and dispatch log
@@ -50,22 +57,24 @@ Independently review and adversarially challenge E2E synthetic testing suite for
 
 ## Review Checklist
 - **Items reviewed**:
-  - M4 Handoff report (read)
-  - M5 Handoff report (read)
-  - PROJECT.md and DISPATCH.md (read)
-- **Verdict**: PENDING
-- **Unverified claims**:
-  - `e2e/suites/03-pairwise-matrix.spec.mjs` test logic, real assertions vs facade
-  - `e2e/suites/04-chaos-explorer.spec.mjs` test logic, real assertions vs facade
-  - `e2e/reports/index.html` standalone nature, metrics accuracy, media indexer
-  - Actual independent execution of test suites
+  - `e2e/suites/03-pairwise-matrix.spec.mjs` (inspected & executed: 12/12 pass)
+  - `e2e/suites/04-chaos-explorer.spec.mjs` (inspected & executed: 12/12 pass)
+  - `e2e/reporters/html-reporter.mjs` & `e2e/reports/index.html` (inspected: standalone, zero CDN, complete KPIs)
+  - `e2e/reports/usability-audit.json` (inspected: 1232 elements, 0 critical defects)
+  - `artifacts/limpeza/src/pages/guest-pre-checkin.tsx` (inspected popstate/pushState)
+  - Twin-server SHA-256 parity (verified: Match: True)
+  - Production database (verified: clean)
+- **Verdict**: APPROVE
+- **Unverified claims**: None.
 
 ## Attack Surface
-- **Hypotheses to test**:
-  - Are tests hardcoded or self-certifying (e.g., returning true without real checks)?
-  - Are double-clicks actually fired with 50ms interval and verified for idempotency?
-  - Does fuzzing test real XSS/SQLi without crashing or executing payload?
-  - Does `page.goBack()` in guest pre-checkin preserve form data without blank screen?
-  - Is `usability-audit.json` dynamically generated from actual DOM queries?
-  - Is `index.html` truly standalone (zero external CDN links like unpkg/cdnjs)?
-  - Does time-travel properly trigger the 22:00 cutoff in pairwise suite?
+- **Hypotheses tested**:
+  - Integrity violation / facade logic: PASSED (authentic Playwright interactions, real browser execution).
+  - Rapid double-clicks (50ms): PASSED (idempotent, no duplicate requests).
+  - Fuzzing & XSS sanitization: PASSED (payload escaped as text, zero React crash).
+  - Browser Back button navigation: PASSED (popstate handled, input preserved).
+  - 19 flats across 7 governance states: PASSED (verified dynamically).
+  - Service orders token & photos & limits: PASSED (max simultaneous flats enforced, photo required).
+  - Breakfast 22h cutoff: PASSED (time-travel tested, rejected post-22h).
+  - Server port lingering on failure: CONFIRMED (Mock Z-API connection linger on Windows).
+- **Vulnerabilities found**: 0 critical logic flaws; 1 environmental reliability risk (port 5056 lingering socket cleanup).

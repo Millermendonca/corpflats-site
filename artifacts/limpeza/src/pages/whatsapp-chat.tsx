@@ -94,6 +94,7 @@ export interface ChatConversation {
     type: string
   }
   reservation?: any
+  otherReservations?: any[]
 }
 
 const EMOJI_LIST = [
@@ -115,20 +116,26 @@ export default function WhatsappChat() {
   const [searchQuery, setSearchQuery] = useState('')
   const [filterTab, setFilterTab] = useState<'all' | 'unread' | 'active' | 'today' | 'pinned'>('all')
 
-  // UI Panels
-  const [showDossier, setShowDossier] = useState(true)
+  // UI Panels (Fechado por padrão em telas menores para priorizar a área de mensagens)
+  const [showDossier, setShowDossier] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth >= 1440
+    }
+    return false
+  })
   const [isMobileListOpen, setIsMobileListOpen] = useState(true)
 
-  // Resizable 3-Column Widths (persisted in localStorage)
+  // Resizable 3-Column Widths (persisted in localStorage com limites protetivos)
   const [contactsWidth, setContactsWidth] = useState<number>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('corpflats_chat_contacts_width')
       if (saved) {
         const parsed = parseInt(saved, 10)
-        if (!isNaN(parsed) && parsed >= 260 && parsed <= 600) return parsed
+        if (!isNaN(parsed) && parsed >= 240 && parsed <= 450) return parsed
       }
+      if (window.innerWidth < 1440) return 290
     }
-    return 360
+    return 310
   })
 
   const [dossierWidth, setDossierWidth] = useState<number>(() => {
@@ -136,10 +143,11 @@ export default function WhatsappChat() {
       const saved = localStorage.getItem('corpflats_chat_dossier_width')
       if (saved) {
         const parsed = parseInt(saved, 10)
-        if (!isNaN(parsed) && parsed >= 260 && parsed <= 600) return parsed
+        if (!isNaN(parsed) && parsed >= 240 && parsed <= 420) return parsed
       }
+      if (window.innerWidth < 1440) return 280
     }
-    return 340
+    return 300
   })
 
   const [isDraggingContacts, setIsDraggingContacts] = useState(false)
@@ -296,7 +304,13 @@ export default function WhatsappChat() {
       if (res.ok) {
         const data = await res.json()
         if (data.conversation) {
-          setActiveConversation(data.conversation)
+          const reservation = data.reservation || data.conversation.reservation || null
+          const otherReservations = data.otherReservations || data.conversation.otherReservations || []
+          setActiveConversation({
+            ...data.conversation,
+            reservation,
+            otherReservations
+          })
           setMessages(data.conversation.messages || [])
         }
       }
@@ -1017,13 +1031,13 @@ Muito obrigado!`
         <div
           onMouseDown={startResizingContacts}
           onDoubleClick={() => {
-            setContactsWidth(360)
-            try { localStorage.setItem('corpflats_chat_contacts_width', '360') } catch {}
+            setContactsWidth(310)
+            try { localStorage.setItem('corpflats_chat_contacts_width', '310') } catch {}
           }}
           className={`hidden md:flex w-2 hover:w-2.5 -mr-1 items-center justify-center cursor-col-resize z-20 group relative transition-all select-none ${
             isDraggingContacts ? 'bg-emerald-500 w-2.5' : 'bg-transparent hover:bg-emerald-400/30'
           }`}
-          title="Arraste para redimensionar a lista de contatos • Duplo clique para restaurar (360px)"
+          title="Arraste para redimensionar a lista de contatos • Duplo clique para restaurar (310px)"
         >
           <div className={`w-1 h-8 rounded-full transition-colors ${
             isDraggingContacts ? 'bg-white shadow-xs' : 'bg-slate-300 dark:bg-slate-700 group-hover:bg-emerald-500'
@@ -1031,7 +1045,7 @@ Muito obrigado!`
         </div>
 
         {/* COLUNA 2: ÁREA DE MENSAGENS E CHAT */}
-        <div className={`${!isMobileListOpen ? 'flex' : 'hidden md:flex'} flex-col flex-1 h-full min-w-0 bg-slate-50 dark:bg-slate-950 relative overflow-hidden`}>
+        <div className={`${!isMobileListOpen ? 'flex' : 'hidden md:flex'} flex-col flex-1 h-full min-w-[320px] sm:min-w-[360px] bg-slate-50 dark:bg-slate-950 relative overflow-hidden`}>
           
           {activeConversation ? (
             <>
@@ -1425,7 +1439,7 @@ Muito obrigado!`
                   </div>
                 )}
 
-                <div className="flex items-end gap-2">
+                <div className="flex items-end gap-1.5 sm:gap-2">
                   {/* Popover de Emojis */}
                   <Popover>
                     <PopoverTrigger asChild>
@@ -1433,9 +1447,9 @@ Muito obrigado!`
                         type="button"
                         variant="ghost"
                         size="icon"
-                        className="h-10 w-10 rounded-xl text-slate-500 hover:text-emerald-600 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
+                        className="h-9 w-9 sm:h-10 sm:w-10 rounded-xl text-slate-500 hover:text-emerald-600 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
                       >
-                        <Smile className="w-5 h-5" />
+                        <Smile className="w-4 h-4 sm:w-5 sm:h-5" />
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent side="top" align="start" className="w-64 p-2 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-lg">
@@ -1464,9 +1478,9 @@ Muito obrigado!`
                         type="button"
                         variant="ghost"
                         size="icon"
-                        className="h-10 w-10 rounded-xl text-slate-500 hover:text-emerald-600 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
+                        className="h-9 w-9 sm:h-10 sm:w-10 rounded-xl text-slate-500 hover:text-emerald-600 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
                       >
-                        <Paperclip className="w-5 h-5" />
+                        <Paperclip className="w-4 h-4 sm:w-5 sm:h-5" />
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent side="top" align="start" className="w-48 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800">
@@ -1503,14 +1517,14 @@ Muito obrigado!`
                     size="icon"
                     onClick={handleSuggestWithAi}
                     disabled={loadingAiSuggestion || !activePhone}
-                    className="h-10 w-10 rounded-xl border-purple-200 dark:border-purple-800/80 bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/60 shrink-0 shadow-2xs transition-colors"
+                    className="h-9 w-9 sm:h-10 sm:w-10 rounded-xl border-purple-200 dark:border-purple-800/80 bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/60 shrink-0 shadow-2xs transition-colors"
                     title="✨ Sugerir resposta com Inteligência Artificial (Copiloto)"
                   >
-                    <Sparkles className={`w-4 h-4 ${loadingAiSuggestion ? 'animate-spin text-purple-600' : ''}`} />
+                    <Sparkles className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${loadingAiSuggestion ? 'animate-spin text-purple-600' : ''}`} />
                   </Button>
 
                   {/* Campo de Digitação com auto-grow e suporte a mensagens grandes */}
-                  <div className="flex-1 min-w-0 relative">
+                  <div className="flex-1 min-w-[140px] sm:min-w-[180px] relative">
                     <Textarea
                       ref={textareaRef}
                       rows={isExpandedEditor ? 6 : 1}
@@ -1546,7 +1560,7 @@ Muito obrigado!`
                     type="button"
                     disabled={sending || !inputMessage.trim()}
                     onClick={() => handleSendMessage()}
-                    className="h-10 w-10 sm:h-11 sm:w-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white p-0 shrink-0 shadow-xs flex items-center justify-center disabled:opacity-50"
+                    className="h-9 w-9 sm:h-10 sm:w-10 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white p-0 shrink-0 shadow-xs flex items-center justify-center disabled:opacity-50"
                   >
                     {sending ? (
                       <RefreshCw className="w-4 h-4 animate-spin text-white" />
@@ -1583,18 +1597,26 @@ Muito obrigado!`
           )}
         </div>
 
+        {/* BACKDROP MOBILE / LAPTOP PARA O DOSSIÊ */}
+        {activeConversation && showDossier && (
+          <div 
+            className="fixed inset-0 bg-black/20 backdrop-blur-2xs z-30 xl:hidden transition-opacity" 
+            onClick={() => setShowDossier(false)}
+          />
+        )}
+
         {/* DIVISOR REDIMENSIONÁVEL: CHAT / DOSSIÊ */}
         {activeConversation && showDossier && (
           <div
             onMouseDown={startResizingDossier}
             onDoubleClick={() => {
-              setDossierWidth(340)
-              try { localStorage.setItem('corpflats_chat_dossier_width', '340') } catch {}
+              setDossierWidth(300)
+              try { localStorage.setItem('corpflats_chat_dossier_width', '300') } catch {}
             }}
-            className={`hidden lg:flex w-2 hover:w-2.5 -ml-1 items-center justify-center cursor-col-resize z-20 group relative transition-all select-none ${
+            className={`hidden xl:flex w-2 hover:w-2.5 -ml-1 items-center justify-center cursor-col-resize z-20 group relative transition-all select-none ${
               isDraggingDossier ? 'bg-emerald-500 w-2.5' : 'bg-transparent hover:bg-emerald-400/30'
             }`}
-            title="Arraste para redimensionar o Dossiê • Duplo clique para restaurar (340px)"
+            title="Arraste para redimensionar o Dossiê • Duplo clique para restaurar (300px)"
           >
             <div className={`w-1 h-8 rounded-full transition-colors ${
               isDraggingDossier ? 'bg-white shadow-xs' : 'bg-slate-300 dark:bg-slate-700 group-hover:bg-emerald-500'
@@ -1602,11 +1624,11 @@ Muito obrigado!`
           </div>
         )}
 
-        {/* COLUNA 3: DOSSIÊ LATERAL DA RESERVA / HÓSPEDE (Redimensionável) */}
+        {/* COLUNA 3: DOSSIÊ LATERAL DA RESERVA / HÓSPEDE (Redimensionável e Responsivo) */}
         {activeConversation && showDossier && (
           <div 
             style={{ width: `${dossierWidth}px` }}
-            className="hidden lg:flex flex-col bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shrink-0 h-full overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/80 transition-[width] duration-75"
+            className="fixed inset-y-0 right-0 z-40 xl:static xl:z-auto flex flex-col bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shrink-0 h-full overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/80 shadow-2xl xl:shadow-none transition-[width] duration-75"
           >
             
             {/* Header do Dossiê */}
@@ -1706,6 +1728,42 @@ Muito obrigado!`
                 </div>
               )}
             </div>
+
+            {/* Outras Reservas deste Hóspede */}
+            {activeConversation.otherReservations && activeConversation.otherReservations.length > 0 && (
+              <div className="p-4 space-y-2.5 border-b border-slate-100 dark:border-slate-800">
+                <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block">
+                  Outras Reservas deste Hóspede ({activeConversation.otherReservations.length})
+                </span>
+                <div className="space-y-2">
+                  {activeConversation.otherReservations.map((ores: any) => (
+                    <div key={ores.code} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 text-xs space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-slate-800 dark:text-slate-200">Flat {ores.flatNumber}</span>
+                        <Badge
+                          variant="outline"
+                          className="text-[9.5px] uppercase font-bold py-0 border-emerald-400 text-emerald-700 bg-emerald-50 dark:bg-emerald-950/60"
+                        >
+                          {ores.status || 'Confirmada'}
+                        </Badge>
+                      </div>
+                      <div className="flex items-center justify-between text-[11px] text-slate-500">
+                        <span className="font-mono">{ores.code}</span>
+                        <span>{ores.checkinDate?.split('-').reverse().join('/')} a {ores.checkoutDate?.split('-').reverse().join('/')}</span>
+                      </div>
+                      <div className="pt-0.5 flex items-center justify-end">
+                        <a
+                          href={`/reservas?code=${ores.code}`}
+                          className="text-[10.5px] font-semibold text-emerald-600 hover:text-emerald-700 hover:underline flex items-center gap-0.5"
+                        >
+                          Ver no PMS <ChevronRight className="w-3 h-3" />
+                        </a>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Links Rápidos do PMS */}
             {activeConversation.reservation && (

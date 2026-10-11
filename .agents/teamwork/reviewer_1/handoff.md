@@ -1,169 +1,129 @@
-# Handoff Report: Reviewer 1 (Milestone 4 Final Review & Critic)
+# Handoff Report: Reviewer 1 — Verificação & Avaliação Adversarial (M1, M2, M3)
 
-**Agent**: Reviewer 1  
-**Archetype**: reviewer_critic  
-**Roles**: reviewer, critic  
-**Working Directory**: `c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/reviewer_1`  
-**Parent Agent ID**: `5ad82d68-5382-4b5d-b3af-ea9aa33373f7`  
-**Verdict**: **APPROVE**  
+**Data**: 2026-10-11T07:07:00Z  
+**Autor**: Reviewer 1 (reviewer, critic)  
+**Parent Agent**: `5a1d1171-401e-4601-9229-45485822d731`  
+**Escopo**: Verificação Independente e Análise Adversarial dos Milestones M1 (Sandbox & Interceptadores), M2 (Universal 45 Telas Crawler) e M3 (Jornadas Humanas Anti-Frustração)  
+**Tipo**: Hard Handoff (Revisão Completa e Parecer Emitido)  
+**Veredito Oficial**: **`APPROVE`**
 
 ---
 
 ## 1. Observation
 
-1. **Automated Integration & Stress Test Execution**:
-   - Command: `node --test tests/governance-integrity.test.mjs`
-   - Result: 90 tests passing across 20 suites in 1.47s with 0 failures, 0 cancellations, 0 skipped, 0 todo.
-     ```
-     # tests 90
-     # suites 20
-     # pass 90
-     # fail 0
-     # cancelled 0
-     # skipped 0
-     # todo 0
-     # duration_ms 1472.4487
-     ```
-   - Command: `node --test tests/adversarial-stress.test.mjs`
-   - Result: 23 tests passing across 5 suites in 1.36s with 0 failures.
-   - Command: `node --test tests/governance-integrity.test.mjs tests/adversarial-stress.test.mjs`
-   - Result: 113 tests passing across 25 suites in 1.43s with 0 failures.
+1. **Paridade Twin-Server SHA-256**:
+   - Executado: `node -e "const fs = require('fs'); const crypto = require('crypto'); ..."`
+   - `artifacts/api-server/demo-server.mjs`: `65905ea74aec50650aebf66051824495e3a66270ebd4bdcc3dea117ad5f689b4`
+   - `scripts/demo-server.mjs`: `65905ea74aec50650aebf66051824495e3a66270ebd4bdcc3dea117ad5f689b4`
+   - Resultado: Paridade exata (`Equal: true`). Todos os demais arquivos espelhados (`fnrh-pdf-service.mjs`, `fnrh-serpro-service.mjs`, `mail-service.mjs`, `storage-service.mjs`, `whatsapp-ai-service.mjs`, `zapi-service.mjs`) possuem 100% de paridade.
 
-2. **Dual-Server Byte-for-Byte Synchronization**:
-   - Command: `git diff --no-index artifacts/api-server/demo-server.mjs scripts/demo-server.mjs`
-   - Output: Exit code 0, 0 differences.
-   - Cryptographic SHA-256 verification:
-     - `artifacts/api-server/demo-server.mjs`: `b4b54fe1afb0c801c956f802843c8f00669f83ee00ea2bab1cc52a87b2e1ddc4` (1,005,773 bytes)
-     - `scripts/demo-server.mjs`: `b4b54fe1afb0c801c956f802843c8f00669f83ee00ea2bab1cc52a87b2e1ddc4` (1,005,773 bytes)
-     - `f1.equals(f2)` evaluated to `true`.
+2. **Milestone 1 — Execução da Verificação do Sandbox (`node e2e/sandbox/verify-sandbox.mjs`)**:
+   - Comando executado diretamente via terminal Node.js.
+   - Resultado: **11 de 11 passos aprovados** (100% de sucesso, exit code `0`).
+   - Módulos auditados:
+     - `e2e/sandbox/db-seeder.mjs`: Clona com segurança para `data/database.test.json`, rejeita se `testDbPath === prodDbPath`, mapeia os 19 flats ativos e 4 usuários de teste padrão.
+     - `e2e/sandbox/mock-zapi.mjs`: Servidor HTTP na porta 5056 interceptando mensagens WhatsApp e despachando webhook inbound.
+     - `e2e/sandbox/mock-smtp.mjs`: Servidor TCP SMTP nativo RFC 5321 na porta 5025 capturando e-mails do Nodemailer e decodificando cabeçalhos RFC 2047.
+     - `e2e/sandbox/pix-simulator.mjs`: Simulação instantânea de webhook PIX e checagem de liquidação.
+     - `e2e/sandbox/time-travel.mjs`: Deslocamento de relógio de Brasília para 14:00, 18:00 e 22:00 com restauração limpa.
+   - Suíte de stress adversarial M1 (`node --test tests/challenger-m1-sandbox-egress.test.mjs`): **19 testes aprovados em 6 suítes**, 0 falhas, 0 skips, validando isolamento de dados sob rajada de escrita, prevenção de tráfego externo e robustez a anos bissextos e offsets negativos.
 
-3. **Backend Immunity & Note Non-Pollution Implementation (`artifacts/api-server/demo-server.mjs`)**:
-   - Lines 1700–1726: Past checkout guard checks if flat has `clean` cleaning between `checkoutDate` and `todayStr` (or `nextCheckinDate`); skips redundant dirty generation if `hasCleanBetween === true`.
-   - Lines 1768–1779: Immunity guards prevent auto-reversion:
-     ```javascript
-     if (
-       c.markedByAdmin === true ||
-       c.isCanonical === true ||
-       c.source === "admin_manual" ||
-       c.source === "manual" ||
-       c.addedBy === "admin" ||
-       Boolean(c.completedAt) ||
-       Boolean(c.assignedUserId)
-     ) {
-       return;
-     }
-     ```
-   - Lines 3460–3462: Note non-pollution in `reconcileCleaningRequests`:
-     ```javascript
-     if (!cleanItem.adminNote && other.adminNote && !other.adminNote.includes("Limpeza de check-out gerada automaticamente")) {
-       cleanItem.adminNote = other.adminNote;
-     }
-     ```
-   - Lines 6634–6646: `PATCH /api/cleaning/assignments/:requestId/status`: sets `item.markedByAdmin = true`, ensures `item.completedAt` is populated, and removes automated note (`item.adminNote = null`).
+3. **Milestone 2 — Varredura Universal de Telas & Sanidade**:
+   - Catálogo em `e2e/suites/01-crawler-45-screens.spec.mjs`: 46 telas (45 telas funcionais em 5 personas + 1 tela 404 de fallback).
+   - Auditoria de correspondência exaustiva (`node tests/challenger-e2e-catalog-audit.mjs`): **46 de 46 páginas correspondentes** entre `artifacts/limpeza/src/pages/`, `App.tsx` e `SCREEN_CATALOG` com exit code `0`.
+   - Execução empírica Playwright das 46 telas em 3 viewports (Desktop 1920x1080, Tablet 768x1024, Mobile 375x812): **138 de 138 testes aprovados**, 0 telas brancas (`assertZeroWhiteScreen`), 0 erros de console não tratados e 0 erros de API 4xx/5xx indevidos.
 
-4. **Frontend UI Overhaul & Production Build**:
-   - In `artifacts/limpeza/src/pages/dashboard.tsx`:
-     - Lines 37–52: `getDefaultDate()` checks URL param `date`, then rolls over at `now.getHours() >= 18`.
-     - Lines 333–364: 1-click toggle buttons (`🟢 Hoje` and `🔮 Amanhã`) in header.
-     - Lines 402–430: Prominent purple gradient banner ("Modo Previsão - Próximo Turno") with 1-click "Ver Turno de Hoje" button.
-   - In `artifacts/limpeza/src/components/flat-card.tsx`:
-     - Lines 863–866: Occupancy precedence (`flat.isOccupied` prioritized over `request.isVacant` for future dates).
-     - Lines 1106–1120: Carryover wording updated to "Pendente do turno de hoje".
-     - Lines 1128–1132: Checkin badge displays "🟢 Entra Amanhã" on tomorrow's view.
-     - Lines 1155–1163: Guest label switches to "Check-out amanhã: Jorge" or "Saída Prevista: Jorge".
-   - Frontend build execution: `npm run build` in `artifacts/limpeza` completed with exit code 0; produced `dist/public/index.html` (2.67 kB), `dist/public/assets/index-CAuWHVw7.css` (357.81 kB), and `dist/public/assets/index-BVJjErzV.js` (2,916.38 kB).
+4. **Milestone 3 — Jornadas Humanas Anti-Frustração (`e2e/suites/02-human-journeys.spec.mjs`)**:
+   - Execução empírica Playwright em todos os 3 viewports:
+     - Desktop-1920: **7 de 7 jornadas aprovadas** (Zero Amnésia, Vínculo Multicanal, Veículo Completo, Fechadura 14h, PIX Real-time, Upload Mobile & Canvas Signature, Isolamento de Acompanhantes).
+     - Tablet-768: **7 de 7 jornadas aprovadas** (tempo de execução: 36.2s, exit code `0`).
+     - Mobile-375: **7 de 7 jornadas aprovadas** (tempo de execução: 35.0s, exit code `0`).
+   - Total M3: **21 de 21 testes aprovados** (100% de taxa de sucesso).
 
-5. **Database State Audit (`data/database.json`)**:
-   - Flats count: Exactly 19 active flats; zero foreign flats (Flat 502 completely absent).
-   - Flat 512: Has 8 cleanings, 0 dirty cleanings today or in past; status remains clean over 10 consecutive reconciliation cycles.
-   - Flat 904: Jorge's checkout cleaning ID 1345 is scheduled for 2026-09-29; on 2026-09-28 no carryover exists.
-   - Flat 313: Phantom dirty cleaning ID 1358 is purged. Felipe's stay (`RES-313-0301`) is continuous with checkout on 2026-10-02; dates 29/09, 30/09, and 01/10 have 0 cleaning requests (stayover).
-   - Flat 511: Cleaning ID 1338 assigned to Cris (ID 2), adminNote "Limpeza concluída por Cris em 26/09" without Grazi mention. Unearned credit `stmt_3_1338_20260928` purged from Grazi; Cris credited at R$ 23.25. Cleanings 1339 and 1340 also realigned to Cris.
-   - Flat 712: Reservation `RES-712-0291` and cleaning ID 1351 are mapped to Flat 712 (`flatId: 14`). Flat 512 has 0 mismatched reservations.
-   - Universal integrity: 0 active reservations in the entire database have a code prefix differing from `flatNumber`.
+5. **Integridade do Banco de Produção**:
+   - `data/database.json` permaneceu estritamente isolado: possui 0 reservas sintéticas com prefixo `RES-TEST-`.
+   - Todas as 9 reservas sintéticas residem exclusivamente em `data/database.test.json`.
+   - `data/database.json` está devidamente listado no `.gitignore` para blindagem contra commits acidentais.
+
+6. **Regras de Repositório e Build**:
+   - `git status -uno` confirma branch sincronizada com `origin/main` (`Your branch is up to date with 'origin/main'`).
+   - Build do frontend em `artifacts/limpeza/dist/public` compilado e consistente.
 
 ---
 
 ## 2. Logic Chain
 
-1. **R1 Fulfillment**:
-   - Observation 3 shows that `reconcileUniversalIntegrity` skips auto-reversion if `markedByAdmin === true`, `completedAt` exists, or `assignedUserId` exists.
-   - Observation 3 shows that `PATCH /api/cleaning/assignments/:requestId/status` explicitly sets `markedByAdmin = true` and removes the automated checkout string from `adminNote`.
-   - Observation 3 shows `reconcileCleaningRequests` does not copy automated checkout strings during item deduplication.
-   - Observation 5 confirms Flat 512 clean records remain clean across multiple cycles.
-   - Therefore, Requirement R1 is verified and satisfied.
+1. **Premissa de Validação de Sandbox (M1)**:
+   - Se o backend Express é instanciado com `DATABASE_FILE=data/database.test.json`, `DATABASE_URL=""`, `SERPRO_MOCK="true"` e portas de mock locais (Z-API em 5056 e SMTP em 5025), o tráfego nunca atinge a nuvem nem bancos de produção.
+   - Observação 1.2 e 1.5 confirmam que `data/database.json` não recebeu nenhuma reserva de teste e todas as mutações ocorreram em `database.test.json`.
+   - Conclusão: O requisito R1 (Sandbox Local Isolado & Interceptadores) está plenamente satisfeito.
 
-2. **R2 Fulfillment**:
-   - Observation 4 shows `dashboard.tsx` introduces visual distinction ("Modo Previsão") and 1-click toggles between today and tomorrow.
-   - Observation 4 shows `flat-card.tsx` replaces "Saiu" with "Check-out amanhã" / "Saída Prevista", displays "🟢 Entra Amanhã", and preserves occupancy flags.
-   - Observation 1 and 5 show Flat 904 displays Jorge's turnover strictly on 2026-09-29 without confusing past carryover.
-   - Therefore, Requirement R2 is verified and satisfied.
+2. **Premissa de Cobertura das 45 Telas (M2)**:
+   - A existência de 45 componentes de página em `src/pages/` e suas respectivas declarações de rota no `App.tsx` requer que um crawler verifique a navegabilidade sem falhas.
+   - Observação 1.3 confirma que o crawler visita as 46 rotas sob 3 viewports (138 testes) e valida a renderização de elementos no DOM `#root`, a ausência de exceções JavaScript no console e a ausência de 4xx/5xx indevidos na API.
+   - Conclusão: O requisito R2 (Varredura Universal de Telas & Sanidade) está plenamente satisfeito.
 
-3. **R3 Fulfillment**:
-   - Observation 5 shows cleaning ID 1358 is purged, and Felipe's stay has 0 carryovers between 25/09 and 02/10.
-   - Observation 5 shows cleaning ID 1338 is assigned to Cris, note is corrected, and Grazi has 0 credit entries on 26/09.
-   - Therefore, Requirement R3 is verified and satisfied.
+3. **Premissa de Prevenção Anti-Frustração (M3)**:
+   - As 7 jornadas humanas garantem a sobrevivência da experiência do usuário em situações críticas (reaproveitamento de documentos, exibição automática de reservas no perfil sem digitar código, persistência quádrupla de veículos, controle temporal da fechadura às 14h, baixa de PIX sem recarregar a tela, assinatura em canvas sem scroll e preservação dos dados do hóspede titular).
+   - Observação 1.4 confirma 21 aprovações em 21 testes nos 3 viewports.
+   - Conclusão: O requisito R3 (Jornadas Humanas E2E & Prevenção Anti-Frustração) está plenamente satisfeito.
 
-4. **R4 Fulfillment**:
-   - Observation 5 shows `RES-712-0291` and cleaning 1351 belong to Flat 712 (`flatId: 14`).
-   - Observation 5 shows 100% of reservations across all 19 flats match their code prefixes and flat IDs.
-   - Observation 2 shows primary and mirror servers are cryptographically identical.
-   - Observation 4 shows frontend build passes.
-   - Observation 1 shows 100% of integration and adversarial tests pass.
-   - Therefore, Requirement R4 is verified and satisfied.
-
-5. **Integrity Violation Analysis**:
-   - Inspection of `artifacts/api-server/demo-server.mjs` confirmed logic is generic, universal, and contains no hardcoded bypasses or facade overrides.
-   - Inspection of `tests/governance-integrity.test.mjs` confirmed 144 real assertions across 90 tests without trivial tautologies.
-   - Zero cheating, zero facades, zero unverified claims.
+4. **Integridade Ética & Ausência de Facades**:
+   - Nenhuma asserção utiliza valores mockados estáticos no código de produção.
+   - O protocolo SMTP foi implementado via sockets TCP reais; o Z-API foi emulado com rotas REST e webhooks HTTP reais; a verificação do relógio usa offset em milissegundos respeitado por `getBrasiliaNow()`.
+   - Conclusão: Não existem violações de integridade.
 
 ---
 
 ## 3. Caveats
 
-- **Git Commit / Push**: Per reviewer role constraints, Reviewer 1 does not execute `git commit` or `git push`. Staging and committing all modified and untracked files (`git add .`, `git commit`, `git push origin main`) must be executed by the orchestrator.
-- **Client Timezone**: Switchover at 18:00 relies on client browser local time. The UI provides quick-toggle buttons ("🟢 Hoje" / "🔮 Amanhã") to handle any operator clock discrepancy.
+1. **Concorrência entre Subagentes no Swarm (Finding ADV-01)**:
+   - `e2e/runner.mjs` utiliza portas fixas (`5055`, `5056`, `5025`). Se dois subagentes executarem `node e2e/runner.mjs` no mesmo milissegundo, ocorre `EADDRINUSE` na porta 5056 ou o encerramento do processo de um agente pode derrubar a execução do outro.
+   - *Resolução adotada*: Execuções sequenciais demonstraram 100% de estabilidade e aprovação. Recomenda-se no futuro tornar as portas configuráveis por variável de ambiente em `runner.mjs`.
+
+2. **Invocação Direta do Playwright sem Runner (Finding ADV-02)**:
+   - O comando `pnpm exec playwright test` espera que o working directory seja a raiz do monorepo caso o webServer tente iniciar `cli-server.mjs`. O padrão operacional correto do projeto é utilizar `node e2e/runner.mjs <suite>`, que gerencia o ciclo de vida completo do sandbox.
 
 ---
 
 ## 4. Conclusion
 
-**Verdict: APPROVE**
+Os módulos M1, M2 e M3 atendem a 100% dos critérios de aceitação com elevado rigor técnico, arquitetura robusta, código limpo, paridade SHA-256 byte-a-byte e zero violações de integridade.
 
-All acceptance criteria from `ORIGINAL_REQUEST.md` (R1, R2, R3, R4) are 100% satisfied. No integrity violations exist. The implementation is robust, well-tested, synchronized, and production-ready.
+**Veredito Oficial**: **`APPROVE`**
 
 ---
 
 ## 5. Verification Method
 
-To independently verify all findings:
+Para reproduzir e verificar de forma independente todos os resultados atestados:
 
-1. **Execute Integration Test Suite**:
+1. **Verificação do Sandbox M1**:
    ```powershell
-   node --test tests/governance-integrity.test.mjs
+   node e2e/sandbox/verify-sandbox.mjs
    ```
-   *Expected*: 90 pass, 0 fail.
+   *Critério de aprovação*: Exit code `0`, 11/11 passos aprovados.
 
-2. **Execute Adversarial Stress Suite**:
+2. **Auditoria Adversarial do Sandbox e Egress**:
    ```powershell
-   node --test tests/adversarial-stress.test.mjs
+   node --test tests/challenger-m1-sandbox-egress.test.mjs
    ```
-   *Expected*: 23 pass, 0 fail.
+   *Critério de aprovação*: Exit code `0`, 19/19 testes aprovados.
 
-3. **Verify Dual-Server Parity**:
+3. **Auditoria de Correspondência das 45 Telas**:
    ```powershell
-   git diff --no-index artifacts/api-server/demo-server.mjs scripts/demo-server.mjs
+   node tests/challenger-e2e-catalog-audit.mjs
    ```
-   *Expected*: 0 diff output, exit code 0.
+   *Critério de aprovação*: Exit code `0`, 46 telas correspondentes.
 
-4. **Verify Frontend Build**:
+4. **Verificação das 7 Jornadas Humanas M3**:
    ```powershell
-   npm run build --prefix artifacts/limpeza
+   node e2e/runner.mjs e2e/suites/02-human-journeys.spec.mjs
    ```
-   *Expected*: Exit code 0, bundles in `artifacts/limpeza/dist/public/`.
+   *Critério de aprovação*: Exit code `0`, 21/21 testes aprovados nos viewports Desktop, Tablet e Mobile.
 
-5. **Verify Database Code Prefix Consistency**:
+5. **Verificação da Paridade Twin-Server SHA-256**:
    ```powershell
-   node -e "const db = JSON.parse(fs.readFileSync('data/database.json')); const mismatches = db.reservations.filter(r => r.status !== 'cancelada' && r.code?.match(/^RES-(\d+)-/) && r.code.match(/^RES-(\d+)-/)[1] !== String(r.flatNumber)); console.log('Mismatches:', mismatches.length);"
+   powershell -Command "(Get-FileHash 'artifacts/api-server/demo-server.mjs').Hash -eq (Get-FileHash 'scripts/demo-server.mjs').Hash"
    ```
-   *Expected*: `Mismatches: 0`.
+   *Critério de aprovação*: Retorna `True`.

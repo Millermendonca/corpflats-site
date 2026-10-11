@@ -48,12 +48,12 @@
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| M1 | Sandbox Local Isolado & Interceptadores | R1.1, R1.2, R1.3, R1.4, R1.5, R1.6 (`e2e/sandbox/`, test server runner, mock servers, time-travel endpoint/helpers) | none | IN_PROGRESS |
-| M2 | Varredura Universal 45 Telas & Sanidade | R2.1, R2.2, R2.3, R2.4 (`e2e/suites/crawler-45-screens.spec.mjs`, fixtures, multi-viewport, multi-persona) | M1 | PLANNED |
-| M3 | Jornadas Humanas & Anti-Frustração | R3.1, R3.2, R3.3, R3.4, R3.5, R3.6, R3.7 (`e2e/suites/human-journeys.spec.mjs`) | M1 | PLANNED |
-| M4 | Matriz Combinatória de Estados Pairwise | R4.1, R4.2, R4.3, R4.4 (`e2e/suites/pairwise-matrix.spec.mjs`) | M1 | PLANNED |
-| M5 | Chaos Explorer & Relatório HTML | R5.1, R5.2, R5.3 (`e2e/suites/chaos-explorer.spec.mjs`, `e2e/reporters/html-report-generator.mjs`) | M1, M2 | PLANNED |
-| M6 | Execução Integral, Auditoria & Deploy | Executar suíte completa via `e2e/runner.mjs`, validar 100% de aprovação, auditoria forense, git commit & push | M1, M2, M3, M4, M5 | PLANNED |
+| M1 | Sandbox Local Isolado & Interceptadores | R1.1, R1.2, R1.3, R1.4, R1.5, R1.6 (`e2e/sandbox/`, test server runner, mock servers, time-travel endpoint/helpers) | none | DONE |
+| M2 | Varredura Universal 45 Telas & Sanidade | R2.1, R2.2, R2.3, R2.4 (`e2e/suites/crawler-45-screens.spec.mjs`, fixtures, multi-viewport, multi-persona) | M1 | DONE |
+| M3 | Jornadas Humanas & Anti-Frustração | R3.1, R3.2, R3.3, R3.4, R3.5, R3.6, R3.7 (`e2e/suites/human-journeys.spec.mjs`) | M1 | DONE |
+| M4 | Matriz Combinatória de Estados Pairwise | R4.1, R4.2, R4.3, R4.4 (`e2e/suites/pairwise-matrix.spec.mjs`) | M1 | DONE |
+| M5 | Chaos Explorer & Relatório HTML | R5.1, R5.2, R5.3 (`e2e/suites/chaos-explorer.spec.mjs`, `e2e/reporters/html-report-generator.mjs`) | M1, M2 | DONE |
+| M6 | Execução Integral, Auditoria & Deploy | Executar suíte completa via `e2e/runner.mjs`, validar 100% de aprovação, auditoria forense, git commit & push | M1, M2, M3, M4, M5 | DONE |
 
 ## Interface Contracts
 ### Test Runner ↔ Isolated Sandbox (`e2e/sandbox/`)

@@ -15,12 +15,16 @@ import path from "node:path";
 import crypto from "node:crypto";
 import net from "node:net";
 import nodemailer from "nodemailer";
-import { startSandbox, stopSandbox, getSandboxInfo } from "../e2e/sandbox/test-server.mjs";
+import { startSandbox, stopSandbox } from "../e2e/sandbox/test-server.mjs";
 import { cleanTestDatabase } from "../e2e/sandbox/db-seeder.mjs";
 
 const ROOT_DIR = process.cwd();
 const PROD_DB_PATH = path.resolve(ROOT_DIR, "data/database.json");
-const TEST_DB_PATH = path.resolve(ROOT_DIR, "data/database.test.json");
+const CHALLENGER_DB_PATH = path.resolve(ROOT_DIR, "data/database.challenger-m1.json");
+
+const TEST_PORT = 5065;
+const ZAPI_PORT = 5066;
+const SMTP_PORT = 5035;
 
 function getSha256(filePath) {
   if (!fs.existsSync(filePath)) return null;
@@ -39,13 +43,14 @@ function checkPortFree(port, host = "127.0.0.1") {
   });
 }
 
-async function waitForPortsFree(ports, timeoutMs = 15000) {
+async function waitForPortsFree(ports, timeoutMs = 20000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const statuses = await Promise.all(ports.map(p => checkPortFree(p)));
     if (statuses.every(s => s === true)) return true;
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise(r => setTimeout(r, 600));
   }
+  return false;
 }
 
 describe("Adversarial Challenge: Milestone 1 Sandbox & Egress Verification", () => {
@@ -56,16 +61,13 @@ describe("Adversarial Challenge: Milestone 1 Sandbox & Egress Verification", () 
     initialProdHash = getSha256(PROD_DB_PATH);
     assert.ok(initialProdHash, "Production data/database.json must exist before test starts.");
 
-    // Ensure any previously running sandbox is stopped and ports are fully free
-    await stopSandbox().catch(() => {});
-    await waitForPortsFree([5055, 5056, 5025]);
-    await new Promise(r => setTimeout(r, 1000));
+    await waitForPortsFree([TEST_PORT, ZAPI_PORT, SMTP_PORT]);
 
     sandbox = await startSandbox({
-      port: 5055,
-      zapiPort: 5056,
-      smtpPort: 5025,
-      dbPath: TEST_DB_PATH,
+      port: TEST_PORT,
+      zapiPort: ZAPI_PORT,
+      smtpPort: SMTP_PORT,
+      dbPath: CHALLENGER_DB_PATH,
       silent: true
     });
     assert.ok(sandbox, "Sandbox must initialize");
@@ -75,7 +77,7 @@ describe("Adversarial Challenge: Milestone 1 Sandbox & Egress Verification", () 
     if (sandbox) {
       await sandbox.stop();
     }
-    cleanTestDatabase({ testDbPath: TEST_DB_PATH });
+    cleanTestDatabase({ testDbPath: CHALLENGER_DB_PATH });
 
     // Assert final prod DB integrity
     const finalProdHash = getSha256(PROD_DB_PATH);
@@ -147,7 +149,7 @@ describe("Adversarial Challenge: Milestone 1 Sandbox & Egress Verification", () 
       }
 
       // Assert test DB exists and is updated
-      assert.ok(fs.existsSync(TEST_DB_PATH), "database.test.json must exist and receive writes");
+      assert.ok(fs.existsSync(CHALLENGER_DB_PATH), "database.challenger-m1.json must exist and receive writes");
 
       // Assert production DB is strictly unchanged
       const afterStressHash = getSha256(PROD_DB_PATH);
@@ -239,7 +241,6 @@ describe("Adversarial Challenge: Milestone 1 Sandbox & Egress Verification", () 
 
     it("SERPRO FNRH client operates in mock mode when SERPRO_MOCK=true", async () => {
       const res = await fetch(`${sandbox.baseUrl}/api/pms/fnrh/health`);
-      // Endpoint may return 200 with status ok and mock indicators
       if (res.ok) {
         const json = await res.json();
         assert.ok(json.ok !== undefined || json.status !== undefined);
@@ -363,9 +364,7 @@ describe("Adversarial Challenge: Milestone 1 Sandbox & Egress Verification", () 
   });
 
   describe("5. Lifecycle and Process Teardown Cleanliness", () => {
-    it("verify-sandbox.mjs execution exits with code 0", async () => {
-      // Temporarily stop our suite's sandbox so verify-sandbox can boot its own
-      await sandbox.stop();
+    it("verify-sandbox.mjs execution exits with code 0 on ports 5055/5056/5025", async () => {
       await waitForPortsFree([5055, 5056, 5025]);
 
       const { execSync } = await import("node:child_process");

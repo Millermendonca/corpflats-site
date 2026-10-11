@@ -4119,21 +4119,125 @@ export function formatPhoneDisplay(phone = "") {
   return digits;
 }
 
-// ── Localizador de Reserva por Telefone ─────────────────────────────────────────
-export function findReservationByPhone(db, phone) {
-  if (!db?.reservations || !phone) return null;
+// ── Extrator e Localizador de Telefones de Reserva e Hóspede ──────────────────
+export function getReservationPhones(r, db) {
+  if (!r) return [];
+  const phones = new Set();
+  if (r.guestPhone) phones.add(String(r.guestPhone));
+  if (r.phone) phones.add(String(r.phone));
+  if (r.whatsapp) phones.add(String(r.whatsapp));
+  if (r.contactPhone) phones.add(String(r.contactPhone));
+  if (r.guestWhatsapp) phones.add(String(r.guestWhatsapp));
+
+  if (Array.isArray(r.guests)) {
+    for (const g of r.guests) {
+      if (typeof g === "string") {
+        phones.add(g);
+      } else if (g && typeof g === "object") {
+        if (g.phone) phones.add(String(g.phone));
+        if (g.whatsapp) phones.add(String(g.whatsapp));
+      }
+    }
+  }
+
+  if (db?.guests && Array.isArray(db.guests)) {
+    let guest = null;
+    if (r.guestId) {
+      guest = db.guests.find(g => g.id === r.guestId || String(g.id) === String(r.guestId));
+    }
+    if (!guest && r.guestCode) {
+      guest = db.guests.find(g => g.guestCode === r.guestCode);
+    }
+    if (!guest && r.guestName) {
+      const norm = String(r.guestName).trim().toLowerCase();
+      if (norm.length >= 3) {
+        guest = db.guests.find(g => g.name && String(g.name).trim().toLowerCase() === norm);
+      }
+    }
+    if (guest) {
+      if (guest.phone) phones.add(String(guest.phone));
+      if (guest.whatsapp) phones.add(String(guest.whatsapp));
+    }
+  }
+
+  return Array.from(phones).filter(Boolean);
+}
+
+export function doesReservationMatchPhone(r, cleanTargetPhone, db) {
+  if (!cleanTargetPhone || !r) return false;
+  const targetLast8 = cleanTargetPhone.slice(-8);
+  const targetLast9 = cleanTargetPhone.slice(-9);
+  const candidatePhones = getReservationPhones(r, db);
+
+  for (const p of candidatePhones) {
+    const cleanCand = cleanWhatsAppPhone(p);
+    if (!cleanCand) continue;
+    if (cleanCand === cleanTargetPhone) return true;
+    if (targetLast9 && cleanCand.endsWith(targetLast9)) return true;
+    if (targetLast8 && cleanCand.endsWith(targetLast8)) return true;
+  }
+  return false;
+}
+
+export function findAllReservationsByPhone(db, phone) {
+  if (!db?.reservations || !phone) return [];
   const cleanP = cleanWhatsAppPhone(phone);
-  if (!cleanP) return null;
-  const last8 = cleanP.slice(-8);
-  const matched = (db.reservations || []).filter(r => {
-    const candidatePhones = [r.guestPhone, ...(Array.isArray(r.guests) ? r.guests.map(g => g?.phone) : [])].filter(Boolean);
-    return candidatePhones.some(p => {
-      const rClean = cleanWhatsAppPhone(p);
-      return rClean === cleanP || (rClean && last8 && rClean.slice(-8) === last8);
-    });
-  });
+  if (!cleanP) return [];
+
+  return (db.reservations || []).filter(r => doesReservationMatchPhone(r, cleanP, db));
+}
+
+// ── Localizador da Melhor Reserva por Telefone (Classificação por Tiers) ────────
+export function findReservationByPhone(db, phone) {
+  const matched = findAllReservationsByPhone(db, phone);
   if (matched.length === 0) return null;
-  matched.sort((a, b) => String(b.checkoutDate || "").localeCompare(String(a.checkoutDate || "")));
+  if (matched.length === 1) return matched[0];
+
+  const now = new Date();
+  const brasiliaFormatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+  const todayStr = brasiliaFormatter.format(now);
+
+  // TIER 1: Estadia Ativa Hoje (check-in <= hoje <= checkout, e status não cancelada)
+  const activeToday = matched.filter(r => 
+    r.status !== "cancelada" &&
+    r.checkinDate && r.checkoutDate &&
+    r.checkinDate <= todayStr && r.checkoutDate >= todayStr
+  );
+  if (activeToday.length > 0) {
+    activeToday.sort((a, b) => {
+      // Prioridade se checkout for hoje (hóspede em saída / atendimento de checkout)
+      const aCheckOutToday = a.checkoutDate === todayStr ? 1 : 0;
+      const bCheckOutToday = b.checkoutDate === todayStr ? 1 : 0;
+      if (bCheckOutToday !== aCheckOutToday) return bCheckOutToday - aCheckOutToday;
+      return String(a.checkoutDate).localeCompare(String(b.checkoutDate));
+    });
+    return activeToday[0];
+  }
+
+  // TIER 2: Próxima Reserva Futura (checkin > hoje, não cancelada)
+  const future = matched.filter(r => 
+    r.status !== "cancelada" &&
+    r.checkinDate && r.checkinDate > todayStr
+  );
+  if (future.length > 0) {
+    future.sort((a, b) => String(a.checkinDate).localeCompare(String(b.checkinDate)));
+    return future[0];
+  }
+
+  // TIER 3: Estadias Passadas Mais Recentes (checkout < hoje)
+  const past = matched.filter(r => 
+    r.checkoutDate && r.checkoutDate < todayStr
+  );
+  if (past.length > 0) {
+    past.sort((a, b) => String(b.checkoutDate).localeCompare(String(a.checkoutDate)));
+    return past[0];
+  }
+
   return matched[0];
 }
 
@@ -4268,42 +4372,49 @@ export function syncWhatsappConversationsStore(db) {
   if (!db.whatsappConversations) db.whatsappConversations = [];
 
   for (const r of (db.reservations || [])) {
-    if (!r.guestPhone) continue;
-    const cleanP = cleanWhatsAppPhone(r.guestPhone);
-    if (!cleanP) continue;
+    const phones = getReservationPhones(r, db);
+    for (const rawP of phones) {
+      const cleanP = cleanWhatsAppPhone(rawP);
+      if (!cleanP) continue;
 
-    let conv = db.whatsappConversations.find(c => c.phone === cleanP);
-    if (!conv) {
-      conv = {
-        id: cleanP,
-        phone: cleanP,
-        formattedPhone: formatPhoneDisplay(cleanP),
-        name: r.guestName || "Hóspede",
-        avatarUrl: "",
-        isGroup: false,
-        unreadCount: 0,
-        pinned: false,
-        reservationCode: r.code,
-        flatNumber: r.flatNumber || "",
-        checkinDate: r.checkinDate || "",
-        checkoutDate: r.checkoutDate || "",
-        status: r.status || "confirmada",
-        paymentStatus: r.paymentStatus || "",
-        totalAmount: r.totalAmount || 0,
-        lastMessage: null,
-        updatedAt: r.createdAt || new Date().toISOString(),
-        messages: []
-      };
-      db.whatsappConversations.push(conv);
-    } else {
-      if (!conv.reservationCode || (r.checkoutDate && (!conv.checkoutDate || r.checkoutDate > conv.checkoutDate))) {
-        conv.reservationCode = r.code;
-        conv.flatNumber = r.flatNumber || conv.flatNumber;
-        conv.checkinDate = r.checkinDate || conv.checkinDate;
-        conv.checkoutDate = r.checkoutDate || conv.checkoutDate;
-        conv.status = r.status || conv.status;
-        conv.paymentStatus = r.paymentStatus || conv.paymentStatus;
-        conv.totalAmount = r.totalAmount || conv.totalAmount;
+      let conv = db.whatsappConversations.find(c => c.phone === cleanP);
+      const bestRes = findReservationByPhone(db, cleanP) || r;
+
+      if (!conv) {
+        conv = {
+          id: cleanP,
+          phone: cleanP,
+          formattedPhone: formatPhoneDisplay(cleanP),
+          name: bestRes.guestName || r.guestName || "Hóspede",
+          avatarUrl: "",
+          isGroup: false,
+          unreadCount: 0,
+          pinned: false,
+          reservationCode: bestRes.code || r.code,
+          flatNumber: bestRes.flatNumber || r.flatNumber || "",
+          checkinDate: bestRes.checkinDate || r.checkinDate || "",
+          checkoutDate: bestRes.checkoutDate || r.checkoutDate || "",
+          status: bestRes.status || r.status || "confirmada",
+          paymentStatus: bestRes.paymentStatus || r.paymentStatus || "",
+          totalAmount: bestRes.totalAmount || r.totalAmount || 0,
+          lastMessage: null,
+          updatedAt: r.createdAt || new Date().toISOString(),
+          messages: []
+        };
+        db.whatsappConversations.push(conv);
+      } else {
+        if (bestRes) {
+          conv.reservationCode = bestRes.code;
+          conv.flatNumber = bestRes.flatNumber || "";
+          conv.checkinDate = bestRes.checkinDate || "";
+          conv.checkoutDate = bestRes.checkoutDate || "";
+          conv.status = bestRes.status || "confirmada";
+          conv.paymentStatus = bestRes.paymentStatus || "";
+          conv.totalAmount = bestRes.totalAmount || 0;
+          if (!conv.name || conv.name === "Hóspede" || conv.name === conv.phone) {
+            conv.name = bestRes.guestName;
+          }
+        }
       }
     }
   }
@@ -6146,17 +6257,31 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       return res.status(404).json({ error: "Conversa não encontrada." });
     }
 
-    let reservationDetails = null;
-    if (conv.reservationCode) {
+    const allReservations = findAllReservationsByPhone(db, conv.phone || cleanPhone);
+    const bestRes = findReservationByPhone(db, conv.phone || cleanPhone);
+
+    if (bestRes) {
+      conv.reservationCode = bestRes.code;
+      conv.flatNumber = bestRes.flatNumber || conv.flatNumber;
+      conv.checkinDate = bestRes.checkinDate || conv.checkinDate;
+      conv.checkoutDate = bestRes.checkoutDate || conv.checkoutDate;
+      conv.status = bestRes.status || conv.status;
+      conv.paymentStatus = bestRes.paymentStatus || conv.paymentStatus;
+      conv.totalAmount = bestRes.totalAmount || conv.totalAmount;
+    }
+
+    let reservationDetails = bestRes;
+    if (!reservationDetails && conv.reservationCode) {
       reservationDetails = (db.reservations || []).find(r => r.code === conv.reservationCode);
     }
-    if (!reservationDetails && conv.phone) {
-      reservationDetails = findReservationByPhone(db, conv.phone);
-    }
+
+    conv.reservation = reservationDetails || null;
+    const otherReservations = allReservations.filter(r => r.code !== reservationDetails?.code);
 
     res.json({
       conversation: conv,
-      reservation: reservationDetails || null
+      reservation: reservationDetails || null,
+      otherReservations: otherReservations || []
     });
   });
 

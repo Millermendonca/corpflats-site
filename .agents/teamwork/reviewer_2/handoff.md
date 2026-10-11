@@ -1,170 +1,161 @@
-# Handoff Report: Reviewer 2 (Milestone 4 Final Review)
+# Relatório de Handoff — Reviewer 2: Verificação das Suítes E2E (M4, M5 & Relatório HTML Consolidado)
+
+**Data**: 2026-10-11T03:58:00Z  
+**Agente**: `reviewer_2` (Reviewer & Adversarial Critic)  
+**Parent Agent**: `5a1d1171-401e-4601-9229-45485822d731` (Orchestrator Lead Architect)  
+**Escopo de Revisão**: 
+- Milestone 4 (M4 - Matriz Combinatória de Estados Pairwise): `e2e/suites/03-pairwise-matrix.spec.mjs`
+- Milestone 5 (M5 - Gemini Chaos Explorer & Usabilidade Heurística): `e2e/suites/04-chaos-explorer.spec.mjs`
+- Relatório HTML Consolidado: `e2e/reporters/html-reporter.mjs` & `e2e/reports/index.html`
+- Artefatos de Auditoria e Heurística: `e2e/reports/usability-audit.json` & `e2e/reports/modules-summary.json`
+- Alterações Frontend: `artifacts/limpeza/src/pages/guest-pre-checkin.tsx`
+- Infraestrutura de Testes e Sandbox: `e2e/runner.mjs`, `e2e/sandbox/`
+
+---
 
 ## 1. Observation
 
-1. **Test Suite Execution**:
-   - Command: `node --test tests/governance-integrity.test.mjs`
-   - Result: 90 subtests passed across 20 test suites in 1.486s with 0 failures, 0 cancellations, 0 skipped, 0 todo.
-   - Verbatim summary:
-     ```
-     # tests 90
-     # suites 20
-     # pass 90
-     # fail 0
-     # cancelled 0
-     # skipped 0
-     # todo 0
-     # duration_ms 1486.2519
+### 1.1 Execução Independente das Suítes E2E
+Executamos as suítes de teste de forma autônoma e independente através do sandbox isolado:
+
+1. **Suíte M5 — Gemini Chaos Explorer (`e2e/suites/04-chaos-explorer.spec.mjs`)**:
+   - Comando: `node e2e/runner.mjs e2e/suites/04-chaos-explorer.spec.mjs`
+   - Resultado: 12 testes aprovados de 12 (100% Pass Rate). Exit code 0.
+   - Saída verbatim:
+     ```text
+     Running 12 tests using 1 worker
+
+       ok  1 [Desktop-1920] › Ação Caótica 1: Cliques Duplos e Rápidos (21.9s)
+       ok  2 [Desktop-1920] › Ação Caótica 2: Injeção de Dados Fuzzing & Especiais (7.1s)
+       ok  3 [Desktop-1920] › Ação Caótica 3: Navegação Fora de Ordem (Botão Voltar) (9.1s)
+       ok  4 [Desktop-1920] › Ação Caótica 4: Auditoria Qualitativa de Usabilidade Heurística (8.9s)
+       ok  5 [Tablet-768]   › Ação Caótica 1: Cliques Duplos e Rápidos (11.4s)
+       ok  6 [Tablet-768]   › Ação Caótica 2: Injeção de Dados Fuzzing & Especiais (6.0s)
+       ok  7 [Tablet-768]   › Ação Caótica 3: Navegação Fora de Ordem (Botão Voltar) (8.3s)
+       ok  8 [Tablet-768]   › Ação Caótica 4: Auditoria Qualitativa de Usabilidade Heurística (6.6s)
+       ok  9 [Mobile-375]   › Ação Caótica 1: Cliques Duplos e Rápidos (10.0s)
+       ok 10 [Mobile-375]   › Ação Caótica 2: Injeção de Dados Fuzzing & Especiais (5.3s)
+       ok 11 [Mobile-375]   › Ação Caótica 3: Navegação Fora de Ordem (Botão Voltar) (12.6s)
+       ok 12 [Mobile-375]   › Ação Caótica 4: Auditoria Qualitativa de Usabilidade Heurística (7.5s)
+
+       12 passed (2.3m)
+     [ConsolidatedHtmlReporter] HTML report saved to C:\Users\mille\...\e2e\reports\index.html
+     [runner] Playwright execution finished with exit code 0.
      ```
 
-2. **Dual-Server Byte-for-Byte Synchronization**:
-   - Command: `powershell -Command "Get-FileHash artifacts/api-server/demo-server.mjs, scripts/demo-server.mjs | Format-List"`
-   - Result: Both files have identical SHA256 hash:
-     ```
-     Algorithm : SHA256
-     Hash      : B4B54FE1AFB0C801C956F802843C8F00669F83EE00EA2BAB1CC52A87B2E1DDC4
-     ```
-   - Command: `git diff --no-index artifacts/api-server/demo-server.mjs scripts/demo-server.mjs` returned exit code 0 with 0 differences.
+2. **Suíte M4 — Matriz Combinatória de Estados Pairwise (`e2e/suites/03-pairwise-matrix.spec.mjs`)**:
+   - Comando: `node e2e/runner.mjs e2e/suites/03-pairwise-matrix.spec.mjs`
+   - Resultado: 12 testes aprovados de 12 (100% Pass Rate). Exit code 0.
+   - Saída verbatim:
+     ```text
+     Running 12 tests using 1 worker
 
-3. **Backend Immunity & Reconciliation Guards (`artifacts/api-server/demo-server.mjs`)**:
-   - Lines 1700–1726: Retroactive checkout guard skips duplicate dirty checkout creation if `hasCleanBetween` is true between past checkout and today/next checkin:
-     ```javascript
-     if (checkoutDate < todayStr) {
-       const nextReservation = (db.reservations || [])...
-       const hasCleanBetween = (db.cleaningRequests || []).some(c => {
-         if (String(c.flatNumber) !== String(r.flatNumber) && (!r.flatId || c.flatId !== r.flatId)) return false;
-         if (c.status !== "clean") return false;
-         const cDate = c.requestDate || c.effectiveDate;
-         if (!cDate || cDate < checkoutDate) return false;
-         if (cDate <= todayStr) return true;
-         if (nextCheckinDate && cDate <= nextCheckinDate) return true;
-         return false;
-       });
-       if (hasCleanBetween) return;
-     }
-     ```
-   - Lines 1768–1779: Immunity guards:
-     ```javascript
-     if (
-       c.markedByAdmin === true ||
-       c.isCanonical === true ||
-       c.source === "admin_manual" ||
-       c.source === "manual" ||
-       c.addedBy === "admin" ||
-       Boolean(c.completedAt) ||
-       Boolean(c.assignedUserId)
-     ) {
-       return;
-     }
-     ```
-   - Lines 1781–1788: Reversion restricted to checkout cleanings with automated note:
-     ```javascript
-     if (
-       c.source === "checkout" &&
-       c.status === "clean" &&
-       !c.assignedUserId &&
-       !c.completedAt &&
-       c.requestDate >= recentWindow &&
-       c.adminNote && c.adminNote.includes("Limpeza de check-out gerada automaticamente")
-     ) {
-       c.status = "dirty";
-     ```
-   - Lines 3460–3462: Note non-pollution in `reconcileCleaningRequests`:
-     ```javascript
-     if (!cleanItem.adminNote && other.adminNote && !other.adminNote.includes("Limpeza de check-out gerada automaticamente")) {
-       cleanItem.adminNote = other.adminNote;
-     }
-     ```
-   - Lines 6635–6646: PATCH `/api/cleaning/assignments/:requestId/status`: sets `item.markedByAdmin = true`, sets `item.completedAt = now`, clears automated `item.adminNote = null`.
+       ok  1 [Desktop-1920] › Cenário 1: Matriz de Composições de Reserva & Durações (16.1s)
+       ok  2 [Desktop-1920] › Cenário 2: Auditoria dos 19 Flats sob Todos os 7 Estados de Governança (3.9s)
+       ok  3 [Desktop-1920] › Cenário 3: Ciclo Completo de Ordens de Serviço (3.2s)
+       ok  4 [Desktop-1920] › Cenário 4: Regras de Café da Manhã & Cutoff Rígido das 22h com Time-Travel (6.2s)
+       ok  5 [Tablet-768]   › Cenário 1: Matriz de Composições de Reserva & Durações (6.8s)
+       ok  6 [Tablet-768]   › Cenário 2: Auditoria dos 19 Flats sob Todos os 7 Estados de Governança (4.2s)
+       ok  7 [Tablet-768]   › Cenário 3: Ciclo Completo de Ordens de Serviço (5.2s)
+       ok  8 [Tablet-768]   › Cenário 4: Regras de Café da Manhã & Cutoff Rígido das 22h com Time-Travel (6.6s)
+       ok  9 [Mobile-375]   › Cenário 1: Matriz de Composições de Reserva & Durações (7.2s)
+       ok 10 [Mobile-375]   › Cenário 2: Auditoria dos 19 Flats sob Todos os 7 Estados de Governança (3.9s)
+       ok 11 [Mobile-375]   › Cenário 3: Ciclo Completo de Ordens de Serviço (2.9s)
+       ok 12 [Mobile-375]   › Cenário 4: Regras de Café da Manhã & Cutoff Rígido das 22h com Time-Travel (4.6s)
 
-4. **Frontend UI Overhaul (`artifacts/limpeza/src/pages/dashboard.tsx` & `flat-card.tsx`)**:
-   - `dashboard.tsx`: `getDefaultDate()` checks URL `?date=YYYY-MM-DD`. Added 1-click toggle buttons (`🟢 Hoje` and `🔮 Amanhã`) and purple warning banner `Modo Previsão (Próximo Turno)` when viewing tomorrow or future dates.
-   - `flat-card.tsx`: Occupancy precedence: `flat.isOccupied` takes precedence over `request.isVacant` for future dates. Replaces "Saiu" with "Saída Prevista" / "Check-out amanhã", displays "🟢 Entra Amanhã" and "Pendente do turno de hoje".
-   - Command: `npm run build` in `artifacts/limpeza` succeeded with exit code 0; produced `dist/public/index.html` (2.67 kB), `dist/public/assets/index-CAuWHVw7.css` (357.81 kB), and `dist/public/assets/index-BVJjErzV.js` (2,916.38 kB).
+       12 passed (1.4m)
+     [ConsolidatedHtmlReporter] HTML report saved to C:\Users\mille\...\e2e\reports\index.html
+     [runner] Playwright execution finished with exit code 0.
+     ```
 
-5. **Database State Audit (`data/database.json`)**:
-   - Active flats: Exactly 19 active flats. Canonical numbers present, Flat 502 absent.
-   - Flat 512: All past cleanings remain clean. Repeated runs of `reconcileUniversalIntegrity()` result in `changed: false`.
-   - Flat 313: Phantom dirty cleaning ID 1358 purged. Felipe stay (`RES-313-0301`) active from 28/09 to 02/10 with 0 carryovers.
-   - Flat 511: Cleaning ID 1338 assigned to Cris (ID 2), adminNote "Limpeza concluída por Cris em 26/09" without Grazi mention. Unearned statement credit `stmt_3_1338_20260928` purged from Grazi. Statement credit `pay_1790528959693_pnzhpy` for Cris linked to 1338 at rate R$ 23.25. Cleanings 1339 and 1340 realigned to Cris.
-   - Flat 712 / 512: Reservation `RES-712-0291` updated to `flatNumber: "712"`, `flatId: 14`. Cleaning ID 1351 reallocated to Flat 712.
-   - Phantom cards 1358, 1361, 1362, 1364: Purged or cleanly marked resolved.
+### 1.2 Auditoria Forense de Integridade (Detecção de Violações)
+- **Resultados fixos / Mocks estáticos em código fonte**: Inspecionamos `03-pairwise-matrix.spec.mjs` e `04-chaos-explorer.spec.mjs`. Não há asserções tautológicas (`expect(true).toBe(true)`), nem resultados pré-computados embutidos. Todas as chamadas geram e consomem dados dinâmicos da API (`/api/bot-actions/quote`, `/api/pms/reservations`, `/api/flats`, `/api/service-orders`, `/api/service/public/:token/*`, `/api/breakfast/orders`).
+- **Implementações dummy / fachada**: Em `guest-pre-checkin.tsx` (linhas 81–107), a sincronização de `step` com a API nativa de histórico (`window.history.pushState` e `popstate`) é autêntica e funcional. No teste de chaos, `page.goBack()` realmente restaura o passo anterior e os valores dos inputs continuam presentes no formulário sem travamentos.
+- **Relatório Standalone (Zero CDN)**: Inspecionamos `e2e/reports/index.html`. Não há nenhuma requisição externa a CDNs (`<script src="http...">` ou `<link href="http...">`). Todo o CSS, layout e script de filtragem são 100% offline e embutidos.
+- **Banco de Dados de Produção**: `data/database.json` permaneceu estritamente intocado pelo sandbox. Todos os testes rodaram isoladamente contra `data/database.test.json` na porta 5055.
+
+### 1.3 Paridade Twin-Server & Build do Frontend
+- Verificação de hash SHA-256 entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`:
+  - Comando: `powershell -Command "(Get-FileHash 'artifacts/api-server/demo-server.mjs').Hash -eq (Get-FileHash 'scripts/demo-server.mjs').Hash"`
+  - Resultado: `True` (Paridade byte-a-byte mantida).
+- Build de verificação em `artifacts/limpeza`: `dist/public/` está compilado e sincronizado com os fontes.
 
 ---
 
 ## 2. Logic Chain
 
-1. **R1 Fulfillment**:
-   - From Observation 3, `reconcileUniversalIntegrity` protects records where `markedByAdmin === true`, `completedAt` is non-null, or `assignedUserId` is non-null.
-   - From Observation 3, when marking clean via API, `markedByAdmin` is set to `true`, `completedAt` is populated, and automated checkout notes are cleared.
-   - From Observation 3, note non-pollution prevents merging from re-infecting clean records with automated notes.
-   - From Observation 5, Flat 512 remains clean across multiple reconciliation cycles without reverting to dirty.
-   - Therefore, Requirement R1 is fully satisfied.
+1. **Validação do M4 (Matriz Combinatória de Estados Pairwise)**:
+   - *Premissa*: O Milestone 4 deve exercitar combinações de reservas (solo, casal, família com menor e estadia longa), auditar a totalidade dos 19 flats sob os 7 estados de governança, validar o ciclo de ordens de serviço externas e certificar o corte estrito das 22h do café da manhã via time-travel.
+   - *Verificação*:
+     - No Cenário 1, a suíte exercita cotações de tarifas com regras SEBRAE (ex: taxa de cama extra de R$ 60 apenas para 3º hóspede; diárias longas > R$ 2.500), persiste reservas no PMS, valida a timeline em `/reservas` e audita o voucher em `/minha-reserva/:code`.
+     - No Cenário 2, audita exatamente os 19 flats canônicos e exercita transições de governança (`dirty` -> `cleaning_now` -> `clean`), além de bloqueios de manutenção no calendário PMS.
+     - No Cenário 3, a ordem de serviço tokenizada impõe o limite de `maxSimultaneousFlats = 1` (rejeitando com HTTP 400 tentativas de iniciar flats simultâneos) e bloqueia a conclusão sem fotos (`requirePhotos = true`). Ao concluir com `needsCleaning = true`, gera solicitação automática de limpeza para a camareira.
+     - No Cenário 4, o time-travel simula 15:00 (pedido aceito e despachado para `/pedidos-cafe`) e 22:00 (pedido rejeitado com HTTP 400 contendo a mensagem de cutoff).
+   - *Conclusão*: Todas as regras de negócio de M4 funcionam de forma real, integrada e assertiva.
 
-2. **R2 Fulfillment**:
-   - From Observation 4, `dashboard.tsx` implements visual distinction between today and tomorrow with the "Modo Previsão" banner and 1-click toggle buttons.
-   - From Observation 4, `flat-card.tsx` uses occupancy precedence so that occupied rooms do not appear vacant for tomorrow's forecast, and changes labels to "Check-out amanhã" / "Saída Prevista".
-   - From Observation 1, test cases 1.3.1–1.4.5, 2.3.1–2.4.5, 3.1, and 4.2 all pass, verifying that Flat 904 at 18:30 shows tomorrow's turnover accurately without carry-over confusion.
-   - Therefore, Requirement R2 is fully satisfied.
+2. **Validação do M5 (Gemini Chaos Explorer)**:
+   - *Premissa*: O Milestone 5 deve testar a resiliência contra comportamento não-linear do usuário: cliques duplos rápidos (50ms), injeção de dados caóticos (XSS, SQLi, emojis, espaços), navegação pelo botão Voltar e auditoria heurística do DOM.
+   - *Verificação*:
+     - Ação 1: Cliques rápidos de 50ms nos botões de avanço e filtros não geram requisições duplicadas, travamentos ou violações do `ErrorGuard`.
+     - Ação 2: Cargas maliciosas injetadas nos formulários não disparam `window.onerror`, são renderizadas como texto escapado seguro e não crasham a árvore do React.
+     - Ação 3: `page.goBack()` recupera etapas anteriores com 100% dos dados preservados em memória, eliminando telas brancas de navegação.
+     - Ação 4: O scanner heurístico embutido inspeciona mais de 1.200 elementos DOM nas 4 telas chave, confirmando ausência de elementos sobrepostos bloqueantes e gerando métricas reais em `usability-audit.json`.
+   - *Conclusão*: O Chaos Explorer é autônomo, rigoroso e valida a robustez da aplicação.
 
-3. **R3 Fulfillment**:
-   - From Observation 5, cleaning ID 1358 on Flat 313 is purged, and Felipe's active stay (28/09 to 02/10) carries zero phantom carry-overs.
-   - From Observation 5, cleaning ID 1338 is assigned to Cris, false Grazi notes are eradicated, unearned credit `stmt_3_1338_20260928` is removed, and Cris is credited at the canonical rate R$ 23.25.
-   - From Observation 1, tests 1.5.1–1.6.5, 2.5.1–2.6.5, and 3.4 confirm maid accounting alignment.
-   - Therefore, Requirement R3 is fully satisfied.
-
-4. **R4 Fulfillment**:
-   - From Observation 5, `RES-712-0291` and cleaning ID 1351 are mapped to Flat 712 (`flatId: 14`).
-   - From Observation 5, all 19 flats in `data/database.json` are valid and unique; foreign flat 502 does not exist; phantom cleanings 1361, 1362, 1364 are resolved.
-   - From Observation 2, `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs` are 100% byte-for-byte identical.
-   - From Observation 4, frontend build passes with clean assets in `dist/`.
-   - Therefore, Requirement R4 and all acceptance criteria are fully satisfied.
-
-5. **Adversarial Integrity Check**:
-   - No hardcoded test responses, no facade logic, no bypassed tasks, no self-certifying mock shortcuts were detected. All 90 tests evaluate real code execution and real persistent state.
-   - Therefore, the work meets all integrity standards.
+3. **Validação do Relatório HTML Consolidado (`e2e/reports/index.html`)**:
+   - *Premissa*: O relatório deve consolidar os KPIs globais, taxa de aprovação por módulo (M1 a M5), seção exclusiva do Chaos Explorer, galeria de evidências para falhas e visualização detalhada.
+   - *Verificação*:
+     - O arquivo gerado contém 100% de taxa de sucesso global, cobrindo os 5 módulos com seus respectivos pass rates e métricas de tempo.
+     - A seção Chaos Explorer detalha os 4 pilares caóticos e integra os resultados reais de `usability-audit.json` (Score: 70/100, 1.232 elementos analisados, 0 bloqueantes).
+     - Quando todos os testes passam, a galeria exibe o badge de integridade "🛡️ Nenhuma Falha Detectada — 100% de Aprovação", com suporte completo a links de fotos e vídeos em caso de falha.
+     - Filtros interativos permitem segmentar por módulo (`Todos`, `M5 Chaos`, `M4 Pairwise`, `M3 Jornadas`, `M2 Crawler`) instantaneamente.
+   - *Conclusão*: O relatório atende com perfeição aos critérios de aceitação do projeto.
 
 ---
 
-## 3. Caveats
+## 3. Caveats (Desafios Adversariais Identificados)
 
-- **Timezone dependency**: The frontend switchover utilizes client system clock (`new Date().getHours() >= 18`). In standard hotel operations (America/Sao_Paulo), this aligns with local time. The "🟢 Hoje" button provides a manual override if an operator accesses the dashboard from another timezone.
-- **Git push prerequisite**: Git commit and push have not yet been executed in this turn as Reviewer 2 is constrained to review-only; the orchestrator / release agent must stage modified files and execute `git commit` + `git push` to `origin main` per `AGENTS.md`.
+Durante a revisão adversarial, realizamos stress-testing e identificamos 2 pontos de atenção na infraestrutura de testes:
+
+1. **Persistência de Sockets do Mock Z-API no Windows (Prioridade Média)**:
+   - *Cenário Adversarial*: No arquivo `e2e/sandbox/mock-zapi.mjs`, o método `stopMockZapi()` invoca `serverInstance.close()`. No Node.js em Windows, conexões HTTP persistentes (Keep-Alive) podem manter a porta `5056` presa se o encerramento do processo do Playwright for prematuro. Em uma de nossas execuções de estresse, a tentativa imediata seguinte resultou em `listen EADDRINUSE: address already in use 127.0.0.1:5056`.
+   - *Recomendação Operacional*: Adicionar `serverInstance.closeAllConnections?.()` (disponível no Node.js v18.2+) antes de `serverInstance.close()`, ou implementar uma rotina prévia de limpeza de porta (`killExistingProcessOnPort(5056)`) em `e2e/sandbox/test-server.mjs`.
+
+2. **Resolução de Caminho Estático de Frontend a Partir de `scripts/demo-server.mjs` (Prioridade Baixa)**:
+   - *Cenário Adversarial*: Em `demo-server.mjs` (linha 29278), `const distPath = path.resolve(__dirname, "../limpeza/dist/public")`. Quando o servidor é iniciado a partir de `artifacts/api-server/demo-server.mjs`, o caminho é resolvido corretamente para `artifacts/limpeza/dist/public`. Porém, caso alguém execute diretamente o espelho `scripts/demo-server.mjs`, `__dirname` aponta para `scripts/` e o caminho resultante `.../limpeza/dist/public` não existe.
+   - *Recomendação Operacional*: Incluir `path.resolve(process.cwd(), "artifacts/limpeza/dist/public")` como prioridade na lista `candidateIndexPaths` e na definição de `distPath`.
 
 ---
 
 ## 4. Conclusion
 
-**Verdict: APPROVE**
+O trabalho implementado nos Milestones M4 (Matriz Pairwise), M5 (Gemini Chaos Explorer) e no Relatório HTML Consolidado cumpre com excelência todos os requisitos do projeto:
+- **Zero Violações de Integridade**: Nenhum resultado mockado ou falsificado; código de testes e aplicação 100% reais.
+- **Taxa de Aprovação de 100%**: Ambas as suítes `03-pairwise-matrix.spec.mjs` (12/12) e `04-chaos-explorer.spec.mjs` (12/12) foram executadas e aprovadas com sucesso em todos os 3 viewports oficiais (Desktop 1920, Tablet 768, Mobile 375).
+- **Relatório Standalone**: `e2e/reports/index.html` gerado sem dependências de rede externa, responsivo e com métricas consolidadas.
+- **Paridade Twin-Server**: Mantida de forma estrita via SHA-256 entre `artifacts/api-server/` e `scripts/`.
+- **Isolamento de Dados**: Banco de produção `data/database.json` 100% preservado.
 
-The governance and integrity overhaul is complete, robust, and verified across all 4 tiers. All 4 core requirements (R1, R2, R3, R4) are satisfied. The codebase is clean of integrity violations, and production frontend assets are built and verified.
+**Parecer Formal**: **`APPROVE`**
 
 ---
 
 ## 5. Verification Method
 
-To independently verify the entire overhaul:
+Para reproduzir e auditar independentemente as suítes e artefatos:
 
-1. **Run Native Test Runner**:
-   ```powershell
-   node --test tests/governance-integrity.test.mjs
-   ```
-   *Expected outcome*: 90 passing tests across 20 suites, 0 failures, execution time < 2.5s.
+```powershell
+# 1. Executar a suíte Chaos Explorer (M5)
+node e2e/runner.mjs e2e/suites/04-chaos-explorer.spec.mjs
 
-2. **Verify Server Synchronization**:
-   ```powershell
-   git diff --no-index artifacts/api-server/demo-server.mjs scripts/demo-server.mjs
-   ```
-   *Expected outcome*: Zero differences.
+# 2. Executar a suíte Pairwise Matrix (M4)
+node e2e/runner.mjs e2e/suites/03-pairwise-matrix.spec.mjs
 
-3. **Verify Frontend Build**:
-   ```powershell
-   npm run build --prefix artifacts/limpeza
-   ```
-   *Expected outcome*: Exit code 0, generated bundle in `artifacts/limpeza/dist/public/`.
+# 3. Conferir a paridade Twin-Server SHA-256
+powershell -Command "(Get-FileHash 'artifacts/api-server/demo-server.mjs').Hash -eq (Get-FileHash 'scripts/demo-server.mjs').Hash"
 
-4. **Forensic Database Verification**:
-   ```powershell
-   node -e "const db=JSON.parse(fs.readFileSync('data/database.json')); console.log('Flats:', db.flats.length, 'Res 712:', (db.reservations.find(r=>r.code==='RES-712-0291')||{}).flatNumber);"
-   ```
-   *Expected outcome*: `Flats: 19 Res 712: 712`.
+# 4. Inspecionar o relatório consolidado gerado
+start e2e/reports/index.html
+```
+
+*Condição de Invalidação*: Qualquer falha com exit code diferente de 0 nas suítes `03-pairwise-matrix.spec.mjs` ou `04-chaos-explorer.spec.mjs`, ou qualquer discrepância no hash SHA-256 dos servidores twin.
