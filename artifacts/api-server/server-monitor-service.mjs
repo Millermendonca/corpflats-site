@@ -105,10 +105,18 @@ export function serverMonitorMiddleware(req, res, next) {
     cleanPath.startsWith("/storage") ||
     cleanPath.startsWith("/assets") ||
     cleanPath.endsWith(".png") ||
+    cleanPath.endsWith(".jpg") ||
+    cleanPath.endsWith(".jpeg") ||
+    cleanPath.endsWith(".webp") ||
+    cleanPath.endsWith(".gif") ||
     cleanPath.endsWith(".ico") ||
     cleanPath.endsWith(".svg") ||
     cleanPath.endsWith(".css") ||
-    cleanPath.endsWith(".js")
+    cleanPath.endsWith(".js") ||
+    cleanPath.endsWith(".woff") ||
+    cleanPath.endsWith(".woff2") ||
+    cleanPath.endsWith(".ttf") ||
+    cleanPath.endsWith(".map")
   ) {
     return next();
   }
@@ -465,6 +473,7 @@ export function startMonitoringEngine() {
       // Armazena cópia compacta e limpa no histórico para manter overhead de memória desprezível (<500KB)
       const compactHistorical = {
         timestamp: snapshot.timestamp,
+        timeMs: Date.now(),
         cpu: {
           processPercent: snapshot.cpu.processPercent,
           userPercent: snapshot.cpu.userPercent,
@@ -691,7 +700,7 @@ export function getLiveSnapshot() {
 export function getTelemetryHistory(minutes = 15) {
   const now = Date.now();
   const maxAgeMs = minutes * 60 * 1000;
-  return telemetryHistory.filter(s => (now - new Date(s.timestamp).getTime()) <= maxAgeMs);
+  return telemetryHistory.filter(s => (now - (s.timeMs || new Date(s.timestamp).getTime())) <= maxAgeMs);
 }
 
 /**

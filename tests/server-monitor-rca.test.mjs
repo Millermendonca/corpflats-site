@@ -182,6 +182,10 @@ test("Server Monitor Middleware: Bypass de assets com query strings e limpeza id
   assert.equal(nextCalled, true, "Middleware deve liberar imediatamente assets com query string sem registrar no mapa de requisições ativas");
   assert.equal(Object.keys(fakeRes.handlers).length, 0, "Assets estáticos não devem registrar listeners de término");
 
+  let webpCalled = false;
+  serverMonitorMiddleware({ method: "GET", url: "/photos/room.webp?v=1", headers: {} }, fakeRes, () => { webpCalled = true; });
+  assert.equal(webpCalled, true, "Extensão .webp deve ser liberada imediatamente sem overhead");
+
   // Testa idempotência de cleanup quando ambos os eventos 'finish' e 'close' são disparados
   let reqNextCalled = false;
   const fakeApiReq = {
@@ -205,11 +209,12 @@ test("Server Monitor Middleware: Bypass de assets com query strings e limpeza id
   assert.ok(fakeApiRes.handlers.finish, "Deve registrar listener finish");
   assert.ok(fakeApiRes.handlers.close, "Deve registrar listener close");
 
-  // Disparar finish e close consecutivamente não deve gerar duplicatas nem erros
+  // Aguarda ultrapassar SLOW_REQUEST_THRESHOLD_MS (500ms) para testar deduplicação real em recentSlowRequests
+  await new Promise(resolve => setTimeout(resolve, 510));
   fakeApiRes.handlers.finish();
   fakeApiRes.handlers.close();
 
   const snapshot = getLiveSnapshot();
   const slowMatches = snapshot.recentSlowRequests.filter(r => r.url === "/api/pms/test-route-latency");
-  assert.ok(slowMatches.length <= 1, "Não deve duplicar registros em recentSlowRequests");
+  assert.equal(slowMatches.length, 1, "Deve registrar exatamente 1 registro deduplicado em recentSlowRequests");
 });

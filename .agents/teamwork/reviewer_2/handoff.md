@@ -1,161 +1,108 @@
-# Relatório de Handoff — Reviewer 2: Verificação das Suítes E2E (M4, M5 & Relatório HTML Consolidado)
+# Relatório de Revisão Adversarial (Reviewer 2) — Otimização de Memória e Event Loop
 
-**Data**: 2026-10-11T03:58:00Z  
-**Agente**: `reviewer_2` (Reviewer & Adversarial Critic)  
-**Parent Agent**: `5a1d1171-401e-4601-9229-45485822d731` (Orchestrator Lead Architect)  
-**Escopo de Revisão**: 
-- Milestone 4 (M4 - Matriz Combinatória de Estados Pairwise): `e2e/suites/03-pairwise-matrix.spec.mjs`
-- Milestone 5 (M5 - Gemini Chaos Explorer & Usabilidade Heurística): `e2e/suites/04-chaos-explorer.spec.mjs`
-- Relatório HTML Consolidado: `e2e/reporters/html-reporter.mjs` & `e2e/reports/index.html`
-- Artefatos de Auditoria e Heurística: `e2e/reports/usability-audit.json` & `e2e/reports/modules-summary.json`
-- Alterações Frontend: `artifacts/limpeza/src/pages/guest-pre-checkin.tsx`
-- Infraestrutura de Testes e Sandbox: `e2e/runner.mjs`, `e2e/sandbox/`
+> [!WARNING] **Skepticism Disclaimer**
+> Embora a suíte pontual e a paridade twin estejam com 100% de aprovação e as maiores causas de bloqueio síncrono e stale cache tenham sido definitivamente sanadas, o comportamento sob picos volumosos de centenas de conexões concorrentes sustentadas no cluster do Render exigirá monitoramento contínuo da telemetria em produção.
 
 ---
 
-## 1. Observation
+## 1. What the prior attempt got wrong
 
-### 1.1 Execução Independente das Suítes E2E
-Executamos as suítes de teste de forma autônoma e independente através do sandbox isolado:
+1. **Serialização Síncrona (`JSON.stringify(db)`) e Reconciliação Eager a Cada Chamada de `saveDatabase("auto_save")`**
+   - **Input**: Múltiplas requisições simultâneas ou consecutivas disparando operações que chamam `saveDatabase()` em rajada (ex.: importações, webhooks, check-ins, interações de hóspedes).
+   - **Expected**: Em regime de auto-save com debounce de 300ms, a serialização e os cálculos de pruning/reconciliação deveriam ocorrer no momento do flush em disco, processando o estado acumulado uma única vez.
+   - **Actual**: O código anterior executava `reconcileCleaningRequests()`, `pruneDatabase()` e `const stateJson = JSON.stringify(db)` de forma síncrona imediatamente em cada invocação de `saveDatabase()`, mesmo quando `localSaveTimeout` já estava agendado e pendente. Isso bloqueava o Event Loop por dezenas de milissegundos repetidas vezes por segundo e inflava o Heap com múltiplas strings JSON redundantes de megabytes descartadas em seguida.
+   - **Root Cause**: Eager serialization síncrona antes do debounce em vez de deferred/lazy serialization no momento do flush.
 
-1. **Suíte M5 — Gemini Chaos Explorer (`e2e/suites/04-chaos-explorer.spec.mjs`)**:
-   - Comando: `node e2e/runner.mjs e2e/suites/04-chaos-explorer.spec.mjs`
-   - Resultado: 12 testes aprovados de 12 (100% Pass Rate). Exit code 0.
-   - Saída verbatim:
-     ```text
-     Running 12 tests using 1 worker
+2. **Funções de Invalidação de Cache Inertes / Nunca Chamadas (`invalidateGuestCache` e `invalidateFlatsCache`)**
+   - **Input**: Atualização cadastral in-place de um hóspede ou flat (ex.: alteração de documento, telefone, nome ou número do flat) sem alteração no `.length` das coleções `db.guests` / `db.flats`.
+   - **Expected**: Ao salvar as alterações via `saveDatabase()`, os índices em memória devem ser imediatamente invalidados para refletir os novos dados no PMS Calendar e relatórios.
+   - **Actual**: O Reviewer 1 criou `invalidateGuestCache()` e `invalidateFlatsCache()`, mas não adicionou chamadas a essas funções em nenhum ponto do código. Sem chamada explícita, o cache dependia unicamente de `length` e TTL (até 5-10s), retornando dados defasados após mutações in-place.
+   - **Root Cause**: Dead code / omissão de chamada de invalidação de cache no ponto focal de persistência (`saveDatabase()`).
 
-       ok  1 [Desktop-1920] › Ação Caótica 1: Cliques Duplos e Rápidos (21.9s)
-       ok  2 [Desktop-1920] › Ação Caótica 2: Injeção de Dados Fuzzing & Especiais (7.1s)
-       ok  3 [Desktop-1920] › Ação Caótica 3: Navegação Fora de Ordem (Botão Voltar) (9.1s)
-       ok  4 [Desktop-1920] › Ação Caótica 4: Auditoria Qualitativa de Usabilidade Heurística (8.9s)
-       ok  5 [Tablet-768]   › Ação Caótica 1: Cliques Duplos e Rápidos (11.4s)
-       ok  6 [Tablet-768]   › Ação Caótica 2: Injeção de Dados Fuzzing & Especiais (6.0s)
-       ok  7 [Tablet-768]   › Ação Caótica 3: Navegação Fora de Ordem (Botão Voltar) (8.3s)
-       ok  8 [Tablet-768]   › Ação Caótica 4: Auditoria Qualitativa de Usabilidade Heurística (6.6s)
-       ok  9 [Mobile-375]   › Ação Caótica 1: Cliques Duplos e Rápidos (10.0s)
-       ok 10 [Mobile-375]   › Ação Caótica 2: Injeção de Dados Fuzzing & Especiais (5.3s)
-       ok 11 [Mobile-375]   › Ação Caótica 3: Navegação Fora de Ordem (Botão Voltar) (12.6s)
-       ok 12 [Mobile-375]   › Ação Caótica 4: Auditoria Qualitativa de Usabilidade Heurística (7.5s)
+3. **Leitura de Disco Síncrona (`fs.readFileSync`) em Todas as Requisições de Páginas SPA**
+   - **Input**: Qualquer requisição HTTP acessando rotas de frontend (SPA catch-all `app.get("*", ...)`).
+   - **Expected**: O arquivo `index.html` deve ser carregado uma vez do disco e servido da memória (`cachedIndexHtml`) sem I/O de disco repetido.
+   - **Actual**: A checagem em `serveSpaWithMetadata` utilizava `if (indexPath)` sem verificar `!html`, forçando uma leitura síncrona de arquivo (`fs.readFileSync(indexPath, "utf-8")`) em todas as visitas, gerando I/O síncrono bloqueante do loop de eventos.
+   - **Root Cause**: Falta da guarda `if (!html && indexPath)` antes de ler o disco.
 
-       12 passed (2.3m)
-     [ConsolidatedHtmlReporter] HTML report saved to C:\Users\mille\...\e2e\reports\index.html
-     [runner] Playwright execution finished with exit code 0.
-     ```
+4. **Operação Síncrona Bloqueante no Startup (`loadDatabase`)**
+   - **Input**: Inicialização do servidor Node.js hidratando dados do arquivo `database.json`.
+   - **Expected**: Leitura assíncrona não-bloqueante no loop de inicialização.
+   - **Actual**: Utilizava `fs.readFileSync(DB_FILE, "utf-8")` dentro de uma função declarada como `async function loadDatabase()`.
+   - **Root Cause**: Uso desnecessário de método síncrono bloqueante em contexto assíncrono.
 
-2. **Suíte M4 — Matriz Combinatória de Estados Pairwise (`e2e/suites/03-pairwise-matrix.spec.mjs`)**:
-   - Comando: `node e2e/runner.mjs e2e/suites/03-pairwise-matrix.spec.mjs`
-   - Resultado: 12 testes aprovados de 12 (100% Pass Rate). Exit code 0.
-   - Saída verbatim:
-     ```text
-     Running 12 tests using 1 worker
+5. **Spreading de Array em `Math.max` Dentro de Loop de Reconciliação**
+   - **Input**: Execução de `reconcileUniversalIntegrity()` com centenas de solicitações de limpeza.
+   - **Expected**: Cálculo eficiente de `maxCleanId` sem alocação desnecessária de memória ou risco de estouro de stack.
+   - **Actual**: `Math.max(...db.cleaningRequests.map(c => Number(c.id) || 0))` dentro de um loop de reservas, alocando novo array a cada iteração e espalhando argumentos na pilha de chamadas.
+   - **Root Cause**: Uso de `.map()` com spread operator em vez de busca linear direta.
 
-       ok  1 [Desktop-1920] › Cenário 1: Matriz de Composições de Reserva & Durações (16.1s)
-       ok  2 [Desktop-1920] › Cenário 2: Auditoria dos 19 Flats sob Todos os 7 Estados de Governança (3.9s)
-       ok  3 [Desktop-1920] › Cenário 3: Ciclo Completo de Ordens de Serviço (3.2s)
-       ok  4 [Desktop-1920] › Cenário 4: Regras de Café da Manhã & Cutoff Rígido das 22h com Time-Travel (6.2s)
-       ok  5 [Tablet-768]   › Cenário 1: Matriz de Composições de Reserva & Durações (6.8s)
-       ok  6 [Tablet-768]   › Cenário 2: Auditoria dos 19 Flats sob Todos os 7 Estados de Governança (4.2s)
-       ok  7 [Tablet-768]   › Cenário 3: Ciclo Completo de Ordens de Serviço (5.2s)
-       ok  8 [Tablet-768]   › Cenário 4: Regras de Café da Manhã & Cutoff Rígido das 22h com Time-Travel (6.6s)
-       ok  9 [Mobile-375]   › Cenário 1: Matriz de Composições de Reserva & Durações (7.2s)
-       ok 10 [Mobile-375]   › Cenário 2: Auditoria dos 19 Flats sob Todos os 7 Estados de Governança (3.9s)
-       ok 11 [Mobile-375]   › Cenário 3: Ciclo Completo de Ordens de Serviço (2.9s)
-       ok 12 [Mobile-375]   › Cenário 4: Regras de Café da Manhã & Cutoff Rígido das 22h com Time-Travel (4.6s)
-
-       12 passed (1.4m)
-     [ConsolidatedHtmlReporter] HTML report saved to C:\Users\mille\...\e2e\reports\index.html
-     [runner] Playwright execution finished with exit code 0.
-     ```
-
-### 1.2 Auditoria Forense de Integridade (Detecção de Violações)
-- **Resultados fixos / Mocks estáticos em código fonte**: Inspecionamos `03-pairwise-matrix.spec.mjs` e `04-chaos-explorer.spec.mjs`. Não há asserções tautológicas (`expect(true).toBe(true)`), nem resultados pré-computados embutidos. Todas as chamadas geram e consomem dados dinâmicos da API (`/api/bot-actions/quote`, `/api/pms/reservations`, `/api/flats`, `/api/service-orders`, `/api/service/public/:token/*`, `/api/breakfast/orders`).
-- **Implementações dummy / fachada**: Em `guest-pre-checkin.tsx` (linhas 81–107), a sincronização de `step` com a API nativa de histórico (`window.history.pushState` e `popstate`) é autêntica e funcional. No teste de chaos, `page.goBack()` realmente restaura o passo anterior e os valores dos inputs continuam presentes no formulário sem travamentos.
-- **Relatório Standalone (Zero CDN)**: Inspecionamos `e2e/reports/index.html`. Não há nenhuma requisição externa a CDNs (`<script src="http...">` ou `<link href="http...">`). Todo o CSS, layout e script de filtragem são 100% offline e embutidos.
-- **Banco de Dados de Produção**: `data/database.json` permaneceu estritamente intocado pelo sandbox. Todos os testes rodaram isoladamente contra `data/database.test.json` na porta 5055.
-
-### 1.3 Paridade Twin-Server & Build do Frontend
-- Verificação de hash SHA-256 entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`:
-  - Comando: `powershell -Command "(Get-FileHash 'artifacts/api-server/demo-server.mjs').Hash -eq (Get-FileHash 'scripts/demo-server.mjs').Hash"`
-  - Resultado: `True` (Paridade byte-a-byte mantida).
-- Build de verificação em `artifacts/limpeza`: `dist/public/` está compilado e sincronizado com os fontes.
+6. **Falso-Positivo no Teste Unitário de Deduplicação de Slow Requests**
+   - **Input**: Execução do Teste 6 em `tests/server-monitor-rca.test.mjs`.
+   - **Expected**: O teste deve submeter uma requisição com duração real >= 500ms para certificar que o registro não duplica em `recentSlowRequests` após os eventos `finish` e `close`.
+   - **Actual**: O teste disparava `finish()` e `close()` imediatamente (<1ms). Como a duração era inferior a 500ms, `recentSlowRequests.unshift` nunca era invocado, e a asserção `slowMatches.length <= 1` passava com `0 <= 1` sem jamais testar a deduplicação.
+   - **Root Cause**: Falta de temporização real ou simulação de duração >= 500ms no teste unitário.
 
 ---
 
-## 2. Logic Chain
+## 2. What I changed
 
-1. **Validação do M4 (Matriz Combinatória de Estados Pairwise)**:
-   - *Premissa*: O Milestone 4 deve exercitar combinações de reservas (solo, casal, família com menor e estadia longa), auditar a totalidade dos 19 flats sob os 7 estados de governança, validar o ciclo de ordens de serviço externas e certificar o corte estrito das 22h do café da manhã via time-travel.
-   - *Verificação*:
-     - No Cenário 1, a suíte exercita cotações de tarifas com regras SEBRAE (ex: taxa de cama extra de R$ 60 apenas para 3º hóspede; diárias longas > R$ 2.500), persiste reservas no PMS, valida a timeline em `/reservas` e audita o voucher em `/minha-reserva/:code`.
-     - No Cenário 2, audita exatamente os 19 flats canônicos e exercita transições de governança (`dirty` -> `cleaning_now` -> `clean`), além de bloqueios de manutenção no calendário PMS.
-     - No Cenário 3, a ordem de serviço tokenizada impõe o limite de `maxSimultaneousFlats = 1` (rejeitando com HTTP 400 tentativas de iniciar flats simultâneos) e bloqueia a conclusão sem fotos (`requirePhotos = true`). Ao concluir com `needsCleaning = true`, gera solicitação automática de limpeza para a camareira.
-     - No Cenário 4, o time-travel simula 15:00 (pedido aceito e despachado para `/pedidos-cafe`) e 22:00 (pedido rejeitado com HTTP 400 contendo a mensagem de cutoff).
-   - *Conclusão*: Todas as regras de negócio de M4 funcionam de forma real, integrada e assertiva.
+### Arquivos Modificados:
+1. `scripts/demo-server.mjs` e `artifacts/api-server/demo-server.mjs` (Par Twin 100% idêntico)
+2. `scripts/server-monitor-service.mjs` e `artifacts/api-server/server-monitor-service.mjs` (Par Twin 100% idêntico)
+3. `tests/server-monitor-rca.test.mjs`
 
-2. **Validação do M5 (Gemini Chaos Explorer)**:
-   - *Premissa*: O Milestone 5 deve testar a resiliência contra comportamento não-linear do usuário: cliques duplos rápidos (50ms), injeção de dados caóticos (XSS, SQLi, emojis, espaços), navegação pelo botão Voltar e auditoria heurística do DOM.
-   - *Verificação*:
-     - Ação 1: Cliques rápidos de 50ms nos botões de avanço e filtros não geram requisições duplicadas, travamentos ou violações do `ErrorGuard`.
-     - Ação 2: Cargas maliciosas injetadas nos formulários não disparam `window.onerror`, são renderizadas como texto escapado seguro e não crasham a árvore do React.
-     - Ação 3: `page.goBack()` recupera etapas anteriores com 100% dos dados preservados em memória, eliminando telas brancas de navegação.
-     - Ação 4: O scanner heurístico embutido inspeciona mais de 1.200 elementos DOM nas 4 telas chave, confirmando ausência de elementos sobrepostos bloqueantes e gerando métricas reais em `usability-audit.json`.
-   - *Conclusão*: O Chaos Explorer é autônomo, rigoroso e valida a robustez da aplicação.
-
-3. **Validação do Relatório HTML Consolidado (`e2e/reports/index.html`)**:
-   - *Premissa*: O relatório deve consolidar os KPIs globais, taxa de aprovação por módulo (M1 a M5), seção exclusiva do Chaos Explorer, galeria de evidências para falhas e visualização detalhada.
-   - *Verificação*:
-     - O arquivo gerado contém 100% de taxa de sucesso global, cobrindo os 5 módulos com seus respectivos pass rates e métricas de tempo.
-     - A seção Chaos Explorer detalha os 4 pilares caóticos e integra os resultados reais de `usability-audit.json` (Score: 70/100, 1.232 elementos analisados, 0 bloqueantes).
-     - Quando todos os testes passam, a galeria exibe o badge de integridade "🛡️ Nenhuma Falha Detectada — 100% de Aprovação", com suporte completo a links de fotos e vídeos em caso de falha.
-     - Filtros interativos permitem segmentar por módulo (`Todos`, `M5 Chaos`, `M4 Pairwise`, `M3 Jornadas`, `M2 Crawler`) instantaneamente.
-   - *Conclusão*: O relatório atende com perfeição aos critérios de aceitação do projeto.
+### Detalhamento das Alterações:
+1. **Lazy Debounced Persistence no Servidor**:
+   - `saveDatabase("auto_save")` agora marca flags de dirty (`pendingLocalDirty = true`, `pendingPgDirty = true`) e agenda timers de debounce sem realizar serialização imediata.
+   - `flushLocalDiskState()` e `flushPgState()` executam `reconcileCleaningRequests()`, `pruneDatabase()` e `JSON.stringify(db)` de forma adiada e coordenada apenas no momento em que a gravação em lote for de fato iniciada.
+   - Salvamentos manuais/críticos (`manual_`, `repair_`, `shutdown`) cancelam timers pendentes e gravam imediatamente.
+2. **Invalidação Ativa e Blindagem de Caches de Hóspedes e Flats**:
+   - `saveDatabase()` agora chama explicitamente `invalidateGuestCache()` e `invalidateFlatsCache()` a cada mutação de estado.
+   - `getGuestIndexes()` indexa chaves por ID numérico e string (`g.id`, `String(g.id)`, `Number(g.id)`), prevenindo incompatibilidades de tipo entre dados numéricos e strings.
+   - `getFlatsByNumberMap()` indexa por número e ID tanto em string quanto numérico.
+   - As declarações de cache foram migradas para o topo da persistência para garantir escopo limpo e imunidade a TDZ (Temporal Dead Zone).
+3. **Eliminação de Bloqueios Síncronos de Disco**:
+   - `serveSpaWithMetadata`: Ajustada a condição para `if (!html && indexPath)` para servir `index.html` estritamente a partir do cache de memória (`cachedIndexHtml`) após a primeira leitura, eliminando I/O síncrono por request.
+   - `loadDatabase`: Convertido `fs.readFileSync(DB_FILE, "utf-8")` para `await fs.promises.readFile(DB_FILE, "utf-8")`.
+   - `reconcileUniversalIntegrity`: Substituído `Math.max(...db.cleaningRequests.map(...))` por busca linear simples `for (const c of db.cleaningRequests)`.
+4. **Bypass Estendido no Middleware de Telemetria**:
+   - Adicionadas extensões estáticas adicionais (`.jpg`, `.jpeg`, `.webp`, `.gif`, `.woff`, `.woff2`, `.ttf`, `.map`) no bypass imediato do middleware de monitoramento para evitar retenção de registros em `activeRequestsMap`.
+   - `compactHistorical` no histórico de telemetria agora inclui `timeMs: Date.now()`, otimizando a filtragem em `getTelemetryHistory` sem parsing repetido de strings ISO de data.
+5. **Aprimoramento do Teste Unitário 6**:
+   - O teste unitário agora aguarda 510ms (>500ms threshold) antes de disparar `finish()` e `close()`, garantindo que a deduplicação de requisições lentas em `recentSlowRequests` seja efetivamente acionada e validada com `assert.equal(slowMatches.length, 1)`.
 
 ---
 
-## 3. Caveats (Desafios Adversariais Identificados)
+## 3. Verification Record
 
-Durante a revisão adversarial, realizamos stress-testing e identificamos 2 pontos de atenção na infraestrutura de testes:
+- **Deep Verification (ran actual tests):**
+  - Permitted Unit Tests: `node --test tests/server-monitor-rca.test.mjs tests/whatsapp-status-cache.test.mjs`
+    - Resultado: **8 de 8 testes aprovados com 100% de sucesso** em ~921ms.
+  - Teste de Inicialização e Cache via Node ESM:
+    - Executado: `node --input-type=module -e "import { getGuestIndexes, getFlatsByNumberMap, invalidateGuestCache, invalidateFlatsCache } from './artifacts/api-server/demo-server.mjs'; ..."`
+    - Resultado: Inicialização de módulos concluída com sucesso (código de saída 0).
+  - Frontend Build: `npm --prefix artifacts/limpeza run build`
+    - Resultado: Compilação concluída com sucesso (3360 módulos transformados, 0 erros, código de saída 0 em 31.74s).
+  - Paridade Rigorosa Twin SHA-256:
+    - Executado via PowerShell: `powershell -Command "(Get-FileHash scripts/demo-server.mjs).Hash -eq (Get-FileHash artifacts/api-server/demo-server.mjs).Hash; (Get-FileHash scripts/server-monitor-service.mjs).Hash -eq (Get-FileHash artifacts/api-server/server-monitor-service.mjs).Hash; (Get-FileHash scripts/zapi-service.mjs).Hash -eq (Get-FileHash artifacts/api-server/zapi-service.mjs).Hash"`
+    - Resultado: `True`, `True`, `True` (100% idênticos).
 
-1. **Persistência de Sockets do Mock Z-API no Windows (Prioridade Média)**:
-   - *Cenário Adversarial*: No arquivo `e2e/sandbox/mock-zapi.mjs`, o método `stopMockZapi()` invoca `serverInstance.close()`. No Node.js em Windows, conexões HTTP persistentes (Keep-Alive) podem manter a porta `5056` presa se o encerramento do processo do Playwright for prematuro. Em uma de nossas execuções de estresse, a tentativa imediata seguinte resultou em `listen EADDRINUSE: address already in use 127.0.0.1:5056`.
-   - *Recomendação Operacional*: Adicionar `serverInstance.closeAllConnections?.()` (disponível no Node.js v18.2+) antes de `serverInstance.close()`, ou implementar uma rotina prévia de limpeza de porta (`killExistingProcessOnPort(5056)`) em `e2e/sandbox/test-server.mjs`.
+- **Shallow Verification (manual only):**
+  - Revisão estática da integridade de rollback e descarte de arquivo temporário na concorrência otimista de disco.
 
-2. **Resolução de Caminho Estático de Frontend a Partir de `scripts/demo-server.mjs` (Prioridade Baixa)**:
-   - *Cenário Adversarial*: Em `demo-server.mjs` (linha 29278), `const distPath = path.resolve(__dirname, "../limpeza/dist/public")`. Quando o servidor é iniciado a partir de `artifacts/api-server/demo-server.mjs`, o caminho é resolvido corretamente para `artifacts/limpeza/dist/public`. Porém, caso alguém execute diretamente o espelho `scripts/demo-server.mjs`, `__dirname` aponta para `scripts/` e o caminho resultante `.../limpeza/dist/public` não existe.
-   - *Recomendação Operacional*: Incluir `path.resolve(process.cwd(), "artifacts/limpeza/dist/public")` como prioridade na lista `candidateIndexPaths` e na definição de `distPath`.
-
----
-
-## 4. Conclusion
-
-O trabalho implementado nos Milestones M4 (Matriz Pairwise), M5 (Gemini Chaos Explorer) e no Relatório HTML Consolidado cumpre com excelência todos os requisitos do projeto:
-- **Zero Violações de Integridade**: Nenhum resultado mockado ou falsificado; código de testes e aplicação 100% reais.
-- **Taxa de Aprovação de 100%**: Ambas as suítes `03-pairwise-matrix.spec.mjs` (12/12) e `04-chaos-explorer.spec.mjs` (12/12) foram executadas e aprovadas com sucesso em todos os 3 viewports oficiais (Desktop 1920, Tablet 768, Mobile 375).
-- **Relatório Standalone**: `e2e/reports/index.html` gerado sem dependências de rede externa, responsivo e com métricas consolidadas.
-- **Paridade Twin-Server**: Mantida de forma estrita via SHA-256 entre `artifacts/api-server/` e `scripts/`.
-- **Isolamento de Dados**: Banco de produção `data/database.json` 100% preservado.
-
-**Parecer Formal**: **`APPROVE`**
+- **Unverified aspects:**
+  - Comportamento de retenção de memória em ambiente de produção contínua durante semanas sob múltiplos deploys e reinicializações no cluster do Render.
 
 ---
 
-## 5. Verification Method
+## 4. Known Issues
 
-Para reproduzir e auditar independentemente as suítes e artefatos:
+- `Minor Robustness Risk`: Se o processo Node.js sofrer encerramento brusco via `kill -9` no intervalo exato de 300ms entre uma mutação e o disparo do flush assíncrono em disco, as alterações pendentes daquele lote dependem da persistência no PostgreSQL caso configurado.
 
-```powershell
-# 1. Executar a suíte Chaos Explorer (M5)
-node e2e/runner.mjs e2e/suites/04-chaos-explorer.spec.mjs
+---
 
-# 2. Executar a suíte Pairwise Matrix (M4)
-node e2e/runner.mjs e2e/suites/03-pairwise-matrix.spec.mjs
+## 5. Remaining risk & next step
 
-# 3. Conferir a paridade Twin-Server SHA-256
-powershell -Command "(Get-FileHash 'artifacts/api-server/demo-server.mjs').Hash -eq (Get-FileHash 'scripts/demo-server.mjs').Hash"
-
-# 4. Inspecionar o relatório consolidado gerado
-start e2e/reports/index.html
-```
-
-*Condição de Invalidação*: Qualquer falha com exit code diferente de 0 nas suítes `03-pairwise-matrix.spec.mjs` ou `04-chaos-explorer.spec.mjs`, ou qualquer discrepância no hash SHA-256 dos servidores twin.
+- Os serviços gêmeos (`demo-server.mjs`, `server-monitor-service.mjs`, `zapi-service.mjs`) estão em total paridade SHA-256, todas as operações síncronas bloqueantes identificadas foram resolvidas e os testes pontuais passam integralmente.
+- Próximo passo: Realizar commit e git push para `origin main` conforme as diretrizes do repositório, seguido pelo acompanhamento dos gráficos de heap e event loop delay no dashboard do Render.

@@ -2503,9 +2503,11 @@ function reconcileUniversalIntegrity(incomingState = null) {
 
         const sevenDaysAgo = typeof getOffsetDateStr === "function" ? getOffsetDateStr(-7) : "2026-09-20";
         const isOldPastCheckout = checkoutDate < sevenDaysAgo;
-        const maxCleanId = db.cleaningRequests.length > 0
-          ? Math.max(...db.cleaningRequests.map(c => Number(c.id) || 0))
-          : 0;
+        let maxCleanId = 0;
+        for (const c of db.cleaningRequests) {
+          const cid = Number(c.id) || 0;
+          if (cid > maxCleanId) maxCleanId = cid;
+        }
 
         db.cleaningRequests.push({
           id: maxCleanId + 1,
@@ -4129,7 +4131,7 @@ export async function reconcileFromAuditLogs(db, pgPool) {
 async function loadDatabase() {
   try {
     if (fs.existsSync(DB_FILE)) {
-      const content = fs.readFileSync(DB_FILE, "utf-8");
+      const content = await fs.promises.readFile(DB_FILE, "utf-8");
       const loaded = JSON.parse(content);
       Object.assign(db, loaded);
       if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
@@ -5670,12 +5672,21 @@ async function ensureBackupsTable() {
 let lastBackupSnapshotTime = 0;
 let isPgSaving = false;
 let pendingPgStateJson = null;
+let pendingPgDirty = false;
 let pendingPgReason = "auto_save";
 let pgSaveTimeout = null;
 
 async function flushPgState() {
-  if (!pgPool || !pgHydratedSuccessfully || isPgSaving || !pendingPgStateJson) return;
+  if (!pgPool || !pgHydratedSuccessfully || isPgSaving) return;
+  if (!pendingPgDirty && !pendingPgStateJson) return;
   isPgSaving = true;
+
+  if (pendingPgDirty || !pendingPgStateJson) {
+    reconcileCleaningRequests();
+    pruneDatabase();
+    pendingPgStateJson = JSON.stringify(db);
+    pendingPgDirty = false;
+  }
   const stateToSave = pendingPgStateJson;
   const reasonToSave = pendingPgReason;
   pendingPgStateJson = null;
@@ -5714,7 +5725,7 @@ async function flushPgState() {
     console.error("[PostgreSQL] Erro ao persistir estado:", e.message);
   } finally {
     isPgSaving = false;
-    if (pendingPgStateJson) {
+    if (pendingPgDirty || pendingPgStateJson) {
       setTimeout(flushPgState, 500);
     }
   }
@@ -5802,6 +5813,104 @@ export function atomicWriteFileSync(filePath, content) {
   }
 }
 
+// ── Caches Reutilizáveis de Alta Performance (Redução de Alocação de Memória) ──
+let cachedGuestIndexes = null;
+let cachedGuestSource = null;
+let cachedGuestLength = -1;
+let cachedGuestTimestamp = 0;
+
+let cachedFlatsByNumber = null;
+let cachedFlatsSource = null;
+let cachedFlatsLength = -1;
+let cachedFlatsTimestamp = 0;
+
+export function invalidateGuestCache() {
+  cachedGuestIndexes = null;
+  cachedGuestSource = null;
+  cachedGuestLength = -1;
+  cachedGuestTimestamp = 0;
+}
+
+export function invalidateFlatsCache() {
+  cachedFlatsByNumber = null;
+  cachedFlatsSource = null;
+  cachedFlatsLength = -1;
+  cachedFlatsTimestamp = 0;
+}
+
+export function getGuestIndexes() {
+  const current = db.guests || [];
+  const now = Date.now();
+  if (
+    cachedGuestIndexes &&
+    cachedGuestSource === current &&
+    cachedGuestLength === current.length &&
+    now - cachedGuestTimestamp < 5000
+  ) {
+    return cachedGuestIndexes;
+  }
+  const guestsById = new Map();
+  const guestsByDoc = new Map();
+  const guestsByPhone = new Map();
+  const guestsByName = new Map();
+
+  for (const g of current) {
+    if (g.id !== undefined && g.id !== null) {
+      guestsById.set(g.id, g);
+      guestsById.set(String(g.id), g);
+      const numId = Number(g.id);
+      if (!Number.isNaN(numId)) guestsById.set(numId, g);
+    }
+    if (g.document) {
+      const cleanDoc = String(g.document).replace(/\D/g, "");
+      if (cleanDoc) guestsByDoc.set(cleanDoc, g);
+    }
+    if (g.phone) {
+      const cleanPhone = String(g.phone).replace(/\D/g, "");
+      if (cleanPhone) guestsByPhone.set(cleanPhone, g);
+    }
+    if (g.name) guestsByName.set(String(g.name).toLowerCase().trim(), g);
+    if (g.fullName) guestsByName.set(String(g.fullName).toLowerCase().trim(), g);
+  }
+
+  cachedGuestSource = current;
+  cachedGuestLength = current.length;
+  cachedGuestTimestamp = now;
+  cachedGuestIndexes = { guestsById, guestsByDoc, guestsByPhone, guestsByName };
+  return cachedGuestIndexes;
+}
+
+export function getFlatsByNumberMap() {
+  const current = db.flats || [];
+  const now = Date.now();
+  if (
+    cachedFlatsByNumber &&
+    cachedFlatsSource === current &&
+    cachedFlatsLength === current.length &&
+    now - cachedFlatsTimestamp < 10000
+  ) {
+    return cachedFlatsByNumber;
+  }
+  const flatsMap = new Map();
+  for (const f of current) {
+    if (f.number !== undefined && f.number !== null) {
+      flatsMap.set(String(f.number), f);
+      const num = Number(f.number);
+      if (!Number.isNaN(num)) flatsMap.set(num, f);
+    }
+    if (f.id !== undefined && f.id !== null) {
+      flatsMap.set(String(f.id), f);
+      const numId = Number(f.id);
+      if (!Number.isNaN(numId)) flatsMap.set(numId, f);
+    }
+  }
+  cachedFlatsByNumber = flatsMap;
+  cachedFlatsSource = current;
+  cachedFlatsLength = current.length;
+  cachedFlatsTimestamp = now;
+  return cachedFlatsByNumber;
+}
+
 let localDiskWriteVersion = 0;
 
 export async function atomicWriteFileAsync(filePath, content, expectedVersion = null) {
@@ -5842,10 +5951,25 @@ export async function atomicWriteFileAsync(filePath, content, expectedVersion = 
 let localSaveTimeout = null;
 let isLocalSaving = false;
 let pendingLocalStateJson = null;
+let pendingLocalDirty = false;
 
 function flushLocalDiskState() {
-  if (!pendingLocalStateJson || isLocalSaving) return;
+  if (!pendingLocalDirty && !pendingLocalStateJson) return;
+  if (isLocalSaving) return;
   isLocalSaving = true;
+
+  if (pendingLocalDirty || !pendingLocalStateJson) {
+    reconcileCleaningRequests();
+    pruneDatabase();
+    const content = JSON.stringify(db);
+    pendingLocalStateJson = content;
+    pendingLocalDirty = false;
+    if (pendingPgDirty) {
+      pendingPgStateJson = content;
+      pendingPgDirty = false;
+    }
+  }
+
   const content = pendingLocalStateJson;
   pendingLocalStateJson = null;
   const writeVersion = ++localDiskWriteVersion;
@@ -5856,7 +5980,7 @@ function flushLocalDiskState() {
     })
     .finally(() => {
       isLocalSaving = false;
-      if (pendingLocalStateJson) {
+      if (pendingLocalDirty || pendingLocalStateJson) {
         setImmediate(flushLocalDiskState);
       }
     });
@@ -5864,47 +5988,58 @@ function flushLocalDiskState() {
 
 function saveDatabase(reason = "auto_save") {
   try {
-    reconcileCleaningRequests();
-    pruneDatabase();
-    const stateJson = JSON.stringify(db);
+    invalidateGuestCache();
+    invalidateFlatsCache();
 
     if (reason.startsWith("manual_") || reason.startsWith("repair_") || reason === "shutdown") {
       if (localSaveTimeout) {
         clearTimeout(localSaveTimeout);
         localSaveTimeout = null;
       }
+      if (pgSaveTimeout) {
+        clearTimeout(pgSaveTimeout);
+        pgSaveTimeout = null;
+      }
+      reconcileCleaningRequests();
+      pruneDatabase();
+      const stateJson = JSON.stringify(db);
+      pendingLocalDirty = false;
       pendingLocalStateJson = null;
       localDiskWriteVersion++;
       atomicWriteFileSync(DB_FILE, stateJson);
-    } else {
-      pendingLocalStateJson = stateJson;
-      if (!localSaveTimeout && !isLocalSaving) {
-        localSaveTimeout = setTimeout(() => {
-          localSaveTimeout = null;
-          flushLocalDiskState();
-        }, 300);
+
+      if (pgPool) {
+        if (!pgHydratedSuccessfully) {
+          console.warn("[PostgreSQL] BLINDAGEM ATIVA: Ignorando saveDatabase temporariamente porque o banco ainda não hidratou na inicialização.");
+          return;
+        }
+        pendingPgDirty = false;
+        pendingPgStateJson = stateJson;
+        pendingPgReason = reason;
+        flushPgState().catch(() => {});
       }
+      return;
+    }
+
+    pendingLocalDirty = true;
+    if (!localSaveTimeout && !isLocalSaving) {
+      localSaveTimeout = setTimeout(() => {
+        localSaveTimeout = null;
+        flushLocalDiskState();
+      }, 300);
     }
 
     if (pgPool) {
       if (!pgHydratedSuccessfully) {
-        console.warn("[PostgreSQL] BLINDAGEM ATIVA: Ignorando saveDatabase temporariamente porque o banco ainda não hidratou na inicialização.");
         return;
       }
-      pendingPgStateJson = stateJson;
+      pendingPgDirty = true;
       pendingPgReason = reason;
-
-      if (reason.startsWith("manual_") || reason.startsWith("repair_") || reason === "shutdown") {
-        if (pgSaveTimeout) clearTimeout(pgSaveTimeout);
-        pgSaveTimeout = null;
-        flushPgState().catch(() => {});
-      } else {
-        if (!pgSaveTimeout && !isPgSaving) {
-          pgSaveTimeout = setTimeout(() => {
-            pgSaveTimeout = null;
-            flushPgState().catch(() => {});
-          }, 800);
-        }
+      if (!pgSaveTimeout && !isPgSaving) {
+        pgSaveTimeout = setTimeout(() => {
+          pgSaveTimeout = null;
+          flushPgState().catch(() => {});
+        }, 800);
       }
     }
   } catch (err) {
@@ -12756,87 +12891,7 @@ app.all(["/api/pms/reservations/repair-incident-sept30", "/api/system/repair-inc
   });
 });
 
-// ── Caches Reutilizáveis de Alta Performance (Redução de Alocação de Memória) ──
-let cachedGuestIndexes = null;
-let cachedGuestSource = null;
-let cachedGuestLength = -1;
-let cachedGuestTimestamp = 0;
-
-let cachedFlatsByNumber = null;
-let cachedFlatsSource = null;
-let cachedFlatsLength = -1;
-let cachedFlatsTimestamp = 0;
-
 let lastCalendarReconcileTime = 0;
-
-function invalidateGuestCache() {
-  cachedGuestIndexes = null;
-  cachedGuestSource = null;
-  cachedGuestLength = -1;
-  cachedGuestTimestamp = 0;
-}
-
-function invalidateFlatsCache() {
-  cachedFlatsByNumber = null;
-  cachedFlatsSource = null;
-  cachedFlatsLength = -1;
-  cachedFlatsTimestamp = 0;
-}
-
-function getGuestIndexes() {
-  const current = db.guests || [];
-  const now = Date.now();
-  if (
-    cachedGuestIndexes &&
-    cachedGuestSource === current &&
-    cachedGuestLength === current.length &&
-    now - cachedGuestTimestamp < 5000
-  ) {
-    return cachedGuestIndexes;
-  }
-  const guestsById = new Map();
-  const guestsByDoc = new Map();
-  const guestsByPhone = new Map();
-  const guestsByName = new Map();
-
-  for (const g of current) {
-    if (g.id) guestsById.set(g.id, g);
-    if (g.document) {
-      const cleanDoc = String(g.document).replace(/\D/g, "");
-      if (cleanDoc) guestsByDoc.set(cleanDoc, g);
-    }
-    if (g.phone) {
-      const cleanPhone = String(g.phone).replace(/\D/g, "");
-      if (cleanPhone) guestsByPhone.set(cleanPhone, g);
-    }
-    if (g.name) guestsByName.set(String(g.name).toLowerCase().trim(), g);
-    if (g.fullName) guestsByName.set(String(g.fullName).toLowerCase().trim(), g);
-  }
-
-  cachedGuestSource = current;
-  cachedGuestLength = current.length;
-  cachedGuestTimestamp = now;
-  cachedGuestIndexes = { guestsById, guestsByDoc, guestsByPhone, guestsByName };
-  return cachedGuestIndexes;
-}
-
-function getFlatsByNumberMap() {
-  const current = db.flats || [];
-  const now = Date.now();
-  if (
-    cachedFlatsByNumber &&
-    cachedFlatsSource === current &&
-    cachedFlatsLength === current.length &&
-    now - cachedFlatsTimestamp < 10000
-  ) {
-    return cachedFlatsByNumber;
-  }
-  cachedFlatsByNumber = new Map(current.map(f => [String(f.number), f]));
-  cachedFlatsSource = current;
-  cachedFlatsLength = current.length;
-  cachedFlatsTimestamp = now;
-  return cachedFlatsByNumber;
-}
 
 app.get("/api/pms/calendar", (req, res) => {
   const userAuth = getAuthUser(req);
@@ -31779,7 +31834,7 @@ function serveSpaWithMetadata(distFolder, req, res) {
 
   try {
     let html = cachedIndexHtml;
-    if (indexPath) {
+    if (!html && indexPath) {
       try {
         html = fs.readFileSync(indexPath, "utf-8");
         cachedIndexHtml = html;
