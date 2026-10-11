@@ -5738,13 +5738,13 @@ function pruneDatabase() {
 
   for (const [key, max] of Object.entries(LIMITS)) {
     if (Array.isArray(db[key]) && db[key].length > max) {
-      // Ordena por data mais recente primeiro e mantém os N mais recentes (null-safe)
+      // Ordena por data mais recente primeiro e mantém os N mais recentes (null-safe e sem overhead de ICU/localeCompare)
       db[key] = db[key]
         .filter(Boolean)
         .sort((a, b) => {
           const dateA = String(a?.createdAt || a?.sentAt || a?.date || a?.updatedAt || "");
           const dateB = String(b?.createdAt || b?.sentAt || b?.date || b?.updatedAt || "");
-          return dateB.localeCompare(dateA);
+          return dateB > dateA ? 1 : (dateB < dateA ? -1 : 0);
         })
         .slice(0, max);
     }
@@ -5802,12 +5802,68 @@ export function atomicWriteFileSync(filePath, content) {
   }
 }
 
+export async function atomicWriteFileAsync(filePath, content) {
+  const dir = path.dirname(filePath);
+  try {
+    await fs.promises.mkdir(dir, { recursive: true });
+    const tmpPath = path.join(dir, `.tmp_${path.basename(filePath)}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
+    await fs.promises.writeFile(tmpPath, content, "utf-8");
+    try {
+      await fs.promises.rename(tmpPath, filePath);
+    } catch {
+      await fs.promises.copyFile(tmpPath, filePath);
+      await fs.promises.unlink(tmpPath).catch(() => {});
+    }
+  } catch (err) {
+    atomicWriteFileSync(filePath, content);
+  }
+}
+
+let localSaveTimeout = null;
+let isLocalSaving = false;
+let pendingLocalStateJson = null;
+
+function flushLocalDiskState() {
+  if (!pendingLocalStateJson || isLocalSaving) return;
+  isLocalSaving = true;
+  const content = pendingLocalStateJson;
+  pendingLocalStateJson = null;
+
+  atomicWriteFileAsync(DB_FILE, content)
+    .catch(err => {
+      console.warn("[Database] Falha ao persistir assincronamente em disco:", err.message);
+    })
+    .finally(() => {
+      isLocalSaving = false;
+      if (pendingLocalStateJson) {
+        setImmediate(flushLocalDiskState);
+      }
+    });
+}
+
 function saveDatabase(reason = "auto_save") {
   try {
     reconcileCleaningRequests();
     pruneDatabase();
     const stateJson = JSON.stringify(db);
-    atomicWriteFileSync(DB_FILE, stateJson);
+
+    if (reason.startsWith("manual_") || reason.startsWith("repair_") || reason === "shutdown") {
+      if (localSaveTimeout) {
+        clearTimeout(localSaveTimeout);
+        localSaveTimeout = null;
+      }
+      pendingLocalStateJson = null;
+      atomicWriteFileSync(DB_FILE, stateJson);
+    } else {
+      pendingLocalStateJson = stateJson;
+      if (!localSaveTimeout && !isLocalSaving) {
+        localSaveTimeout = setTimeout(() => {
+          localSaveTimeout = null;
+          flushLocalDiskState();
+        }, 300);
+      }
+    }
+
     if (pgPool) {
       if (!pgHydratedSuccessfully) {
         console.warn("[PostgreSQL] BLINDAGEM ATIVA: Ignorando saveDatabase temporariamente porque o banco ainda não hidratou na inicialização.");
@@ -5887,9 +5943,9 @@ async function logAuditEvent(arg1, arg2) {
       db.auditLogs = db.auditLogs.slice(0, 200);
     }
 
-    // 2. Append-Only em arquivo local à prova de falhas
+    // 2. Append-Only em arquivo local à prova de falhas (assíncrono para não travar o Event Loop)
     try {
-      fs.appendFileSync(AUDIT_LOG_FILE, JSON.stringify(logEntry) + "\n", "utf-8");
+      fs.appendFile(AUDIT_LOG_FILE, JSON.stringify(logEntry) + "\n", "utf-8", () => {});
     } catch {}
 
     // 3. Persistência em PostgreSQL dedicado
@@ -12484,27 +12540,60 @@ app.get("/api/system/snapshots/search", async (req, res) => {
     await ensureBackupsTable();
     const q = await pgPool.query("SELECT id, timestamp, reason, value FROM system_store_backups WHERE value::text ILIKE $1 ORDER BY id DESC LIMIT 25", [`%${term}%`]);
     const matches = [];
+    const termLower = term.toLowerCase();
+
     for (const row of q.rows) {
       const val = row.value || {};
       const foundIn = [];
-      const termLower = term.toLowerCase();
-      if (JSON.stringify(val.companies || []).toLowerCase().includes(termLower)) {
-        foundIn.push({ section: "companies", data: val.companies });
+
+      // Empresas
+      if (Array.isArray(val.companies)) {
+        const matchingComps = val.companies.filter(c =>
+          (c.corporateName && c.corporateName.toLowerCase().includes(termLower)) ||
+          (c.tradeName && c.tradeName.toLowerCase().includes(termLower)) ||
+          (c.cnpj && String(c.cnpj).includes(termLower))
+        );
+        if (matchingComps.length > 0) {
+          foundIn.push({ section: "companies", data: matchingComps });
+        }
       }
-      if (JSON.stringify(val.guests || []).toLowerCase().includes(termLower)) {
-        const matchingGuests = (val.guests || []).filter(g => JSON.stringify(g).toLowerCase().includes(termLower));
-        foundIn.push({ section: "guests", data: matchingGuests });
+
+      // Hóspedes
+      if (Array.isArray(val.guests)) {
+        const matchingGuests = val.guests.filter(g =>
+          (g.name && g.name.toLowerCase().includes(termLower)) ||
+          (g.fullName && g.fullName.toLowerCase().includes(termLower)) ||
+          (g.document && String(g.document).includes(termLower)) ||
+          (g.phone && String(g.phone).includes(termLower)) ||
+          (g.email && g.email.toLowerCase().includes(termLower))
+        );
+        if (matchingGuests.length > 0) {
+          foundIn.push({ section: "guests", data: matchingGuests });
+        }
       }
-      if (JSON.stringify(val.reservations || []).toLowerCase().includes(termLower)) {
-        const matchingRes = (val.reservations || []).filter(r => JSON.stringify(r).toLowerCase().includes(termLower));
-        foundIn.push({ section: "reservations", data: matchingRes });
+
+      // Reservas
+      if (Array.isArray(val.reservations)) {
+        const matchingRes = val.reservations.filter(r =>
+          (r.code && r.code.toLowerCase().includes(termLower)) ||
+          (r.guestName && r.guestName.toLowerCase().includes(termLower)) ||
+          (r.flatNumber && String(r.flatNumber).includes(termLower)) ||
+          (r.notes && r.notes.toLowerCase().includes(termLower))
+        );
+        if (matchingRes.length > 0) {
+          foundIn.push({ section: "reservations", data: matchingRes });
+        }
       }
+
       matches.push({
         id: row.id,
         timestamp: row.timestamp,
         reason: row.reason,
         foundIn
       });
+
+      // Libera o Event Loop para evitar travamentos síncronos
+      await new Promise(resolve => setImmediate(resolve));
     }
     res.json({ success: true, count: matches.length, term, matches });
   } catch (e) {
@@ -12645,6 +12734,52 @@ app.all(["/api/pms/reservations/repair-incident-sept30", "/api/system/repair-inc
   });
 });
 
+// ── Caches Reutilizáveis de Alta Performance (Redução de Alocação de Memória) ──
+let cachedGuestIndexes = null;
+let cachedGuestSource = null;
+let cachedFlatsByNumber = null;
+let cachedFlatsSource = null;
+let lastCalendarReconcileTime = 0;
+
+function getGuestIndexes() {
+  const current = db.guests || [];
+  if (cachedGuestIndexes && cachedGuestSource === current) {
+    return cachedGuestIndexes;
+  }
+  const guestsById = new Map();
+  const guestsByDoc = new Map();
+  const guestsByPhone = new Map();
+  const guestsByName = new Map();
+
+  for (const g of current) {
+    if (g.id) guestsById.set(g.id, g);
+    if (g.document) {
+      const cleanDoc = String(g.document).replace(/\D/g, "");
+      if (cleanDoc) guestsByDoc.set(cleanDoc, g);
+    }
+    if (g.phone) {
+      const cleanPhone = String(g.phone).replace(/\D/g, "");
+      if (cleanPhone) guestsByPhone.set(cleanPhone, g);
+    }
+    if (g.name) guestsByName.set(String(g.name).toLowerCase().trim(), g);
+    if (g.fullName) guestsByName.set(String(g.fullName).toLowerCase().trim(), g);
+  }
+
+  cachedGuestSource = current;
+  cachedGuestIndexes = { guestsById, guestsByDoc, guestsByPhone, guestsByName };
+  return cachedGuestIndexes;
+}
+
+function getFlatsByNumberMap() {
+  const current = db.flats || [];
+  if (cachedFlatsByNumber && cachedFlatsSource === current) {
+    return cachedFlatsByNumber;
+  }
+  cachedFlatsByNumber = new Map(current.map(f => [String(f.number), f]));
+  cachedFlatsSource = current;
+  return cachedFlatsByNumber;
+}
+
 app.get("/api/pms/calendar", (req, res) => {
   const userAuth = getAuthUser(req);
   if (!userAuth || (userAuth.role !== "admin" && userAuth.role !== "reception")) {
@@ -12653,9 +12788,15 @@ app.get("/api/pms/calendar", (req, res) => {
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   res.set("Pragma", "no-cache");
   res.set("Expires", "0");
-  if (reconcileUniversalIntegrity()) {
-    setImmediate(() => saveDatabase());
+
+  const now = Date.now();
+  if (now - lastCalendarReconcileTime > 15000) {
+    lastCalendarReconcileTime = now;
+    if (reconcileUniversalIntegrity()) {
+      setImmediate(() => saveDatabase());
+    }
   }
+
   const { startDate, endDate } = req.query;
   const start = startDate || getOffsetDateStr(-3);
   const end = endDate || getOffsetDateStr(30);
@@ -12701,25 +12842,8 @@ app.get("/api/pms/calendar", (req, res) => {
     return r.checkinDate <= end && r.checkoutDate >= start && r.status !== "cancelada" && r.status !== "cancelled";
   });
 
-  // Pré-indexação dos hóspedes em Map para acesso O(1) instantâneo sem regex em loop
-  const guestsById = new Map();
-  const guestsByDoc = new Map();
-  const guestsByPhone = new Map();
-  const guestsByName = new Map();
-
-  for (const g of (db.guests || [])) {
-    if (g.id) guestsById.set(g.id, g);
-    if (g.document) {
-      const cleanDoc = String(g.document).replace(/\D/g, "");
-      if (cleanDoc) guestsByDoc.set(cleanDoc, g);
-    }
-    if (g.phone) {
-      const cleanPhone = String(g.phone).replace(/\D/g, "");
-      if (cleanPhone) guestsByPhone.set(cleanPhone, g);
-    }
-    if (g.name) guestsByName.set(String(g.name).toLowerCase().trim(), g);
-    if (g.fullName) guestsByName.set(String(g.fullName).toLowerCase().trim(), g);
-  }
+  // Pré-indexação dos hóspedes em Map com cache reutilizável para acesso O(1) instantâneo sem alocações repetidas
+  const { guestsById, guestsByDoc, guestsByPhone, guestsByName } = getGuestIndexes();
 
   const reservations = rawReservations.map(r => {
     let matchedGuest = null;
@@ -13435,7 +13559,7 @@ app.get("/api/pms/reservations/export-csv", (req, res) => {
     return String(a.flatNumber || "").localeCompare(String(b.flatNumber || ""), undefined, { numeric: true });
   });
 
-  const guestsMap = new Map((db.guests || []).map(g => [g.id, g]));
+  const { guestsById: guestsMap } = getGuestIndexes();
 
   const escapeCsv = (val) => {
     if (val === null || val === undefined) return '""';
@@ -13701,7 +13825,7 @@ app.post("/api/pms/reservations/preview-csv", (req, res) => {
     return res.status(400).json({ error: "Nenhuma linha de dados identificada no arquivo CSV." });
   }
 
-  const flatsMap = new Map((db.flats || []).map(f => [String(f.number), f]));
+  const flatsMap = getFlatsByNumberMap();
   const existingRes = db.reservations || [];
 
   const preview = [];
@@ -13830,7 +13954,7 @@ app.post("/api/pms/reservations/import-csv", async (req, res) => {
   if (!db.reservations) db.reservations = [];
   if (!db.guests) db.guests = [];
 
-  const flatsMap = new Map((db.flats || []).map(f => [String(f.number), f]));
+  const flatsMap = getFlatsByNumberMap();
   let insertedCount = 0;
   let updatedCount = 0;
   let skippedCount = 0;
@@ -31367,11 +31491,19 @@ app.get("/api/audit-logs", async (req, res) => {
       }
       if (search) {
         const q = search.toLowerCase();
-        logs = logs.filter(l =>
-          (l.action && l.action.toLowerCase().includes(q)) ||
-          JSON.stringify(l.details || {}).toLowerCase().includes(q) ||
-          JSON.stringify(l.actor || {}).toLowerCase().includes(q)
-        );
+        logs = logs.filter(l => {
+          if (l.action && l.action.toLowerCase().includes(q)) return true;
+          if (l.actor?.name && String(l.actor.name).toLowerCase().includes(q)) return true;
+          if (l.actor?.username && String(l.actor.username).toLowerCase().includes(q)) return true;
+          if (l.details?.title && String(l.details.title).toLowerCase().includes(q)) return true;
+          if (l.details?.message && String(l.details.message).toLowerCase().includes(q)) return true;
+          if (l.details?.probableCause && String(l.details.probableCause).toLowerCase().includes(q)) return true;
+          try {
+            return JSON.stringify(l.details || {}).toLowerCase().includes(q) || JSON.stringify(l.actor || {}).toLowerCase().includes(q);
+          } catch {
+            return false;
+          }
+        });
       }
       if (startDate) {
         logs = logs.filter(l => new Date(l.timestamp) >= new Date(startDate));

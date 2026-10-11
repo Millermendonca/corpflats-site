@@ -16,8 +16,8 @@ import crypto from "node:crypto";
 // Configurações & Limiares
 export const MONITOR_CONFIG = {
   SAMPLE_INTERVAL_MS: 3000,         // Coleta interna a cada 3 segundos
-  HISTORY_MAX_SAMPLES: 360,          // ~18 minutos em memória (~1.2MB overhead máximo)
-  DIAGNOSTICS_MAX_ITEMS: 50,         // Mantém os últimos 50 diagnósticos
+  HISTORY_MAX_SAMPLES: 120,          // Mantém ~6 minutos de histórico enxuto em memória (<300KB)
+  DIAGNOSTICS_MAX_ITEMS: 30,         // Mantém os últimos 30 diagnósticos
   SLOW_REQUEST_THRESHOLD_MS: 500,    // Requisições acima de 500ms entram para o ranking de gargalos
   MEMORY_SPIKE_DELTA_MB: 25,         // Salto de 25MB em 1 ciclo ativa análise investigativa
   MEMORY_WARNING_PERCENT: 75,        // 75% do heap limit ativa alerta
@@ -91,16 +91,30 @@ export function setAuditLogger(loggerFn) {
  * Middleware Express para interceptar requisições ativas e medir alocações de memória
  */
 export function serverMonitorMiddleware(req, res, next) {
-  const reqId = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-  const startTime = Date.now();
-  const memStart = process.memoryUsage();
-  const clientIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "local";
-  const urlPath = req.baseUrl ? `${req.baseUrl}${req.path}` : (req.originalUrl || req.url || "/");
+  // Caminhos e métodos rápidos ignorados imediatamente sem overhead
+  if (req.method === "OPTIONS" || req.method === "HEAD") return next();
 
-  // Não rastreia o próprio endpoint do monitor para evitar overhead de recursão
-  if (urlPath.includes("/api/admin/server-monitor") || urlPath.includes("/api/observability/render-metrics")) {
+  const urlPath = req.baseUrl ? `${req.baseUrl}${req.path}` : (req.originalUrl || req.url || "/");
+  if (
+    urlPath.startsWith("/api/admin/server-monitor") ||
+    urlPath.startsWith("/api/observability/render-metrics") ||
+    urlPath.startsWith("/v1/metrics") ||
+    urlPath.startsWith("/metrics") ||
+    urlPath.startsWith("/api/storage") ||
+    urlPath.startsWith("/storage") ||
+    urlPath.startsWith("/assets") ||
+    urlPath.endsWith(".png") ||
+    urlPath.endsWith(".ico") ||
+    urlPath.endsWith(".svg") ||
+    urlPath.endsWith(".css") ||
+    urlPath.endsWith(".js")
+  ) {
     return next();
   }
+
+  const reqId = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const startTime = Date.now();
+  const clientIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "local";
 
   const reqRecord = {
     id: reqId,
@@ -108,21 +122,27 @@ export function serverMonitorMiddleware(req, res, next) {
     url: urlPath.split("?")[0],
     fullUrl: urlPath,
     startTime,
-    ip: String(clientIp).split(",")[0].trim(),
-    memStartRss: memStart.rss,
-    memStartHeap: memStart.heapUsed
+    ip: String(clientIp).split(",")[0].trim()
   };
 
   activeRequestsMap.set(reqId, reqRecord);
+  if (activeRequestsMap.size > 100) {
+    const oldestKey = activeRequestsMap.keys().next().value;
+    activeRequestsMap.delete(oldestKey);
+  }
 
   const cleanup = () => {
     activeRequestsMap.delete(reqId);
     const durationMs = Date.now() - startTime;
-    const memEnd = process.memoryUsage();
-    const heapDeltaMB = Math.round(((memEnd.heapUsed - memStart.heapUsed) / (1024 * 1024)) * 10) / 10;
 
-    // Rastreia se foi lenta ou alocou memória expressiva (>10MB)
-    if (durationMs >= MONITOR_CONFIG.SLOW_REQUEST_THRESHOLD_MS || heapDeltaMB >= 10) {
+    // Rastreia apenas se a requisição foi lenta (evita chamadas a process.memoryUsage() em requisições rápidas)
+    if (durationMs >= MONITOR_CONFIG.SLOW_REQUEST_THRESHOLD_MS) {
+      let heapDeltaMB = 0;
+      try {
+        const memEnd = process.memoryUsage();
+        heapDeltaMB = Math.round(((memEnd.heapUsed - (lastMemoryUsage?.heapUsed || memEnd.heapUsed)) / (1024 * 1024)) * 10) / 10;
+      } catch (_) {}
+
       recentSlowRequests.unshift({
         id: reqId,
         method: reqRecord.method,
@@ -132,7 +152,7 @@ export function serverMonitorMiddleware(req, res, next) {
         statusCode: res.statusCode,
         timestamp: new Date().toISOString()
       });
-      if (recentSlowRequests.length > 30) recentSlowRequests.pop();
+      if (recentSlowRequests.length > 20) recentSlowRequests.pop();
     }
   };
 
@@ -437,9 +457,35 @@ export function startMonitoringEngine() {
       evaluateRootCauses(snapshot, previousSnapshot);
       previousSnapshot = snapshot;
 
-      telemetryHistory.push(snapshot);
+      // Armazena cópia compacta e limpa no histórico para manter overhead de memória desprezível (<500KB)
+      const compactHistorical = {
+        timestamp: snapshot.timestamp,
+        cpu: {
+          processPercent: snapshot.cpu.processPercent,
+          userPercent: snapshot.cpu.userPercent,
+          systemPercent: snapshot.cpu.systemPercent,
+          containerPercent: snapshot.cpu.containerPercent
+        },
+        memory: {
+          rssMB: snapshot.memory.rssMB,
+          heapUsedMB: snapshot.memory.heapUsedMB,
+          heapTotalMB: snapshot.memory.heapTotalMB,
+          heapLimitMB: snapshot.memory.heapLimitMB,
+          heapPercent: snapshot.memory.heapPercent,
+          containerMemUsedMB: snapshot.memory.containerMemUsedMB
+        },
+        eventLoop: {
+          max: snapshot.eventLoop.max,
+          p99: snapshot.eventLoop.p99
+        },
+        traffic: {
+          activeRequestsCount: snapshot.traffic.activeRequestsCount
+        }
+      };
+
+      telemetryHistory.push(compactHistorical);
       if (telemetryHistory.length > MONITOR_CONFIG.HISTORY_MAX_SAMPLES) {
-        telemetryHistory.shift();
+        telemetryHistory.splice(0, telemetryHistory.length - MONITOR_CONFIG.HISTORY_MAX_SAMPLES);
       }
     } catch (err) {
       console.error("[ServerMonitor] Erro no ciclo de amostragem:", err?.message);
@@ -544,7 +590,7 @@ export function ingestRenderMetrics(payload, authHeader) {
         ? Math.round((memFound / (memLimitFound || renderContainerMetrics.containerMemoryLimitBytes)) * 100)
         : null,
       restarts: renderContainerMetrics.restarts,
-      rawAttributes: payload?.attributes || {}
+      rawAttributes: {}
     };
 
     return {
