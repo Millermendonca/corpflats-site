@@ -412,11 +412,10 @@ export default function GuestPortal() {
   )
 
   const hasEnteredFlat = Boolean(
-    reservation?.status === "checkin" ||
-    reservation?.status === "checked_in" ||
+    reservation?.guestSelfCheckin ||
+    reservation?.actualCheckinAt ||
     reservation?.status === "in_house" ||
-    reservation?.checkedInAt ||
-    reservation?.guestSelfCheckin
+    (reservation?.status === "checkin" && reservation?.guestSelfCheckin)
   )
 
   const guestsList: any[] = useMemo(() => {
@@ -448,7 +447,10 @@ export default function GuestPortal() {
 
   const isCurrentGuestPreCheckinDone = Boolean(
     currentGuest?.hasCompletedCheckin ||
-    (isCurrentGuestTitular && (
+    currentGuest?.status === "CHECKED_IN" ||
+    currentGuest?.fnrhSignedAt ||
+    currentGuest?.signatureUrl ||
+    (guestsList.length === 1 && (
       reservation?.fnhrCompleted ||
       reservation?.preCheckinCompleted ||
       reservation?.hasPreCheckin
@@ -1707,7 +1709,13 @@ export default function GuestPortal() {
                     const gDisplayName = g.name && !g.name.startsWith("Hóspede ") 
                       ? g.name 
                       : (isTitular ? (reservation.guestName || `Hóspede ${gIdx}`) : `Hóspede ${gIdx}`)
-                    const gCheckinDone = Boolean(g.hasCompletedCheckin || (isTitular && (reservation.fnhrCompleted || reservation.preCheckinCompleted)))
+                    const gCheckinDone = Boolean(
+                      g.hasCompletedCheckin || 
+                      g.status === "CHECKED_IN" || 
+                      g.fnrhSignedAt || 
+                      g.signatureUrl || 
+                      (isTitular && guestsList.length === 1 && (reservation.fnhrCompleted || reservation.preCheckinCompleted))
+                    )
 
                     return (
                       <button

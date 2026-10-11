@@ -880,6 +880,7 @@ Sua reserva no *{{nome_hotel}}* para *HOJE* está *Confirmada*!
 • Entrada (Check-in): *Hoje a partir das {{horario_checkin}}*
 • Saída (Check-out): *{{data_checkout}} até às {{horario_checkout}}*
 • Café da Manhã: *{{status_cafe}}*
+• Pagamento: *{{status_pagamento}}*
 
 📍 *Endereço:* {{endereco_hotel}}
 🗺️ *Localização no Maps:* {{link_maps}}
@@ -1968,21 +1969,25 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     ? `🥐 *Café da Manhã Incluso:*\nSua diária inclui nosso café da manhã servido exclusivamente no seu flat! Você já pode agendar sua bandeja pelo botão abaixo.`
     : "";
 
-  // Determina status de pré-checkin e entrada no flat
+  const titularGuest = (reservation.guests || []).find(g => Number(g.index) === 1) || reservation.guests?.[0];
+  const isTitularDone = titularGuest 
+    ? Boolean(titularGuest.hasCompletedCheckin || titularGuest.status === "CHECKED_IN")
+    : Boolean(reservation.fnhrCompleted || reservation.preCheckinCompleted || reservation.checkedInAt);
+
   const allCheckedIn = Boolean(
-    reservation.checkedInAt ||
     reservation.fnhrCompleted ||
-    reservation.preCheckinCompleted ||
-    (Array.isArray(reservation.guests) && reservation.guests.length > 0 && reservation.guests.every(g => g.hasCompletedCheckin || g.status === "CHECKED_IN"))
+    (Array.isArray(reservation.guests) && reservation.guests.length > 0 && reservation.guests.every(g => g.hasCompletedCheckin || g.status === "CHECKED_IN")) ||
+    (!reservation.guests?.length && (reservation.preCheckinCompleted || reservation.checkedInAt))
   );
   const hasEnteredFlat = Boolean(
-    reservation.status === "checkin" ||
-    reservation.status === "checked_in" ||
+    reservation.guestSelfCheckin ||
+    reservation.actualCheckinAt ||
     reservation.status === "in_house" ||
-    reservation.checkedInAt ||
-    reservation.guestSelfCheckin
+    (reservation.status === "checkin" && reservation.guestSelfCheckin)
   );
-  const isPreCheckinDone = companion ? Boolean(reservation.checkedInAt || companion.hasCompletedCheckin) : allCheckedIn;
+  const isPreCheckinDone = companion 
+    ? Boolean(companion.hasCompletedCheckin || companion.status === "CHECKED_IN") 
+    : isTitularDone;
 
   // Tag: {{instrucao_checkin_ou_chegada}}
   let instrucaoCheckinOuChegada = "";
@@ -2221,20 +2226,18 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
   const companionTarget = getCompanionForTarget(getReservationRecipients(reservation || {}, db || {}), targetRecipient);
 
   const isPreCheckinDone = companionTarget
-    ? Boolean(reservation?.checkedInAt || companionTarget.hasCompletedCheckin)
+    ? Boolean(companionTarget.hasCompletedCheckin || companionTarget.status === "CHECKED_IN")
     : Boolean(
-      reservation?.checkedInAt ||
       reservation?.fnhrCompleted ||
-      reservation?.preCheckinCompleted ||
-      (Array.isArray(reservation?.guests) && reservation.guests.length > 0 && reservation.guests.every(g => g.hasCompletedCheckin || g.status === "CHECKED_IN"))
+      (Array.isArray(reservation?.guests) && reservation.guests.length > 0 && reservation.guests.every(g => g.hasCompletedCheckin || g.status === "CHECKED_IN")) ||
+      (!reservation?.guests?.length && (reservation?.preCheckinCompleted || reservation?.checkedInAt))
     );
 
   const hasEnteredFlat = Boolean(
-    reservation?.status === "checkin" ||
-    reservation?.status === "checked_in" ||
+    reservation?.guestSelfCheckin ||
+    reservation?.actualCheckinAt ||
     reservation?.status === "in_house" ||
-    reservation?.checkedInAt ||
-    reservation?.guestSelfCheckin
+    (reservation?.status === "checkin" && reservation?.guestSelfCheckin)
   );
 
   const targetGuestIdx = companionTarget ? companionTarget.index : (targetRecipient?.guestIndex || targetRecipient?.index);
@@ -4230,11 +4233,30 @@ export function findReservationByPhone(db, phone) {
   );
   if (activeToday.length > 0) {
     activeToday.sort((a, b) => {
-      // Prioridade se checkout for hoje (hóspede em saída / atendimento de checkout)
-      const aCheckOutToday = a.checkoutDate === todayStr ? 1 : 0;
-      const bCheckOutToday = b.checkoutDate === todayStr ? 1 : 0;
-      if (bCheckOutToday !== aCheckOutToday) return bCheckOutToday - aCheckOutToday;
-      return String(a.checkoutDate).localeCompare(String(b.checkoutDate));
+      // a) Reservas confirmadas/reais sobre pré-reservas
+      const aConfirmed = (a.status !== "pre_reserva" && a.status !== "pendente") ? 1 : 0;
+      const bConfirmed = (b.status !== "pre_reserva" && b.status !== "pendente") ? 1 : 0;
+      if (bConfirmed !== aConfirmed) return bConfirmed - aConfirmed;
+
+      // b) Estadias que continuam além de hoje (checkoutDate > todayStr)
+      const aStaysBeyond = (a.checkoutDate && a.checkoutDate > todayStr) ? 1 : 0;
+      const bStaysBeyond = (b.checkoutDate && b.checkoutDate > todayStr) ? 1 : 0;
+      if (bStaysBeyond !== aStaysBeyond) return bStaysBeyond - aStaysBeyond;
+
+      // c) Maior checkoutDate
+      const cmpCheckout = String(b.checkoutDate || "").localeCompare(String(a.checkoutDate || ""));
+      if (cmpCheckout !== 0) return cmpCheckout;
+
+      // d) Maior ID numérico ou recência de criação
+      const aId = Number(a.id) || (typeof a.id === "string" ? parseInt(a.id.replace(/\D/g, ""), 10) || 0 : 0);
+      const bId = Number(b.id) || (typeof b.id === "string" ? parseInt(b.id.replace(/\D/g, ""), 10) || 0 : 0);
+      if (bId !== aId) return bId - aId;
+
+      const aCreated = new Date(a.createdAt || a.created_at || 0).getTime() || 0;
+      const bCreated = new Date(b.createdAt || b.created_at || 0).getTime() || 0;
+      if (bCreated !== aCreated) return bCreated - aCreated;
+
+      return String(b.code || "").localeCompare(String(a.code || ""));
     });
     return activeToday[0];
   }
@@ -4793,7 +4815,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           tpl.recipientTarget = "guest";
         }
         if (tpl.id === "tpl_sameday_reservation_instructions") {
-          if (!tpl.message.includes("instrucao_checkin_ou_chegada") || tpl.message.includes("Como sua reserva foi confirmada")) {
+          if (!tpl.message.includes("instrucao_checkin_ou_chegada") || tpl.message.includes("Como sua reserva foi confirmada") || !tpl.message.includes("status_pagamento")) {
             const defSame = DEFAULT_WHATSAPP_TEMPLATES.find(t => t.id === "tpl_sameday_reservation_instructions");
             if (defSame) {
               tpl.title = defSame.title;
@@ -6277,8 +6299,16 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       return res.status(404).json({ error: "Conversa não encontrada." });
     }
 
+    const reqReservationCode = req.query?.reservationCode ? String(req.query.reservationCode).trim() : null;
     const allReservations = findAllReservationsByPhone(db, conv.phone || cleanPhone);
-    const bestRes = findReservationByPhone(db, conv.phone || cleanPhone);
+    let bestRes = null;
+    if (reqReservationCode) {
+      bestRes = (allReservations || []).find(r => r.code === reqReservationCode) || 
+                (db.reservations || []).find(r => r.code === reqReservationCode) || null;
+    }
+    if (!bestRes) {
+      bestRes = findReservationByPhone(db, conv.phone || cleanPhone);
+    }
 
     if (bestRes) {
       conv.reservationCode = bestRes.code;
@@ -6297,6 +6327,13 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
     conv.reservation = reservationDetails || null;
     const otherReservations = allReservations.filter(r => r.code !== reservationDetails?.code);
+    otherReservations.sort((a, b) => {
+      const cmp = String(b.checkinDate || "").localeCompare(String(a.checkinDate || ""));
+      if (cmp !== 0) return cmp;
+      const aId = Number(a.id) || 0;
+      const bId = Number(b.id) || 0;
+      return bId - aId;
+    });
 
     res.json({
       conversation: conv,

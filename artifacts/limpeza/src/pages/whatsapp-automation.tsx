@@ -1368,8 +1368,9 @@ export default function WhatsappAutomation() {
     const mapsUrl = config.googleReviewUrl || "https://share.google/LHu3541d5lhkdvbL2"
 
     const totalAmount = Number(targetRes.totalAmount) || 450
-    const paidAmount = Number(targetRes.paidAmount ?? (targetRes.paymentStatus === "pago" ? totalAmount : 0))
-    const pendingAmount = Math.max(0, totalAmount - paidAmount)
+    const isPaidInFull = targetRes.paymentStatus === "pago" || targetRes.paymentStatus === "pago_total" || (Number(targetRes.paidAmount) >= totalAmount && totalAmount > 0)
+    const paidAmount = Number(targetRes.paidAmount ?? (isPaidInFull ? totalAmount : 0))
+    const pendingAmount = isPaidInFull ? 0 : Math.max(0, totalAmount - paidAmount)
     const fmtTotal = totalAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
     const fmtPaid = paidAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
     const fmtPending = pendingAmount.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
@@ -1398,7 +1399,7 @@ export default function WhatsappAutomation() {
       "{{quanto_falta}}": fmtPending,
       "{{saldo_restante}}": fmtPending,
       "{{status_confirmacao}}": isPreReserva ? "Pré-Reserva" : "Confirmada",
-      "{{status_pagamento}}": targetRes.paymentStatus === "pago" ? "Confirmado / Pago" : (paidAmount > 0 ? "Sinal Pago" : "Pendente"),
+      "{{status_pagamento}}": isPaidInFull ? "Confirmado / Pago" : (paidAmount > 0 ? "Sinal Pago" : "Pendente"),
       "{{chave_pix}}": "47.964.813/0001-65",
       "{{titular_pix}}": "CorpFlats Hospedagem",
       "{{instrucao_saldo}}": pendingAmount > 0 ? `ℹ️ *Aviso de Pagamento:* Resta o saldo de ${fmtPending} a acertar no check-in.` : "",

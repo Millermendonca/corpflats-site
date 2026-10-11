@@ -79,4 +79,55 @@ test("Multi-Guest Portal Link & Identity Parity Suite", async (t) => {
     const resolved = resolveWhatsAppTags(text, dummyReservation, {}, "https://corpflats.onrender.com", titularRecipient);
     assert.strictEqual(resolved, "Acesse seu portal: https://corpflats.onrender.com/minha-reserva/RES-605-0398");
   });
+
+  await t.test("5. Pre-checkin done without self-checkin DOES NOT mark flat entrance (hasEnteredFlat = false)", () => {
+    const companionRecipient = {
+      type: "companion",
+      index: 2,
+      guestIndex: 2,
+      name: "Thamiris Maiara Santos da Silva",
+      phone: "22999998888"
+    };
+
+    // Reservation with FNRH signed and checkedInAt, but NO guestSelfCheckin and status confirmada
+    const resPreCheckinOnly = {
+      ...dummyReservation,
+      status: "confirmada",
+      checkedInAt: "2026-10-11T12:00:00.000Z",
+      guestSelfCheckin: false
+    };
+
+    const buttons = renderTemplateButtons([], resPreCheckinOnly, {}, "https://corpflats.onrender.com", companionRecipient);
+    // When pre-checkin is done but flat entrance is NOT done, btn_cheguei must be present
+    const chegueiBtn = buttons.find(b => b.id === "btn_cheguei");
+    assert.ok(chegueiBtn, "btn_cheguei ('Já Cheguei no Flat') must be present when pre-checkin is done before entering");
+    
+    // btn_portal should NOT be auto-injected as the sole entry button
+    const portalBtn = buttons.find(b => b.id === "btn_portal");
+    assert.strictEqual(portalBtn, undefined, "btn_portal should not replace arrival flow when guest has not entered flat yet");
+  });
+
+  await t.test("6. Companion pre-checkin done does not falsely mark titular pre-checkin as done", () => {
+    const partialReservation = {
+      ...dummyReservation,
+      fnhrCompleted: false,
+      preCheckinCompleted: true, // aggregate flag set by companion
+      guests: [
+        { index: 1, name: "Miller Mendonça Pessanha", phone: "22998505276", hasCompletedCheckin: false },
+        { index: 2, name: "Thamiris Maiara Santos da Silva", phone: "22999998888", hasCompletedCheckin: true, status: "CHECKED_IN" }
+      ]
+    };
+
+    const companionRecipient = { type: "companion", index: 2, guestIndex: 2, name: "Thamiris", phone: "22999998888" };
+    const titularRecipient = { type: "guest", index: 1, guestIndex: 1, name: "Miller", phone: "22998505276" };
+
+    const companionButtons = renderTemplateButtons([], partialReservation, {}, "https://corpflats.onrender.com", companionRecipient);
+    const titularButtons = renderTemplateButtons([], partialReservation, {}, "https://corpflats.onrender.com", titularRecipient);
+
+    // Companion has completed -> gets btn_cheguei
+    assert.ok(companionButtons.some(b => b.id === "btn_cheguei"), "Companion should get btn_cheguei");
+
+    // Titular has NOT completed -> must NOT get btn_cheguei
+    assert.ok(!titularButtons.some(b => b.id === "btn_cheguei"), "Titular should NOT get btn_cheguei before completing pre-checkin");
+  });
 });

@@ -14858,7 +14858,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     reservation: {
       id: r.id,
       code: r.code,
-      status: r.status || "confirmada",
+      status: (r.status === "CHECKED_IN" || !r.status) ? "confirmada" : r.status,
       isCancelled: isCancelledRes,
       cancelledAt: r.cancelledAt || null,
       cancellationReason: r.cancellationReason || null,
@@ -14906,6 +14906,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       preCheckinCompleted: Boolean(r.preCheckinCompleted || r.fnhrCompleted || (Array.isArray(r.guests) && r.guests.some(g => g.hasCompletedCheckin))),
       hasPreCheckin: Boolean(r.hasPreCheckin || r.preCheckinCompleted || r.fnhrCompleted || (Array.isArray(r.guests) && r.guests.some(g => g.hasCompletedCheckin))),
       checkedInAt: r.checkedInAt || null,
+      actualCheckinAt: r.actualCheckinAt || null,
       guestSelfCheckin: Boolean(r.guestSelfCheckin)
     },
     hasBreakfast,
@@ -15217,7 +15218,9 @@ app.all(["/api/pms/guest-portal/:code/self-checkin", "/api/pms/reservations/by-c
   triggerImmediateWhatsApp(db, saveDatabase, "checkin_completed", r).catch(() => {});
 
   if (req.method === "GET") {
-    return res.redirect(`/minha-reserva/${r.code}?self_checkin=success`);
+    const guestParam = req.query.guest || req.query.guestIndex || "";
+    const guestQuery = guestParam ? `&guest=${encodeURIComponent(guestParam)}` : "";
+    return res.redirect(`/minha-reserva/${r.code}?self_checkin=success${guestQuery}`);
   }
 
   res.json({
@@ -19598,9 +19601,12 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
       targetGuest.fnrhFileName = fnrhDocument.fileName;
       targetGuest.fnrhFilePath = fnrhDocument.filePath;
       targetGuest.status = "CHECKED_IN";
+      targetGuest.hasCompletedCheckin = true;
 
-      // Reserva marcada como CHECKED_IN no sistema
-      r.status = "CHECKED_IN";
+      // Preserva status como "confirmada" caso não esteja in_house/checkin
+      if (!r.status || r.status === "CHECKED_IN" || r.status === "pre_reserva") {
+        r.status = "confirmada";
+      }
       r.checkedInAt = fnrhDocument.signedAt;
       if (Number(guestIndex) === 1) {
         r.fnrhPdfUrl = fnrhDocument.fileUrl;
@@ -28060,7 +28066,7 @@ function isConfirmationAlreadyDispatched(r) {
   return history.some(h => {
     const hCode = String(h.reservationCode || "").toUpperCase();
     const isSameRes = (rCode && hCode === rCode) || (rId && hCode === rId);
-    return isSameRes && (h.triggerEvent === "payment_confirmed" || h.triggerEvent === "reservation_created" || h.triggerEvent === "sameday_reservation") && (h.status === "sent" || h.status === "delivered");
+    return isSameRes && (h.triggerEvent === "payment_confirmed" || h.triggerEvent === "reservation_created") && (h.status === "sent" || h.status === "delivered");
   });
 }
 
@@ -28104,17 +28110,6 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
   const isSameDay = r.checkinDate === todayStr;
   const isAfter0701 = isSameDay && (brDate.getHours() > 7 || (brDate.getHours() === 7 && brDate.getMinutes() >= 1));
 
-  if (isAfter0701) {
-    console.log(`[WhatsApp Dispatch] Reserva no dia do check-in após as 07:01 confirmada: disparando sameday_reservation para ${r.guestName}...`);
-    try {
-      await triggerImmediateWhatsApp(db, saveDatabase, "sameday_reservation", r);
-      scheduleUpcomingReservationTriggers(db, saveDatabase);
-    } catch (err) {
-      console.error("[WhatsApp Dispatch] Erro ao disparar sameday_reservation:", err.message);
-    }
-    return;
-  }
-
   const chan = String(r.channel || "").toLowerCase();
   const isDirect = chan.includes("site") || chan.includes("whats") || chan.includes("direta");
 
@@ -28134,6 +28129,27 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
       scheduleUpcomingReservationTriggers(db, saveDatabase);
     } catch (err) {
       console.error("[WhatsApp Dispatch] Erro ao disparar reservation_created:", err.message);
+    }
+  }
+
+  // Para reservas confirmadas no dia do check-in após 07:01, garante envio das orientações de chegada imediatas
+  if (isAfter0701) {
+    const hasSameDayDispatched = (db.whatsappHistory || []).some(h => {
+      const hCode = String(h.reservationCode || "").toUpperCase();
+      const rCode = String(r.code || "").toUpperCase();
+      const rId = String(r.id || "");
+      const isSameRes = (rCode && hCode === rCode) || (rId && hCode === rId);
+      return isSameRes && h.triggerEvent === "sameday_reservation" && (h.status === "sent" || h.status === "delivered");
+    });
+
+    if (!hasSameDayDispatched) {
+      console.log(`[WhatsApp Dispatch] Reserva no dia do check-in após as 07:01 confirmada: disparando sameday_reservation para ${r.guestName}...`);
+      try {
+        await triggerImmediateWhatsApp(db, saveDatabase, "sameday_reservation", r);
+        scheduleUpcomingReservationTriggers(db, saveDatabase);
+      } catch (err) {
+        console.error("[WhatsApp Dispatch] Erro ao disparar sameday_reservation:", err.message);
+      }
     }
   }
 }

@@ -39,6 +39,7 @@ import {
   Plus,
   ChevronLeft,
   ChevronRight,
+  ArrowRightCircle,
   Info,
   Wifi,
   MapPin,
@@ -101,6 +102,57 @@ const EMOJI_LIST = [
   '👋', '😊', '🏨', '🔑', '🥐', '☕', '🚗', '⭐', '📄', '✅', '❤️', '🕒', '📍', '📱', '✨', '👍', '🙏', '🏖️', '🚪', '🛎️'
 ]
 
+function getPaymentInfo(res: any) {
+  if (!res) return { label: 'Pendente', className: 'border-amber-500 text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-400' }
+  const rawStatus = String(res.paymentStatus || '').toLowerCase().trim()
+  const totalAmount = Number(res.totalAmount) || 0
+  const paidAmount = Number(res.paidAmount) || 0
+
+  const isPaid = rawStatus === 'pago' || rawStatus === 'pago_total' || (paidAmount >= totalAmount && totalAmount > 0)
+  if (isPaid) {
+    return {
+      label: 'Pago ✓',
+      className: 'bg-emerald-600 text-white hover:bg-emerald-700 border-transparent'
+    }
+  }
+  if (rawStatus === 'sinal_pago' || (paidAmount > 0 && paidAmount < totalAmount)) {
+    return {
+      label: 'Sinal Pago',
+      className: 'border-blue-500 text-blue-700 bg-blue-50 dark:bg-blue-950/40 dark:text-blue-300'
+    }
+  }
+  return {
+    label: 'Pendente',
+    className: 'border-amber-500 text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-400'
+  }
+}
+
+function getReservationStatusInfo(status?: string) {
+  const s = String(status || '').toLowerCase().trim()
+  if (s === 'confirmada' || s === 'checked_in' || s === 'checkedin' || s === 'in_house' || s === 'checkin') {
+    return {
+      label: s === 'checked_in' || s === 'checkedin' || s === 'checkin' ? 'Check-in Realizado' : 'Confirmada',
+      className: 'bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-700'
+    }
+  }
+  if (s === 'pre_reserva' || s === 'pendente') {
+    return {
+      label: s === 'pre_reserva' ? 'Pré-Reserva' : 'Pendente',
+      className: 'bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-700'
+    }
+  }
+  if (s === 'cancelada' || s === 'cancelled' || s === 'cancelado') {
+    return {
+      label: 'Cancelada',
+      className: 'bg-rose-50 text-rose-700 border-rose-300 dark:bg-rose-950/50 dark:text-rose-300 dark:border-rose-700'
+    }
+  }
+  return {
+    label: status || 'Confirmada',
+    className: 'bg-slate-50 text-slate-700 border-slate-300 dark:bg-slate-800 dark:text-slate-300'
+  }
+}
+
 export default function WhatsappChat() {
   const [, setLocation] = useLocation()
   const { data: user } = useGetMe()
@@ -111,6 +163,7 @@ export default function WhatsappChat() {
   const [loadingConversations, setLoadingConversations] = useState(true)
   const [activePhone, setActivePhone] = useState<string | null>(null)
   const [activeConversation, setActiveConversation] = useState<ChatConversation | null>(null)
+  const [selectedResCode, setSelectedResCode] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [loadingMessages, setLoadingMessages] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -297,10 +350,12 @@ export default function WhatsappChat() {
   }
 
   // Fetch Active Conversation Messages
-  const fetchActiveMessages = async (phone: string, silent = false) => {
+  const fetchActiveMessages = async (phone: string, silent = false, reservationCode?: string) => {
     if (!silent) setLoadingMessages(true)
     try {
-      const res = await fetch(`/api/whatsapp/chat/conversations/${phone}`)
+      const activeCode = reservationCode || selectedResCode
+      const queryParam = activeCode ? `?reservationCode=${encodeURIComponent(activeCode)}` : ''
+      const res = await fetch(`/api/whatsapp/chat/conversations/${phone}${queryParam}`)
       if (res.ok) {
         const data = await res.json()
         if (data.conversation) {
@@ -422,16 +477,16 @@ export default function WhatsappChat() {
   useEffect(() => {
     if (!activePhone) return
 
-    fetchActiveMessages(activePhone)
+    fetchActiveMessages(activePhone, false, selectedResCode || undefined)
     markAsRead(activePhone)
 
     const interval = setInterval(() => {
-      fetchActiveMessages(activePhone, true)
+      fetchActiveMessages(activePhone, true, selectedResCode || undefined)
       fetchConversations(true)
     }, 4500)
 
     return () => clearInterval(interval)
-  }, [activePhone])
+  }, [activePhone, selectedResCode])
 
   // Scroll down whenever messages change
   useEffect(() => {
@@ -442,6 +497,7 @@ export default function WhatsappChat() {
 
   // Select conversation
   const handleSelectConversation = (conv: ChatConversation) => {
+    setSelectedResCode(null)
     setActivePhone(conv.phone)
     setActiveConversation(conv)
     setIsMobileListOpen(false)
@@ -1694,6 +1750,16 @@ Muito obrigado!`
                   </div>
 
                   <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-500">Status:</span>
+                    <Badge
+                      variant="outline"
+                      className={`text-[10px] uppercase font-bold ${getReservationStatusInfo(activeConversation.reservation.status).className}`}
+                    >
+                      {getReservationStatusInfo(activeConversation.reservation.status).label}
+                    </Badge>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs">
                     <span className="text-slate-500">Quarto / Flat:</span>
                     <span className="font-black text-slate-900 dark:text-slate-100">
                       Flat {activeConversation.reservation.flatNumber}
@@ -1731,14 +1797,10 @@ Muito obrigado!`
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-slate-500">Pagamento:</span>
                     <Badge
-                      variant={activeConversation.reservation.paymentStatus === 'pago' ? 'default' : 'outline'}
-                      className={`text-[10px] uppercase font-bold ${
-                        activeConversation.reservation.paymentStatus === 'pago'
-                          ? 'bg-emerald-600 text-white'
-                          : 'border-amber-500 text-amber-700 bg-amber-50'
-                      }`}
+                      variant={getPaymentInfo(activeConversation.reservation).label === 'Pago ✓' ? 'default' : 'outline'}
+                      className={`text-[10px] uppercase font-bold ${getPaymentInfo(activeConversation.reservation).className}`}
                     >
-                      {activeConversation.reservation.paymentStatus || 'Pendente'}
+                      {getPaymentInfo(activeConversation.reservation).label}
                     </Badge>
                   </div>
                 </div>
@@ -1756,31 +1818,57 @@ Muito obrigado!`
                   Outras Reservas deste Hóspede ({activeConversation.otherReservations.length})
                 </span>
                 <div className="space-y-2">
-                  {activeConversation.otherReservations.map((ores: any) => (
-                    <div key={ores.code} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 text-xs space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-slate-800 dark:text-slate-200">Flat {ores.flatNumber}</span>
-                        <Badge
-                          variant="outline"
-                          className="text-[9.5px] uppercase font-bold py-0 border-emerald-400 text-emerald-700 bg-emerald-50 dark:bg-emerald-950/60"
-                        >
-                          {ores.status || 'Confirmada'}
-                        </Badge>
+                  {activeConversation.otherReservations.map((ores: any) => {
+                    const stInfo = getReservationStatusInfo(ores.status)
+                    const payInfo = getPaymentInfo(ores)
+                    return (
+                      <div key={ores.code} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 text-xs space-y-1.5">
+                        <div className="flex items-center justify-between gap-1 flex-wrap">
+                          <span className="font-bold text-slate-800 dark:text-slate-200">Flat {ores.flatNumber}</span>
+                          <div className="flex items-center gap-1">
+                            <Badge
+                              variant="outline"
+                              className={`text-[9.5px] uppercase font-bold py-0 ${stInfo.className}`}
+                            >
+                              {stInfo.label}
+                            </Badge>
+                            <Badge
+                              variant={payInfo.label === 'Pago ✓' ? 'default' : 'outline'}
+                              className={`text-[9.5px] uppercase font-bold py-0 ${payInfo.className}`}
+                            >
+                              {payInfo.label}
+                            </Badge>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] text-slate-500">
+                          <span className="font-mono">{ores.code}</span>
+                          <span>{ores.checkinDate?.split('-').reverse().join('/')} a {ores.checkoutDate?.split('-').reverse().join('/')}</span>
+                        </div>
+                        <div className="pt-1 flex items-center justify-between border-t border-slate-100 dark:border-slate-700/50">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setSelectedResCode(ores.code)
+                              if (activePhone) {
+                                fetchActiveMessages(activePhone, false, ores.code)
+                              }
+                            }}
+                            className="h-6 px-1.5 text-[10.5px] font-semibold text-emerald-700 dark:text-emerald-400 hover:text-emerald-800 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 flex items-center gap-1"
+                          >
+                            <ArrowRightCircle className="w-3.5 h-3.5" /> Ativar no Dossiê
+                          </Button>
+                          <a
+                            href={`/reservas?code=${ores.code}`}
+                            className="text-[10.5px] font-semibold text-emerald-600 hover:text-emerald-700 hover:underline flex items-center gap-0.5"
+                          >
+                            Ver no PMS <ChevronRight className="w-3 h-3" />
+                          </a>
+                        </div>
                       </div>
-                      <div className="flex items-center justify-between text-[11px] text-slate-500">
-                        <span className="font-mono">{ores.code}</span>
-                        <span>{ores.checkinDate?.split('-').reverse().join('/')} a {ores.checkoutDate?.split('-').reverse().join('/')}</span>
-                      </div>
-                      <div className="pt-0.5 flex items-center justify-end">
-                        <a
-                          href={`/reservas?code=${ores.code}`}
-                          className="text-[10.5px] font-semibold text-emerald-600 hover:text-emerald-700 hover:underline flex items-center gap-0.5"
-                        >
-                          Ver no PMS <ChevronRight className="w-3 h-3" />
-                        </a>
-                      </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
             )}
