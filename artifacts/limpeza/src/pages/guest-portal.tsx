@@ -14,7 +14,7 @@ import {
   Wifi, HelpCircle, Check, Copy, Phone, UserCheck, ShieldAlert,
   MapPin, Navigation, ExternalLink, Car, ArrowLeft, Search,
   CreditCard, QrCode, RefreshCw, AlertCircle, DoorOpen, MoreVertical,
-  Download, Printer
+  Download, Printer, PenTool
 } from "lucide-react"
 import { format, parseISO, differenceInDays } from "date-fns"
 import { ptBR } from "date-fns/locale"
@@ -102,15 +102,101 @@ export default function GuestPortal() {
   const [claimingEarly, setClaimingEarly] = useState(false)
   const [reminderSaved, setReminderSaved] = useState(false)
 
-  // Modificar Reserva States
+  // ── Modificar Reserva Multi-Step States (M3) ────────────────────────
   const [modifyModalOpen, setModifyModalOpen] = useState(false)
+  const [modStep, setModStep] = useState<"preview" | "checkout" | "success">("preview")
   const [modCheckinDate, setModCheckinDate] = useState("")
   const [modCheckoutDate, setModCheckoutDate] = useState("")
   const [modGuestCount, setModGuestCount] = useState(1)
   const [modReason, setModReason] = useState("")
-  const [modifying, setModifying] = useState(false)
-  const [modifyError, setModifyError] = useState<string | null>(null)
-  const [modifySuccess, setModifySuccess] = useState<string | null>(null)
+
+  // Etapa 1: Simulação & Preview
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewData, setPreviewData] = useState<any | null>(null)
+  const [previewError, setPreviewError] = useState<string | null>(null)
+
+  // Etapa 2: Checkout & Hold
+  const [checkoutLoading, setCheckoutLoading] = useState(false)
+  const [checkoutData, setCheckoutData] = useState<any | null>(null)
+  const [checkoutError, setCheckoutError] = useState<string | null>(null)
+  const [modPaymentMethod, setModPaymentMethod] = useState<"pix" | "card">("pix")
+  const [modCopiedPix, setModCopiedPix] = useState(false)
+  const [modTimeRemaining, setModTimeRemaining] = useState("30:00")
+  const [modPollingActive, setModPollingActive] = useState(false)
+  const [cancellingHold, setCancellingHold] = useState(false)
+
+  // Etapa 3: Sucesso & Re-assinatura
+  const [modifySuccessInfo, setModifySuccessInfo] = useState<{
+    message: string
+    newCheckinDate: string
+    newCheckoutDate: string
+    newFlatNumber: string
+    needsReSignature: boolean
+    reSignatureUrl: string
+  } | null>(null)
+
+  // Contagem regressiva do Hold Provisório de 30 minutos
+  useEffect(() => {
+    if (modStep !== "checkout" || !checkoutData?.expiresAt || !modifyModalOpen) return
+
+    const updateTimer = () => {
+      const diff = new Date(checkoutData.expiresAt).getTime() - Date.now()
+      if (diff <= 0) {
+        setModTimeRemaining("00:00")
+        setCheckoutError("O prazo de 30 minutos para pagamento desta alteração expirou. Por favor, reinicie a simulação.")
+        setModPollingActive(false)
+      } else {
+        const totalSecs = Math.floor(diff / 1000)
+        const mins = Math.floor(totalSecs / 60)
+        const secs = totalSecs % 60
+        setModTimeRemaining(`${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`)
+      }
+    }
+
+    updateTimer()
+    const interval = setInterval(updateTimer, 1000)
+    return () => clearInterval(interval)
+  }, [modStep, checkoutData?.expiresAt, modifyModalOpen])
+
+  // Polling em segundo plano para detecção automática de pagamento (/modify-status)
+  useEffect(() => {
+    if (!modPollingActive || !checkoutData?.pendingId || !modifyModalOpen) return
+
+    const pendingId = checkoutData.pendingId
+    const currentCode = data?.reservation?.code || code
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(currentCode)}/modify-status?pendingId=${encodeURIComponent(pendingId)}`)
+        if (!res.ok) return
+        const json = await res.json()
+
+        if (json.paid || json.status === "paid" || json.committed) {
+          clearInterval(pollInterval)
+          setModPollingActive(false)
+          setModifySuccessInfo({
+            message: json.message || "Pagamento confirmado! As datas da sua estadia foram atualizadas com sucesso.",
+            newCheckinDate: json.newCheckinDate || checkoutData.newDates?.checkinDate,
+            newCheckoutDate: json.newCheckoutDate || checkoutData.newDates?.checkoutDate,
+            newFlatNumber: json.flatNumber || checkoutData.newFlatNumber || data?.reservation?.flatNumber,
+            needsReSignature: Boolean(json.needsReSignature),
+            reSignatureUrl: json.reSignatureUrl || `/pre-checkin/${encodeURIComponent(currentCode)}?resign=1`
+          })
+          setModStep("success")
+          fetchPortalData(currentCode)
+        } else if (json.status === "expired") {
+          clearInterval(pollInterval)
+          setModPollingActive(false)
+          setCheckoutError("O prazo de 30 minutos para pagamento expirou. Por favor, reinicie a alteração.")
+        }
+      } catch (err) {
+        console.warn("[Modify Status Polling] Erro:", err)
+      }
+    }, 2500)
+
+    return () => clearInterval(pollInterval)
+  }, [modPollingActive, checkoutData?.pendingId, modifyModalOpen, data?.reservation?.code, code])
+
 
   // Cancelamento Self-Service States
   const [cancelModalOpen, setCancelModalOpen] = useState(false)
@@ -309,25 +395,145 @@ export default function GuestPortal() {
     }
   }
 
+  // Abertura do Modal e Inicialização
   const handleOpenModifyModal = () => {
     if (!data?.reservation) return
     const r = data.reservation
+    setModStep("preview")
     setModCheckinDate(r.checkinDate || "")
     setModCheckoutDate(r.checkoutDate || "")
     setModGuestCount(r.guestCount || 1)
     setModReason("")
-    setModifyError(null)
-    setModifySuccess(null)
+    setPreviewData(null)
+    setPreviewError(null)
+    setCheckoutData(null)
+    setCheckoutError(null)
+    setModPollingActive(false)
+    setModifySuccessInfo(null)
     setModifyModalOpen(true)
+
+    // Dispara a primeira simulação com os dados atuais
+    if (r.checkinDate && r.checkoutDate) {
+      handleRunPreview(r.checkinDate, r.checkoutDate, r.guestCount || 1)
+    }
   }
 
-  const handleConfirmModify = async (e: React.FormEvent) => {
-    e.preventDefault()
+  // Executa Simulação no /modify-preview
+  const handleRunPreview = async (checkin = modCheckinDate, checkout = modCheckoutDate, guests = modGuestCount) => {
+    if (!data?.reservation || !checkin || !checkout) return
+    const currentCode = data.reservation.code || code
+
+    if (checkout <= checkin) {
+      setPreviewError("A data de check-out deve ser posterior à data de check-in.")
+      setPreviewData(null)
+      return
+    }
+
+    setPreviewLoading(true)
+    setPreviewError(null)
+
+    try {
+      const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(currentCode)}/modify-preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          newCheckinDate: checkin,
+          newCheckoutDate: checkout,
+          newGuestCount: guests,
+          reason: modReason
+        })
+      })
+
+      const json = await res.json()
+
+      if (res.status === 409) {
+        setPreviewData({ available: false, conflictMessage: json.conflictMessage || json.message })
+        setPreviewError(json.conflictMessage || json.message)
+      } else if (!res.ok) {
+        setPreviewError(json.message || json.error || "Erro ao consultar disponibilidade.")
+        setPreviewData(null)
+      } else {
+        setPreviewData(json)
+        setPreviewError(null)
+      }
+    } catch (err: any) {
+      setPreviewError(err.message || "Erro de conexão com o servidor.")
+      setPreviewData(null)
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  // Avançar para Etapa 2 (Checkout com Hold de 30 Minutos)
+  const handleProceedToCheckout = async () => {
+    if (!data?.reservation || !previewData?.available) return
+    const currentCode = data.reservation.code || code
+
+    setCheckoutLoading(true)
+    setCheckoutError(null)
+
+    try {
+      const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(currentCode)}/modify-checkout`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          newCheckinDate: modCheckinDate,
+          newCheckoutDate: modCheckoutDate,
+          newGuestCount: modGuestCount,
+          paymentMethod: modPaymentMethod === "card" ? "credit_card" : "pix",
+          reason: modReason
+        })
+      })
+
+      const json = await res.json()
+
+      if (!res.ok) {
+        setCheckoutError(json.message || json.error || "Erro ao gerar cobrança de alteração.")
+      } else {
+        setCheckoutData(json)
+        setModStep("checkout")
+        setModPollingActive(true)
+      }
+    } catch (err: any) {
+      setCheckoutError(err.message || "Erro ao conectar com o servidor.")
+    } finally {
+      setCheckoutLoading(false)
+    }
+  }
+
+  // Cancelar Hold Provisório e Restaurar Datas Originais
+  const handleCancelHold = async () => {
+    if (!data?.reservation || !checkoutData?.pendingId) return
+    const currentCode = data.reservation.code || code
+
+    setCancellingHold(true)
+    try {
+      const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(currentCode)}/modify-cancel-pending`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pendingId: checkoutData.pendingId })
+      })
+      if (res.ok) {
+        setModPollingActive(false)
+        setCheckoutData(null)
+        setModifyModalOpen(false)
+        fetchPortalData(currentCode)
+      }
+    } catch (err) {
+      console.error("Erro ao cancelar hold:", err)
+    } finally {
+      setCancellingHold(false)
+    }
+  }
+
+  // Confirmar Alteração com Custo Zero (Sem Pagamento)
+  const handleConfirmZeroCostModify = async () => {
     if (!data?.reservation) return
     const currentCode = data.reservation.code || code
-    setModifying(true)
-    setModifyError(null)
-    setModifySuccess(null)
+
+    setCheckoutLoading(true)
+    setPreviewError(null)
+
     try {
       const res = await fetch(`/api/pms/guest-portal/${encodeURIComponent(currentCode)}/modify`, {
         method: "POST",
@@ -339,21 +545,27 @@ export default function GuestPortal() {
           reason: modReason
         })
       })
+
       const json = await res.json()
+
       if (res.ok) {
-        setModifySuccess(json.message || "Reserva modificada com sucesso!")
+        setModifySuccessInfo({
+          message: json.message || "Reserva modificada com sucesso!",
+          newCheckinDate: json.newCheckinDate || modCheckinDate,
+          newCheckoutDate: json.newCheckoutDate || modCheckoutDate,
+          newFlatNumber: json.reservation?.flatNumber || data.reservation.flatNumber,
+          needsReSignature: Boolean(json.needsReSignature),
+          reSignatureUrl: json.reSignatureUrl || `/pre-checkin/${encodeURIComponent(currentCode)}?resign=1`
+        })
+        setModStep("success")
         fetchPortalData(currentCode)
-        setTimeout(() => {
-          setModifyModalOpen(false)
-          setModifySuccess(null)
-        }, 3000)
       } else {
-        setModifyError(json.error || "Não foi possível alterar a reserva.")
+        setPreviewError(json.error || json.message || "Não foi possível confirmar a alteração.")
       }
     } catch (err: any) {
-      setModifyError(err.message || "Erro ao conectar com o servidor.")
+      setPreviewError(err.message || "Erro de conexão com o servidor.")
     } finally {
-      setModifying(false)
+      setCheckoutLoading(false)
     }
   }
 
@@ -445,7 +657,15 @@ export default function GuestPortal() {
 
   const isCurrentGuestTitular = Number(currentGuest?.index || activeGuestIndex) === 1
 
-  const isCurrentGuestPreCheckinDone = Boolean(
+  const needsReSignature = Boolean(
+    reservation?.needsReSignature ||
+    (currentGuest && currentGuest.needsReSignature)
+  )
+
+  const reSignatureReason = reservation?.reSignatureReason || 
+    "Sua reserva teve as datas ou acomodação alteradas. É obrigatório assinar a declaração atualizada para liberar o acesso ao condomínio."
+
+  const isCurrentGuestPreCheckinDone = !needsReSignature && Boolean(
     currentGuest?.hasCompletedCheckin ||
     currentGuest?.status === "CHECKED_IN" ||
     currentGuest?.fnrhSignedAt ||
@@ -457,7 +677,7 @@ export default function GuestPortal() {
     ))
   )
 
-  const isPreCheckinDone = guestsList.length > 1
+  const isPreCheckinDone = !needsReSignature && (guestsList.length > 1
     ? isCurrentGuestPreCheckinDone
     : Boolean(
         data?.preCheckinStatus?.completed ||
@@ -466,13 +686,14 @@ export default function GuestPortal() {
         reservation?.preCheckinCompleted ||
         reservation?.hasPreCheckin ||
         (Array.isArray(reservation?.guests) && reservation.guests.length > 0 && reservation.guests.some((g: any) => g.hasCompletedCheckin))
-      )
+      ))
 
   const getCheckinPath = (readonly = false) => {
     const c = code || reservation?.code || ""
     const gParam = activeGuestIndex > 1 ? `guest=${activeGuestIndex}` : ""
     const roParam = readonly ? "readonly=true" : ""
-    const parts = [gParam, roParam].filter(Boolean).join("&")
+    const resignParam = needsReSignature ? "resign=1" : ""
+    const parts = [gParam, roParam, resignParam].filter(Boolean).join("&")
     return `/pre-checkin/${c}${parts ? `?${parts}` : ""}`
   }
 
@@ -1402,7 +1623,18 @@ export default function GuestPortal() {
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {/* Atalhos para Tablet e Desktop (>= md) */}
             {/* Atalhos para Tablet e Desktop (>= md) */}
-            {!hasEnteredFlat && !isPreCheckinDone && (
+            {!hasEnteredFlat && needsReSignature && (
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => setLocation(getCheckinPath(false))}
+                className="hidden md:inline-flex h-9 px-3.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs items-center gap-2 shadow-sm animate-pulse"
+              >
+                <PenTool className="w-4 h-4 shrink-0" />
+                <span>Assinar Termo Atualizado</span>
+              </Button>
+            )}
+            {!hasEnteredFlat && !needsReSignature && !isPreCheckinDone && (
               <Button
                 type="button"
                 variant="outline"
@@ -1481,7 +1713,16 @@ export default function GuestPortal() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-52 bg-white border-slate-200 rounded-2xl shadow-xl p-1.5 text-slate-800">
-                  {!hasEnteredFlat && !isPreCheckinDone && (
+                  {!hasEnteredFlat && needsReSignature && (
+                    <DropdownMenuItem
+                      onClick={() => setLocation(getCheckinPath(false))}
+                      className="flex items-center gap-2.5 px-3 py-2.5 text-xs font-bold rounded-xl cursor-pointer hover:bg-amber-50 text-amber-900"
+                    >
+                      <PenTool className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>Assinar Termo Atualizado</span>
+                    </DropdownMenuItem>
+                  )}
+                  {!hasEnteredFlat && !needsReSignature && !isPreCheckinDone && (
                     <DropdownMenuItem
                       onClick={() => setLocation(getCheckinPath(false))}
                       className="flex items-center gap-2.5 px-3 py-2.5 text-xs font-bold rounded-xl cursor-pointer hover:bg-slate-100 text-indigo-700"
@@ -1556,6 +1797,73 @@ export default function GuestPortal() {
       {/* ── Main Container ──────────────────────────────────────────────── */}
       <main className="max-w-4xl w-full mx-auto px-4 py-6 sm:py-8 space-y-6">
         
+        {/* ── Banner de Alerta: Re-assinatura Obrigatória (Datas ou Flat Alterados) ── */}
+        {!isCancelled && needsReSignature && (
+          <div className="rounded-3xl border-2 border-amber-400 bg-gradient-to-r from-amber-50 via-orange-50/80 to-amber-50 p-5 sm:p-6 shadow-md space-y-3 animate-in fade-in slide-in-from-top-2">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-start sm:items-center gap-3.5">
+                <div className="w-12 h-12 rounded-2xl bg-amber-500 text-white flex items-center justify-center font-bold shadow-sm shrink-0">
+                  <PenTool className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Badge className="bg-amber-600 text-white text-[10.5px] font-bold px-2 py-0.5">
+                      ⚠️ ASSINATURA PENDENTE • ATUALIZAÇÃO OBRIGATÓRIA
+                    </Badge>
+                    <span className="text-[11px] text-amber-800 font-semibold font-mono">
+                      Flat {reservation.flatNumber} • {reservation.code}
+                    </span>
+                  </div>
+                  <h2 className="text-lg sm:text-xl font-black text-amber-950 mt-1">
+                    Declaração de Check-in Requer Nova Assinatura
+                  </h2>
+                  <p className="text-xs sm:text-sm text-amber-900/90 mt-0.5 leading-relaxed max-w-2xl">
+                    Sua reserva teve as datas ou acomodação alteradas. É obrigatório assinar a declaração atualizada para liberar o acesso ao condomínio.
+                  </p>
+                </div>
+              </div>
+
+              <div className="shrink-0 w-full sm:w-auto">
+                <Button
+                  type="button"
+                  onClick={() => setLocation(getCheckinPath(false))}
+                  className="w-full sm:w-auto h-11 px-5 rounded-xl bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md transition-all"
+                >
+                  <PenTool className="w-4 h-4" />
+                  <span>Assinar Termo Atualizado</span>
+                  <ArrowRight className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+
+            <div className="p-3 bg-white/80 rounded-xl border border-amber-200/80 text-xs text-amber-900 flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>
+                <strong>Seus dados e documentos estão salvos:</strong> você só precisará conferir as novas informações da estadia e assinar digitalmente.
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* ── Banner de Confirmação: Re-assinatura Concluída com Sucesso ─────────── */}
+        {typeof window !== "undefined" && new URLSearchParams(window.location.search).get("resign_success") === "1" && !needsReSignature && (
+          <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 text-white shadow-lg flex items-center justify-between gap-4 animate-in fade-in slide-in-from-top-2">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-white/20 flex items-center justify-center shrink-0">
+                <CheckCircle2 className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <h3 className="text-base sm:text-lg font-black tracking-tight">
+                  ✓ Ficha de Check-in Re-assinada com Sucesso!
+                </h3>
+                <p className="text-xs sm:text-sm text-emerald-50 leading-relaxed mt-0.5">
+                  Sua declaração atualizada com as novas datas e acomodação foi autenticada e enviada para a portaria. O acesso ao condomínio está 100% liberado!
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ── Banner de Alerta: Reserva Cancelada ───────────────────────── */}
         {isCancelled && (
           <div className="rounded-3xl border-2 border-rose-300 bg-gradient-to-br from-rose-50 via-rose-50/90 to-red-50 p-5 sm:p-7 shadow-sm space-y-4">
@@ -1779,6 +2087,10 @@ export default function GuestPortal() {
                     <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-300 font-bold text-[10px]">
                       ✓ Entrada Confirmada
                     </Badge>
+                  ) : needsReSignature ? (
+                    <Badge variant="outline" className="bg-amber-100 text-amber-900 border-amber-300 font-bold text-[10px] animate-pulse">
+                      ⚠️ Re-assinatura Obrigatória
+                    </Badge>
                   ) : isPreCheckinDone ? (
                     <Badge variant="outline" className="bg-sky-50 text-sky-700 border-sky-300 font-bold text-[10px]">
                       ✓ Dados Enviados
@@ -1798,7 +2110,22 @@ export default function GuestPortal() {
                 </span>
               </div>
 
-              {hasEnteredFlat ? (
+              {needsReSignature ? (
+                <div className="space-y-2 mt-2">
+                  <div className="p-2.5 rounded-xl bg-amber-100/90 border border-amber-300 text-amber-950 text-xs font-medium leading-snug">
+                    <span className="font-bold block text-amber-900 mb-0.5">⚠️ Assinatura Atualizada Obrigatória</span>
+                    Sua reserva teve as datas ou acomodação alteradas. É obrigatório assinar a declaração atualizada para liberar o acesso ao condomínio.
+                  </div>
+                  <Button
+                    type="button"
+                    onClick={() => setLocation(getCheckinPath(false))}
+                    className="w-full h-10 text-xs sm:text-sm font-bold rounded-xl bg-amber-600 hover:bg-amber-700 text-white shadow-xs transition-all active:scale-95 flex items-center justify-center gap-2"
+                  >
+                    <PenTool className="w-4.5 h-4.5 shrink-0" />
+                    <span>Assinar Termo Atualizado</span>
+                  </Button>
+                </div>
+              ) : hasEnteredFlat ? (
                 <div className="space-y-1.5 mt-2">
                   <div className="w-full h-10 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs sm:text-sm font-bold flex items-center justify-center gap-2">
                     <CheckCircle2 className="w-4.5 h-4.5 text-emerald-600 shrink-0" />
@@ -3113,212 +3440,536 @@ export default function GuestPortal() {
 
       </main>
 
-      {/* ── Modal: Modificar Reserva ────────────────────────────────────── */}
-      <Dialog open={modifyModalOpen} onOpenChange={setModifyModalOpen}>
-        <DialogContent className="sm:max-w-lg bg-white border border-slate-200 text-slate-900 rounded-3xl p-6 shadow-2xl">
-          <DialogHeader>
-            <DialogTitle className="text-lg font-black text-slate-900 flex items-center gap-2">
-              <Calendar className="w-5 h-5 text-sky-600" />
-              Modificar Estadia ou Hóspedes
-            </DialogTitle>
-            <DialogDescription className="text-xs text-slate-500">
-              Altere o período da estadia ou a quantidade de pessoas para o Flat {reservation?.flatNumber}.
-            </DialogDescription>
+      {/* ── Modal Multi-Etapas: Modificar Reserva (Milestone 3) ──────────── */}
+      <Dialog 
+        open={modifyModalOpen} 
+        onOpenChange={(open) => {
+          if (!open && modStep === "checkout" && checkoutData?.pendingId) {
+            if (confirm("Você possui um hold provisório ativo para estas datas. Deseja cancelar o bloqueio e manter suas datas originais?")) {
+              handleCancelHold()
+            }
+            return
+          }
+          setModifyModalOpen(open)
+        }}
+      >
+        <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto bg-white border border-slate-200 text-slate-900 rounded-3xl p-5 sm:p-7 shadow-2xl">
+          <DialogHeader className="border-b border-slate-100 pb-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-sky-50 text-sky-600 border border-sky-200 flex items-center justify-center font-bold shadow-2xs">
+                  <Calendar className="w-5 h-5" />
+                </div>
+                <div>
+                  <DialogTitle className="text-base sm:text-lg font-black text-slate-900 leading-snug">
+                    {modStep === "preview" && "Modificar Estadia & Hóspedes"}
+                    {modStep === "checkout" && "Pagamento da Alteração"}
+                    {modStep === "success" && "Alteração Confirmada!"}
+                  </DialogTitle>
+                  <DialogDescription className="text-xs text-slate-500">
+                    Flat {reservation?.flatNumber} • Localizador: <strong className="font-mono text-slate-700">{reservation?.code}</strong>
+                  </DialogDescription>
+                </div>
+              </div>
+
+              {/* Indicador de Etapa */}
+              <div className="flex items-center gap-1 shrink-0">
+                <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                  modStep === "preview" ? "bg-sky-600 text-white" : "bg-emerald-100 text-emerald-700"
+                }`}>
+                  1
+                </span>
+                <span className="w-3 h-0.5 bg-slate-200" />
+                <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                  modStep === "checkout" ? "bg-sky-600 text-white" : (modStep === "success" ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-400")
+                }`}>
+                  2
+                </span>
+                <span className="w-3 h-0.5 bg-slate-200" />
+                <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                  modStep === "success" ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-400"
+                }`}>
+                  3
+                </span>
+              </div>
+            </div>
           </DialogHeader>
 
-          {(() => {
-            if (!reservation) return null
-
-            const origNights = reservation.checkinDate && reservation.checkoutDate 
-              ? Math.max(1, differenceInDays(parseISO(reservation.checkoutDate), parseISO(reservation.checkinDate))) 
-              : 1
-            const newNights = modCheckinDate && modCheckoutDate 
-              ? differenceInDays(parseISO(modCheckoutDate), parseISO(modCheckinDate)) 
-              : origNights
-            const origGuests = reservation.guestCount || 1
-            const dailyRate = Number(reservation.dailyRate) || (origNights > 0 ? (Number(reservation.totalAmount || 0) / origNights) : 160)
-
-            // Limite de 24h antes do check-in original (14:00 do dia anterior ao check-in)
-            const checkinDateObj = reservation.checkinDate ? parseISO(reservation.checkinDate) : new Date()
-            const officialCheckinTime = new Date(checkinDateObj)
-            officialCheckinTime.setHours(14, 0, 0, 0)
-            const cutoff24h = new Date(officialCheckinTime.getTime() - 24 * 3600 * 1000)
-            const isUnder24h = new Date().getTime() >= cutoff24h.getTime()
-
-            const isReducingNights = newNights < origNights
-            const isReducingGuests = modGuestCount < origGuests
-            const isIncreasingNights = newNights > origNights
-            const isIncreasingGuests = modGuestCount > origGuests
-            const nightsDiff = newNights - origNights
-            const addAmount = isIncreasingNights ? nightsDiff * dailyRate : 0
-            const refundAmountEstimate = isReducingNights && !isUnder24h ? (origNights - newNights) * dailyRate : 0
-
-            return (
-              <form onSubmit={handleConfirmModify} className="space-y-4 py-2 text-xs">
-                {modifyError && (
-                  <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl flex items-start gap-2">
-                    <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                    <span>{modifyError}</span>
-                  </div>
-                )}
-
-                {modifySuccess && (
-                  <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl flex items-start gap-2 font-bold">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                    <span>{modifySuccess}</span>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <Label className="text-slate-700 font-bold text-[11px]">Nova Data de Entrada (Check-in)</Label>
-                    <Input
-                      type="date"
-                      value={modCheckinDate}
-                      onChange={e => setModCheckinDate(e.target.value)}
-                      required
-                      className="bg-white border-slate-200 text-slate-900 rounded-xl text-xs h-10"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-slate-700 font-bold text-[11px]">Nova Data de Saída (Check-out)</Label>
-                    <Input
-                      type="date"
-                      value={modCheckoutDate}
-                      onChange={e => setModCheckoutDate(e.target.value)}
-                      required
-                      min={modCheckinDate || undefined}
-                      className="bg-white border-slate-200 text-slate-900 rounded-xl text-xs h-10"
-                    />
+          {/* ══════════════════════════════════════════════════════════════════
+              ETAPA 1: SIMULAÇÃO & PREVIEW
+          ══════════════════════════════════════════════════════════════════ */}
+          {modStep === "preview" && (
+            <div className="space-y-4 py-2 text-xs">
+              {previewError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <strong className="block font-bold">Aviso de Disponibilidade</strong>
+                    <span>{previewError}</span>
                   </div>
                 </div>
+              )}
 
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <Label className="text-slate-700 font-bold text-[11px]">Quantidade de Hóspedes</Label>
-                  <div className="flex items-center gap-2">
-                    {[1, 2, 3, 4].map(num => (
-                      <Button
-                        key={num}
-                        type="button"
-                        variant={modGuestCount === num ? "default" : "outline"}
-                        onClick={() => setModGuestCount(num)}
-                        className={`flex-1 h-9 rounded-xl text-xs font-bold ${
-                          modGuestCount === num 
-                            ? "bg-slate-900 text-white shadow-xs" 
-                            : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
-                        }`}
-                      >
-                        <Users className="w-3.5 h-3.5 mr-1" />
-                        {num} {num === 1 ? "Pessoa" : "Pessoas"}
-                      </Button>
-                    ))}
-                  </div>
+                  <Label className="text-slate-700 font-bold text-[11px]">Nova Data de Check-in (Entrada)</Label>
+                  <Input
+                    type="date"
+                    value={modCheckinDate}
+                    onChange={(e) => {
+                      const val = e.target.value
+                      setModCheckinDate(val)
+                      if (val && modCheckoutDate) handleRunPreview(val, modCheckoutDate, modGuestCount)
+                    }}
+                    required
+                    className="bg-white border-slate-200 text-slate-900 rounded-xl text-xs h-10"
+                  />
                 </div>
+                <div className="space-y-1">
+                  <Label className="text-slate-700 font-bold text-[11px]">Nova Data de Check-out (Saída)</Label>
+                  <Input
+                    type="date"
+                    value={modCheckoutDate}
+                    onChange={(e) => {
+                      const val = e.target.value
+                      setModCheckoutDate(val)
+                      if (modCheckinDate && val) handleRunPreview(modCheckinDate, val, modGuestCount)
+                    }}
+                    required
+                    min={modCheckinDate || undefined}
+                    className="bg-white border-slate-200 text-slate-900 rounded-xl text-xs h-10"
+                  />
+                </div>
+              </div>
 
-                {/* Resumo Dinâmico das Alterações */}
-                <div className="p-3.5 bg-slate-50 border border-slate-100 rounded-2xl space-y-2">
-                  <div className="flex items-center justify-between text-slate-600">
-                    <span>Diárias:</span>
-                    <span className="font-bold text-slate-900">
-                      {origNights} {origNights === 1 ? "diária" : "diárias"} → {newNights} {newNights === 1 ? "diária" : "diárias"}
-                      {nightsDiff !== 0 && (
-                        <span className={`ml-1 font-bold ${nightsDiff > 0 ? "text-sky-600" : "text-amber-600"}`}>
-                          ({nightsDiff > 0 ? `+${nightsDiff}` : nightsDiff})
+              <div className="space-y-1">
+                <Label className="text-slate-700 font-bold text-[11px]">Quantidade de Hóspedes</Label>
+                <div className="flex items-center gap-2">
+                  {[1, 2, 3, 4].map(num => (
+                    <Button
+                      key={num}
+                      type="button"
+                      variant={modGuestCount === num ? "default" : "outline"}
+                      onClick={() => {
+                        setModGuestCount(num)
+                        if (modCheckinDate && modCheckoutDate) handleRunPreview(modCheckinDate, modCheckoutDate, num)
+                      }}
+                      className={`flex-1 h-9 rounded-xl text-xs font-bold ${
+                        modGuestCount === num 
+                          ? "bg-slate-900 text-white shadow-xs" 
+                          : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                      }`}
+                    >
+                      <Users className="w-3.5 h-3.5 mr-1" />
+                      {num} {num === 1 ? "Pessoa" : "Pessoas"}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-slate-700 text-[11px]">Motivo da alteração (opcional):</Label>
+                <Input
+                  value={modReason}
+                  onChange={e => setModReason(e.target.value)}
+                  placeholder="Ex: Extensão a trabalho, reagendamento..."
+                  className="bg-white border-slate-200 text-xs h-9 rounded-xl text-slate-900"
+                />
+              </div>
+
+              {/* Status de Disponibilidade & Feedback */}
+              {previewLoading && (
+                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-center gap-2 text-slate-600 font-semibold">
+                  <RefreshCw className="w-4 h-4 animate-spin text-sky-600" />
+                  <span>Consultando disponibilidade e calculando valores...</span>
+                </div>
+              )}
+
+              {previewData && !previewLoading && (
+                <div className="space-y-3 pt-1">
+                  {/* Badge de Disponibilidade */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                      Status do Calendário
+                    </span>
+                    {previewData.available ? (
+                      <Badge className="bg-emerald-600 text-white font-bold text-xs py-1 px-3 flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Disponível para o Período</span>
+                      </Badge>
+                    ) : (
+                      <Badge className="bg-rose-600 text-white font-bold text-xs py-1 px-3 flex items-center gap-1.5">
+                        <Ban className="w-3.5 h-3.5" />
+                        <span>Indisponível / Conflito</span>
+                      </Badge>
+                    )}
+                  </div>
+
+                  {/* Detalhamento de Custos */}
+                  <div className="p-4 bg-slate-50/90 border border-slate-200/80 rounded-2xl space-y-2.5">
+                    <div className="flex justify-between items-center text-slate-600">
+                      <span>Duração da Estadia:</span>
+                      <span className="font-bold text-slate-900">
+                        {previewData.originalDates?.nights} diárias → {previewData.newDates?.nights} diárias
+                        {previewData.extraNights > 0 && (
+                          <span className="text-sky-600 font-bold ml-1">(+{previewData.extraNights})</span>
+                        )}
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between items-center text-slate-600">
+                      <span>Valor da Diária Base:</span>
+                      <span className="font-bold text-slate-900">
+                        R$ {Number(previewData.dailyRate).toFixed(2)}
+                      </span>
+                    </div>
+
+                    {previewData.extraNights > 0 && (
+                      <div className="flex justify-between items-center pt-2 border-t border-slate-200/60 font-bold text-sky-950">
+                        <span>Acréscimo a Pagar:</span>
+                        <span className="text-base text-sky-600 font-mono">
+                          + R$ {Number(previewData.additionalAmountToPay).toFixed(2)}
                         </span>
-                      )}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-slate-600">
-                    <span>Hóspedes:</span>
-                    <span className="font-bold text-slate-900">
-                      {origGuests} {origGuests === 1 ? "pessoa" : "pessoas"} → {modGuestCount} {modGuestCount === 1 ? "pessoa" : "pessoas"}
-                    </span>
-                  </div>
-                </div>
+                      </div>
+                    )}
 
-                {/* ALERTA DE MENOS DE 24H CONFORME REGRA E CONTRATO */}
-                {(isReducingNights || isReducingGuests) && isUnder24h && (
-                  <div className="p-4 rounded-2xl bg-amber-50/90 border border-amber-200 text-amber-900 text-xs space-y-2 shadow-2xs">
-                    <div className="flex items-start gap-2.5">
-                      <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-                      <div className="space-y-1.5">
-                        <strong className="block text-amber-950 font-bold text-xs">
-                          Aviso de Política de Alteração (Menos de 24h para o início)
-                        </strong>
-                        <p className="text-[11.5px] leading-relaxed text-amber-900">
-                          Atenção: como faltam menos de 24 horas para o início da sua reserva (limite: 14:00 do dia anterior ao check-in), a diminuição na quantidade de diárias ou de hóspedes <strong>não gerará estorno ou reembolso</strong> de valores, conforme as condições do{" "}
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setTermsModalTab("contract")
-                              setTermsModalOpen(true)
-                            }}
-                            className="font-bold underline text-indigo-700 hover:text-indigo-900 inline-flex items-center gap-0.5 cursor-pointer bg-amber-100/80 hover:bg-amber-100 px-1 py-0.5 rounded transition-colors"
-                          >
-                            Contrato de Hospedagem (Cláusula 5)
-                          </button>.
+                    {previewData.refundAmount > 0 && (
+                      <div className="flex justify-between items-center pt-2 border-t border-slate-200/60 font-bold text-emerald-950">
+                        <span>Estorno / Crédito Elegível:</span>
+                        <span className="text-base text-emerald-600 font-mono">
+                          - R$ {Number(previewData.refundAmount).toFixed(2)}
+                        </span>
+                      </div>
+                    )}
+
+                    {!previewData.requiresPayment && previewData.refundAmount <= 0 && (
+                      <div className="flex justify-between items-center pt-2 border-t border-slate-200/60 font-bold text-slate-800">
+                        <span>Acréscimo Financeiro:</span>
+                        <span className="text-emerald-600 font-bold">R$ 0,00 (Sem custo adicional)</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Aviso da Regra de 24h */}
+                  {previewData.isUnder24h && previewData.nonRefundableReduction && (
+                    <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-start gap-2.5">
+                      <AlertTriangle className="w-4.5 h-4.5 text-amber-600 shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <strong className="block font-bold">Regra de Cancelamento / Redução (Menos de 24h)</strong>
+                        <p className="text-[11px] leading-relaxed text-amber-800">
+                          A redução de diárias ou hóspedes com menos de 24h do início da estadia não confere direito a estorno ou reembolso conforme as condições contratuais.
                         </p>
                       </div>
                     </div>
-                  </div>
-                )}
-
-                {/* Informativo de acréscimo de noites */}
-                {isIncreasingNights && (
-                  <div className="p-3.5 rounded-2xl bg-sky-50 border border-sky-200 text-sky-900 text-xs space-y-1">
-                    <div className="flex items-center justify-between font-bold">
-                      <span>Acréscimo de {nightsDiff} {nightsDiff === 1 ? "diária" : "diárias"}:</span>
-                      <span className="text-sm font-black text-sky-950">+ R$ {addAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
-                    </div>
-                    <p className="text-[11px] text-sky-700">
-                      O valor adicional poderá ser liquidado via PIX ou com a administração.
-                    </p>
-                  </div>
-                )}
-
-                {/* Informativo de redução com mais de 24h */}
-                {isReducingNights && !isUnder24h && (
-                  <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs space-y-1">
-                    <div className="flex items-center justify-between font-bold">
-                      <span>Redução com mais de 24h de antecedência:</span>
-                      <span className="text-sm font-black text-emerald-950">Estorno elegível: R$ {refundAmountEstimate.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
-                    </div>
-                    <p className="text-[11px] text-emerald-700">
-                      O estorno proporcional será creditado na mesma modalidade de liquidação original.
-                    </p>
-                  </div>
-                )}
-
-                <div className="space-y-1">
-                  <Label className="text-slate-700 text-[11px]">Motivo da alteração (opcional):</Label>
-                  <Input
-                    value={modReason}
-                    onChange={e => setModReason(e.target.value)}
-                    placeholder="Ex: Ajuste de compromisso de trabalho..."
-                    className="bg-white border-slate-200 text-xs h-9 rounded-xl text-slate-900"
-                  />
+                  )}
                 </div>
+              )}
 
-                <DialogFooter className="gap-2 sm:gap-0 pt-2">
+              <DialogFooter className="gap-2 sm:gap-0 pt-3 border-t border-slate-100">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setModifyModalOpen(false)}
+                  className="rounded-xl border-slate-200 text-slate-700"
+                >
+                  Cancelar
+                </Button>
+
+                {previewData?.available && previewData?.requiresPayment && (
                   <Button
                     type="button"
-                    variant="outline"
-                    onClick={() => setModifyModalOpen(false)}
-                    className="rounded-xl border-slate-200 text-slate-700"
+                    disabled={checkoutLoading}
+                    onClick={handleProceedToCheckout}
+                    className="font-bold text-xs rounded-xl bg-sky-600 hover:bg-sky-700 text-white shadow-xs gap-1.5"
                   >
-                    Fechar
+                    <span>{checkoutLoading ? "Gerando Cobrança..." : `Continuar para Pagamento (R$ ${Number(previewData.additionalAmountToPay).toFixed(2)})`}</span>
+                    <ArrowRight className="w-4 h-4" />
                   </Button>
+                )}
+
+                {previewData?.available && !previewData?.requiresPayment && (
                   <Button
-                    type="submit"
-                    disabled={modifying || newNights <= 0}
-                    className="font-bold text-xs rounded-xl bg-sky-600 hover:bg-sky-700 text-white"
+                    type="button"
+                    disabled={checkoutLoading}
+                    onClick={handleConfirmZeroCostModify}
+                    className="font-bold text-xs rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs gap-1.5"
                   >
-                    {modifying ? "Processando Alteração..." : "Confirmar Modificação"}
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>{checkoutLoading ? "Confirmando..." : "Confirmar Alteração de Datas"}</span>
                   </Button>
-                </DialogFooter>
-              </form>
-            )
-          })()}
+                )}
+              </DialogFooter>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════════════════════════
+              ETAPA 2: CHECKOUT COM HOLD DE 30 MINUTOS
+          ══════════════════════════════════════════════════════════════════ */}
+          {modStep === "checkout" && checkoutData && (
+            <div className="space-y-4 py-2 text-xs">
+              {checkoutError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <span>{checkoutError}</span>
+                </div>
+              )}
+
+              {/* Banner de Hold Provisório com Cronômetro */}
+              <div className="p-3.5 bg-sky-50 rounded-2xl border border-sky-200 flex items-center justify-between gap-3 text-sky-950">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-5 h-5 text-sky-600 shrink-0" />
+                  <div>
+                    <span className="font-bold block text-xs">Bloqueio Provisório de 30 Minutos</span>
+                    <span className="text-[11px] text-sky-800">Suas datas estão reservadas enquanto conclui o pagamento.</span>
+                  </div>
+                </div>
+                <Badge variant="outline" className="bg-white border-sky-300 font-mono font-bold text-sm px-2.5 py-1 text-sky-700 shrink-0">
+                  ⏳ {modTimeRemaining}
+                </Badge>
+              </div>
+
+              {/* Caixa de Valor Adicional */}
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200/90 flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block">
+                    Valor Adicional a Liquidar
+                  </span>
+                  <span className="text-xs text-slate-600">
+                    Novas datas: {checkoutData.newDates?.checkinDate} até {checkoutData.newDates?.checkoutDate}
+                  </span>
+                </div>
+                <span className="text-2xl font-black text-slate-900 font-mono">
+                  R$ {Number(checkoutData.additionalAmountToPay).toFixed(2)}
+                </span>
+              </div>
+
+              {/* Seletor de Método de Pagamento */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setModPaymentMethod("pix")}
+                  className={`p-3 rounded-2xl border text-center font-bold text-xs flex items-center justify-center gap-2 transition-all ${
+                    modPaymentMethod === "pix"
+                      ? "bg-slate-900 text-white border-slate-900 shadow-xs"
+                      : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+                  }`}
+                >
+                  <QrCode className="w-4 h-4" />
+                  <span>PIX Instantâneo</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setModPaymentMethod("card")}
+                  className={`p-3 rounded-2xl border text-center font-bold text-xs flex items-center justify-center gap-2 transition-all ${
+                    modPaymentMethod === "card"
+                      ? "bg-slate-900 text-white border-slate-900 shadow-xs"
+                      : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+                  }`}
+                >
+                  <CreditCard className="w-4 h-4" />
+                  <span>Cartão de Crédito</span>
+                </button>
+              </div>
+
+              {/* ABA PIX */}
+              {modPaymentMethod === "pix" && (
+                <div className="space-y-3.5 p-4 rounded-2xl bg-white border border-slate-200/80 shadow-2xs">
+                  {checkoutData.pixQrCodeUrl && (
+                    <div className="flex flex-col items-center justify-center space-y-2">
+                      <div className="p-2.5 bg-white border border-slate-200 rounded-2xl shadow-xs">
+                        <img
+                          src={checkoutData.pixQrCodeUrl}
+                          alt="QR Code PIX para Alteração"
+                          className="w-44 h-44 rounded-xl"
+                        />
+                      </div>
+                      <span className="text-[11px] text-slate-500 font-medium text-center">
+                        Abra o app do seu banco e aponte a câmera para o QR Code.
+                      </span>
+                    </div>
+                  )}
+
+                  {checkoutData.pixCopiaECola && (
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[11px] font-bold text-slate-700">PIX Copia e Cola:</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(checkoutData.pixCopiaECola)
+                            setModCopiedPix(true)
+                            setTimeout(() => setModCopiedPix(false), 3000)
+                          }}
+                          className="text-xs font-bold text-sky-700 hover:text-sky-800 flex items-center gap-1"
+                        >
+                          {modCopiedPix ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                          <span>{modCopiedPix ? "Código Copiado!" : "Copiar Código PIX"}</span>
+                        </button>
+                      </div>
+
+                      <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200 font-mono text-[11px] text-slate-700 break-all select-all max-h-16 overflow-y-auto">
+                        {checkoutData.pixCopiaECola}
+                      </div>
+
+                      <Button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(checkoutData.pixCopiaECola)
+                          setModCopiedPix(true)
+                          setTimeout(() => setModCopiedPix(false), 3000)
+                        }}
+                        className="w-full h-10 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs flex items-center justify-center gap-2 mt-2 shadow-xs"
+                      >
+                        {modCopiedPix ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                        <span>{modCopiedPix ? "Código PIX Copiado com Sucesso!" : "Copiar Código PIX"}</span>
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* Feedback de Polling Ativo */}
+                  <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl flex items-center justify-center gap-2 text-emerald-800 font-semibold text-xs">
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-600" />
+                    <span>Aguardando confirmação bancária em tempo real...</span>
+                  </div>
+                </div>
+              )}
+
+              {/* ABA CARTÃO DE CRÉDITO */}
+              {modPaymentMethod === "card" && (
+                <div className="space-y-3.5 p-4 rounded-2xl bg-white border border-slate-200/80 shadow-2xs">
+                  <div className="text-center space-y-2 py-2">
+                    <CreditCard className="w-10 h-10 text-sky-600 mx-auto" />
+                    <h4 className="font-bold text-slate-900 text-sm">Checkout Seguro Mercado Pago</h4>
+                    <p className="text-xs text-slate-500 max-w-sm mx-auto leading-relaxed">
+                      Você será redirecionado para o ambiente protegido do Mercado Pago para efetuar o pagamento com cartão de crédito.
+                    </p>
+                  </div>
+
+                  {checkoutData.mpCheckoutUrl && (
+                    <a
+                      href={checkoutData.mpCheckoutUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full h-11 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition-colors"
+                    >
+                      <CreditCard className="w-4 h-4" />
+                      <span>Pagar no Mercado Pago ↗</span>
+                    </a>
+                  )}
+
+                  {/* Feedback de Polling Ativo */}
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-center gap-2 text-slate-600 font-semibold text-xs text-center">
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-sky-600" />
+                    <span>Após concluir o pagamento, esta tela atualizará automaticamente.</span>
+                  </div>
+                </div>
+              )}
+
+              <DialogFooter className="flex flex-col sm:flex-row justify-between gap-2 pt-3 border-t border-slate-100">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={cancellingHold}
+                  onClick={handleCancelHold}
+                  className="rounded-xl border-rose-200 bg-rose-50/60 hover:bg-rose-100 text-rose-800 text-xs font-bold"
+                >
+                  {cancellingHold ? "Cancelando Bloqueio..." : "Cancelar e Manter Datas Originais"}
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setModStep("preview")}
+                  className="rounded-xl text-slate-600 text-xs font-semibold"
+                >
+                  ← Voltar à Simulação
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════════════════════════
+              ETAPA 3: SUCESSO & PROMPT DE RE-ASSINATURA OBRIGATÓRIA (R3)
+          ══════════════════════════════════════════════════════════════════ */}
+          {modStep === "success" && modifySuccessInfo && (
+            <div className="space-y-4 py-3 text-xs">
+              <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-sm">
+                  <CheckCircle2 className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-black text-emerald-950">
+                    Estadia Alterada com Sucesso!
+                  </h3>
+                  <p className="text-xs text-emerald-800 mt-0.5">
+                    {modifySuccessInfo.message}
+                  </p>
+                </div>
+              </div>
+
+              {/* Demonstrativo das Novas Datas */}
+              <div className="p-4 bg-slate-50 border border-slate-200/80 rounded-2xl space-y-2 text-slate-700">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block border-b border-slate-200 pb-1">
+                  Resumo da Hospedagem Atualizada
+                </span>
+                <div className="flex justify-between">
+                  <span>Novo Período:</span>
+                  <strong className="text-slate-900 font-bold">
+                    {modifySuccessInfo.newCheckinDate} até {modifySuccessInfo.newCheckoutDate}
+                  </strong>
+                </div>
+                <div className="flex justify-between">
+                  <span>Acomodação:</span>
+                  <strong className="text-slate-900 font-bold">
+                    Flat {modifySuccessInfo.newFlatNumber}
+                  </strong>
+                </div>
+              </div>
+
+              {/* ALERTA CRÍTICO: RE-ASSINATURA OBRIGATÓRIA DA FICHA DE CHECK-IN */}
+              {modifySuccessInfo.needsReSignature && (
+                <div className="p-4 sm:p-5 rounded-2xl bg-amber-50 border-2 border-amber-300 shadow-xs space-y-3">
+                  <div className="flex items-start gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-2xs mt-0.5">
+                      <FileText className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <strong className="block text-amber-950 font-bold text-sm">
+                        Assinatura da Ficha de Check-in Necessária
+                      </strong>
+                      <p className="text-xs text-amber-900 mt-1 leading-relaxed">
+                        Como as datas ou a acomodação da sua reserva foram alteradas, sua assinatura digital anterior foi invalidada. É obrigatório assinar a nova Ficha Nacional de Registro de Hóspedes (FNRH) com as informações atualizadas.
+                      </p>
+                    </div>
+                  </div>
+
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      setModifyModalOpen(false)
+                      setLocation(modifySuccessInfo.reSignatureUrl || `/pre-checkin/${encodeURIComponent(reservation?.code || code)}?resign=1`)
+                    }}
+                    className="w-full h-11 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-black text-xs sm:text-sm shadow-sm flex items-center justify-center gap-2 transition-all active:scale-95"
+                  >
+                    <FileText className="w-4.5 h-4.5" />
+                    <span>Assinar Nova Ficha de Check-in Agora →</span>
+                  </Button>
+                </div>
+              )}
+
+              <DialogFooter className="pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setModifyModalOpen(false)}
+                  className="w-full h-10 rounded-xl border-slate-200 text-slate-700 font-bold text-xs"
+                >
+                  Concluir e Voltar ao Painel
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

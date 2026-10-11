@@ -15136,6 +15136,9 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
       fnhrCompleted: Boolean(r.fnhrCompleted),
       preCheckinCompleted: Boolean(r.preCheckinCompleted || r.fnhrCompleted || (Array.isArray(r.guests) && r.guests.some(g => g.hasCompletedCheckin))),
       hasPreCheckin: Boolean(r.hasPreCheckin || r.preCheckinCompleted || r.fnhrCompleted || (Array.isArray(r.guests) && r.guests.some(g => g.hasCompletedCheckin))),
+      needsReSignature: Boolean(r.needsReSignature),
+      reSignatureReason: r.reSignatureReason || null,
+      reSignatureUrl: r.needsReSignature ? `/pre-checkin/${r.code}?resign=1` : null,
       checkedInAt: r.checkedInAt || null,
       actualCheckinAt: r.actualCheckinAt || null,
       guestSelfCheckin: Boolean(r.guestSelfCheckin)

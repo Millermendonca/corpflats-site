@@ -1,18 +1,20 @@
-import { useState, useEffect } from "react"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { useState, useEffect, useCallback } from "react"
+import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { 
-  Car, ShieldCheck, CheckCircle2, Send, Plus, RefreshCw,
-  Building2, Calendar, User, Phone, Check, Copy, FileText, AlertCircle, MessageCircle, Mail
+  Car, ShieldCheck, Send, Plus, RefreshCw,
+  Building2, Check, Copy, MessageCircle, Mail,
+  Clock
 } from "lucide-react"
 
 export default function GarageDashboard() {
   const [data, setData] = useState<any | null>(null)
   const [loading, setLoading] = useState(true)
+  const [lastSyncTime, setLastSyncTime] = useState<Date>(new Date())
   const [authModalOpen, setAuthModalOpen] = useState(false)
   const [sending, setSending] = useState(false)
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null)
@@ -28,6 +30,51 @@ export default function GarageDashboard() {
   const [checkinDate, setCheckinDate] = useState("")
   const [checkoutDate, setCheckoutDate] = useState("")
   const [recipientEmail, setRecipientEmail] = useState("millerpessanha@gmail.com")
+
+  // Função centralizada com suporte a modo silencioso
+  const fetchGarageData = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true)
+    try {
+      const res = await fetch("/api/pms/garage/daily-sheet")
+      if (res.ok) {
+        const json = await res.json()
+        setData(json)
+        setLastSyncTime(new Date())
+      }
+    } catch (e) {
+      console.warn("Erro ao buscar dados da garagem:", e)
+    } finally {
+      if (!silent) setLoading(false)
+    }
+  }, [])
+
+  // Efeito de Polling em Segundo Plano (30 segundos) + Re-sincronização por Visibilidade
+  useEffect(() => {
+    // 1. Carga inicial com feedback visual
+    fetchGarageData(false)
+
+    // 2. Polling silencioso a cada 30 segundos
+    const intervalId = setInterval(() => {
+      fetchGarageData(true)
+    }, 30000)
+
+    // 3. Re-sincronização imediata ao focar na janela/aba
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === "visible") {
+        fetchGarageData(true)
+      }
+    }
+
+    window.addEventListener("focus", handleVisibilityOrFocus)
+    document.addEventListener("visibilitychange", handleVisibilityOrFocus)
+
+    // 4. Limpeza no desmonte
+    return () => {
+      clearInterval(intervalId)
+      window.removeEventListener("focus", handleVisibilityOrFocus)
+      document.removeEventListener("visibilitychange", handleVisibilityOrFocus)
+    }
+  }, [fetchGarageData])
 
   const handleResendGarageEmail = async (v: any) => {
     setResendingPlate(v.plate)
@@ -49,7 +96,7 @@ export default function GarageDashboard() {
       })
       if (res.ok) {
         alert(`Autorização de garagem para a placa ${v.plate} (Flat ${v.flatNumber}) enviada com sucesso para millerpessanha@gmail.com!`)
-        fetchGarageData()
+        fetchGarageData(true)
       } else {
         const err = await res.json()
         alert("Erro ao enviar: " + (err.error || "Falha na comunicação"))
@@ -60,25 +107,6 @@ export default function GarageDashboard() {
       setResendingPlate(null)
     }
   }
-
-  const fetchGarageData = async () => {
-    setLoading(true)
-    try {
-      const res = await fetch("/api/pms/garage/daily-sheet")
-      if (res.ok) {
-        const json = await res.json()
-        setData(json)
-      }
-    } catch (e) {
-      console.warn("Erro ao buscar dados da garagem:", e)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    fetchGarageData()
-  }, [])
 
   const handleSendAuthorization = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -109,7 +137,7 @@ export default function GarageDashboard() {
         setColor("")
         setGuestName("")
         setFlatNumber("")
-        fetchGarageData()
+        fetchGarageData(true)
         alert("Autorização de garagem gerada e registrada com sucesso!")
       }
     } finally {
@@ -131,6 +159,7 @@ export default function GarageDashboard() {
   }
 
   const vehicles = data?.vehicles || []
+  const todayStr = data?.date || new Date().toISOString().substring(0, 10)
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-4 sm:p-8 font-sans space-y-6">
@@ -150,8 +179,14 @@ export default function GarageDashboard() {
         </div>
 
         <div className="flex items-center gap-2.5">
+          {/* Indicador de Polling Ao Vivo */}
+          <div className="hidden sm:inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-[11px] font-bold text-slate-300">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span>Tempo Real (30s)</span>
+          </div>
+
           <Button
-            onClick={fetchGarageData}
+            onClick={() => fetchGarageData(false)}
             variant="outline"
             className="bg-slate-900 border-slate-700 text-slate-200 hover:text-white text-xs font-bold gap-2 rounded-xl h-10"
           >
@@ -195,7 +230,12 @@ export default function GarageDashboard() {
           <div className="flex items-baseline gap-2 mt-2">
             <span className="text-xl font-black text-emerald-400">Sincronizado 24h</span>
           </div>
-          <span className="text-[11px] text-slate-500 block mt-1">Tablet da portaria atualizado</span>
+          <div className="flex items-center gap-1.5 mt-1 text-[11px] text-slate-400">
+            <Clock className="w-3 h-3 text-slate-500" />
+            <span>
+              Último sync: {lastSyncTime.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+            </span>
+          </div>
         </Card>
 
         <Card className="bg-slate-900 border-slate-800 rounded-2xl p-5 shadow-xl">
@@ -219,9 +259,11 @@ export default function GarageDashboard() {
             <Car className="w-5 h-5 text-blue-400" />
             <h2 className="text-lg font-black text-white">Relação de Veículos Autorizados ({vehicles.length})</h2>
           </div>
-          <Badge variant="outline" className="text-xs text-slate-400 border-slate-700">
-            Data: {data?.date || "Hoje"}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="text-xs text-slate-400 border-slate-700">
+              Data: {todayStr}
+            </Badge>
+          </div>
         </div>
 
         {vehicles.length === 0 ? (
@@ -232,6 +274,12 @@ export default function GarageDashboard() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
             {vehicles.map((v: any, idx: number) => {
               const phoneClean = (v.phone || "").replace(/\D/g, "")
+              
+              // Determina fase da estadia
+              const isCheckinToday = v.checkinDate === todayStr
+              const isCheckoutToday = v.checkoutDate === todayStr
+              const isInHouse = v.checkinDate < todayStr && v.checkoutDate > todayStr
+
               return (
                 <div key={idx} className="p-4 bg-slate-950 rounded-2xl border border-slate-800/80 space-y-3 flex flex-col justify-between">
                   <div className="space-y-2">
@@ -239,9 +287,26 @@ export default function GarageDashboard() {
                       <span className="font-mono text-lg font-black text-white tracking-widest bg-slate-900 px-3 py-1 rounded-xl border border-slate-700">
                         {v.plate}
                       </span>
-                      <Badge className="bg-blue-950 text-blue-300 border-blue-800 font-bold text-xs">
-                        Apt {v.flatNumber}
-                      </Badge>
+                      <div className="flex items-center gap-1.5">
+                        {isCheckoutToday && (
+                          <Badge className="bg-amber-950/80 text-amber-300 border-amber-800 text-[10px] font-bold">
+                            Checkout Hoje
+                          </Badge>
+                        )}
+                        {isCheckinToday && (
+                          <Badge className="bg-blue-950/80 text-blue-300 border-blue-800 text-[10px] font-bold">
+                            Check-in Hoje
+                          </Badge>
+                        )}
+                        {isInHouse && (
+                          <Badge className="bg-emerald-950/80 text-emerald-300 border-emerald-800 text-[10px] font-bold">
+                            Em Estadia
+                          </Badge>
+                        )}
+                        <Badge className="bg-slate-900 text-slate-300 border-slate-700 font-bold text-xs">
+                          Apt {v.flatNumber}
+                        </Badge>
+                      </div>
                     </div>
 
                     <span className="font-bold text-sm text-slate-200 block">

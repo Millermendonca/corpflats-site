@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { PdfPreview } from "@/components/pdf-preview"
 import { 
   Building2, User, Phone, Mail, Camera, FileText, CheckCircle2, 
-  MapPin, ShieldCheck, ArrowRight, ArrowLeft, PenTool, AlertCircle, Zap, Car,
+  MapPin, ShieldCheck, ArrowRight, ArrowLeft, PenTool, AlertCircle, AlertTriangle, Zap, Car,
   Printer, Edit3, Share2, Eye, ZoomIn, Download, ExternalLink, MessageCircle, Clock, Calendar, Check, Ban, Lock, Award, KeyRound, Search, RefreshCw, Copy
 } from "lucide-react"
 import { getCurrentSession, saveSessionLocally } from "@/lib/auth-client"
@@ -69,9 +69,18 @@ export default function GuestPreCheckin() {
   const code = getQueryCode()
   const [searchCodeInput, setSearchCodeInput] = useState("")
 
+  const isResignParam = useMemo(() => {
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search)
+      return sp.get("resign") === "1"
+    }
+    return false
+  }, [])
+
   const [step, setStep] = useState(() => {
     if (typeof window !== "undefined") {
       const sp = new URLSearchParams(window.location.search)
+      if (sp.get("resign") === "1" && !sp.get("step")) return 3
       const st = parseInt(sp.get("step") || "1", 10)
       if (st >= 1 && st <= 3) return st
     }
@@ -602,7 +611,11 @@ export default function GuestPreCheckin() {
     // Hóspede 2+: lê SOMENTE de currentG (NUNCA herda fotos do hóspede 1!)
     const selfie = currentG?.selfieUrl || (isTitular ? (res.selfieUrl || guest.photoUrl || null) : null)
     const doc = currentG?.docPhotoUrl || (isTitular ? (res.docPhotoUrl || guest.docPhotoUrl || null) : null)
-    const isReSignatureNeeded = Boolean(res.needsReSignature || currentG?.needsReSignature)
+    const isReSignatureNeeded = Boolean(
+      isResignParam || 
+      res.needsReSignature || 
+      currentG?.needsReSignature
+    )
     const sig = isReSignatureNeeded ? null : (currentG?.signatureUrl || (isTitular ? res.signatureUrl : null))
 
     setSelfiePhoto(selfie || null)
@@ -634,6 +647,14 @@ export default function GuestPreCheckin() {
     if (isReadOnlyDocument) {
       setIsCompleted(true)
       setIsEditing(false)
+    } else if (isReSignatureNeeded) {
+      setIsCompleted(false)
+      setIsEditing(true)
+      // Fast-track: se já possui os dados cadastrais preservados e não há ?step= na URL, direciona diretamente para o Passo 3 (Assinatura)
+      const hasBaseData = Boolean(gName && gDoc && gPhone)
+      if (hasBaseData && !new URLSearchParams(window.location.search).get("step")) {
+        setStep(3)
+      }
     } else {
       setIsCompleted(fnhrDone)
       setIsEditing(!fnhrDone)
@@ -970,6 +991,12 @@ export default function GuestPreCheckin() {
       const cleanModel = isCarTransport ? vehicleModel.trim() : ""
       const cleanColor = isCarTransport ? vehicleColor.trim() : ""
 
+      const isReSignatureNeeded = Boolean(
+        isResignParam || 
+        reservation?.needsReSignature || 
+        guestList[selectedGuestIndex - 1]?.needsReSignature
+      )
+
       const res = await fetch("/api/pms/pre-checkin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -980,6 +1007,8 @@ export default function GuestPreCheckin() {
           guestIndex: selectedGuestIndex,
           token: signatureToken || (typeof window !== "undefined" ? (new URLSearchParams(window.location.search).get("token") || "") : ""),
           whatsappOtp: whatsappOtpInput.trim(),
+          resign: isReSignatureNeeded ? "1" : undefined,
+          isReSignature: isReSignatureNeeded,
           fullName,
           phone,
           email,
@@ -1112,6 +1141,14 @@ export default function GuestPreCheckin() {
         setIsCompleted(true)
         setIsEditing(false)
         setSuccess(true)
+
+        if (isReSignatureNeeded || resData.wasReSignature) {
+          // Fast-track: Redireciona com confirmação de sucesso de volta ao Portal do Hóspede
+          const targetCode = resData.reservation?.code || reservation?.code || code
+          setTimeout(() => {
+            setLocation(`/minha-reserva/${encodeURIComponent(targetCode)}?resign_success=1${selectedGuestIndex > 1 ? `&guest=${selectedGuestIndex}` : ""}`)
+          }, 1500)
+        }
       } else {
         alert(resData?.error || "Erro ao registrar check-in. Por favor, tente novamente.")
       }
@@ -2064,17 +2101,29 @@ export default function GuestPreCheckin() {
           </Card>
         )}
 
-        {Boolean(reservation?.needsReSignature || guestList[selectedGuestIndex - 1]?.needsReSignature) && (
-          <div className="p-4 sm:p-5 bg-amber-50 border-2 border-amber-300 rounded-2xl space-y-2 shadow-sm">
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-100 text-amber-900 rounded-full text-xs font-bold">
-              <AlertTriangle className="w-3.5 h-3.5 text-amber-700" />
-              <span>Reserva Atualizada • Nova Assinatura Necessária</span>
+        {Boolean(isResignParam || reservation?.needsReSignature || guestList[selectedGuestIndex - 1]?.needsReSignature) && (
+          <div className="p-4 sm:p-5 bg-amber-50 border-2 border-amber-300 rounded-2xl space-y-2.5 shadow-sm animate-in fade-in">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-100 text-amber-900 rounded-full text-xs font-bold">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-700" />
+                <span>Reserva Atualizada • Nova Assinatura Obrigatória</span>
+              </div>
+              {step < 3 && (
+                <button
+                  type="button"
+                  onClick={() => setStep(3)}
+                  className="text-xs font-bold text-amber-900 hover:text-amber-950 underline flex items-center gap-1 cursor-pointer"
+                >
+                  <span>Ir direto para assinatura (Passo 3)</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
             <h3 className="text-sm sm:text-base font-bold text-amber-950">
-              {reservation?.reSignatureReason || "Sua acomodação ou período da estadia foi atualizado."}
+              {reservation?.reSignatureReason || "Sua reserva teve as datas ou acomodação alteradas. É obrigatório assinar a declaração atualizada para liberar o acesso ao condomínio."}
             </h3>
             <p className="text-xs text-amber-800 leading-relaxed">
-              Todos os seus dados cadastrais e documentos foram preservados com total segurança. Por favor, confira os novos dados do flat e período acima e assine ao final da página para confirmar sua nova Ficha de Hospedagem.
+              ⚡ <strong>Fluxo Expresso:</strong> Todos os seus dados cadastrais (Nome, CPF, Telefone, Endereço e Foto do Documento) foram preservados com segurança. Confira os novos dados do flat e período acima e assine ao final para confirmar sua nova Ficha de Hospedagem.
             </p>
           </div>
         )}
