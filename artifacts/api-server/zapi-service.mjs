@@ -1943,8 +1943,8 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const mapsUrl = db.settings?.googleMapsUrl || "https://share.google/LHu3541d5lhkdvbL2";
   
   const zapiCfg = db.zapiConfig || {};
-  const wifiNetwork = zapiCfg.wifiNetwork || "CorpFlats-Hospedes";
-  const wifiPassword = zapiCfg.wifiPassword || "corpflats2026";
+  const wifiNetwork = flatNumber ? `apto ${flatNumber}` : (zapiCfg.wifiNetwork || "apto {quarto}");
+  const wifiPassword = zapiCfg.wifiPassword || "1234567890123";
   const adminWhatsApp = db.settings?.adminWhatsApp || "5522997124021";
   const googleReviewUrl = zapiCfg.googleReviewUrl || "https://share.google/LHu3541d5lhkdvbL2";
 
@@ -3039,8 +3039,21 @@ export async function sendZapiOptionList(config, { phone, message, title, button
   }
 }
 
-// ── Consulta Status da Conexão Z-API ──────────────────────────────────────────
-export async function getZapiStatus(config) {
+// ── Cache & Single-Flight para Status da Conexão Z-API (Elimina Event Loop Lag) ──
+let zapiStatusCache = {
+  data: null,
+  cachedAt: 0,
+  key: ""
+};
+let inFlightZapiStatusPromise = null;
+
+export function clearZapiStatusCache() {
+  zapiStatusCache = { data: null, cachedAt: 0, key: "" };
+  inFlightZapiStatusPromise = null;
+}
+
+export async function getZapiStatus(config, options = {}) {
+  const force = Boolean(options?.force);
   const instanceId = config?.instanceId?.trim();
   const token = config?.token?.trim();
   const clientToken = config?.clientToken?.trim();
@@ -3053,48 +3066,84 @@ export async function getZapiStatus(config) {
     };
   }
 
-  const baseUrl = config.baseUrl?.replace(/\/+$/, "") || "https://api.z-api.io";
-  const statusUrl = `${baseUrl}/instances/${instanceId}/token/${token}/status`;
-  const deviceUrl = `${baseUrl}/instances/${instanceId}/token/${token}/device`;
-  const headers = {};
-  if (clientToken) headers["Client-Token"] = clientToken;
+  const cacheKey = `${instanceId}:${token}`;
+  const now = Date.now();
+  const CACHE_TTL_MS = 15000; // 15 segundos de cache para eliminar sobrecarga contínua
 
-  try {
-    const res = await fetch(statusUrl, { headers });
-    const data = await res.json().catch(() => ({}));
-    const isConnected = Boolean(data.connected || data.smartphoneConnected);
-
-    let deviceInfo = null;
-    if (isConnected) {
-      try {
-        const devRes = await fetch(deviceUrl, { headers });
-        if (devRes.ok) {
-          deviceInfo = await devRes.json().catch(() => null);
-        }
-      } catch (devErr) {
-        console.warn("[Z-API] Falha ao consultar /device:", devErr.message);
-      }
-    }
-
-    return {
-      connected: isConnected,
-      configured: true,
-      smartphone: data.smartphone || null,
-      phone: deviceInfo?.phone || data.phone || data.smartphone?.phone || "",
-      name: deviceInfo?.name || "",
-      isBusiness: Boolean(deviceInfo?.isBusiness),
-      deviceModel: deviceInfo?.device?.device_model || deviceInfo?.originalDevice || "",
-      battery: data.battery || data.smartphone?.battery || null,
-      error: isConnected ? null : (data.error || data.message || null),
-      details: { ...data, device: deviceInfo }
-    };
-  } catch (err) {
-    return {
-      connected: false,
-      configured: true,
-      error: err.message
-    };
+  // Retorna instantaneamente do cache em memória (<1ms) se válido
+  if (!force && zapiStatusCache.data && zapiStatusCache.key === cacheKey && (now - zapiStatusCache.cachedAt) < CACHE_TTL_MS) {
+    return { ...zapiStatusCache.data, fromCache: true };
   }
+
+  // Deduplicação de chamadas concorrentes: se já houver uma busca em andamento, aguarda a mesma Promise
+  if (inFlightZapiStatusPromise) {
+    return inFlightZapiStatusPromise;
+  }
+
+  const executeFetch = async () => {
+    const baseUrl = config.baseUrl?.replace(/\/+$/, "") || "https://api.z-api.io";
+    const statusUrl = `${baseUrl}/instances/${instanceId}/token/${token}/status`;
+    const deviceUrl = `${baseUrl}/instances/${instanceId}/token/${token}/device`;
+    const headers = {};
+    if (clientToken) headers["Client-Token"] = clientToken;
+
+    try {
+      const statusSignal = typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(3500) : undefined;
+      const res = await fetch(statusUrl, { headers, signal: statusSignal });
+      const data = await res.json().catch(() => ({}));
+      const isConnected = Boolean(data.connected || data.smartphoneConnected);
+
+      let deviceInfo = null;
+      if (isConnected) {
+        try {
+          const devSignal = typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(3500) : undefined;
+          const devRes = await fetch(deviceUrl, { headers, signal: devSignal });
+          if (devRes.ok) {
+            deviceInfo = await devRes.json().catch(() => null);
+          }
+        } catch (devErr) {
+          console.warn("[Z-API] Falha ao consultar /device:", devErr.message);
+        }
+      }
+
+      const result = {
+        connected: isConnected,
+        configured: true,
+        smartphone: data.smartphone || null,
+        phone: deviceInfo?.phone || data.phone || data.smartphone?.phone || "",
+        name: deviceInfo?.name || "",
+        isBusiness: Boolean(deviceInfo?.isBusiness),
+        deviceModel: deviceInfo?.device?.device_model || deviceInfo?.originalDevice || "",
+        battery: data.battery || data.smartphone?.battery || null,
+        error: isConnected ? null : (data.error || data.message || null),
+        details: { ...data, device: deviceInfo },
+        cachedAt: new Date().toISOString()
+      };
+
+      zapiStatusCache = {
+        data: result,
+        cachedAt: Date.now(),
+        key: cacheKey
+      };
+
+      return result;
+    } catch (err) {
+      // Se a conexão falhar ou expirar por timeout, usa o cache anterior como fallback gracioso
+      if (zapiStatusCache.data && zapiStatusCache.key === cacheKey) {
+        return { ...zapiStatusCache.data, fromCacheFallback: true };
+      }
+      return {
+        connected: false,
+        configured: true,
+        error: err.message
+      };
+    } finally {
+      inFlightZapiStatusPromise = null;
+    }
+  };
+
+  inFlightZapiStatusPromise = executeFetch();
+  return inFlightZapiStatusPromise;
 }
 
 // ── Consulta QR Code Z-API ────────────────────────────────────────────────────
@@ -4602,8 +4651,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         enabled: false,
         deliveryMode: "buttons",
         fallbackToText: true,
-        wifiNetwork: "CorpFlats-Hospedes",
-        wifiPassword: "corpflats2026",
+        wifiNetwork: "apto {quarto}",
+        wifiPassword: "1234567890123",
         googleReviewUrl: "https://share.google/LHu3541d5lhkdvbL2",
         guestGuidePdfUrl: "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
         guestGuidePdfName: "Manual_do_Hospede_CorpFlats.pdf",
@@ -5018,11 +5067,12 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     res.json({ success: true, config: db.zapiConfig });
   });
 
-  // 3. Status Z-API
+  // 3. Status Z-API (com suporte a force=true para refresh manual)
   app.get("/api/whatsapp/status", async (req, res) => {
     const db = getDb();
     ensureDbDefaults();
-    const status = await getZapiStatus(db?.zapiConfig);
+    const force = req.query.force === "true" || req.query.refresh === "true";
+    const status = await getZapiStatus(db?.zapiConfig, { force });
     res.json(status);
   });
 

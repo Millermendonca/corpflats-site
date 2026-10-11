@@ -12653,7 +12653,9 @@ app.get("/api/pms/calendar", (req, res) => {
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   res.set("Pragma", "no-cache");
   res.set("Expires", "0");
-  if (reconcileUniversalIntegrity()) saveDatabase();
+  if (reconcileUniversalIntegrity()) {
+    setImmediate(() => saveDatabase());
+  }
   const { startDate, endDate } = req.query;
   const start = startDate || getOffsetDateStr(-3);
   const end = endDate || getOffsetDateStr(30);
@@ -12699,14 +12701,41 @@ app.get("/api/pms/calendar", (req, res) => {
     return r.checkinDate <= end && r.checkoutDate >= start && r.status !== "cancelada" && r.status !== "cancelled";
   });
 
+  // Pré-indexação dos hóspedes em Map para acesso O(1) instantâneo sem regex em loop
+  const guestsById = new Map();
+  const guestsByDoc = new Map();
+  const guestsByPhone = new Map();
+  const guestsByName = new Map();
+
+  for (const g of (db.guests || [])) {
+    if (g.id) guestsById.set(g.id, g);
+    if (g.document) {
+      const cleanDoc = String(g.document).replace(/\D/g, "");
+      if (cleanDoc) guestsByDoc.set(cleanDoc, g);
+    }
+    if (g.phone) {
+      const cleanPhone = String(g.phone).replace(/\D/g, "");
+      if (cleanPhone) guestsByPhone.set(cleanPhone, g);
+    }
+    if (g.name) guestsByName.set(String(g.name).toLowerCase().trim(), g);
+    if (g.fullName) guestsByName.set(String(g.fullName).toLowerCase().trim(), g);
+  }
+
   const reservations = rawReservations.map(r => {
-    const matchedGuest = (db.guests || []).find(g =>
-      (g.id && g.id === r.guestId) ||
-      (g.document && r.guestDocument && g.document.replace(/\D/g, '') === r.guestDocument.replace(/\D/g, '')) ||
-      (g.phone && r.guestPhone && g.phone.replace(/\D/g, '') === r.guestPhone.replace(/\D/g, '')) ||
-      (g.name && r.guestName && g.name.toLowerCase().trim() === r.guestName.toLowerCase().trim()) ||
-      (g.fullName && r.guestName && g.fullName.toLowerCase().trim() === r.guestName.toLowerCase().trim())
-    );
+    let matchedGuest = null;
+    if (r.guestId) matchedGuest = guestsById.get(r.guestId);
+    if (!matchedGuest && r.guestDocument) {
+      const cleanDoc = String(r.guestDocument).replace(/\D/g, "");
+      if (cleanDoc) matchedGuest = guestsByDoc.get(cleanDoc);
+    }
+    if (!matchedGuest && r.guestPhone) {
+      const cleanPhone = String(r.guestPhone).replace(/\D/g, "");
+      if (cleanPhone) matchedGuest = guestsByPhone.get(cleanPhone);
+    }
+    if (!matchedGuest && r.guestName) {
+      const cleanName = String(r.guestName).toLowerCase().trim();
+      matchedGuest = guestsByName.get(cleanName);
+    }
 
     const isMonthly = Boolean(
       r.isMonthlyGuest ||
