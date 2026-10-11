@@ -1,0 +1,1 @@
+{"success":true,"token":"bed5af3645a87290e0488c6d217c65340414d5e63a1d53b1","expiresAt":"2026-10-11T06:33:19.778Z","expiresInMinutes":120,"signatureUrl":"http://127.0.0.1:5055/pre-checkin/RES-TEST-MOBILE-SIGN?token=bed5af3645a87290e0488c6d217c65340414d5e63a1d53b1&guest=1","message":"Link de assinatura temporário gerado com sucesso (válido por 2 horas)."}
