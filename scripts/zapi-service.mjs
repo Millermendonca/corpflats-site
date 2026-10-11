@@ -18,8 +18,23 @@ import {
   getWhatsAppAiConfig,
   generateAiWhatsAppResponse,
   processAiInboundMessage,
-  DEFAULT_AI_CONFIG
+  DEFAULT_AI_CONFIG,
+  autoCreatePendingFaq,
+  isPotentialGuestQuestion,
+  inferFaqCategory,
+  extractFaqKeywords,
+  isQuestionMappedInFaq,
+  findExistingPendingFaq
 } from "./whatsapp-ai-service.mjs";
+
+export {
+  autoCreatePendingFaq,
+  isPotentialGuestQuestion,
+  inferFaqCategory,
+  extractFaqKeywords,
+  isQuestionMappedInFaq,
+  findExistingPendingFaq
+};
 import {
   getCheckinUrlSync as getSerproCheckinUrlSync,
   getCheckinUrl as getSerproCheckinUrl
@@ -1082,6 +1097,153 @@ export function cleanWhatsAppPhone(rawPhone) {
   }
   return digits;
 }
+
+// ── Comparador Seguro de Telefones com Tolerância a 8/9 Dígitos e DDD ──────────
+export function matchClientPhone(phoneA, phoneB) {
+  if (!phoneA || !phoneB) return false;
+  const cleanA = cleanWhatsAppPhone(phoneA);
+  const cleanB = cleanWhatsAppPhone(phoneB);
+  if (!cleanA || !cleanB) return false;
+
+  if (cleanA.length < 8 || cleanB.length < 8) return false;
+  if (cleanA === cleanB) return true;
+
+  const last8A = cleanA.slice(-8);
+  const last8B = cleanB.slice(-8);
+  if (last8A !== last8B) return false;
+
+  const getDdd = (clean) => {
+    if (clean.startsWith("55") && (clean.length === 12 || clean.length === 13)) {
+      return clean.slice(2, 4);
+    }
+    if (clean.length === 10 || clean.length === 11) {
+      return clean.slice(0, 2);
+    }
+    return null;
+  };
+
+  const dddA = getDdd(cleanA);
+  const dddB = getDdd(cleanB);
+  if (dddA && dddB && dddA !== dddB) {
+    return false;
+  }
+
+  return cleanA.endsWith(last8B) || cleanB.endsWith(last8A);
+}
+
+// ── Motor de Regras de Exceção e Segmentação por Cliente (FAQ Sofia) ───────────
+export function isFaqApplicableToClient(faqItem, clientPhone) {
+  if (!faqItem || typeof faqItem !== 'object') return false;
+  if (faqItem.status && faqItem.status !== "ativo") return false;
+
+  const scope = faqItem.scope || "all";
+  if (scope === "all") return true;
+
+  const rawPhones = Array.isArray(faqItem.clientPhones)
+    ? faqItem.clientPhones
+    : (typeof faqItem.clientPhones === "string" ? faqItem.clientPhones.split(/[,;\s]+/) : []);
+  const clientPhones = rawPhones.map(p => String(p).trim()).filter(Boolean);
+
+  if (!clientPhone) {
+    if (scope === "exclude") return true;
+    if (scope === "include_only") return false;
+    return true;
+  }
+
+  const isMatched = clientPhones.some(p => matchClientPhone(clientPhone, p));
+
+  if (scope === "exclude") {
+    return !isMatched;
+  }
+
+  if (scope === "include_only") {
+    if (clientPhones.length === 0) return false;
+    return isMatched;
+  }
+
+  return true;
+}
+
+// ── Captura Automática da Resposta Humana do Operador (Auto-Aprendizado FAQ) ────
+export function linkOperatorResponseToPendingFaq(db, param1, param2) {
+  let clientPhone = "";
+  let text = "";
+  let answeredBy = "operador";
+
+  if (param1 && typeof param1 === "object") {
+    clientPhone = param1.clientPhone || param1.phone || "";
+    text = param1.text || param1.message || "";
+    answeredBy = param1.answeredBy || "operador";
+  } else {
+    clientPhone = param1 || "";
+    text = param2 || "";
+  }
+
+  if (!db || !Array.isArray(db.faqItems) || !clientPhone || !text) {
+    return null;
+  }
+  const cleanPhone = cleanWhatsAppPhone(clientPhone);
+  if (!cleanPhone) return null;
+
+  const trimmedText = String(text).trim();
+  if (!trimmedText || /^\[(image|audio|video|document|location)\]$/i.test(trimmedText)) {
+    return null;
+  }
+
+  const now = Date.now();
+  const maxAgeMs = 24 * 60 * 60 * 1000; // 24 horas
+
+  // Busca itens de FAQ com status "pendente" para o telefone do cliente nas últimas 24h
+  const candidates = db.faqItems.filter(item => {
+    if (!item || item.status !== "pendente") return false;
+
+    // Correspondência pelo sourceClientPhone ou pela lista de clientPhones
+    const matchesSource = item.sourceClientPhone && matchClientPhone(item.sourceClientPhone, cleanPhone);
+    const matchesList = Array.isArray(item.clientPhones) && item.clientPhones.some(p => matchClientPhone(p, cleanPhone));
+    if (!matchesSource && !matchesList) return false;
+
+    // Verificação da janela de 24 horas
+    const itemDateStr = item.createdAt || item.updatedAt;
+    if (!itemDateStr) return true;
+    const itemTime = new Date(itemDateStr).getTime();
+    if (isNaN(itemTime)) return true;
+
+    const diff = now - itemTime;
+    return diff >= -300000 && diff <= maxAgeMs;
+  });
+
+  if (candidates.length === 0) return null;
+
+  // Ordena decrescente pelo timestamp mais recente
+  candidates.sort((a, b) => {
+    const timeA = new Date(a.createdAt || a.updatedAt || 0).getTime() || 0;
+    const timeB = new Date(b.createdAt || b.updatedAt || 0).getTime() || 0;
+    return timeB - timeA;
+  });
+
+  const targetItem = candidates[0];
+  const nowIso = new Date().toISOString();
+
+  targetItem.suggestedAnswer = trimmedText;
+  targetItem.status = "aguardando_aprovacao";
+  targetItem.answeredAt = nowIso;
+  targetItem.answeredBy = answeredBy;
+  targetItem.updatedAt = nowIso;
+
+  // Pausa a IA na conversa deste cliente em db.whatsappConversations
+  if (Array.isArray(db.whatsappConversations)) {
+    const conv = db.whatsappConversations.find(c => matchClientPhone(c.phone, cleanPhone));
+    if (conv) {
+      conv.aiPaused = true;
+      conv.aiPausedAt = nowIso;
+      conv.aiPausedReason = "operator_manual_reply";
+    }
+  }
+
+  return targetItem;
+}
+
+export const captureOperatorResponseForFaq = linkOperatorResponseToPendingFaq;
 
 // Referência global ao getter do banco de dados para checagens contextuais (ex: números de camareiras)
 let globalDbGetter = null;
@@ -3507,7 +3669,8 @@ export async function handleConnectionEvent({ db, saveDatabase, createNotificati
 // ── Monitoramento Inteligente do Grupo da Portaria (WhatsApp Concierge) ────────
 
 export function getBrasiliaNow() {
-  const d = new Date();
+  const offset = Number(global.__simulatedTimeOffsetMs || 0);
+  const d = new Date(Date.now() + offset);
   const utc = d.getTime() + (d.getTimezoneOffset() * 60000);
   const brl = new Date(utc - (3 * 3600000));
   const date = brl.toISOString().split("T")[0];
@@ -3545,7 +3708,19 @@ export function extractIncomingMessageInfo(body) {
     body.participantPhone || body.participant || body.senderPhone || body.sender || body.data?.participant || ""
   ).replace(/\D/g, "");
 
-  const fromMe = Boolean(body.fromMe || body.isMyMessage);
+  const fromMe = Boolean(
+    body.fromMe || 
+    body.isFromMe || 
+    body.isMyMessage || 
+    body.data?.fromMe || 
+    body.data?.key?.fromMe || 
+    body.key?.fromMe || 
+    body.data?.isFromMe
+  );
+
+  const phone = String(
+    body.phone || body.chatId || body.recipientPhone || body.recipient || body.to || ""
+  ).replace(/\D/g, "");
 
   let senderName = String(
     body.senderName || body.pushName || body.notifyName || body.data?.senderName || ""
@@ -3604,6 +3779,7 @@ export function extractIncomingMessageInfo(body) {
     isGroup,
     groupId,
     groupName,
+    phone,
     senderPhone,
     senderName,
     fromMe,
@@ -4204,6 +4380,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
   function ensureDbDefaults() {
     const db = getDb();
     if (!db) return;
+    if (!Array.isArray(db.faqItems)) {
+      db.faqItems = [];
+    }
     if (!db.zapiConfig) {
       db.zapiConfig = {
         instanceId: "",
@@ -5468,7 +5647,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     // 1. Grava no Chat WhatsApp Web
     const rawTarget = incomingInfo.isGroup && incomingInfo.groupId
       ? incomingInfo.groupId
-      : (incomingInfo.senderPhone || req.body?.phone || req.body?.participantPhone);
+      : (incomingInfo.fromMe
+          ? (incomingInfo.phone || req.body?.phone || req.body?.chatId || incomingInfo.senderPhone)
+          : (incomingInfo.senderPhone || req.body?.phone || incomingInfo.phone));
     const cleanTarget = incomingInfo.isGroup ? rawTarget : cleanWhatsAppPhone(rawTarget);
 
     let updatedConv = null;
@@ -5501,6 +5682,39 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           link: `/whatsapp-chat?phone=${cleanTarget}`
         });
       }
+
+      // Se for mensagem enviada pelo operador (fromMe: true) no WhatsApp móvel ou desktop:
+      if (incomingInfo.fromMe && !incomingInfo.isGroup && cleanTarget) {
+        // 1. Pausa a IA nesta conversa para assegurar controle humano total
+        const conv = updatedConv || (db.whatsappConversations || []).find(c => matchClientPhone(c.phone, cleanTarget));
+        if (conv) {
+          conv.aiPaused = true;
+          conv.aiPausedAt = incomingInfo.timestamp || new Date().toISOString();
+          conv.aiPausedReason = "operator_manual_reply";
+        }
+
+        // 2. Auto-aprendizado: vincula a resposta do operador se houver pergunta pendente nas últimas 24h
+        if (incomingInfo.text) {
+          const linkedFaq = linkOperatorResponseToPendingFaq(db, {
+            clientPhone: cleanTarget,
+            text: incomingInfo.text,
+            answeredBy: "operador"
+          });
+
+          if (linkedFaq) {
+            console.log(`[Z-API Webhook fromMe] Resposta do operador vinculada ao FAQ [${linkedFaq.id}] ("${linkedFaq.question.substring(0, 40)}...") -> aguardando aprovação.`);
+            if (typeof createNotification === "function") {
+              createNotification({
+                title: "💡 Sugestão de FAQ Capturada",
+                message: `Resposta do operador para "${linkedFaq.question.substring(0, 60)}" aguardando aprovação no painel de FAQ.`,
+                type: "faq_suggestion",
+                link: "/whatsapp-automation?tab=faq"
+              });
+            }
+          }
+        }
+      }
+
       if (typeof saveDatabase === "function") saveDatabase();
     }
 
@@ -5940,24 +6154,25 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     });
   });
 
-  // C. Enviar Mensagem pelo Chat (/api/whatsapp/chat/send)
-  app.post("/api/whatsapp/chat/send", async (req, res) => {
+  // C. Enviar Mensagem pelo Chat (/api/whatsapp/chat/send e /api/whatsapp/chats/:phone/messages)
+  const handleChatSend = async (req, res) => {
     const db = getDb();
     ensureDbDefaults();
     syncWhatsappConversationsStore(db);
 
     const { 
-      phone, 
+      phone: bodyPhone, 
       message = "", 
+      text = "",
       mediaUrl = "", 
       fileName = "", 
       mediaType = "text", 
       buttons = [], 
       reservationCode = null,
       quickMessageId = null
-    } = req.body;
+    } = req.body || {};
 
-    const rawPhone = String(phone || "").trim();
+    const rawPhone = String(req.params?.phone || bodyPhone || "").trim();
     const isGroup = rawPhone.includes("@g.us");
     const cleanPhone = isGroup ? rawPhone : cleanWhatsAppPhone(rawPhone);
 
@@ -5973,7 +6188,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     }
 
     const baseUrl = `${req.protocol}://${req.get("host")}`;
-    let finalMessage = message;
+    let finalMessage = message || text;
     if (targetRes && finalMessage) {
       finalMessage = resolveWhatsAppTags(finalMessage, targetRes, db, baseUrl);
     }
@@ -6025,6 +6240,28 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       updatedConv.aiPausedReason = "operator_manual_reply";
     }
 
+    // Auto-aprendizado: vincula a resposta do operador se houver pergunta pendente nas últimas 24h
+    let linkedFaq = null;
+    if (!isGroup && cleanPhone && finalMessage) {
+      linkedFaq = linkOperatorResponseToPendingFaq(db, {
+        clientPhone: cleanPhone,
+        text: finalMessage,
+        answeredBy: "operador"
+      });
+
+      if (linkedFaq) {
+        console.log(`[WhatsApp Live Chat] Resposta do operador vinculada ao FAQ [${linkedFaq.id}] ("${linkedFaq.question.substring(0, 40)}...") -> aguardando aprovação.`);
+        if (typeof createNotification === "function") {
+          createNotification({
+            title: "💡 Sugestão de FAQ Capturada",
+            message: `Resposta do operador para "${linkedFaq.question.substring(0, 60)}" aguardando aprovação no painel de FAQ.`,
+            type: "faq_suggestion",
+            link: "/whatsapp-automation?tab=faq"
+          });
+        }
+      }
+    }
+
     if (!db.whatsappHistory) db.whatsappHistory = [];
     db.whatsappHistory.push({
       id: `chat_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
@@ -6047,9 +6284,19 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     res.json({
       success: result.success,
       result,
-      conversation: updatedConv
+      conversation: updatedConv,
+      linkedFaq: linkedFaq ? {
+        id: linkedFaq.id,
+        question: linkedFaq.question,
+        status: linkedFaq.status,
+        suggestedAnswer: linkedFaq.suggestedAnswer
+      } : null
     });
-  });
+  };
+
+  app.post("/api/whatsapp/chat/send", handleChatSend);
+  app.post("/api/whatsapp/chats/:phone/messages", handleChatSend);
+  app.post("/api/whatsapp/chat/:phone/messages", handleChatSend);
 
   // D. Marcar Conversa como Lida (/api/whatsapp/chat/:phone/read)
   app.post("/api/whatsapp/chat/:phone/read", (req, res) => {
@@ -6357,8 +6604,167 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     }
   });
 
+  // ─── Base de Conhecimento & FAQ Dinâmico Endpoints ─────────────────────────
+
+  // 6. Listar FAQs (com filtros opcionais por categoria, status, escopo e busca)
+  app.get("/api/whatsapp/faq", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    let items = Array.isArray(db.faqItems) ? [...db.faqItems] : [];
+    const { category, status, scope, search } = req.query || {};
+
+    if (category) {
+      items = items.filter(i => i.category === category);
+    }
+    if (status) {
+      items = items.filter(i => i.status === status);
+    }
+    if (scope) {
+      items = items.filter(i => i.scope === scope);
+    }
+    if (search) {
+      const q = String(search).toLowerCase().trim();
+      items = items.filter(i =>
+        (i.question && i.question.toLowerCase().includes(q)) ||
+        (i.answer && i.answer.toLowerCase().includes(q)) ||
+        (Array.isArray(i.keywords) && i.keywords.some(k => String(k).toLowerCase().includes(q))) ||
+        (Array.isArray(i.variations) && i.variations.some(v => String(v).toLowerCase().includes(q)))
+      );
+    }
+
+    res.json({ success: true, count: items.length, items });
+  });
+
+  // 7. Criar FAQ
+  app.post("/api/whatsapp/faq", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const body = req.body || {};
+    const question = String(body.question || "").trim();
+    if (!question) {
+      return res.status(400).json({ error: "Pergunta é obrigatória." });
+    }
+
+    const answer = String(body.answer || "").trim();
+    const category = body.category || "estrutura_flat";
+    const status = body.status || (answer ? "ativo" : "pendente");
+    const scope = body.scope || "all";
+
+    const parseList = (val) => {
+      if (Array.isArray(val)) return val.map(s => String(s).trim()).filter(Boolean);
+      if (typeof val === "string") return val.split(/[,;\n\s]+/).map(s => s.trim()).filter(Boolean);
+      return [];
+    };
+
+    const keywords = parseList(body.keywords);
+    const variations = parseList(body.variations);
+    const rawPhones = parseList(body.clientPhones);
+    const clientPhones = rawPhones.map(p => cleanWhatsAppPhone(p) || p.replace(/\D/g, "")).filter(Boolean);
+
+    const now = new Date().toISOString();
+    const newItem = {
+      id: body.id || `faq_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      question,
+      answer,
+      category,
+      keywords,
+      variations,
+      status,
+      scope,
+      clientPhones,
+      suggestedAnswer: body.suggestedAnswer ? String(body.suggestedAnswer).trim() : undefined,
+      sourceClientPhone: body.sourceClientPhone ? String(body.sourceClientPhone).trim() : undefined,
+      sourceClientName: body.sourceClientName ? String(body.sourceClientName).trim() : undefined,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    db.faqItems.push(newItem);
+    if (typeof saveDatabase === "function") saveDatabase();
+    res.status(201).json({ success: true, item: newItem });
+  });
+
+  // 8. Atualizar FAQ
+  app.put("/api/whatsapp/faq/:id", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const item = (db.faqItems || []).find(i => i.id === req.params.id);
+    if (!item) {
+      return res.status(404).json({ error: "Item do FAQ não encontrado." });
+    }
+
+    const body = req.body || {};
+    if (body.question !== undefined) item.question = String(body.question).trim();
+    if (body.answer !== undefined) item.answer = String(body.answer).trim();
+    if (body.category !== undefined) item.category = body.category;
+    if (body.status !== undefined) item.status = body.status;
+    if (body.scope !== undefined) item.scope = body.scope;
+
+    const parseList = (val) => {
+      if (Array.isArray(val)) return val.map(s => String(s).trim()).filter(Boolean);
+      if (typeof val === "string") return val.split(/[,;\n\s]+/).map(s => s.trim()).filter(Boolean);
+      return [];
+    };
+
+    if (body.keywords !== undefined) item.keywords = parseList(body.keywords);
+    if (body.variations !== undefined) item.variations = parseList(body.variations);
+    if (body.clientPhones !== undefined) {
+      const rawPhones = parseList(body.clientPhones);
+      item.clientPhones = rawPhones.map(p => cleanWhatsAppPhone(p) || p.replace(/\D/g, "")).filter(Boolean);
+    }
+    if (body.suggestedAnswer !== undefined) item.suggestedAnswer = String(body.suggestedAnswer).trim();
+
+    item.updatedAt = new Date().toISOString();
+    if (typeof saveDatabase === "function") saveDatabase();
+    res.json({ success: true, item });
+  });
+
+  // 9. Excluir FAQ
+  app.delete("/api/whatsapp/faq/:id", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const idx = (db.faqItems || []).findIndex(i => i.id === req.params.id);
+    if (idx === -1) {
+      return res.status(404).json({ error: "Item do FAQ não encontrado." });
+    }
+
+    const deleted = db.faqItems.splice(idx, 1)[0];
+    if (typeof saveDatabase === "function") saveDatabase();
+    res.json({ success: true, id: deleted.id });
+  });
+
+  // 10. Aprovar Sugestão em 1 Clique
+  app.post("/api/whatsapp/faq/:id/approve", (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const item = (db.faqItems || []).find(i => i.id === req.params.id);
+    if (!item) {
+      return res.status(404).json({ error: "Item do FAQ não encontrado." });
+    }
+
+    const body = req.body || {};
+    const finalAnswer = body.answer !== undefined && String(body.answer).trim() !== ""
+      ? String(body.answer).trim()
+      : (item.suggestedAnswer || item.answer);
+
+    if (!finalAnswer) {
+      return res.status(400).json({ error: "Não é possível aprovar sem uma resposta definida ou sugerida." });
+    }
+
+    item.answer = finalAnswer;
+    if (body.category) item.category = body.category;
+    if (body.question) item.question = String(body.question).trim();
+
+    item.status = "ativo";
+    item.approvedAt = new Date().toISOString();
+    item.updatedAt = new Date().toISOString();
+
+    if (typeof saveDatabase === "function") saveDatabase();
+    res.json({ success: true, item });
+  });
+
   // Auto-sincronização de webhooks e notifySentByMe na inicialização
-  setTimeout(async () => {
+  const syncTimeout = setTimeout(async () => {
     try {
       const db = getDb();
       if (db?.zapiConfig?.instanceId && db?.zapiConfig?.token && db?.zapiConfig?.enabled !== false) {
@@ -6374,10 +6780,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       console.warn("[Z-API Init] Aviso na sincronização automática de webhooks:", e.message);
     }
   }, 4000);
+  if (syncTimeout && typeof syncTimeout.unref === "function") syncTimeout.unref();
 
   // ── Background Runner Contínuo (Verifica e Dispara a Cada 60 Segundos) ──────
   let cronCounter = 0;
-  setInterval(async () => {
+  const runnerInterval = setInterval(async () => {
     try {
       const db = getDb();
       if (!db || !db.zapiConfig?.enabled) return;
@@ -6575,6 +6982,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       console.error("[Auto-WhatsApp Cron Error]:", err.message);
     }
   }, 60 * 1000);
+  if (runnerInterval && typeof runnerInterval.unref === "function") runnerInterval.unref();
 
   console.log("✓ [Z-API WhatsApp Engine] Inicializado e monitorando réguas de mensagens.");
 }

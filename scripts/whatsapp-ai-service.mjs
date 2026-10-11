@@ -11,10 +11,10 @@
  * - Base de conhecimento rica sobre o CorpFlats (Wi-Fi, garagem, café, horários, localização, comodidades)
  */
 
-import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES, isFaqApplicableToClient, matchClientPhone, generateStaticPixPayload } from "./zapi-service.mjs";
+import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES, isFaqApplicableToClient, matchClientPhone, generateStaticPixPayload, linkOperatorResponseToPendingFaq, captureOperatorResponseForFaq } from "./zapi-service.mjs";
 import { getCheckinUrlSync as getSerproCheckinUrlSync } from "./fnrh-serpro-service.mjs";
 
-export { isFaqApplicableToClient, matchClientPhone };
+export { isFaqApplicableToClient, matchClientPhone, linkOperatorResponseToPendingFaq, captureOperatorResponseForFaq };
 
 /**
  * Resolução dinâmica e unificada de URL de check-in para o agente de IA WhatsApp
@@ -1022,10 +1022,28 @@ export async function executeBotAction(db, actionName, args = {}) {
 /**
  * Resposta Heurística de Contingência caso o Google Gemini esteja offline ou sem cota
  */
-export function generateHeuristicResponse(messageText = "", guestContext = {}, aiConfig = DEFAULT_AI_CONFIG) {
+export function generateHeuristicResponse(messageText = "", guestContext = {}, aiConfig = DEFAULT_AI_CONFIG, dbOrFaqs = null) {
   const text = (messageText || "").toLowerCase().trim();
   const kb = aiConfig.knowledgeBase || DEFAULT_AI_CONFIG.knowledgeBase;
   const name = guestContext.guestName ? `, ${guestContext.guestName.split(" ")[0]}` : "";
+
+  // Extrai e filtra itens de FAQ ativos e aplicáveis ao cliente
+  let candidateFaqs = [];
+  if (Array.isArray(dbOrFaqs)) {
+    candidateFaqs = dbOrFaqs;
+  } else if (dbOrFaqs && typeof dbOrFaqs === "object") {
+    const raw = dbOrFaqs.faqItems || dbOrFaqs.knowledgeBaseFaq || [];
+    candidateFaqs = Array.isArray(raw) ? raw : [];
+  } else if (aiConfig && Array.isArray(aiConfig.faqItems)) {
+    candidateFaqs = aiConfig.faqItems;
+  } else if (typeof globalThis !== "undefined" && Array.isArray(globalThis.db?.faqItems)) {
+    candidateFaqs = globalThis.db.faqItems;
+  }
+
+  const clientPhone = guestContext?.phone || (typeof guestContext === "string" ? guestContext : null);
+  const activeFaqs = candidateFaqs.filter(faq => {
+    return faq && faq.status === "ativo" && isFaqApplicableToClient(faq, clientPhone);
+  });
 
   // 1. Wi-Fi / Internet
   if (/wifi|wi-fi|internet|senha(?:\s+do\s+wi-?fi)?|conectar/i.test(text)) {
@@ -1084,6 +1102,70 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
       return `Olá${name}! Tudo bem? Sou a ${aiConfig.agentName}, concierge virtual da CorpFlats. Como posso tornar a sua estadia ainda mais agradável hoje? 🏨✨`;
     }
     return `Olá${name}! Sou a ${aiConfig.agentName}, concierge virtual da CorpFlats em Campos dos Goytacazes. Como posso te ajudar hoje? Ficou com alguma dúvida sobre nossas acomodações ou sobre sua estadia? 😊`;
+  }
+
+  // 8.5 Base Dinâmica de FAQs Ativas (Pesquisa Heurística por Perguntas, Variações e Palavras-chave)
+  if (activeFaqs.length > 0) {
+    const cleanQuery = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const queryTokens = cleanQuery.split(/[\s,.;:?!+=\-_/\\()]+/).filter(w => w.length > 2);
+
+    let bestFaq = null;
+    let highestScore = 0;
+
+    for (const faq of activeFaqs) {
+      let score = 0;
+      const qNorm = (faq.question || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+      // Coincidência com pergunta principal
+      if (cleanQuery.includes(qNorm) || (qNorm.length > 8 && qNorm.includes(cleanQuery))) {
+        score += 80;
+      }
+
+      // Coincidência com variações da pergunta
+      if (Array.isArray(faq.variations)) {
+        for (const variation of faq.variations) {
+          if (!variation) continue;
+          const vNorm = variation.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+          if (cleanQuery.includes(vNorm) || (vNorm.length > 8 && vNorm.includes(cleanQuery))) {
+            score += 100;
+            break;
+          }
+          const vTokens = vNorm.split(/[\s,.;:?!+=\-_/\\()]+/).filter(w => w.length > 2);
+          const common = vTokens.filter(t => queryTokens.includes(t));
+          if (vTokens.length > 0 && common.length >= Math.min(2, vTokens.length)) {
+            score += Math.max(score, 40 + (common.length * 10));
+          }
+        }
+      }
+
+      // Coincidência com palavras-chave
+      if (Array.isArray(faq.keywords)) {
+        for (const keyword of faq.keywords) {
+          if (!keyword) continue;
+          const kNorm = keyword.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+          if (kNorm.includes(" ")) {
+            if (cleanQuery.includes(kNorm)) {
+              score += 50;
+            }
+          } else if (kNorm.length >= 3) {
+            if (queryTokens.includes(kNorm)) {
+              score += 25;
+            } else if (cleanQuery.includes(kNorm)) {
+              score += 15;
+            }
+          }
+        }
+      }
+
+      if (score > highestScore) {
+        highestScore = score;
+        bestFaq = faq;
+      }
+    }
+
+    if (bestFaq && highestScore >= 25) {
+      return `Olá${name}! ${bestFaq.answer}`;
+    }
   }
 
   // 9. Resposta padrão prestativa
@@ -1290,6 +1372,37 @@ DIRETRIZES ESPECÍFICAS:
 `;
   }
 
+  // 2.1 Carrega e filtra FAQs dinâmicos ativos aplicáveis ao cliente
+  const allFaqItems = Array.isArray(db?.faqItems)
+    ? db.faqItems
+    : (Array.isArray(db?.knowledgeBaseFaq) ? db.knowledgeBaseFaq : []);
+
+  const applicableFaqs = allFaqItems.filter(faq => {
+    return faq && faq.status === "ativo" && isFaqApplicableToClient(faq, phone);
+  });
+
+  let dynamicFaqPromptSection = "";
+  if (applicableFaqs.length > 0) {
+    const formattedFaqs = applicableFaqs.map((faq, idx) => {
+      const vars = Array.isArray(faq.variations) && faq.variations.length > 0
+        ? `\n  - Variações comuns: ${faq.variations.slice(0, 3).join("; ")}`
+        : "";
+      const kw = Array.isArray(faq.keywords) && faq.keywords.length > 0
+        ? ` (Palavras-chave: ${faq.keywords.join(", ")})`
+        : "";
+      return `[FAQ #${idx + 1} - Categoria: ${(faq.category || "geral").toUpperCase()}]
+- Pergunta: ${faq.question}${kw}${vars}
+- Resposta Oficial: ${faq.answer}`;
+    }).join("\n\n");
+
+    dynamicFaqPromptSection = `
+## BASE DE CONHECIMENTO & REGRAS (FAQS ATIVAS):
+Abaixo estão as perguntas e respostas oficiais da CorpFlats ativas e aplicáveis a este hóspede. Priorize rigorosamente estas respostas oficiais para quaisquer dúvidas correspondentes:
+
+${formattedFaqs}
+`;
+  }
+
   const contextString = `
 [CONTEXTO EM TEMPO REAL]
 - Data atual: ${guestContext.todayStr} | Horário: ${guestContext.timeStr} (Brasília)
@@ -1318,6 +1431,7 @@ ${guestContext.hasReservation ? `- Flat atribuído: ${guestContext.flatNumber ||
 - Benefícios Reserva Direta: ${aiConfig.knowledgeBase.directBookingBenefits}
 - Site Oficial para Reservas: ${aiConfig.knowledgeBase.siteUrl}
 - WhatsApp da Recepção: ${aiConfig.knowledgeBase.receptionPhone}
+${dynamicFaqPromptSection}
 ${systemActionsNotice}
 `;
 
@@ -1353,7 +1467,7 @@ ${systemActionsNotice}
   }
 
   // 4. Contingência Heurística Local de Alta Precisão (Zero-Crash Fallback)
-  const heuristicText = generateHeuristicResponse(messageText, guestContext, aiConfig);
+  const heuristicText = generateHeuristicResponse(messageText, guestContext, aiConfig, applicableFaqs);
   return {
     shouldHandover: false,
     replyText: heuristicText,
@@ -1361,6 +1475,211 @@ ${systemActionsNotice}
     modelUsed: "heuristic_fallback",
     source: "heuristic"
   };
+}
+
+// ── Detecção e Auto-Aprendizado de Perguntas Não Mapeadas (FAQ Sofia) ─────────
+
+export function isPotentialGuestQuestion(text) {
+  if (!text || typeof text !== "string") return false;
+  const t = text.trim();
+  if (t.length < 5) return false;
+
+  const lower = t.toLowerCase();
+
+  // Descartar saudações puras ou confirmações simples
+  if (/^(oi|ol[aá]|bom dia|boa tarde|boa noite|opa|ei|hello|hi)[!.\s]*$/i.test(lower)) return false;
+  if (/^(ok|obrigad[oa]|valeu|show|beleza|perfeito|entendi|combinado|certo|t[aá] bom|blz|agrade[cç]o|sim|n[aã]o|positivo)[!.\s]*$/i.test(lower)) return false;
+  if (/^(?:quero|preciso|gostaria)?\s*(?:de\s+)?(?:falar\s+com\s+)?(?:um\s+|uma\s+)?(?:humano|atendente|pessoa|algu[eé]m|recep[cç][aã]o|recepcionista|gerente|operador)(?:\s+urgente)?[!.\s]*$/i.test(lower)) return false;
+
+  // Interrogação explícita
+  if (t.includes("?")) return true;
+
+  // Padrões interrogativos
+  const patterns = [
+    /\b(como|onde|quando|qual|quais|quanto|quantos|quanta|quantas|por que|porque)\b/i,
+    /\b(tem|teria|posso|pode|podemos|consegue|consigo|d[aá]\s+para|d[aá]\s+pra)\b/i,
+    /\b(aceita|aceitam|possui|possuem|existe|existem|funciona|hor[aá]rio)\b/i,
+    /\b(sabe me dizer|gostaria de saber|queria saber|voc[eê]s?\s+t[eê]m?|tem como)\b/i,
+    /\b(preciso saber|informa[cç][aã]o|d[uú]vida|procedimento|como fa[cç]o)\b/i
+  ];
+
+  return patterns.some(p => p.test(lower));
+}
+
+export function inferFaqCategory(text) {
+  if (!text || typeof text !== "string") return "reservas";
+  const lower = text.toLowerCase();
+
+  if (/wifi|wi-fi|internet|senha(?:\s+do\s+wi-?fi)?|conectar|rede|conex[aã]o|sinal|computador|smart\s*tv/i.test(lower)) return "wifi_tecnologia";
+  if (/caf[eé]|desjejum|bandeja|lou[cç]a|garrafa\s+t[eé]rmica|cafeteira|p[aã]o|leite|fruta/i.test(lower)) return "cafe_manha";
+  if (/garagem|estacionamento|vaga|carro|ve[ií]culo|placa|moto|estacionar|recarga/i.test(lower)) return "garagem";
+  if (/check-?in|entrada|cheg(?:ada|ar)|portaria|chave|cart[aã]o|fechadura|acesso|port[aã]o|early|entrar\s+no\s+quarto/i.test(lower)) return "checkin_acesso";
+  if (/check-?out|sa[ií]da|desocupa|deixar\s+o\s+flat|entregar\s+(?:chave|cart[aã]o)|late\s+check/i.test(lower)) return "checkout";
+  if (/flat|quarto|apartamento|frigobar|[aá]gua|ar[- ]condicionado|ar\s+condicionado|tomada|voltagem|110|220|ferro|t[aá]bua|secador|toalha|cama|travesseiro|len[cç]ol|chuveiro|banheiro|cozinha|micro-ondas|utens[ií]lio|panela|copo|fog[aã]o|ber[cç]o/i.test(lower)) return "estrutura_flat";
+  if (/visit(?:a|ante)|convidad|pet|cachorro|c[aã]o|gato|animal|fumo|fumar|cigarro|pernoite|barulho|norma|regra/i.test(lower)) return "regras_visitas_pets";
+  if (/piscina|jacuzzi|sauna|academia|cobertura|lazer|churrasqueira|sal[aã]o|condom[ií]nio|pr[eé]dio|edif[ií]cio/i.test(lower)) return "lazer_condominio";
+
+  return "reservas";
+}
+
+export function extractFaqKeywords(text) {
+  if (!text || typeof text !== "string") return [];
+  const stopWords = new Set([
+    "de", "a", "o", "que", "e", "do", "da", "em", "um", "para", "com", "nao", "não",
+    "uma", "os", "no", "se", "na", "por", "mais", "as", "dos", "como", "mas", "foi",
+    "ao", "ele", "das", "tem", "seu", "sua", "ou", "ser", "quando", "muito", "ha", "há",
+    "nos", "ja", "já", "esta", "está", "eu", "tambem", "também", "so", "só", "pelo",
+    "pela", "ate", "até", "isso", "ela", "entre", "era", "depois", "sem", "mesmo",
+    "aos", "ter", "seus", "quem", "nas", "me", "esse", "eles", "estao", "estão",
+    "voce", "você", "tinha", "foram", "essa", "num", "nem", "suas", "meu", "minha",
+    "qual", "quais", "onde", "posso", "pode", "favor", "gostaria", "queria", "bom",
+    "boa", "dia", "tarde", "noite", "ola", "olá", "corpflats", "hotel"
+  ]);
+
+  const clean = text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w\s]/g, " ");
+
+  const words = clean.split(/\s+/).filter(w => w.length >= 3 && !stopWords.has(w));
+  return Array.from(new Set(words)).slice(0, 8);
+}
+
+export function isQuestionMappedInFaq(text, db, clientPhone) {
+  if (!db || !Array.isArray(db.faqItems) || !text) return false;
+  const lower = text.toLowerCase().trim();
+  const cleanTokens = lower
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .split(/[\s,.;:?!+=\-_/\\()]+/)
+    .filter(w => w.length > 2);
+
+  for (const item of db.faqItems) {
+    if (!item || item.status !== "ativo") continue;
+    if (typeof isFaqApplicableToClient === "function" && !isFaqApplicableToClient(item, clientPhone)) continue;
+
+    const qLower = (item.question || "").toLowerCase().trim();
+    if (qLower && (lower.includes(qLower) || qLower.includes(lower))) return true;
+
+    if (Array.isArray(item.variations)) {
+      for (const v of item.variations) {
+        if (!v) continue;
+        const vLower = String(v).toLowerCase().trim();
+        if (vLower && (lower.includes(vLower) || vLower.includes(lower))) return true;
+      }
+    }
+
+    if (Array.isArray(item.keywords) && item.keywords.length > 0) {
+      const kwMatches = item.keywords.filter(k => {
+        if (!k) return false;
+        const kNorm = String(k).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        return cleanTokens.includes(kNorm) || lower.includes(kNorm);
+      });
+      if (kwMatches.length >= 2) return true;
+    }
+  }
+
+  return false;
+}
+
+export function findExistingPendingFaq(text, db, clientPhone) {
+  if (!db || !Array.isArray(db.faqItems) || !text) return null;
+  const lower = text.toLowerCase().trim();
+  const cleanPhone = clientPhone ? cleanWhatsAppPhone(clientPhone) : null;
+
+  return db.faqItems.find(item => {
+    if (!item || (item.status !== "pendente" && item.status !== "aguardando_aprovacao")) return false;
+    const qLower = (item.question || "").toLowerCase().trim();
+    if (qLower === lower) return true;
+    if (cleanPhone && (item.sourceClientPhone || (Array.isArray(item.clientPhones) && item.clientPhones.length > 0))) {
+      const phoneMatches = (item.sourceClientPhone && matchClientPhone(item.sourceClientPhone, cleanPhone)) ||
+        (Array.isArray(item.clientPhones) && item.clientPhones.some(p => matchClientPhone(p, cleanPhone)));
+      if (phoneMatches && (lower.includes(qLower) || qLower.includes(lower))) return true;
+    }
+    return false;
+  }) || null;
+}
+
+export function autoCreatePendingFaq({
+  db,
+  questionText,
+  senderPhone,
+  senderName,
+  saveDatabase,
+  createNotification
+}) {
+  if (!db) return null;
+  if (!Array.isArray(db.faqItems)) db.faqItems = [];
+
+  const text = (questionText || "").trim();
+  if (!text) return null;
+
+  const cleanPhone = cleanWhatsAppPhone(senderPhone) || String(senderPhone || "").replace(/\D/g, "");
+
+  const existing = findExistingPendingFaq(text, db, cleanPhone);
+  if (existing) {
+    if (Array.isArray(existing.variations) && !existing.variations.includes(text)) {
+      existing.variations.push(text);
+    }
+    existing.updatedAt = new Date().toISOString();
+    if (cleanPhone && !existing.clientPhones?.some(p => matchClientPhone(p, cleanPhone))) {
+      if (!Array.isArray(existing.clientPhones)) existing.clientPhones = [];
+      existing.clientPhones.push(cleanPhone);
+    }
+    if (typeof saveDatabase === "function") {
+      try { saveDatabase(); } catch (_) {}
+    }
+    return existing;
+  }
+
+  const now = new Date().toISOString();
+  const category = inferFaqCategory(text);
+  const keywords = extractFaqKeywords(text);
+  const randomSuffix = Math.random().toString(36).substring(2, 7);
+
+  const newFaq = {
+    id: `faq_${Date.now()}_${randomSuffix}`,
+    question: text,
+    answer: "",
+    category,
+    keywords,
+    variations: [text],
+    status: "pendente",
+    source: "auto_aprendizado",
+    scope: "all",
+    clientPhones: cleanPhone ? [cleanPhone] : [],
+    sourceClientPhone: cleanPhone,
+    sourceClientName: senderName || "Hóspede",
+    metadata: {
+      customerPhone: cleanPhone,
+      customerName: senderName || "Hóspede",
+      askedAt: now
+    },
+    createdAt: now,
+    updatedAt: now
+  };
+
+  db.faqItems.push(newFaq);
+
+  if (typeof saveDatabase === "function") {
+    try { saveDatabase(); } catch (_) {}
+  }
+
+  if (typeof createNotification === "function") {
+    try {
+      createNotification({
+        title: `❓ Nova Dúvida Hóspede: ${senderName || cleanPhone}`,
+        message: `Pergunta não mapeada recebida: "${text.substring(0, 100)}". Registrada como pendente no FAQ.`,
+        type: "whatsapp_faq_pending",
+        link: "/whatsapp-automation"
+      });
+    } catch (_) {}
+  }
+
+  console.log(`[Auto-Aprendizado FAQ] Nova dúvida não mapeada registrada como pendente: "${text}" (${cleanPhone})`);
+
+  return newFaq;
 }
 
 /**
@@ -1455,6 +1774,24 @@ export async function processAiInboundMessage({
     isCopilot: false
   });
 
+  // 6.5. Auto-Aprendizado: Detecção e Registro de Perguntas Não Mapeadas (R2)
+  const isQuestion = isPotentialGuestQuestion(incomingInfo.text);
+  const isMapped = isQuestionMappedInFaq(incomingInfo.text, db, cleanTarget);
+  const isFallback = aiResult.modelUsed === "heuristic_fallback" || aiResult.source === "heuristic";
+  const needsHandoverOrFallback = Boolean(aiResult.shouldHandover || aiResult.requiresHandover || isFallback);
+
+  let unmappedFaq = null;
+  if (isQuestion && !isMapped && needsHandoverOrFallback) {
+    unmappedFaq = autoCreatePendingFaq({
+      db,
+      questionText: incomingInfo.text,
+      senderPhone: incomingInfo.senderPhone || cleanTarget,
+      senderName: incomingInfo.senderName || conv?.name || "Hóspede",
+      saveDatabase,
+      createNotification
+    });
+  }
+
   // 7. Se for transbordo humano:
   if (aiResult.shouldHandover) {
     if (conv) {
@@ -1496,7 +1833,13 @@ export async function processAiInboundMessage({
     }
 
     if (typeof saveDatabase === "function") saveDatabase();
-    return { handled: true, handover: true, replyText: aiResult.replyText };
+    return {
+      handled: true,
+      handover: true,
+      replyText: aiResult.replyText,
+      unmappedFaqCreated: Boolean(unmappedFaq),
+      unmappedFaq
+    };
   }
 
   // 8. Resposta Autônoma Normal:
@@ -1530,6 +1873,8 @@ export async function processAiInboundMessage({
     handover: false,
     replyText: aiResult.replyText,
     source: aiResult.source,
-    modelUsed: aiResult.modelUsed
+    modelUsed: aiResult.modelUsed,
+    unmappedFaqCreated: Boolean(unmappedFaq),
+    unmappedFaq
   };
 }
