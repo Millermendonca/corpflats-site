@@ -613,6 +613,16 @@ export function FlatCard({
     setSaveErrorMessage(null)
     setOfflineQueued(false)
 
+    const resolvedMaidName = (currentUser?.role === "camareira" || currentUser?.role === "cleaner")
+      ? (currentUser.name || currentUser.username)
+      : (request?.assignedTo || request?.cleanerName || flat?.cleanerName || currentUser?.name || currentUser?.username || "");
+    const resolvedMaidPhone = (currentUser?.role === "camareira" || currentUser?.role === "cleaner")
+      ? (currentUser.whatsapp || currentUser.phone || "")
+      : "";
+    const resolvedMaidId = (currentUser?.role === "camareira" || currentUser?.role === "cleaner")
+      ? currentUser.id
+      : (request?.assignedUserId || undefined);
+
     const payload = {
       flatId: flat.flatId,
       flatNumber: flat.flatNumber,
@@ -623,6 +633,10 @@ export function FlatCard({
       date: date || flat.requestDate,
       guestName: flat.leavingGuest || "",
       guestPhone: flat.activeReservation?.guestPhone || flat.leavingGuestPhone || flat.guestPhone || "",
+      maidId: resolvedMaidId,
+      maidName: resolvedMaidName || undefined,
+      foundBy: resolvedMaidName || undefined,
+      maidPhone: resolvedMaidPhone || undefined,
       timestamp: new Date().toISOString()
     }
 
@@ -2012,6 +2026,16 @@ export function FlatCard({
                     placeholder="Ex: Entregue na recepção, guardado no armário de governança..."
                     className="text-xs h-16 resize-none"
                   />
+                </div>
+
+                <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/40 text-[11px] text-emerald-800 dark:text-emerald-300 flex items-start gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
+                  <div>
+                    <span className="font-semibold block">Notificação via WhatsApp</span>
+                    <span className="text-[10px] text-emerald-700 dark:text-emerald-400">
+                      O hóspede anterior receberá uma mensagem automática no WhatsApp com a foto do item e o contato da camareira para combinar a retirada.
+                    </span>
+                  </div>
                 </div>
               </div>
             )}

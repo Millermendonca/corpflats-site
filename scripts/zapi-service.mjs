@@ -899,6 +899,34 @@ Sua reserva no *{{nome_hotel}}* para *HOJE* está *Confirmada*!
       { id: "btn_cheguei", type: "URL", label: "📍 Já Cheguei no Flat", url: "{{link_autocheckin}}" },
       { id: "btn_portal", type: "URL", label: "🏨 Portal da Reserva", url: "{{link_portal_hospede}}" }
     ]
+  },
+  {
+    id: "tpl_lost_item_registered",
+    triggerEvent: "lost_item_registered",
+    title: "Achados & Perdidos • Objeto Encontrado no Quarto",
+    description: "Enviado automaticamente ao hóspede quando um item esquecido é registrado no Achados & Perdidos, contendo a descrição, foto e o WhatsApp da camareira que o encontrou para combinar a retirada.",
+    enabled: true,
+    channels: ["all"],
+    recipientTarget: "guest",
+    triggerTiming: "immediate",
+    offsetValue: 0,
+    offsetUnit: "minutes",
+    fixedTime: "",
+    message: `Olá, *{{nome_hospede}}*! Tudo bem?
+
+A equipe de governança do *{{nome_hotel}}* identificou que foi esquecido um objeto no *Flat {{quarto}}*{{local_no_quarto}} após o seu check-out.
+
+📦 *Item encontrado:* {{descricao_item}}
+{{foto_item}}
+👩‍💼 *Encontrado e guardado por:* {{nome_camareira}}
+📱 *WhatsApp da Camareira:* {{whatsapp_camareira}}
+💬 *Link direto:* {{link_whatsapp_camareira}}
+
+Por favor, entre em contato diretamente com a *{{nome_camareira}}* pelo WhatsApp acima para combinar a retirada ou envio do seu objeto! ✨`,
+    footer: "CorpFlats • Governança & Hospitalidade",
+    buttons: [
+      { id: "btn_contact_maid", type: "URL", label: "Falar com Camareira", url: "{{link_whatsapp_camareira}}" }
+    ]
   }
 ];
 
@@ -2080,7 +2108,13 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
     "{{early_checkin_beneficio}}": earlyCheckinBeneficio,
     "{{forma_pagamento}}": formaPagamento,
     "{{data_pagamento}}": formatDateBr(reservation.paidAt || new Date().toISOString()),
-    "{{resumo_alteracoes}}": resumoAlteracoes
+    "{{resumo_alteracoes}}": resumoAlteracoes,
+    "{{nome_camareira}}": reservation.maidName || reservation.foundBy || "Camareira",
+    "{{whatsapp_camareira}}": reservation.maidPhone || "",
+    "{{link_whatsapp_camareira}}": reservation.maidWhatsAppUrl || (reservation.maidPhone ? `https://wa.me/55${String(reservation.maidPhone).replace(/\D/g, "").replace(/^55/, "")}` : ""),
+    "{{descricao_item}}": reservation.description || reservation.itemDescription || "",
+    "{{local_no_quarto}}": reservation.locationInRoom ? ` (${reservation.locationInRoom})` : "",
+    "{{foto_item}}": (reservation.photoUrl && (reservation.photoUrl.startsWith("http://") || reservation.photoUrl.startsWith("https://"))) ? `📸 *Foto do item:* ${reservation.photoUrl}\n` : ""
   };
 
   let rendered = text;

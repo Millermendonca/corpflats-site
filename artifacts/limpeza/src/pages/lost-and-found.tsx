@@ -29,6 +29,8 @@ interface LostItem {
   photoUrl?: string | null
   status: "guardado" | "devolvido" | "descartado"
   foundBy: string
+  maidPhone?: string
+  maidId?: number
   lastGuestName?: string
   lastGuestPhone?: string
   lastGuestEmail?: string
@@ -37,6 +39,10 @@ interface LostItem {
   returnedTo?: string
   returnedAt?: string
   returnedBy?: string
+  guestNotified?: boolean
+  guestNotifiedAt?: string
+  guestNotificationStatus?: string
+  notifiedPhone?: string
   createdAt: string
   updatedAt: string
 }
@@ -56,7 +62,13 @@ export default function LostAndFoundPage() {
   const [locationInput, setLocationInput] = useState("")
   const [notesInput, setNotesInput] = useState("")
   const [photoBase64, setPhotoBase64] = useState<string | null>(null)
+  const [selectedCleanerId, setSelectedCleanerId] = useState<string>("")
+  const [foundByInput, setFoundByInput] = useState<string>("")
+  const [maidPhoneInput, setMaidPhoneInput] = useState<string>("")
+  const [cleaners, setCleaners] = useState<any[]>([])
   const [submitting, setSubmitting] = useState(false)
+  const [notifyingItemId, setNotifyingItemId] = useState<number | null>(null)
+  const [editGuestNotifyCheckbox, setEditGuestNotifyCheckbox] = useState(true)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Modal Foto Ampliada (Zoom)
@@ -88,12 +100,14 @@ export default function LostAndFoundPage() {
   const loadData = async () => {
     setLoading(true)
     try {
-      const [itemsRes, flatsRes] = await Promise.all([
+      const [itemsRes, flatsRes, cleanersRes] = await Promise.all([
         fetch("/api/lost-and-found", { credentials: "include" }).then(r => r.json()).catch(() => []),
-        fetch("/api/flats", { credentials: "include" }).then(r => r.json()).catch(() => [])
+        fetch("/api/flats", { credentials: "include" }).then(r => r.json()).catch(() => []),
+        fetch("/api/cleaners", { credentials: "include" }).then(r => r.json()).catch(() => [])
       ])
       if (Array.isArray(itemsRes)) setItems(itemsRes)
       if (Array.isArray(flatsRes)) setFlats(flatsRes)
+      if (Array.isArray(cleanersRes)) setCleaners(cleanersRes)
     } catch (e) {
       console.error(e)
     } finally {
@@ -115,10 +129,61 @@ export default function LostAndFoundPage() {
     loadData()
   }, [])
 
+  const handleOpenNewModal = () => {
+    setFlatNumberInput("")
+    setDescriptionInput("")
+    setLocationInput("")
+    setNotesInput("")
+    setPhotoBase64(null)
+    if (user?.role === "camareira" || user?.role === "cleaner") {
+      setSelectedCleanerId(String(user.id))
+      setFoundByInput(user.name || user.username)
+      setMaidPhoneInput(user.whatsapp || user.phone || "")
+    } else {
+      setSelectedCleanerId("")
+      setFoundByInput("")
+      setMaidPhoneInput("")
+    }
+    setNewModalOpen(true)
+  }
+
+  const handleSelectCleaner = (cleanerId: string) => {
+    setSelectedCleanerId(cleanerId)
+    const c = cleaners.find(x => String(x.id) === cleanerId)
+    if (c) {
+      setFoundByInput(c.name || c.username)
+      setMaidPhoneInput(c.whatsapp || c.phone || "")
+    }
+  }
+
+  const handleNotifyGuest = async (itemId: number) => {
+    setNotifyingItemId(itemId)
+    try {
+      const res = await fetch(`/api/lost-and-found/${itemId}/notify-guest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include"
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        alert("Notificação enviada ao cliente com sucesso via WhatsApp!")
+        fetchItems()
+      } else {
+        alert(data.error || data.details?.reason || "Não foi possível enviar a mensagem. Verifique se o hóspede tem telefone válido.")
+        fetchItems()
+      }
+    } catch (err: any) {
+      alert(`Erro ao disparar notificação: ${err.message}`)
+    } finally {
+      setNotifyingItemId(null)
+    }
+  }
+
   const handleOpenEditGuest = (item: LostItem) => {
     setSelectedItemForGuestEdit(item)
     setEditGuestNameInput(item.lastGuestName || "")
     setEditGuestPhoneInput(item.lastGuestPhone || "")
+    setEditGuestNotifyCheckbox(true)
     setEditGuestModalOpen(true)
   }
 
@@ -132,7 +197,8 @@ export default function LostAndFoundPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           lastGuestName: editGuestNameInput.trim(),
-          lastGuestPhone: editGuestPhoneInput.trim()
+          lastGuestPhone: editGuestPhoneInput.trim(),
+          notifyGuest: editGuestNotifyCheckbox
         }),
         credentials: "include"
       })
@@ -279,7 +345,11 @@ export default function LostAndFoundPage() {
           locationInRoom: locationInput.trim(),
           notes: notesInput.trim(),
           photoBase64,
-          date: new Intl.DateTimeFormat("sv-SE", { timeZone: "America/Sao_Paulo" }).format(new Date())
+          date: new Intl.DateTimeFormat("sv-SE", { timeZone: "America/Sao_Paulo" }).format(new Date()),
+          maidId: selectedCleanerId ? Number(selectedCleanerId) : undefined,
+          maidName: foundByInput.trim() || undefined,
+          foundBy: foundByInput.trim() || undefined,
+          maidPhone: maidPhoneInput.trim() || undefined
         }),
         credentials: "include"
       })
@@ -291,6 +361,9 @@ export default function LostAndFoundPage() {
         setLocationInput("")
         setNotesInput("")
         setPhotoBase64(null)
+        setSelectedCleanerId("")
+        setFoundByInput("")
+        setMaidPhoneInput("")
         fetchItems()
       }
     } finally {
@@ -410,7 +483,7 @@ export default function LostAndFoundPage() {
 
           <div className="flex items-center gap-2">
             <Button
-              onClick={() => setNewModalOpen(true)}
+              onClick={handleOpenNewModal}
               className="h-10 px-4 rounded-2xl text-xs font-bold gap-1.5 bg-primary text-primary-foreground shadow-sm"
             >
               <PlusCircle className="w-4 h-4" />
@@ -546,7 +619,11 @@ export default function LostAndFoundPage() {
               const phoneWithDDI = cleanPhone.startsWith("55") ? cleanPhone : `55${cleanPhone}`
               const guestFirstName = item.lastGuestName ? item.lastGuestName.split(" ")[0] : "Hóspede"
               
-              const whatsappMsg = `Olá, *${guestFirstName}*! Tudo bem?\nA equipe de governança do *CorpFlats Soho Residence* identificou que foi esquecido um(a) *${item.description}* no *Flat ${item.flatNumber}* após o seu check-out.\n\n📦 O objeto está guardado com segurança na nossa administração.\nComo prefere combinar a retirada ou envio?`
+              const maidContactText = item.maidPhone
+                ? `\n\n👩‍💼 *Encontrado e guardado por:* ${item.foundBy || "Camareira"}\n📱 *WhatsApp da Camareira:* ${item.maidPhone}\nVocê pode conversar diretamente com ela pelo WhatsApp acima para combinar a retirada!`
+                : `\n\n👩‍💼 *Encontrado por:* ${item.foundBy || "Camareira"}\n📦 O objeto está guardado com segurança na nossa governança.\nComo prefere combinar a retirada ou envio?`
+
+              const whatsappMsg = `Olá, *${guestFirstName}*! Tudo bem?\nA equipe de governança do *CorpFlats Soho Residence* identificou que foi esquecido um(a) *${item.description}* no *Flat ${item.flatNumber}* após o seu check-out.${maidContactText}`
               const whatsappUrl = cleanPhone ? `https://api.whatsapp.com/send?phone=${phoneWithDDI}&text=${encodeURIComponent(whatsappMsg)}` : null
 
               return (
@@ -687,8 +764,11 @@ export default function LostAndFoundPage() {
                           </p>
                         )}
                         {item.foundBy && (
-                          <p className="text-[10px] text-muted-foreground mt-0.5">
-                            Encontrado por: <strong>{item.foundBy}</strong>
+                          <p className="text-[10px] text-muted-foreground mt-0.5 flex flex-wrap items-center gap-1">
+                            <span>Encontrado por: <strong className="text-foreground">{item.foundBy}</strong></span>
+                            {item.maidPhone && (
+                              <span className="font-mono text-emerald-600 dark:text-emerald-400 font-bold">({item.maidPhone})</span>
+                            )}
                           </p>
                         )}
                       </div>
@@ -718,16 +798,56 @@ export default function LostAndFoundPage() {
                           </div>
                         )}
 
-                        {whatsappUrl && item.status === "guardado" && (
-                          <a
-                            href={whatsappUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="mt-1 inline-flex items-center justify-center gap-1.5 w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2 px-3 rounded-xl transition-all shadow-xs"
-                          >
-                            <MessageSquare className="w-3.5 h-3.5" />
-                            <span>Avisar Hóspede via WhatsApp</span>
-                          </a>
+                        {/* Status de Notificação do Hóspede */}
+                        {item.guestNotified ? (
+                          <div className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-xl">
+                            <Check className="w-3.5 h-3.5 shrink-0" />
+                            <span>Hóspede notificado no WhatsApp</span>
+                          </div>
+                        ) : item.lastGuestPhone ? (
+                          <div className="flex items-center justify-between gap-1 text-[10px] font-medium text-amber-700 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-xl">
+                            <span>Envio automático pendente</span>
+                            <button
+                              type="button"
+                              onClick={() => handleNotifyGuest(item.id)}
+                              disabled={notifyingItemId === item.id}
+                              className="font-bold underline hover:text-amber-900 dark:hover:text-amber-200 cursor-pointer"
+                            >
+                              {notifyingItemId === item.id ? "Enviando..." : "Disparar agora"}
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="text-[10px] text-muted-foreground italic px-1">
+                            Sem WhatsApp cadastrado para este hóspede
+                          </div>
+                        )}
+
+                        {item.status === "guardado" && (
+                          <div className="flex flex-col sm:flex-row gap-1.5 pt-1">
+                            {whatsappUrl && (
+                              <a
+                                href={whatsappUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center justify-center gap-1.5 flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2 px-3 rounded-xl transition-all shadow-xs"
+                              >
+                                <MessageSquare className="w-3.5 h-3.5" />
+                                <span>Abrir WhatsApp</span>
+                              </a>
+                            )}
+                            {item.lastGuestPhone && (
+                              <button
+                                type="button"
+                                onClick={() => handleNotifyGuest(item.id)}
+                                disabled={notifyingItemId === item.id}
+                                className="inline-flex items-center justify-center gap-1 bg-muted hover:bg-muted/80 text-foreground font-bold text-xs py-2 px-2.5 rounded-xl border border-border transition-all"
+                                title="Reenviar notificação oficial via Z-API com contato da camareira"
+                              >
+                                <RefreshCw className={`w-3 h-3 ${notifyingItemId === item.id ? "animate-spin" : ""}`} />
+                                <span>{notifyingItemId === item.id ? "..." : (item.guestNotified ? "Reenviar Z-API" : "Enviar Z-API")}</span>
+                              </button>
+                            )}
+                          </div>
                         )}
                       </div>
 
@@ -846,6 +966,58 @@ export default function LostAndFoundPage() {
                   onChange={e => setLocationInput(e.target.value)}
                   className="h-10 text-xs rounded-xl"
                 />
+              </div>
+
+              {/* Seleção da Camareira que Encontrou */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold">Camareira Responsável / Quem Encontrou</Label>
+                {cleaners.length > 0 && (
+                  <Select value={selectedCleanerId} onValueChange={handleSelectCleaner}>
+                    <SelectTrigger className="h-10 text-xs rounded-xl">
+                      <SelectValue placeholder="Selecione na lista de camareiras cadastradas" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {cleaners.map(c => (
+                        <SelectItem key={c.id} value={String(c.id)}>
+                          {c.name || c.username} {c.whatsapp || c.phone ? `(${c.whatsapp || c.phone})` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-bold">Nome da Camareira *</Label>
+                  <Input 
+                    placeholder="Ex: Cris, Grazi..."
+                    value={foundByInput}
+                    onChange={e => setFoundByInput(e.target.value)}
+                    required
+                    className="h-10 text-xs rounded-xl"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-bold">WhatsApp da Camareira *</Label>
+                  <Input 
+                    placeholder="Ex: 22988486446 ou (22) 98848-6446"
+                    value={maidPhoneInput}
+                    onChange={e => setMaidPhoneInput(e.target.value)}
+                    required
+                    className="h-10 text-xs rounded-xl"
+                  />
+                </div>
+              </div>
+
+              <div className="p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/40 text-[11px] text-emerald-800 dark:text-emerald-300 flex items-start gap-2.5">
+                <MessageSquare className="w-4 h-4 text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
+                <div>
+                  <p className="font-bold">Notificação Automática no WhatsApp</p>
+                  <p className="text-[10px] text-emerald-700 dark:text-emerald-400 mt-0.5 leading-relaxed">
+                    O hóspede que fez checkout deste flat receberá automaticamente uma mensagem no WhatsApp com a foto/descrição do item e o contato direto desta camareira para combinar a devolução.
+                  </p>
+                </div>
               </div>
 
               <div className="space-y-1.5">
@@ -1040,6 +1212,22 @@ export default function LostAndFoundPage() {
                   placeholder="Ex: 22999998888 ou (22) 99999-8888" 
                   className="rounded-xl text-xs h-9.5"
                 />
+              </div>
+
+              <div className="flex items-center space-x-2 pt-1 bg-muted/40 p-2.5 rounded-xl border border-border">
+                <input 
+                  type="checkbox" 
+                  id="editGuestNotifyCheckbox"
+                  checked={editGuestNotifyCheckbox}
+                  onChange={e => setEditGuestNotifyCheckbox(e.target.checked)}
+                  className="w-4 h-4 rounded border-gray-300 text-primary focus:ring-primary accent-primary cursor-pointer"
+                />
+                <label 
+                  htmlFor="editGuestNotifyCheckbox"
+                  className="text-xs font-medium text-foreground cursor-pointer leading-tight"
+                >
+                  Disparar notificação no WhatsApp com contato da camareira ao salvar
+                </label>
               </div>
               <DialogFooter className="gap-2 sm:gap-0 pt-2">
                 <Button type="button" variant="outline" onClick={() => setEditGuestModalOpen(false)} className="rounded-xl h-9 text-xs">
