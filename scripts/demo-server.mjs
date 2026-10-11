@@ -112,6 +112,17 @@ import {
   isSerproConfigured,
   getSerproConfig
 } from "./fnrh-serpro-service.mjs";
+import {
+  serverMonitorMiddleware,
+  startMonitoringEngine,
+  ingestRenderMetrics,
+  getLiveSnapshot,
+  getTelemetryHistory,
+  getDiagnostics,
+  getMonitorConfig,
+  triggerManualGc,
+  setAuditLogger
+} from "./server-monitor-service.mjs";
 
 const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
@@ -267,6 +278,7 @@ app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use(cookieParser());
+app.use(serverMonitorMiddleware);
 app.use("/api/storage/files", express.static(UPLOADS_DIR));
 app.use("/storage/files", express.static(UPLOADS_DIR));
 app.get([
@@ -31413,6 +31425,64 @@ app.post("/api/audit-logs/client", (req, res) => {
   }
 });
 
+// ── Server Monitor & Real-Time Root Cause Analysis (RCA) Engine ────────────
+app.post("/api/observability/render-metrics", (req, res) => {
+  try {
+    const authHeader = req.headers.authorization || req.headers["x-render-token"] || req.headers.token || "";
+    const result = ingestRenderMetrics(req.body, authHeader);
+    if (!result.success) {
+      return res.status(result.status || 400).json(result);
+    }
+    return res.json(result);
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get("/api/admin/server-monitor/live", (req, res) => {
+  try {
+    return res.json(getLiveSnapshot());
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/server-monitor/history", (req, res) => {
+  try {
+    const minutes = Number(req.query.minutes) || 15;
+    return res.json({ success: true, history: getTelemetryHistory(minutes) });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/server-monitor/diagnostics", (req, res) => {
+  try {
+    const limit = Number(req.query.limit) || 30;
+    return res.json({ success: true, diagnostics: getDiagnostics(limit) });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/admin/server-monitor/config", (req, res) => {
+  try {
+    return res.json({ success: true, config: getMonitorConfig(req) });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/server-monitor/trigger-gc", (req, res) => {
+  try {
+    const reason = req.body?.reason || "Acionamento manual via dashboard administrativo";
+    const result = triggerManualGc(reason);
+    return res.json(result);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // 8.4 Middleware Global de Captura de Erros Express
 app.use((err, req, res, next) => {
   console.error("[EXPRESS UNHANDLED ERROR]", err);
@@ -32893,6 +32963,10 @@ setInterval(async () => {
 
 const httpServer = app.listen(PORT, "0.0.0.0", () => {
   console.log(`[Demo Server] API rodando em http://0.0.0.0:${PORT}`);
+  setAuditLogger(logAuditEvent);
+  if (process.env.NODE_ENV !== "test") {
+    startMonitoringEngine();
+  }
 });
 httpServer.on("error", (err) => {
   console.error("[HTTP Server Error]", err?.message || err);

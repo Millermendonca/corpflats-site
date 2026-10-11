@@ -53,6 +53,7 @@ import EmailHub from '@/pages/email-hub';
 import ReservationJourney from '@/pages/reservation-journey';
 import ServiceOrders from '@/pages/service-orders';
 import ServiceWorkerPortal from '@/pages/service-worker-portal';
+import ServerMonitorPage from '@/pages/server-monitor';
 import NotFound from '@/pages/not-found';
 
 const queryClient = new QueryClient({
@@ -333,6 +334,9 @@ function Router() {
         <AdminRoute path="/ia-status" component={AiStatusPage} moduleName="o Status da IA" />
         <AdminRoute path="/ai-status" component={AiStatusPage} moduleName="o Status da IA" />
         <AdminRoute path="/status-ia" component={AiStatusPage} moduleName="o Status da IA" />
+        <AdminRoute path="/monitor-servidor" component={ServerMonitorPage} moduleName="o Monitor do Servidor em Tempo Real" />
+        <AdminRoute path="/servidor" component={ServerMonitorPage} moduleName="o Monitor do Servidor em Tempo Real" />
+        <AdminRoute path="/server-monitor" component={ServerMonitorPage} moduleName="o Monitor do Servidor em Tempo Real" />
 
         {/* External Service Orders Management (Admin Only) */}
         <AdminRoute path="/servicos" component={ServiceOrders} moduleName="a Gestão de Ordens de Serviço" />

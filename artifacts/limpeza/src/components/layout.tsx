@@ -10,7 +10,7 @@ import {
   MessageSquareWarning, BarChart3, Bell, ClipboardCheck, Sparkles, Key, Check, AlertCircle,
   CalendarDays, Users, Tablet, Globe, DollarSign, Bot, FileText, Coffee, Menu, X, Search, ChevronRight,
   CreditCard, Palette, Coins, ScrollText, Building2, Package, TrendingUp, Car, ThumbsUp, MessageSquare,
-  Smartphone, ShoppingCart, Wallet, Mail, Workflow, Wrench
+  Smartphone, ShoppingCart, Wallet, Mail, Workflow, Wrench, Activity
 } from "lucide-react"
 import { Button } from "./ui/button"
 import { Skeleton } from "./ui/skeleton"
@@ -291,6 +291,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       {
         title: "⚙️ Sistema & Integrações",
         items: [
+          { href: "/monitor-servidor", label: "Monitor do Servidor & IA", icon: Activity, description: "Telemetria de CPU, RAM em tempo real, RCA e Render stream" },
           { href: "/configuracoes", label: "Integrações Técnicas & Nuvem", icon: Settings, description: "Cloudflare R2, Microsoft Graph, usuários" },
           { href: "/notificacoes", label: "Central de Notificações", icon: Bell, badge: unreadNotifications > 0 ? unreadNotifications : null, description: "Alertas de pedidos e chamados" },
           { href: "/logs", label: "Logs & Auditoria Fail-Safe", icon: ScrollText, description: "Auditoria fail-safe de eventos e erros" },
