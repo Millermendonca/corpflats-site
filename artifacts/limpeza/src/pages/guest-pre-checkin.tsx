@@ -317,14 +317,33 @@ export default function GuestPreCheckin() {
     setOtpError(null)
     setOtpSuccessMessage(null)
     try {
+      const isTitular = selectedGuestIndex === 1
+      const targetPhone = phone || (isTitular ? reservation?.guestPhone : "") || ""
+      const targetEmail = email || (isTitular ? reservation?.guestEmail : "") || ""
+
+      if (channel === "whatsapp" && !targetPhone) {
+        setOtpError(
+          isTitular 
+            ? "Telefone não informado para envio via WhatsApp."
+            : "Telefone do acompanhante não informado. Por favor, volte ao Passo 1 e preencha seu celular com DDD."
+        )
+        setOtpLoading(false)
+        return
+      }
+      if (channel === "email" && !targetEmail) {
+        setOtpError("E-mail não informado para envio.")
+        setOtpLoading(false)
+        return
+      }
+
       const resCode = code || reservation?.code
       const res = await fetch(`/api/pms/pre-checkin/${resCode}/whatsapp-otp`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           guestIndex: selectedGuestIndex,
-          phone,
-          email,
+          phone: targetPhone,
+          email: targetEmail,
           fullName,
           channel,
           forceNew
@@ -353,10 +372,12 @@ export default function GuestPreCheckin() {
 
   // Disparo automático do código OTP no WhatsApp ao chegar no Passo 3 (Assinatura)
   useEffect(() => {
-    if (step === 3 && !otpSent && (phone || reservation?.guestPhone) && !isTokenSessionExpired) {
+    const isTitular = selectedGuestIndex === 1
+    const targetPhone = phone || (isTitular ? reservation?.guestPhone : "")
+    if (step === 3 && !otpSent && targetPhone && !isTokenSessionExpired) {
       handleSendOtp("whatsapp")
     }
-  }, [step, otpSent, phone, reservation?.guestPhone, isTokenSessionExpired])
+  }, [step, otpSent, phone, selectedGuestIndex, reservation?.guestPhone, isTokenSessionExpired])
 
   // Canvas for signature
 
@@ -469,6 +490,66 @@ export default function GuestPreCheckin() {
     setLocation(`/minha-reserva/${targetCode}${gParam}`)
   }
 
+  const getTitularData = () => {
+    const titularGuest = (guestList || []).find((g: any) => Number(g.index) === 1)
+    const res = reservation || {}
+    const guestObj = (res as any)?.guest || {}
+    return {
+      cep: titularGuest?.cep || res.guestCep || guestObj.cep || "",
+      street: titularGuest?.street || res.guestStreet || res.guestAddress || guestObj.street || guestObj.address || "",
+      streetNumber: titularGuest?.streetNumber || res.guestStreetNumber || titularGuest?.number || guestObj.streetNumber || "",
+      complement: titularGuest?.complement || res.guestComplement || guestObj.complement || "",
+      neighborhood: titularGuest?.neighborhood || res.guestNeighborhood || titularGuest?.bairro || guestObj.neighborhood || "",
+      city: titularGuest?.city || res.guestCity || guestObj.city || "",
+      state: titularGuest?.state || res.guestState || guestObj.state || "RJ",
+      address: titularGuest?.address || res.guestAddress || guestObj.address || "",
+      vehicle: titularGuest?.vehicle || res.vehicle || guestObj.vehicle || (guestObj.vehiclePlate ? {
+        plate: guestObj.vehiclePlate,
+        brand: guestObj.vehicleBrand || "",
+        model: guestObj.vehicleModel || "",
+        color: guestObj.vehicleColor || ""
+      } : null),
+      transportMethod: titularGuest?.transportMethod || res.transportMethod || guestObj.transportMethod || "Carro próprio",
+      travelReason: titularGuest?.travelReason || res.travelReason || guestObj.travelReason || "Lazer / Férias",
+      originCity: titularGuest?.originCity || res.originCity || guestObj.originCity || "",
+      originState: titularGuest?.originState || res.originState || guestObj.originState || "RJ",
+      destinationCity: titularGuest?.destinationCity || res.destinationCity || guestObj.destinationCity || "Campos dos Goytacazes",
+      destinationState: titularGuest?.destinationState || res.destinationState || guestObj.destinationState || "RJ"
+    }
+  }
+
+  const handleCopyTitularAddress = () => {
+    const tit = getTitularData()
+    if (tit.cep) setCep(tit.cep)
+    if (tit.street) setStreet(tit.street)
+    if (tit.streetNumber) setStreetNumber(tit.streetNumber)
+    if (tit.complement) setComplement(tit.complement)
+    if (tit.neighborhood) setNeighborhood(tit.neighborhood)
+    if (tit.city) setCity(tit.city)
+    if (tit.state) setState(tit.state)
+    if (tit.address) {
+      setAddress(tit.address)
+    } else if (tit.street) {
+      syncAddress(tit.street, tit.streetNumber, tit.complement, tit.neighborhood)
+    }
+  }
+
+  const handleCopyTitularVehicle = () => {
+    const tit = getTitularData()
+    if (tit.transportMethod) setTransportMethod(tit.transportMethod)
+    if (tit.vehicle) {
+      setVehiclePlate(tit.vehicle.plate || "")
+      setVehicleModel(tit.vehicle.model || "")
+      setVehicleBrand(tit.vehicle.brand || "")
+      setVehicleColor(tit.vehicle.color || "")
+    }
+    if (tit.originCity) setOriginCity(tit.originCity)
+    if (tit.originState) setOriginState(tit.originState)
+    if (tit.destinationCity) setDestinationCity(tit.destinationCity)
+    if (tit.destinationState) setDestinationState(tit.destinationState)
+    if (tit.travelReason) setTravelReason(tit.travelReason)
+  }
+
   const loadGuestData = (resData: any, gIdx: number) => {
     const gList = resData.guests || []
     setGuestList(gList)
@@ -483,6 +564,17 @@ export default function GuestPreCheckin() {
     setSignatureData(null)
     setMinorAuthDocPhoto(null)
     setMinorKinship("filho")
+
+    // Isolamento estrito de 2FA / OTP entre titular e acompanhantes
+    setWhatsappOtpInput("")
+    setOtpSent(false)
+    setOtpLoading(false)
+    setOtpCooldown(0)
+    setOtpMaskedPhone("")
+    setOtpMaskedEmail("")
+    setOtpVerified(false)
+    setOtpError(null)
+    setOtpSuccessMessage(null)
 
     const isTitular = gIdx === 1
 
@@ -533,23 +625,24 @@ export default function GuestPreCheckin() {
     setState(currentG?.state || (isTitular ? (guest.state || res.guestState || "RJ") : "RJ"))
     setCep(currentG?.cep || (isTitular ? (guest.cep || res.guestCep || "") : ""))
 
+    // Dados da Viagem MTur (isolamento estrito: acompanhante não herda dados de estadia do titular automaticamente)
     const travelReasonVal = currentG?.travelReason || (isTitular ? (guest.travelReason || res.travelReason || "") : "")
-    if (travelReasonVal) setTravelReason(travelReasonVal)
+    setTravelReason(travelReasonVal || "")
 
     const transportVal = currentG?.transportMethod || (isTitular ? (guest.transportMethod || res.transportMethod || "") : "")
-    if (transportVal) setTransportMethod(transportVal)
+    setTransportMethod(transportVal || "")
 
     const originCityVal = currentG?.originCity || (isTitular ? (guest.originCity || res.originCity || "") : "")
-    if (originCityVal) setOriginCity(originCityVal)
+    setOriginCity(originCityVal || "")
 
     const originStateVal = currentG?.originState || (isTitular ? (guest.originState || res.originState || "RJ") : "RJ")
-    if (originStateVal) setOriginState(originStateVal)
+    setOriginState(originStateVal || "RJ")
 
     const destCityVal = currentG?.destinationCity || (isTitular ? (guest.destinationCity || res.destinationCity || "") : "")
-    if (destCityVal) setDestinationCity(destCityVal)
+    setDestinationCity(destCityVal || "")
 
     const destStateVal = currentG?.destinationState || (isTitular ? (guest.destinationState || res.destinationState || "RJ") : "RJ")
-    if (destStateVal) setDestinationState(destStateVal)
+    setDestinationState(destStateVal || "RJ")
 
     setMinorKinship(currentG?.minorKinship || "filho")
     setMinorAuthDocPhoto(currentG?.minorAuthDocUrl || null)
@@ -592,18 +685,29 @@ export default function GuestPreCheckin() {
       }).catch(() => {})
     }
 
-    const v = res.vehicle || guest.vehicle || (guest.vehiclePlate ? {
-      plate: guest.vehiclePlate,
-      brand: guest.vehicleBrand || "",
-      model: guest.vehicleModel || "",
-      color: guest.vehicleColor || ""
-    } : null)
+    // Isolamento estrito de veículo: titular lê da reserva; acompanhante lê SOMENTE de currentG.vehicle
+    const v = isTitular 
+      ? (res.vehicle || guest.vehicle || (guest.vehiclePlate ? {
+          plate: guest.vehiclePlate,
+          brand: guest.vehicleBrand || "",
+          model: guest.vehicleModel || "",
+          color: guest.vehicleColor || ""
+        } : null))
+      : (currentG?.vehicle || null)
+
     if (v && v.plate) {
       setVehiclePlate(v.plate)
       setVehicleModel(v.model || "")
       setVehicleBrand(v.brand || "")
       setVehicleColor(v.color || "")
-      setTransportMethod(prev => (prev === "Carro próprio" || prev === "Carro alugado") ? prev : "Carro próprio")
+      if (!transportVal) {
+        setTransportMethod(prev => (prev === "Carro próprio" || prev === "Carro alugado") ? prev : "Carro próprio")
+      }
+    } else {
+      setVehiclePlate("")
+      setVehicleModel("")
+      setVehicleBrand("")
+      setVehicleColor("")
     }
 
     // Isolamento estrito de fotos e biometria:
@@ -654,10 +758,15 @@ export default function GuestPreCheckin() {
       const hasBaseData = Boolean(gName && gDoc && gPhone)
       if (hasBaseData && !new URLSearchParams(window.location.search).get("step")) {
         setStep(3)
+      } else {
+        setStep(1)
       }
     } else {
       setIsCompleted(fnhrDone)
       setIsEditing(!fnhrDone)
+      if (!fnhrDone) {
+        setStep(1)
+      }
     }
   }
 
@@ -1522,6 +1631,7 @@ export default function GuestPreCheckin() {
                       type="button"
                       onClick={() => {
                         setSelectedGuestIndex(g.index)
+                        setStep(1)
                         if (reservation) {
                           loadGuestData({ reservation, guests: guestList }, g.index)
                         }
@@ -2440,12 +2550,24 @@ export default function GuestPreCheckin() {
 
                 {/* Endereço Residencial com Auto-Preenchimento e Campos Estruturados */}
                 <div className="space-y-3 p-4 bg-slate-50/70 border border-slate-200/80 rounded-2xl">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
                     <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                       <MapPin className="w-4 h-4 text-sky-600" />
                       <span>Endereço Residencial *</span>
                     </span>
-                    {loadingCep && <span className="text-[10px] text-sky-600 animate-pulse font-bold">Buscando CEP...</span>}
+                    <div className="flex items-center gap-2">
+                      {selectedGuestIndex > 1 && (
+                        <button
+                          type="button"
+                          onClick={handleCopyTitularAddress}
+                          className="text-[11px] text-sky-700 hover:text-sky-900 font-bold bg-white hover:bg-sky-50 border border-sky-300 px-2 py-1 rounded-lg transition-colors flex items-center gap-1 shadow-xs"
+                        >
+                          <Copy className="w-3 h-3 text-sky-600" />
+                          Copiar endereço do titular
+                        </button>
+                      )}
+                      {loadingCep && <span className="text-[10px] text-sky-600 animate-pulse font-bold">Buscando CEP...</span>}
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
@@ -2536,7 +2658,19 @@ export default function GuestPreCheckin() {
                       <MapPin className="w-4 h-4 text-sky-600" />
                       <span>Informações da Estadia Atual (Exigência MTur - Lei 11.771/2008) *</span>
                     </span>
-                    <Badge className="bg-sky-100 text-sky-800 text-[10px] font-bold border-sky-200">Obrigatório</Badge>
+                    <div className="flex items-center gap-2">
+                      {selectedGuestIndex > 1 && (
+                        <button
+                          type="button"
+                          onClick={handleCopyTitularVehicle}
+                          className="text-[11px] text-sky-700 hover:text-sky-900 font-bold bg-white hover:bg-sky-50 border border-sky-300 px-2 py-1 rounded-lg transition-colors flex items-center gap-1 shadow-xs"
+                        >
+                          <Car className="w-3.5 h-3.5 text-sky-600" />
+                          Viajando no mesmo veículo do titular
+                        </button>
+                      )}
+                      <Badge className="bg-sky-100 text-sky-800 text-[10px] font-bold border-sky-200">Obrigatório</Badge>
+                    </div>
                   </div>
                   <p className="text-[11px] text-slate-600 leading-relaxed">
                     Por exigência do Ministério do Turismo, informe os dados específicos desta viagem para emissão da FNRH:
@@ -2623,12 +2757,24 @@ export default function GuestPreCheckin() {
                 {/* 🚗 Garagem & Veículo Soho */}
                 {isCarTransport && (
                   <div className="p-4 bg-sky-50/70 border border-sky-200/80 rounded-2xl space-y-3">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
                       <span className="text-xs font-bold text-sky-900 flex items-center gap-1.5">
                         <Car className="w-4 h-4 text-sky-600" />
                         Estacionamento Privativo • Edifício Soho Residence
                       </span>
-                      <Badge className="bg-sky-100 text-sky-800 text-[10px] font-bold border-sky-200">1 Vaga Inclusa</Badge>
+                      <div className="flex items-center gap-2">
+                        {selectedGuestIndex > 1 && (
+                          <button
+                            type="button"
+                            onClick={handleCopyTitularVehicle}
+                            className="text-[10px] text-sky-700 hover:text-sky-900 font-bold bg-white hover:bg-sky-100/80 border border-sky-300 px-2 py-0.5 rounded-lg transition-colors flex items-center gap-1 shadow-xs"
+                          >
+                            <Copy className="w-3 h-3 text-sky-600" />
+                            Copiar veículo do titular
+                          </button>
+                        )}
+                        <Badge className="bg-sky-100 text-sky-800 text-[10px] font-bold border-sky-200">1 Vaga Inclusa</Badge>
+                      </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">
@@ -3021,9 +3167,21 @@ export default function GuestPreCheckin() {
                       </span>
                     </div>
                   </div>
-                  <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 text-[10px] font-bold py-0.5 px-2">
-                    Posse Comprovada
-                  </Badge>
+                  {whatsappOtpInput.length === 6 ? (
+                    <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 text-[10px] font-bold py-0.5 px-2 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                      Código Preenchido
+                    </Badge>
+                  ) : otpSent ? (
+                    <Badge className="bg-amber-100 text-amber-800 border-amber-300 text-[10px] font-bold py-0.5 px-2 flex items-center gap-1">
+                      <Clock className="w-3 h-3 text-amber-600" />
+                      Aguardando Código
+                    </Badge>
+                  ) : (
+                    <Badge className="bg-slate-100 text-slate-700 border-slate-300 text-[10px] font-bold py-0.5 px-2">
+                      Validação Pendente
+                    </Badge>
+                  )}
                 </div>
 
                 <p className="text-xs text-slate-600 leading-relaxed">

@@ -21399,11 +21399,22 @@ app.post("/api/pms/pre-checkin/:code/whatsapp-otp", async (req, res) => {
   const r = (db.reservations || []).find(x => x.code === code || String(x.id) === code);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
 
-  const cleanPhone = cleanWhatsAppPhone(phone || r.guestPhone || "");
-  const targetEmail = (email || r.guestEmail || "").trim().toLowerCase();
+  // Isolamento estrito de telefone entre titular e acompanhantes
+  const isTitular = Number(guestIndex) === 1;
+  const targetGuest = Array.isArray(r.guests) ? r.guests.find(g => Number(g.index) === Number(guestIndex)) : null;
+
+  // Para o titular (índice 1): se phone não vier no body, usa r.guestPhone.
+  // Para acompanhantes (índice > 1): usa ESTRITAMENTE o phone enviado no body ou targetGuest.phone. NUNCA recorre ao telefone do titular!
+  let resolvedPhone = phone || (isTitular ? r.guestPhone : targetGuest?.phone) || "";
+  const cleanPhone = cleanWhatsAppPhone(resolvedPhone);
+  const targetEmail = (email || (isTitular ? r.guestEmail : targetGuest?.email) || "").trim().toLowerCase();
 
   if (channel === "whatsapp" && !cleanPhone) {
-    return res.status(400).json({ error: "Telefone do hóspede não informado para envio via WhatsApp." });
+    return res.status(400).json({
+      error: isTitular
+        ? "Telefone do hóspede não informado para envio via WhatsApp."
+        : "Telefone do hóspede acompanhante não informado para envio via WhatsApp. Por favor, volte ao Passo 1 e informe o número do celular com DDD."
+    });
   }
   if (channel === "email" && !targetEmail) {
     return res.status(400).json({ error: "E-mail do hóspede não informado para envio." });
@@ -21456,7 +21467,7 @@ app.post("/api/pms/pre-checkin/:code/whatsapp-otp", async (req, res) => {
   };
 
   db.fnrhWhatsappOtps.push(otpRecord);
-  saveDatabase();
+  saveDatabase("manual_otp");
 
   const guestName = (req.body.fullName || r.guestName || "Hóspede").trim().split(" ")[0];
   const flatNumber = r.flatNumber || r.flatId || "";
@@ -21528,6 +21539,7 @@ app.post("/api/pms/pre-checkin/:code/whatsapp-otp", async (req, res) => {
     expiresInSeconds: 600,
     cooldownSeconds: 60,
     simulated: sendResult.simulated || false,
+    otpCode: (process.env.NODE_ENV === "test" || sendResult.simulated) ? otpCode : undefined,
     message: channel === "whatsapp" 
       ? `Código enviado com sucesso para seu WhatsApp ${maskedPhone}.`
       : `Código enviado com sucesso para seu e-mail.`
@@ -21915,6 +21927,16 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   targetGuest.originState = originState || req.body.originState || targetGuest.originState || "RJ";
   targetGuest.destinationCity = destinationCity || req.body.destinationCity || targetGuest.destinationCity || "";
   targetGuest.destinationState = destinationState || req.body.destinationState || targetGuest.destinationState || "RJ";
+  targetGuest.travelReason = req.body.travelReason || travelReason || targetGuest.travelReason || "";
+  targetGuest.transportMethod = req.body.transportMethod || transportMethod || targetGuest.transportMethod || "";
+  if (req.body.vehiclePlate) {
+    targetGuest.vehicle = {
+      plate: String(req.body.vehiclePlate).toUpperCase().trim(),
+      brand: req.body.vehicleBrand || "",
+      model: req.body.vehicleModel || "",
+      color: req.body.vehicleColor || ""
+    };
+  }
   targetGuest.selfieUrl = selfieUrl;
   targetGuest.docPhotoUrl = docPhotoUrl;
   targetGuest.signatureUrl = signatureUrl;
@@ -21991,19 +22013,23 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   }
 
   if (req.body.vehiclePlate) {
-    const mergedVehicle = mergeVehicleData(r.vehicle, {
-      plate: req.body.vehiclePlate,
-      brand: req.body.vehicleBrand,
-      model: req.body.vehicleModel,
-      color: req.body.vehicleColor
-    });
-    if (mergedVehicle) {
-      const samePlate = String(r.vehicle?.plate || "").toUpperCase().trim() === mergedVehicle.plate;
-      r.vehicle = {
-        ...(samePlate ? (r.vehicle || {}) : {}),
-        ...mergedVehicle,
-        updatedAt: now
-      };
+    const isTitularGuest = Number(guestIndex) === 1;
+    // O veículo principal da reserva (r.vehicle) é prioritariamente do titular, ou preenchido pelo acompanhante se a reserva não tinha carro cadastrado
+    if (isTitularGuest || !r.vehicle || !r.vehicle.plate) {
+      const mergedVehicle = mergeVehicleData(r.vehicle, {
+        plate: req.body.vehiclePlate,
+        brand: req.body.vehicleBrand,
+        model: req.body.vehicleModel,
+        color: req.body.vehicleColor
+      });
+      if (mergedVehicle) {
+        const samePlate = String(r.vehicle?.plate || "").toUpperCase().trim() === mergedVehicle.plate;
+        r.vehicle = {
+          ...(samePlate ? (r.vehicle || {}) : {}),
+          ...mergedVehicle,
+          updatedAt: now
+        };
+      }
     }
   }
 
