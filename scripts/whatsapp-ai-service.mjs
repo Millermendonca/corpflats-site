@@ -55,7 +55,7 @@ export const DEFAULT_AI_CONFIG = {
     "reclamar", "reclamacao", "reclamação", "cancelar reserva", "cancelamento",
     "falar com alguém", "suporte humano", "atendimento humano"
   ],
-  systemPrompt: `Você é a Sofia, concierge virtual inteligente e acolhedora dos flats de alto padrão da CorpFlats em Campos dos Goytacazes/RJ.
+  systemPrompt: `Você é a Sofia, concierge virtual inteligente e acolhedora dos flats de alto padrão da CorpFlats no Edifício Soho Residence Service em Campos dos Goytacazes/RJ.
 Seu objetivo é encantar os hóspedes, responder dúvidas com precisão e fornecer assistência ágil e atenciosa.
 
 DIRETRIZES DE ATENDIMENTO:
@@ -64,20 +64,21 @@ DIRETRIZES DE ATENDIMENTO:
 3. Seja sempre fidedigna às informações fornecidas no CONTEXTO DO HÓSPEDE e na BASE DE CONHECIMENTO. NUNCA invente números de apartamentos, códigos ou senhas que não constem nos dados oficiais.
 4. Se o hóspede solicitar expressamente falar com um atendente humano, transborde o atendimento com gentileza informando que a equipe da recepção assumirá a conversa em instantes.
 5. Para hóspedes que chegam hoje: confira o status de limpeza informado no contexto. Se estiver "LIMPO E LIBERADO", comemore que o apartamento já está pronto para recebê-lo! Se estiver "EM PREPARAÇÃO", informe que a governança está caprichando na higienização para liberar o flat até o horário oficial das 14:00 (ou antes se finalizado).
-6. Para novos clientes / sem reserva: apresente a CorpFlats como a melhor opção de flats executivos mobiliados e climatizados em Campos dos Goytacazes (Av. Pelinca, melhor ponto da cidade), convide a reservar pelo site oficial e tire dúvidas de diárias e comodidades.`,
+6. Para novos clientes / sem reserva: apresente a CorpFlats como a melhor opção de flats executivos mobiliados e climatizados em Campos dos Goytacazes (Centro, no prestigiado Edifício Soho Residence Service, na Rua Conselheiro Otaviano, 209), convide a reservar pelo site oficial e tire dúvidas de diárias e comodidades.`,
   knowledgeBase: {
-    address: "Av. Pelinca, 100 - Parque Pelinca, Campos dos Goytacazes - RJ (Excelente localização, próximo a restaurantes, bancos e comércio)",
+    address: "Edifício Soho Residence Service, Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ",
     checkinTime: "14:00 (Check-in padrão a partir das 14h)",
     checkoutTime: "12:00 (Check-out padrão até às 12h)",
     earlyCheckinPolicy: "Entrada antecipada a partir das 10:00 é um benefício gratuito para reservas diretas (Site ou WhatsApp), ESTRITAMENTE MEDIANTE DISPONIBILIDADE de limpeza prévia do flat pela governança.",
-    lateCheckoutPolicy: "Saída após as 12:00 deve ser combinada previamente com a recepção e depende de disponibilidade de outros hóspedes.",
-    wifiNetwork: "CorpFlats-Hospedes",
-    wifiPassword: "corpflats2026",
-    breakfastInfo: "O café da manhã é servido das 06:30 às 10:00. Hóspedes com café incluso desfrutam de buffet completo; hóspedes sem café podem solicitar inclusão avulsa ou delivery na recepção.",
-    garageInfo: "Estacionamento privativo com vaga coberta disponível. É necessário informar placa, modelo e cor do veículo com antecedência para cadastro e autorização na portaria.",
-    petPolicy: "Aceitamos pets de pequeno porte em apartamentos selecionados mediante aviso prévio e taxa de higienização diferenciada.",
+    lateCheckoutPolicy: "Saída após as 12:00 deve ser combinada previamente com a administração e depende de disponibilidade de outros hóspedes.",
+    wifiNetwork: "apto {{quarto}} (rede individual por flat com o número do quarto)",
+    wifiPassword: "1234567890123",
+    breakfastInfo: "O café da manhã é servido exclusivamente via bandeja diretamente no quarto das 05:00 às 09:30, com escolha de itens e agendamento pelo portal /cafe até a véspera. Não há buffet presencial nem restaurante no condomínio. A recepção do condomínio não vende nem gerencia café. Reservas sem café incluso podem solicitar inclusão avulsa com antecedência via WhatsApp da administração CorpFlats.",
+    garageInfo: "Garagem rotativa gratuita no condomínio Soho (qualquer vaga livre). É obrigatório cadastrar a placa no Pré-Check-in Digital com antecedência para autorização de entrada na portaria 24h. Comporta veículos normais, SUVs e caminhonetes (altura do portão ~2,10m a 2,20m).",
+    petPolicy: "Aceitamos exclusivamente cães (apenas cachorros), máximo de 1 pet até 10kg por apartamento. Custo adicional de R$ 40,00 por dia (diária).",
     smokingPolicy: "Ambiente 100% livre de fumo! É estritamente proibido fumar dentro dos apartamentos e nas áreas fechadas do edifício.",
-    amenities: "Apartamentos completos com cama box confortável, ar-condicionado Split, Smart TV, Wi-Fi veloz, cozinha equipada com micro-ondas e frigobar, enxoval completo de hotelaria e ducha aquecida.",
+    amenities: "Flats climatizados (Split), Smart TV, Wi-Fi veloz individual em cada flat, tomadas 127V, ferro de passar disponível (sem tábua), frigobar vazio e ligado para uso particular (sem cortesia de água), cozinha com micro-ondas e utensílios, enxoval completo de hotelaria e ducha aquecida.",
+    leisureInfo: "Piscina/jacuzzi aquecida e academia na cobertura funcionando diariamente das 06:00 às 22:00, exclusivo para hóspedes cadastrados (não é permitida a entrada de visitantes na cobertura e proibido vidro na área molhada).",
     directBookingBenefits: "Melhor tarifa garantida sem taxas de intermediários, prioridade de early check-in a partir das 10h (quando disponível) e suporte direto com a nossa administração.",
     receptionPhone: "5522998505276",
     siteUrl: "https://corpflats.onrender.com"
@@ -1554,22 +1555,24 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
 
   // 1. Wi-Fi / Internet
   if (/wifi|wi-fi|internet|senha(?:\s+do\s+wi-?fi)?|conectar/i.test(text)) {
-    return `Olá${name}! 📶 Aqui estão as informações de conexão:\n\n*Rede:* ${kb.wifiNetwork}\n*Senha:* \`${kb.wifiPassword}\`\n\nA rede é de alta velocidade e fica disponível em todo o apartamento. Se precisar de algo mais, estou à disposição! ✨`;
+    const flatNum = guestContext?.flatNumber || "";
+    const netName = flatNum ? `apto ${flatNum}` : "apto {número do seu flat}";
+    return `Olá${name}! 📶 Cada flat possui sua própria rede Wi-Fi exclusiva para máxima estabilidade e velocidade:\n\n• *Nome da Rede:* ${netName}\n• *Senha:* \`${kb.wifiPassword || "1234567890123"}\`\n\nCaso tenha qualquer dificuldade para conectar, certifique-se de digitar a senha com atenção. Estamos à disposição! ✨`;
   }
 
   // 2. Café da Manhã (verificado antes de termos genéricos de acomodação)
   if (/caf[eé]|desjejum/i.test(text)) {
-    return `Olá${name}! 🥐☕ ${kb.breakfastInfo}\n\nQualquer dúvida sobre opções ou pedidos de delivery, estamos por aqui!`;
+    return `Olá${name}! 🥐☕ ${kb.breakfastInfo}\n\nPara agendar sua bandeja e escolher os itens do café da manhã, acesse o link do Portal do Hóspede até a véspera! ✨`;
   }
 
   // 3. Garagem / Estacionamento / Carro
   if (/garagem|estacionamento|vaga|carro|ve[ií]culo|placa/i.test(text)) {
-    return `Olá${name}! 🚗 ${kb.garageInfo}\n\nSe ainda não informou os dados do veículo, pode mandar aqui a *Placa, Modelo e Cor* que já providenciamos a autorização na portaria!`;
+    return `Olá${name}! 🚗 ${kb.garageInfo}\n\nSe ainda não informou os dados do veículo, acesse seu Pré-Check-in Digital ou envie por aqui a *Placa, Modelo e Cor* que já providenciamos a autorização com a portaria!`;
   }
 
   // 4. Localização / Endereço / Onde fica
   if (/endere[cç]o|localiza[cç][aã]o|onde\s+fica|como\s+chegar|mapa/i.test(text)) {
-    return `Olá${name}! 📍 Estamos localizados na *${kb.address}*.\n\nÉ um ponto nobre e privilegiado no coração da Pelinca em Campos dos Goytacazes! Se precisar de instruções de rota, nos avise. 🏨`;
+    return `Olá${name}! 📍 Estamos localizados no *${kb.address}*.\n\nLocalização privilegiada no Centro de Campos dos Goytacazes! Se precisar de instruções de rota ou localização no Google Maps, nos avise. 🏨`;
   }
 
   // 5. Check-out / Horário de Saída
@@ -1865,10 +1868,11 @@ ${guestContext.hasReservation ? `- Flat atribuído: ${guestContext.flatNumber ||
 - Horário de Check-out: ${aiConfig.knowledgeBase.checkoutTime}
 - Benefício Early Check-in: ${aiConfig.knowledgeBase.earlyCheckinPolicy}
 - Política de Late Check-out: ${aiConfig.knowledgeBase.lateCheckoutPolicy}
-- Wi-Fi Oficial: Rede "${aiConfig.knowledgeBase.wifiNetwork}" | Senha: "${aiConfig.knowledgeBase.wifiPassword}"
+- Wi-Fi Oficial: Cada apartamento tem sua própria rede individualizada no formato "apto {quarto}" (ex: se o quarto for 113, a rede é "apto 113"). A senha é única para todos os apartamentos: "${aiConfig.knowledgeBase.wifiPassword || "1234567890123"}". Se o quarto do hóspede constar no contexto acima, informe a rede específica dele ("apto {quarto}"); caso contrário, explique a regra geral.
 - Café da Manhã: ${aiConfig.knowledgeBase.breakfastInfo}
 - Garagem e Estacionamento: ${aiConfig.knowledgeBase.garageInfo}
 - Animais / Pets: ${aiConfig.knowledgeBase.petPolicy}
+- Lazer e Cobertura: ${aiConfig.knowledgeBase.leisureInfo || "Piscina/jacuzzi aquecida e academia na cobertura das 06:00 às 22:00 exclusivo hóspedes."}
 - Fumo: ${aiConfig.knowledgeBase.smokingPolicy}
 - Comodidades dos Flats: ${aiConfig.knowledgeBase.amenities}
 - Benefícios Reserva Direta: ${aiConfig.knowledgeBase.directBookingBenefits}

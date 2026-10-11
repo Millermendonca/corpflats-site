@@ -1643,7 +1643,7 @@ export function getOfficialFaqSeed() {
   {
     "id": "faq-wifi",
     "question": "Qual é o nome da rede e a senha do Wi-Fi?",
-    "answer": "📶 *Wi-Fi de Alta Velocidade CorpFlats (500MB):*\n\n• *Rede:* CorpFlats-Hospedes\n• *Senha:* `corpflats2026`\n\nNossa conexão é dedicada e está disponível em todas as áreas do apartamento, ideal para reuniões e trabalho remoto. Caso tenha qualquer dificuldade de conexão, certifique-se de digitar a senha em letras minúsculas! ✨",
+    "answer": "📶 *Wi-Fi Exclusivo do Apartamento:*\n\n• *Nome da Rede:* apto {{quarto}} (cada flat possui sua própria rede individual com o número do quarto)\n• *Senha:* `1234567890123`\n\nA rede é dedicada por apartamento para garantir máxima estabilidade e velocidade na sua estadia. Digite a senha com atenção e, se precisar de qualquer suporte, estamos à disposição! ✨",
     "category": "wifi_tecnologia",
     "keywords": [
       "wifi",
@@ -1654,7 +1654,7 @@ export function getOfficialFaqSeed() {
       "rede",
       "conexao",
       "banda larga",
-      "500mb"
+      "senha wifi"
     ],
     "variations": [
       "Como faço para conectar na internet?",
@@ -1674,7 +1674,7 @@ export function getOfficialFaqSeed() {
   {
     "id": "faq-cafe-quarto",
     "question": "Como funciona o café da manhã no quarto?",
-    "answer": "☕🥐 *Café da Manhã Exclusivo no Flat:*\n\nNosso serviço de café da manhã é servido com todo conforto *diretamente no seu flat* através de uma deliciosa bandeja personalizada (o serviço é exclusivo no quarto, não servido no restaurante do condomínio).\n\n• *Horário de entrega:* Das 06:30 às 10:00 (você escolhe o melhor horário).\n• *Agendamento:* Você monta sua bandeja e escolhe seus itens favoritos diretamente pelo link do Portal do Hóspede até a véspera!\n\nSe a sua reserva não possuir café incluso, você pode solicitar a inclusão avulsa diretamente conosco pelo WhatsApp! ✨",
+    "answer": "☕🥐 *Café da Manhã Exclusivo no Flat:*\n\nNosso serviço de café da manhã é servido com todo conforto *diretamente no seu flat* através de uma deliciosa bandeja personalizada (o serviço é exclusivo no quarto, não servido em restaurante presencial).\n\n• *Horário de entrega:* Das 05:00 às 09:30 (você escolhe o melhor horário).\n• *Agendamento:* Você monta sua bandeja e escolhe seus itens favoritos diretamente pelo link do Portal do Hóspede (/cafe) até a véspera!\n\n⚠️ *Avisos Importantes:*\n1. Não temos buffet presencial nem restaurante no condomínio.\n2. A recepção do condomínio NÃO vende nem gerencia café da manhã.\n3. Se sua reserva não tiver café incluso, a inclusão avulsa pode ser solicitada com antecedência pelo WhatsApp da administração CorpFlats! ✨",
     "category": "cafe_manha",
     "keywords": [
       "cafe",
@@ -1737,7 +1737,7 @@ export function getOfficialFaqSeed() {
   {
     "id": "faq-agua-frigobar",
     "question": "A água no frigobar é cortesia ou é cobrada à parte?",
-    "answer": "🧊💧 *Água no Frigobar - Cortesia de Boas-Vindas:*\n\nSim! Para o seu conforto e hidratação imediata ao chegar de viagem, disponibilizamos *garrafas de água mineral no frigobar como cortesia de boas-vindas* na sua entrada! 🎁\n\n• Não há nenhuma cobrança extra por essas águas de cortesia.\n• O frigobar também fica totalmente livre e ligado para você armazenar suas próprias bebidas e alimentos durante a estadia.\n\nFique à vontade e aproveite! ✨",
+    "answer": "🧊 *Frigobar no Flat:*\n\nO frigobar do seu flat é entregue devidamente higienizado, vazio e ligado para seu uso particular durante a estadia. ❄️\n\n• *Atenção:* Não disponibilizamos água mineral ou bebidas como cortesia gratuita de boas-vindas.\n• Você pode utilizar o frigobar com total liberdade para guardar suas próprias compras e bebidas com conforto!",
     "category": "estrutura_flat",
     "keywords": [
       "agua",
@@ -1799,7 +1799,7 @@ export function getOfficialFaqSeed() {
   {
     "id": "faq-regras-pets",
     "question": "Quais são as regras para hospedagem com animais de estimação (pets)?",
-    "answer": "🐾 *Política Pet CorpFlats:*\n\nAdoramos receber seu amigo de quatro patas! Confira nossas diretrizes para garantir uma estadia harmoniosa:\n\n• *Permissão:* Aceitamos exclusivamente *cães de pequeno porte (até 10 kg)* em unidades selecionadas, mediante aviso prévio.\n• *Taxa de Higienização Pet:* R$ 80,00 por estadia (destinada à higienização especial pós-saída).\n• *Circulação no Prédio:* No condomínio, o transporte deve ser no colo ou bolsa/guia curta, utilizando *obrigatoriamente o elevador de serviço*.\n• *Cuidados no Flat:* Proibido deixar o animal sozinho por longos períodos; não utilizar toalhas ou roupas de cama do flat no pet.\n\nAvise-nos antes da chegada para prepararmos a autorização com a portaria! 🐶✨",
+    "answer": "🐾 *Política Pet CorpFlats:*\n\nAdoramos receber seu cãozinho! Confira nossas diretrizes oficiais:\n\n• *Permissão:* Aceitamos exclusivamente *cães* (não aceitamos outros animais).\n• *Limite:* Apenas *1 cachorro de pequeno porte (até 10 kg)* por apartamento.\n• *Taxa Pet Oficial:* R$ 40,00 por dia (diária).\n• *Circulação no Condomínio:* No prédio, o transporte deve ser no colo ou guia curta, utilizando o elevador de serviço.\n• *Aviso Prévio:* Informe-nos antes da chegada para autorização prévia com a portaria! 🐶✨",
     "category": "regras_visitas_pets",
     "keywords": [
       "pet",
@@ -1807,11 +1807,10 @@ export function getOfficialFaqSeed() {
       "cachorro",
       "cao",
       "cão",
-      "gato",
       "animal",
-      "animais",
       "taxa pet",
-      "porte pequeno"
+      "porte pequeno",
+      "diaria pet"
     ],
     "variations": [
       "Aceita cachorro no apartamento?",
@@ -1924,12 +1923,13 @@ export function getOfficialFaqSeed() {
   {
     "id": "faq-pending-voltagem",
     "question": "Qual é a voltagem das tomadas no flat? É 110V ou 220V?",
-    "answer": "",
+    "answer": "⚡ *Voltagem das Tomadas:*\n\nA voltagem padrão das tomadas em todos os nossos flats é de *127V (110V)*. Recomendamos conferir a voltagem dos seus aparelhos eletrônicos antes de plugar na tomada! 🔌✨",
     "category": "estrutura_flat",
     "keywords": [
       "voltagem",
       "tomada",
       "110v",
+      "127v",
       "220v",
       "energia",
       "eletricidade"
@@ -1939,18 +1939,17 @@ export function getOfficialFaqSeed() {
       "Posso ligar secador 220v?",
       "Qual voltagem do flat?"
     ],
-    "status": "pendente",
+    "status": "ativo",
     "scope": "all",
     "clientPhones": [],
-    "sourceClientPhone": "5522998505276",
-    "sourceClientName": "Carlos Drumond",
     "createdAt": "2026-10-11T00:00:00.000Z",
-    "updatedAt": "2026-10-11T00:00:00.000Z"
+    "updatedAt": "2026-10-11T00:00:00.000Z",
+    "approvedAt": "2026-10-11T00:00:00.000Z"
   },
   {
     "id": "faq-pending-ferro",
     "question": "O flat possui ferro e tábua de passar roupa disponíveis?",
-    "answer": "",
+    "answer": "👔 *Ferro de Passar Roupas:*\n\nSim! Disponibilizamos *ferro de passar roupas* no flat para sua conveniência durante a estadia. Note apenas que *não disponibilizamos tábua de passar*, apenas o ferro. ✨",
     "category": "estrutura_flat",
     "keywords": [
       "ferro",
@@ -1964,19 +1963,17 @@ export function getOfficialFaqSeed() {
       "Vocês emprestam ferro de passar?",
       "Tem como passar roupa no flat?"
     ],
-    "status": "pendente",
+    "status": "ativo",
     "scope": "all",
     "clientPhones": [],
-    "sourceClientPhone": "5521988887777",
-    "sourceClientName": "Juliana Mendes",
     "createdAt": "2026-10-11T00:00:00.000Z",
-    "updatedAt": "2026-10-11T00:00:00.000Z"
+    "updatedAt": "2026-10-11T00:00:00.000Z",
+    "approvedAt": "2026-10-11T00:00:00.000Z"
   },
   {
     "id": "faq-approval-jacuzzi-aquecida",
     "question": "A piscina ou jacuzzi da cobertura é aquecida? Qual o horário de funcionamento?",
-    "answer": "",
-    "suggestedAnswer": "🏊‍♂️✨ *Área de Lazer & Jacuzzi (Cobertura Soho):*\n\nSim! A jacuzzi na cobertura do Edifício Soho conta com sistema de aquecimento e hidromassagem, e a área de lazer funciona diariamente das *06:00 às 22:00h*.\n\nPor regulamento do condomínio, não é permitido o consumo de bebidas em garrafas de vidro ou alimentos na área molhada. Aproveite para relaxar!",
+    "answer": "🏊‍♂️✨ *Área de Lazer, Piscina & Academia (Cobertura Soho):*\n\nA cobertura do Edifício Soho conta com piscina/jacuzzi com água aquecida e academia completa, funcionando diariamente das *06:00 às 22:00h*.\n\n⚠️ *Regras Importantes:*\n1. Uso exclusivo de hóspedes cadastrados (não é permitida a entrada de visitantes na cobertura).\n2. É estritamente proibido o consumo de alimentos ou bebidas em recipientes de vidro na área molhada.",
     "category": "lazer_condominio",
     "keywords": [
       "jacuzzi",
@@ -1985,26 +1982,25 @@ export function getOfficialFaqSeed() {
       "aquecida",
       "lazer",
       "horario jacuzzi",
-      "sauna"
+      "academia"
     ],
     "variations": [
       "A jacuzzi é quente?",
       "A piscina funciona até que horas?",
-      "Posso usar a jacuzzi à noite?"
+      "Posso usar a jacuzzi à noite?",
+      "Tem academia no prédio?"
     ],
-    "status": "aguardando_aprovacao",
+    "status": "ativo",
     "scope": "all",
     "clientPhones": [],
-    "sourceClientPhone": "5522997124021",
-    "sourceClientName": "Roberto Alencar",
     "createdAt": "2026-10-11T00:00:00.000Z",
-    "updatedAt": "2026-10-11T00:00:00.000Z"
+    "updatedAt": "2026-10-11T00:00:00.000Z",
+    "approvedAt": "2026-10-11T00:00:00.000Z"
   },
   {
     "id": "faq-approval-estacionamento-caminhonete",
     "question": "A vaga de garagem comporta caminhonete grande (Hilux / Ranger) ou tem limite de altura?",
-    "answer": "",
-    "suggestedAnswer": "🚗 *Garagem & Veículos de Grande Porte:*\n\nNossa garagem coberta comporta caminhonetes e SUVs de médio e grande porte como Hilux e Ranger. A altura livre do portão de entrada é de 2,20m.\n\nPedimos apenas que informe a placa, modelo e cor do veículo no seu Check-in Digital para cadastro prévio na portaria 24h!",
+    "answer": "🚗 *Garagem & Veículos de Grande Porte:*\n\nA nossa garagem rotativa gratuita no Edifício Soho comporta tranquilamente automóveis, SUVs e caminhonetes (como Hilux e Ranger). A altura livre do portão de entrada é de aproximadamente 2,10m a 2,20m.\n\n⚠️ *Obrigatório:* Cadastrar a placa do veículo no seu Pré-Check-in Digital com antecedência para que a portaria 24h libere sua entrada no portão!",
     "category": "garagem",
     "keywords": [
       "garagem",
@@ -2020,13 +2016,12 @@ export function getOfficialFaqSeed() {
       "Qual a altura máxima do estacionamento?",
       "Posso parar Hilux na garagem?"
     ],
-    "status": "aguardando_aprovacao",
+    "status": "ativo",
     "scope": "all",
     "clientPhones": [],
-    "sourceClientPhone": "5524992345678",
-    "sourceClientName": "Marcos Vinicius",
     "createdAt": "2026-10-11T00:00:00.000Z",
-    "updatedAt": "2026-10-11T00:00:00.000Z"
+    "updatedAt": "2026-10-11T00:00:00.000Z",
+    "approvedAt": "2026-10-11T00:00:00.000Z"
   },
   {
     "id": "faq-rule-exclude-ota-early",
@@ -4523,7 +4518,7 @@ async function loadDatabase() {
           recipientType: "guest",
           recipientName: "Miller Mendonça Pessanha",
           triggerEvent: "reservation_created",
-          message: "Olá, *Miller*! 🌟✨\nSua reserva no *CorpFlats* está *Confirmada*!\n\n📋 *Resumo da sua Estadia:*\n• Código da Reserva: *RES-712-0290*\n• Acomodação: *Flat 712*\n• Entrada (Check-in): *28/09/2026 a partir das 14:00*\n• Saída (Check-out): *29/09/2026 até às 12:00*\n• Total de Hóspedes: *1*\n• Café da Manhã: *Incluso*\n\n💰 *Situação Financeira:*\n• Valor Total: *R$ 250,00*\n• Quanto foi Pago: *R$ 250,00*\n• Saldo a Quitar: *R$ 0,00*\n\n🎁 *Benefício Exclusivo — Early Check-in a partir das 10:00:*\nComo você reservou diretamente conosco, você tem direito à entrada antecipada a partir das 10:00, *ESTRITAMENTE MEDIANTE DISPONIBILIDADE* (depende da desocupação do hóspede anterior e da conclusão da limpeza).\n\n📍 *Endereço:*\nAv. Pelinca, 393 - Tamandaré, Campos dos Goytacazes - RJ",
+          message: "Olá, *Miller*! 🌟✨\nSua reserva no *CorpFlats* está *Confirmada*!\n\n📋 *Resumo da sua Estadia:*\n• Código da Reserva: *RES-712-0290*\n• Acomodação: *Flat 712*\n• Entrada (Check-in): *28/09/2026 a partir das 14:00*\n• Saída (Check-out): *29/09/2026 até às 12:00*\n• Total de Hóspedes: *1*\n• Café da Manhã: *Incluso*\n\n💰 *Situação Financeira:*\n• Valor Total: *R$ 250,00*\n• Quanto foi Pago: *R$ 250,00*\n• Saldo a Quitar: *R$ 0,00*\n\n🎁 *Benefício Exclusivo — Early Check-in a partir das 10:00:*\nComo você reservou diretamente conosco, você tem direito à entrada antecipada a partir das 10:00, *ESTRITAMENTE MEDIANTE DISPONIBILIDADE* (depende da desocupação do hóspede anterior e da conclusão da limpeza).\n\n📍 *Endereço:*\nEdifício Soho Residence Service, Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ",
           buttons: [
             { id: "btn_chk", type: "URL", label: "📝 Fazer Check-in Online", url: "https://corpflats.onrender.com/checkin?code=RES-712-0290" },
             { id: "btn_portal", type: "URL", label: "🏨 Ver Detalhes da Reserva", url: "https://corpflats.onrender.com/portal?code=RES-712-0290" },

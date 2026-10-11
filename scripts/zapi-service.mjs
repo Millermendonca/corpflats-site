@@ -1943,8 +1943,8 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const mapsUrl = db.settings?.googleMapsUrl || "https://share.google/LHu3541d5lhkdvbL2";
   
   const zapiCfg = db.zapiConfig || {};
-  const wifiNetwork = zapiCfg.wifiNetwork || "CorpFlats-Hospedes";
-  const wifiPassword = zapiCfg.wifiPassword || "corpflats2026";
+  const wifiNetwork = flatNumber ? `apto ${flatNumber}` : (zapiCfg.wifiNetwork || "apto {quarto}");
+  const wifiPassword = zapiCfg.wifiPassword || "1234567890123";
   const adminWhatsApp = db.settings?.adminWhatsApp || "5522997124021";
   const googleReviewUrl = zapiCfg.googleReviewUrl || "https://share.google/LHu3541d5lhkdvbL2";
 
@@ -4602,8 +4602,8 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         enabled: false,
         deliveryMode: "buttons",
         fallbackToText: true,
-        wifiNetwork: "CorpFlats-Hospedes",
-        wifiPassword: "corpflats2026",
+        wifiNetwork: "apto {quarto}",
+        wifiPassword: "1234567890123",
         googleReviewUrl: "https://share.google/LHu3541d5lhkdvbL2",
         guestGuidePdfUrl: "/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf",
         guestGuidePdfName: "Manual_do_Hospede_CorpFlats.pdf",

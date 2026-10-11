@@ -2264,117 +2264,8 @@ export default function WhatsappAutomation() {
                         placeholder="Instruções para o modelo sobre tom, regras e como agir..."
                       />
                     </div>
-                  </CardContent>
-                </Card>
 
-                {/* Base de Conhecimento Rápida */}
-                <Card className="border shadow-xs">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-base font-bold flex items-center gap-2">
-                      <Key className="w-4 h-4 text-amber-600" />
-                      Base de Conhecimento Rápida
-                    </CardTitle>
-                    <CardDescription className="text-xs">
-                      Informações oficiais utilizadas para responder dúvidas instantaneamente e contextualizar a IA.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4 pt-2">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="space-y-1.5">
-                        <Label className="text-xs font-semibold flex items-center gap-1">
-                          <Wifi className="w-3 h-3 text-emerald-600" /> Nome da Rede Wi-Fi
-                        </Label>
-                        <Input
-                          value={aiConfig.knowledgeBase?.wifiNetwork || ""}
-                          onChange={e => setAiConfig((prev: any) => ({
-                            ...prev,
-                            knowledgeBase: { ...prev.knowledgeBase, wifiNetwork: e.target.value }
-                          }))}
-                          className="h-9 text-xs"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs font-semibold flex items-center gap-1">
-                          <Key className="w-3 h-3 text-emerald-600" /> Senha do Wi-Fi
-                        </Label>
-                        <Input
-                          value={aiConfig.knowledgeBase?.wifiPassword || ""}
-                          onChange={e => setAiConfig((prev: any) => ({
-                            ...prev,
-                            knowledgeBase: { ...prev.knowledgeBase, wifiPassword: e.target.value }
-                          }))}
-                          className="h-9 text-xs font-mono"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="space-y-1.5">
-                        <Label className="text-xs font-semibold">Horário Check-in</Label>
-                        <Input
-                          value={aiConfig.knowledgeBase?.checkinTime || "14:00"}
-                          onChange={e => setAiConfig((prev: any) => ({
-                            ...prev,
-                            knowledgeBase: { ...prev.knowledgeBase, checkinTime: e.target.value }
-                          }))}
-                          className="h-9 text-xs"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs font-semibold">Horário Check-out</Label>
-                        <Input
-                          value={aiConfig.knowledgeBase?.checkoutTime || "12:00"}
-                          onChange={e => setAiConfig((prev: any) => ({
-                            ...prev,
-                            knowledgeBase: { ...prev.knowledgeBase, checkoutTime: e.target.value }
-                          }))}
-                          className="h-9 text-xs"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold flex items-center gap-1">
-                        <Coffee className="w-3 h-3 text-amber-600" /> Café da Manhã
-                      </Label>
-                      <Input
-                        value={aiConfig.knowledgeBase?.breakfastInfo || ""}
-                        onChange={e => setAiConfig((prev: any) => ({
-                          ...prev,
-                          knowledgeBase: { ...prev.knowledgeBase, breakfastInfo: e.target.value }
-                        }))}
-                        className="h-9 text-xs"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold flex items-center gap-1">
-                        <DoorOpen className="w-3 h-3 text-blue-600" /> Garagem & Estacionamento
-                      </Label>
-                      <Input
-                        value={aiConfig.knowledgeBase?.garageInfo || ""}
-                        onChange={e => setAiConfig((prev: any) => ({
-                          ...prev,
-                          knowledgeBase: { ...prev.knowledgeBase, garageInfo: e.target.value }
-                        }))}
-                        className="h-9 text-xs"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold flex items-center gap-1">
-                        <MapPin className="w-3 h-3 text-rose-600" /> Endereço Oficial
-                      </Label>
-                      <Input
-                        value={aiConfig.knowledgeBase?.address || ""}
-                        onChange={e => setAiConfig((prev: any) => ({
-                          ...prev,
-                          knowledgeBase: { ...prev.knowledgeBase, address: e.target.value }
-                        }))}
-                        className="h-9 text-xs"
-                      />
-                    </div>
-
+                    {/* Botão de Salvar Configurações do Agente */}
                     <div className="pt-2">
                       <Button
                         type="button"
@@ -2383,9 +2274,70 @@ export default function WhatsappAutomation() {
                         className="w-full h-10 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs gap-2"
                       >
                         {savingAiConfig ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                        Salvar Todas as Configurações da IA
+                        Salvar Configurações do Agente
                       </Button>
                     </div>
+                  </CardContent>
+                </Card>
+
+                {/* Central Oficial de Respostas & Base de Conhecimento (Unificada na Aba Base & FAQ) */}
+                <Card className="border border-indigo-200/80 dark:border-indigo-900/60 bg-gradient-to-br from-indigo-50/50 via-white to-blue-50/40 dark:from-slate-900 dark:to-indigo-950/20 shadow-xs">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-base font-bold flex items-center gap-2 text-indigo-950 dark:text-indigo-200">
+                        <HelpCircle className="w-4 h-4 text-indigo-600" />
+                        Base de Conhecimento & FAQ Oficial
+                      </CardTitle>
+                      <Badge variant="outline" className="bg-indigo-100 text-indigo-800 dark:bg-indigo-950 border-indigo-200 text-[10px] font-bold">
+                        Fonte Única da Verdade
+                      </Badge>
+                    </div>
+                    <CardDescription className="text-xs text-indigo-900/70 dark:text-indigo-300/70">
+                      Todas as informações oficiais de Wi-Fi, Café da Manhã, Garagem, Estrutura e Políticas estão centralizadas na aba <strong>📚 Base & FAQ</strong>. Tanto a Sofia quanto os operadores utilizam rigorosamente a mesma base de respostas aprovadas.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3 pt-1">
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div className="p-2.5 rounded-lg bg-white/80 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700/60 flex items-center gap-2">
+                        <Wifi className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <div>
+                          <p className="font-semibold text-slate-800 dark:text-slate-200">Wi-Fi Oficial</p>
+                          <p className="text-[10px] text-muted-foreground">Rede apto &#123;número&#125; • Senha padrão</p>
+                        </div>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-white/80 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700/60 flex items-center gap-2">
+                        <Coffee className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                        <div>
+                          <p className="font-semibold text-slate-800 dark:text-slate-200">Café da Manhã</p>
+                          <p className="text-[10px] text-muted-foreground">05h às 09:30 • Bandeja no quarto</p>
+                        </div>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-white/80 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700/60 flex items-center gap-2">
+                        <DoorOpen className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                        <div>
+                          <p className="font-semibold text-slate-800 dark:text-slate-200">Garagem Soho</p>
+                          <p className="text-[10px] text-muted-foreground">Rotativa grátis • Placa no check-in</p>
+                        </div>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-white/80 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700/60 flex items-center gap-2">
+                        <MapPin className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                        <div>
+                          <p className="font-semibold text-slate-800 dark:text-slate-200">Localização</p>
+                          <p className="text-[10px] text-muted-foreground">R. Conselheiro Otaviano, 209</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setActiveTab("faq")}
+                      className="w-full h-9 rounded-xl border-indigo-300 dark:border-indigo-800 hover:bg-indigo-100/60 dark:hover:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-bold text-xs gap-2 mt-2"
+                    >
+                      <HelpCircle className="w-3.5 h-3.5" />
+                      Gerenciar Base de Conhecimento & FAQs Oficiais
+                      <ExternalLink className="w-3.5 h-3.5 ml-auto" />
+                    </Button>
                   </CardContent>
                 </Card>
               </div>

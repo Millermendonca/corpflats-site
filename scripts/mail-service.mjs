@@ -936,8 +936,8 @@ export function renderAccessInstructionsEmail({ reservation, flat, settings, bas
   const hostBase = baseUrl || settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com";
 
   const checkinUrl = getCheckinUrlSync(reservation, 1, hostBase, db || settings);
-  const wifiNetwork = flat?.wifiNetwork || settings?.wifiNetwork || "CorpFlats";
-  const wifiPassword = flat?.wifiPassword || settings?.wifiPassword || "corpflats2026";
+  const wifiNetwork = flat?.wifiNetwork || settings?.wifiNetwork || (flatDisplay ? `apto ${flatDisplay}` : "apto {quarto}");
+  const wifiPassword = flat?.wifiPassword || settings?.wifiPassword || "1234567890123";
 
   const subject = `[INSTRUÇÕES DE ACESSO] ${flatDisplay} - ${guestName} (${buildingName})`;
 
