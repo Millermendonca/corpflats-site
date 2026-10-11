@@ -10,6 +10,8 @@ import {
   getDiagnostics,
   getMonitorConfig,
   serverMonitorMiddleware,
+  startMonitoringEngine,
+  stopMonitoringEngine,
   MONITOR_CONFIG
 } from "../scripts/server-monitor-service.mjs";
 
@@ -218,3 +220,41 @@ test("Server Monitor Middleware: Bypass de assets com query strings e limpeza id
   const slowMatches = snapshot.recentSlowRequests.filter(r => r.url === "/api/pms/test-route-latency");
   assert.equal(slowMatches.length, 1, "Deve registrar exatamente 1 registro deduplicado em recentSlowRequests");
 });
+
+test("Server Monitor: Limitação de activeRequestsMap sob alta concorrência e retenção enxuta de telemetria", async () => {
+  // 1. Simula >100 requisições simultâneas para validar descarte de registros e teto estrito de 100 itens
+  const handlers = [];
+  for (let i = 0; i < 120; i++) {
+    const fakeReq = {
+      method: "GET",
+      url: `/api/pms/concurrent-${i}`,
+      headers: { "x-forwarded-for": "10.0.0.1" }
+    };
+    const fakeRes = {
+      statusCode: 200,
+      handlers: {},
+      on(event, handler) { this.handlers[event] = handler; }
+    };
+    serverMonitorMiddleware(fakeReq, fakeRes, () => {});
+    handlers.push(fakeRes);
+  }
+
+  const live = getLiveSnapshot();
+  assert.ok(
+    live.current.traffic.activeRequestsCount <= 100,
+    `activeRequestsMap deve respeitar o limite máximo de 100 itens (atual: ${live.current.traffic.activeRequestsCount})`
+  );
+
+  // Limpa as requisições simuladas disparando finish
+  for (const h of handlers) {
+    if (h.handlers.finish) h.handlers.finish();
+  }
+
+  // 2. Valida startMonitoringEngine, retenção enxuta e getTelemetryHistory
+  startMonitoringEngine();
+  const history = getTelemetryHistory(15);
+  assert.ok(Array.isArray(history), "getTelemetryHistory deve retornar um array");
+  assert.ok(history.length <= MONITOR_CONFIG.HISTORY_MAX_SAMPLES, "Histórico não pode ultrapassar HISTORY_MAX_SAMPLES");
+  stopMonitoringEngine();
+});
+

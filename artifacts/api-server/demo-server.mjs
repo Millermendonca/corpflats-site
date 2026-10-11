@@ -5289,7 +5289,7 @@ export async function inspectDocumentWithAI({
     }
   } else if (typeof effectiveFile === "string" && (effectiveFile.startsWith("/") || effectiveFile.startsWith("./")) && fs.existsSync(effectiveFile)) {
     try {
-      const buf = fs.readFileSync(effectiveFile);
+      const buf = await fs.promises.readFile(effectiveFile);
       rawBase64 = buf.toString("base64");
       if (effectiveFile.endsWith(".pdf")) mimeType = "application/pdf";
       else if (effectiveFile.endsWith(".png")) mimeType = "image/png";
@@ -5744,7 +5744,8 @@ function pruneDatabase() {
     garageAuthorizations: 500,
     reservationCommunications: 500,
     serviceOrders: 500,
-    auditLogs: 200
+    auditLogs: 200,
+    notifications: 250
   };
 
   for (const [key, max] of Object.entries(LIMITS)) {
@@ -5855,6 +5856,7 @@ export function getGuestIndexes() {
   const guestsByName = new Map();
 
   for (const g of current) {
+    if (!g || typeof g !== "object") continue;
     if (g.id !== undefined && g.id !== null) {
       guestsById.set(g.id, g);
       guestsById.set(String(g.id), g);
@@ -5893,6 +5895,7 @@ export function getFlatsByNumberMap() {
   }
   const flatsMap = new Map();
   for (const f of current) {
+    if (!f || typeof f !== "object") continue;
     if (f.number !== undefined && f.number !== null) {
       flatsMap.set(String(f.number), f);
       const num = Number(f.number);
@@ -6046,6 +6049,28 @@ function saveDatabase(reason = "auto_save") {
     console.error("[Database] Erro ao salvar database:", err);
   }
 }
+
+// ── Tratamento Graceful de Shutdown (Persistência Imediata em Rediploys do Render) ──
+function handleGracefulShutdown(signal) {
+  try {
+    if (pendingLocalDirty || pendingPgDirty) {
+      console.log(`[Database] Sinal ${signal} recebido. Forçando gravação de estado pendente antes do encerramento...`);
+      saveDatabase("shutdown");
+    }
+  } catch (err) {
+    console.error(`[Database] Erro ao gravar dados no shutdown (${signal}):`, err.message);
+  }
+}
+
+process.on("SIGTERM", () => {
+  handleGracefulShutdown("SIGTERM");
+  process.exit(0);
+});
+
+process.on("SIGINT", () => {
+  handleGracefulShutdown("SIGINT");
+  process.exit(0);
+});
 
 // ── Fail-Safe Audit Log Engine ───────────────────────────────────────────────
 const AUDIT_LOG_FILE = path.join(__dirname, "audit_logs.jsonl");
@@ -6216,7 +6241,12 @@ function createNotification(arg1, arg2, arg3) {
       return null;
     }
 
-    const id = db.notifications.length > 0 ? Math.max(...db.notifications.map(n => n.id)) + 1 : 1;
+    let maxNotifId = 0;
+    for (const n of db.notifications) {
+      const nid = Number(n?.id) || 0;
+      if (nid > maxNotifId) maxNotifId = nid;
+    }
+    const id = maxNotifId + 1;
     const notification = {
       id,
       category,
@@ -29976,19 +30006,39 @@ let interTokenCache = {
   expiresAt: 0
 };
 
+let cachedInterCert = null;
+let cachedInterKey = null;
+
 function getInterCertificates() {
   const cfg = db.settings?.interConfig || DEFAULT_INTER_CONFIG;
   let cert = cfg.certText;
   let key = cfg.keyText;
 
-  const defaultCertPath = path.resolve(__dirname, "./certs/inter.crt");
-  const defaultKeyPath = path.resolve(__dirname, "./certs/inter.key");
-
-  if (!cert && fs.existsSync(defaultCertPath)) {
-    try { cert = fs.readFileSync(defaultCertPath, "utf-8"); } catch {}
+  if (!cert) {
+    if (cachedInterCert) {
+      cert = cachedInterCert;
+    } else {
+      const defaultCertPath = path.resolve(__dirname, "./certs/inter.crt");
+      if (fs.existsSync(defaultCertPath)) {
+        try {
+          cert = fs.readFileSync(defaultCertPath, "utf-8");
+          cachedInterCert = cert;
+        } catch {}
+      }
+    }
   }
-  if (!key && fs.existsSync(defaultKeyPath)) {
-    try { key = fs.readFileSync(defaultKeyPath, "utf-8"); } catch {}
+  if (!key) {
+    if (cachedInterKey) {
+      key = cachedInterKey;
+    } else {
+      const defaultKeyPath = path.resolve(__dirname, "./certs/inter.key");
+      if (fs.existsSync(defaultKeyPath)) {
+        try {
+          key = fs.readFileSync(defaultKeyPath, "utf-8");
+          cachedInterKey = key;
+        } catch {}
+      }
+    }
   }
 
   // Fallback garantido com certificados oficiais cadastrados
