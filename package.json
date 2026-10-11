@@ -6,7 +6,7 @@
   "scripts": {
     "build": "npm --prefix artifacts/limpeza run build",
     "postinstall": "npm --prefix artifacts/limpeza run build",
-    "start": "node server.mjs"
+    "start": "node --max-old-space-size=384 server.mjs"
   },
   "private": true,
   "dependencies": {

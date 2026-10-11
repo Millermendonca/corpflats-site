@@ -3462,12 +3462,140 @@ function sanitizeReservationFlags() {
 }
 
 
+// ── Breakfast Canonical Normalizer & Items ──────────────────────────────────
+// Garante que pedidos Padrão e Personalizados usem exatamente os mesmos nomes canônicos
+// e que a produção diária consolide itens idênticos (ex: Café duplo, Pão francês, etc.) sem duplicidade.
+export const CANONICAL_BREAKFAST_ALIASES = [
+  // Cafés
+  { pattern: /^caf[eé](\s+(puro|preto|tradicional|simples|quente))?$/i, canonical: "Café" },
+  { pattern: /^caf[eé]\s+duplo$/i, canonical: "Café duplo" },
+  { pattern: /^caf[eé]\s+(com|c\/|e)\s*leite$/i, canonical: "Café com leite" },
+  { pattern: /^leite(\s+(puro|quente|frio|gelado))?$/i, canonical: "Leite" },
+  { pattern: /^leite\s+duplo$/i, canonical: "Leite duplo" },
+
+  // Outras Bebidas
+  { pattern: /^suco\s+de\s+laranja$/i, canonical: "Suco de laranja" },
+  { pattern: /^suco\s+de\s+uva$/i, canonical: "Suco de uva" },
+  { pattern: /^achocolatado(\s+gelado)?$/i, canonical: "Achocolatado gelado" },
+  { pattern: /^vitamina\s+de\s+banana(\s+com\s+iogurte\s+de\s+morango)?$/i, canonical: "Vitamina de banana com iogurte de morango" },
+  { pattern: /^([aá]gua|agua)(\s+mineral)?(\s+500ml)?$/i, canonical: "Água mineral" },
+
+  // Pães
+  { pattern: /^p[aã]o\s+franc[eê]s$/i, canonical: "Pão francês" },
+  { pattern: /^p[aã]o\s+de\s+queijo$/i, canonical: "Pão de queijo" },
+  { pattern: /^p[aã]o\s+integral$/i, canonical: "Pão integral" },
+
+  // Acompanhamentos / Frios / Ovos
+  { pattern: /^(queijo\s+)?mussarela$/i, canonical: "Queijo mussarela" },
+  { pattern: /^(queijo\s+)?prato$/i, canonical: "Queijo prato" },
+  { pattern: /^(queijo\s+)?minas(\s+frescal)?$/i, canonical: "Queijo Minas frescal" },
+  { pattern: /^presunto(\s+cozido)?$/i, canonical: "Presunto" },
+  { pattern: /^peito\s+de\s+peru(\s+defumado)?$/i, canonical: "Peito de Peru" },
+  { pattern: /^ovos?\s+mexidos?$/i, canonical: "Ovos mexidos" },
+  { pattern: /^ovos?\s+cozidos?$/i, canonical: "Ovos cozidos" },
+  { pattern: /^omelete(\s+completo)?$/i, canonical: "Omelete completo" },
+
+  // Complementos
+  { pattern: /^manteiga(\s+(com|c\/)\s*sal)?$/i, canonical: "Manteiga" },
+  { pattern: /^manteiga\s+dupla$/i, canonical: "Manteiga dupla" },
+  { pattern: /^requeij[aã]o(\s+cremoso)?$/i, canonical: "Requeijão" },
+  { pattern: /^requeij[aã]o\s+duplo$/i, canonical: "Requeijão duplo" },
+  { pattern: /^mel(\s+de\s+abelha)?$/i, canonical: "Mel" },
+  { pattern: /^leite\s+condensado$/i, canonical: "Leite condensado" },
+
+  // Doces & Biscoitos
+  { pattern: /^bolo(\s+do\s+dia)?$/i, canonical: "Bolo do dia" },
+  { pattern: /^torradas?(\s+amanteigadas?)?$/i, canonical: "Torradas amanteigadas" },
+  { pattern: /^torradas?\s+duplas?$/i, canonical: "Torradas duplas" },
+  { pattern: /^casadinhos?(\s*\(biscoito\s+com\s+goiabada\))?$/i, canonical: "Casadinho (biscoito com goiabada)" },
+  { pattern: /^casadinhos?\s+duplos?$/i, canonical: "Casadinhos duplos" },
+
+  // Frutas
+  { pattern: /^banana(\s+prata)?$/i, canonical: "Banana" },
+  { pattern: /^ma[cç][aã](\s+fuji|\s+gala)?$/i, canonical: "Maçã" },
+  { pattern: /^mam[aã]o(\s+papaya|\s+formosa)?(\s+(com|c\/)\s*mel)?$/i, canonical: "Mamão" },
+  { pattern: /^salada\s+de\s+frutas?(\s*\(.*\))?$/i, canonical: "Salada de frutas" },
+  { pattern: /^fruta\s+do\s+dia(\s*\(.*\))?$/i, canonical: "Fruta do dia" },
+
+  // Adoçamento
+  { pattern: /^a[cç][uú]car(\s+sach[eê])?$/i, canonical: "Açúcar" },
+  { pattern: /^ado[cç]ante(\s+sach[eê])?$/i, canonical: "Adoçante" },
+  { pattern: /^ambos(\s*\(.*\))?$/i, canonical: "Ambos (Açúcar + Adoçante)" }
+];
+
+export function normalizeBreakfastItem(name) {
+  if (!name || typeof name !== "string") return "";
+  const cleaned = name.trim();
+  for (const entry of CANONICAL_BREAKFAST_ALIASES) {
+    if (entry.pattern.test(cleaned)) {
+      return entry.canonical;
+    }
+  }
+  return cleaned;
+}
+
+export function splitLegacyCompoundItem(name) {
+  if (!name || typeof name !== "string") return [];
+  const lower = name.trim().toLowerCase();
+  if (
+    lower === "café e leite" ||
+    lower === "cafe e leite" ||
+    lower === "café com leite" ||
+    lower === "cafe com leite" ||
+    lower === "café, leite" ||
+    lower === "cafe, leite" ||
+    lower === "café / leite" ||
+    lower === "cafe / leite"
+  ) {
+    return ["Café", "Leite"];
+  }
+  if (lower === "manteiga e requeijão" || lower === "manteiga e requeijao") {
+    return ["Manteiga", "Requeijão"];
+  }
+  return [normalizeBreakfastItem(name)];
+}
+
+export function isExcludedBreakfastItem(name) {
+  if (!name) return true;
+  const lower = name.trim().toLowerCase();
+  return (
+    lower.startsWith("não quero") ||
+    lower.startsWith("nao quero") ||
+    lower.startsWith("nenhum") ||
+    lower.startsWith("sem ") ||
+    lower === "nenhuma outra bebida" ||
+    lower === "nenhuma fruta"
+  );
+}
+
+export const STANDARD_BREAKFAST_ITEMS = [
+  "Café",
+  "Leite",
+  "Suco de laranja",
+  "Pão francês",
+  "Pão de queijo",
+  "Queijo mussarela",
+  "Presunto",
+  "Manteiga",
+  "Bolo do dia",
+  "Fruta do dia",
+  "Açúcar"
+];
+
 // ── Recuperação Automática e À Prova de Falhas via Logs de Auditoria do PostgreSQL ──
 export async function reconcileFromAuditLogs(db, pgPool) {
   if (!pgPool) return false;
   try {
     const q = await pgPool.query(
-      "SELECT * FROM system_audit_logs ORDER BY timestamp ASC"
+      `SELECT id, timestamp, action, details
+       FROM system_audit_logs
+       WHERE action LIKE 'RESERVATION_%'
+          OR action LIKE '%STAY_EXTENDED%'
+          OR action = 'NOTIFICATION_BREAKFAST'
+          OR action LIKE 'CLEANING_%'
+          OR action LIKE 'COMPANY_%'
+       ORDER BY id DESC
+       LIMIT 1000`
     );
     if (!q || !q.rows || q.rows.length === 0) return false;
 
@@ -3478,7 +3606,8 @@ export async function reconcileFromAuditLogs(db, pgPool) {
       activeFlatsMap.set(Number(f.id), f);
     });
 
-    const logs = q.rows;
+    // Reverte para ordem cronológica (antigo -> novo) para reproduzir o histórico corretamente
+    const logs = q.rows.reverse();
 
     // 1. RECONCILIAR RESERVAS
     const distinctRes = new Map();
@@ -5513,12 +5642,76 @@ async function ensureBackupsTable() {
       CREATE INDEX IF NOT EXISTS idx_backups_timestamp ON system_store_backups (timestamp DESC);
     `);
     backupsTableReady = true;
+
+    // Limpeza mandatória de inicialização: remove snapshots legados excedentes
+    const oldSnapshots = await pgPool.query(
+      "SELECT id FROM system_store_backups ORDER BY id DESC OFFSET 25 LIMIT 1"
+    );
+    if (oldSnapshots.rows.length > 0) {
+      const cutoffId = oldSnapshots.rows[0].id;
+      const delRes = await pgPool.query("DELETE FROM system_store_backups WHERE id < $1", [cutoffId]);
+      console.log(`[PostgreSQL] Snapshots legados podados com sucesso (${delRes.rowCount || 0} removidos, mantidos os 25 mais recentes).`);
+    }
+
+    // Prune audit logs older than 90 days to keep system_audit_logs light
+    await pgPool.query("DELETE FROM system_audit_logs WHERE timestamp < NOW() - INTERVAL '90 days'").catch(() => {});
   } catch (err) {
     console.warn("[PostgreSQL] Erro ao assegurar tabela system_store_backups:", err.message);
   }
 }
 
 let lastBackupSnapshotTime = 0;
+let isPgSaving = false;
+let pendingPgStateJson = null;
+let pendingPgReason = "auto_save";
+let pgSaveTimeout = null;
+
+async function flushPgState() {
+  if (!pgPool || !pgHydratedSuccessfully || isPgSaving || !pendingPgStateJson) return;
+  isPgSaving = true;
+  const stateToSave = pendingPgStateJson;
+  const reasonToSave = pendingPgReason;
+  pendingPgStateJson = null;
+
+  try {
+    await pgPool.query(
+      "INSERT INTO system_store (key, value, updated_at) VALUES ('db_state', $1::jsonb, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1::jsonb, updated_at = NOW()",
+      [stateToSave]
+    );
+    lastPersistInfo = { status: "success", timestamp: new Date().toISOString(), error: null };
+
+    const resCount = db.reservations ? db.reservations.length : 0;
+    if (resCount > 0) {
+      const nowMs = Date.now();
+      // Snapshots históricos em system_store_backups a cada 15 minutos (900.000 ms) ou operações manuais
+      const SNAPSHOT_INTERVAL_MS = 15 * 60 * 1000;
+      if (nowMs - lastBackupSnapshotTime > SNAPSHOT_INTERVAL_MS || reasonToSave.startsWith("manual_") || reasonToSave.startsWith("repair_")) {
+        lastBackupSnapshotTime = nowMs;
+        await ensureBackupsTable();
+        await pgPool.query(
+          "INSERT INTO system_store_backups (timestamp, reason, reservations_count, value) VALUES (NOW(), $1, $2, $3::jsonb)",
+          [reasonToSave, resCount, stateToSave]
+        );
+        // Limpeza ágil usando index scan (mantém últimos 25 snapshots para não estourar RAM/disco do Render)
+        const thresholdRes = await pgPool.query(
+          "SELECT id FROM system_store_backups ORDER BY id DESC OFFSET 25 LIMIT 1"
+        );
+        if (thresholdRes.rows.length > 0) {
+          const cutoffId = thresholdRes.rows[0].id;
+          await pgPool.query("DELETE FROM system_store_backups WHERE id < $1", [cutoffId]);
+        }
+      }
+    }
+  } catch (e) {
+    lastPersistInfo = { status: "error", timestamp: new Date().toISOString(), error: e.message };
+    console.error("[PostgreSQL] Erro ao persistir estado:", e.message);
+  } finally {
+    isPgSaving = false;
+    if (pendingPgStateJson) {
+      setTimeout(flushPgState, 500);
+    }
+  }
+}
 
 // ── Pruning Engine — Limita coleções em memória para evitar OOM (512MB Render Free) ──
 function pruneDatabase() {
@@ -5532,7 +5725,8 @@ function pruneDatabase() {
     lostAndFound: 300,
     garageAuthorizations: 500,
     reservationCommunications: 500,
-    serviceOrders: 500
+    serviceOrders: 500,
+    auditLogs: 200
   };
 
   for (const [key, max] of Object.entries(LIMITS)) {
@@ -5612,30 +5806,19 @@ function saveDatabase(reason = "auto_save") {
         console.warn("[PostgreSQL] BLINDAGEM ATIVA: Ignorando saveDatabase temporariamente porque o banco ainda não hidratou na inicialização.");
         return;
       }
-      pgPool.query(
-        "INSERT INTO system_store (key, value, updated_at) VALUES ('db_state', $1::jsonb, NOW()) ON CONFLICT (key) DO UPDATE SET value = $1::jsonb, updated_at = NOW()",
-        [stateJson]
-      ).then(() => {
-        lastPersistInfo = { status: "success", timestamp: new Date().toISOString(), error: null };
-      }).catch(e => {
-        lastPersistInfo = { status: "error", timestamp: new Date().toISOString(), error: e.message };
-        console.error("[PostgreSQL] Erro ao persistir estado:", e.message);
-      });
+      pendingPgStateJson = stateJson;
+      pendingPgReason = reason;
 
-      const resCount = db.reservations ? db.reservations.length : 0;
-      if (resCount > 0) {
-        const nowMs = Date.now();
-        // Evita rajada excessiva de snapshots em system_store_backups (mínimo 30s entre auto_saves)
-        if (nowMs - lastBackupSnapshotTime > 30000 || reason.startsWith("manual_") || reason.startsWith("repair_")) {
-          lastBackupSnapshotTime = nowMs;
-          ensureBackupsTable().then(() => {
-            return pgPool.query(
-              "INSERT INTO system_store_backups (timestamp, reason, reservations_count, value) VALUES (NOW(), $1, $2, $3::jsonb)",
-              [reason, resCount, stateJson]
-            );
-          }).then(() => {
-            pgPool.query("DELETE FROM system_store_backups WHERE id NOT IN (SELECT id FROM system_store_backups ORDER BY timestamp DESC LIMIT 500)").catch(() => {});
-          }).catch(e => console.warn("[PostgreSQL Backup Snapshot]", e.message));
+      if (reason.startsWith("manual_") || reason.startsWith("repair_") || reason === "shutdown") {
+        if (pgSaveTimeout) clearTimeout(pgSaveTimeout);
+        pgSaveTimeout = null;
+        flushPgState().catch(() => {});
+      } else {
+        if (!pgSaveTimeout && !isPgSaving) {
+          pgSaveTimeout = setTimeout(() => {
+            pgSaveTimeout = null;
+            flushPgState().catch(() => {});
+          }, 800);
         }
       }
     }
@@ -5691,10 +5874,10 @@ async function logAuditEvent(arg1, arg2) {
       userAgent: userAgent || (actor && actor.userAgent) || ""
     };
 
-    // 1. Memória (Últimos 2.500 registros)
+    // 1. Memória (Últimos 200 registros)
     db.auditLogs.unshift(logEntry);
-    if (db.auditLogs.length > 2500) {
-      db.auditLogs = db.auditLogs.slice(0, 2500);
+    if (db.auditLogs.length > 200) {
+      db.auditLogs = db.auditLogs.slice(0, 200);
     }
 
     // 2. Append-Only em arquivo local à prova de falhas
@@ -25176,126 +25359,6 @@ app.get("/api/lookup-cep/:cep", async (req, res) => {
 });
 
 // ── Breakfast System (Café da Manhã dos Hóspedes & Produção da Cozinha) ─────
-
-// Normalizador Canônico de Itens do Café da Manhã
-// Garante que pedidos Padrão e Personalizados usem exatamente os mesmos nomes canônicos
-// e que a produção diária consolide itens idênticos (ex: Café duplo, Pão francês, etc.) sem duplicidade.
-const CANONICAL_BREAKFAST_ALIASES = [
-  // Cafés
-  { pattern: /^caf[eé](\s+(puro|preto|tradicional|simples|quente))?$/i, canonical: "Café" },
-  { pattern: /^caf[eé]\s+duplo$/i, canonical: "Café duplo" },
-  { pattern: /^caf[eé]\s+(com|c\/|e)\s*leite$/i, canonical: "Café com leite" },
-  { pattern: /^leite(\s+(puro|quente|frio|gelado))?$/i, canonical: "Leite" },
-  { pattern: /^leite\s+duplo$/i, canonical: "Leite duplo" },
-
-  // Outras Bebidas
-  { pattern: /^suco\s+de\s+laranja$/i, canonical: "Suco de laranja" },
-  { pattern: /^suco\s+de\s+uva$/i, canonical: "Suco de uva" },
-  { pattern: /^achocolatado(\s+gelado)?$/i, canonical: "Achocolatado gelado" },
-  { pattern: /^vitamina\s+de\s+banana(\s+com\s+iogurte\s+de\s+morango)?$/i, canonical: "Vitamina de banana com iogurte de morango" },
-  { pattern: /^([aá]gua|agua)(\s+mineral)?(\s+500ml)?$/i, canonical: "Água mineral" },
-
-  // Pães
-  { pattern: /^p[aã]o\s+franc[eê]s$/i, canonical: "Pão francês" },
-  { pattern: /^p[aã]o\s+de\s+queijo$/i, canonical: "Pão de queijo" },
-  { pattern: /^p[aã]o\s+integral$/i, canonical: "Pão integral" },
-
-  // Acompanhamentos / Frios / Ovos
-  { pattern: /^(queijo\s+)?mussarela$/i, canonical: "Queijo mussarela" },
-  { pattern: /^(queijo\s+)?prato$/i, canonical: "Queijo prato" },
-  { pattern: /^(queijo\s+)?minas(\s+frescal)?$/i, canonical: "Queijo Minas frescal" },
-  { pattern: /^presunto(\s+cozido)?$/i, canonical: "Presunto" },
-  { pattern: /^peito\s+de\s+peru(\s+defumado)?$/i, canonical: "Peito de Peru" },
-  { pattern: /^ovos?\s+mexidos?$/i, canonical: "Ovos mexidos" },
-  { pattern: /^ovos?\s+cozidos?$/i, canonical: "Ovos cozidos" },
-  { pattern: /^omelete(\s+completo)?$/i, canonical: "Omelete completo" },
-
-  // Complementos
-  { pattern: /^manteiga(\s+(com|c\/)\s*sal)?$/i, canonical: "Manteiga" },
-  { pattern: /^manteiga\s+dupla$/i, canonical: "Manteiga dupla" },
-  { pattern: /^requeij[aã]o(\s+cremoso)?$/i, canonical: "Requeijão" },
-  { pattern: /^requeij[aã]o\s+duplo$/i, canonical: "Requeijão duplo" },
-  { pattern: /^mel(\s+de\s+abelha)?$/i, canonical: "Mel" },
-  { pattern: /^leite\s+condensado$/i, canonical: "Leite condensado" },
-
-  // Doces & Biscoitos
-  { pattern: /^bolo(\s+do\s+dia)?$/i, canonical: "Bolo do dia" },
-  { pattern: /^torradas?(\s+amanteigadas?)?$/i, canonical: "Torradas amanteigadas" },
-  { pattern: /^torradas?\s+duplas?$/i, canonical: "Torradas duplas" },
-  { pattern: /^casadinhos?(\s*\(biscoito\s+com\s+goiabada\))?$/i, canonical: "Casadinho (biscoito com goiabada)" },
-  { pattern: /^casadinhos?\s+duplos?$/i, canonical: "Casadinhos duplos" },
-
-  // Frutas
-  { pattern: /^banana(\s+prata)?$/i, canonical: "Banana" },
-  { pattern: /^ma[cç][aã](\s+fuji|\s+gala)?$/i, canonical: "Maçã" },
-  { pattern: /^mam[aã]o(\s+papaya|\s+formosa)?(\s+(com|c\/)\s*mel)?$/i, canonical: "Mamão" },
-  { pattern: /^salada\s+de\s+frutas?(\s*\(.*\))?$/i, canonical: "Salada de frutas" },
-  { pattern: /^fruta\s+do\s+dia(\s*\(.*\))?$/i, canonical: "Fruta do dia" },
-
-  // Adoçamento
-  { pattern: /^a[cç][uú]car(\s+sach[eê])?$/i, canonical: "Açúcar" },
-  { pattern: /^ado[cç]ante(\s+sach[eê])?$/i, canonical: "Adoçante" },
-  { pattern: /^ambos(\s*\(.*\))?$/i, canonical: "Ambos (Açúcar + Adoçante)" }
-];
-
-function normalizeBreakfastItem(name) {
-  if (!name || typeof name !== "string") return "";
-  const cleaned = name.trim();
-  for (const entry of CANONICAL_BREAKFAST_ALIASES) {
-    if (entry.pattern.test(cleaned)) {
-      return entry.canonical;
-    }
-  }
-  return cleaned;
-}
-
-function splitLegacyCompoundItem(name) {
-  if (!name || typeof name !== "string") return [];
-  const lower = name.trim().toLowerCase();
-  if (
-    lower === "café e leite" ||
-    lower === "cafe e leite" ||
-    lower === "café com leite" ||
-    lower === "cafe com leite" ||
-    lower === "café, leite" ||
-    lower === "cafe, leite" ||
-    lower === "café / leite" ||
-    lower === "cafe / leite"
-  ) {
-    return ["Café", "Leite"];
-  }
-  if (lower === "manteiga e requeijão" || lower === "manteiga e requeijao") {
-    return ["Manteiga", "Requeijão"];
-  }
-  return [normalizeBreakfastItem(name)];
-}
-
-function isExcludedBreakfastItem(name) {
-  if (!name) return true;
-  const lower = name.trim().toLowerCase();
-  return (
-    lower.startsWith("não quero") ||
-    lower.startsWith("nao quero") ||
-    lower.startsWith("nenhum") ||
-    lower.startsWith("sem ") ||
-    lower === "nenhuma outra bebida" ||
-    lower === "nenhuma fruta"
-  );
-}
-
-const STANDARD_BREAKFAST_ITEMS = [
-  "Café",
-  "Leite",
-  "Suco de laranja",
-  "Pão francês",
-  "Pão de queijo",
-  "Queijo mussarela",
-  "Presunto",
-  "Manteiga",
-  "Bolo do dia",
-  "Fruta do dia",
-  "Açúcar"
-];
 
 function initBreakfastData() {
   if (!db.breakfastOrders) {

@@ -2,6 +2,9 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import v8 from "node:v8";
+import { spawn } from "node:child_process";
+
 // Guardas de processo globais — previnem crash com Status 1 em exceções não tratadas
 process.on("uncaughtException", (err, origin) => {
   console.error(`[Process Crash Guard] Exceção não capturada (origem: ${origin}):`, err?.stack || err?.message || err);
@@ -10,15 +13,38 @@ process.on("unhandledRejection", (reason, promise) => {
   console.error("[Process Crash Guard] Rejeição de Promise não tratada:", reason?.stack || reason?.message || reason);
 });
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const isDirectRun = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(__filename);
+
+// Render Free Tier tem limite estrito de 512MB RAM total para a instância.
+// Se o processo Node foi iniciado sem --max-old-space-size adequado (< 450MB),
+// o V8 expande o heap para > 1.4GB e o kernel Linux mata o container com SIGKILL (OOM).
+// Respawna de forma transparente limitando o heap a 384MB para forçar GC agressivo.
+const currentHeapLimitMB = Math.round(v8.getHeapStatistics().heap_size_limit / (1024 * 1024));
+if (isDirectRun && !process.env.__CONTAINER_OPT__ && currentHeapLimitMB > 450 && process.env.NODE_ENV !== "test") {
+  const child = spawn(process.execPath, ["--max-old-space-size=384", ...process.argv.slice(1)], {
+    stdio: "inherit",
+    env: { ...process.env, __CONTAINER_OPT__: "1" }
+  });
+  child.on("exit", (code, signal) => {
+    if (signal) process.kill(process.pid, signal);
+    else process.exit(code ?? 0);
+  });
+  process.on("SIGTERM", () => child.kill("SIGTERM"));
+  process.on("SIGINT", () => child.kill("SIGINT"));
+  await new Promise(() => {});
+}
+
+const memStats = process.memoryUsage();
+console.log(`[Memory Guard] Heap limit: ${Math.round(v8.getHeapStatistics().heap_size_limit / (1024 * 1024))}MB | RSS inicial: ${Math.round(memStats.rss / (1024 * 1024))}MB`);
+
 if (!crypto.hash) {
   crypto.hash = function (algorithm, data, outputEncoding) {
     const hash = crypto.createHash(algorithm).update(data);
     return outputEncoding ? hash.digest(outputEncoding) : hash.digest();
   };
 }
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 // Carrega variáveis do Render (/etc/secrets) e de arquivos .env
 function loadEnvFiles() {
