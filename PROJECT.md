@@ -1,83 +1,58 @@
-# Project: Guest-Flow-Manager Dynamic FAQ & Knowledge Base
+# Project: CorpFlats Guest-Flow-Manager - Secure Reservation Modification Flow
 
 ## Architecture
-- **Backend & API Layer**: Node.js ESM Express server (`artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`) integrating with Z-API engine (`zapi-service.mjs`). Dual-mirrored byte-for-byte codebase between `artifacts/api-server/` and `scripts/`.
-- **Database & Persistence**: In-memory JSON database loaded from and atomic-saved to `data/database.json` and replicated to PostgreSQL (`system_store`). `db.faqItems` collection stores knowledge base items.
-- **Auto-Learning Engine**:
-  - Inbound webhook (`processAiInboundMessage`) detects unmapped queries requiring human handover and persists them as `"pendente"`.
-  - Outbound human response (`fromMe: true` via webhook or live chat API) captures operator response as `suggestedAnswer` with status `"aguardando_aprovacao"`.
-  - 1-click approval promotes status to `"ativo"`.
-- **Rule Engine & Client Exception**: `isFaqApplicableToClient` normalizes phone numbers (Brazilian DDI 55, DDD, 8/9 digit variants) and enforces scopes (`all`, `exclude`, `include_only`).
-- **Sofia AI Motor**: `whatsapp-ai-service.mjs` dynamically injects applicable active FAQs into Google Gemini context and prioritizes them in local heuristic search.
-- **Frontend UI Layer**: React + Vite 7 + Tailwind v4 + wouter in `artifacts/limpeza`. Dedicated tab "Base de Conhecimento & FAQ" on `/whatsapp-automation` with category cards/table, status filters, create/edit modal with exception config, and 1-click approval.
-- **Build & CI**: `npm run build` in `artifacts/limpeza` emits to `dist/public/`. Strict git push policy per `AGENTS.md`.
+- **Backend Core**: In-memory `db` persisted atomically via `atomicWriteFileSync` in `data/database.json`. Server entry points in `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs` maintaining strict 100% byte-for-byte SHA-256 parity.
+- **Guest Portal Frontend**: React + TypeScript single-page app in `artifacts/limpeza/src/pages/guest-portal.tsx` and `guest-pre-checkin.tsx`, built via Vite to `artifacts/limpeza/dist/`.
+- **Payment Layer**: Banco Inter PIX (dynamic mTLS + static EMV with QRCode), Mercado Pago Checkout preference, status polling (`/modify-status` / `/payment-status`).
+- **Legal & Reception Synchronization**: FNRH check-in document generation via `scripts/fnrh-pdf-service.mjs`, digital signatures, automated WhatsApp notifications via `scripts/zapi-service.mjs`, email dispatch via `scripts/mail-service.mjs`, and real-time polling on Reception (`/api/reception/today`) and Garage (`/api/pms/garage/daily-sheet`).
 
 ## Feature Inventory
 | # | Feature | Description | Milestone | Source |
 |---|---------|-------------|-----------|--------|
-| 1 | DB FAQ Collection & Seed | `db.faqItems` persistence in `data/database.json` initialized with official FAQs and pending items | M1 | ORIGINAL_REQUEST §R5, AC1 |
-| 2 | Phone Normalization & Rule Engine | `isFaqApplicableToClient` supporting scopes `all`, `exclude`, `include_only` with DDI/DDD normalization | M1 | ORIGINAL_REQUEST §R4, AC3 |
-| 3 | REST API Endpoints | `GET`, `POST`, `PUT`, `DELETE` on `/api/whatsapp/faq` and `POST /api/whatsapp/faq/:id/approve` | M1 | ORIGINAL_REQUEST §R1, AC1 |
-| 4 | Mirrored Code Parity | Ensure exact SHA-256 byte-for-byte identity between `artifacts/api-server/` and `scripts/` | M1 | Explorer Survey 3, AC4 |
-| 5 | Unmapped Inbound Detection | Detect unmapped guest questions in `processAiInboundMessage` and persist with status `"pendente"` | M2 | ORIGINAL_REQUEST §R2, AC2 |
-| 6 | Operator Response Capture | Capture `fromMe: true` operator responses linking `suggestedAnswer` and changing status to `"aguardando_aprovacao"` | M2 | ORIGINAL_REQUEST §R3, AC2 |
-| 7 | Sofia Motor Dynamic Integration | Dynamic injection of active FAQs into Gemini prompt and heuristic keyword fallback | M2 | ORIGINAL_REQUEST §R5, AC2 |
-| 8 | Frontend Route Alias | Declare `<AdminRoute path="/whatsapp-automation" ... />` in `artifacts/limpeza/src/App.tsx` | M3 | Explorer Survey 2, ORIGINAL_REQUEST §R1 |
-| 9 | UI Hook `use-faq` | React hook for FAQ state management, cache, API calls, and toast alerts | M3 | Explorer Survey 2 |
-| 10 | Knowledge Base & FAQ UI Tab | Tab in `/whatsapp-automation` with 9 category cards, table view, 4 status filters, modal, and 1-click approve | M3 | ORIGINAL_REQUEST §R1 |
-| 11 | Frontend Build & Dist Sync | Build frontend via `npm run build` in `artifacts/limpeza` generating `dist/public` | M3 | AGENTS.md, AC4 |
-| 12 | E2E Testing Suite | Comprehensive test suite in `tests/whatsapp-ai-agent.test.mjs` verifying R1-R5 | M4 | ORIGINAL_REQUEST AC4 |
-| 13 | Adversarial Coverage & Hardening | Stress testing corner cases, phone formats, and exception rules | M4 | Project Pattern Phase 2 |
-| 14 | Forensic Integrity & Git Push | Clean forensic audit, git commit and mandatory `git push` | M4 | AGENTS.md, ORIGINAL_REQUEST AC4 |
+| 1 | Simulation & Availability Check (`/modify-preview`) | Validates flat calendar availability, calculates daily rates, extra nights, 24h refund policy, and returns pricing breakdown without mutating database. | M1 | ORIGINAL_REQUEST R1 |
+| 2 | Provisional Hold & Conflict Guard | Prevents double-booking during payment checkout via 30-minute hold (`r.pendingModification`) while keeping original dates intact until payment confirmation. | M1 | ORIGINAL_REQUEST R1, R2 |
+| 3 | Payment Settlement Before Date Commit | When `additionalAmountToPay > 0`, dates are committed only after PIX/Card payment verification; canceling or abandoning leaves reservation untouched. | M1 | ORIGINAL_REQUEST R2 |
+| 4 | Audit Trail & Payment Recording | Commits `r.payments`, `r.totalAmount`, `r.modificationHistory`, and updates reservation dates atomically upon verified payment. | M1 | ORIGINAL_REQUEST R2 |
+| 5 | Mandatory Re-Signature Invalidation | Flags `r.needsReSignature = true`, clears `fnhrCompleted`, `signatureUrl`, and stale FNRH links whenever dates or flat change in Portal or PMS Admin. | M2 | ORIGINAL_REQUEST R3 |
+| 6 | Automated Re-Signature Communication | Dispatches WhatsApp and/or email notification with direct personalized link (`/pre-checkin/:code?resign=1`) for immediate re-signing. | M2 | ORIGINAL_REQUEST R3 |
+| 7 | Forensic Document Generation & Reception Email Delivery | Generates updated FNRH PDF with SHA-256 hash upon re-signing, clears `needsReSignature = false`, and delivers document to reception email. | M2 | ORIGINAL_REQUEST R3 |
+| 8 | Reception & Garage Panel Synchronization | Reception panel (`reception-tablet.tsx`) blocks check-in while `needsReSignature = true`; garage panel (`garage-dashboard.tsx`) adds polling to reflect updated stay dates & vehicle plates. | M3 | ORIGINAL_REQUEST R4 |
+| 9 | Guest Portal Multi-Step UI Modal & Re-Sign Banner | Guest portal displays Step 1 preview badge & cost breakdown, Step 2 PIX QR Code/Copia e Cola + Card checkout with polling, and top banner when re-signature is required. | M3 | ORIGINAL_REQUEST R1, R2, R3 |
+| 10 | Schedulers & Daily Routines Synchronization | Synchronizes morning 07:00 notification routine, breakfast orders, and housekeeping turnovers to new stay dates. | M2 | ORIGINAL_REQUEST R4 |
+| 11 | Comprehensive E2E Testing Suite (Tiers 1-4) | Automated tests covering availability simulation, payment settlement guardrails, re-signature invalidation, WhatsApp link dispatch, and panel synchronization. | M4 | ORIGINAL_REQUEST Acceptance Criteria |
+| 12 | Twin-Server Parity & Production Build Cleanliness | Strict SHA-256 parity between `scripts/` and `artifacts/api-server/`, clean `npm run build` in `artifacts/limpeza`, and git push to `origin main`. | M4 | Strict Guardrails & Parity |
 
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| M1 | Backend Core & Database Layer | Features 1, 2, 3, 4: Schema, seed, CRUD API, phone normalization & rule engine, code parity | none | DONE |
-| M2 | Auto-Learning & Sofia Motor Integration | Features 5, 6, 7: Inbound unmapped question detection, operator response capture, Sofia Gemini/heuristic integration | M1 | DONE |
-| M3 | Frontend UI & Build Delivery | Features 8, 9, 10, 11: Route alias, use-faq hook, FAQ tab, modal with rules, 1-click approval, build | M1, M2 | DONE |
-| M4 | Final Milestone: E2E Tests, Hardening & Git Push | Features 12, 13, 14: 100% E2E test pass, adversarial hardening, clean forensic audit, git commit and push | M1, M2, M3 | DONE |
+| M1 | Backend Simulation, Hold & Settlement Engine | Endpoints `/modify-preview`, `/modify-checkout`, `/modify-status`, `/modify-cancel-pending`, availability check, calendar hold, atomic payment commit. | None | PLANNED |
+| M2 | Re-Signature Lifecycle, Document Delivery & Ops Synchronization | Invalidation of signature on date/flat change, automated WhatsApp/email dispatch, PDF re-generation, reception email dispatch, scheduler sync. | M1 | PLANNED |
+| M3 | Guest Portal UI Flow, Modals & Operational Panels | Refactor `guest-portal.tsx` modal (Step 1 preview, Step 2 payment checkout), re-signature banner, `guest-pre-checkin.tsx` fast-track, and `garage-dashboard.tsx` polling. | M1, M2 | PLANNED |
+| M4 | Comprehensive E2E Test Suite, Parity & Production Verification | Tiers 1-4 automated tests, SHA-256 parity validation, clean `npm run build` in `artifacts/limpeza`, git push. | M1, M2, M3 | PLANNED |
 
 ## Interface Contracts
-### Backend ↔ Frontend API Contract
-- `GET /api/whatsapp/faq`: Returns `{ success: true, count: number, items: FaqItem[] }`
-- `POST /api/whatsapp/faq`: Body `{ question, answer, category, keywords?, variations?, scope?, clientPhones?, status? }` -> Returns `{ success: true, item: FaqItem }`
-- `PUT /api/whatsapp/faq/:id`: Body `{ question?, answer?, category?, keywords?, variations?, scope?, clientPhones?, status? }` -> Returns `{ success: true, item: FaqItem }`
-- `DELETE /api/whatsapp/faq/:id`: Returns `{ success: true, id: string }`
-- `POST /api/whatsapp/faq/:id/approve`: Body `{ answer?, category? }` -> Returns `{ success: true, item: FaqItem }` (sets `status: "ativo"`, `approvedAt: ISOString`)
-
-### FaqItem Schema
-```typescript
-interface FaqItem {
-  id: string;
-  question: string;
-  answer: string;
-  category: "reservas" | "checkin_acesso" | "wifi_tecnologia" | "cafe_manha" | "garagem" | "estrutura_flat" | "regras_visitas_pets" | "lazer_condominio" | "checkout";
-  keywords: string[];
-  variations: string[];
-  status: "ativo" | "inativo" | "pendente" | "aguardando_aprovacao";
-  scope: "all" | "exclude" | "include_only";
-  clientPhones: string[];
-  suggestedAnswer?: string;
-  sourceClientPhone?: string;
-  sourceClientName?: string;
-  createdAt: string;
-  updatedAt: string;
-  approvedAt?: string;
-}
-```
-
-### Auto-Learning Inbound/Outbound Contract
-- Inbound: `processAiInboundMessage({ db, incomingInfo, cleanTarget, ... })` -> if unmapped question & handover, push to `db.faqItems` with `status: "pendente"`.
-- Outbound: `onOperatorMessage({ db, phone, text })` -> if open pending item exists for phone in last 24h, set `suggestedAnswer = text`, `status = "aguardando_aprovacao"`.
+### Frontend ↔ Backend Modification Endpoints
+- `POST /api/pms/guest-portal/:code/modify-preview`
+  - Input: `{ newCheckinDate: string, newCheckoutDate: string, newGuestCount?: number, newFlatId?: string, reason?: string }`
+  - Output: `{ success: true, available: boolean, conflictMessage?: string, originalDates: { checkinDate, checkoutDate }, newDates: { checkinDate, checkoutDate }, dailyRate: number, extraNights: number, additionalAmountToPay: number, refundAmount: number, currency: 'BRL', requiresPayment: boolean }`
+- `POST /api/pms/guest-portal/:code/modify-checkout`
+  - Input: `{ newCheckinDate: string, newCheckoutDate: string, newGuestCount?: number, newFlatId?: string, reason?: string, paymentMethod: 'pix' | 'credit_card' }`
+  - Output: `{ success: true, pendingId: string, additionalAmountToPay: number, pixQrCodeUrl?: string, pixCopiaECola?: string, pixTxId?: string, mpCheckoutUrl?: string, expiresAt: string }`
+- `GET /api/pms/guest-portal/:code/modify-status?pendingId=:id`
+  - Output: `{ success: true, status: 'pending' | 'paid' | 'expired' | 'canceled', committed: boolean, message?: string }`
+- `POST /api/pms/guest-portal/:code/modify-cancel-pending`
+  - Input: `{ pendingId?: string }`
+  - Output: `{ success: true, message: string }`
+- `POST /api/pms/pre-checkin`
+  - Input: form submission with signature
+  - Behavior: Saves signature, clears `r.needsReSignature = false`, generates FNRH PDF with SHA-256 hash, delivers email to reception.
 
 ## Code Layout
-- `artifacts/api-server/zapi-service.mjs` & `scripts/zapi-service.mjs`: Z-API webhook, live chat, and FAQ REST API endpoints.
-- `artifacts/api-server/whatsapp-ai-service.mjs` & `scripts/whatsapp-ai-service.mjs`: AI motor, prompt injection, heuristic search, unmapped question auto-detection.
-- `artifacts/api-server/demo-server.mjs` & `scripts/demo-server.mjs`: Database initialization, seed FAQs in `db.faqItems`.
-- `data/database.json`: Persistent database state.
-- `artifacts/limpeza/src/App.tsx`: Route declaration for `/whatsapp-automation`.
-- `artifacts/limpeza/src/hooks/use-faq.ts`: FAQ state management hook.
-- `artifacts/limpeza/src/components/faq-knowledge-base.tsx` or `artifacts/limpeza/src/pages/whatsapp-automation.tsx`: UI tab, category cards, table, modal, 1-click approve.
-- `artifacts/limpeza/dist/`: Compiled production assets.
-- `tests/whatsapp-ai-agent.test.mjs`: Test suite covering R1-R5.
+- `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs`: Server routes and business logic (must be byte-for-byte identical).
+- `scripts/fnrh-pdf-service.mjs` and `artifacts/api-server/fnrh-pdf-service.mjs`: Forensic PDF generation with SHA-256.
+- `scripts/zapi-service.mjs` and `artifacts/api-server/zapi-service.mjs`: WhatsApp notification triggers.
+- `artifacts/limpeza/src/pages/guest-portal.tsx`: Guest Portal UI, reservation view, modification modal.
+- `artifacts/limpeza/src/pages/guest-pre-checkin.tsx`: Pre-checkin and re-signing canvas.
+- `artifacts/limpeza/src/pages/reception-tablet.tsx`: Reception tablet view.
+- `artifacts/limpeza/src/pages/garage-dashboard.tsx`: Garage dashboard.
+- `tests/`: Automated test suites (`node --test tests/*.test.mjs`).

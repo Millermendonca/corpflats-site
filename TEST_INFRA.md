@@ -1,25 +1,39 @@
-# E2E Test Infra: Guest-Flow-Manager Governance & Integrity Overhaul
+# E2E Test Infra: CorpFlats Reservation Modification Flow
 
 ## Test Philosophy
-- Opaque-box, requirement-driven. Derived strictly from `ORIGINAL_REQUEST.md` and user specifications.
-- Comprehensive 4-tier methodology: Feature Isolation (Tier 1), Boundary & Corner Cases (Tier 2), Cross-Feature Combinations (Tier 3), and Real-World Application Scenarios (Tier 4).
-- Deterministic verification using Node.js test runner (`node --test`) and automated assertions.
+- Opaque-box, requirement-driven. No dependency on implementation design.
+- Methodology: Category-Partition + BVA + Pairwise + Workload Testing.
 
-## Feature Inventory & Test Coverage Goals
-| # | Feature | Source | Tier 1 (Min 5) | Tier 2 (Min 5) | Tier 3 | Tier 4 |
-|---|---------|--------|:--------------:|:--------------:|:------:|:------:|
-| 1 | R1: Clean-to-dirty loop immunity | ORIGINAL_REQUEST §R1 | 5 | 5 | ✓ | ✓ |
-| 2 | R1: Dual-server sync & note non-pollution | ORIGINAL_REQUEST §R1 | 5 | 5 | ✓ | ✓ |
-| 3 | R2: 18:00 Date Switchover UI mode & toggle | ORIGINAL_REQUEST §R2 | 5 | 5 | ✓ | ✓ |
-| 4 | R2: FlatCard semantics & occupancy precedence | ORIGINAL_REQUEST §R2 | 5 | 5 | ✓ | ✓ |
-| 5 | R3: Flat 313 phantom cleaning eradication | ORIGINAL_REQUEST §R3 | 5 | 5 | ✓ | ✓ |
-| 6 | R3: Flat 511 maid schedule & statement cleanup | ORIGINAL_REQUEST §R3 | 5 | 5 | ✓ | ✓ |
-| 7 | R4: Flat 512 / 712 reservation allocation | ORIGINAL_REQUEST §R4 | 5 | 5 | ✓ | ✓ |
-| 8 | R4: Universal 19-flat database audit & consistency | ORIGINAL_REQUEST §R4 | 5 | 5 | ✓ | ✓ |
+## Feature Inventory
+| # | Feature | Source (requirement) | Tier 1 | Tier 2 | Tier 3 |
+|---|---------|---------------------|:------:|:------:|:------:|
+| 1 | Simulation & Availability Check (/modify-preview) | ORIGINAL_REQUEST R1 | 5 | 5 | ✓ |
+| 2 | Hold & Pending Conflict Prevention | ORIGINAL_REQUEST R1, R2 | 5 | 5 | ✓ |
+| 3 | Payment Settlement Before Date Commit | ORIGINAL_REQUEST R2 | 5 | 5 | ✓ |
+| 4 | Audit Trail & Payment Recording | ORIGINAL_REQUEST R2 | 5 | 5 | ✓ |
+| 5 | Mandatory Re-Signature Invalidation | ORIGINAL_REQUEST R3 | 5 | 5 | ✓ |
+| 6 | Automated Re-Signature Communication | ORIGINAL_REQUEST R3 | 5 | 5 | ✓ |
+| 7 | Document Generation & Reception Email Delivery | ORIGINAL_REQUEST R3 | 5 | 5 | ✓ |
+| 8 | Reception & Garage Panel Synchronization | ORIGINAL_REQUEST R4 | 5 | 5 | ✓ |
+| 9 | Guest Portal Multi-Step UI & Re-Sign Banner | ORIGINAL_REQUEST R1, R2, R3 | 5 | 5 | ✓ |
+| 10 | Schedulers & Daily Routines Synchronization | ORIGINAL_REQUEST R4 | 5 | 5 | ✓ |
 
 ## Test Architecture
-- Test Runner: Node.js native test runner (`node --test tests/*.test.mjs`)
-- Test Scripts:
-  - `tests/governance-integrity.test.mjs`: Automated integration test covering R1-R4
-  - `scratch/test_dates.mjs`: Housekeeping request date evaluation harness
-- Acceptance Semantics: Exit code 0, 100% assertions passing, 0 unhandled rejections.
+- Test runner: `node --test tests/reservation-modification-flow.test.mjs`
+- Test case format: ESM `.test.mjs` with native `node:test` and `node:assert`.
+- Directory layout: `tests/`
+
+## Real-World Application Scenarios (Tier 4)
+| # | Scenario | Features Exercised | Complexity |
+|---|----------|--------------------|------------|
+| 1 | Extension with additional payment via PIX, payment completed, dates committed, re-signature triggered, document re-signed & sent to reception | F1, F2, F3, F4, F5, F6, F7, F8, F10 | High |
+| 2 | Extension attempted with calendar conflict on same flat: simulation returns conflict error and blocks checkout | F1, F2 | Medium |
+| 3 | Modification abandoned / canceled during PIX payment hold: original dates remain intact, hold expires, flat remains available | F2, F3, F4 | Medium |
+| 4 | Shortening stay within 24h refund policy or no-cost date change: immediate commit, re-signature triggered, panels synced | F1, F4, F5, F6, F8 | Medium |
+| 5 | Flat change: old flat freed, new flat assigned, check-in signature invalidated, reception blocks physical entry until re-signed | F5, F7, F8 | High |
+
+## Coverage Thresholds
+- Tier 1: >= 5 per feature
+- Tier 2: >= 5 per feature (where boundaries exist)
+- Tier 3: pairwise coverage of major feature interactions
+- Tier 4: >= 5 realistic application scenarios
