@@ -104,9 +104,9 @@ const EMOJI_LIST = [
 
 function getPaymentInfo(res: any) {
   if (!res) return { label: 'Pendente', className: 'border-amber-500 text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-400' }
-  const rawStatus = String(res.paymentStatus || '').toLowerCase().trim()
-  const totalAmount = Number(res.totalAmount) || 0
-  const paidAmount = Number(res.paidAmount) || 0
+  const rawStatus = String(res.paymentStatus || res.payment_status || '').toLowerCase().trim()
+  const totalAmount = Number(res.totalAmount ?? res.total_amount) || 0
+  const paidAmount = Number(res.paidAmount ?? res.paid_amount) || 0
 
   const isPaid = rawStatus === 'pago' || rawStatus === 'pago_total' || (paidAmount >= totalAmount && totalAmount > 0)
   if (isPaid) {
@@ -115,7 +115,7 @@ function getPaymentInfo(res: any) {
       className: 'bg-emerald-600 text-white hover:bg-emerald-700 border-transparent'
     }
   }
-  if (rawStatus === 'sinal_pago' || (paidAmount > 0 && paidAmount < totalAmount)) {
+  if (rawStatus === 'sinal_pago' || rawStatus === 'parcial' || (paidAmount > 0 && paidAmount < totalAmount)) {
     return {
       label: 'Sinal Pago',
       className: 'border-blue-500 text-blue-700 bg-blue-50 dark:bg-blue-950/40 dark:text-blue-300'
@@ -129,7 +129,7 @@ function getPaymentInfo(res: any) {
 
 function getReservationStatusInfo(status?: string) {
   const s = String(status || '').toLowerCase().trim()
-  if (s === 'confirmada' || s === 'checked_in' || s === 'checkedin' || s === 'in_house' || s === 'checkin') {
+  if (s === 'confirmada' || s === 'confirmed' || s === 'checked_in' || s === 'checkedin' || s === 'in_house' || s === 'checkin') {
     return {
       label: s === 'checked_in' || s === 'checkedin' || s === 'checkin' ? 'Check-in Realizado' : 'Confirmada',
       className: 'bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-700'
@@ -139,6 +139,12 @@ function getReservationStatusInfo(status?: string) {
     return {
       label: s === 'pre_reserva' ? 'Pré-Reserva' : 'Pendente',
       className: 'bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-700'
+    }
+  }
+  if (s === 'checkout' || s === 'checked_out') {
+    return {
+      label: 'Check-out',
+      className: 'bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700'
     }
   }
   if (s === 'cancelada' || s === 'cancelled' || s === 'cancelado') {

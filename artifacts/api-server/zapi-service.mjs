@@ -4234,8 +4234,10 @@ export function findReservationByPhone(db, phone) {
   if (activeToday.length > 0) {
     activeToday.sort((a, b) => {
       // a) Reservas confirmadas/reais sobre pré-reservas
-      const aConfirmed = (a.status !== "pre_reserva" && a.status !== "pendente") ? 1 : 0;
-      const bConfirmed = (b.status !== "pre_reserva" && b.status !== "pendente") ? 1 : 0;
+      const aStatus = String(a.status || "").toLowerCase().trim();
+      const bStatus = String(b.status || "").toLowerCase().trim();
+      const aConfirmed = (aStatus !== "pre_reserva" && aStatus !== "pendente") ? 1 : 0;
+      const bConfirmed = (bStatus !== "pre_reserva" && bStatus !== "pendente") ? 1 : 0;
       if (bConfirmed !== aConfirmed) return bConfirmed - aConfirmed;
 
       // b) Estadias que continuam além de hoje (checkoutDate > todayStr)
@@ -4262,12 +4264,24 @@ export function findReservationByPhone(db, phone) {
   }
 
   // TIER 2: Próxima Reserva Futura (checkin > hoje, não cancelada)
-  const future = matched.filter(r => 
-    r.status !== "cancelada" &&
-    r.checkinDate && r.checkinDate > todayStr
-  );
+  const future = matched.filter(r => {
+    const s = String(r.status || "").toLowerCase().trim();
+    return s !== "cancelada" && s !== "cancelled" && s !== "cancelado" &&
+      r.checkinDate && r.checkinDate > todayStr;
+  });
   if (future.length > 0) {
-    future.sort((a, b) => String(a.checkinDate).localeCompare(String(b.checkinDate)));
+    future.sort((a, b) => {
+      const cmpDate = String(a.checkinDate).localeCompare(String(b.checkinDate));
+      if (cmpDate !== 0) return cmpDate;
+      const aStatus = String(a.status || "").toLowerCase().trim();
+      const bStatus = String(b.status || "").toLowerCase().trim();
+      const aConfirmed = (aStatus !== "pre_reserva" && aStatus !== "pendente") ? 1 : 0;
+      const bConfirmed = (bStatus !== "pre_reserva" && bStatus !== "pendente") ? 1 : 0;
+      if (bConfirmed !== aConfirmed) return bConfirmed - aConfirmed;
+      const aId = Number(a.id) || (typeof a.id === "string" ? parseInt(a.id.replace(/\D/g, ""), 10) || 0 : 0);
+      const bId = Number(b.id) || (typeof b.id === "string" ? parseInt(b.id.replace(/\D/g, ""), 10) || 0 : 0);
+      return bId - aId;
+    });
     return future[0];
   }
 

@@ -227,4 +227,52 @@ test("RES-605-0398 Payment, Same-Day Dispatch & Phone Matching Suite", async (t)
     assert.ok(chatCode.includes("selectedResCode"), "Deve conter estado selectedResCode");
     assert.ok(chatCode.includes("?reservationCode="), "Deve passar reservationCode na busca de conversas");
   });
+
+  // 9. Comportamento exato dos helpers de pagamento e status
+  await t.test("9. Behavioral evaluation of getPaymentInfo and getReservationStatusInfo", () => {
+    const chatCode = fs.readFileSync("artifacts/limpeza/src/pages/whatsapp-chat.tsx", "utf8");
+    const getPaymentFnCode = chatCode.match(/function getPaymentInfo[\s\S]*?^}/m)?.[0];
+    const getStatusFnCode = chatCode.match(/function getReservationStatusInfo[\s\S]*?^}/m)?.[0];
+    assert.ok(getPaymentFnCode, "getPaymentInfo code extracted");
+    assert.ok(getStatusFnCode, "getReservationStatusInfo code extracted");
+
+    const cleanPaymentFn = getPaymentFnCode.replace(/:\s*any/g, "");
+    const cleanStatusFn = getStatusFnCode.replace(/\?:\s*string/g, "");
+    const evalScope = new Function(`${cleanPaymentFn}\n${cleanStatusFn}\nreturn { getPaymentInfo, getReservationStatusInfo };`);
+    const { getPaymentInfo, getReservationStatusInfo } = evalScope();
+
+    // Avaliação de pagamento
+    assert.strictEqual(getPaymentInfo({ paymentStatus: "pago_total" }).label, "Pago ✓");
+    assert.strictEqual(getPaymentInfo({ paymentStatus: "pago" }).label, "Pago ✓");
+    assert.strictEqual(getPaymentInfo({ totalAmount: 400, paidAmount: 400 }).label, "Pago ✓");
+    assert.strictEqual(getPaymentInfo({ paymentStatus: "sinal_pago" }).label, "Sinal Pago");
+    assert.strictEqual(getPaymentInfo({ paymentStatus: "parcial" }).label, "Sinal Pago");
+    assert.strictEqual(getPaymentInfo({ totalAmount: 400, paidAmount: 200 }).label, "Sinal Pago");
+    assert.strictEqual(getPaymentInfo({ paymentStatus: "pendente" }).label, "Pendente");
+    assert.strictEqual(getPaymentInfo(null).label, "Pendente");
+
+    // Avaliação de status
+    assert.strictEqual(getReservationStatusInfo("confirmada").label, "Confirmada");
+    assert.strictEqual(getReservationStatusInfo("confirmed").label, "Confirmada");
+    assert.strictEqual(getReservationStatusInfo("CHECKED_IN").label, "Check-in Realizado");
+    assert.strictEqual(getReservationStatusInfo("pre_reserva").label, "Pré-Reserva");
+    assert.strictEqual(getReservationStatusInfo("pendente").label, "Pendente");
+    assert.strictEqual(getReservationStatusInfo("cancelada").label, "Cancelada");
+    assert.strictEqual(getReservationStatusInfo("checkout").label, "Check-out");
+  });
+
+  // 10. TIER 2: Próxima reserva futura desempata confirmed sobre pre_reserva para a mesma data
+  await t.test("10. TIER 2 future reservations tie-break confirmed over pre-reserva", () => {
+    const futureDate = "2029-10-15";
+    const testDb = {
+      reservations: [
+        { id: 201, code: "RES-FUT-PRE", guestPhone: "22999990004", status: "pre_reserva", checkinDate: futureDate, checkoutDate: "2029-10-20" },
+        { id: 202, code: "RES-FUT-CONF", guestPhone: "22999990004", status: "confirmada", checkinDate: futureDate, checkoutDate: "2029-10-20" }
+      ]
+    };
+    const res = findReservationByPhone(testDb, "22999990004");
+    assert.ok(res);
+    assert.strictEqual(res.code, "RES-FUT-CONF", "Deve selecionar confirmada sobre pré-reserva para mesma data futura");
+  });
 });
+

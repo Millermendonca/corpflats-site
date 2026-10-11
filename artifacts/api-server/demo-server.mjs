@@ -29388,7 +29388,6 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
   // Nunca confirma nem dispara confirmação para pré-reserva sem pagamento real comprovado
   const isPreStatus = r.status === "pre_reserva" || r.status === "pendente" || !r.status;
   if (isPreStatus && !hasRealPaymentEvidence(r)) return;
-  if (isConfirmationAlreadyDispatched(r)) return;
 
   const isPreOrWasPre = wasPreReserva || r.status === "pre_reserva" || r.status === "pendente" || !r.status || r.isPreReservation || (db.whatsappHistory || []).some(h => {
     const hCode = String(h.reservationCode || "").toUpperCase();
@@ -29402,37 +29401,37 @@ async function ensurePaymentConfirmationDispatched(r, { wasPreReserva = false } 
     saveDatabase();
   }
 
-  // Verifica se é no mesmo dia após as 07:01
-  const now = new Date();
-  const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
-  const brDate = new Date(nowUtc - (3 * 3600000));
-  const todayStr = brDate.toISOString().substring(0, 10);
-  const isSameDay = r.checkinDate === todayStr;
-  const isAfter0701 = isSameDay && (brDate.getHours() > 7 || (brDate.getHours() === 7 && brDate.getMinutes() >= 1));
+  // 1. Dispara o comprovante financeiro / confirmação se ainda não foi disparado
+  if (!isConfirmationAlreadyDispatched(r)) {
+    const chan = String(r.channel || "").toLowerCase();
+    const isDirect = chan.includes("site") || chan.includes("whats") || chan.includes("direta");
 
-  const chan = String(r.channel || "").toLowerCase();
-  const isDirect = chan.includes("site") || chan.includes("whats") || chan.includes("direta");
-
-  if (isPreOrWasPre && isDirect) {
-    console.log(`[WhatsApp Dispatch] Disparando confirmação de pagamento (payment_confirmed) para ${r.guestName} (${r.code})...`);
-    try {
-      await triggerImmediateWhatsApp(db, saveDatabase, "payment_confirmed", r);
-      scheduleUpcomingReservationTriggers(db, saveDatabase);
-    } catch (err) {
-      console.error("[WhatsApp Dispatch] Erro ao disparar payment_confirmed:", err.message);
-    }
-  } else {
-    // Para OTAs (booking/airbnb) ou reservas diretas já criadas confirmadas sem passar por pré-reserva
-    console.log(`[WhatsApp Dispatch] Disparando confirmação padrão (reservation_created) para ${r.guestName} (${r.code})...`);
-    try {
-      await triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", r);
-      scheduleUpcomingReservationTriggers(db, saveDatabase);
-    } catch (err) {
-      console.error("[WhatsApp Dispatch] Erro ao disparar reservation_created:", err.message);
+    if (isPreOrWasPre && isDirect) {
+      console.log(`[WhatsApp Dispatch] Disparando confirmação de pagamento (payment_confirmed) para ${r.guestName} (${r.code})...`);
+      try {
+        await triggerImmediateWhatsApp(db, saveDatabase, "payment_confirmed", r);
+        scheduleUpcomingReservationTriggers(db, saveDatabase);
+      } catch (err) {
+        console.error("[WhatsApp Dispatch] Erro ao disparar payment_confirmed:", err.message);
+      }
+    } else {
+      // Para OTAs (booking/airbnb) ou reservas diretas já criadas confirmadas sem passar por pré-reserva
+      console.log(`[WhatsApp Dispatch] Disparando confirmação padrão (reservation_created) para ${r.guestName} (${r.code})...`);
+      try {
+        await triggerImmediateWhatsApp(db, saveDatabase, "reservation_created", r);
+        scheduleUpcomingReservationTriggers(db, saveDatabase);
+      } catch (err) {
+        console.error("[WhatsApp Dispatch] Erro ao disparar reservation_created:", err.message);
+      }
     }
   }
 
-  // Para reservas confirmadas no dia do check-in após 07:01, garante envio das orientações de chegada imediatas
+  // 2. Para reservas confirmadas no dia do check-in após 07:01, garante envio das orientações de chegada imediatas
+  const brNow = typeof getBrasiliaNow === "function" ? getBrasiliaNow() : { date: getTodayStr(), hour: new Date().getHours(), minute: new Date().getMinutes() };
+  const todayStr = brNow.date;
+  const isSameDay = r.checkinDate === todayStr;
+  const isAfter0701 = isSameDay && (brNow.hour > 7 || (brNow.hour === 7 && brNow.minute >= 1));
+
   if (isAfter0701) {
     const hasSameDayDispatched = (db.whatsappHistory || []).some(h => {
       const hCode = String(h.reservationCode || "").toUpperCase();
