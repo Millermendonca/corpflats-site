@@ -1,4 +1,4 @@
-# BRIEFING — 2026-10-11T04:30:00Z
+# BRIEFING — 2026-10-11T04:41:00Z
 
 ## Mission
 Implement Milestone 3 Frontend UI & Build Delivery: Route alias `/whatsapp-automation`, typed `use-faq.ts` hook, `FaqKnowledgeBase` UI component, integrate 6th tab in `whatsapp-automation.tsx`, run clean Vite build to `artifacts/limpeza/dist/`, verify backend tests pass 24/24, commit & push to GitHub.
@@ -17,25 +17,29 @@ Implement Milestone 3 Frontend UI & Build Delivery: Route alias `/whatsapp-autom
 
 ## Current Parent
 - Conversation ID: 27c61f6a-5652-421c-bbda-1b5d6be7db98
-- Updated: 2026-10-11T04:30:00Z
+- Updated: 2026-10-11T04:41:00Z
 
 ## Task Summary
-- **What to build**:
-  1. Route alias `/whatsapp-automation` in `App.tsx`.
-  2. Typed `use-faq.ts` hook with full REST CRUD, status filters, category stats, and approval.
-  3. `faq-knowledge-base.tsx` UI with 4 metric cards, 9 category cards, 4 status filters, dual table/card view, 1-click approval button for "aguardando_aprovacao", and Create/Edit modal with client exception rule engine (all, exclude, include_only with phone tags).
-  4. 6th tab "Base de Conhecimento & FAQ" (`value="faq"`) in `whatsapp-automation.tsx`.
-  5. Run `npm run build` in `artifacts/limpeza` to confirm clean compilation into `dist/public` with exit code 0.
-  6. Run `node --test tests/whatsapp-ai-agent.test.mjs` to ensure 24/24 backend tests continue to pass.
-  7. Commit and git push.
-  8. Write `handoff.md` and message parent.
+- **What was built**:
+  1. Route alias `/whatsapp-automation` registered in `App.tsx` mapped to `WhatsappAutomation`.
+  2. Typed `use-faq.ts` hook created with full REST API operations (`GET /api/whatsapp/faq`, `POST /api/whatsapp/faq`, `PUT /api/whatsapp/faq/:id`, `DELETE /api/whatsapp/faq/:id`, `POST /api/whatsapp/faq/:id/approve`), status filters, category counters, client scope rules, and toast alerts.
+  3. `FaqKnowledgeBase` component created in `src/components/faq-knowledge-base.tsx` with 4 metric cards, 9 category cards, 4 status filters, dual table/card views, 1-click approval for `aguardando_aprovacao`, and create/edit modal with client exception rule engine (`all`, `exclude`, `include_only` with normalized phone chips).
+  4. 6th tab trigger (`value="faq"`) and content (`<FaqKnowledgeBase />`) mounted in `src/pages/whatsapp-automation.tsx`.
+  5. `npm run build` executed cleanly in `artifacts/limpeza` with exit code 0 (`dist/public/` generated).
+  6. Backend test suite `tests/whatsapp-ai-agent.test.mjs` executed with 24/24 passing tests (100%).
+  7. Committed and pushed to `origin/main` via `git push origin main`.
 
 ## Change Tracker
-- **Files modified**: pending
-- **Build status**: pending
-- **Pending issues**: none
+- **Files modified**:
+  - `artifacts/limpeza/src/App.tsx`: Added AdminRoute for `/whatsapp-automation`.
+  - `artifacts/limpeza/src/hooks/use-faq.ts`: Created typed hook for FAQ knowledge base.
+  - `artifacts/limpeza/src/components/faq-knowledge-base.tsx`: Created visual knowledge base management UI.
+  - `artifacts/limpeza/src/pages/whatsapp-automation.tsx`: Added 6th tab "Base & FAQ" and responsive grid layout.
+  - `artifacts/limpeza/dist/`: Built production bundle (`index.html`, `index.js`, `index.css`).
+- **Build status**: Pass (exit code 0, built in 26.84s).
+- **Pending issues**: None.
 
 ## Quality Status
-- **Build/test result**: pending
-- **Lint status**: clean
-- **Tests added/modified**: running `whatsapp-ai-agent.test.mjs`
+- **Build/test result**: Pass (24/24 tests pass in `tests/whatsapp-ai-agent.test.mjs`).
+- **Lint status**: Clean (no TS errors).
+- **Tests added/modified**: Verified all 24 backend integration and unit tests.
