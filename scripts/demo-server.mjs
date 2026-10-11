@@ -269,6 +269,20 @@ app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use(cookieParser());
 app.use("/api/storage/files", express.static(UPLOADS_DIR));
 app.use("/storage/files", express.static(UPLOADS_DIR));
+app.get([
+  "/Manual_do_Hospede_CorpFlats.pdf",
+  "/Guia_do_Hospede.pdf",
+  "/Guia_do_Hospede_CorpFlats.pdf",
+  "/manual",
+  "/guia"
+], (req, res) => {
+  const filePath = path.join(UPLOADS_DIR, "documents", "Manual_do_Hospede_CorpFlats.pdf");
+  if (fs.existsSync(filePath)) {
+    res.setHeader("Content-Type", "application/pdf");
+    return res.sendFile(filePath);
+  }
+  res.redirect("/api/storage/files/documents/Manual_do_Hospede_CorpFlats.pdf");
+});
 app.use("/storage", (req, res) => {
   const pixel = Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64");
   res.setHeader("Content-Type", "image/gif");
