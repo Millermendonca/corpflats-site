@@ -10475,13 +10475,16 @@ app.post("/api/service/public/:token/flats/:flatId/finish", async (req, res) => 
     const maxReqId = db.cleaningRequests.length > 0 ? Math.max(...db.cleaningRequests.map(r => Number(r.id) || 0)) : 0;
     const existingReq = db.cleaningRequests.find(r =>
       (Number(r.flatId) === Number(flat.flatId) || String(r.flatNumber) === String(flat.flatNumber)) &&
-      r.requestDate === getTodayStr() &&
-      r.status !== "clean"
+      r.requestDate === getTodayStr()
     );
     const cleanNote = `[OS: ${order.title}] Limpeza pós-serviço solicitada pelo prestador. Obs: ${flat.observations || "Nenhuma"}`.trim();
     if (existingReq) {
       existingReq.status = "dirty";
+      existingReq.source = "service_order";
       existingReq.adminNote = cleanNote;
+      existingReq.completedAt = null;
+      existingReq.cleaningStartedAt = null;
+      existingReq.durationMinutes = null;
       existingReq.updatedAt = now.toISOString();
     } else {
       db.cleaningRequests.unshift({
@@ -23352,8 +23355,10 @@ app.get("/api/breakfast/reservation-context", (req, res) => {
   const daysInfo = bDates.map(dateStr => {
     const isPast = dateStr < todayStr;
     const isToday = dateStr === todayStr;
+    const isTomorrow = dateStr === getOffsetDateStr(1);
     const isClosedTodayAfter5am = isToday && (nowBrl.hour >= 5);
-    const isOpen = !isCancelled && !isPast && (!isToday || nowBrl.hour < 5);
+    const isClosedTomorrowAfter22h = isTomorrow && (nowBrl.hour >= 22);
+    const isOpen = !isCancelled && !isPast && (!isToday || nowBrl.hour < 5) && (!isTomorrow || nowBrl.hour < 22);
 
     const existing = reservationOrders.find(o => o.date === dateStr);
 
@@ -23377,8 +23382,10 @@ app.get("/api/breakfast/reservation-context", (req, res) => {
     return {
       date: dateStr,
       isToday,
+      isTomorrow,
       isPast,
       isClosedTodayAfter5am,
+      isClosedTomorrowAfter22h,
       isOpen,
       status,
       cancelReason,
@@ -24349,7 +24356,8 @@ app.post("/api/breakfast/orders", (req, res) => {
 
   const targetDates = [...new Set(rawDates)].filter(Boolean);
 
-  // Validação de horário limite das 05:00
+  // Validação de horário limite das 05:00 e corte rígido das 22:00
+  const tomorrowStr = getOffsetDateStr(1);
   for (const tDate of targetDates) {
     if (tDate < todayStr) {
       return res.status(400).json({ error: `A data ${tDate} já passou. Não é possível realizar pedidos para datas retroativas.` });
@@ -24357,6 +24365,11 @@ app.post("/api/breakfast/orders", (req, res) => {
     if (tDate === todayStr && nowBrl.hour >= 5) {
       return res.status(400).json({
         error: `O horário limite para pedidos de hoje (${todayStr}) foi encerrado às 05:00. O próximo café da manhã disponível é para amanhã.`
+      });
+    }
+    if (tDate === tomorrowStr && nowBrl.hour >= 22) {
+      return res.status(400).json({
+        error: `O horário limite (cutoff) para pedidos de café da manhã de amanhã (${tDate}) foi encerrado às 22:00. O corte diário ocorre às 22h para organização da produção da cozinha.`
       });
     }
     if (activeRes && tDate > activeRes.checkoutDate) {
@@ -29303,6 +29316,16 @@ app.get(["/copiar-pix/:code", "/copiar-pix", "/pix/:code", "/pix"], (req, res) =
 });
 
 if (fs.existsSync(distPath)) {
+  const assetsDir = path.join(distPath, "assets");
+  if (fs.existsSync(assetsDir)) {
+    app.use("/assets", express.static(assetsDir, {
+      setHeaders: (res) => {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+      }
+    }));
+  }
   app.use(express.static(distPath, {
     setHeaders: (res, filePath) => {
       if (filePath.endsWith('.html') || filePath.endsWith('/index.js') || filePath.endsWith('\\index.js') || filePath.endsWith('/index.css') || filePath.endsWith('\\index.css')) {

@@ -6,7 +6,7 @@
       "test",
       "--config",
       "e2e/playwright.config.mjs",
-      "e2e/suites/02-human-journeys.spec.mjs"
+      "e2e/suites/03-pairwise-matrix.spec.mjs"
     ],
     "configFile": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\playwright.config.mjs",
     "rootDir": "C:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/e2e/suites",
@@ -225,20 +225,20 @@
   },
   "suites": [
     {
-      "title": "02-human-journeys.spec.mjs",
-      "file": "02-human-journeys.spec.mjs",
+      "title": "03-pairwise-matrix.spec.mjs",
+      "file": "03-pairwise-matrix.spec.mjs",
       "column": 0,
       "line": 0,
       "specs": [],
       "suites": [
         {
-          "title": "Milestone 3 (M3) - Jornadas Humanas Anti-Frustração (R3)",
-          "file": "02-human-journeys.spec.mjs",
-          "line": 25,
+          "title": "Milestone 4 (M4) - Matriz Combinatória de Estados Pairwise (R4)",
+          "file": "03-pairwise-matrix.spec.mjs",
+          "line": 19,
           "column": 15,
           "specs": [
             {
-              "title": "Jornada 1: Zero Amnésia - Hóspede recorrente reutiliza documentos sem re-envio forçado",
+              "title": "Cenário 1: Matriz de Composições de Reserva & Durações (Permutações Pairwise, Tarifas, PMS Calendar & Vouchers)",
               "ok": true,
               "tags": [],
               "tests": [
@@ -248,8 +248,8 @@
                     {
                       "type": "serial",
                       "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                        "line": 25,
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
                         "column": 15
                       }
                     }
@@ -262,18 +262,18 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3389,
+                      "duration": 17038,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:53:35.962Z",
+                      "startTime": "2026-10-11T06:04:51.495Z",
                       "annotations": [
                         {
                           "type": "serial",
                           "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                            "line": 25,
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
                             "column": 15
                           }
                         }
@@ -284,13 +284,13 @@
                   "status": "expected"
                 }
               ],
-              "id": "84ff382c39dc6b6a77f3-6c31705ef7d5250b3aaf",
-              "file": "02-human-journeys.spec.mjs",
-              "line": 30,
+              "id": "ee4eb678168193b9785b-232fabeaaf2fcd1f0fa9",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 28,
               "column": 3
             },
             {
-              "title": "Jornada 2: Vínculo Multicanal Automático - Reservas vinculadas no /minha-conta sem digitação de código",
+              "title": "Cenário 2: Auditoria dos 19 Flats sob Todos os 7 Estados de Governança no Dashboard de Limpeza",
               "ok": true,
               "tags": [],
               "tests": [
@@ -300,8 +300,8 @@
                     {
                       "type": "serial",
                       "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                        "line": 25,
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
                         "column": 15
                       }
                     }
@@ -314,18 +314,18 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 14584,
+                      "duration": 3343,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:53:40.409Z",
+                      "startTime": "2026-10-11T06:05:09.168Z",
                       "annotations": [
                         {
                           "type": "serial",
                           "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                            "line": 25,
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
                             "column": 15
                           }
                         }
@@ -336,13 +336,13 @@
                   "status": "expected"
                 }
               ],
-              "id": "84ff382c39dc6b6a77f3-7099e064f6c023b363ac",
-              "file": "02-human-journeys.spec.mjs",
-              "line": 92,
+              "id": "ee4eb678168193b9785b-ab490d3731ebe1d11bab",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 273,
               "column": 3
             },
             {
-              "title": "Jornada 3: Persistência Completa de Veículo - Placa, marca, modelo e cor em Portaria, Garagem e Mock SMTP",
+              "title": "Cenário 3: Ciclo Completo de Ordens de Serviço (Criação Admin, Portal Token, Cadastro Prestador, Limites, Fotos & Camareira)",
               "ok": true,
               "tags": [],
               "tests": [
@@ -352,8 +352,8 @@
                     {
                       "type": "serial",
                       "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                        "line": 25,
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
                         "column": 15
                       }
                     }
@@ -366,18 +366,18 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 18747,
+                      "duration": 2906,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:53:55.032Z",
+                      "startTime": "2026-10-11T06:05:12.553Z",
                       "annotations": [
                         {
                           "type": "serial",
                           "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                            "line": 25,
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
                             "column": 15
                           }
                         }
@@ -388,13 +388,13 @@
                   "status": "expected"
                 }
               ],
-              "id": "84ff382c39dc6b6a77f3-d08b77c7c7ad5f2438dc",
-              "file": "02-human-journeys.spec.mjs",
-              "line": 162,
+              "id": "ee4eb678168193b9785b-1eb4f40e0b5fd71435d3",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 449,
               "column": 3
             },
             {
-              "title": "Jornada 4: Gestão de Acesso e Fechadura Digital - Bloqueio antes das 14h com aviso e liberação destacada após 14h",
+              "title": "Cenário 4: Regras de Café da Manhã & Cutoff Rígido das 22h com Time-Travel (Portal /cafe, Produção Cozinha & Rejeição Pós-22h)",
               "ok": true,
               "tags": [],
               "tests": [
@@ -404,8 +404,8 @@
                     {
                       "type": "serial",
                       "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                        "line": 25,
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
                         "column": 15
                       }
                     }
@@ -418,18 +418,18 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3756,
+                      "duration": 4212,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:54:13.826Z",
+                      "startTime": "2026-10-11T06:05:15.498Z",
                       "annotations": [
                         {
                           "type": "serial",
                           "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                            "line": 25,
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
                             "column": 15
                           }
                         }
@@ -440,13 +440,13 @@
                   "status": "expected"
                 }
               ],
-              "id": "84ff382c39dc6b6a77f3-a38f5603f1cb1459e934",
-              "file": "02-human-journeys.spec.mjs",
-              "line": 237,
+              "id": "ee4eb678168193b9785b-0b22acc943a8b33f58cd",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 599,
               "column": 3
             },
             {
-              "title": "Jornada 5: Resiliência de Pagamento PIX - Confirmação em tempo real sem reload e regeneração de QR Code",
+              "title": "Cenário 1: Matriz de Composições de Reserva & Durações (Permutações Pairwise, Tarifas, PMS Calendar & Vouchers)",
               "ok": true,
               "tags": [],
               "tests": [
@@ -456,164 +456,8 @@
                     {
                       "type": "serial",
                       "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                        "line": 25,
-                        "column": 15
-                      }
-                    }
-                  ],
-                  "expectedStatus": "passed",
-                  "projectId": "Desktop-1920",
-                  "projectName": "Desktop-1920",
-                  "results": [
-                    {
-                      "workerIndex": 0,
-                      "parallelIndex": 0,
-                      "status": "passed",
-                      "duration": 20834,
-                      "errors": [],
-                      "stdout": [],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2026-10-11T04:54:17.644Z",
-                      "annotations": [
-                        {
-                          "type": "serial",
-                          "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                            "line": 25,
-                            "column": 15
-                          }
-                        }
-                      ],
-                      "attachments": []
-                    }
-                  ],
-                  "status": "expected"
-                }
-              ],
-              "id": "84ff382c39dc6b6a77f3-798cfc28adbaeb8ed154",
-              "file": "02-human-journeys.spec.mjs",
-              "line": 290,
-              "column": 3
-            },
-            {
-              "title": "Jornada 6: Upload Mobile Resiliente & Canvas Signature - touch-action: none sem scroll e compressão de imagem",
-              "ok": true,
-              "tags": [],
-              "tests": [
-                {
-                  "timeout": 60000,
-                  "annotations": [
-                    {
-                      "type": "serial",
-                      "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                        "line": 25,
-                        "column": 15
-                      }
-                    }
-                  ],
-                  "expectedStatus": "passed",
-                  "projectId": "Desktop-1920",
-                  "projectName": "Desktop-1920",
-                  "results": [
-                    {
-                      "workerIndex": 0,
-                      "parallelIndex": 0,
-                      "status": "passed",
-                      "duration": 2460,
-                      "errors": [],
-                      "stdout": [],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2026-10-11T04:54:38.534Z",
-                      "annotations": [
-                        {
-                          "type": "serial",
-                          "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                            "line": 25,
-                            "column": 15
-                          }
-                        }
-                      ],
-                      "attachments": []
-                    }
-                  ],
-                  "status": "expected"
-                }
-              ],
-              "id": "84ff382c39dc6b6a77f3-a18b16a488c8e53bd28c",
-              "file": "02-human-journeys.spec.mjs",
-              "line": 357,
-              "column": 3
-            },
-            {
-              "title": "Jornada 7: Isolamento Estrito de Acompanhantes - Hóspede 2 não sobrescreve Hóspede 1",
-              "ok": true,
-              "tags": [],
-              "tests": [
-                {
-                  "timeout": 60000,
-                  "annotations": [
-                    {
-                      "type": "serial",
-                      "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                        "line": 25,
-                        "column": 15
-                      }
-                    }
-                  ],
-                  "expectedStatus": "passed",
-                  "projectId": "Desktop-1920",
-                  "projectName": "Desktop-1920",
-                  "results": [
-                    {
-                      "workerIndex": 0,
-                      "parallelIndex": 0,
-                      "status": "passed",
-                      "duration": 4328,
-                      "errors": [],
-                      "stdout": [],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2026-10-11T04:54:41.040Z",
-                      "annotations": [
-                        {
-                          "type": "serial",
-                          "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                            "line": 25,
-                            "column": 15
-                          }
-                        }
-                      ],
-                      "attachments": []
-                    }
-                  ],
-                  "status": "expected"
-                }
-              ],
-              "id": "84ff382c39dc6b6a77f3-09133d4bca5c4111b149",
-              "file": "02-human-journeys.spec.mjs",
-              "line": 483,
-              "column": 3
-            },
-            {
-              "title": "Jornada 1: Zero Amnésia - Hóspede recorrente reutiliza documentos sem re-envio forçado",
-              "ok": true,
-              "tags": [],
-              "tests": [
-                {
-                  "timeout": 60000,
-                  "annotations": [
-                    {
-                      "type": "serial",
-                      "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                        "line": 25,
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
                         "column": 15
                       }
                     }
@@ -626,18 +470,18 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2973,
+                      "duration": 28940,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:54:58.028Z",
+                      "startTime": "2026-10-11T06:05:21.620Z",
                       "annotations": [
                         {
                           "type": "serial",
                           "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                            "line": 25,
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
                             "column": 15
                           }
                         }
@@ -648,13 +492,13 @@
                   "status": "expected"
                 }
               ],
-              "id": "84ff382c39dc6b6a77f3-99ae292f29c720e13f7f",
-              "file": "02-human-journeys.spec.mjs",
-              "line": 30,
+              "id": "ee4eb678168193b9785b-232f06b50897fb10f96d",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 28,
               "column": 3
             },
             {
-              "title": "Jornada 2: Vínculo Multicanal Automático - Reservas vinculadas no /minha-conta sem digitação de código",
+              "title": "Cenário 2: Auditoria dos 19 Flats sob Todos os 7 Estados de Governança no Dashboard de Limpeza",
               "ok": true,
               "tags": [],
               "tests": [
@@ -664,8 +508,8 @@
                     {
                       "type": "serial",
                       "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                        "line": 25,
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
                         "column": 15
                       }
                     }
@@ -678,18 +522,18 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1586,
+                      "duration": 3318,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:55:01.465Z",
+                      "startTime": "2026-10-11T06:05:51.595Z",
                       "annotations": [
                         {
                           "type": "serial",
                           "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                            "line": 25,
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
                             "column": 15
                           }
                         }
@@ -700,13 +544,13 @@
                   "status": "expected"
                 }
               ],
-              "id": "84ff382c39dc6b6a77f3-a30d3ccbd8a250d851a5",
-              "file": "02-human-journeys.spec.mjs",
-              "line": 92,
+              "id": "ee4eb678168193b9785b-24665c377435d0fd755b",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 273,
               "column": 3
             },
             {
-              "title": "Jornada 3: Persistência Completa de Veículo - Placa, marca, modelo e cor em Portaria, Garagem e Mock SMTP",
+              "title": "Cenário 3: Ciclo Completo de Ordens de Serviço (Criação Admin, Portal Token, Cadastro Prestador, Limites, Fotos & Camareira)",
               "ok": true,
               "tags": [],
               "tests": [
@@ -716,8 +560,8 @@
                     {
                       "type": "serial",
                       "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                        "line": 25,
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
                         "column": 15
                       }
                     }
@@ -730,18 +574,18 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3960,
+                      "duration": 2792,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:55:03.096Z",
+                      "startTime": "2026-10-11T06:05:54.965Z",
                       "annotations": [
                         {
                           "type": "serial",
                           "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                            "line": 25,
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
                             "column": 15
                           }
                         }
@@ -752,13 +596,13 @@
                   "status": "expected"
                 }
               ],
-              "id": "84ff382c39dc6b6a77f3-c0c74f08eb6f5f2ee1fb",
-              "file": "02-human-journeys.spec.mjs",
-              "line": 162,
+              "id": "ee4eb678168193b9785b-a7f1e92ed845772ab7f6",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 449,
               "column": 3
             },
             {
-              "title": "Jornada 4: Gestão de Acesso e Fechadura Digital - Bloqueio antes das 14h com aviso e liberação destacada após 14h",
+              "title": "Cenário 4: Regras de Café da Manhã & Cutoff Rígido das 22h com Time-Travel (Portal /cafe, Produção Cozinha & Rejeição Pós-22h)",
               "ok": true,
               "tags": [],
               "tests": [
@@ -768,8 +612,8 @@
                     {
                       "type": "serial",
                       "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                        "line": 25,
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
                         "column": 15
                       }
                     }
@@ -782,18 +626,18 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4050,
+                      "duration": 3404,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:55:07.096Z",
+                      "startTime": "2026-10-11T06:05:57.805Z",
                       "annotations": [
                         {
                           "type": "serial",
                           "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                            "line": 25,
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
                             "column": 15
                           }
                         }
@@ -804,13 +648,13 @@
                   "status": "expected"
                 }
               ],
-              "id": "84ff382c39dc6b6a77f3-3391316a6b036720f1ed",
-              "file": "02-human-journeys.spec.mjs",
-              "line": 237,
+              "id": "ee4eb678168193b9785b-ba37b3c2e0fd8eeb0cb6",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 599,
               "column": 3
             },
             {
-              "title": "Jornada 5: Resiliência de Pagamento PIX - Confirmação em tempo real sem reload e regeneração de QR Code",
+              "title": "Cenário 1: Matriz de Composições de Reserva & Durações (Permutações Pairwise, Tarifas, PMS Calendar & Vouchers)",
               "ok": true,
               "tags": [],
               "tests": [
@@ -820,164 +664,8 @@
                     {
                       "type": "serial",
                       "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                        "line": 25,
-                        "column": 15
-                      }
-                    }
-                  ],
-                  "expectedStatus": "passed",
-                  "projectId": "Tablet-768",
-                  "projectName": "Tablet-768",
-                  "results": [
-                    {
-                      "workerIndex": 1,
-                      "parallelIndex": 0,
-                      "status": "passed",
-                      "duration": 9711,
-                      "errors": [],
-                      "stdout": [],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2026-10-11T04:55:11.187Z",
-                      "annotations": [
-                        {
-                          "type": "serial",
-                          "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                            "line": 25,
-                            "column": 15
-                          }
-                        }
-                      ],
-                      "attachments": []
-                    }
-                  ],
-                  "status": "expected"
-                }
-              ],
-              "id": "84ff382c39dc6b6a77f3-a2f5d99d380fba0dac6d",
-              "file": "02-human-journeys.spec.mjs",
-              "line": 290,
-              "column": 3
-            },
-            {
-              "title": "Jornada 6: Upload Mobile Resiliente & Canvas Signature - touch-action: none sem scroll e compressão de imagem",
-              "ok": true,
-              "tags": [],
-              "tests": [
-                {
-                  "timeout": 60000,
-                  "annotations": [
-                    {
-                      "type": "serial",
-                      "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                        "line": 25,
-                        "column": 15
-                      }
-                    }
-                  ],
-                  "expectedStatus": "passed",
-                  "projectId": "Tablet-768",
-                  "projectName": "Tablet-768",
-                  "results": [
-                    {
-                      "workerIndex": 1,
-                      "parallelIndex": 0,
-                      "status": "passed",
-                      "duration": 3535,
-                      "errors": [],
-                      "stdout": [],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2026-10-11T04:55:20.940Z",
-                      "annotations": [
-                        {
-                          "type": "serial",
-                          "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                            "line": 25,
-                            "column": 15
-                          }
-                        }
-                      ],
-                      "attachments": []
-                    }
-                  ],
-                  "status": "expected"
-                }
-              ],
-              "id": "84ff382c39dc6b6a77f3-e53bd4852525e5a21784",
-              "file": "02-human-journeys.spec.mjs",
-              "line": 357,
-              "column": 3
-            },
-            {
-              "title": "Jornada 7: Isolamento Estrito de Acompanhantes - Hóspede 2 não sobrescreve Hóspede 1",
-              "ok": true,
-              "tags": [],
-              "tests": [
-                {
-                  "timeout": 60000,
-                  "annotations": [
-                    {
-                      "type": "serial",
-                      "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                        "line": 25,
-                        "column": 15
-                      }
-                    }
-                  ],
-                  "expectedStatus": "passed",
-                  "projectId": "Tablet-768",
-                  "projectName": "Tablet-768",
-                  "results": [
-                    {
-                      "workerIndex": 1,
-                      "parallelIndex": 0,
-                      "status": "passed",
-                      "duration": 3111,
-                      "errors": [],
-                      "stdout": [],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2026-10-11T04:55:24.524Z",
-                      "annotations": [
-                        {
-                          "type": "serial",
-                          "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                            "line": 25,
-                            "column": 15
-                          }
-                        }
-                      ],
-                      "attachments": []
-                    }
-                  ],
-                  "status": "expected"
-                }
-              ],
-              "id": "84ff382c39dc6b6a77f3-618e8ce7e9f8ae03a71f",
-              "file": "02-human-journeys.spec.mjs",
-              "line": 483,
-              "column": 3
-            },
-            {
-              "title": "Jornada 1: Zero Amnésia - Hóspede recorrente reutiliza documentos sem re-envio forçado",
-              "ok": true,
-              "tags": [],
-              "tests": [
-                {
-                  "timeout": 60000,
-                  "annotations": [
-                    {
-                      "type": "serial",
-                      "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                        "line": 25,
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
                         "column": 15
                       }
                     }
@@ -990,18 +678,18 @@
                       "workerIndex": 2,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3190,
+                      "duration": 17108,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:55:29.935Z",
+                      "startTime": "2026-10-11T06:06:03.131Z",
                       "annotations": [
                         {
                           "type": "serial",
                           "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                            "line": 25,
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
                             "column": 15
                           }
                         }
@@ -1012,13 +700,13 @@
                   "status": "expected"
                 }
               ],
-              "id": "84ff382c39dc6b6a77f3-37b8e1d28e8c5466b9e6",
-              "file": "02-human-journeys.spec.mjs",
-              "line": 30,
+              "id": "ee4eb678168193b9785b-0f0eba46a2512167cdbd",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 28,
               "column": 3
             },
             {
-              "title": "Jornada 2: Vínculo Multicanal Automático - Reservas vinculadas no /minha-conta sem digitação de código",
+              "title": "Cenário 2: Auditoria dos 19 Flats sob Todos os 7 Estados de Governança no Dashboard de Limpeza",
               "ok": true,
               "tags": [],
               "tests": [
@@ -1028,8 +716,8 @@
                     {
                       "type": "serial",
                       "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                        "line": 25,
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
                         "column": 15
                       }
                     }
@@ -1042,18 +730,18 @@
                       "workerIndex": 2,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 1997,
+                      "duration": 2456,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:55:34.217Z",
+                      "startTime": "2026-10-11T06:06:21.307Z",
                       "annotations": [
                         {
                           "type": "serial",
                           "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                            "line": 25,
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
                             "column": 15
                           }
                         }
@@ -1064,13 +752,13 @@
                   "status": "expected"
                 }
               ],
-              "id": "84ff382c39dc6b6a77f3-133d0b4da0088b8b93ac",
-              "file": "02-human-journeys.spec.mjs",
-              "line": 92,
+              "id": "ee4eb678168193b9785b-b4ce8ed62fd50ef2469c",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 273,
               "column": 3
             },
             {
-              "title": "Jornada 3: Persistência Completa de Veículo - Placa, marca, modelo e cor em Portaria, Garagem e Mock SMTP",
+              "title": "Cenário 3: Ciclo Completo de Ordens de Serviço (Criação Admin, Portal Token, Cadastro Prestador, Limites, Fotos & Camareira)",
               "ok": true,
               "tags": [],
               "tests": [
@@ -1080,60 +768,8 @@
                     {
                       "type": "serial",
                       "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                        "line": 25,
-                        "column": 15
-                      }
-                    }
-                  ],
-                  "expectedStatus": "passed",
-                  "projectId": "Mobile-375",
-                  "projectName": "Mobile-375",
-                  "results": [
-                    {
-                      "workerIndex": 2,
-                      "parallelIndex": 0,
-                      "status": "passed",
-                      "duration": 13873,
-                      "errors": [],
-                      "stdout": [],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2026-10-11T04:55:36.258Z",
-                      "annotations": [
-                        {
-                          "type": "serial",
-                          "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                            "line": 25,
-                            "column": 15
-                          }
-                        }
-                      ],
-                      "attachments": []
-                    }
-                  ],
-                  "status": "expected"
-                }
-              ],
-              "id": "84ff382c39dc6b6a77f3-69cda26aa8880b718d6e",
-              "file": "02-human-journeys.spec.mjs",
-              "line": 162,
-              "column": 3
-            },
-            {
-              "title": "Jornada 4: Gestão de Acesso e Fechadura Digital - Bloqueio antes das 14h com aviso e liberação destacada após 14h",
-              "ok": true,
-              "tags": [],
-              "tests": [
-                {
-                  "timeout": 60000,
-                  "annotations": [
-                    {
-                      "type": "serial",
-                      "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                        "line": 25,
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
                         "column": 15
                       }
                     }
@@ -1151,13 +787,13 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:55:50.174Z",
+                      "startTime": "2026-10-11T06:06:23.808Z",
                       "annotations": [
                         {
                           "type": "serial",
                           "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                            "line": 25,
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
                             "column": 15
                           }
                         }
@@ -1168,13 +804,13 @@
                   "status": "expected"
                 }
               ],
-              "id": "84ff382c39dc6b6a77f3-2fe7d3cffb335bf5b53a",
-              "file": "02-human-journeys.spec.mjs",
-              "line": 237,
+              "id": "ee4eb678168193b9785b-678ba31d137e870eb771",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 449,
               "column": 3
             },
             {
-              "title": "Jornada 5: Resiliência de Pagamento PIX - Confirmação em tempo real sem reload e regeneração de QR Code",
+              "title": "Cenário 4: Regras de Café da Manhã & Cutoff Rígido das 22h com Time-Travel (Portal /cafe, Produção Cozinha & Rejeição Pós-22h)",
               "ok": true,
               "tags": [],
               "tests": [
@@ -1184,8 +820,8 @@
                     {
                       "type": "serial",
                       "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                        "line": 25,
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
                         "column": 15
                       }
                     }
@@ -1198,18 +834,18 @@
                       "workerIndex": 2,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 8860,
+                      "duration": 3409,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:55:52.800Z",
+                      "startTime": "2026-10-11T06:06:26.443Z",
                       "annotations": [
                         {
                           "type": "serial",
                           "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                            "line": 25,
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
                             "column": 15
                           }
                         }
@@ -1220,113 +856,9 @@
                   "status": "expected"
                 }
               ],
-              "id": "84ff382c39dc6b6a77f3-17396317ec554d2e1d3e",
-              "file": "02-human-journeys.spec.mjs",
-              "line": 290,
-              "column": 3
-            },
-            {
-              "title": "Jornada 6: Upload Mobile Resiliente & Canvas Signature - touch-action: none sem scroll e compressão de imagem",
-              "ok": true,
-              "tags": [],
-              "tests": [
-                {
-                  "timeout": 60000,
-                  "annotations": [
-                    {
-                      "type": "serial",
-                      "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                        "line": 25,
-                        "column": 15
-                      }
-                    }
-                  ],
-                  "expectedStatus": "passed",
-                  "projectId": "Mobile-375",
-                  "projectName": "Mobile-375",
-                  "results": [
-                    {
-                      "workerIndex": 2,
-                      "parallelIndex": 0,
-                      "status": "passed",
-                      "duration": 2670,
-                      "errors": [],
-                      "stdout": [],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2026-10-11T04:56:01.705Z",
-                      "annotations": [
-                        {
-                          "type": "serial",
-                          "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                            "line": 25,
-                            "column": 15
-                          }
-                        }
-                      ],
-                      "attachments": []
-                    }
-                  ],
-                  "status": "expected"
-                }
-              ],
-              "id": "84ff382c39dc6b6a77f3-6f6f68f259d9c0b243f4",
-              "file": "02-human-journeys.spec.mjs",
-              "line": 357,
-              "column": 3
-            },
-            {
-              "title": "Jornada 7: Isolamento Estrito de Acompanhantes - Hóspede 2 não sobrescreve Hóspede 1",
-              "ok": true,
-              "tags": [],
-              "tests": [
-                {
-                  "timeout": 60000,
-                  "annotations": [
-                    {
-                      "type": "serial",
-                      "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                        "line": 25,
-                        "column": 15
-                      }
-                    }
-                  ],
-                  "expectedStatus": "passed",
-                  "projectId": "Mobile-375",
-                  "projectName": "Mobile-375",
-                  "results": [
-                    {
-                      "workerIndex": 2,
-                      "parallelIndex": 0,
-                      "status": "passed",
-                      "duration": 3525,
-                      "errors": [],
-                      "stdout": [],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2026-10-11T04:56:04.418Z",
-                      "annotations": [
-                        {
-                          "type": "serial",
-                          "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                            "line": 25,
-                            "column": 15
-                          }
-                        }
-                      ],
-                      "attachments": []
-                    }
-                  ],
-                  "status": "expected"
-                }
-              ],
-              "id": "84ff382c39dc6b6a77f3-7943e4ebc0369ec1938b",
-              "file": "02-human-journeys.spec.mjs",
-              "line": 483,
+              "id": "ee4eb678168193b9785b-c6c82765659a8feb0ddc",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 599,
               "column": 3
             }
           ]
@@ -1336,9 +868,9 @@
   ],
   "errors": [],
   "stats": {
-    "startTime": "2026-10-11T04:53:34.020Z",
-    "duration": 154472.17899999997,
-    "expected": 21,
+    "startTime": "2026-10-11T06:04:49.395Z",
+    "duration": 100988.133,
+    "expected": 12,
     "skipped": 0,
     "unexpected": 0,
     "flaky": 0

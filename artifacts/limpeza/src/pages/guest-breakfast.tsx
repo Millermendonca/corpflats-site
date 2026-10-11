@@ -810,7 +810,9 @@ export default function GuestBreakfast() {
                       <span className="text-[10px] text-slate-500 font-medium">
                         {d.isToday 
                           ? (d.isClosedTodayAfter5am ? "Hoje (pedidos encerrados às 05:00)" : "Hoje (pedir até 05:00)")
-                          : d.isPast ? "Dia finalizado" : "Dia de café"}
+                          : d.isTomorrow
+                            ? (d.isClosedTomorrowAfter22h ? "Amanhã (corte encerrado às 22:00)" : "Amanhã (pedir até 22:00)")
+                            : d.isPast ? "Dia finalizado" : "Dia de café"}
                       </span>
                     </button>
                   )
@@ -824,6 +826,17 @@ export default function GuestBreakfast() {
                   <div>
                     <strong className="font-black block">Horário Limite Encerrado para Hoje (05:00)</strong>
                     <span>O serviço de café da manhã inicia pontualmente às 05:00 e não é mais possível realizar novos pedidos para o mesmo dia ({formatDateDisplay(currentDayInfo.date)}). Por favor, selecione acima a data de amanhã ou outro dia disponível para realizar o pedido.</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Aviso se o dia selecionado for amanhã após 22:00 */}
+              {currentDayInfo?.isClosedTomorrowAfter22h && (
+                <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-900 flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <strong className="font-black block">Horário Limite Encerrado (Cutoff 22:00)</strong>
+                    <span>O horário limite para pedidos de café da manhã de amanhã ({formatDateDisplay(currentDayInfo.date)}) foi encerrado às 22:00. O corte diário ocorre pontualmente às 22h para planejamento da cozinha. Para solicitações de última hora, favor entrar em contato diretamente com a recepção do hotel.</span>
                   </div>
                 </div>
               )}

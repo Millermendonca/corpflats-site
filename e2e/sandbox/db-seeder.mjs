@@ -169,6 +169,8 @@ export function seedTestDatabase(options = {}) {
   const todayIso = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(now);
   const tomorrowDate = new Date(now.getTime() + 86400000);
   const tomorrowIso = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(tomorrowDate);
+  const dayAfterTomorrowDate = new Date(now.getTime() + 2 * 86400000);
+  const dayAfterTomorrowIso = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(dayAfterTomorrowDate);
 
   const sampleReservations = [
     {
@@ -392,6 +394,48 @@ export function seedTestDatabase(options = {}) {
           email: "gabriel.siqueira@teste.corpflats",
           phone: "5522998877667",
           hasCompletedCheckin: false
+        }
+      ]
+    },
+    {
+      id: 9009,
+      code: "RES-TEST-BREAKFAST",
+      guestName: "Eduardo Fonseca",
+      guestEmail: "eduardo.fonseca@teste.corpflats",
+      guestPhone: "5522998877668",
+      guestDocument: "33344455566",
+      flatNumber: "509",
+      flatId: 10,
+      checkinDate: todayIso,
+      checkoutDate: dayAfterTomorrowIso,
+      nights: 2,
+      totalAmount: 560.00,
+      paidAmount: 560.00,
+      paymentStatus: "pago_total",
+      status: "confirmada",
+      isPaid: true,
+      includeBreakfast: true,
+      hasBreakfast: true,
+      breakfastToken: "bfk_test_breakfast_509",
+      channel: "Direto Site",
+      guestCount: 2,
+      adults: 2,
+      guests: [
+        {
+          index: 1,
+          name: "Eduardo Fonseca",
+          cpf: "33344455566",
+          email: "eduardo.fonseca@teste.corpflats",
+          phone: "5522998877668",
+          hasCompletedCheckin: true
+        },
+        {
+          index: 2,
+          name: "Patricia Fonseca",
+          cpf: "77788899900",
+          email: "patricia.fonseca@teste.corpflats",
+          phone: "5522998877669",
+          hasCompletedCheckin: true
         }
       ]
     }

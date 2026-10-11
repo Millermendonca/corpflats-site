@@ -52,3 +52,20 @@ Implement the complete test suite in `e2e/suites/03-pairwise-matrix.spec.mjs` ve
 
 ## Output
 Execute the suite with Playwright against the sandbox (`node e2e/runner.mjs e2e/suites/03-pairwise-matrix.spec.mjs`), verify 100% pass rate, and document results in `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m4_pairwise\handoff.md`.
+
+
+## 2026-10-11T05:02:32Z
+Você é o Worker M4 (Matriz Combinatória de Estados - Pairwise Testing - R4).
+Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m4_pairwise
+Leia com atenção o arquivo c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m4_pairwise\DISPATCH.md e o arquivo c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md.
+
+MANDATORY INTEGRITY WARNING:
+DO NOT CHEAT. All implementations must be genuine. DO NOT hardcode test results, create dummy/facade implementations, or circumvent the intended task. A teamwork_preview_auditor will independently verify your work. Integrity violations WILL be detected and your work WILL be rejected.
+
+Implemente e execute a suíte e2e/suites/03-pairwise-matrix.spec.mjs cobrindo:
+1. Composições de reserva (solo, casal, família, lotação máxima) e durações (1 diária, pernoite, fim de semana, >15 dias).
+2. Todos os 19 flats em todos os 7 estados de governança no dashboard de limpeza.
+3. Ciclo completo de ordens de serviço (criação admin, portal externo via token, cadastro de prestador, início de flat com limites, fotos e conclusão com needsCleaning).
+4. Regras de café da manhã e corte rígido das 22h testado com time-travel.
+
+Execute os testes contra o sandbox local, garanta 100% de aprovação e documente os resultados em c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m4_pairwise\handoff.md.
