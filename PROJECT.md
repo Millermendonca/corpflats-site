@@ -35,8 +35,8 @@
 |---|------|-------|-------------|--------|
 | M1 | Backend Core & Database Layer | Features 1, 2, 3, 4: Schema, seed, CRUD API, phone normalization & rule engine, code parity | none | DONE |
 | M2 | Auto-Learning & Sofia Motor Integration | Features 5, 6, 7: Inbound unmapped question detection, operator response capture, Sofia Gemini/heuristic integration | M1 | DONE |
-| M3 | Frontend UI & Build Delivery | Features 8, 9, 10, 11: Route alias, use-faq hook, FAQ tab, modal with rules, 1-click approval, build | M1, M2 | IN_PROGRESS |
-| M4 | Final Milestone: E2E Tests, Hardening & Git Push | Features 12, 13, 14: 100% E2E test pass, adversarial hardening, clean forensic audit, git commit and push | M1, M2, M3 | PLANNED |
+| M3 | Frontend UI & Build Delivery | Features 8, 9, 10, 11: Route alias, use-faq hook, FAQ tab, modal with rules, 1-click approval, build | M1, M2 | DONE |
+| M4 | Final Milestone: E2E Tests, Hardening & Git Push | Features 12, 13, 14: 100% E2E test pass, adversarial hardening, clean forensic audit, git commit and push | M1, M2, M3 | IN_PROGRESS |
 
 ## Interface Contracts
 ### Backend ↔ Frontend API Contract
