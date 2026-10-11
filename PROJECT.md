@@ -55,4 +55,4 @@
 - `artifacts/limpeza/src/pages/guest-pre-checkin.tsx`: Pre-checkin and re-signing canvas.
 - `artifacts/limpeza/src/pages/reception-tablet.tsx`: Reception tablet view.
 - `artifacts/limpeza/src/pages/garage-dashboard.tsx`: Garage dashboard.
-- `tests/`: Automated test suites (`node --test tests/*.test.mjs`).
+- `tests/`: Testes automatizados pontuais (executar apenas o arquivo específico da funcionalidade: `node --test tests/<arquivo_especifico>.test.mjs`; nunca rodar suítes inteiras ou wildcards).
