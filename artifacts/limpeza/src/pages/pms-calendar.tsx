@@ -846,6 +846,12 @@ export default function PmsCalendar() {
   const [showGuestSuggestions, setShowGuestSuggestions] = useState(false)
   const guestSuggestionsRef = useRef<HTMLDivElement>(null)
 
+  // Third-Party Requester CRM States
+  const [formRequesterId, setFormRequesterId] = useState("")
+  const [requesterSearchFilter, setRequesterSearchFilter] = useState("")
+  const [showRequesterSuggestions, setShowRequesterSuggestions] = useState(false)
+  const requesterSuggestionsRef = useRef<HTMLDivElement>(null)
+
   // Quick Company Creation Modal States
   const [newCompanyModalOpen, setNewCompanyModalOpen] = useState(false)
   const [newCompCorporateName, setNewCompCorporateName] = useState("")
@@ -2010,6 +2016,9 @@ export default function PmsCalendar() {
     setFormRequesterPhone("")
     setFormRequesterEmail("")
     setFormRequesterCpf("")
+    setFormRequesterId("")
+    setRequesterSearchFilter("")
+    setShowRequesterSuggestions(false)
     setFormCompanyId("")
     setFormCompanyName("")
     setFormGuestId("")
@@ -2186,6 +2195,9 @@ export default function PmsCalendar() {
     setFormRequesterPhone("")
     setFormRequesterEmail("")
     setFormRequesterCpf("")
+    setFormRequesterId("")
+    setRequesterSearchFilter("")
+    setShowRequesterSuggestions(false)
     setFormCompanyId("")
     setFormCompanyName("")
     setFormGuestId("")
@@ -2278,6 +2290,9 @@ export default function PmsCalendar() {
     setFormGuestCount(String(resItem.guestCount || resItem.adults || (resItem.guests?.length || 1)) as any)
     const resolvedReqType = (resItem.requesterType as any) || (resItem.companyId || resItem.companyName ? "company" : (resItem.requesterInfo?.name ? "other_person" : "guest"))
     setFormRequesterType(resolvedReqType)
+    setFormRequesterId(resItem.requesterInfo?.guestId ? String(resItem.requesterInfo.guestId) : (resItem.requesterInfo?.name ? "manual" : ""))
+    setRequesterSearchFilter("")
+    setShowRequesterSuggestions(false)
     setFormRequesterName(resItem.requesterInfo?.name || "")
     setFormRequesterPhone(resItem.requesterInfo?.phone || "")
     setFormRequesterEmail(resItem.requesterInfo?.email || "")
@@ -2515,6 +2530,106 @@ export default function PmsCalendar() {
     document.addEventListener("mousedown", handleClickOutside)
     return () => document.removeEventListener("mousedown", handleClickOutside)
   }, [])
+
+  // Handlers e Memos para Solicitante Terceiro (CRM)
+  const handleSelectRequester = (val: string) => {
+    setFormRequesterId(val)
+    if (!val || val === "manual") {
+      return
+    }
+    const g = crmGuests.find(guest => String(guest.id) === val)
+    if (g) {
+      setFormRequesterName(g.name || g.fullName || "")
+      setFormRequesterCpf(g.documentNumber || g.document || "")
+      setFormRequesterPhone(g.phone || "")
+      setFormRequesterEmail(g.email || "")
+      toast({
+        title: "Solicitante Selecionado do CRM",
+        description: `${g.name || g.fullName} carregado com sucesso.`
+      })
+    }
+  }
+
+  const filteredRequesters = useMemo(() => {
+    if (!requesterSearchFilter.trim()) return []
+    const q = requesterSearchFilter.toLowerCase().trim()
+    const cleanQ = q.replace(/\D/g, "")
+    return crmGuests.filter(g => {
+      const name = (g.name || g.fullName || "").toLowerCase()
+      const doc = (g.documentNumber || g.document || "").replace(/\D/g, "")
+      const phone = (g.phone || "").replace(/\D/g, "")
+      return name.includes(q) || (cleanQ && doc.includes(cleanQ)) || (cleanQ && phone.includes(cleanQ))
+    })
+  }, [crmGuests, requesterSearchFilter])
+
+  const liveRequesterMatches = useMemo(() => {
+    const query = (formRequesterName || "").toLowerCase().trim()
+    if (!query) return []
+    const cleanQ = query.replace(/\D/g, "")
+    return crmGuests.filter(g => {
+      const name = (g.name || g.fullName || "").toLowerCase()
+      const doc = (g.documentNumber || g.document || "").replace(/\D/g, "")
+      const phone = (g.phone || "").replace(/\D/g, "")
+      const comp = (g.companyName || "").toLowerCase()
+      return name.includes(query) || (cleanQ && doc.includes(cleanQ)) || (cleanQ && phone.includes(cleanQ)) || comp.includes(query)
+    }).slice(0, 8)
+  }, [crmGuests, formRequesterName])
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (requesterSuggestionsRef.current && !requesterSuggestionsRef.current.contains(event.target as Node)) {
+        setShowRequesterSuggestions(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [])
+
+  const handleSaveRequesterToCrm = async () => {
+    const nameToSave = formRequesterName.trim()
+    if (!nameToSave) {
+      toast({
+        title: "Nome Obrigatório",
+        description: "Preencha o nome do solicitante para cadastrá-lo no CRM.",
+        variant: "destructive"
+      })
+      return
+    }
+    try {
+      const res = await fetch("/api/pms/guests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          name: nameToSave,
+          fullName: nameToSave,
+          phone: formRequesterPhone.trim(),
+          email: formRequesterEmail.trim(),
+          document: formRequesterCpf.trim(),
+          documentNumber: formRequesterCpf.trim(),
+          tags: ["solicitante_terceiro"],
+          notes: "Cadastrado como solicitante da reserva via CRM"
+        })
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.error || "Erro ao cadastrar cliente no CRM.")
+      }
+      const newGuest = await res.json()
+      setCrmGuests(prev => [newGuest, ...prev.filter(g => g.id !== newGuest.id)])
+      setFormRequesterId(String(newGuest.id))
+      toast({
+        title: "Cliente Cadastrado no CRM!",
+        description: `${newGuest.name || newGuest.fullName} foi registrado com sucesso.`
+      })
+    } catch (e: any) {
+      toast({
+        title: "Erro ao Cadastrar",
+        description: e.message || "Não foi possível cadastrar o solicitante no CRM.",
+        variant: "destructive"
+      })
+    }
+  }
 
   // Handlers para Cadastro Rápido de Empresa Parceira
   const handleOpenNewCompanyModal = () => {
@@ -3051,6 +3166,7 @@ export default function PmsCalendar() {
         guests: guestsPayload,
         requesterType: resolvedReqType,
         requesterInfo: resolvedReqType === "other_person" ? {
+          guestId: formRequesterId && formRequesterId !== "manual" ? Number(formRequesterId) : (selectedRes?.requesterInfo?.guestId || null),
           name: formRequesterName.trim(),
           cpf: formRequesterCpf.trim(),
           phone: formRequesterPhone.trim(),
@@ -5279,10 +5395,237 @@ export default function PmsCalendar() {
                   {/* Detalhes do Solicitante Terceiro */}
                   {formRequesterType === "other_person" && (
                     <div className="p-2.5 bg-background border border-primary/20 rounded-xl space-y-2 mt-2">
-                      <span className="text-[10px] uppercase font-black text-primary block">Dados do Solicitante (Contato)</span>
-                      <div className="grid grid-cols-2 gap-2">
-                        <Input value={formRequesterName} onChange={e => setFormRequesterName(e.target.value)} placeholder="Nome do Solicitante" className="text-xs h-8" />
-                        <Input value={formRequesterPhone} onChange={e => setFormRequesterPhone(e.target.value)} placeholder="WhatsApp do Solicitante" className="text-xs h-8" />
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] uppercase font-black text-primary block">
+                          Buscar Solicitante Cadastrado (CRM 360°)
+                        </span>
+                        {formRequesterId && formRequesterId !== "manual" && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFormRequesterId("manual")
+                              setFormRequesterName("")
+                              setFormRequesterCpf("")
+                              setFormRequesterPhone("")
+                              setFormRequesterEmail("")
+                            }}
+                            className="text-[10px] text-muted-foreground hover:text-rose-600 underline font-semibold transition-colors cursor-pointer"
+                          >
+                            Desvincular / Novo Solicitante
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Dropdown com filtro em tempo real ao digitar solicitante */}
+                      <div className="relative">
+                        <Input
+                          value={requesterSearchFilter}
+                          onChange={e => setRequesterSearchFilter(e.target.value)}
+                          placeholder="🔍 Digite para filtrar no CRM por nome, CPF ou WhatsApp do solicitante..."
+                          className="text-xs h-8 bg-muted/40"
+                        />
+                        {requesterSearchFilter.trim() && (
+                          <div className="absolute left-0 right-0 top-full mt-1 bg-popover/95 backdrop-blur-sm border border-border shadow-2xl rounded-2xl z-50 overflow-hidden max-h-56 overflow-y-auto animate-in fade-in zoom-in-95">
+                            <div className="px-2.5 py-1 bg-muted/60 text-[10px] font-bold text-muted-foreground flex items-center justify-between border-b">
+                              <span>Resultados no CRM ({filteredRequesters.length})</span>
+                              <span className="text-[9px]">Clique para selecionar</span>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setFormRequesterId("manual")
+                                setFormRequesterName(requesterSearchFilter)
+                                setRequesterSearchFilter("")
+                              }}
+                              className="w-full text-left p-2 hover:bg-primary/10 text-primary font-bold text-xs flex items-center gap-2 border-b cursor-pointer"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>➕ Cadastrar "{requesterSearchFilter}" como Novo Solicitante</span>
+                            </button>
+
+                            {filteredRequesters.length > 0 ? (
+                              <div className="divide-y divide-border/40">
+                                {filteredRequesters.slice(0, 10).map((g: any) => (
+                                  <button
+                                    key={g.id}
+                                    type="button"
+                                    onClick={() => {
+                                      handleSelectRequester(String(g.id))
+                                      setRequesterSearchFilter("")
+                                    }}
+                                    className="w-full text-left p-2 hover:bg-primary/10 transition-colors flex items-start gap-2 group cursor-pointer"
+                                  >
+                                    <div className="w-6 h-6 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
+                                      <User className="w-3.5 h-3.5" />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="text-xs font-bold text-foreground truncate">
+                                        {g.name || g.fullName}
+                                      </div>
+                                      <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 flex-wrap">
+                                        {g.documentNumber || g.document ? (
+                                          <span>CPF: {g.documentNumber || g.document}</span>
+                                        ) : null}
+                                        {g.phone ? (
+                                          <span>• Tel: {g.phone}</span>
+                                        ) : null}
+                                        {g.companyName ? (
+                                          <span className="text-indigo-600 dark:text-indigo-400 font-semibold">• {g.companyName}</span>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                  </button>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="p-3 text-center text-xs text-muted-foreground">
+                                Nenhum cliente localizado com esse termo.
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Select tradicional do Solicitante */}
+                      <Select value={formRequesterId} onValueChange={handleSelectRequester}>
+                        <SelectTrigger className="text-xs h-8">
+                          <SelectValue placeholder="Ou selecione um Solicitante Cadastrado..." />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-64">
+                          <SelectItem value="manual" className="text-primary font-bold">
+                            ➕ Novo Solicitante (Digitar manualmente)
+                          </SelectItem>
+                          {crmGuests.map((g: any) => (
+                            <SelectItem key={g.id} value={String(g.id)}>
+                              <span className="font-semibold">{g.name || g.fullName}</span>
+                              {g.documentNumber || g.document ? ` • CPF: ${g.documentNumber || g.document}` : ""}
+                              {g.phone ? ` • Tel: ${g.phone}` : ""}
+                              {g.companyName ? ` • (${g.companyName})` : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {formRequesterId && formRequesterId !== "manual" && (
+                        <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1 mt-0.5">
+                          <CheckCircle2 className="w-3.5 h-3.5" /> Solicitante vinculado do CRM ({formRequesterName}).
+                        </div>
+                      )}
+
+                      {/* Campos do Solicitante (Nome, CPF, WhatsApp, E-mail) */}
+                      <div className="pt-2 border-t border-border/40 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] uppercase font-black text-slate-700 dark:text-slate-300 block">
+                            Dados do Solicitante (Contato & Faturamento)
+                          </span>
+                          {formRequesterName.trim() && (!formRequesterId || formRequesterId === "manual") && (
+                            <button
+                              type="button"
+                              onClick={handleSaveRequesterToCrm}
+                              className="text-[10px] text-primary hover:underline font-bold flex items-center gap-1 cursor-pointer"
+                            >
+                              <Plus className="w-3 h-3" /> Cadastrar no CRM agora
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="relative" ref={requesterSuggestionsRef}>
+                            <Input
+                              value={formRequesterName}
+                              onChange={e => {
+                                setFormRequesterName(e.target.value)
+                                setShowRequesterSuggestions(true)
+                              }}
+                              onFocus={() => {
+                                if (formRequesterName.trim().length > 0) setShowRequesterSuggestions(true)
+                              }}
+                              placeholder="Nome do Solicitante *"
+                              className="text-xs h-8"
+                            />
+                            {/* Floating live matches para Solicitante */}
+                            {showRequesterSuggestions && formRequesterName.trim().length > 0 && (
+                              <div className="absolute left-0 right-0 top-full mt-1 bg-popover/95 backdrop-blur-sm border border-border shadow-2xl rounded-2xl z-50 overflow-hidden max-h-64 overflow-y-auto animate-in fade-in zoom-in-95">
+                                <div className="px-2.5 py-1.5 bg-muted/60 text-[10px] font-bold text-muted-foreground flex items-center justify-between border-b">
+                                  <span>Clientes no CRM ({liveRequesterMatches.length})</span>
+                                  <span className="text-[9px]">Clique para preencher</span>
+                                </div>
+                                {liveRequesterMatches.length > 0 ? (
+                                  <div className="divide-y divide-border/40">
+                                    {liveRequesterMatches.map((g: any) => (
+                                      <button
+                                        key={g.id}
+                                        type="button"
+                                        onClick={() => {
+                                          handleSelectRequester(String(g.id))
+                                          setShowRequesterSuggestions(false)
+                                        }}
+                                        className="w-full text-left p-2 hover:bg-primary/10 transition-colors flex items-start gap-2 group cursor-pointer"
+                                      >
+                                        <div className="w-6 h-6 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
+                                          <User className="w-3.5 h-3.5" />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                          <div className="text-xs font-bold text-foreground truncate">
+                                            {g.name || g.fullName}
+                                          </div>
+                                          <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 flex-wrap">
+                                            {g.documentNumber || g.document ? <span>CPF: {g.documentNumber || g.document}</span> : null}
+                                            {g.phone ? <span>• Tel: {g.phone}</span> : null}
+                                            {g.companyName ? <span className="text-indigo-600 dark:text-indigo-400 font-semibold">• {g.companyName}</span> : null}
+                                          </div>
+                                        </div>
+                                      </button>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div className="p-3 text-center text-[11px] text-muted-foreground">
+                                    Nenhum cliente localizado no CRM com este nome.
+                                  </div>
+                                )}
+                                <div className="p-1.5 bg-muted/30 border-t border-border">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setFormRequesterId("manual")
+                                      setShowRequesterSuggestions(false)
+                                      toast({
+                                        title: "Novo Solicitante",
+                                        description: `Preencha os dados de '${formRequesterName}' para registrá-lo.`
+                                      })
+                                    }}
+                                    className="w-full py-1.5 px-2 text-[11px] font-bold text-primary hover:bg-primary/10 rounded-lg flex items-center gap-1.5 justify-center transition-colors cursor-pointer"
+                                  >
+                                    <Plus className="w-3.5 h-3.5" />
+                                    <span>Cadastrar como Novo Solicitante: "{formRequesterName}"</span>
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                          <Input
+                            value={formRequesterCpf}
+                            onChange={e => setFormRequesterCpf(e.target.value)}
+                            placeholder="CPF / Documento"
+                            className="text-xs h-8"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <Input
+                            value={formRequesterPhone}
+                            onChange={e => setFormRequesterPhone(e.target.value)}
+                            placeholder="WhatsApp / Celular"
+                            className="text-xs h-8"
+                          />
+                          <Input
+                            value={formRequesterEmail}
+                            onChange={e => setFormRequesterEmail(e.target.value)}
+                            placeholder="E-mail"
+                            type="email"
+                            className="text-xs h-8"
+                          />
+                        </div>
                       </div>
                     </div>
                   )}

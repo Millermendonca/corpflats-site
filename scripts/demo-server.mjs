@@ -13392,6 +13392,56 @@ app.post("/api/pms/reservations", async (req, res) => {
   const creatorRole = authUser ? authUser.role : "admin";
   const reqSource = req.body.source || "PMS Calendário";
 
+  // Upsert do Solicitante Terceiro no CRM caso aplicável
+  let finalRequesterInfo = requesterInfo ? { ...requesterInfo } : null;
+  if (requesterType === "other_person" && finalRequesterInfo && finalRequesterInfo.name) {
+    const reqName = (finalRequesterInfo.name || "").trim();
+    const reqPhone = (finalRequesterInfo.phone || "").trim();
+    const reqEmail = (finalRequesterInfo.email || "").trim();
+    const reqDoc = (finalRequesterInfo.cpf || finalRequesterInfo.document || "").trim();
+
+    if (!db.guests) db.guests = [];
+
+    let reqGuest = db.guests.find(g =>
+      (finalRequesterInfo.guestId && g.id === Number(finalRequesterInfo.guestId)) ||
+      (reqDoc && (g.document === reqDoc || g.documentNumber === reqDoc)) ||
+      (reqPhone && g.phone === reqPhone) ||
+      (reqName && g.name && g.name.toLowerCase() === reqName.toLowerCase())
+    );
+
+    if (!reqGuest) {
+      reqGuest = {
+        id: db.guests.length > 0 ? Math.max(...db.guests.map(g => g.id)) + 1 : 1,
+        name: reqName,
+        fullName: reqName,
+        phone: reqPhone,
+        email: reqEmail,
+        document: reqDoc,
+        documentNumber: reqDoc,
+        city: "",
+        companyName: companyName || "",
+        notes: "Cadastrado como solicitante da reserva",
+        tags: ["solicitante_terceiro"],
+        isMonthlyGuest: false,
+        clientType: "avulso",
+        autoEmitInvoice: false,
+        createdAt: new Date().toISOString()
+      };
+      db.guests.push(reqGuest);
+    } else {
+      if (reqPhone && !reqGuest.phone) reqGuest.phone = reqPhone;
+      if (reqEmail && !reqGuest.email) reqGuest.email = reqEmail;
+      if (reqDoc && !reqGuest.document) {
+        reqGuest.document = reqDoc;
+        reqGuest.documentNumber = reqDoc;
+      }
+      if (Array.isArray(reqGuest.tags) && !reqGuest.tags.includes("solicitante_terceiro")) {
+        reqGuest.tags.push("solicitante_terceiro");
+      }
+    }
+    finalRequesterInfo.guestId = reqGuest.id;
+  }
+
   const newReservation = {
     id: resId,
     code: `RES-${String(flat.number)}-${String(resId).padStart(4, "0")}`,
@@ -13404,7 +13454,7 @@ app.post("/api/pms/reservations", async (req, res) => {
     guestCount: numGuests,
     guests: preparedGuests,
     requesterType,
-    requesterInfo: requesterInfo || null,
+    requesterInfo: finalRequesterInfo || null,
     companyId: companyId ? Number(companyId) : (guest.companyId || null),
     companyName: companyName || guest.companyName || "",
     invoiceDetails: invoiceDetails || null,
@@ -14522,6 +14572,55 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   ];
   for (const f of fields) {
     if (req.body[f] !== undefined) r[f] = req.body[f];
+  }
+
+  // Upsert do Solicitante Terceiro no CRM ao atualizar reserva
+  if (r.requesterType === "other_person" && r.requesterInfo && r.requesterInfo.name) {
+    const reqName = (r.requesterInfo.name || "").trim();
+    const reqPhone = (r.requesterInfo.phone || "").trim();
+    const reqEmail = (r.requesterInfo.email || "").trim();
+    const reqDoc = (r.requesterInfo.cpf || r.requesterInfo.document || "").trim();
+
+    if (!db.guests) db.guests = [];
+
+    let reqGuest = db.guests.find(g =>
+      (r.requesterInfo.guestId && g.id === Number(r.requesterInfo.guestId)) ||
+      (reqDoc && (g.document === reqDoc || g.documentNumber === reqDoc)) ||
+      (reqPhone && g.phone === reqPhone) ||
+      (reqName && g.name && g.name.toLowerCase() === reqName.toLowerCase())
+    );
+
+    if (!reqGuest) {
+      reqGuest = {
+        id: db.guests.length > 0 ? Math.max(...db.guests.map(g => g.id)) + 1 : 1,
+        name: reqName,
+        fullName: reqName,
+        phone: reqPhone,
+        email: reqEmail,
+        document: reqDoc,
+        documentNumber: reqDoc,
+        city: "",
+        companyName: r.companyName || "",
+        notes: "Cadastrado como solicitante da reserva",
+        tags: ["solicitante_terceiro"],
+        isMonthlyGuest: false,
+        clientType: "avulso",
+        autoEmitInvoice: false,
+        createdAt: new Date().toISOString()
+      };
+      db.guests.push(reqGuest);
+    } else {
+      if (reqPhone && !reqGuest.phone) reqGuest.phone = reqPhone;
+      if (reqEmail && !reqGuest.email) reqGuest.email = reqEmail;
+      if (reqDoc && !reqGuest.document) {
+        reqGuest.document = reqDoc;
+        reqGuest.documentNumber = reqDoc;
+      }
+      if (Array.isArray(reqGuest.tags) && !reqGuest.tags.includes("solicitante_terceiro")) {
+        reqGuest.tags.push("solicitante_terceiro");
+      }
+    }
+    r.requesterInfo.guestId = reqGuest.id;
   }
 
   // Se houve alteração de flat ou datas, garante que req.body.guests não ressuscite flags de check-in concluído
