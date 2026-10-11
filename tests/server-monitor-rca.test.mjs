@@ -9,6 +9,7 @@ import {
   getTelemetryHistory,
   getDiagnostics,
   getMonitorConfig,
+  serverMonitorMiddleware,
   MONITOR_CONFIG
 } from "../scripts/server-monitor-service.mjs";
 
@@ -146,8 +147,69 @@ test("Server Monitor: Disparo de Garbage Collection (GC) e consulta de configura
   assert.equal(gcRes.success, true);
   assert.ok(gcRes.diag, "Deve gerar registro de diagnóstico da ação");
 
+  // Testa limite estrito de DIAGNOSTICS_MAX_ITEMS
+  for (let i = 0; i < MONITOR_CONFIG.DIAGNOSTICS_MAX_ITEMS + 10; i++) {
+    triggerManualGc(`Teste limite ${i}`);
+  }
+  const diags = getDiagnostics(100);
+  assert.ok(diags.length <= MONITOR_CONFIG.DIAGNOSTICS_MAX_ITEMS, `Diagnósticos devem ser limitados a no máximo ${MONITOR_CONFIG.DIAGNOSTICS_MAX_ITEMS}`);
+
   const fakeReq = { headers: { host: "corpflats.onrender.com", "x-forwarded-proto": "https" } };
   const config = getMonitorConfig(fakeReq);
   assert.equal(config.renderWebhookUrl, "https://corpflats.onrender.com/api/observability/render-metrics");
   assert.equal(config.renderWebhookToken, MONITOR_CONFIG.DEFAULT_TOKEN);
+});
+
+test("Server Monitor Middleware: Bypass de assets com query strings e limpeza idempotente sem duplicatas", async () => {
+  let nextCalled = false;
+  const fakeAssetReq = {
+    method: "GET",
+    url: "/assets/index.js?v=20261011",
+    headers: {}
+  };
+  const fakeRes = {
+    statusCode: 200,
+    handlers: {},
+    on(event, handler) {
+      this.handlers[event] = handler;
+    }
+  };
+
+  serverMonitorMiddleware(fakeAssetReq, fakeRes, () => {
+    nextCalled = true;
+  });
+
+  assert.equal(nextCalled, true, "Middleware deve liberar imediatamente assets com query string sem registrar no mapa de requisições ativas");
+  assert.equal(Object.keys(fakeRes.handlers).length, 0, "Assets estáticos não devem registrar listeners de término");
+
+  // Testa idempotência de cleanup quando ambos os eventos 'finish' e 'close' são disparados
+  let reqNextCalled = false;
+  const fakeApiReq = {
+    method: "GET",
+    url: "/api/pms/test-route-latency",
+    headers: { "x-forwarded-for": "127.0.0.1" }
+  };
+  const fakeApiRes = {
+    statusCode: 200,
+    handlers: {},
+    on(event, handler) {
+      this.handlers[event] = handler;
+    }
+  };
+
+  serverMonitorMiddleware(fakeApiReq, fakeApiRes, () => {
+    reqNextCalled = true;
+  });
+
+  assert.equal(reqNextCalled, true);
+  assert.ok(fakeApiRes.handlers.finish, "Deve registrar listener finish");
+  assert.ok(fakeApiRes.handlers.close, "Deve registrar listener close");
+
+  // Disparar finish e close consecutivamente não deve gerar duplicatas nem erros
+  fakeApiRes.handlers.finish();
+  fakeApiRes.handlers.close();
+
+  const snapshot = getLiveSnapshot();
+  const slowMatches = snapshot.recentSlowRequests.filter(r => r.url === "/api/pms/test-route-latency");
+  assert.ok(slowMatches.length <= 1, "Não deve duplicar registros em recentSlowRequests");
 });

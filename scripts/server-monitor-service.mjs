@@ -16,7 +16,7 @@ import crypto from "node:crypto";
 // Configurações & Limiares
 export const MONITOR_CONFIG = {
   SAMPLE_INTERVAL_MS: 3000,         // Coleta interna a cada 3 segundos
-  HISTORY_MAX_SAMPLES: 120,          // Mantém ~6 minutos de histórico enxuto em memória (<300KB)
+  HISTORY_MAX_SAMPLES: 300,          // Mantém 15 minutos de histórico enxuto em memória (<60KB)
   DIAGNOSTICS_MAX_ITEMS: 30,         // Mantém os últimos 30 diagnósticos
   SLOW_REQUEST_THRESHOLD_MS: 500,    // Requisições acima de 500ms entram para o ranking de gargalos
   MEMORY_SPIKE_DELTA_MB: 25,         // Salto de 25MB em 1 ciclo ativa análise investigativa
@@ -95,19 +95,20 @@ export function serverMonitorMiddleware(req, res, next) {
   if (req.method === "OPTIONS" || req.method === "HEAD") return next();
 
   const urlPath = req.baseUrl ? `${req.baseUrl}${req.path}` : (req.originalUrl || req.url || "/");
+  const cleanPath = urlPath.split("?")[0].toLowerCase();
   if (
-    urlPath.startsWith("/api/admin/server-monitor") ||
-    urlPath.startsWith("/api/observability/render-metrics") ||
-    urlPath.startsWith("/v1/metrics") ||
-    urlPath.startsWith("/metrics") ||
-    urlPath.startsWith("/api/storage") ||
-    urlPath.startsWith("/storage") ||
-    urlPath.startsWith("/assets") ||
-    urlPath.endsWith(".png") ||
-    urlPath.endsWith(".ico") ||
-    urlPath.endsWith(".svg") ||
-    urlPath.endsWith(".css") ||
-    urlPath.endsWith(".js")
+    cleanPath.startsWith("/api/admin/server-monitor") ||
+    cleanPath.startsWith("/api/observability/render-metrics") ||
+    cleanPath.startsWith("/v1/metrics") ||
+    cleanPath.startsWith("/metrics") ||
+    cleanPath.startsWith("/api/storage") ||
+    cleanPath.startsWith("/storage") ||
+    cleanPath.startsWith("/assets") ||
+    cleanPath.endsWith(".png") ||
+    cleanPath.endsWith(".ico") ||
+    cleanPath.endsWith(".svg") ||
+    cleanPath.endsWith(".css") ||
+    cleanPath.endsWith(".js")
   ) {
     return next();
   }
@@ -119,7 +120,7 @@ export function serverMonitorMiddleware(req, res, next) {
   const reqRecord = {
     id: reqId,
     method: req.method,
-    url: urlPath.split("?")[0],
+    url: cleanPath,
     fullUrl: urlPath,
     startTime,
     ip: String(clientIp).split(",")[0].trim()
@@ -131,7 +132,10 @@ export function serverMonitorMiddleware(req, res, next) {
     activeRequestsMap.delete(oldestKey);
   }
 
+  let cleanedUp = false;
   const cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
     activeRequestsMap.delete(reqId);
     const durationMs = Date.now() - startTime;
 
@@ -179,6 +183,7 @@ export function collectCurrentMetrics() {
 
   // V8 & Process Memory
   const mem = process.memoryUsage();
+  lastMemoryUsage = mem;
   const heapStats = v8.getHeapStatistics();
   let heapSpaces = [];
   try {
@@ -641,6 +646,9 @@ export function triggerManualGc(reason = "Acionamento manual via dashboard") {
   };
 
   diagnosticsHistory.unshift(diag);
+  if (diagnosticsHistory.length > MONITOR_CONFIG.DIAGNOSTICS_MAX_ITEMS) {
+    diagnosticsHistory.pop();
+  }
   return { success: true, triggered, freedHeapMB, diag };
 }
 

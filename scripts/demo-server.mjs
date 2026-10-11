@@ -5802,20 +5802,40 @@ export function atomicWriteFileSync(filePath, content) {
   }
 }
 
-export async function atomicWriteFileAsync(filePath, content) {
+let localDiskWriteVersion = 0;
+
+export async function atomicWriteFileAsync(filePath, content, expectedVersion = null) {
   const dir = path.dirname(filePath);
+  let tmpPath = null;
   try {
     await fs.promises.mkdir(dir, { recursive: true });
-    const tmpPath = path.join(dir, `.tmp_${path.basename(filePath)}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
+    tmpPath = path.join(dir, `.tmp_${path.basename(filePath)}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
     await fs.promises.writeFile(tmpPath, content, "utf-8");
+
+    // Se uma gravação mais recente já foi iniciada ou concluída, descarta o arquivo temporário
+    if (expectedVersion !== null && expectedVersion !== localDiskWriteVersion) {
+      await fs.promises.unlink(tmpPath).catch(() => {});
+      return;
+    }
+
     try {
       await fs.promises.rename(tmpPath, filePath);
     } catch {
+      if (expectedVersion !== null && expectedVersion !== localDiskWriteVersion) {
+        await fs.promises.unlink(tmpPath).catch(() => {});
+        return;
+      }
       await fs.promises.copyFile(tmpPath, filePath);
       await fs.promises.unlink(tmpPath).catch(() => {});
     }
   } catch (err) {
-    atomicWriteFileSync(filePath, content);
+    if (tmpPath) {
+      await fs.promises.unlink(tmpPath).catch(() => {});
+    }
+    // Fallback apenas se a versão ainda for a atual
+    if (expectedVersion === null || expectedVersion === localDiskWriteVersion) {
+      atomicWriteFileSync(filePath, content);
+    }
   }
 }
 
@@ -5828,8 +5848,9 @@ function flushLocalDiskState() {
   isLocalSaving = true;
   const content = pendingLocalStateJson;
   pendingLocalStateJson = null;
+  const writeVersion = ++localDiskWriteVersion;
 
-  atomicWriteFileAsync(DB_FILE, content)
+  atomicWriteFileAsync(DB_FILE, content, writeVersion)
     .catch(err => {
       console.warn("[Database] Falha ao persistir assincronamente em disco:", err.message);
     })
@@ -5853,6 +5874,7 @@ function saveDatabase(reason = "auto_save") {
         localSaveTimeout = null;
       }
       pendingLocalStateJson = null;
+      localDiskWriteVersion++;
       atomicWriteFileSync(DB_FILE, stateJson);
     } else {
       pendingLocalStateJson = stateJson;
@@ -12737,13 +12759,39 @@ app.all(["/api/pms/reservations/repair-incident-sept30", "/api/system/repair-inc
 // ── Caches Reutilizáveis de Alta Performance (Redução de Alocação de Memória) ──
 let cachedGuestIndexes = null;
 let cachedGuestSource = null;
+let cachedGuestLength = -1;
+let cachedGuestTimestamp = 0;
+
 let cachedFlatsByNumber = null;
 let cachedFlatsSource = null;
+let cachedFlatsLength = -1;
+let cachedFlatsTimestamp = 0;
+
 let lastCalendarReconcileTime = 0;
+
+function invalidateGuestCache() {
+  cachedGuestIndexes = null;
+  cachedGuestSource = null;
+  cachedGuestLength = -1;
+  cachedGuestTimestamp = 0;
+}
+
+function invalidateFlatsCache() {
+  cachedFlatsByNumber = null;
+  cachedFlatsSource = null;
+  cachedFlatsLength = -1;
+  cachedFlatsTimestamp = 0;
+}
 
 function getGuestIndexes() {
   const current = db.guests || [];
-  if (cachedGuestIndexes && cachedGuestSource === current) {
+  const now = Date.now();
+  if (
+    cachedGuestIndexes &&
+    cachedGuestSource === current &&
+    cachedGuestLength === current.length &&
+    now - cachedGuestTimestamp < 5000
+  ) {
     return cachedGuestIndexes;
   }
   const guestsById = new Map();
@@ -12766,17 +12814,27 @@ function getGuestIndexes() {
   }
 
   cachedGuestSource = current;
+  cachedGuestLength = current.length;
+  cachedGuestTimestamp = now;
   cachedGuestIndexes = { guestsById, guestsByDoc, guestsByPhone, guestsByName };
   return cachedGuestIndexes;
 }
 
 function getFlatsByNumberMap() {
   const current = db.flats || [];
-  if (cachedFlatsByNumber && cachedFlatsSource === current) {
+  const now = Date.now();
+  if (
+    cachedFlatsByNumber &&
+    cachedFlatsSource === current &&
+    cachedFlatsLength === current.length &&
+    now - cachedFlatsTimestamp < 10000
+  ) {
     return cachedFlatsByNumber;
   }
   cachedFlatsByNumber = new Map(current.map(f => [String(f.number), f]));
   cachedFlatsSource = current;
+  cachedFlatsLength = current.length;
+  cachedFlatsTimestamp = now;
   return cachedFlatsByNumber;
 }
 
