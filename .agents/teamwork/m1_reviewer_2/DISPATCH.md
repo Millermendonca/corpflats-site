@@ -1,35 +1,20 @@
-# Dispatch: Milestone 1 Reviewer 2 (API Contracts & Security/Robustness)
+## 2026-10-11T13:54:48Z
 
-Read `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md`.
-Read `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md`.
-Read `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m1_worker\handoff.md`.
+You are M1 Reviewer 2 for Milestone 1 of the CorpFlats Guest-Flow-Manager project.
 
-You are Reviewer 2 for Milestone 1 (Backend Core & Database Layer).
-Review:
-1. REST Endpoints compliance with interface contracts in `PROJECT.md` (`GET`, `POST`, `PUT`, `DELETE` on `/api/whatsapp/faq` and `POST /api/whatsapp/faq/:id/approve`).
-2. Robustness of `atomicWriteFileSync` and error handling.
-3. Phone normalization and edge case resilience in `isFaqApplicableToClient` and `matchClientPhone`.
-4. Run tests: `node --test tests/whatsapp-ai-agent.test.mjs`
-5. Conclude with a definitive verdict: `APPROVE` or `REQUEST_CHANGES`.
-Write `review.md` and `handoff.md` in this directory.
+Your Working Directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m1_reviewer_2
+Authoritative Request: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md (read section from 2026-10-11T12:53:32Z)
+Project Plan: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md
+Worker Handoff: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m1_worker_1\handoff.md
 
-
-## 2026-10-11T02:11:16Z
-Sender: 27c61f6a-5652-421c-bbda-1b5d6be7db98
-Message:
-You are Reviewer 2 for Milestone 1 (Backend Core & Database Layer) for Guest-Flow-Manager.
-Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m1_reviewer_2
-Project root: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
-
-MANDATORY INSTRUCTION: You MUST read ORIGINAL_REQUEST.md before starting:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-
-Also read your task instructions:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m1_reviewer_2\DISPATCH.md
-and the worker handoff:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m1_worker\handoff.md
-
-Review REST endpoints, error handling, phone normalization edge cases, and atomic persistence robustness. Run tests:
-node --test tests/whatsapp-ai-agent.test.mjs
-Write review.md and handoff.md with definitive verdict APPROVE or REQUEST_CHANGES.
-When done, send message with your verdict and handoff path.
+Review Tasks:
+1. Read ORIGINAL_REQUEST.md, PROJECT.md, and worker's handoff.md.
+2. Review security and financial guardrails:
+   - Check that reservations cannot be modified to conflicting date ranges on the same flat.
+   - Check that stay extensions cannot update `checkinDate` or `checkoutDate` before payment settlement.
+   - Check that canceling hold or abandoning checkout leaves the original reservation untouched.
+   - Check that upon payment confirmation, `r.payments`, `r.totalAmount`, `r.paidAmount`, and `r.modificationHistory` are accurately updated.
+   - Check that `r.needsReSignature = true` is set upon date commit.
+3. Verify SHA-256 parity between `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs`.
+4. Execute `node --test tests/m1-reservation-modification-settlement.test.mjs` and verify all tests pass.
+5. State your explicit verdict (APPROVE or REQUEST_CHANGES) in `handoff.md` and report back.

@@ -1,595 +1,817 @@
-# Análise Arquitetural — Milestone 1 Explorer 2
-**Escopo**: Normalização de Telefones, Motor de Regras `isFaqApplicableToClient` (`all`, `exclude`, `include_only`), Endpoints REST em `zapi-service.mjs` e Resolução de Divergência SHA-256 em `whatsapp-ai-service.mjs`.
+# Relatório de Análise e Especificação Técnica: Endpoint `/modify-checkout` e Motor de Hold Provisório (`r.pendingModification`)
+
+**Agente**: M1 Explorer 2  
+**Data**: 2026-10-11  
+**Projeto**: CorpFlats Guest-Flow-Manager  
+**Milestone**: Milestone 1 — Backend Simulation, Hold & Settlement Engine  
+**Diretório de Trabalho**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m1_explorer_2`  
+**Escopo**: Endpoint `POST /api/pms/guest-portal/:code/modify-checkout`, Estrutura do Hold Provisório (`r.pendingModification`), Integração de Pagamento PIX e Mercado Pago, Algoritmos de Disponibilidade/Conflito e Auto-Expiração de 30 Minutos.
 
 ---
 
 ## 1. Sumário Executivo
 
-Esta investigação mapeou em detalhes a camada de backend e motor de regras para o Milestone 1 (Backend Core & Database Layer) do Guest-Flow-Manager. Foram analisados os arquivos espelhados:
-- `artifacts/api-server/zapi-service.mjs` e `scripts/zapi-service.mjs` (atualmente com hash idêntico: `301F4D859495BC0242EB7F3F050EB4C1BFE482B963D02BB166A5E86794C17007`);
-- `artifacts/api-server/whatsapp-ai-service.mjs` (hash `6683557D...`) e `scripts/whatsapp-ai-service.mjs` (hash `1DD69090...`), confirmando a causa exata da divergência de SHA-256;
-- `tests/whatsapp-ai-agent.test.mjs`, diagnosticando o comportamento do teste de integridade 10.
+O objetivo desta investigação é projetar a especificação arquitetural e o blueprint de código completo para o endpoint **`POST /api/pms/guest-portal/:code/modify-checkout`** e para a estrutura de **bloqueio provisório de calendário (hold de 30 minutos em `r.pendingModification`)** no backend do CorpFlats (`scripts/demo-server.mjs` e `artifacts/api-server/demo-server.mjs`).
 
-Foram projetadas, testadas com suíte de casos de borda e documentadas as implementações para:
-1. **Normalização e Matching de Telefones**: Função `matchClientPhone(phoneA, phoneB)` com inteligência para tolerar sufixos de 8 dígitos, presença/ausência do 9º dígito móvel, DDI 55, DDD e sufixos de JID do WhatsApp (`@c.us`), prevenindo falsos positivos entre DDDs distintos (ex: 21 vs 22);
-2. **Motor de Regras `isFaqApplicableToClient(faqItem, clientPhone)`**: Suporte rigoroso a escopos (`all`, `exclude`, `include_only`), validação de status (`ativo`), tolerância a arrays ou strings delimitadas de telefones, e tratamento robusto de telefones nulos/inválidos;
-3. **Endpoints REST no `initWhatsAppEngine`**:
-   - `GET /api/whatsapp/faq`: Listagem com suporte a filtros (`category`, `status`, `scope`, `search`);
-   - `POST /api/whatsapp/faq`: Criação com validação de obrigatoriedade, geração de ID (`faq_<timestamp>_<rand>`) e defaults defensivos;
-   - `PUT /api/whatsapp/faq/:id`: Edição com atualização de campos e timestamp `updatedAt`;
-   - `DELETE /api/whatsapp/faq/:id`: Remoção atômica;
-   - `POST /api/whatsapp/faq/:id/approve`: Aprovação em 1 clique, promovendo para `status: "ativo"`, registrando `approvedAt` e promovendo `suggestedAnswer` para `answer`;
-4. **Resolução de Paridade Dual-Mirrored**: Alinhamento imediato de `scripts/whatsapp-ai-service.mjs` com `artifacts/api-server/whatsapp-ai-service.mjs` para restaurar paridade de 100% de bytes.
+### Diagnóstico da Vulnerabilidade Existente
+Atualmente, o endpoint legado `POST /api/pms/guest-portal/:code/modify` (linhas 15.456 a 15.716 do `demo-server.mjs`) altera imediatamente as datas da reserva no banco de dados (`r.checkinDate = newCheckinDate`, `r.checkoutDate = newCheckoutDate`, linhas 15.615–15.616) e adiciona o valor ao total (`r.totalAmount += additionalAmountToPay`, linha 15.529), mesmo quando há acréscimo financeiro a pagar (`additionalAmountToPay > 0`). Se o hóspede fechar a janela, desistir ou não efetuar o pagamento, a estadia já foi estendida no PMS sem nenhuma liquidação prévia.
+
+### Solução Arquitetural de 2 Etapas
+Para sanar essa falha crítica:
+1. **Etapa 1 (Simulação)**: Endpoint `/modify-preview` (desenhado pelo M1 Explorer 1) calcula custos e verifica disponibilidade sem tocar no banco.
+2. **Etapa 2 (Hold & Checkout)**: Quando `additionalAmountToPay > 0`, o endpoint **`POST /modify-checkout`** cria um bloqueio provisório de 30 minutos em `r.pendingModification`, gera cobrança PIX (Banco Inter mTLS oficial com fallback para PIX estático EMV com QR Code Base64) e preferência no Mercado Pago (Checkout Pro), **sem alterar as datas originais da reserva (`r.checkinDate` e `r.checkoutDate` permanecem estritamente intactas)**.
+3. **Bloqueio de Calendário sem Efeito Colateral**: Todos os algoritmos de consulta de disponibilidade do sistema (`hasReservationConflict`, `GET /api/reservations/availability`, `GET /api/bot-actions/availability`, `POST /api/bot-actions/pre-reserve`, etc.) passam a reconhecer o hold ativo como bloqueio de quarto. Se o hóspede não pagar em até 30 minutos, o hold expira automaticamente, liberando as datas propostas sem que as datas originais tenham sido adulteradas.
 
 ---
 
-## 2. Investigação de Normalização de Telefone & Matching
+## 2. Investigação Técnica dos Subsistemas Existentes em `scripts/demo-server.mjs`
 
-### 2.1 Análise de `cleanWhatsAppPhone`
-Em `zapi-service.mjs` (linhas 1069-1084):
-```javascript
-export function cleanWhatsAppPhone(rawPhone) {
-  if (!rawPhone) return "";
-  let digits = String(rawPhone).replace(/\D/g, "");
-  if (!digits) return "";
-  
-  // Remove zeros à esquerda (ex: 022998505276 -> 22998505276)
-  while (digits.startsWith("0")) {
-    digits = digits.substring(1);
-  }
+### 2.1 Geração de Cobrança PIX
+A investigação detalhada do código-fonte revelou dois mecanismos de emissão PIX em `demo-server.mjs`:
 
-  // Se tem 10 ou 11 dígitos (DDD + número no Brasil), adiciona 55
-  if (digits.length === 10 || digits.length === 11) {
-    digits = "55" + digits;
+#### A. PIX Dinâmico Inter (mTLS Cobrança Imediata / v2)
+- **Função**: `createInterPixCob({ amount, description, debtorName, debtorDocument, reservationCode })` (linhas 27.704–27.776).
+- **Mecanismo**: Realiza chamada autenticada mTLS via `https://cdpj.partners.bancointer.com.br/pix/v2/cob/${txid}` utilizando `getInterAccessToken()` e agente HTTPS configurado com certificados da CorpFlats.
+- **Retorno**:
+  ```javascript
+  {
+    txid: string,          // Hash hexadecimal de 32 chars
+    pixCopiaECola: string, // BR Code oficial gerado pelo Banco Inter
+    location: string,
+    status: "ATIVA",
+    valor: string,
+    expiresIn: 3600,
+    createdAt: string
   }
-  return digits;
+  ```
+- **Resiliência**: Se as credenciais do Banco Inter não estiverem configuradas ou se a API retornar erro de rede/timeout, a função rejeita a Promise, permitindo fallback transparente para o PIX estático.
+
+#### B. PIX Estático Autônomo (EMV BR Code Padrão BACEN)
+- **Função**: `generateStaticPixPayload({ pixKey, amount, merchantName, merchantCity, txid })` (linhas 11.283–11.307).
+- **Mecanismo**: Monta a string no padrão EMV BR Code (ID 00 a 63 com cálculo de CRC16).
+  - Chave padrão: `47964813000165` (CNPJ CorpFlats).
+  - Nome: `CORPFLATS LTDA`.
+  - Cidade: `CAMPOS DOS GOYTACAZES`.
+  - TxId: Normalizado e sanitizado (até 25 caracteres alfanuméricos).
+- **QR Code Base64**: Biblioteca `qrcode` já importada no topo do arquivo (linha 66: `import QRCode from "qrcode";`). A geração ocorre via `await QRCode.toDataURL(pixPayload)`.
+
+### 2.2 Geração de Preferência no Mercado Pago
+- **Função**: `createMercadoPagoPreference({ reservationCode, amount, guestName, guestEmail, nights, flatNumber })` (linhas 28.487–28.570).
+- **Configuração**: Credenciais em `db.settings.mercadoPagoConfig` ou `DEFAULT_MP_CONFIG` (linhas 28.478–28.485).
+- **Retorno**:
+  ```javascript
+  {
+    id: string,               // Preference ID (ex: "pref_123456789")
+    initPoint: string,        // URL de checkout web (Checkout Pro)
+    sandboxInitPoint: string
+  }
+  ```
+
+#### Descoberta Crítica de Isolamento: `external_reference`
+Na função `createMercadoPagoPreference`, a propriedade `external_reference` é definida como `reservationCode`.
+Se usássemos simplesmente `reservationCode: r.code`, uma reserva que já foi paga pelo Mercado Pago no momento da compra original teria um pagamento aprovado registrado com `external_reference = r.code`. Ao consultar `checkMercadoPagoPaymentByRef(r.code)`, a API retornaria o pagamento antigo de semanas atrás, gerando um **falso positivo catastrófico de liquidação imediata**!
+**Decisão de Projeto**: No checkout de modificação, a preferência do Mercado Pago deve ser gerada com `external_reference: "MOD-" + r.code` (ou `"MOD-" + r.code + "-" + pendingId`). Dessa forma, a busca por pagamentos da modificação em `checkMercadoPagoPaymentByRef("MOD-" + r.code)` encontrará exclusivamente o pagamento correspondente a essa alteração!
+
+---
+
+## 3. Estrutura do Hold Provisório (`r.pendingModification`)
+
+O bloqueio provisório é anexado diretamente à reserva no array `db.reservations`.
+
+### 3.1 Especificação TypeScript do Objeto
+```typescript
+interface PendingModification {
+  // Identificação e Controle
+  pendingId: string;              // Ex: "mod_1728651234_a1b2c3"
+  status: 'pending' | 'expired' | 'committed' | 'canceled';
+  createdAt: string;              // ISO 8601 (ex: "2026-10-11T13:00:00.000Z")
+  expiresAt: string;              // ISO 8601 = createdAt + 30 minutos
+  expiredAt?: string;             // ISO 8601 preenchido na expiração
+  committedAt?: string;           // ISO 8601 preenchido na confirmação
+  canceledAt?: string;            // ISO 8601 preenchido no cancelamento
+
+  // Parâmetros Solicitados para a Nova Estadia
+  newCheckinDate: string;         // YYYY-MM-DD
+  newCheckoutDate: string;        // YYYY-MM-DD
+  newGuestCount: number;          // Ocupantes
+  newFlatId: number | string;     // ID do flat de destino
+  newFlatNumber: string;          // Número do flat de destino (ex: "114")
+
+  // Valores Financeiros
+  additionalAmountToPay: number;  // Valor extra a liquidar (R$)
+  paymentMethod: 'pix' | 'credit_card';
+
+  // Artefatos de Cobrança PIX
+  pixTxId: string;                // TxId oficial Inter ou sanitizado estático
+  pixCopiaECola: string;          // Linha digitável EMV BR Code
+  pixQrCodeUrl: string;           // Imagem data:image/png;base64,...
+
+  // Artefatos de Cobrança Mercado Pago
+  mpPreferenceId: string | null;  // ID da preferência gerada no MP
+  mpCheckoutUrl: string | null;   // URL initPoint para redirecionamento
+
+  // Metadados da Reserva Original (Snapshot de Segurança)
+  reason: string;
+  oldCheckinDate: string;         // Data de check-in original inalterada
+  oldCheckoutDate: string;        // Data de check-out original inalterada
+  oldFlatNumber: string;          // Flat original
+  oldFlatId: number | string;
+  oldTotalAmount: number;         // Valor total original da reserva
+  oldNights: number;              // Noites originais
+  newNights: number;              // Novas noites calculadas
+  extraNights: number;            // Noites adicionais
+  dailyRate: number;              // Diária base utilizada no cálculo
+  refundAmount: number;           // Valor de estorno elegível (se houver)
+  isUnder24h: boolean;            // Flag da política de 24 horas
+  nonRefundableReduction: boolean;
 }
 ```
 
-**Comportamento Observado**:
-- Entrada com caracteres especiais (`+55 (22) 99850-5276`) ou JID (`5522998505276@c.us`) tem todos os caracteres não-numéricos removidos;
-- Zeros à esquerda (ex: de discagem DDD com zero `022...`) são descartados;
-- Telefones com 10 dígitos (DDD + 8 dígitos) ou 11 dígitos (DDD + 9 dígitos) recebem o prefixo do DDI brasileiro `55`;
-- Números com 12 dígitos (55 + DDD + 8 dígitos - padrão comum retornado pela Z-API) ou 13 dígitos (55 + DDD + 9 dígitos) são preservados;
-- Números com menos de 10 dígitos (ex: apenas 8 ou 9 dígitos sem DDD) retornam seus dígitos brutos.
+### 3.2 Ciclo de Vida e Transições de Estado
 
-### 2.2 Padrão de Matching no Repositório
-No código existente (`zapi-service.mjs:3951`, `5284`, `6301` e `whatsapp-ai-service.mjs:180`, `540`), o sistema compara telefones verificando se os últimos 8 dígitos coincidem:
-```javascript
-const isAllowed = allowed.some(a => targetNorm.endsWith(a.slice(-8)) || a.endsWith(targetNorm.slice(-8)));
 ```
-**Vantagem**: Resolve a discrepância brasileira do 9º dígito adicional em celulares (o sufixo de 8 dígitos é idêntico com ou sem o 9 inicial).
-**Risco Identificado**: Se comparar apenas os últimos 8 dígitos sem validar o DDD, números de DDDs distintos com o mesmo número terminal (ex: `(21) 99850-5276` vs `(22) 99850-5276`) poderiam colidir.
+                 [ POST /modify-checkout ]
+                            │
+                            ▼
+                    status: 'pending'
+                 (Hold ativo por 30 min)
+                Bloqueia calendário do flat
+               Datas originais NÃO se alteram
+                            │
+         ┌──────────────────┼──────────────────┐
+         │                  │                  │
+   Após 30 minutos    Cancelado pelo     Pagamento Detectado
+   sem pagamento      hóspede no modal    e Confirmado
+         │                  │                  │
+         ▼                  ▼                  ▼
+ status: 'expired'  status: 'canceled' status: 'committed'
+   Hold desfeito      Hold desfeito      Datas originais são
+Datas originais     Datas originais     atualizadas para as novas.
+permanecem intactas permanecem intactas Pagamento entra em r.payments.
+                                        r.needsReSignature = true.
+```
 
-### 2.3 Design da Função `matchClientPhone(phoneA, phoneB)`
-Para garantir precisão máxima tanto para telefones completos quanto parciais, desenvolvemos a seguinte lógica:
+---
+
+## 4. Algoritmos de Disponibilidade e Blindagem de Calendário
+
+Para que o hold funcione sem permitir double-booking, todos os pontos de consulta de disponibilidade do sistema devem reconhecer o objeto `r.pendingModification`.
+
+### 4.1 Regras de Bloqueio por Hold
+Uma data solicitada `[reqIn, reqOut)` para um apartamento `targetFlat` colide com um hold provisório de outra reserva `other` se:
+1. `other.pendingModification` existir;
+2. `other.pendingModification.status === "pending"` (ou `"pending_payment"`);
+3. `new Date(other.pendingModification.expiresAt).getTime() > Date.now()` (hold ainda não expirou);
+4. O flat solicitado for igual ao flat de destino do hold:
+   `String(targetFlat) === String(other.pendingModification.newFlatNumber || other.pendingModification.newFlatId)`;
+5. Houver sobreposição temporal:
+   `other.pendingModification.newCheckinDate < reqOut && other.pendingModification.newCheckoutDate > reqIn`.
+
+### 4.2 Função Canônica Centralizada: `hasReservationConflict`
+Propõe-se a criação da função utilitária exportável `hasReservationConflict`:
+
 ```javascript
-export function matchClientPhone(phoneA, phoneB) {
-  if (!phoneA || !phoneB) return false;
-  const cleanA = cleanWhatsAppPhone(phoneA);
-  const cleanB = cleanWhatsAppPhone(phoneB);
-  if (!cleanA || !cleanB) return false;
+export function hasReservationConflict({
+  flatId,
+  flatNumber,
+  checkinDate,
+  checkoutDate,
+  excludeReservationId = null,
+  excludePendingHoldReservationId = null,
+  nowMs = Date.now()
+}) {
+  const targetFlatIdStr = flatId != null ? String(flatId) : null;
+  const targetFlatNumberStr = flatNumber != null ? String(flatNumber) : null;
 
-  // Igualdade exata
-  if (cleanA === cleanB) return true;
-
-  // Se algum tiver menos de 8 dígitos, não é comparável
-  if (cleanA.length < 8 || cleanB.length < 8) return false;
-
-  const last8A = cleanA.slice(-8);
-  const last8B = cleanB.slice(-8);
-  if (last8A !== last8B) return false;
-
-  // Extrai DDD para evitar colisão entre estados/regiões diferentes (ex: 21 vs 22)
-  const getDdd = (clean) => {
-    if (clean.startsWith("55") && (clean.length === 12 || clean.length === 13)) {
-      return clean.slice(2, 4);
+  // 1. Checa conflito com reservas ativas do PMS
+  const conflictWithReservation = (db.reservations || []).some(other => {
+    if (excludeReservationId && (other.id === excludeReservationId || other.code === excludeReservationId)) {
+      return false;
     }
-    if (clean.length === 10 || clean.length === 11) {
-      return clean.slice(0, 2);
+    if (other.status === "cancelada" || other.status === "CANCELLED" || other.status === "expirada") {
+      return false;
     }
-    return null;
-  };
+    // Expira pré-reservas vencidas
+    if ((other.status === "pre_reserva" || other.status === "pendente") && other.expiresAt) {
+      if (new Date(other.expiresAt).getTime() < nowMs && other.paymentStatus !== "pago_total") {
+        other.status = "expirada";
+        return false;
+      }
+    }
 
-  const dddA = getDdd(cleanA);
-  const dddB = getDdd(cleanB);
+    const otherFlatIdStr = other.flatId != null ? String(other.flatId) : null;
+    const otherFlatNumberStr = other.flatNumber != null ? String(other.flatNumber) : null;
+    const matchesFlat =
+      (targetFlatNumberStr && (targetFlatNumberStr === otherFlatNumberStr || targetFlatNumberStr === otherFlatIdStr)) ||
+      (targetFlatIdStr && (targetFlatIdStr === otherFlatIdStr || targetFlatIdStr === otherFlatNumberStr));
 
-  // Se ambos forneceram DDD identificável, os DDDs DEVEM ser iguais
-  if (dddA && dddB && dddA !== dddB) {
-    return false;
-  }
+    if (!matchesFlat) return false;
 
-  // Sufixo terminal compatível
-  return cleanA.endsWith(last8B) || cleanB.endsWith(last8A);
+    return checkinDate < other.checkoutDate && checkoutDate > other.checkinDate;
+  });
+
+  if (conflictWithReservation) return true;
+
+  // 2. Checa conflito com holds provisórios ativos (r.pendingModification)
+  const conflictWithPendingHold = (db.reservations || []).some(other => {
+    if (excludePendingHoldReservationId && (other.id === excludePendingHoldReservationId || other.code === excludePendingHoldReservationId)) {
+      return false;
+    }
+    const pending = other.pendingModification;
+    if (!pending) return false;
+    if (pending.status !== "pending" && pending.status !== "pending_payment") return false;
+
+    // Se o hold expirou, atualiza status para expired e não bloqueia
+    if (pending.expiresAt && new Date(pending.expiresAt).getTime() < nowMs) {
+      pending.status = "expired";
+      pending.expiredAt = new Date(nowMs).toISOString();
+      return false;
+    }
+
+    const pHoldIn = pending.newCheckinDate || pending.proposedCheckinDate;
+    const pHoldOut = pending.newCheckoutDate || pending.proposedCheckoutDate;
+    const pHoldFlatId = pending.newFlatId != null ? String(pending.newFlatId) : null;
+    const pHoldFlatNum = pending.newFlatNumber != null ? String(pending.newFlatNumber) : (pHoldFlatId || String(other.flatNumber));
+
+    const matchesFlat =
+      (targetFlatNumberStr && (targetFlatNumberStr === pHoldFlatNum || targetFlatNumberStr === pHoldFlatId)) ||
+      (targetFlatIdStr && (targetFlatIdStr === pHoldFlatId || targetFlatIdStr === pHoldFlatNum));
+
+    if (!matchesFlat) return false;
+
+    return checkinDate < pHoldOut && checkoutDate > pHoldIn;
+  });
+
+  if (conflictWithPendingHold) return true;
+
+  // 3. Checa conflito com bloqueios de manutenção (db.roomBlocks)
+  const conflictWithRoomBlock = (db.roomBlocks || []).some(b => {
+    const bFlatId = b.flatId != null ? String(b.flatId) : null;
+    const bFlatNum = b.flatNumber != null ? String(b.flatNumber) : null;
+    const matchesFlat =
+      (targetFlatNumberStr && (targetFlatNumberStr === bFlatNum || targetFlatNumberStr === bFlatId)) ||
+      (targetFlatIdStr && (targetFlatIdStr === bFlatId || targetFlatIdStr === bFlatNum));
+
+    if (!matchesFlat) return false;
+
+    return checkinDate < b.endDate && checkoutDate > b.startDate;
+  });
+
+  if (conflictWithRoomBlock) return true;
+
+  return false;
+}
+```
+
+### 4.3 Pontos de Integração em Endpoints Existentes
+1. **`GET /api/reservations/availability` (linha 11.183)**:
+   - Adicionar o flat do hold ativo de `r.pendingModification` em `occupiedFlatIds`.
+2. **`POST /api/reservations/quote` (linha 11.483)**:
+   - Adicionar o flat do hold ativo de `r.pendingModification` em `occupiedFlatNumbers`.
+3. **`GET /api/bot-actions/availability` (linha 20.756)**:
+   - Adicionar o flat e ID do hold ativo em `busyFlatSet`.
+4. **`POST /api/bot-actions/pre-reserve` (linha 21.002)**:
+   - Incluir verificação de holds provisórios em `hasConflict`.
+5. **`POST /api/bot-actions/commit-reservation` (linha 21.175)**:
+   - Incluir verificação de holds provisórios em `hasConflict`.
+
+---
+
+## 5. Especificação do Endpoint `POST /api/pms/guest-portal/:code/modify-checkout`
+
+### 5.1 Contrato da Rota
+- **Método**: `POST`
+- **URL**: `/api/pms/guest-portal/:code/modify-checkout`
+- **Headers**: `Content-Type: application/json`
+
+### 5.2 Corpo da Requisição (Input)
+```json
+{
+  "newCheckinDate": "2026-10-15",
+  "newCheckoutDate": "2026-10-20",
+  "newGuestCount": 2,
+  "newFlatId": 2,
+  "newFlatNumber": "114",
+  "reason": "Extensão de duas diárias",
+  "paymentMethod": "pix"
+}
+```
+
+### 5.3 Pipeline de Processamento
+1. **Autenticação & Validação de Canal**:
+   - Localiza reserva por código ou telefone: `findReservationByLocatorOrContact(code)`.
+   - Se não encontrada: `404 Not Found`.
+   - Se `r.status === "cancelada" || r.status === "CANCELLED" || r.status === "expirada"`: `400 Bad Request`.
+   - Se o canal não for direto (`whatsapp`, `site`, `site_direto`, `direto`, `balcao`): `403 Forbidden`.
+2. **Validação de Parâmetros**:
+   - `newCheckinDate` e `newCheckoutDate` obrigatórios.
+   - `newCheckoutDate > newCheckinDate`.
+   - Resolução do flat de destino: se informado `newFlatId` ou `newFlatNumber`, valida existência em `db.flats`. Caso contrário, mantém o flat atual `r.flatNumber`.
+3. **Verificação Concorrente de Disponibilidade**:
+   - Executa `hasReservationConflict` para o flat de destino no intervalo `[newCheckinDate, newCheckoutDate)`.
+   - Se o flat de destino for o mesmo da reserva atual, passa `excludeReservationId = r.id` (pois a estadia atual será substituída pela nova após a liquidação).
+   - Se o flat de destino for diferente, **NÃO** exclui a reserva atual no novo flat (o novo flat deve estar 100% livre).
+   - Se houver conflito: `409 Conflict` com `{ error: "FLAT_UNAVAILABLE", message: "..." }`.
+4. **Cálculo Financeiro e Política das 24 Horas**:
+   - Calcula `oldNights`, `newNights` e `dailyRate`.
+   - Se `newNights > oldNights`: calcula `extraNights = newNights - oldNights` e `additionalAmountToPay = extraNights * dailyRate`.
+   - Se `additionalAmountToPay <= 0`: retorna `{ success: true, requiresPayment: false, additionalAmountToPay: 0, message: "Esta alteração não possui custo adicional e pode ser confirmada diretamente." }`.
+5. **Geração de Cobrança PIX**:
+   - Gera `pendingId = "mod_" + Date.now() + "_" + crypto.randomBytes(3).toString("hex")`.
+   - Tenta criar cobrança oficial via `createInterPixCob`.
+   - Se falhar ou estiver em ambiente sem credenciais Inter: gera PIX estático EMV via `generateStaticPixPayload` com TxId sanitizado.
+   - Gera imagem do QR Code em Base64 via `await QRCode.toDataURL(pixCopiaECola)`.
+6. **Geração de Preferência Mercado Pago**:
+   - Tenta gerar preferência no Mercado Pago via `createMercadoPagoPreference` com `reservationCode = "MOD-" + r.code`.
+   - Armazena `mpPreferenceId` e `mpCheckoutUrl` (`initPoint`).
+7. **Criação do Bloqueio Atômico**:
+   - Preenche `r.pendingModification` com status `"pending"` e `expiresAt = now + 30 min`.
+   - Salva o banco de dados via `saveDatabase("modify_checkout_hold")`.
+8. **Resposta (Output)**:
+   - Retorna HTTP 200 com os dados de pagamento e hold.
+
+### 5.4 Resposta de Sucesso (200 OK)
+```json
+{
+  "success": true,
+  "pendingId": "mod_1728651234_a1b2c3",
+  "additionalAmountToPay": 320.00,
+  "expiresAt": "2026-10-11T13:30:00.000Z",
+  "holdMinutes": 30,
+  "pixQrCodeUrl": "data:image/png;base64,iVBORw0KGgo...",
+  "pixCopiaECola": "00020126580014br.gov.bcb.pix0114479648130001655204000053039865406320.005802BR5914CORPFLATS LTDA6015CAMPOS62270523MODRES31303013206304E8A1",
+  "pixTxId": "MODRES3130301320",
+  "mpCheckoutUrl": "https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=pref_123456",
+  "mpPreferenceId": "pref_123456",
+  "newDates": {
+    "checkinDate": "2026-10-15",
+    "checkoutDate": "2026-10-20"
+  },
+  "newFlatNumber": "114",
+  "newGuestCount": 2
 }
 ```
 
 ---
 
-## 3. Investigação & Design do Motor de Regras `isFaqApplicableToClient`
+## 6. Blueprint de Implementação (Código Verbatim para o Worker)
 
-### 3.1 Requisitos do Motor
-Conforme `ORIGINAL_REQUEST.md` (§R4):
-- `scope`:
-  - `"all"`: Válido para todos os clientes (padrão quando omitido);
-  - `"exclude"`: Válido para todos, **exceto** os clientes listados em `clientPhones`;
-  - `"include_only"`: Válido **exclusivamente** para os clientes listados em `clientPhones`.
-- `clientPhones`: Lista de números de telefone formatados ou puros;
-- Status: Se `faqItem.status` for informado e diferente de `"ativo"` (ex: `"inativo"`, `"pendente"`, `"aguardando_aprovacao"`), a resposta não deve ser aplicada.
+Abaixo está o código drop-in exato para inclusão em `scripts/demo-server.mjs` e `artifacts/api-server/demo-server.mjs`.
 
-### 3.2 Design da Função `isFaqApplicableToClient`
+### 6.1 Funções Utilitárias de Hold e Conflito (Inserir antes de `POST /api/pms/guest-portal/:code/modify`, aprox. linha 15.455)
+
 ```javascript
-export function isFaqApplicableToClient(faqItem, clientPhone) {
-  if (!faqItem) return false;
-
-  // Respeita status: apenas itens ativos (ou itens de teste sem status explícito) são aplicáveis
-  if (faqItem.status && faqItem.status !== "ativo") {
+// ── Helper: Verifica se um hold provisório está ativo ─────────────────────────
+export function isPendingHoldActive(pending, nowMs = Date.now()) {
+  if (!pending) return false;
+  if (pending.status !== "pending" && pending.status !== "pending_payment") return false;
+  if (!pending.expiresAt) return false;
+  const expMs = new Date(pending.expiresAt).getTime();
+  if (isNaN(expMs) || expMs <= nowMs) {
     return false;
   }
-
-  const scope = faqItem.scope || "all";
-  if (scope === "all") {
-    return true;
-  }
-
-  // Normaliza lista de telefones da regra (suporta array ou string delimitada)
-  const rawPhones = Array.isArray(faqItem.clientPhones)
-    ? faqItem.clientPhones
-    : (typeof faqItem.clientPhones === "string" ? faqItem.clientPhones.split(/[,;\s]+/) : []);
-  const clientPhones = rawPhones.map(p => String(p).trim()).filter(Boolean);
-
-  // Se o telefone do cliente for indefinido/vazio
-  if (!clientPhone) {
-    if (scope === "exclude") return true; // Não há como excluir cliente desconhecido
-    if (scope === "include_only") return false; // Não há como incluir cliente desconhecido
-    return true;
-  }
-
-  const isMatched = clientPhones.some(p => matchClientPhone(clientPhone, p));
-
-  if (scope === "exclude") {
-    // Se deu match com a lista de exclusão, NÃO é aplicável
-    return !isMatched;
-  }
-
-  if (scope === "include_only") {
-    // Se a lista estiver vazia, ninguém é incluído
-    if (clientPhones.length === 0) return false;
-    // Só é aplicável se coincidir com a lista
-    return isMatched;
-  }
-
   return true;
 }
+
+// ── Helper: Expira hold provisório se o tempo de 30 minutos tiver passado ─────
+export function expirePendingHoldIfNeeded(r, nowMs = Date.now()) {
+  if (r && r.pendingModification && (r.pendingModification.status === "pending" || r.pendingModification.status === "pending_payment")) {
+    const expMs = new Date(r.pendingModification.expiresAt).getTime();
+    if (!isNaN(expMs) && expMs <= nowMs) {
+      r.pendingModification.status = "expired";
+      r.pendingModification.expiredAt = new Date(nowMs).toISOString();
+      return true;
+    }
+  }
+  return false;
+}
+
+// ── Helper: Verificador Canônico de Conflitos no PMS (Reservas, Holds e RoomBlocks) ──
+export function hasReservationConflict({
+  flatId,
+  flatNumber,
+  checkinDate,
+  checkoutDate,
+  excludeReservationId = null,
+  excludePendingHoldReservationId = null,
+  nowMs = Date.now()
+}) {
+  const targetFlatIdStr = flatId != null ? String(flatId) : null;
+  const targetFlatNumberStr = flatNumber != null ? String(flatNumber) : null;
+
+  // 1. Checa contra reservas ativas no PMS
+  const conflictWithReservation = (db.reservations || []).some(other => {
+    if (excludeReservationId && (other.id === excludeReservationId || other.code === excludeReservationId)) {
+      return false;
+    }
+    if (other.status === "cancelada" || other.status === "CANCELLED" || other.status === "expirada") {
+      return false;
+    }
+    // Expira pré-reservas vencidas
+    if ((other.status === "pre_reserva" || other.status === "pendente") && other.expiresAt) {
+      if (new Date(other.expiresAt).getTime() < nowMs && other.paymentStatus !== "pago_total") {
+        other.status = "expirada";
+        return false;
+      }
+    }
+
+    const otherFlatIdStr = other.flatId != null ? String(other.flatId) : null;
+    const otherFlatNumberStr = other.flatNumber != null ? String(other.flatNumber) : null;
+    const matchesFlat =
+      (targetFlatNumberStr && (targetFlatNumberStr === otherFlatNumberStr || targetFlatNumberStr === otherFlatIdStr)) ||
+      (targetFlatIdStr && (targetFlatIdStr === otherFlatIdStr || targetFlatIdStr === otherFlatNumberStr));
+
+    if (!matchesFlat) return false;
+
+    return checkinDate < other.checkoutDate && checkoutDate > other.checkinDate;
+  });
+
+  if (conflictWithReservation) return true;
+
+  // 2. Checa contra holds provisórios (r.pendingModification)
+  const conflictWithPendingHold = (db.reservations || []).some(other => {
+    if (excludePendingHoldReservationId && (other.id === excludePendingHoldReservationId || other.code === excludePendingHoldReservationId)) {
+      return false;
+    }
+    const pending = other.pendingModification;
+    if (!pending) return false;
+    if (pending.status !== "pending" && pending.status !== "pending_payment") return false;
+
+    // Se o hold expirou, atualiza status para expired e não bloqueia
+    if (pending.expiresAt && new Date(pending.expiresAt).getTime() < nowMs) {
+      pending.status = "expired";
+      pending.expiredAt = new Date(nowMs).toISOString();
+      return false;
+    }
+
+    const pHoldIn = pending.newCheckinDate || pending.proposedCheckinDate;
+    const pHoldOut = pending.newCheckoutDate || pending.proposedCheckoutDate;
+    const pHoldFlatId = pending.newFlatId != null ? String(pending.newFlatId) : null;
+    const pHoldFlatNum = pending.newFlatNumber != null ? String(pending.newFlatNumber) : (pHoldFlatId || String(other.flatNumber));
+
+    const matchesFlat =
+      (targetFlatNumberStr && (targetFlatNumberStr === pHoldFlatNum || targetFlatNumberStr === pHoldFlatId)) ||
+      (targetFlatIdStr && (targetFlatIdStr === pHoldFlatId || targetFlatIdStr === pHoldFlatNum));
+
+    if (!matchesFlat) return false;
+
+    return checkinDate < pHoldOut && checkoutDate > pHoldIn;
+  });
+
+  if (conflictWithPendingHold) return true;
+
+  // 3. Checa contra bloqueios de manutenção (db.roomBlocks)
+  const conflictWithRoomBlock = (db.roomBlocks || []).some(b => {
+    const bFlatId = b.flatId != null ? String(b.flatId) : null;
+    const bFlatNum = b.flatNumber != null ? String(b.flatNumber) : null;
+    const matchesFlat =
+      (targetFlatNumberStr && (targetFlatNumberStr === bFlatNum || targetFlatNumberStr === bFlatId)) ||
+      (targetFlatIdStr && (targetFlatIdStr === bFlatId || targetFlatIdStr === bFlatNum));
+
+    if (!matchesFlat) return false;
+
+    return checkinDate < b.endDate && checkoutDate > b.startDate;
+  });
+
+  if (conflictWithRoomBlock) return true;
+
+  return false;
+}
 ```
 
-### 3.3 Matriz de Verificação de Casos de Borda (Testada com Node.js)
-| Cenário | Configuração da Regra | Entrada `clientPhone` | Resultado Esperado | Status do Teste |
-|---|---|---|---|---|
-| Escopo padrão (`all`) | `{ scope: 'all' }` | `"5522998505276"` | `true` | Aprovado |
-| Exclusão (match positivo) | `{ scope: 'exclude', clientPhones: ['22998505276'] }` | `"5522998505276"` | `false` | Aprovado |
-| Exclusão (não-match) | `{ scope: 'exclude', clientPhones: ['22998505276'] }` | `"5521998505276"` | `true` | Aprovado |
-| Inclusão Restrita (match) | `{ scope: 'include_only', clientPhones: ['22998505276'] }` | `"5522998505276"` | `true` | Aprovado |
-| Inclusão Restrita (não-match) | `{ scope: 'include_only', clientPhones: ['22998505276'] }` | `"5521998505276"` | `false` | Aprovado |
-| Variação 8 vs 9 dígitos | `{ scope: 'include_only', clientPhones: ['552298505276'] }` | `"5522998505276"` | `true` | Aprovado |
-| Formatação + JID `@c.us` | `{ scope: 'include_only', clientPhones: ['+55 (22) 99850-5276'] }` | `"5522998505276@c.us"` | `true` | Aprovado |
-| Item com `status: "inativo"` | `{ status: 'inativo', scope: 'all' }` | `"5522998505276"` | `false` | Aprovado |
-| Item com `status: "pendente"` | `{ status: 'pendente', scope: 'all' }` | `"5522998505276"` | `false` | Aprovado |
-| Cliente nulo com `exclude` | `{ scope: 'exclude', clientPhones: ['22998505276'] }` | `null` | `true` | Aprovado |
-| Cliente nulo com `include_only` | `{ scope: 'include_only', clientPhones: ['22998505276'] }` | `null` | `false` | Aprovado |
-| Lista de telefones como string | `{ scope: 'include_only', clientPhones: '22998505276, 21997142513' }` | `"5521997142513"` | `true` | Aprovado |
-| Lista vazia com `include_only` | `{ scope: 'include_only', clientPhones: [] }` | `"5522998505276"` | `false` | Aprovado |
+### 6.2 Endpoint `POST /api/pms/guest-portal/:code/modify-checkout`
 
----
-
-## 4. Investigação & Design dos Endpoints REST em `zapi-service.mjs`
-
-### 4.1 Ponto de Injeção
-Em `zapi-service.mjs`:
-- Inicialização de defaults em `ensureDbDefaults()` (linha 4208+):
-  ```javascript
-  if (!Array.isArray(db.faqItems)) {
-    db.faqItems = [];
-  }
-  ```
-- Registro dos endpoints na função `initWhatsAppEngine`: linha 6360 (logo após `/api/whatsapp/chat/:phone/ai-suggest` e antes do `setTimeout` de auto-sincronização).
-
-### 4.2 Especificação dos 5 Endpoints
-
-#### 1. `GET /api/whatsapp/faq`
-- **Finalidade**: Listar perguntas e respostas cadastradas com suporte a filtros dinâmicos;
-- **Query Params**:
-  - `category`: Filtra por categoria (`reservas`, `checkin_acesso`, `wifi_tecnologia`, etc.);
-  - `status`: Filtra por status (`ativo`, `inativo`, `pendente`, `aguardando_aprovacao`);
-  - `scope`: Filtra por escopo (`all`, `exclude`, `include_only`);
-  - `search`: Busca textual em pergunta, resposta, palavras-chave e variações;
-- **Resposta**:
-  ```json
-  {
-    "success": true,
-    "count": 10,
-    "items": [ ... ]
-  }
-  ```
-
-#### 2. `POST /api/whatsapp/faq`
-- **Finalidade**: Criar um novo item de FAQ;
-- **Payload**:
-  ```json
-  {
-    "question": "Como funciona o café da manhã?",
-    "answer": "O café da manhã é servido no quarto das 06:30 às 10:00...",
-    "category": "cafe_manha",
-    "keywords": ["café", "desjejum", "manhã"],
-    "variations": ["tem café da manhã?", "que horas é o café?"],
-    "scope": "all",
-    "clientPhones": [],
-    "status": "ativo"
-  }
-  ```
-- **Validação**: `question` obrigatória (retorna 400 se ausente ou vazia);
-- **Defaults**:
-  - `status`: `"ativo"` se houver resposta, senão `"pendente"`;
-  - `category`: `"estrutura_flat"` se não especificada;
-  - `scope`: `"all"`;
-  - `id`: `faq_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-  - `createdAt` e `updatedAt`: `new Date().toISOString()`;
-- **Persistência**: `db.faqItems.push(newItem)` e chamada a `saveDatabase()`;
-- **Status HTTP**: `201 Created`.
-
-#### 3. `PUT /api/whatsapp/faq/:id`
-- **Finalidade**: Atualizar campos de um item existente de FAQ;
-- **Payload**: Campos parciais (`question`, `answer`, `category`, `keywords`, `variations`, `scope`, `clientPhones`, `status`, `suggestedAnswer`);
-- **Validação**: Retorna 404 `{ error: "Item do FAQ não encontrado." }` se ID inexistente;
-- **Efeito**: Atualiza campos presentes, define `updatedAt = new Date().toISOString()` e chama `saveDatabase()`;
-- **Resposta**: `{ success: true, item: updatedItem }`.
-
-#### 4. `DELETE /api/whatsapp/faq/:id`
-- **Finalidade**: Excluir um item de FAQ do banco;
-- **Validação**: Retorna 404 se ID inexistente;
-- **Efeito**: Remove do array `db.faqItems` e chama `saveDatabase()`;
-- **Resposta**: `{ success: true, id: deletedId }`.
-
-#### 5. `POST /api/whatsapp/faq/:id/approve`
-- **Finalidade**: Aprovar sugestão em 1 clique (requisito R1 e R3);
-- **Payload**: Opcional `{ answer?, category?, question? }`;
-- **Lógica**:
-  1. Localiza item por ID (404 se ausente);
-  2. Determina a resposta final:
-     - `req.body.answer` (se fornecido pelo operador no modal);
-     - ou `item.suggestedAnswer` (capturado automaticamente da conversa com o hóspede);
-     - ou `item.answer` pré-existente;
-  3. Se não houver nenhuma resposta válida: retorna 400 `{ error: "Não é possível aprovar sem uma resposta definida ou sugerida." }`;
-  4. Atualiza `item.answer = finalAnswer`;
-  5. Se `req.body.category` ou `req.body.question` forem passados, atualiza-os;
-  6. Define `item.status = "ativo"`;
-  7. Define `item.approvedAt = new Date().toISOString()`;
-  8. Define `item.updatedAt = new Date().toISOString()`;
-  9. Executa `saveDatabase()`;
-  10. Retorna `{ success: true, item }`.
-
----
-
-## 5. Resolução da Divergência SHA-256 em `whatsapp-ai-service.mjs`
-
-### 5.1 Evidência Forense da Divergência
-Executando `git diff --no-index artifacts/api-server/whatsapp-ai-service.mjs scripts/whatsapp-ai-service.mjs`:
-```diff
---- a/artifacts/api-server/whatsapp-ai-service.mjs
-+++ b/scripts/whatsapp-ai-service.mjs
-@@ -9,7 +9,7 @@
--import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES } from "./zapi-service.mjs";
-+import { cleanWhatsAppPhone } from "./zapi-service.mjs";
-@@ -532,7 +532,8 @@
-   // 2. Verifica se está em Modo de Teste
-   if (db.zapiConfig?.testModeOnly === true) {
--    const allowed = [...DEFAULT_TEST_ALLOWED_PHONES, ...String(db.zapiConfig.testAllowedPhones || "").split(/[,\s]+/)]
-+    const allowed = String(db.zapiConfig.testAllowedPhones || "")
-+      .split(/[,\s]+/)
-```
-
-### 5.2 Avaliação do Teste de Integridade (Teste 10)
-Em `tests/whatsapp-ai-agent.test.mjs` (linha 311):
 ```javascript
-test("10. Integridade dos Arquivos Duplos Espelhados (SHA256)", async () => {
-  const hashAiApi = getHash("artifacts/api-server/whatsapp-ai-service.mjs");
-  const hashAiScript = getHash("scripts/whatsapp-ai-service.mjs");
-  assert.equal(hashAiApi, hashAiScript);
-  ...
+// ── POST /api/pms/guest-portal/:code/modify-checkout (Etapa 2 - Hold & Pagamento) ──
+app.post("/api/pms/guest-portal/:code/modify-checkout", async (req, res) => {
+  try {
+    const code = (req.params.code || "").trim();
+    if (!db.reservations) db.reservations = [];
+    const r = findReservationByLocatorOrContact(code) || (db.reservations || []).find(x => x.code === code || String(x.id) === code);
+    if (!r) {
+      return res.status(404).json({ error: "Reserva não encontrada." });
+    }
+
+    if (r.status === "cancelada" || r.status === "CANCELLED" || r.status === "expirada") {
+      return res.status(400).json({ error: "Esta reserva está cancelada e não pode ser modificada." });
+    }
+
+    const directChannels = ["whatsapp", "site", "site_direto", "direto", "balcao"];
+    const channel = (r.channel || "").toLowerCase();
+    if (!directChannels.includes(channel)) {
+      return res.status(403).json({
+        error: `Modificação pelo portal não permitida para reservas do canal ${r.channel || "externo"}. Por favor, solicite a alteração diretamente pela plataforma de origem.`
+      });
+    }
+
+    const {
+      newCheckinDate,
+      newCheckoutDate,
+      newGuestCount,
+      newFlatId,
+      newFlatNumber,
+      reason,
+      paymentMethod = "pix"
+    } = req.body || {};
+
+    if (!newCheckinDate || !newCheckoutDate) {
+      return res.status(400).json({ error: "Datas de check-in e check-out são obrigatórias." });
+    }
+
+    if (newCheckoutDate <= newCheckinDate) {
+      return res.status(400).json({ error: "A data de check-out deve ser posterior à data de check-in." });
+    }
+
+    // 1. Resolução do Flat de Destino
+    let targetFlatId = r.flatId;
+    let targetFlatNumber = String(r.flatNumber || r.flatId);
+
+    if (newFlatId != null || newFlatNumber != null) {
+      const foundFlat = (db.flats || []).find(f =>
+        (newFlatId != null && String(f.id) === String(newFlatId)) ||
+        (newFlatNumber != null && String(f.number) === String(newFlatNumber))
+      );
+      if (foundFlat) {
+        targetFlatId = foundFlat.id;
+        targetFlatNumber = String(foundFlat.number);
+      } else if (newFlatNumber != null) {
+        targetFlatNumber = String(newFlatNumber);
+      }
+    }
+
+    const guestsNum = Math.max(1, Math.min(6, Number(newGuestCount) || r.guestCount || 1));
+
+    // 2. Verificação de Conflitos (Pre-flight Concurrency Check)
+    const isSameFlat = targetFlatNumber === String(r.flatNumber || r.flatId);
+    const hasConflict = hasReservationConflict({
+      flatId: targetFlatId,
+      flatNumber: targetFlatNumber,
+      checkinDate: newCheckinDate,
+      checkoutDate: newCheckoutDate,
+      excludeReservationId: isSameFlat ? r.id : null,
+      excludePendingHoldReservationId: r.id
+    });
+
+    if (hasConflict) {
+      return res.status(409).json({
+        error: "FLAT_UNAVAILABLE",
+        message: `O Flat ${targetFlatNumber} não possui disponibilidade para o período solicitado (${newCheckinDate} a ${newCheckoutDate}). Por favor, selecione outras datas ou entre em contato com nossa administração.`
+      });
+    }
+
+    // 3. Cálculo Financeiro e Política 24h
+    const parseDate = (dStr) => new Date(dStr + "T00:00:00Z");
+    const oldNights = Math.max(1, Math.round((parseDate(r.checkoutDate) - parseDate(r.checkinDate)) / 86400000));
+    const newNights = Math.max(1, Math.round((parseDate(newCheckoutDate) - parseDate(newCheckinDate)) / 86400000));
+    const dailyRate = Number(r.dailyRate) || (oldNights > 0 ? (Number(r.totalAmount || 0) / oldNights) : 160);
+
+    const originalCheckin = new Date(r.checkinDate + "T14:00:00-03:00");
+    const cutoff24h = new Date(originalCheckin.getTime() - 24 * 3600 * 1000);
+    const now = new Date();
+    const isUnder24h = now.getTime() >= cutoff24h.getTime();
+
+    let additionalAmountToPay = 0;
+    let refundAmount = 0;
+    let nonRefundableReduction = false;
+
+    if (newNights > oldNights) {
+      const extraNights = newNights - oldNights;
+      additionalAmountToPay = extraNights * dailyRate;
+    } else if (newNights < oldNights) {
+      const reducedNights = oldNights - newNights;
+      const val = reducedNights * dailyRate;
+      if (isUnder24h) {
+        nonRefundableReduction = true;
+      } else {
+        refundAmount = val;
+      }
+    }
+
+    // Se não há acréscimo de valor, o pagamento não é necessário
+    if (additionalAmountToPay <= 0) {
+      return res.json({
+        success: true,
+        requiresPayment: false,
+        additionalAmountToPay: 0,
+        refundAmount,
+        message: "Esta alteração não requer pagamento adicional e pode ser confirmada diretamente.",
+        newDates: {
+          checkinDate: newCheckinDate,
+          checkoutDate: newCheckoutDate
+        },
+        newFlatNumber: targetFlatNumber,
+        newGuestCount: guestsNum
+      });
+    }
+
+    // 4. Parâmetros de Hold (30 minutos)
+    const holdMinutes = 30;
+    const expiresAt = new Date(now.getTime() + holdMinutes * 60 * 1000).toISOString();
+    const pendingId = `mod_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`;
+
+    // 5. Geração de Cobrança PIX (Inter Dinâmico com Fallback Estático)
+    let pixTxId = null;
+    let pixCopiaECola = null;
+
+    try {
+      const pixResult = await createInterPixCob({
+        amount: additionalAmountToPay,
+        description: `Modificacao Reserva ${r.code}`,
+        debtorName: r.guestName,
+        debtorDocument: r.guestDocument || r.document,
+        reservationCode: r.code
+      });
+      pixTxId = pixResult.txid;
+      pixCopiaECola = pixResult.pixCopiaECola;
+    } catch (pixErr) {
+      console.warn("[modify-checkout] Falha ao criar Pix Inter oficial, gerando Pix estático:", pixErr.message);
+      const cleanTxId = `MOD${r.code.replace(/[^a-zA-Z0-9]/g, "")}${pendingId.replace(/[^a-zA-Z0-9]/g, "")}`.substring(0, 25);
+      pixTxId = cleanTxId;
+      pixCopiaECola = generateStaticPixPayload({
+        pixKey: db.settings?.interConfig?.pixKey || DEFAULT_INTER_CONFIG?.pixKey || "47964813000165",
+        amount: additionalAmountToPay,
+        merchantName: "CORPFLATS LTDA",
+        merchantCity: "CAMPOS DOS GOYTACAZES",
+        txid: cleanTxId
+      });
+    }
+
+    let qrCodeBase64 = "";
+    try {
+      qrCodeBase64 = await QRCode.toDataURL(pixCopiaECola);
+    } catch (qrErr) {
+      console.error("[modify-checkout] Erro ao gerar QRCode:", qrErr);
+    }
+
+    // 6. Geração de Preferência Mercado Pago (Checkout Pro)
+    let mpPreferenceId = null;
+    let mpCheckoutUrl = null;
+
+    try {
+      const mpPreference = await createMercadoPagoPreference({
+        reservationCode: `MOD-${r.code}`,
+        amount: additionalAmountToPay,
+        guestName: r.guestName,
+        guestEmail: r.guestEmail,
+        nights: Math.max(1, newNights - oldNights),
+        flatNumber: targetFlatNumber
+      });
+      if (mpPreference) {
+        mpPreferenceId = mpPreference.id;
+        mpCheckoutUrl = mpPreference.initPoint;
+      }
+    } catch (mpErr) {
+      console.warn("[modify-checkout] Aviso ao criar preferência Mercado Pago:", mpErr.message);
+    }
+
+    // 7. Registro do Bloqueio Provisório em r.pendingModification
+    r.pendingModification = {
+      pendingId,
+      newCheckinDate,
+      newCheckoutDate,
+      newGuestCount: guestsNum,
+      newFlatId: targetFlatId,
+      newFlatNumber: targetFlatNumber,
+      additionalAmountToPay,
+      createdAt: now.toISOString(),
+      expiresAt,
+      status: "pending",
+      paymentMethod: paymentMethod === "credit_card" ? "credit_card" : "pix",
+      pixTxId,
+      pixQrCodeUrl: qrCodeBase64,
+      pixCopiaECola,
+      mpPreferenceId,
+      mpCheckoutUrl,
+      reason: reason || "Modificação solicitada pelo hóspede via autoatendimento",
+      oldCheckinDate: r.checkinDate,
+      oldCheckoutDate: r.checkoutDate,
+      oldFlatNumber: String(r.flatNumber || r.flatId),
+      oldFlatId: r.flatId,
+      oldTotalAmount: Number(r.totalAmount || 0),
+      oldNights,
+      newNights,
+      extraNights: newNights - oldNights,
+      dailyRate,
+      refundAmount: 0,
+      isUnder24h,
+      nonRefundableReduction: false
+    };
+
+    saveDatabase("modify_checkout_hold");
+
+    // 8. Resposta ao Hóspede
+    res.json({
+      success: true,
+      pendingId,
+      additionalAmountToPay,
+      expiresAt,
+      holdMinutes,
+      pixQrCodeUrl: qrCodeBase64,
+      pixCopiaECola,
+      pixTxId,
+      mpCheckoutUrl,
+      mpPreferenceId,
+      newDates: {
+        checkinDate: newCheckinDate,
+        checkoutDate: newCheckoutDate
+      },
+      newFlatNumber: targetFlatNumber,
+      newGuestCount: guestsNum
+    });
+  } catch (err) {
+    console.error("[modify-checkout] Erro inesperado:", err);
+    res.status(500).json({ error: "INTERNAL_ERROR", message: err.message });
+  }
 });
 ```
-Executado isoladamente no Node.js:
-`AssertionError: '6683557d7c735deb3b23494ea41307bacfebb33df8252771274d4b24506653c8' == '1dd69090f7ff3ac2e0f513432eb53909dcbd9fd5a4b32853458b5d16b3ee2991'`
 
-A versão em `artifacts/api-server/whatsapp-ai-service.mjs` está **correta**:
-- `DEFAULT_TEST_ALLOWED_PHONES` foi criado em `zapi-service.mjs:1096` exatamente para liberar Miller Mendonça (`22998505276`) e números de teste;
-- Sem essa inclusão, `scripts/whatsapp-ai-service.mjs` bloqueia mensagens do gestor caso `db.zapiConfig.testAllowedPhones` não seja preenchido explicitamente;
-- O arquivo `scripts/whatsapp-ai-service.mjs` simplesmente não havia recebido a atualização de espelhamento.
+### 6.3 Adaptação dos Endpoints de Disponibilidade Existentes
 
-### 5.3 Resolução Recomendada
-Copiar as linhas 12 e 534-540 de `artifacts/api-server/whatsapp-ai-service.mjs` para `scripts/whatsapp-ai-service.mjs`, ou sincronizar o arquivo na íntegra. Além disso, ao adicionar a exportação de `isFaqApplicableToClient` e `matchClientPhone`, garantir que ambos os arquivos recebam exatamente as mesmas linhas e quebras de linha.
-
----
-
-## 6. Proposta Concreta de Código & Diffs Recomendados
-
-### 6.1 Diffs para `zapi-service.mjs` (Aplicar em `artifacts/api-server/zapi-service.mjs` E `scripts/zapi-service.mjs`)
-
-#### Trecho A: Exportar `matchClientPhone` e `isFaqApplicableToClient` (após linha 1084)
+#### A. Em `GET /api/reservations/availability` (linhas 11.183–11.187)
+Substituir o filtro de `occupiedFlatIds` por:
 ```javascript
-// ── Comparador Seguro de Telefones com Tolerância a 8/9 Dígitos e DDD ──────────
-export function matchClientPhone(phoneA, phoneB) {
-  if (!phoneA || !phoneB) return false;
-  const cleanA = cleanWhatsAppPhone(phoneA);
-  const cleanB = cleanWhatsAppPhone(phoneB);
-  if (!cleanA || !cleanB) return false;
+    // Verifica flats ocupados no período (reservas ativas e holds provisórios)
+    const nowMs = Date.now();
+    const occupiedFlatIds = new Set();
 
-  if (cleanA === cleanB) return true;
-  if (cleanA.length < 8 || cleanB.length < 8) return false;
-
-  const last8A = cleanA.slice(-8);
-  const last8B = cleanB.slice(-8);
-  if (last8A !== last8B) return false;
-
-  const getDdd = (clean) => {
-    if (clean.startsWith("55") && (clean.length === 12 || clean.length === 13)) {
-      return clean.slice(2, 4);
-    }
-    if (clean.length === 10 || clean.length === 11) {
-      return clean.slice(0, 2);
-    }
-    return null;
-  };
-
-  const dddA = getDdd(cleanA);
-  const dddB = getDdd(cleanB);
-  if (dddA && dddB && dddA !== dddB) {
-    return false;
-  }
-
-  return cleanA.endsWith(last8B) || cleanB.endsWith(last8A);
-}
-
-// ── Motor de Regras de Exceção e Segmentação por Cliente (FAQ Sofia) ───────────
-export function isFaqApplicableToClient(faqItem, clientPhone) {
-  if (!faqItem) return false;
-  if (faqItem.status && faqItem.status !== "ativo") return false;
-
-  const scope = faqItem.scope || "all";
-  if (scope === "all") return true;
-
-  const rawPhones = Array.isArray(faqItem.clientPhones)
-    ? faqItem.clientPhones
-    : (typeof faqItem.clientPhones === "string" ? faqItem.clientPhones.split(/[,;\s]+/) : []);
-  const clientPhones = rawPhones.map(p => String(p).trim()).filter(Boolean);
-
-  if (!clientPhone) {
-    if (scope === "exclude") return true;
-    if (scope === "include_only") return false;
-    return true;
-  }
-
-  const isMatched = clientPhones.some(p => matchClientPhone(clientPhone, p));
-
-  if (scope === "exclude") {
-    return !isMatched;
-  }
-
-  if (scope === "include_only") {
-    if (clientPhones.length === 0) return false;
-    return isMatched;
-  }
-
-  return true;
-}
+    (db.reservations || []).forEach(r => {
+      if (r.status === "cancelada" || r.status === "CANCELLED" || r.status === "expirada") return;
+      if ((r.status === "pre_reserva" || r.status === "pendente") && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") {
+        r.status = "expirada";
+        r.updatedAt = new Date().toISOString();
+        return;
+      }
+      // Ocupação da reserva principal
+      if (r.checkinDate < checkout && r.checkoutDate > checkin) {
+        if (r.flatNumber != null) occupiedFlatIds.add(String(r.flatNumber));
+        if (r.flatId != null) occupiedFlatIds.add(String(r.flatId));
+      }
+      // Ocupação por hold provisório de modificação
+      if (r.pendingModification && (r.pendingModification.status === "pending" || r.pendingModification.status === "pending_payment")) {
+        if (r.pendingModification.expiresAt && new Date(r.pendingModification.expiresAt).getTime() < nowMs) {
+          r.pendingModification.status = "expired";
+          r.pendingModification.expiredAt = new Date(nowMs).toISOString();
+        } else {
+          const pHoldIn = r.pendingModification.newCheckinDate || r.pendingModification.proposedCheckinDate;
+          const pHoldOut = r.pendingModification.newCheckoutDate || r.pendingModification.proposedCheckoutDate;
+          const pHoldFlat = String(r.pendingModification.newFlatNumber || r.pendingModification.newFlatId || r.flatNumber);
+          if (pHoldIn && pHoldOut && pHoldIn < checkout && pHoldOut > checkin) {
+            occupiedFlatIds.add(pHoldFlat);
+          }
+        }
+      }
+    });
 ```
 
-#### Trecho B: Inicialização Defensiva em `ensureDbDefaults()` (linha 4208)
+#### B. Em `GET /api/bot-actions/availability` (linhas 20.755–20.765)
+Acrescentar após a verificação de `r.checkinDate < outDate && r.checkoutDate > inDate`:
 ```javascript
-  function ensureDbDefaults() {
-    const db = getDb();
-    if (!db) return;
-    if (!Array.isArray(db.faqItems)) {
-      db.faqItems = [];
-    }
-    if (!db.zapiConfig) {
-      // ...
-```
-
-#### Trecho C: Endpoints REST em `initWhatsAppEngine` (linha 6360, após `/api/whatsapp/chat/:phone/ai-suggest`)
-```javascript
-  // ─── Base de Conhecimento & FAQ Dinâmico Endpoints ─────────────────────────
-
-  // 6. Listar FAQs (com filtros opcionais por categoria, status, escopo e busca)
-  app.get("/api/whatsapp/faq", (req, res) => {
-    const db = getDb();
-    ensureDbDefaults();
-    let items = Array.isArray(db.faqItems) ? [...db.faqItems] : [];
-    const { category, status, scope, search } = req.query || {};
-
-    if (category) {
-      items = items.filter(i => i.category === category);
-    }
-    if (status) {
-      items = items.filter(i => i.status === status);
-    }
-    if (scope) {
-      items = items.filter(i => i.scope === scope);
-    }
-    if (search) {
-      const q = String(search).toLowerCase().trim();
-      items = items.filter(i =>
-        (i.question && i.question.toLowerCase().includes(q)) ||
-        (i.answer && i.answer.toLowerCase().includes(q)) ||
-        (Array.isArray(i.keywords) && i.keywords.some(k => String(k).toLowerCase().includes(q))) ||
-        (Array.isArray(i.variations) && i.variations.some(v => String(v).toLowerCase().includes(q)))
-      );
-    }
-
-    res.json({ success: true, count: items.length, items });
-  });
-
-  // 7. Criar FAQ
-  app.post("/api/whatsapp/faq", (req, res) => {
-    const db = getDb();
-    ensureDbDefaults();
-    const body = req.body || {};
-    const question = String(body.question || "").trim();
-    if (!question) {
-      return res.status(400).json({ error: "Pergunta é obrigatória." });
-    }
-
-    const answer = String(body.answer || "").trim();
-    const category = body.category || "estrutura_flat";
-    const status = body.status || (answer ? "ativo" : "pendente");
-    const scope = body.scope || "all";
-
-    const parseList = (val) => {
-      if (Array.isArray(val)) return val.map(s => String(s).trim()).filter(Boolean);
-      if (typeof val === "string") return val.split(/[,;\n\s]+/).map(s => s.trim()).filter(Boolean);
-      return [];
-    };
-
-    const keywords = parseList(body.keywords);
-    const variations = parseList(body.variations);
-    const rawPhones = parseList(body.clientPhones);
-    const clientPhones = rawPhones.map(p => cleanWhatsAppPhone(p) || p.replace(/\D/g, "")).filter(Boolean);
-
-    const now = new Date().toISOString();
-    const newItem = {
-      id: body.id || `faq_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      question,
-      answer,
-      category,
-      keywords,
-      variations,
-      status,
-      scope,
-      clientPhones,
-      suggestedAnswer: body.suggestedAnswer ? String(body.suggestedAnswer).trim() : undefined,
-      sourceClientPhone: body.sourceClientPhone ? String(body.sourceClientPhone).trim() : undefined,
-      sourceClientName: body.sourceClientName ? String(body.sourceClientName).trim() : undefined,
-      createdAt: now,
-      updatedAt: now
-    };
-
-    db.faqItems.push(newItem);
-    if (typeof saveDatabase === "function") saveDatabase();
-    res.status(201).json({ success: true, item: newItem });
-  });
-
-  // 8. Atualizar FAQ
-  app.put("/api/whatsapp/faq/:id", (req, res) => {
-    const db = getDb();
-    ensureDbDefaults();
-    const item = (db.faqItems || []).find(i => i.id === req.params.id);
-    if (!item) {
-      return res.status(404).json({ error: "Item do FAQ não encontrado." });
-    }
-
-    const body = req.body || {};
-    if (body.question !== undefined) item.question = String(body.question).trim();
-    if (body.answer !== undefined) item.answer = String(body.answer).trim();
-    if (body.category !== undefined) item.category = body.category;
-    if (body.status !== undefined) item.status = body.status;
-    if (body.scope !== undefined) item.scope = body.scope;
-
-    const parseList = (val) => {
-      if (Array.isArray(val)) return val.map(s => String(s).trim()).filter(Boolean);
-      if (typeof val === "string") return val.split(/[,;\n\s]+/).map(s => s.trim()).filter(Boolean);
-      return [];
-    };
-
-    if (body.keywords !== undefined) item.keywords = parseList(body.keywords);
-    if (body.variations !== undefined) item.variations = parseList(body.variations);
-    if (body.clientPhones !== undefined) {
-      const rawPhones = parseList(body.clientPhones);
-      item.clientPhones = rawPhones.map(p => cleanWhatsAppPhone(p) || p.replace(/\D/g, "")).filter(Boolean);
-    }
-    if (body.suggestedAnswer !== undefined) item.suggestedAnswer = String(body.suggestedAnswer).trim();
-
-    item.updatedAt = new Date().toISOString();
-    if (typeof saveDatabase === "function") saveDatabase();
-    res.json({ success: true, item });
-  });
-
-  // 9. Excluir FAQ
-  app.delete("/api/whatsapp/faq/:id", (req, res) => {
-    const db = getDb();
-    ensureDbDefaults();
-    const idx = (db.faqItems || []).findIndex(i => i.id === req.params.id);
-    if (idx === -1) {
-      return res.status(404).json({ error: "Item do FAQ não encontrado." });
-    }
-
-    const deleted = db.faqItems.splice(idx, 1)[0];
-    if (typeof saveDatabase === "function") saveDatabase();
-    res.json({ success: true, id: deleted.id });
-  });
-
-  // 10. Aprovar Sugestão em 1 Clique
-  app.post("/api/whatsapp/faq/:id/approve", (req, res) => {
-    const db = getDb();
-    ensureDbDefaults();
-    const item = (db.faqItems || []).find(i => i.id === req.params.id);
-    if (!item) {
-      return res.status(404).json({ error: "Item do FAQ não encontrado." });
-    }
-
-    const body = req.body || {};
-    const finalAnswer = body.answer !== undefined && String(body.answer).trim() !== ""
-      ? String(body.answer).trim()
-      : (item.suggestedAnswer || item.answer);
-
-    if (!finalAnswer) {
-      return res.status(400).json({ error: "Não é possível aprovar sem uma resposta definida ou sugerida." });
-    }
-
-    item.answer = finalAnswer;
-    if (body.category) item.category = body.category;
-    if (body.question) item.question = String(body.question).trim();
-
-    item.status = "ativo";
-    item.approvedAt = new Date().toISOString();
-    item.updatedAt = new Date().toISOString();
-
-    if (typeof saveDatabase === "function") saveDatabase();
-    res.json({ success: true, item });
-  });
+      // Hold provisório de modificação
+      if (r.pendingModification && (r.pendingModification.status === "pending" || r.pendingModification.status === "pending_payment")) {
+        if (r.pendingModification.expiresAt && new Date(r.pendingModification.expiresAt).getTime() < nowMs) {
+          r.pendingModification.status = "expired";
+          r.pendingModification.expiredAt = new Date(nowMs).toISOString();
+        } else {
+          const pHoldIn = r.pendingModification.newCheckinDate || r.pendingModification.proposedCheckinDate;
+          const pHoldOut = r.pendingModification.newCheckoutDate || r.pendingModification.proposedCheckoutDate;
+          const pHoldFlatNum = r.pendingModification.newFlatNumber || r.pendingModification.proposedFlatNumber;
+          const pHoldFlatId = r.pendingModification.newFlatId || r.pendingModification.proposedFlatId;
+          if (pHoldIn && pHoldOut && pHoldIn < outDate && pHoldOut > inDate) {
+            if (pHoldFlatId != null) busyFlatSet.add(String(pHoldFlatId));
+            if (pHoldFlatNum != null) busyFlatSet.add(String(pHoldFlatNum));
+          }
+        }
+      }
 ```
 
 ---
 
-### 6.2 Diffs para `whatsapp-ai-service.mjs` (Aplicar em `artifacts/api-server/whatsapp-ai-service.mjs` E `scripts/whatsapp-ai-service.mjs`)
+## 7. Estratégia de Testes Automatizados para o Worker
 
-#### Linha 12: Import e Re-export
-```javascript
-import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES, isFaqApplicableToClient, matchClientPhone } from "./zapi-service.mjs";
-import { getCheckinUrlSync as getSerproCheckinUrlSync } from "./fnrh-serpro-service.mjs";
+Para garantir que a implementação seja validada com 100% de precisão antes de qualquer commit, a suíte de testes deve cobrir:
 
-export { isFaqApplicableToClient, matchClientPhone };
-```
-
-#### Linha 534: Modo de Teste Idêntico em ambos os espelhos
-```javascript
-  // 2. Verifica se está em Modo de Teste
-  if (db.zapiConfig?.testModeOnly === true) {
-    const allowed = [...DEFAULT_TEST_ALLOWED_PHONES, ...String(db.zapiConfig.testAllowedPhones || "").split(/[,\s]+/)]
-      .map(p => cleanWhatsAppPhone(p))
-      .filter(Boolean);
-    const targetNorm = cleanWhatsAppPhone(cleanTarget);
-    const isAllowed = allowed.some(a => targetNorm.endsWith(a.slice(-8)) || a.endsWith(targetNorm.slice(-8)));
-    if (!isAllowed) {
-      console.log(`[WhatsApp AI] Modo de Teste ativo: mensagem de ${cleanTarget} ignorada pela IA.`);
-      return { skipped: true, reason: "test_mode_not_allowed" };
-    }
-  }
-```
+1. **Paridade Byte-a-Byte**:
+   `assert.strictEqual(fs.readFileSync('scripts/demo-server.mjs').equals(fs.readFileSync('artifacts/api-server/demo-server.mjs')), true)`.
+2. **Criação de Hold Provisório com Datas Originais Inalteradas**:
+   - Criar reserva teste `RES-HOLD-001` (Apt 113, 2026-11-01 a 2026-11-03, Total R$ 320,00).
+   - Postar em `/modify-checkout` solicitando extensão para 2026-11-05 (+2 diárias = +R$ 320,00).
+   - Validar retorno HTTP 200 com `pendingId`, `pixCopiaECola`, `pixQrCodeUrl`, `expiresAt` (now + 30 min).
+   - Inspecionar a reserva no banco:
+     - `r.checkinDate === "2026-11-01"` (inalterado)
+     - `r.checkoutDate === "2026-11-03"` (inalterado)
+     - `r.totalAmount === 320` (inalterado)
+     - `r.pendingModification.status === "pending"`
+     - `r.pendingModification.additionalAmountToPay === 320`.
+3. **Bloqueio de Conflito de Calendário por Hold Ativo**:
+   - Outra reserva tenta pré-reservar ou modificar para o Apt 113 no período 2026-11-03 a 2026-11-05.
+   - O sistema detecta o hold ativo e retorna HTTP 409 Conflict.
+4. **Auto-Expiração do Hold de 30 Minutos**:
+   - Simular avanço temporal modificando `r.pendingModification.expiresAt` para 1 minuto no passado.
+   - Chamar a verificação de disponibilidade ou `/modify-status`.
+   - Validar que o hold é marcado como `"expired"` e o calendário do Apt 113 é imediatamente liberado para novas reservas, mantendo as datas originais 2026-11-01 a 2026-11-03 perfeitamente intactas.
 
 ---
 
-## 7. Próximos Passos para o Worker de Implementação
-1. Aplicar os trechos A, B e C em `artifacts/api-server/zapi-service.mjs` e `scripts/zapi-service.mjs`;
-2. Atualizar `scripts/whatsapp-ai-service.mjs` e `artifacts/api-server/whatsapp-ai-service.mjs` com o import/re-export e paridade total;
-3. Executar script de validação de SHA-256 para assegurar 100% de paridade binária entre `artifacts/` e `scripts/`;
-4. Adicionar testes unitários dedicados em `tests/whatsapp-ai-agent.test.mjs` para validar `matchClientPhone`, `isFaqApplicableToClient` e as 5 novas rotas REST do FAQ.
+## 8. Conclusão
+
+Esta especificação resolve integralmente o núcleo do Milestone 1 no tocante ao endpoint de checkout e blindagem de calendário. Ela impede que o hóspede obtenha extensão de reserva sem liquidação prévia, fornece ambos os meios de pagamento (PIX oficial Inter + estático com QR Code Base64 e Mercado Pago), protege o calendário contra double-booking durante os 30 minutos de checkout e garante que desistências ou expirações não afetem as datas originais da reserva.

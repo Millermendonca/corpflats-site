@@ -1,13 +1,14 @@
-# Progress — Milestone 2 Explorer 2
+# Progress Heartbeat - M2 Explorer 2
 
-Last visited: 2026-10-11T03:11:50Z
+Last visited: 2026-10-11T14:58:00Z
 Status: Completed
-
-- [x] Initialized DISPATCH.md and BRIEFING.md
-- [x] Inspect `artifacts/api-server/zapi-service.mjs` and `scripts/zapi-service.mjs`
-- [x] Investigate webhook inbound `fromMe: true` / `isFromMe: true` flow
-- [x] Investigate Live chat API endpoint (`POST /api/whatsapp/chat/send` and `POST /api/whatsapp/chats/:phone/messages`)
-- [x] Investigate Conversation AI pause / human handover mechanism
-- [x] Design robust linking logic for `suggestedAnswer` & `aguardando_aprovacao` (including phone normalization and 24h window)
-- [x] Produce `analysis.md` and `handoff.md` with recommended implementation diffs
-- [x] Send handoff notification via `send_message`
+Completed steps:
+- Inspected ORIGINAL_REQUEST.md, PROJECT.md
+- Inspected scripts/zapi-service.mjs, scripts/mail-service.mjs, scripts/demo-server.mjs
+- Verified Twin-Server Parity status (scripts/ <=> artifacts/api-server/ are identical)
+- Designed automated guest communication mechanism (WhatsApp + Email) with direct re-signing link
+- Formulated exact drop-in code blueprints for demo-server.mjs and zapi-service.mjs
+- Updated BRIEFING.md
+- Authored analysis.md with complete architectural design and code blueprints
+- Authored 5-component handoff.md
+- Sending completion message to parent orchestrator

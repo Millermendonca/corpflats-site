@@ -1,42 +1,47 @@
-# BRIEFING — 2026-10-11T01:45:00Z
+# BRIEFING — 2026-10-11T13:23:00Z
 
 ## Mission
-Investigate database schema initialization, atomic file persistence, safe seeding of `db.faqItems` in `demo-server.mjs`, and recommend concrete implementation diffs.
+Design endpoint POST /api/pms/guest-portal/:code/modify-preview and calendar conflict engine for Milestone 1.
 
 ## 🔒 My Identity
 - Archetype: explorer
 - Roles: investigation, synthesis
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m1_explorer_1
-- Original parent: 27c61f6a-5652-421c-bbda-1b5d6be7db98
-- Milestone: Milestone 1: Backend Core & Database Layer
+- Original parent: 494db1f9-cfb2-46e9-8b9f-419a8aa9586c
+- Milestone: Milestone 1 — Backend Simulation, Hold & Settlement Engine
 
 ## 🔒 Key Constraints
-- Read-only investigation — do NOT implement directly in production codebase.
-- Provide recommended implementation diffs and detailed analysis.
-- Dual-mirrored parity constraint: changes must apply identically to both `artifacts/api-server/` and `scripts/`.
-- PostgreSQL sync compatibility: atomic save and PostgreSQL sync must be respected.
+- Read-only investigation — do NOT implement
+- Focus on endpoint `/api/pms/guest-portal/:code/modify-preview` design, conflict checking, pricing, and policy simulation
+- All outputs in own agent folder
 
 ## Current Parent
-- Conversation ID: 27c61f6a-5652-421c-bbda-1b5d6be7db98
-- Updated: not yet
+- Conversation ID: 494db1f9-cfb2-46e9-8b9f-419a8aa9586c
+- Updated: 2026-10-11T13:23:00Z
 
 ## Investigation State
-- **Explored paths**: `ORIGINAL_REQUEST.md`, `PROJECT.md`, `DISPATCH.md`, `artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, `data/database.json`, `tests/whatsapp-ai-agent.test.mjs`, `artifacts/api-server/zapi-service.mjs`, `artifacts/api-server/whatsapp-ai-service.mjs`.
+- **Explored paths**:
+  - `ORIGINAL_REQUEST.md` (R1 to R4, Acceptance Criteria)
+  - `PROJECT.md` (Milestones, Feature Inventory, Interface Contracts)
+  - `survey_report.md` (Technical diagnosis, 2-stage mechanism, holds)
+  - `scripts/demo-server.mjs` (lines 14629-14680, 15270-15320, 15456-15716, 21000-21045)
+  - `artifacts/api-server/demo-server.mjs` (Parity check confirmed SHA-256 identical)
+  - `artifacts/limpeza/src/pages/guest-portal.tsx` (lines 310-365, 3150-3270)
 - **Key findings**:
-  1. `db.faqItems: []` must be declared in initial `db` schema.
-  2. `loadDatabase()` must defend against PostgreSQL hydration overwriting empty collections from legacy snapshots.
-  3. `atomicWriteFileSync` is required to replace direct `fs.writeFileSync(DB_FILE, ...)` and prevent file truncation/corruption.
-  4. Complete 9 official FAQs + 2 test/pending items designed with full `FaqItem` properties (keywords, variations, scopes, clientPhones, categories).
-  5. Idempotent seeding function `seedInitialFaqItems` designed to merge without overwriting admin edits.
-  6. Dual-mirrored parity constraint between `artifacts/api-server/` and `scripts/` confirmed and preserved.
-- **Unexplored areas**: None for M1 Explorer 1 scope.
+  - Legacy `/modify` immediately updates dates before payment, causing data inconsistency on abandon.
+  - New `/modify-preview` endpoint designed with 3-layer conflict checking (active reservations excluding current, pending holds, room blocks).
+  - 24h cutoff policy (14:00 BRT of previous day) properly integrated into pricing simulation.
+  - Complete drop-in code blueprint drafted for `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs`.
+- **Unexplored areas**: Milestone 1 subsequent endpoints (`modify-checkout`, `modify-status`, `modify-cancel-pending`) are scoped to subsequent agents/tasks.
 
 ## Key Decisions Made
-- Formulated concrete diffs for `demo-server.mjs` covering schema declaration, `atomicWriteFileSync`, PostgreSQL reconciliation in `reconcileUniversalIntegrity`, and idempotent seeding.
-- Documented complete analysis in `analysis.md` and hard handoff in `handoff.md`.
+- Exclude current reservation (`other.id === r.id || other.code === r.code`) from active conflict check so extending/shortening own stay does not trigger false conflict.
+- Return HTTP 409 Conflict with structured payload `{ success: false, available: false, error: 'CONFLICT', message: '...', conflictMessage: '...' }` when flat is occupied, on hold, or in maintenance.
+- Maintain strict SHA-256 parity mandate between `scripts/` and `artifacts/api-server/`.
 
 ## Artifact Index
-- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m1_explorer_1\analysis.md` — In-depth analysis of schema, seeding, persistence, and diff proposals
-- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m1_explorer_1\handoff.md` — 5-component handoff report for worker
-- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m1_explorer_1\progress.md` — Progress tracker and heartbeat
-- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m1_explorer_1\DISPATCH.md` — Dispatch log with timestamps
+- DISPATCH.md — Task dispatch record
+- BRIEFING.md — Persistent situational awareness
+- progress.md — Liveness heartbeat
+- analysis.md — Full design & analysis report with complete code blueprint
+- handoff.md — 5-component handoff report

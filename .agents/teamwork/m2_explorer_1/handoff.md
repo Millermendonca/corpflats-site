@@ -1,112 +1,148 @@
-# Handoff Report — Milestone 2 Explorer 1 (Inbound Auto-Detection)
-
-**Agent**: `m2_explorer_1` (Roles: explorer, investigation, synthesis)  
-**Date**: 2026-10-11T03:20:00Z  
-**Working Directory**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_explorer_1`  
-**Project Root**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`  
-**Recipient**: Milestone 2 Orchestrator / Implementer  
-**Status**: Hard Handoff (Investigation & Architecture Design 100% complete)
+# Milestone 2 — Explorer 1 Handoff Report
+## Re-Signature Lifecycle, Document Delivery & Operational Synchronization
+### Focus: Signature Invalidation on Date/Flat Change & Pre-Checkin Clearance
 
 ---
 
 ## 1. Observation
 
-1. **Ponto de Entrada do Webhook Inbound (`artifacts/api-server/zapi-service.mjs` e `scripts/zapi-service.mjs`)**:
-   - `zapi-service.mjs:5516`: Rota Express `app.post("/api/whatsapp/webhook/received", async (req, res) => { ... })`.
-   - `zapi-service.mjs:5533`: Extração de payload: `const incomingInfo = extractIncomingMessageInfo(req.body);`.
-   - `zapi-service.mjs:5542`: Sanitização do telefone: `const cleanTarget = incomingInfo.isGroup ? rawTarget : cleanWhatsAppPhone(rawTarget);`.
-   - `zapi-service.mjs:5706-5718`: Acionamento assíncrono do Agente de IA:
+Direct code examination of `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs` (both currently SHA-256 verified as byte-identical: `72ea96ce4dc341181b8b41e7a01fe91f52e975fdd757fbd70c033688fec6184f`) reveals the following exact code states:
+
+1. **Admin Edit (`PUT /api/pms/reservations/:id`)**:
+   - Location: lines 13770–13828 in `scripts/demo-server.mjs`:
      ```javascript
-     // 5. Agente de IA para WhatsApp (Atuação Híbrida / Resposta Autônoma / Transbordo Humano)
-     if (!incomingInfo.fromMe && !incomingInfo.isGroup && incomingInfo.text && cleanTarget) {
-       processAiInboundMessage({
-         db,
-         incomingInfo,
-         cleanTarget,
-         saveDatabase,
-         createNotification,
-         sendZapiMessage,
-         appendMessageFn: appendMessageToConversation
-       }).catch(aiErr => {
-         console.warn("[WhatsApp AI Processing Error]:", aiErr.message);
+     const isDatesOrFlatChanged = Boolean(
+       (req.body.checkinDate && oldCheckin && req.body.checkinDate !== oldCheckin) ||
+       (req.body.checkoutDate && oldCheckout && req.body.checkoutDate !== oldCheckout) ||
+       (req.body.flatId !== undefined && oldFlatId !== undefined && Number(req.body.flatId) !== Number(oldFlatId))
+     );
+
+     if (isDatesOrFlatChanged) {
+       const hadSignedCheckin = Boolean(
+         r.fnhrCompleted ||
+         r.signatureUrl ||
+         r.checkedInAt ||
+         r.fnrhDocumentUuid ||
+         (Array.isArray(r.guests) && r.guests.some(g => g.hasCompletedCheckin || g.signatureUrl || g.fnrhDocumentUuid))
+       );
+       if (hadSignedCheckin) {
+         ...
+         r.needsReSignature = true;
+         r.reSignatureReason = "Alteração de acomodação (flat) ou período da estadia";
+         delete r.fnrhPdfUrl;
+         ...
+       }
+     }
+     ```
+   - At lines 13863–13875, `fields` includes `"guests"`. Copying `req.body.guests` after line 13826 overwrites `r.guests`, which can unintentionally wipe `g.needsReSignature = true` and restore stale `g.hasCompletedCheckin = true`.
+   - `req.body.flatNumber` was not evaluated in `isDatesOrFlatChanged`.
+
+2. **Hold Settlement (`commitPendingModification`)**:
+   - Location: lines 15737–15750 in `scripts/demo-server.mjs`:
+     ```javascript
+     // 4. Invalidação Obrigatória de Assinatura (Requisito R3)
+     r.needsReSignature = true;
+     r.reSignatureReason = "Alteração no período da estadia ou flat";
+     r.fnhrCompleted = false;
+     r.preCheckinCompleted = false;
+     delete r.fnrhPdfUrl;
+     delete r.fnrhSha256Hash;
+     if (Array.isArray(r.guests)) {
+       r.guests.forEach(g => {
+         g.needsReSignature = true;
+         g.hasCompletedCheckin = false;
        });
      }
      ```
+   - Omitted: `r.signatureUrl = null`, `r.checkedInAt = null`, `delete r.fnrhDocumentUuid`, `delete r.fnrhDownloadUrl`, `delete r.fnrhVerifyUrl`, `delete r.fnrhSignedAt`, `delete r.fnrhAuditTrail`, `delete r.fnrhFileName`, `delete r.fnrhFilePath`, `delete r.r2Url`, `delete r.fnrhR2Url`.
+   - Omitted on `g` in `r.guests`: `g.signatureUrl = null`, `g.checkinCompletedAt = null`, `delete g.fnrhDocumentUuid`.
+   - Reason string diverges: `"Alteração no período da estadia ou flat"` instead of `"Alteração de acomodação (flat) ou período da estadia"`.
 
-2. **Fluxo do Agente de IA (`artifacts/api-server/whatsapp-ai-service.mjs` e `scripts/whatsapp-ai-service.mjs`)**:
-   - `whatsapp-ai-service.mjs:1369`: Definição de `export async function processAiInboundMessage({ db, incomingInfo, cleanTarget, saveDatabase, createNotification, sendZapiMessage, appendMessageFn })`.
-   - `whatsapp-ai-service.mjs:1450`: Chamada central: `const aiResult = await generateAiWhatsAppResponse({ db, phone: cleanTarget, messageText: incomingInfo.text, history, isCopilot: false });`.
-   - `whatsapp-ai-service.mjs:1459-1500`: Ramo de transbordo humano (`if (aiResult.shouldHandover)`): pausa a conversa (`conv.aiPaused = true`), envia mensagem educada de transbordo, registra no histórico e emite notificação `whatsapp_handover`.
-   - `whatsapp-ai-service.mjs:1502-1534`: Ramo de resposta autônoma normal / fallback. Atualmente, se a mensagem não coincidir com nenhum tema e cair no fallback heurístico (`generateHeuristicResponse:1089`), emite texto padrão prestativo sem persistir a dúvida em `db.faqItems`.
-
-3. **Schema do Banco e Catálogo Inicial (`artifacts/api-server/demo-server.mjs`)**:
-   - `demo-server.mjs:625`: Coleção `faqItems: []` inicializada no schema universal `db`.
-   - `demo-server.mjs:1877-1926`: Catálogo seed já contém itens pendentes canônicos com metadados de cliente (`sourceClientPhone`, `sourceClientName`, `status: "pendente"`), tais como `faq-pending-voltagem` e `faq-pending-ferro`.
-
-4. **Suite de Testes Atual (`tests/whatsapp-ai-agent.test.mjs`)**:
-   - Execução via `node --test tests/whatsapp-ai-agent.test.mjs`:
+3. **Direct Zero-Cost Modification (`POST /api/pms/guest-portal/:code/modify`)**:
+   - Location: lines 16903–16916 in `scripts/demo-server.mjs`:
+     ```javascript
+     // 8. Invalidação Obrigatória de Assinatura (Requisito R3)
+     r.needsReSignature = true;
+     r.reSignatureReason = "Alteração no período da estadia ou acomodação";
+     r.fnhrCompleted = false;
+     r.preCheckinCompleted = false;
+     delete r.fnrhPdfUrl;
+     delete r.fnrhSha256Hash;
+     if (Array.isArray(r.guests)) {
+       r.guests.forEach(g => {
+         g.needsReSignature = true;
+         g.hasCompletedCheckin = false;
+       });
+     }
      ```
-     # tests 20
-     # suites 1
-     # pass 20
-     # fail 0
+   - Exhibits the identical field omissions as `commitPendingModification`, with yet another divergent reason string: `"Alteração no período da estadia ou acomodação"`.
+
+4. **Stale Link Resurrection in `GET /api/pms/pre-checkin/:code` & Reception (`/api/reception/today`)**:
+   - Location: lines 20422–20435 & lines 18946–18958 in `scripts/demo-server.mjs`:
+     ```javascript
+     if (r.fnrhDocumentUuid) {
+       const tkn = generateSignedFnrhToken(r.fnrhDocumentUuid, 60 * 24 * 30);
+       r.fnrhPdfUrl = `/api/pms/fnrh/${r.fnrhDocumentUuid}/view?token=${tkn}`;
+       r.fnrhDownloadUrl = `/api/pms/fnrh/${r.fnrhDocumentUuid}/download?token=${tkn}`;
+     }
      ```
-   - O teste 6 (`tests/whatsapp-ai-agent.test.mjs:186-232`) valida transbordo humano em `processAiInboundMessage` com texto `"Preciso falar com uma pessoa urgente"`.
-   - O teste 10 (`tests/whatsapp-ai-agent.test.mjs:351-366`) impõe paridade SHA-256 byte a byte entre `artifacts/api-server/` e `scripts/`.
+   - Because `r.fnrhDocumentUuid` was not deleted in `commitPendingModification` and `POST /modify`, subsequent GET calls automatically re-instantiated `r.fnrhPdfUrl`, resurrecting access to the stale pre-modification FNRH document.
+
+5. **Renewed Pre-Checkin Submission (`POST /api/pms/pre-checkin`)**:
+   - Location: lines 21016–21018 and lines 21054–21058 in `scripts/demo-server.mjs`:
+     ```javascript
+     targetGuest.hasCompletedCheckin = true;
+     targetGuest.checkinCompletedAt = now;
+     ...
+     r.fnhrCompleted = r.guests.every(g => g.hasCompletedCheckin);
+     ```
+   - Neither `targetGuest.needsReSignature = false` nor `r.needsReSignature = false` is ever executed anywhere in the endpoint. As a result, once a reservation enters `needsReSignature = true`, re-signing via the form never clears the re-signature requirement.
 
 ---
 
 ## 2. Logic Chain
 
-1. **Da Entrada Webhook ao Motor da IA (Observação 1 e 2)**:
-   - Toda mensagem recebida de cliente (`!fromMe && !isGroup`) passa obrigatoriamente por `processAiInboundMessage`.
-   - Como `processAiInboundMessage` recebe `db`, `incomingInfo`, `cleanTarget`, `saveDatabase` e `createNotification`, é exatamente dentro desta função (ou logo após a geração de `aiResult`) que o auto-aprendizado deve atuar, garantindo cobertura tanto no webhook de produção quanto em invocações diretas de testes.
-
-2. **Da Identificação de Dúvidas Não Mapeadas (Observações 2 e 3)**:
-   - Nem toda mensagem recebida é uma dúvida. Saudações (`"olá"`, `"bom dia"`), agradecimentos/confirmações (`"ok"`, `"obrigado"`) e pedidos puros de atendente (`"quero falar com atendente"`) não devem poluir o FAQ.
-   - Uma dúvida genuína é caracterizada por interrogação `?`, termos interrogativos (`como`, `onde`, `qual`, `quanto`) ou verbos de consulta (`tem`, `posso`, `aceita`, `funciona`).
-   - Se essa dúvida não estiver mapeada em nenhum FAQ ativo aplicável ao cliente (`isQuestionMappedInFaq === false`) E a IA requerer transbordo ou cair em fallback heurístico genérico (`needsHandoverOrFallback === true`), comprova-se que a pergunta é inédita / não mapeada.
-
-3. **Da Persistência e Desduplicação do FAQ Pendente (Observações 3 e 4)**:
-   - Para evitar proliferação de perguntas repetidas enviadas pelo mesmo cliente na mesma janela, `findExistingPendingFaq` localiza perguntas pendentes ou aguardando aprovação existentes, anexando variações sem duplicar IDs.
-   - O novo item é criado com `id: faq_${Date.now()}_${random}`, `status: "pendente"`, categoria inferida automaticamente via `inferFaqCategory` (com fallback `"reservas"`), palavras-chave extraídas via `extractFaqKeywords`, `scope: "all"`, `source: "auto_aprendizado"`, e metadados completos do cliente (`customerPhone`, `customerName`, `askedAt`).
-   - A chamada síncrona a `saveDatabase()` garante persistência atômica no `data/database.json`.
-
-4. **Da Não-Regressão e Paridade de Código (Observação 4)**:
-   - Ao estender `whatsapp-ai-service.mjs` com as funções utilitárias e integrá-las em `processAiInboundMessage`, os retornos existentes continuam idênticos (`handled: true`, `handover: true/false`, etc.), acrescentando `unmappedFaqCreated: Boolean(unmappedFaq)` e `unmappedFaq`. O teste 6 e todos os 20 testes atuais permanecem 100% íntegros.
-   - Re-exportar as funções em `zapi-service.mjs` e espelhar rigorosamente em `scripts/` preserva a igualdade de hash SHA-256 exigida pelo Teste 10.
+1. **Premise 1 (Legal & Operational Invalidation)**: When a reservation's dates or flat change, the existing check-in contract and FNRH declaration become invalid. Therefore, `r.needsReSignature` must become `true`, `r.fnhrCompleted` must become `false`, `r.signatureUrl` must become `null`, `r.checkedInAt` must become `null`, and all stale FNRH references (`r.fnrhPdfUrl`, `r.fnrhDocumentUuid`, `r.fnrhSha256Hash`, etc.) must be deleted.
+2. **Premise 2 (Link Resurrection Bug)**: Based on Observation 4, `GET /api/pms/pre-checkin/:code` reconstructs `r.fnrhPdfUrl` if `r.fnrhDocumentUuid` is truthy. Failing to delete `r.fnrhDocumentUuid` in `commitPendingModification` and `POST /modify` causes the server to expose stale PDF links even after `delete r.fnrhPdfUrl` was executed.
+3. **Premise 3 (Clearance Failure Bug)**: Based on Observation 5, `POST /api/pms/pre-checkin` updates `targetGuest.hasCompletedCheckin = true`, but neglects to set `targetGuest.needsReSignature = false` and `r.needsReSignature = false`. Consequently, `mail-service.mjs` (which checks `!reservation.needsReSignature`) continues to withhold reception emails, and the Guest Portal continues to render the re-signature banner.
+4. **Premise 4 (Uniformity & DRY Architecture)**: Rather than maintaining 3 separate manual invalidation code blocks with differing reason strings and divergent deleted keys, encapsulating the invalidation into `invalidateReservationCheckinSignatures(r, reason)` provides complete uniformity across Admin Edit, Portal Settlement, and Direct Portal Modification.
+5. **Conclusion**: Introducing `invalidateReservationCheckinSignatures(r, reason)` and updating `PUT /api/pms/reservations/:id`, `commitPendingModification`, `POST /api/pms/guest-portal/:code/modify`, and `POST /api/pms/pre-checkin` resolves all link resurrection, field clobbering, and re-signature clearance bugs.
 
 ---
 
 ## 3. Caveats
 
-- **Mensagens com múltiplos temas**: Se o cliente enviar uma mensagem com 3 perguntas simultâneas em um único balão, o sistema registrará o texto integral como uma única pergunta pendente, permitindo que o operador responda e decomponha se necessário.
-- **Áudios e Imagens**: Mensagens sem texto recebidas via WhatsApp não são processadas pelo motor textual de FAQ, mantendo-se a notificação regular de mídia.
-- No other caveats.
+- **Frontend Signature Pad Reset**: The Guest Portal (`guest-pre-checkin.tsx`) correctly checks `isReSignatureNeeded = Boolean(res.needsReSignature || currentG?.needsReSignature)` to clear `signatureData` on mount. This ensures the guest must provide a fresh physical signature on the canvas.
+- **Reception Email Deferral**: If a reservation's new check-in date is in the future, reception notification is intentionally deferred until 07:00 on the day of arrival, pursuant to standard hotel operating procedure. If the arrival date is today, notification is dispatched immediately upon re-signing.
+- **Multi-Guest Arrays**: In multi-guest reservations, titular guest (index 1) re-signing clears the primary reservation-level block (`r.needsReSignature = false`, `r.fnhrCompleted = true`), while tracking individual companion guest completion via `g.needsReSignature`.
 
 ---
 
 ## 4. Conclusion
 
-A solução de detecção automática de perguntas não mapeadas no Webhook Inbound (Milestone 2 - Feature 5, R2) está 100% desenhada, especificada e pronta para implementação pelo agente implementador. A arquitetura preserva a integridade de todos os 20 testes existentes, viabiliza o fluxo subsequente de captura de resposta do operador (Feature 6, R3) e garante conformidade estrita com o contrato de dados de `FaqItem`.
+The technical analysis and drop-in code blueprints provided in `analysis.md` completely satisfy all Milestone 2 requirements for Re-Signature Invalidation and Pre-Checkin Clearance:
+1. All three date/flat change pathways (`PUT /api/pms/reservations/:id`, `commitPendingModification`, and `POST /modify`) uniformly invalidate check-in signatures, delete stale document identifiers, and flag guest arrays.
+2. Ghost link resurrection is eliminated by ensuring `r.fnrhDocumentUuid` and `g.fnrhDocumentUuid` are purged on every invalidation.
+3. `POST /api/pms/pre-checkin` reliably clears `targetGuest.needsReSignature = false` and `r.needsReSignature = false`, sets `r.fnhrCompleted = true`, and persists atomically to `data/database.json`.
+4. The exact drop-in blueprints are ready for implementation in both `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs` to maintain 100% byte-for-byte SHA-256 parity.
 
 ---
 
 ## 5. Verification Method
 
-Para verificação forense e validação independente da implementação:
-
-1. **Verificar os relatórios e diffs documentados**:
-   - Ler `analysis.md` em `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_explorer_1\analysis.md`.
-2. **Executar a suite existente de testes**:
+To independently verify the implementation:
+1. **Targeted Test Execution** (adhering strictly to `AGENTS.md` - no global sweeps):
    ```powershell
-   node --test tests/whatsapp-ai-agent.test.mjs
+   node --test tests/m1-reservation-modification-settlement.test.mjs
    ```
-   *Critério*: 20 testes executados, 20 aprovados, 0 falhas.
-3. **Validar paridade SHA-256 entre `artifacts/` e `scripts/`**:
+2. **Dedicated Re-Signature Lifecycle Verification**:
+   Run the targeted M2 test verifying:
+   - Date/flat change via PUT / Admin sets `r.needsReSignature = true`, `r.signatureUrl = null`, `r.fnrhPdfUrl = undefined`, `r.fnrhDocumentUuid = undefined`.
+   - Date change via `commitPendingModification` sets identical invalidation state.
+   - Date change via `POST /modify` sets identical invalidation state.
+   - Submission of `POST /api/pms/pre-checkin` sets `r.needsReSignature = false`, `r.fnhrCompleted = true`, and `targetGuest.needsReSignature = false`.
+3. **Twin-Server SHA-256 Parity Verification**:
    ```powershell
-   node -e "const crypto = require('crypto'); const fs = require('fs'); const getHash = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex'); ['whatsapp-ai-service.mjs', 'zapi-service.mjs'].forEach(f => { const hA = getHash('artifacts/api-server/' + f); const hB = getHash('scripts/' + f); if (hA !== hB) throw new Error('Mismatch in ' + f); console.log('PARITY OK:', f, hA); });"
+   node -e "const crypto=require('crypto'), fs=require('fs'); const h1=crypto.createHash('sha256').update(fs.readFileSync('scripts/demo-server.mjs')).digest('hex'); const h2=crypto.createHash('sha256').update(fs.readFileSync('artifacts/api-server/demo-server.mjs')).digest('hex'); console.log('Parity:', h1 === h2, h1);"
    ```
-   *Critério*: Ambos os arquivos reportam `PARITY OK` com hashes idênticos.
-4. **Condição de Invalidação**:
-   Se uma mensagem de saudação (ex: `"bom dia"`) gerar um FAQ pendente, ou se uma dúvida inédita (ex: `"Tem ferro de passar?"`) não criar uma entrada em `db.faqItems` com `status: "pendente"`, a implementação deve ser ajustada.
+   Result must output `Parity: true`.

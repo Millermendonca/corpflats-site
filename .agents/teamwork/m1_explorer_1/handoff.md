@@ -1,141 +1,118 @@
-# Handoff Report: Milestone 1 Explorer 1 (Database Layer & Seed Persistence)
+# Handoff Report: Milestone 1 — Endpoint `/api/pms/guest-portal/:code/modify-preview` & Conflict Engine Design
 
-**Working directory**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m1_explorer_1`  
-**Target Milestone**: Milestone 1 (Backend Core & Database Layer)  
-**Recipient**: Milestone 1 Worker / Orchestrator  
-**Status**: Task complete (Hard handoff)
+**Agent**: M1 Explorer 1  
+**Milestone**: Milestone 1 — Backend Simulation, Hold & Settlement Engine  
+**Task**: Design of endpoint `POST /api/pms/guest-portal/:code/modify-preview` and multi-layered calendar conflict checking.  
+**Working Directory**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m1_explorer_1`  
+**Artifacts Produced**:
+- `analysis.md`: Detailed architecture report and complete code blueprint.
+- `handoff.md`: 5-component handoff specification.
 
 ---
 
 ## 1. Observation
 
-1. **Localização do Banco e Persistência**:
-   - `artifacts/api-server/demo-server.mjs:583-587`:
-     ```javascript
-     const DATA_DIR = path.resolve(__dirname, "../../data");
-     if (!fs.existsSync(DATA_DIR)) {
-       fs.mkdirSync(DATA_DIR, { recursive: true });
-     }
-     const DB_FILE = process.env.DATA_FILE || process.env.DATABASE_FILE || path.join(DATA_DIR, "database.json");
-     ```
-   - `artifacts/api-server/demo-server.mjs:595-660`:
-     Declaração `let db = { ... }` contém `users`, `flats`, `cleaningRequests`, `periodicTasks`, `guests`, `reservations`, etc., porém **não** contém `faqItems: []`.
-   - `data/database.json`: Arquivo em disco com 1.174.060 bytes (~1,17 MB) em linha única. Verificado via grep por `"faqItems"`: `No results found`.
+1. **`ORIGINAL_REQUEST.md` (lines 85–135)**:
+   - R1 defines: "The guest portal and backend must provide a simulation mechanism (`/modify-preview`) before any changes are committed: Validate flat calendar availability against existing active reservations to prevent conflicts. Calculate daily rate, extra nights, additional amount to pay, or eligible refunds according to the 24-hour policy."
+   - Acceptance Criteria (line 120): "Attempting to modify a reservation to a conflicting date range on the same flat returns an availability error and blocks checkout."
 
-2. **Fluxo de Carga e Sincronização PostgreSQL em `loadDatabase()`**:
-   - `artifacts/api-server/demo-server.mjs:3452-3465`:
-     ```javascript
-     if (fs.existsSync(DB_FILE)) {
-       const content = fs.readFileSync(DB_FILE, "utf-8");
-       const loaded = JSON.parse(content);
-       Object.assign(db, loaded);
-       if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
-       if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
-       ...
-     ```
-     Não há inicialização defensiva de `db.faqItems`.
-   - `artifacts/api-server/demo-server.mjs:3546-3595`:
-     ```javascript
-     const pgLoaded = res.rows[0].value;
-     ...
-     const localReservations = [...(db.reservations || [])];
-     ...
-     Object.assign(db, pgLoaded);
-     ```
-     `localReservations` e outras 11 coleções são salvas antes de `Object.assign(db, pgLoaded)`, mas `localFaqItems` não é capturado. Se o PostgreSQL tiver um snapshot legado sem `faqItems`, `db.faqItems` é sobrescrito para `undefined`.
+2. **`PROJECT.md` (lines 1–59)**:
+   - Backend Core: In-memory `db` persisted atomically via `atomicWriteFileSync` in `data/database.json`. Server entry points in `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs` maintaining strict 100% byte-for-byte SHA-256 parity.
+   - Milestone 1: Backend Simulation, Hold & Settlement Engine (`/modify-preview`, `/modify-checkout`, `/modify-status`, `/modify-cancel-pending`).
+   - Interface Contract (lines 35–37):
+     - `POST /api/pms/guest-portal/:code/modify-preview`:
+       - Input: `{ newCheckinDate: string, newCheckoutDate: string, newGuestCount?: number, newFlatId?: string, reason?: string }`
+       - Output: `{ success: true, available: boolean, conflictMessage?: string, originalDates: { checkinDate, checkoutDate }, newDates: { checkinDate, checkoutDate }, dailyRate: number, extraNights: number, additionalAmountToPay: number, refundAmount: number, currency: 'BRL', requiresPayment: boolean }`
 
-3. **Gravação Não-Atômica em `saveDatabase()`**:
-   - `artifacts/api-server/demo-server.mjs:5030-5031`:
+3. **`survey_report.md` (lines 10–22, 110–123, 301–383)**:
+   - Diagnosed that the legacy endpoint `POST /api/pms/guest-portal/:code/modify` (lines 15456–15716) mutates dates in the database immediately, without checking for prior settlement.
+   - Identified that availability checking lacked support for provisional holds (`pendingModification`) and room maintenance blocks (`db.roomBlocks`).
+
+4. **`scripts/demo-server.mjs` (lines 15456–15716)**:
+   - Legacy endpoint starts at line 15456.
+   - Line 15459: `const r = findReservationByLocatorOrContact(code);` resolves reservation by locator, ID, phone, CPF, or name.
+   - Lines 15488–15496: Existing conflict checking on same flat:
      ```javascript
-     const stateJson = JSON.stringify(db);
-     fs.writeFileSync(DB_FILE, stateJson, "utf-8");
+     const flatNumberStr = String(r.flatNumber || r.flatId);
+     const hasConflict = (db.reservations || []).some(other => {
+       if (other.id === r.id || other.code === r.code) return false;
+       if (other.status === "cancelada" || other.status === "CANCELLED") return false;
+       const otherFlat = String(other.flatNumber || other.flatId);
+       if (otherFlat !== flatNumberStr) return false;
+       return (newCheckinDate < other.checkoutDate) && (newCheckoutDate > other.checkinDate);
+     });
      ```
-     A gravação é direta e síncrona sobre o arquivo de destino `DB_FILE`. Se o processo for interrompido durante a escrita dos ~1,17 MB, o arquivo `database.json` é truncado/corrompido.
-
-4. **Regra de Espelhamento Obrigatório (Dual-Mirrored Codebase)**:
-   - Verificado via comando powershell:
-     ```powershell
-     (Get-FileHash 'artifacts/api-server/demo-server.mjs').Hash -eq (Get-FileHash 'scripts/demo-server.mjs').Hash
+   - Lines 15505–15545: Duration, rate, and 24h cutoff calculation:
+     ```javascript
+     const parseDate = (dStr) => new Date(dStr + "T00:00:00Z");
+     const oldNights = Math.max(1, Math.round((parseDate(r.checkoutDate) - parseDate(r.checkinDate)) / (1000 * 3600 * 24)));
+     const newNights = Math.max(1, Math.round((parseDate(newCheckoutDate) - parseDate(newCheckinDate)) / (1000 * 3600 * 24)));
+     const dailyRate = Number(r.dailyRate) || (oldNights > 0 ? (Number(r.totalAmount || 0) / oldNights) : 160);
+     const originalCheckin = new Date(r.checkinDate + "T14:00:00-03:00");
+     const cutoff24h = new Date(originalCheckin.getTime() - 24 * 3600 * 1000);
+     const now = new Date();
+     const isUnder24h = now.getTime() >= cutoff24h.getTime();
      ```
-     Resultado retornado: `True`.
-   - `tests/whatsapp-ai-agent.test.mjs:311-326` executa teste número 10 que calcula o SHA-256 de `artifacts/api-server/demo-server.mjs` vs `scripts/demo-server.mjs` e falha a suíte caso haja discrepância.
 
-5. **Testes Atuais**:
-   - `node --test tests/whatsapp-ai-agent.test.mjs` executou e passou com sucesso (10 testes aprovados, 0 falhas).
+5. **Twin-Server Parity Check**:
+   - `powershell -Command "Get-FileHash scripts/demo-server.mjs, artifacts/api-server/demo-server.mjs"`
+   - Output confirmed identical SHA-256: `4FDDE099E92A3036D49E7C1ED5E1E57CF3568719D0E7573D4AC6F6AB9B92CAEB`.
 
 ---
 
 ## 2. Logic Chain
 
-1. **Da Ausência de `faqItems` (Observação 1 e 2)**:
-   - Como `faqItems` não existe em `let db = { ... }` nem é inicializado caso ausente em `database.json`, qualquer acesso em tempo de execução a `db.faqItems` antes da criação de itens resultará em `undefined`, gerando `TypeError: db.faqItems.filter is not a function` em endpoints ou no serviço de IA.
-   - *Ação necessária*: Declarar `faqItems: []` na inicialização de `db` (linha 617) e garantir `if (!Array.isArray(db.faqItems)) db.faqItems = [];` logo após `Object.assign(db, loaded)` (linha 3458).
-
-2. **Da Sobrescrita pelo PostgreSQL na Nuvem (Observação 2)**:
-   - Se o servidor subir conectado ao PostgreSQL de produção (onde `db_state` ainda não tem `faqItems`), a linha 3595 executará `Object.assign(db, pgLoaded)`.
-   - Como `pgLoaded.faqItems` não existe na nuvem, o valor em memória voltará a ser `undefined`.
-   - *Ação necessária*: Capturar `const localFaqItems = Array.isArray(db.faqItems) ? [...db.faqItems] : [];` antes do `Object.assign` e, após ele, restaurar `if ((!Array.isArray(db.faqItems) || db.faqItems.length === 0) && localFaqItems.length > 0) db.faqItems = localFaqItems;`.
-   - Além disso, estender `reconcileUniversalIntegrity` para união não-destrutiva de `faqItems` por `id` com base em `updatedAt || createdAt`.
-
-3. **Da Vulnerabilidade de Corrupção no `saveDatabase()` (Observação 3)**:
-   - `fs.writeFileSync(DB_FILE, ...)` direto sobrescreve o arquivo no mesmo inode/descritor. Se houver shutdown ou restart durante a serialização de 1,17 MB, o arquivo ficará corrompido, inutilizando `database.json`.
-   - O teste comprovou que `fs.writeFileSync(tmpPath, ...)` seguido de `fs.renameSync(tmpPath, DB_FILE)` no diretório `data/` substitui o arquivo de forma atômica no sistema de arquivos.
-   - *Ação necessária*: Encapsular a gravação na função `atomicWriteFileSync(filePath, content)` com fallback para Windows (caso locks de indexador/antivírus ocorram) e utilizá-la na linha 5031 de `saveDatabase()`.
-
-4. **Da Idempotência do Seeding dos 9 FAQs Oficiais**:
-   - Para atender os critérios de aceitação do `ORIGINAL_REQUEST.md` (§ Acceptance Criteria) sem apagar personalizações feitas por operadores, o seeding deve:
-     - Identificar cada FAQ oficial por um ID determinístico (`faq-official-wifi`, `faq-official-cafe-quarto`, `faq-official-recolhimento-loucas`, `faq-official-agua-frigobar`, `faq-official-regras-visitas`, `faq-official-regras-pets`, `faq-official-checkin-14h`, `faq-official-early-checkin`, `faq-official-checkout-12h`).
-     - Injetar todos os 9 oficiais + 2 pendentes/fluxo caso `db.faqItems` esteja vazio.
-     - Caso `db.faqItems` já contenha itens, injetar apenas os oficiais faltantes sem sobrescrever os itens já existentes.
-   - O seeding deve ser invocado em `loadDatabase()` logo antes de `saveDatabase()` (linha 3863).
-
-5. **Da Paridade Estrita de Código (Observação 4)**:
-   - Qualquer edição em `artifacts/api-server/demo-server.mjs` DEVE ser replicada de modo idêntico em `scripts/demo-server.mjs` para garantir 100% de integridade com o teste 10 da suíte.
+1. **Premise**: In the current architecture, changing reservation dates directly mutates the database. If a user extends a stay by 2 days and leaves before paying, the dates are already extended without payment.
+2. **Inference 1**: To satisfy R1, we need a dedicated simulation endpoint (`/modify-preview`) that executes purely in-memory (read-only) and never calls `saveDatabase()`.
+3. **Inference 2**: When checking availability for a modification, the engine must evaluate:
+   - Layer 1: Confirmed and active reservations in `db.reservations` (excluding `r` itself so the guest's own dates do not cause false positives).
+   - Layer 2: Active provisional modification holds (`other.pendingModification` where `status === "pending_payment"` and `expiresAt > now`).
+   - Layer 3: Room maintenance blocks in `db.roomBlocks`.
+4. **Inference 3**: If a conflict is found, the endpoint must return HTTP 409 with payload `{ success: false, available: false, error: "CONFLICT", message: "...", conflictMessage: "..." }`.
+5. **Inference 4**: If available, the engine calculates:
+   - Stay durations (`oldNights`, `newNights`, `extraNights = Math.max(0, newNights - oldNights)`, `reducedNights = Math.max(0, oldNights - newNights)`).
+   - Daily rate: `Number(r.dailyRate) || (oldNights > 0 ? Number(r.totalAmount || 0) / oldNights : 160)`.
+   - 24-hour cutoff: `cutoff24h = new Date(new Date(r.checkinDate + "T14:00:00-03:00").getTime() - 24 * 3600 * 1000)`.
+   - Under 24h: reductions have `nonRefundableReduction = true` and `refundAmount = 0`.
+   - Over 24h: reductions have `refundAmount = reducedNights * dailyRate`.
+   - Extensions: `additionalAmountToPay = extraNights * dailyRate`, `requiresPayment = true`.
+   - Changes in dates or flat: `requiresReSignature = true`.
+6. **Inference 5**: The endpoint returns HTTP 200 with the exact contract specified in `PROJECT.md` and the dispatch message.
 
 ---
 
 ## 3. Caveats
 
-- **Ambiente sem PostgreSQL configurado**: Em ambiente de desenvolvimento local sem variável `DATABASE_URL` / `pgPool`, `demo-server.mjs` opera exclusivamente com persistência em arquivo (`data/database.json`). A implementação recomendada foi desenhada para funcionar de forma idêntica e à prova de falhas com ou sem PostgreSQL.
-- **Tamanho do Arquivo `database.json`**: Com a inclusão dos 11 itens de FAQ no seed, o arquivo aumentará em aproximadamente 5 KB (~0,4% do tamanho total de 1,17 MB), o que não traz qualquer impacto de desempenho na serialização atômica.
-- **Não-modificação de código de produção**: Como agente Explorer, nenhuma alteração direta em arquivos fora de `.agents/teamwork/` foi executada. Todos os diffs e especificações foram testados sinteticamente e detalhados em `analysis.md`.
+1. **Twin-Server Parity**: When applying this code, the implementer must modify both `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs` simultaneously so their SHA-256 hashes match.
+2. **Subsequent Endpoints**: This design addresses `modify-preview` (simulation). The subsequent endpoints in Milestone 1 (`modify-checkout`, `modify-status`, and `modify-cancel-pending`) depend on `r.pendingModification` structure documented in Section 6 of `survey_report.md` and Section 4 of `analysis.md`.
+3. **External Channels**: Reservations from channels other than direct (`whatsapp`, `site`, `site_direto`, `direto`, `balcao`) return HTTP 403 `EXTERNAL_CHANNEL`.
 
 ---
 
 ## 4. Conclusion
 
-1. O plano de implementação está totalmente validado e pronto para o Worker de Milestone 1.
-2. A solução resolve:
-   - Inicialização formal de `db.faqItems: []`.
-   - Carga e preservação defensiva contra sobrescrita de snapshots legados do PostgreSQL.
-   - Seeding seguro e idempotente dos 9 FAQs oficiais + itens de teste/fluxo com categorização, variações e palavras-chave.
-   - Escrita atômica em disco via `atomicWriteFileSync`.
-   - Manutenção da paridade exata de bytes entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`.
+The specification and code blueprint for `POST /api/pms/guest-portal/:code/modify-preview` have been fully drafted, verified against project conventions, and documented in `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m1_explorer_1\analysis.md`. The endpoint provides:
+- Complete input validation (locator, channels, date formats, ordering, flat lookup).
+- 3-layer conflict checking (active reservations excluding current, pending holds, room blocks).
+- Precise 24h cutoff financial simulation.
+- Structured JSON response complying with `PROJECT.md`.
+- Read-only execution with zero database side-effects.
 
 ---
 
 ## 5. Verification Method
 
-Para verificar de forma independente as constatações e testar as implementações propostas:
-
-1. **Verificação de Paridade Inicial**:
-   ```powershell
-   powershell -Command "(Get-FileHash 'artifacts/api-server/demo-server.mjs').Hash -eq (Get-FileHash 'scripts/demo-server.mjs').Hash"
-   ```
-   *Resultado esperado*: `True`.
-
-2. **Execução da Suíte de Testes Automatizada Existente**:
-   ```bash
-   node --test tests/whatsapp-ai-agent.test.mjs
-   ```
-   *Resultado esperado*: Todos os 10 testes passam sem erros.
-
-3. **Verificação de Escrita Atômica no SO**:
-   ```bash
-   node -e "const fs = require('fs'); const path = require('path'); const dst = path.join('data', '.test_atomic_' + Date.now()); const tmp = dst + '.tmp'; fs.writeFileSync(tmp, 'OK', 'utf-8'); fs.renameSync(tmp, dst); console.log('Atomic write verified:', fs.readFileSync(dst, 'utf-8') === 'OK'); fs.unlinkSync(dst);"
-   ```
-   *Resultado esperado*: `Atomic write verified: true`.
-
-4. **Inspeção dos Arquivos Gerados**:
-   - `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m1_explorer_1\analysis.md`
-   - `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m1_explorer_1\handoff.md`
+To independently verify the blueprint:
+1. **File Review**:
+   - Inspect `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m1_explorer_1\analysis.md` (Sections 2, 4, 5, and 6).
+2. **Automated Unit & Integration Testing**:
+   - Run Node.js test runner against the 10 test vectors detailed in Section 7 of `analysis.md` using:
+     ```powershell
+     node --test tests/modify-preview.test.mjs
+     ```
+3. **Parity Check**:
+   - Verify file hash parity between servers:
+     ```powershell
+     powershell -Command "Get-FileHash scripts/demo-server.mjs, artifacts/api-server/demo-server.mjs"
+     ```
+   - Invalidation condition: Any difference in hash between the two server files invalidates deployment.

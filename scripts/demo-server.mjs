@@ -79,7 +79,11 @@ import {
   detectAndRecordUnmetDemand,
   classifyUnmetDemand,
   UNMET_DEMAND_CATEGORIES,
-  appendMessageToConversation
+  appendMessageToConversation,
+  sendMirrorEmail,
+  buildMirrorEmailSubject,
+  renderTemplateButtons,
+  DEFAULT_WHATSAPP_TEMPLATES
 } from "./zapi-service.mjs";
 import { initMaidAutomationEngine } from "./maid-automation-service.mjs";
 import { sendInterPix, isInterConfigured, INTER_ENV } from "./inter-pix-service.mjs";
@@ -5801,15 +5805,19 @@ function createNotification(arg1, arg2, arg3) {
  */
 export async function getCheckinUrl(reservation, guestIndex = 1, baseUrl = "", dbInstance = null) {
   const activeDb = dbInstance || (typeof db !== "undefined" ? db : null);
-  const hostBase = (baseUrl || process.env.SERVER_BASE_URL || "https://corpflats.onrender.com").replace(/\/$/, "");
+  const hostBase = (baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com").replace(/\/$/, "");
   const safeGuestIndex = Number(guestIndex) || 1;
   const resCode = reservation?.code || reservation?.id || "";
-  const internalCheckinUrl = `${hostBase}/pre-checkin/${resCode}?guest=${safeGuestIndex}`;
+  const isResign = Boolean(reservation?.needsReSignature);
+  const resignParam = isResign
+    ? (safeGuestIndex > 1 ? `?guest=${safeGuestIndex}&resign=1` : "?resign=1")
+    : `?guest=${safeGuestIndex}`;
+  const internalCheckinUrl = `${hostBase}/pre-checkin/${resCode}${resignParam}`;
 
   const currentProvider = activeDb?.settings?.checkinProvider || "proprio";
 
-  // 1. Provedor Próprio: resolução imediata sem I/O
-  if (currentProvider !== "gov_fnrh") {
+  // 1. Provedor Próprio ou re-assinatura: resolução imediata sem I/O
+  if (currentProvider !== "gov_fnrh" || isResign) {
     return internalCheckinUrl;
   }
 
@@ -5919,14 +5927,18 @@ export async function getCheckinUrl(reservation, guestIndex = 1, baseUrl = "", d
  */
 export function getCheckinUrlSync(reservation, guestIndex = 1, baseUrl = "", dbInstance = null) {
   const activeDb = dbInstance || (typeof db !== "undefined" ? db : null);
-  const hostBase = (baseUrl || process.env.SERVER_BASE_URL || "https://corpflats.onrender.com").replace(/\/$/, "");
+  const hostBase = (baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com").replace(/\/$/, "");
   const safeGuestIndex = Number(guestIndex) || 1;
   const resCode = reservation?.code || reservation?.id || "";
-  const internalCheckinUrl = `${hostBase}/pre-checkin/${resCode}?guest=${safeGuestIndex}`;
+  const isResign = Boolean(reservation?.needsReSignature);
+  const resignParam = isResign
+    ? (safeGuestIndex > 1 ? `?guest=${safeGuestIndex}&resign=1` : "?resign=1")
+    : `?guest=${safeGuestIndex}`;
+  const internalCheckinUrl = `${hostBase}/pre-checkin/${resCode}${resignParam}`;
 
   const currentProvider = activeDb?.settings?.checkinProvider || "proprio";
 
-  if (currentProvider === "gov_fnrh" && (reservation?.serproPrecheckinUrl || reservation?.link_precheckin)) {
+  if (currentProvider === "gov_fnrh" && !isResign && (reservation?.serproPrecheckinUrl || reservation?.link_precheckin)) {
     return reservation.serproPrecheckinUrl || reservation.link_precheckin;
   }
 
@@ -13746,6 +13758,143 @@ app.post("/api/pms/reservations/import-csv", async (req, res) => {
 });
 
 
+// ── M2: Função Canônica de Invalidação de Assinatura de Check-in em Mudança de Flat/Datas ──
+export function invalidateReservationCheckinSignatures(r, reason = "Alteração de acomodação (flat) ou período da estadia") {
+  if (!r) return;
+  r.fnhrCompleted = false;
+  r.preCheckinCompleted = false;
+  r.signatureUrl = null;
+  r.checkedInAt = null;
+  r.needsReSignature = true;
+  r.reSignatureReason = reason;
+
+  delete r.fnrhPdfUrl;
+  delete r.fnrhDownloadUrl;
+  delete r.fnrhDocumentUuid;
+  delete r.fnrhSha256Hash;
+  delete r.fnrhVerifyUrl;
+  delete r.fnrhSignedAt;
+  delete r.fnrhAuditTrail;
+  delete r.fnrhFileName;
+  delete r.fnrhFilePath;
+  delete r.r2Url;
+  delete r.fnrhR2Url;
+
+  if (r.status === "CHECKED_IN" || r.status === "checkin") {
+    r.status = "confirmada";
+  }
+
+  if (Array.isArray(r.guests)) {
+    r.guests.forEach(g => {
+      g.hasCompletedCheckin = false;
+      g.checkinCompletedAt = null;
+      g.signatureUrl = null;
+      g.needsReSignature = true;
+      delete g.fnrhPdfUrl;
+      delete g.fnrhDownloadUrl;
+      delete g.fnrhDocumentUuid;
+      delete g.fnrhSha256Hash;
+      delete g.fnrhVerifyUrl;
+      delete g.fnrhSignedAt;
+      delete g.fnrhAuditTrail;
+      delete g.fnrhFileName;
+      delete g.fnrhFilePath;
+      delete g.r2Url;
+      delete g.fnrhR2Url;
+    });
+  }
+}
+
+/**
+ * M2: Despacha notificações automáticas ao hóspede quando datas ou flat mudam,
+ * enviando WhatsApp via Z-API e espelho por E-mail com o link direto de re-assinatura.
+ * Executa de forma assíncrona, não-bloqueante e tolerante a falhas de gateway.
+ */
+export function dispatchReservationReSignatureNotifications(reservation, changes = [], options = {}) {
+  if (!reservation) return;
+  const appOrigin = (options.origin || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com").replace(/\/$/, "");
+  const reSignatureUrl = `${appOrigin}/pre-checkin/${reservation.code}?resign=1`;
+
+  // 1. Registro Imediato de Auditoria
+  try {
+    logAuditEvent({
+      level: "info",
+      category: "communication",
+      action: "RE_SIGNATURE_NOTIFICATION_DISPATCHED",
+      actor: options.actor || { name: "Sistema", role: "system" },
+      source: options.source || "re_signature_lifecycle",
+      details: {
+        reservationCode: reservation.code,
+        reSignatureUrl,
+        guestPhone: reservation.guestPhone || null,
+        guestEmail: reservation.guestEmail || null,
+        changesCount: Array.isArray(changes) ? changes.length : 0
+      }
+    });
+
+    addReservationAuditLog(reservation, {
+      action: "re_signature_requested",
+      actor: options.actor || { name: "Sistema", role: "system", type: "system" },
+      source: options.source || "Notificações Automáticas",
+      description: `Notificação de re-assinatura disparada para o hóspede. Link direto: ${reSignatureUrl}`,
+      changes: Array.isArray(changes) ? changes : []
+    });
+  } catch (auditErr) {
+    console.warn("[Re-Signature Audit] Erro ao registrar auditoria de re-assinatura:", auditErr.message);
+  }
+
+  // 2. Execução Assíncrona Não-Bloqueante
+  setImmediate(async () => {
+    try {
+      const resvWithChanges = { ...reservation, _changesContext: changes };
+
+      // A. Disparo integrado via WhatsApp / Z-API
+      if (typeof triggerImmediateWhatsApp === "function") {
+        try {
+          await triggerImmediateWhatsApp(db, saveDatabase, "reservation_updated", resvWithChanges, appOrigin);
+        } catch (waErr) {
+          console.warn("[Re-Signature WhatsApp] Falha graciosa no disparo WhatsApp:", waErr.message);
+        }
+      }
+
+      // B. Garantia de Entrega de E-mail: Se o espelho de e-mail não foi disparado pelo Z-API
+      // (ex.: se o Z-API estiver desativado no painel), despacha o e-mail diretamente via SMTP
+      const alreadySentEmail = (db.reservationCommunications || []).some(c =>
+        (String(c.reservation_id) === String(reservation.code) || String(c.reservation_id) === String(reservation.id)) &&
+        (c.metadata?.trigger === "reservation_updated" || c.metadata?.trigger === "re_signature_requested") &&
+        (Date.now() - new Date(c.created_at || c.timestamp || Date.now()).getTime() < 10000)
+      );
+
+      if (reservation.guestEmail && !alreadySentEmail && typeof sendMirrorEmail === "function") {
+        try {
+          const tpl = (db.whatsappTemplates || []).find(t => t.id === "tpl_reservation_updated" || t.triggerEvent === "reservation_updated") ||
+                      (DEFAULT_WHATSAPP_TEMPLATES || []).find(t => t.id === "tpl_reservation_updated");
+          if (tpl) {
+            sendMirrorEmail(db, saveDatabase, {
+              reservation: resvWithChanges,
+              email: reservation.guestEmail,
+              recipientName: reservation.guestName,
+              recipientType: "guest",
+              templateId: tpl.id,
+              triggerEvent: "reservation_updated",
+              subject: buildMirrorEmailSubject(tpl, resvWithChanges, db, appOrigin, "guest"),
+              message: resolveWhatsAppTags(tpl.message, resvWithChanges, db, appOrigin, "guest", tpl),
+              buttons: renderTemplateButtons(tpl.buttons, resvWithChanges, db, appOrigin, "guest", tpl),
+              footer: tpl.footer,
+              baseUrl: appOrigin,
+              source: "re_signature_direct_email"
+            });
+          }
+        } catch (emailErr) {
+          console.warn("[Re-Signature Email] Falha graciosa no disparo de e-mail:", emailErr.message);
+        }
+      }
+    } catch (err) {
+      console.warn("[Re-Signature Notifications] Erro global na rotina de notificação:", err.message);
+    }
+  });
+}
+
 app.put("/api/pms/reservations/:id", async (req, res) => {
   const id = Number(req.params.id);
   const r = (db.reservations || []).find(x => x.id === id);
@@ -13767,65 +13916,18 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     r.previousCheckoutDate = oldCheckout;
   }
 
-  // Se datas ou flat mudarem em reserva já assinada, invalida assinatura para nova assinatura,
+  // Se datas ou flat mudarem na edição, invalida assinatura para nova conferência legal,
   // preservando 100% dos dados cadastrais do hóspede no cadastro e na reserva.
   const isDatesOrFlatChanged = Boolean(
     (req.body.checkinDate && oldCheckin && req.body.checkinDate !== oldCheckin) ||
     (req.body.checkoutDate && oldCheckout && req.body.checkoutDate !== oldCheckout) ||
-    (req.body.flatId !== undefined && oldFlatId !== undefined && Number(req.body.flatId) !== Number(oldFlatId))
+    (req.body.flatId !== undefined && oldFlatId !== undefined && Number(req.body.flatId) !== Number(oldFlatId)) ||
+    (req.body.flatNumber !== undefined && r.flatNumber !== undefined && String(req.body.flatNumber) !== String(r.flatNumber))
   );
 
   if (isDatesOrFlatChanged) {
-    const hadSignedCheckin = Boolean(
-      r.fnhrCompleted ||
-      r.signatureUrl ||
-      r.checkedInAt ||
-      r.fnrhDocumentUuid ||
-      (Array.isArray(r.guests) && r.guests.some(g => g.hasCompletedCheckin || g.signatureUrl || g.fnrhDocumentUuid))
-    );
-    if (hadSignedCheckin) {
-      console.log(`[PMS Edição] Reserva ${r.code || r.id} teve alteração de flat/datas após check-in digital. Invalidando assinatura para nova conferência e preservando 100% dos dados cadastrais.`);
-      r.fnhrCompleted = false;
-      r.signatureUrl = null;
-      r.checkedInAt = null;
-      r.needsReSignature = true;
-      r.reSignatureReason = "Alteração de acomodação (flat) ou período da estadia";
-      delete r.fnrhPdfUrl;
-      delete r.fnrhDownloadUrl;
-      delete r.fnrhDocumentUuid;
-      delete r.fnrhSha256Hash;
-      delete r.fnrhVerifyUrl;
-      delete r.fnrhSignedAt;
-      delete r.fnrhAuditTrail;
-      delete r.fnrhFileName;
-      delete r.fnrhFilePath;
-      delete r.r2Url;
-      delete r.fnrhR2Url;
-      if (r.status === "CHECKED_IN" || r.status === "checkin") {
-        r.status = "confirmada";
-      }
-      if (Array.isArray(r.guests)) {
-        r.guests.forEach(g => {
-          if (g.hasCompletedCheckin || g.signatureUrl || g.fnrhDocumentUuid) {
-            g.hasCompletedCheckin = false;
-            g.checkinCompletedAt = null;
-            g.signatureUrl = null;
-            g.needsReSignature = true;
-            delete g.fnrhPdfUrl;
-            delete g.fnrhDownloadUrl;
-            delete g.fnrhDocumentUuid;
-            delete g.fnrhSha256Hash;
-            delete g.fnrhVerifyUrl;
-            delete g.fnrhSignedAt;
-            delete g.fnrhAuditTrail;
-            delete g.fnrhFileName;
-            delete g.fnrhFilePath;
-            delete g.r2Url;
-            delete g.fnrhR2Url;
-          }
-        });
-      }
-    }
+    console.log(`[PMS Edição] Reserva ${r.code || r.id} teve alteração de flat/datas. Invalidando assinatura de check-in (needsReSignature = true) e preservando dados cadastrais.`);
+    invalidateReservationCheckinSignatures(r, "Alteração de acomodação (flat) ou período da estadia");
   }
 
   const oldVehiclePlate = r.vehicle?.plate;
@@ -13872,6 +13974,30 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
   ];
   for (const f of fields) {
     if (req.body[f] !== undefined) r[f] = req.body[f];
+  }
+
+  // Se houve alteração de flat ou datas, garante que req.body.guests não ressuscite flags de check-in concluído
+  if (isDatesOrFlatChanged) {
+    r.needsReSignature = true;
+    r.reSignatureReason = "Alteração de acomodação (flat) ou período da estadia";
+    r.fnhrCompleted = false;
+    r.preCheckinCompleted = false;
+    r.signatureUrl = null;
+    r.checkedInAt = null;
+    delete r.fnrhPdfUrl;
+    delete r.fnrhDocumentUuid;
+    delete r.fnrhSha256Hash;
+    if (Array.isArray(r.guests)) {
+      r.guests.forEach(g => {
+        g.needsReSignature = true;
+        g.hasCompletedCheckin = false;
+        g.signatureUrl = null;
+        g.checkinCompletedAt = null;
+        delete g.fnrhPdfUrl;
+        delete g.fnrhDocumentUuid;
+        delete g.fnrhSha256Hash;
+      });
+    }
   }
 
   if (req.body.docPhotoBase64) {
@@ -14337,14 +14463,50 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
     changes.push({ field: "guestName", label: "Hóspede Titular", oldValue: oldGuestName, newValue: r.guestName });
   }
 
-  // Se a data de checkin foi adiada para uma data futura, limpa os carimbos matinais para disparar quando a nova data chegar
-  if (oldCheckin !== r.checkinDate && isReservationForFuture(r)) {
+  // Se a data de checkin mudou, limpa incondicionalmente os carimbos matinais para disparar quando a nova data chegar
+  if (oldCheckin !== r.checkinDate) {
     delete r.morningEmailSentDate;
     delete r.morningEmailSentAt;
     delete r.receptionNotifiedAt;
     if (r.vehicle) {
       delete r.vehicle.garageNotifiedAt;
       delete r.vehicle.lastNotifiedPlate;
+    }
+  }
+
+  // Sincronização de pedidos de café da manhã e governança em alteração de datas/flat
+  if (oldCheckin !== r.checkinDate || oldCheckout !== r.checkoutDate || (oldFlatId !== undefined && Number(oldFlatId) !== Number(r.flatId)) || (req.body.flatNumber !== undefined && String(req.body.flatNumber) !== String(r.flatNumber))) {
+    if (!db.breakfastOrders) db.breakfastOrders = [];
+    const nowBrl = getBrasiliaNow();
+    const todayStr = nowBrl.date;
+    db.breakfastOrders.forEach(o => {
+      if ((o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) || o.reservationId === r.id) {
+        if (o.date < r.checkinDate || o.date > r.checkoutDate) {
+          o.status = "cancelled";
+          o.cancelReason = computeBreakfastCancellationReason(o, r, todayStr, nowBrl, db);
+        } else if (o.date >= r.checkinDate && o.date <= r.checkoutDate && o.status === "cancelled") {
+          o.status = "pending";
+          o.cancelReason = null;
+        }
+        if (r.flatNumber) {
+          o.roomNumber = String(r.flatNumber);
+          o.flatNumber = String(r.flatNumber);
+        }
+        if (r.flatId) o.flatId = Number(r.flatId) || r.flatId;
+      }
+    });
+
+    if (oldCheckout !== r.checkoutDate && Array.isArray(db.cleaningRequests)) {
+      const reqItem = db.cleaningRequests.find(c =>
+        (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber) || (oldFlatId !== undefined && c.flatId === oldFlatId)) &&
+        (c.requestDate === oldCheckout || c.requestDate === oldCheckin)
+      );
+      if (reqItem) {
+        reqItem.requestDate = r.checkoutDate;
+        reqItem.effectiveDate = r.checkoutDate;
+        if (r.flatNumber) reqItem.flatNumber = String(r.flatNumber);
+        if (r.flatId) reqItem.flatId = Number(r.flatId) || r.flatId;
+      }
     }
   }
 
@@ -14495,6 +14657,15 @@ app.put("/api/pms/reservations/:id", async (req, res) => {
           });
         } else {
           console.log(`[WhatsApp Trigger] Edição da reserva ${r.code} (${r.guestName}) não teve alterações de itens voltados ao hóspede. Disparo ao WhatsApp suprimido.`);
+        }
+
+        if (isDatesOrFlatChanged) {
+          const originHeader = req.headers["origin"] || (req.headers["host"] ? `${req.protocol || "https"}://${req.headers["host"]}` : "https://corpflats.onrender.com");
+          dispatchReservationReSignatureNotifications(r, guestFacingDiffs.length > 0 ? guestFacingDiffs : (changes.length > 0 ? changes : diffs), {
+            origin: originHeader,
+            source: "pms_admin_edit",
+            actor: { name: (getAuthUser(req)?.username || getAuthUser(req)?.name || "Administrador"), role: "admin", type: "user" }
+          });
         }
       }
     }
@@ -15734,19 +15905,8 @@ export async function commitPendingModification(r, pending, {
     r.paymentStatus = (r.totalAmount > 0 && r.paidAmount >= r.totalAmount) ? "pago_total" : (r.paidAmount > 0 ? "sinal_pago" : r.paymentStatus);
   }
 
-  // 4. Invalidação Obrigatória de Assinatura (Requisito R3)
-  r.needsReSignature = true;
-  r.reSignatureReason = "Alteração no período da estadia ou flat";
-  r.fnhrCompleted = false;
-  r.preCheckinCompleted = false;
-  delete r.fnrhPdfUrl;
-  delete r.fnrhSha256Hash;
-  if (Array.isArray(r.guests)) {
-    r.guests.forEach(g => {
-      g.needsReSignature = true;
-      g.hasCompletedCheckin = false;
-    });
-  }
+  // 4. Invalidação Obrigatória de Assinatura (Requisito R3 / M2)
+  invalidateReservationCheckinSignatures(r, "Alteração de acomodação (flat) ou período da estadia");
 
   // 5. Registro no Histórico de Modificações com Deduplicação
   if (!Array.isArray(r.modificationHistory)) r.modificationHistory = [];
@@ -15848,8 +16008,8 @@ export async function commitPendingModification(r, pending, {
     }
   });
 
-  // B. Se for estadia futura, limpa carimbos de rotina matinal
-  if (isReservationForFuture(r)) {
+  // B. Limpeza incondicional de carimbos da rotina matinal em mudança de check-in
+  if (oldCheckin !== targetCheckin) {
     delete r.morningEmailSentDate;
     delete r.morningEmailSentAt;
     delete r.receptionNotifiedAt;
@@ -15857,6 +16017,17 @@ export async function commitPendingModification(r, pending, {
       delete r.vehicle.garageNotifiedAt;
       delete r.vehicle.lastNotifiedPlate;
     }
+  }
+
+  // Sincronização de pedidos de café se o flat mudar
+  if (targetFlatNumber && targetFlatNumber !== String(oldFlatNumber)) {
+    (db.breakfastOrders || []).forEach(o => {
+      if ((o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) || o.reservationId === r.id) {
+        o.roomNumber = targetFlatNumber;
+        o.flatNumber = targetFlatNumber;
+        if (targetFlatId) o.flatId = Number(targetFlatId) || targetFlatId;
+      }
+    });
   }
 
   // C. Reconciliação de Governança
@@ -15895,7 +16066,41 @@ export async function commitPendingModification(r, pending, {
     targetUrl: `/reservas?code=${r.code}`
   });
 
-  // 10. Persistência Atômica no Disco e DB
+  // 10. Disparo de Notificações de Re-Assinatura ao Hóspede (WhatsApp & E-mail)
+  const modChanges = [
+    {
+      field: "checkinDate",
+      label: "Data de Entrada (Check-in)",
+      oldValue: oldCheckin,
+      newValue: targetCheckin
+    },
+    {
+      field: "checkoutDate",
+      label: "Data de Saída (Check-out)",
+      oldValue: oldCheckout,
+      newValue: targetCheckout
+    },
+    ...(oldFlatNumber !== targetFlatNumber ? [{
+      field: "flatNumber",
+      label: "Apartamento",
+      oldValue: `Flat ${oldFlatNumber}`,
+      newValue: `Flat ${targetFlatNumber}`
+    }] : []),
+    ...(additionalPaid > 0 ? [{
+      field: "totalAmount",
+      label: "Valor Total",
+      oldValue: `R$ ${oldTotalAmount.toFixed(2)}`,
+      newValue: `R$ ${(oldTotalAmount + additionalPaid).toFixed(2)} (+R$ ${additionalPaid.toFixed(2)})`
+    }] : [])
+  ];
+
+  dispatchReservationReSignatureNotifications(r, modChanges, {
+    origin: (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com",
+    source: "portal_modify_settled",
+    actor: { name: r.guestName || "Hóspede", role: "guest", type: "guest" }
+  });
+
+  // 11. Persistência Atômica no Disco e DB
   saveDatabase("modify_settled_committed");
 
   return { success: true, committed: true, reservation: r };
@@ -16882,6 +17087,11 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
     ]
   });
 
+  const oldCheckin = r.checkinDate;
+  const oldCheckout = r.checkoutDate;
+  const oldFlatNumber = r.flatNumber;
+  const oldFlatId = r.flatId;
+
   if (r.checkinDate !== newCheckinDate) {
     r.previousCheckinDate = r.checkinDate;
   }
@@ -16900,19 +17110,8 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
   r.calendarSequence = (r.calendarSequence || 0) + 1;
   r.updatedAt = new Date().toISOString();
 
-  // 8. Invalidação Obrigatória de Assinatura (Requisito R3)
-  r.needsReSignature = true;
-  r.reSignatureReason = "Alteração no período da estadia ou acomodação";
-  r.fnhrCompleted = false;
-  r.preCheckinCompleted = false;
-  delete r.fnrhPdfUrl;
-  delete r.fnrhSha256Hash;
-  if (Array.isArray(r.guests)) {
-    r.guests.forEach(g => {
-      g.needsReSignature = true;
-      g.hasCompletedCheckin = false;
-    });
-  }
+  // 8. Invalidação Obrigatória de Assinatura (Requisito R3 / M2)
+  invalidateReservationCheckinSignatures(r, "Alteração de acomodação (flat) ou período da estadia");
 
   // Sincronizar pedidos de café da manhã vinculados
   if (!db.breakfastOrders) db.breakfastOrders = [];
@@ -16928,11 +17127,16 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
         o.status = "pending";
         o.cancelReason = null;
       }
+      if (targetFlatNumber && targetFlatNumber !== String(oldFlatNumber)) {
+        o.roomNumber = targetFlatNumber;
+        o.flatNumber = targetFlatNumber;
+        if (targetFlatId) o.flatId = Number(targetFlatId) || targetFlatId;
+      }
     }
   });
 
-  // Se a nova data de checkin for futura, limpa os carimbos matinais para disparar quando a nova data chegar
-  if (isReservationForFuture(r)) {
+  // Limpeza incondicional de carimbos da rotina matinal em mudança de check-in
+  if (oldCheckin !== newCheckinDate) {
     delete r.morningEmailSentDate;
     delete r.morningEmailSentAt;
     delete r.receptionNotifiedAt;
@@ -16948,7 +17152,7 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
       const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
       const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
       const changes = [
-        { field: "dates", label: "Novo Período", oldValue: `${formatDateBr(r.modificationHistory[r.modificationHistory.length - 1]?.oldCheckin)} a ${formatDateBr(r.modificationHistory[r.modificationHistory.length - 1]?.oldCheckout)}`, newValue: `${formatDateBr(newCheckinDate)} a ${formatDateBr(newCheckoutDate)}` }
+        { field: "dates", label: "Novo Período", oldValue: `${formatDateBr(oldCheckin)} a ${formatDateBr(oldCheckout)}`, newValue: `${formatDateBr(newCheckinDate)} a ${formatDateBr(newCheckoutDate)}` }
       ];
       const { subject, bodyHtml } = renderReservationUpdateEmail({ reservation: r, flat, changes, settings: db.settings });
 
@@ -16978,14 +17182,46 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
   // Se houver solicitação de limpeza correspondente, sincroniza as datas
   if (Array.isArray(db.cleaningRequests)) {
     const reqItem = db.cleaningRequests.find(c =>
-      (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) &&
-      c.requestDate === r.checkinDate
+      (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber) || (oldFlatId !== undefined && c.flatId === oldFlatId) || String(c.flatNumber) === String(oldFlatNumber)) &&
+      (c.requestDate === oldCheckout || c.requestDate === oldCheckin)
     );
     if (reqItem) {
-      reqItem.requestDate = newCheckinDate;
-      reqItem.effectiveDate = newCheckinDate;
+      reqItem.requestDate = newCheckoutDate;
+      reqItem.effectiveDate = newCheckoutDate;
+      if (targetFlatNumber && targetFlatNumber !== String(oldFlatNumber)) {
+        reqItem.flatNumber = targetFlatNumber;
+        if (targetFlatId) reqItem.flatId = Number(targetFlatId) || targetFlatId;
+      }
     }
   }
+
+  // Disparo de Comunicação ao Hóspede com Link de Re-Assinatura
+  const directModChanges = [
+    {
+      field: "checkinDate",
+      label: "Data de Entrada (Check-in)",
+      oldValue: oldCheckin,
+      newValue: newCheckinDate
+    },
+    {
+      field: "checkoutDate",
+      label: "Data de Saída (Check-out)",
+      oldValue: oldCheckout,
+      newValue: newCheckoutDate
+    },
+    ...(targetFlatNumber !== String(oldFlatNumber) ? [{
+      field: "flatNumber",
+      label: "Apartamento",
+      oldValue: `Flat ${oldFlatNumber}`,
+      newValue: `Flat ${targetFlatNumber}`
+    }] : [])
+  ];
+
+  dispatchReservationReSignatureNotifications(r, directModChanges, {
+    origin: req.headers["origin"] || (req.headers["host"] ? `${req.protocol || "https"}://${req.headers["host"]}` : "https://corpflats.onrender.com"),
+    source: "portal_modify_direct",
+    actor: { name: r.guestName || "Hóspede", role: "guest", type: "guest" }
+  });
 
   saveDatabase("modify_direct_committed");
 
@@ -18827,6 +19063,8 @@ app.get("/api/reception/today", (req, res) => {
 
         const isRoomReady = cleaningStatus === "clean";
 
+        const isReSignatureNeeded = Boolean(r.needsReSignature);
+
         // Quantidade de hóspedes autorizados (1, 2 ou 3)
         const count = Math.min(Math.max(Number(r.guestCount) || Number(r.adults) || 1, 1), 3);
         let guestList = Array.isArray(r.guests) && r.guests.length > 0 ? [...r.guests] : [];
@@ -18838,8 +19076,9 @@ app.get("/api/reception/today", (req, res) => {
             cpf: guest.document || "",
             phone: r.guestPhone || guest.phone || "",
             email: r.guestEmail || guest.email || "",
-            hasCompletedCheckin: Boolean(r.fnhrCompleted && !r.needsReSignature),
-            checkinCompletedAt: r.fnhrCompleted ? r.updatedAt : null
+            hasCompletedCheckin: Boolean(!isReSignatureNeeded && r.fnhrCompleted),
+            needsReSignature: isReSignatureNeeded,
+            checkinCompletedAt: r.fnhrCompleted && !isReSignatureNeeded ? r.updatedAt : null
           });
           for (let i = 2; i <= count; i++) {
             guestList.push({
@@ -18849,13 +19088,20 @@ app.get("/api/reception/today", (req, res) => {
               phone: "",
               email: "",
               hasCompletedCheckin: false,
+              needsReSignature: isReSignatureNeeded,
               checkinCompletedAt: null
             });
           }
+        } else if (isReSignatureNeeded) {
+          guestList = guestList.map(g => ({
+            ...g,
+            needsReSignature: true,
+            hasCompletedCheckin: false
+          }));
         }
 
-        const allCheckinDone = guestList.every(g => g.hasCompletedCheckin);
-        const someCheckinDone = guestList.some(g => g.hasCompletedCheckin);
+        const allCheckinDone = !isReSignatureNeeded && guestList.every(g => g.hasCompletedCheckin && !g.needsReSignature);
+        const someCheckinDone = !isReSignatureNeeded && guestList.some(g => g.hasCompletedCheckin && !g.needsReSignature);
 
         // Histórico de reservas anteriores do hóspede para checar se é 1ª vez ou recorrente
         const priorReservations = (db.reservations || []).filter(prev => {
@@ -18871,7 +19117,7 @@ app.get("/api/reception/today", (req, res) => {
         const isFirstTimeGuest = priorStayCount === 0;
 
         // Lógica de Liberação de Check-in Antecipado e Entrada na Portaria
-        const isSiteBooking = r.channel === "site";
+        const isSiteBooking = r.channel === "site" || r.channel === "site_direto" || r.channel === "direto";
         const isOtaBooking = r.channel === "airbnb" || r.channel === "booking" || r.channel === "decolar" || r.channel === "expedia";
         const isEarlyAuthorizedManual = Boolean(r.earlyCheckinAuthorized);
         const isPastOrExact14h = currentHour >= 14;
@@ -18910,10 +19156,14 @@ app.get("/api/reception/today", (req, res) => {
         let entryMessage = "";
         let entryBadgeType = "neutral";
 
-        const completedCount = guestList.filter(g => g.hasCompletedCheckin).length;
+        const completedCount = guestList.filter(g => g.hasCompletedCheckin && !g.needsReSignature).length;
         const totalCount = guestList.length;
 
-        if (!allCheckinDone) {
+        if (isReSignatureNeeded) {
+          canAuthorizeEntry = false;
+          entryMessage = "Check-in Pendente (Re-assinatura de Termo Obrigatória)";
+          entryBadgeType = "error";
+        } else if (!allCheckinDone) {
           if (completedCount > 0) {
             canAuthorizeEntry = isRoomReady && (isPastOrExact14h || earlyCheckinStatus === "Liberado");
             entryMessage = `Entrada Parcial Liberada (${completedCount}/${totalCount} prontos)`;
@@ -18989,7 +19239,9 @@ app.get("/api/reception/today", (req, res) => {
           guestPhoto: r.selfieUrl || guest.photoUrl || null,
           docPhoto: r.docPhotoUrl || guest.docPhotoUrl || null,
           signatureUrl: r.signatureUrl || null,
-          hasPreCheckin: Boolean((r.fnhrCompleted && !r.needsReSignature) || someCheckinDone)
+          needsReSignature: isReSignatureNeeded,
+          reSignatureReason: r.reSignatureReason || (isReSignatureNeeded ? "Alteração de acomodação (flat) ou período da estadia" : null),
+          hasPreCheckin: Boolean(!isReSignatureNeeded && ((r.fnhrCompleted && !r.needsReSignature) || someCheckinDone))
         };
       });
 
@@ -19144,6 +19396,15 @@ app.post("/api/reception/checkin/:reservationId", (req, res) => {
   const id = Number(req.params.reservationId);
   const r = (db.reservations || []).find(x => x.id === id);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
+
+  // Bloqueio mandatório: se a reserva requer re-assinatura de termo (datas ou flat alterados)
+  if (r.needsReSignature && !req.body.adminOverride && !req.body.forceOverrideReSignature) {
+    return res.status(400).json({
+      error: "Não é possível liberar a entrada: Re-assinatura de termo obrigatória devido a alterações na reserva (datas/acomodação). O hóspede precisa assinar o termo atualizado antes da liberação.",
+      needsReSignature: true,
+      reSignatureReason: r.reSignatureReason || "Alteração de acomodação (flat) ou período da estadia"
+    });
+  }
 
   // Garante array de hóspedes consistente
   const count = Math.min(Math.max(Number(r.guestCount) || Number(r.adults) || 1, 1), 3);
@@ -20693,6 +20954,13 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
 
   const r = (db.reservations || []).find(x => x.id === Number(reservationId) || x.code === code);
   if (!r) return res.status(404).json({ error: "Reserva não encontrada" });
+
+  const wasReSignature = Boolean(
+    r.needsReSignature ||
+    req.body.resign === "1" ||
+    req.body.isReSignature === true ||
+    req.query?.resign === "1"
+  );
   // Validação estrita do token de assinatura de 2 horas (se fornecido)
   if (req.body.token && Array.isArray(db.fnrhSignatureTokens)) {
     const tRec = db.fnrhSignatureTokens.find(t => t.token === req.body.token && (t.reservationCode === r.code || String(t.reservationId) === String(r.id)));
@@ -21015,6 +21283,7 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   }
   targetGuest.hasCompletedCheckin = true;
   targetGuest.checkinCompletedAt = now;
+  targetGuest.needsReSignature = false;
 
   // Se for hóspede titular (índice 1)
   if (Number(guestIndex) === 1) {
@@ -21054,6 +21323,12 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   if (Number(guestIndex) === 1 || (Array.isArray(r.guests) && r.guests.some(g => g.hasCompletedCheckin))) {
     r.hasPreCheckin = true;
     r.preCheckinCompleted = true;
+  }
+  const hasPendingGuestsReSign = Array.isArray(r.guests) && r.guests.some(g => g.needsReSignature);
+  if (!hasPendingGuestsReSign) {
+    r.needsReSignature = false;
+    delete r.reSignatureReason;
+    r.fnhrCompleted = true;
   }
   r.fnhrCompleted = r.guests.every(g => g.hasCompletedCheckin);
   r.hasMinor = Boolean(effectiveIsMinor || r.hasMinor || r.guests.some(g => g.isMinor));
@@ -21195,23 +21470,48 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
       targetGuest.fnrhFilePath = fnrhDocument.filePath;
       targetGuest.status = "CHECKED_IN";
       targetGuest.hasCompletedCheckin = true;
+      targetGuest.needsReSignature = false;
 
       // Preserva status como "confirmada" caso não esteja in_house/checkin
       if (!r.status || r.status === "CHECKED_IN" || r.status === "pre_reserva") {
         r.status = "confirmada";
       }
       r.checkedInAt = fnrhDocument.signedAt;
+      r.signatureUrl = effectiveSignature;
       if (Number(guestIndex) === 1) {
         r.fnrhPdfUrl = fnrhDocument.fileUrl;
         r.fnrhDownloadUrl = fnrhDocument.downloadUrl;
         r.r2Url = fnrhDocument.r2Url;
         r.fnrhDocumentUuid = fnrhDocument.documentUuid;
         r.fnrhSha256Hash = fnrhDocument.sha256Hash;
+        r.fnrhCanonicalHash = fnrhDocument.canonicalHash;
         r.fnrhVerifyUrl = fnrhDocument.verifyUrl;
         r.fnrhSignedAt = fnrhDocument.signedAt;
         r.fnrhAuditTrail = fnrhDocument.auditTrail;
         r.fnrhFileName = fnrhDocument.fileName;
         r.fnrhFilePath = fnrhDocument.filePath;
+      }
+
+      // Se todos os hóspedes foram liberados da re-assinatura, desmarca na reserva
+      const hasPendingGuestsReSign = Array.isArray(r.guests) && r.guests.some(g => g.needsReSignature);
+      if (!hasPendingGuestsReSign) {
+        r.needsReSignature = false;
+        delete r.reSignatureReason;
+        r.fnhrCompleted = true;
+      }
+
+      if (wasReSignature) {
+        logFnrhInternalAudit({
+          req,
+          action: "RE_SIGNATURE_COMPLETED",
+          recordId: r.code || r.id,
+          details: {
+            guestName: validName,
+            documentUuid: fnrhDocument.documentUuid,
+            sha256Hash: fnrhDocument.sha256Hash,
+            guestIndex: Number(guestIndex)
+          }
+        });
       }
 
       // Se a assinatura foi realizada com token temporário de 2 horas, registra uso
@@ -21228,12 +21528,12 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
   }
 
   // Gatilho A & D: Envio Automático de Notificação à Recepção/Portaria e Garagem com FNRH PDF Anexo
-  // Apenas despacha imediatamente se a data de check-in for hoje (ou anterior).
-  // Se for reserva com check-in futuro, a FNRH fica salva e o disparo à recepção ocorrerá pontualmente às 07:00 do dia de chegada.
+  // Despacha imediatamente se: (1) Check-in for hoje/passado OU (2) For uma Re-Assinatura de termo
   const brToday = getBrasiliaTodayStr();
   const isCheckinTodayOrPast = isReservationForTodayOrPast(r);
+  const shouldNotifyReception = Boolean(wasReSignature || isCheckinTodayOrPast);
 
-  if (isCheckinTodayOrPast) {
+  if (shouldNotifyReception) {
     try {
       const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
       const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
@@ -21256,19 +21556,24 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
         });
       }
 
+      const emailSubject = wasReSignature
+        ? `[RE-ASSINATURA CHECK-IN] Termo Atualizado - Flat ${r.flatNumber} - ${validName}`
+        : subject;
+
       sendEmailAsync({
         db,
         saveDatabase,
         reservationId: r.code || r.id,
         recipient: receptionEmail,
-        cc: garageEmail !== receptionEmail ? garageEmail : undefined,
-        subject,
+        cc: (r.vehicle?.plate && garageEmail !== receptionEmail) ? garageEmail : undefined,
+        subject: emailSubject,
         bodyHtml,
         type: "email",
         direction: "outbound",
         attachments: emailAttachments,
         metadata: {
-          trigger: "pre_checkin",
+          trigger: wasReSignature ? "re_signature_checkin" : "pre_checkin",
+          isReSignature: wasReSignature,
           flatNumber: r.flatNumber,
           guestName: validName,
           buildingName: flat?.buildingName || db.settings?.buildingName || "Edifício Soho Residence Service",
@@ -21276,12 +21581,15 @@ app.post("/api/pms/pre-checkin", async (req, res) => {
           hasDocumentAttached: emailAttachments.some(a => a.filename?.includes("Documento")),
           attachmentsCount: emailAttachments.length,
           receptionEmail,
-          garageEmail
+          garageEmail,
+          fnrhSha256Hash: fnrhDocument?.sha256Hash
         }
       });
-      r.morningEmailSentDate = brToday;
-      r.morningEmailSentAt = new Date().toISOString();
       r.receptionNotifiedAt = new Date().toISOString();
+      if (isCheckinTodayOrPast) {
+        r.morningEmailSentDate = brToday;
+        r.morningEmailSentAt = new Date().toISOString();
+      }
     } catch (mailErr) {
       console.warn("[MailService] Erro ao disparar aviso de check-in à portaria:", mailErr.message);
     }

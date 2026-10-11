@@ -1,418 +1,525 @@
-# Análise Técnica — Detecção Automática de Perguntas Não Mapeadas no Webhook Inbound (Milestone 2 - Feature 5)
-
-**Autor**: Milestone 2 Explorer 1  
-**Data**: 2026-10-11T03:15:00Z  
-**Escopo**: `artifacts/api-server/zapi-service.mjs`, `scripts/zapi-service.mjs`, `artifacts/api-server/whatsapp-ai-service.mjs`, `scripts/whatsapp-ai-service.mjs`  
-**Requisitos Alvo**: ORIGINAL_REQUEST §R2 (Detecção Automática de Perguntas Não Mapeadas) & PROJECT.md Feature 5 / Milestone 2
+# Milestone 2 — Technical Analysis & Code Blueprint
+## Re-Signature Lifecycle, Document Delivery & Operational Synchronization
+### Focus: Signature Invalidation on Date/Flat Change & Pre-Checkin Clearance
 
 ---
 
-## 1. Sumário Executivo
+## 1. Executive Summary
 
-O objetivo desta investigação é mapear e projetar a mecânica completa de **auto-aprendizado em fluxo contínuo** para o Agente de IA (Sofia) no Guest-Flow-Manager quando mensagens inbound de clientes contendo dúvidas/perguntas não mapeadas na Base de Conhecimento chegam via Webhook da Z-API.
+In CorpFlats Soho / Guest-Flow-Manager, legal and operational compliance mandates that any stay modification involving accommodation (flat/apartment) or calendar stay window (check-in / check-out dates) must **strictly invalidate** any prior check-in digital signature and FNRH (Ficha Nacional de Registro de Hóspedes) legal declaration.
 
-Ao detectar que a mensagem do hóspede representa uma dúvida genuína sobre serviços, acomodação ou políticas do hotel que a IA não reconhece com alta confiança no FAQ existente (resultando em fallback heurístico ou necessidade de transbordo humano), o sistema deve registrar instantaneamente uma entrada na coleção `db.faqItems` com `status: "pendente"`, capturando os metadados do cliente para que:
-1. O operador humano responda posteriormente pelo WhatsApp ou Live Chat (Feature 6, R3).
-2. O texto do operador seja capturado automaticamente como `suggestedAnswer` com status `"aguardando_aprovacao"`.
-3. O gestor (Miller) aprove a resposta com 1 clique (`POST /api/whatsapp/faq/:id/approve`), promovendo-a para `"ativo"` para uso autônomo imediato pela Sofia.
+Prior to Milestone 2, signature invalidation across modification pathways was partially implemented with critical inconsistencies:
+1. **Incomplete Field Invalidation**: In `commitPendingModification` and `POST /modify`, while `r.needsReSignature = true` and `delete r.fnrhPdfUrl` were executed, `r.signatureUrl = null`, `r.checkedInAt = null`, and `delete r.fnrhDocumentUuid` were **omitted**.
+2. **Ghost Document URL Re-generation**: In `GET /api/pms/pre-checkin/:code` and `/api/reception/today`, if `r.fnrhDocumentUuid` remains on the reservation, the server automatically re-generates signed view and download URLs pointing to the obsolete FNRH document, resurrecting invalidated documents.
+3. **Reason String Fragmentation**: The re-signature reason differed across endpoints (`"Alteração de acomodação (flat) ou período da estadia"` in Admin PUT, `"Alteração no período da estadia ou flat"` in `commitPendingModification`, and `"Alteração no período da estadia ou acomodação"` in Portal `/modify`).
+4. **Missing Clearance on Renewal**: When guests submitted a renewed pre-checkin form via `POST /api/pms/pre-checkin`, `targetGuest.needsReSignature` was never set to `false`, and `r.needsReSignature` was not cleared to `false`, leaving reservations perpetually flagged as requiring re-signature.
+5. **Array Overwrite Hazard**: In Admin PUT (`/api/pms/reservations/:id`), the mass-field assignment loop (`for (const f of fields) r[f] = req.body[f]`) copies `req.body.guests` *after* the initial guest invalidation loop, risking the clobbering of `g.needsReSignature = true` flags if the incoming payload contained stale guest objects.
 
----
-
-## 2. Ponto de Entrada e Cadeia de Chamadas no Webhook Inbound
-
-### 2.1 Ponto de Entrada do Webhook (`zapi-service.mjs`)
-- **Rota HTTP**: `app.post("/api/whatsapp/webhook/received", ...)` (linhas `5516-5721` de `artifacts/api-server/zapi-service.mjs` e espelho em `scripts/zapi-service.mjs`).
-- **Extração da Mensagem**:
-  - `incomingInfo = extractIncomingMessageInfo(req.body);` (linha 5533).
-  - Sanitização de telefone: `cleanTarget = cleanWhatsAppPhone(rawTarget);` (linha 5542).
-  - Gravação no histórico da conversa: `appendMessageToConversation(db, ...);` (linha 5546).
-- **Gatilho do Agente de IA**:
-  - Linhas `5706-5718`:
-    ```javascript
-    // 5. Agente de IA para WhatsApp (Atuação Híbrida / Resposta Autônoma / Transbordo Humano)
-    if (!incomingInfo.fromMe && !incomingInfo.isGroup && incomingInfo.text && cleanTarget) {
-      processAiInboundMessage({
-        db,
-        incomingInfo,
-        cleanTarget,
-        saveDatabase,
-        createNotification,
-        sendZapiMessage,
-        appendMessageFn: appendMessageToConversation
-      }).catch(aiErr => {
-        console.warn("[WhatsApp AI Processing Error]:", aiErr.message);
-      });
-    }
-    ```
-
-### 2.2 Motor de Processamento da IA (`whatsapp-ai-service.mjs`)
-- **Função**: `export async function processAiInboundMessage({ ... })` (linhas `1369-1535`).
-- **Filtros de Elegibilidade Prévios**:
-  1. `if (!incomingInfo || incomingInfo.fromMe || incomingInfo.isGroup || !incomingInfo.text || !cleanTarget)` -> pula (`not_eligible`).
-  2. `if (aiConfig.enabled === false)` -> pula (`ai_disabled`).
-  3. `if (db?.zapiConfig?.testModeOnly === true)` -> valida whitelist contra `DEFAULT_TEST_ALLOWED_PHONES` e `testAllowedPhones`.
-  4. `if (conv && conv.aiPaused === true)` -> pula (`conversation_ai_paused`), pois o operador humano já assumiu.
-  5. `if (aiConfig.mode === "copilot")` -> pula (`mode_copilot_only`).
-  6. `if (aiConfig.mode === "off_hours")` -> valida horário fora de expediente.
-- **Avaliação da IA**:
-  - Linha 1450: `const aiResult = await generateAiWhatsAppResponse({ db, phone: cleanTarget, messageText: incomingInfo.text, history, isCopilot: false });`
-  - Linha 1459: `if (aiResult.shouldHandover)` -> dispara transbordo humano, pausa conversa e cria notificação.
-  - Linha 1502: Resposta autônoma normal / fallback heurístico.
+This analysis provides the architectural rationale, root causes, operational ripple effects, and exact drop-in code blueprints for `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs` to ensure 100% compliance with Milestone 2 and byte-for-byte twin-server parity.
 
 ---
 
-## 3. Critérios de Detecção de Perguntas Não Mapeadas (Unmapped Detection)
+## 2. Invalidation Contract Specification
 
-Para evitar poluição da base com saudações, confirmações de rotina ou comandos operacionais, a detecção deve atender rigorosamente a um filtro em 4 etapas:
+Whenever a confirmed or active reservation is modified such that its check-in date, check-out date, flat ID, or flat number changes, the following state transitions are mandatory:
 
-### 3.1 Etapa 1: É uma Dúvida/Pergunta Potencial de Hóspede? (`isPotentialGuestQuestion`)
-A mensagem deve expressar uma intenção de consulta:
-- **Positivo**:
-  - Contém ponto de interrogação `?`.
-  - OU contém termos interrogativos em português: `como`, `onde`, `quando`, `qual`, `quais`, `quanto`, `quantos`, `por que`, `porque`.
-  - OU contém verbos/expressões de consulta comuns em hotelaria: `tem`, `teria`, `posso`, `pode`, `podemos`, `consegue`, `consigo`, `dá para`, `aceita`, `aceitam`, `possui`, `possuem`, `existe`, `funciona`, `horário`, `sabe me dizer`, `gostaria de saber`, `queria saber`, `vocês têm`.
-  - Tamanho mínimo significativo (>= 6 caracteres).
-- **Negativo (Descarte imediato)**:
-  - Saudações puras: `oi`, `olá`, `bom dia`, `boa tarde`, `boa noite`, `opa`.
-  - Confirmações / Agradecimentos: `ok`, `obrigado`, `obrigada`, `valeu`, `show`, `beleza`, `perfeito`, `entendi`, `sim`, `não`.
-  - Pedido direto de humano sem dúvida: `quero falar com humano`, `atendente`, `recepção` (são tratados como transbordo direto, não FAQ).
-  - Horários de chegada isolados: `14h`, `12:00` (já tratados pelo módulo de previsão de chegada).
+### Reservation Aggregate (`r`)
+| Field | Desired State | Rationale |
+|---|---|---|
+| `r.needsReSignature` | `true` | Signals Guest Portal, Reception Tablet, and Schedulers that a new signature is required. |
+| `r.reSignatureReason` | `"Alteração de acomodação (flat) ou período da estadia"` | Canonical, user-facing and audit explanation. |
+| `r.fnhrCompleted` | `false` | Check-in is legally incomplete until renewed document is signed. |
+| `r.preCheckinCompleted` | `false` | Unlocks pre-checkin form for review and signing. |
+| `r.signatureUrl` | `null` | Removes prior canvas signature asset. |
+| `r.checkedInAt` | `null` | Resets check-in timestamp. |
+| `r.status` | Reverted to `"confirmada"` if `"CHECKED_IN"` or `"checkin"` | Blocks unauthorized entry at physical reception. |
+| Stale FNRH Document Properties | `delete r.fnrhPdfUrl`<br>`delete r.fnrhDownloadUrl`<br>`delete r.fnrhDocumentUuid`<br>`delete r.fnrhSha256Hash`<br>`delete r.fnrhVerifyUrl`<br>`delete r.fnrhSignedAt`<br>`delete r.fnrhAuditTrail`<br>`delete r.fnrhFileName`<br>`delete r.fnrhFilePath`<br>`delete r.r2Url`<br>`delete r.fnrhR2Url` | Eliminates all forensic metadata and prevents link resurrection. |
 
-### 3.2 Etapa 2: A Pergunta já está Mapeada no FAQ Ativo? (`isQuestionMappedInFaq`)
-Verifica se `db.faqItems` possui algum item com `status === "ativo"` aplicável ao cliente (`isFaqApplicableToClient(faq, clientPhone) === true`):
-- Comparação de similaridade de texto: se o texto da mensagem inclui a pergunta do FAQ ou vice-versa.
-- Comparação com a lista de variações cadastradas (`faq.variations`).
-- Coincidência de 2 ou mais palavras-chave cadastradas (`faq.keywords`).
-Se houver correspondência ativa aplicável, a pergunta **já está mapeada** -> NÃO cria FAQ pendente.
-
-### 3.3 Etapa 3: Houve Baixa Confiança, Fallback Heurístico ou Transbordo?
-A pergunta é considerada não mapeada quando:
-1. `aiResult.shouldHandover === true` ou `aiResult.requiresHandover === true` (transbordo acionado por dúvida complexa ou ação de sistema desativada).
-2. OU `aiResult.modelUsed === "heuristic_fallback"` e a resposta emitida é a resposta padrão genérica prestativa (ou seja, não coincidiu com Wi-Fi, Café, Garagem, Localização, Check-in, Check-out ou FAQ ativo).
-3. OU `aiResult.isFallback === true` / `aiResult.unmappedQuery === true`.
-
-### 3.4 Etapa 4: Desduplicação de Perguntas Pendentes (`findExistingPendingFaq`)
-Se o mesmo cliente (ou outro cliente) já tiver feito a mesma pergunta recentemente e ela já estiver cadastrada com `status: "pendente"` ou `status: "aguardando_aprovacao"`:
-- Não duplica o registro em `db.faqItems`.
-- Apenas anexa a variação de texto e atualiza `updatedAt` e o array `clientPhones`.
+### Guest Items (`r.guests[...]`)
+| Field | Desired State | Rationale |
+|---|---|---|
+| `g.needsReSignature` | `true` | Flags guest item in multi-guest arrays. |
+| `g.hasCompletedCheckin` | `false` | Invalidates individual guest check-in completion. |
+| `g.checkinCompletedAt` | `null` | Resets individual timestamp. |
+| `g.signatureUrl` | `null` | Wipes individual signature graphic. |
+| Stale FNRH Properties | `delete g.fnrhPdfUrl`<br>`delete g.fnrhDownloadUrl`<br>`delete g.fnrhDocumentUuid`<br>`delete g.fnrhSha256Hash`<br>`delete g.fnrhVerifyUrl`<br>`delete g.fnrhSignedAt`<br>`delete g.fnrhAuditTrail`<br>`delete g.fnrhFileName`<br>`delete g.fnrhFilePath`<br>`delete g.r2Url`<br>`delete g.fnrhR2Url` | Purges individual forensic document references. |
 
 ---
 
-## 4. Motor de Inferência de Categorias e Extração de Palavras-Chave
+## 3. Clearance Contract Specification on Renewed Pre-Checkin
 
-### 4.1 Inferência de Categoria (`inferFaqCategory`)
-O sistema classifica automaticamente a pergunta em uma das 9 categorias canônicas do CorpFlats (com fallback para `"reservas"`):
+Upon submission of the renewed pre-checkin form via `POST /api/pms/pre-checkin`:
 
-| Categoria | Expressões / Padrões Regex |
-|---|---|
-| `wifi_tecnologia` | `wifi`, `wi-fi`, `internet`, `senha`, `conectar`, `rede`, `conexão`, `sinal`, `computador`, `smart tv` |
-| `cafe_manha` | `café`, `desjejum`, `bandeja`, `louça`, `garrafa térmica`, `cafeteira`, `pão`, `leite` |
-| `garagem` | `garagem`, `estacionamento`, `vaga`, `carro`, `veículo`, `placa`, `moto` |
-| `checkin_acesso` | `check-in`, `entrada`, `chegada`, `portaria`, `chave`, `cartão`, `acesso`, `early check-in` |
-| `checkout` | `check-out`, `saída`, `desocupar`, `deixar o flat`, `entregar chave/cartão`, `late check-out` |
-| `estrutura_flat` | `flat`, `quarto`, `frigobar`, `água`, `ar-condicionado`, `tomada`, `voltagem`, `110v`, `220v`, `ferro`, `secador`, `toalha`, `cozinha` |
-| `regras_visitas_pets` | `visita`, `convidado`, `pet`, `cachorro`, `cão`, `gato`, `animal`, `fumo`, `fumar`, `pernoite` |
-| `lazer_condominio` | `piscina`, `jacuzzi`, `sauna`, `academia`, `cobertura`, `lazer`, `churrasqueira`, `condomínio` |
-| `reservas` (default) | `reserva`, `diária`, `preço`, `valor`, `cotação`, `pagamento`, `pix`, `cancelamento`, `data` |
+### Guest Target (`targetGuest = r.guests.find(g => g.index === guestIndex)`)
+- `targetGuest.needsReSignature = false`
+- `targetGuest.hasCompletedCheckin = true`
+- `targetGuest.checkinCompletedAt = new Date().toISOString()`
+- `targetGuest.signatureUrl = signatureUrl`
+- `targetGuest.fnrhDocumentUuid = fnrhDocument.documentUuid`
+- `targetGuest.fnrhPdfUrl = fnrhDocument.fileUrl`
+- `targetGuest.fnrhSha256Hash = fnrhDocument.sha256Hash`
+- `targetGuest.status = "CHECKED_IN"`
 
-### 4.2 Extração de Palavras-Chave (`extractFaqKeywords`)
-Remove stop words do português (`de`, `para`, `com`, `que`, `uma`, etc.), remove acentos via normalização NFD, seleciona termos com 3 ou mais caracteres e retorna as palavras mais descritivas (até 8 termos).
+### Reservation Aggregate (`r`)
+- `r.needsReSignature = false` (when titular guest signs or when all co-guests have `needsReSignature === false`)
+- `delete r.reSignatureReason`
+- `r.fnhrCompleted = true`
+- `r.preCheckinCompleted = true`
+- `r.hasPreCheckin = true`
+- `r.signatureUrl = signatureUrl`
+- `r.checkedInAt = fnrhDocument.signedAt || new Date().toISOString()`
+- Forensic document properties populated with the new FNRH PDF hash, UUID, and download URLs.
+- Database persisted immediately via `saveDatabase()`.
 
 ---
 
-## 5. Schema do Item Pendente Criado (`FaqItem`)
+## 4. Architectural Analysis Across Pathways
 
-Em estrita conformidade com o `PROJECT.md` e `DISPATCH.md`:
+### Pathway 1: Admin Edit via PMS Calendar (`PUT /api/pms/reservations/:id`)
+- **Location**: `scripts/demo-server.mjs`, lines 13749–14533.
+- **Trigger**: An administrative user edits a reservation through the calendar drawer or edit modal.
+- **Change Detection**:
+  ```javascript
+  const isDatesOrFlatChanged = Boolean(
+    (req.body.checkinDate && oldCheckin && req.body.checkinDate !== oldCheckin) ||
+    (req.body.checkoutDate && oldCheckout && req.body.checkoutDate !== oldCheckout) ||
+    (req.body.flatId !== undefined && oldFlatId !== undefined && Number(req.body.flatId) !== Number(oldFlatId)) ||
+    (req.body.flatNumber !== undefined && r.flatNumber !== undefined && String(req.body.flatNumber) !== String(r.flatNumber))
+  );
+  ```
+- **Identified Flaw in Current Code**:
+  At lines 13779–13786, the check `if (hadSignedCheckin)` only executed invalidation if `r.fnhrCompleted` or `r.signatureUrl` were truthy. If an admin moved dates on a reservation that had pre-checkin in a partial state or where `r.needsReSignature` was already set, certain fields were left dirty. Furthermore, lines 13863–13875 copied `req.body.guests` into `r.guests` without reapplying `g.needsReSignature = true`.
+- **Remedy**:
+  Standardize through a shared helper `invalidateReservationCheckinSignatures(r, reason)`. Call this helper if `isDatesOrFlatChanged`, and re-apply the guest-level invalidation after copying `req.body.guests`.
 
-```typescript
-{
-  id: `faq_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-  question: string,            // Texto original da dúvida do hóspede
-  answer: "",                  // Vazio inicialmente
-  category: string,            // Inferido via inferFaqCategory (ou "reservas")
-  keywords: string[],          // Extraído via extractFaqKeywords
-  variations: [questionText],  // Inicializado com a pergunta original
-  status: "pendente",          // Status pendente de resposta
-  source: "auto_aprendizado",  // Marca de auditoria de auto-aprendizado
-  scope: "all",                // Escopo padrão aberto
-  clientPhones: [cleanPhone],  // Telefone normalizado do solicitante
-  sourceClientPhone: cleanPhone,
-  sourceClientName: customerName,
-  metadata: {
-    customerPhone: cleanPhone,
-    customerName: customerName,
-    askedAt: ISOString
-  },
-  createdAt: ISOString,
-  updatedAt: ISOString
+### Pathway 2: Settlement of Portal Modification Hold (`commitPendingModification`)
+- **Location**: `scripts/demo-server.mjs`, lines 15635–15900.
+- **Trigger**: Financial settlement of a reservation modification requiring payment (PIX Copia e Cola / QR Code or Credit Card) verified via `/modify-status` polling or payment webhook.
+- **Identified Flaw in Current Code**:
+  Lines 15737–15750 only set:
+  ```javascript
+  r.needsReSignature = true;
+  r.reSignatureReason = "Alteração no período da estadia ou flat";
+  r.fnhrCompleted = false;
+  r.preCheckinCompleted = false;
+  delete r.fnrhPdfUrl;
+  delete r.fnrhSha256Hash;
+  ```
+  It did **NOT** clear `r.signatureUrl = null`, `r.checkedInAt = null`, `delete r.fnrhDocumentUuid`, or the corresponding fields on `g` in `r.guests`.
+- **Remedy**:
+  Call `invalidateReservationCheckinSignatures(r, "Alteração de acomodação (flat) ou período da estadia")`.
+
+### Pathway 3: Direct Zero-Cost Portal Modification (`POST /api/pms/guest-portal/:code/modify`)
+- **Location**: `scripts/demo-server.mjs`, lines 16693–17013.
+- **Trigger**: Guest initiates date shifting (e.g. 2 nights to 2 nights on different dates) or stay reduction where no additional payment is required.
+- **Identified Flaw in Current Code**:
+  Lines 16903–16916 had identical omissions to `commitPendingModification`, with reason string `"Alteração no período da estadia ou acomodação"`.
+- **Remedy**:
+  Call `invalidateReservationCheckinSignatures(r, "Alteração de acomodação (flat) ou período da estadia")`.
+
+### Pathway 4: Renewed Pre-Checkin Submission (`POST /api/pms/pre-checkin`)
+- **Location**: `scripts/demo-server.mjs`, lines 20657–21312.
+- **Trigger**: Guest opens `/pre-checkin/:code?resign=1`, fills the check-in declaration, signs the digital signature canvas, and submits.
+- **Identified Flaw in Current Code**:
+  Lines 21016–21018 marked `targetGuest.hasCompletedCheckin = true`, but **never** set `targetGuest.needsReSignature = false`.
+  Lines 21054–21058 updated `r.fnhrCompleted`, but **never** set `r.needsReSignature = false` or deleted `r.reSignatureReason`.
+- **Remedy**:
+  Explicitly clear `targetGuest.needsReSignature = false` and `r.needsReSignature = false`, delete `r.reSignatureReason`, set `r.fnhrCompleted = true`, and persist via `saveDatabase()`.
+
+---
+
+## 5. Canonical Invalidation Helper
+
+To ensure strict DRY (Don't Repeat Yourself) compliance and avoid future divergence across pathways, define the following canonical function in `demo-server.mjs`:
+
+```javascript
+// ── M2: Canonical Invalidation of Check-in Signatures on Date/Flat Change ────
+export function invalidateReservationCheckinSignatures(r, reason = "Alteração de acomodação (flat) ou período da estadia") {
+  if (!r) return;
+
+  r.fnhrCompleted = false;
+  r.preCheckinCompleted = false;
+  r.signatureUrl = null;
+  r.checkedInAt = null;
+  r.needsReSignature = true;
+  r.reSignatureReason = reason;
+
+  delete r.fnrhPdfUrl;
+  delete r.fnrhDownloadUrl;
+  delete r.fnrhDocumentUuid;
+  delete r.fnrhSha256Hash;
+  delete r.fnrhVerifyUrl;
+  delete r.fnrhSignedAt;
+  delete r.fnrhAuditTrail;
+  delete r.fnrhFileName;
+  delete r.fnrhFilePath;
+  delete r.r2Url;
+  delete r.fnrhR2Url;
+
+  if (r.status === "CHECKED_IN" || r.status === "checkin") {
+    r.status = "confirmada";
+  }
+
+  if (Array.isArray(r.guests)) {
+    r.guests.forEach(g => {
+      g.hasCompletedCheckin = false;
+      g.checkinCompletedAt = null;
+      g.signatureUrl = null;
+      g.needsReSignature = true;
+      delete g.fnrhPdfUrl;
+      delete g.fnrhDownloadUrl;
+      delete g.fnrhDocumentUuid;
+      delete g.fnrhSha256Hash;
+      delete g.fnrhVerifyUrl;
+      delete g.fnrhSignedAt;
+      delete g.fnrhAuditTrail;
+      delete g.fnrhFileName;
+      delete g.fnrhFilePath;
+      delete g.r2Url;
+      delete g.fnrhR2Url;
+    });
+  }
 }
 ```
 
 ---
 
-## 6. Recomendação de Diffs de Implementação
+## 6. Exact Drop-In Code Blueprint
 
-### 6.1 `whatsapp-ai-service.mjs` (em `artifacts/api-server/` e `scripts/`)
+The following blueprint specifies the exact changes required in both `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs`.
 
-#### Adicionar Funções Auxiliares de Detecção e Criação
+### Chunk 1: Helper Declaration (Place before `app.put("/api/pms/reservations/:id", ...)`)
+**Target Location**: Around line 13748.
+
 ```javascript
-// ── Detecção e Auto-Aprendizado de Perguntas Não Mapeadas (FAQ Sofia) ─────────
+// ── M2: Função Canônica de Invalidação de Assinatura de Check-in em Mudança de Flat/Datas ──
+export function invalidateReservationCheckinSignatures(r, reason = "Alteração de acomodação (flat) ou período da estadia") {
+  if (!r) return;
+  r.fnhrCompleted = false;
+  r.preCheckinCompleted = false;
+  r.signatureUrl = null;
+  r.checkedInAt = null;
+  r.needsReSignature = true;
+  r.reSignatureReason = reason;
 
-export function isPotentialGuestQuestion(text) {
-  if (!text || typeof text !== "string") return false;
-  const t = text.trim();
-  if (t.length < 5) return false;
+  delete r.fnrhPdfUrl;
+  delete r.fnrhDownloadUrl;
+  delete r.fnrhDocumentUuid;
+  delete r.fnrhSha256Hash;
+  delete r.fnrhVerifyUrl;
+  delete r.fnrhSignedAt;
+  delete r.fnrhAuditTrail;
+  delete r.fnrhFileName;
+  delete r.fnrhFilePath;
+  delete r.r2Url;
+  delete r.fnrhR2Url;
 
-  const lower = t.toLowerCase();
+  if (r.status === "CHECKED_IN" || r.status === "checkin") {
+    r.status = "confirmada";
+  }
 
-  // Descartar saudações puras ou confirmações simples
-  if (/^(oi|ol[aá]|bom dia|boa tarde|boa noite|opa|ei|hello|hi)[!.\s]*$/i.test(lower)) return false;
-  if (/^(ok|obrigad[oa]|valeu|show|beleza|perfeito|entendi|combinado|certo|t[aá] bom|blz|agrade[cç]o|sim|n[aã]o|positivo)[!.\s]*$/i.test(lower)) return false;
-  if (/^(quero falar com (?:um )?humano|atendente|humano|recep[cç][aã]o|falar com algu[eé]m)[!.\s]*$/i.test(lower)) return false;
-
-  // Interrogação explícita
-  if (t.includes("?")) return true;
-
-  // Padrões interrogativos
-  const patterns = [
-    /\b(como|onde|quando|qual|quais|quanto|quantos|quanta|quantas|por que|porque)\b/i,
-    /\b(tem|teria|posso|pode|podemos|consegue|consigo|d[aá]\s+para|d[aá]\s+pra)\b/i,
-    /\b(aceita|aceitam|possui|possuem|existe|existem|funciona|hor[aá]rio)\b/i,
-    /\b(sabe me dizer|gostaria de saber|queria saber|voc[eê]s?\s+t[eê]m?|tem como)\b/i,
-    /\b(preciso saber|informa[cç][aã]o|d[uú]vida|procedimento|como fa[cç]o)\b/i
-  ];
-
-  return patterns.some(p => p.test(lower));
+  if (Array.isArray(r.guests)) {
+    r.guests.forEach(g => {
+      g.hasCompletedCheckin = false;
+      g.checkinCompletedAt = null;
+      g.signatureUrl = null;
+      g.needsReSignature = true;
+      delete g.fnrhPdfUrl;
+      delete g.fnrhDownloadUrl;
+      delete g.fnrhDocumentUuid;
+      delete g.fnrhSha256Hash;
+      delete g.fnrhVerifyUrl;
+      delete g.fnrhSignedAt;
+      delete g.fnrhAuditTrail;
+      delete g.fnrhFileName;
+      delete g.fnrhFilePath;
+      delete g.r2Url;
+      delete g.fnrhR2Url;
+    });
+  }
 }
+```
 
-export function inferFaqCategory(text) {
-  if (!text || typeof text !== "string") return "reservas";
-  const lower = text.toLowerCase();
+### Chunk 2: Admin Edit (`PUT /api/pms/reservations/:id`)
+**Target Location**: Lines 13770–13830.
 
-  if (/wifi|wi-fi|internet|senha(?:\s+do\s+wi-?fi)?|conectar|rede|conex[aã]o|sinal|computador|smart\s*tv/i.test(lower)) return "wifi_tecnologia";
-  if (/caf[eé]|desjejum|bandeja|lou[cç]a|garrafa\s+t[eé]rmica|cafeteira|p[aã]o|leite|fruta/i.test(lower)) return "cafe_manha";
-  if (/garagem|estacionamento|vaga|carro|ve[ií]culo|placa|moto|estacionar/i.test(lower)) return "garagem";
-  if (/check-?in|entrada|cheg(?:ada|ar)|portaria|chave|cart[aã]o|fechadura|acesso|port[aã]o|early|entrar\s+no\s+quarto/i.test(lower)) return "checkin_acesso";
-  if (/check-?out|sa[ií]da|desocupa|deixar\s+o\s+flat|entregar\s+(?:chave|cart[aã]o)|late\s+check/i.test(lower)) return "checkout";
-  if (/flat|quarto|apartamento|frigobar|[aá]gua|ar[- ]condicionado|ar\s+condicionado|tomada|voltagem|110|220|ferro|t[aá]bua|secador|toalha|cama|travesseiro|len[cç]ol|chuveiro|banheiro|cozinha|micro-ondas|utens[ií]lio|panela|copo|fog[aã]o/i.test(lower)) return "estrutura_flat";
-  if (/visit(?:a|ante)|convidad|pet|cachorro|c[aã]o|gato|animal|fumo|fumar|cigarro|pernoite|barulho|norma|regra/i.test(lower)) return "regras_visitas_pets";
-  if (/piscina|jacuzzi|sauna|academia|cobertura|lazer|churrasqueira|sal[aã]o|condom[ií]nio|pr[eé]dio|edif[ií]cio/i.test(lower)) return "lazer_condominio";
+**Replace Existing Code**:
+```javascript
+  // Se datas ou flat mudarem em reserva já assinada, invalida assinatura para nova assinatura,
+  // preservando 100% dos dados cadastrais do hóspede no cadastro e na reserva.
+  const isDatesOrFlatChanged = Boolean(
+    (req.body.checkinDate && oldCheckin && req.body.checkinDate !== oldCheckin) ||
+    (req.body.checkoutDate && oldCheckout && req.body.checkoutDate !== oldCheckout) ||
+    (req.body.flatId !== undefined && oldFlatId !== undefined && Number(req.body.flatId) !== Number(oldFlatId))
+  );
 
-  return "reservas";
-}
-
-export function extractFaqKeywords(text) {
-  if (!text || typeof text !== "string") return [];
-  const stopWords = new Set([
-    "de", "a", "o", "que", "e", "do", "da", "em", "um", "para", "com", "nao", "não",
-    "uma", "os", "no", "se", "na", "por", "mais", "as", "dos", "como", "mas", "foi",
-    "ao", "ele", "das", "tem", "seu", "sua", "ou", "ser", "quando", "muito", "ha", "há",
-    "nos", "ja", "já", "esta", "está", "eu", "tambem", "também", "so", "só", "pelo",
-    "pela", "ate", "até", "isso", "ela", "entre", "era", "depois", "sem", "mesmo",
-    "aos", "ter", "seus", "quem", "nas", "me", "esse", "eles", "estao", "estão",
-    "voce", "você", "tinha", "foram", "essa", "num", "nem", "suas", "meu", "minha",
-    "qual", "quais", "onde", "posso", "pode", "favor", "gostaria", "queria", "bom",
-    "boa", "dia", "tarde", "noite", "ola", "olá", "corpflats", "hotel"
-  ]);
-
-  const clean = text
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^\w\s]/g, " ");
-
-  const words = clean.split(/\s+/).filter(w => w.length >= 3 && !stopWords.has(w));
-  return Array.from(new Set(words)).slice(0, 8);
-}
-
-export function isQuestionMappedInFaq(text, db, clientPhone) {
-  if (!db || !Array.isArray(db.faqItems) || !text) return false;
-  const lower = text.toLowerCase();
-
-  for (const item of db.faqItems) {
-    if (item.status !== "ativo") continue;
-    if (typeof isFaqApplicableToClient === "function" && !isFaqApplicableToClient(item, clientPhone)) continue;
-
-    const qLower = (item.question || "").toLowerCase();
-    if (qLower && (lower.includes(qLower) || qLower.includes(lower))) return true;
-
-    if (Array.isArray(item.variations)) {
-      for (const v of item.variations) {
-        const vLower = String(v).toLowerCase();
-        if (vLower && (lower.includes(vLower) || vLower.includes(lower))) return true;
+  if (isDatesOrFlatChanged) {
+    const hadSignedCheckin = Boolean(
+      r.fnhrCompleted ||
+      r.signatureUrl ||
+      r.checkedInAt ||
+      r.fnrhDocumentUuid ||
+      (Array.isArray(r.guests) && r.guests.some(g => g.hasCompletedCheckin || g.signatureUrl || g.fnrhDocumentUuid))
+    );
+    if (hadSignedCheckin) {
+      console.log(`[PMS Edição] Reserva ${r.code || r.id} teve alteração de flat/datas após check-in digital. Invalidando assinatura para nova conferência e preservando 100% dos dados cadastrais.`);
+      r.fnhrCompleted = false;
+      r.signatureUrl = null;
+      r.checkedInAt = null;
+      r.needsReSignature = true;
+      r.reSignatureReason = "Alteração de acomodação (flat) ou período da estadia";
+      delete r.fnrhPdfUrl;
+      delete r.fnrhDownloadUrl;
+      delete r.fnrhDocumentUuid;
+      delete r.fnrhSha256Hash;
+      delete r.fnrhVerifyUrl;
+      delete r.fnrhSignedAt;
+      delete r.fnrhAuditTrail;
+      delete r.fnrhFileName;
+      delete r.fnrhFilePath;
+      delete r.r2Url;
+      delete r.fnrhR2Url;
+      if (r.status === "CHECKED_IN" || r.status === "checkin") {
+        r.status = "confirmada";
+      }
+      if (Array.isArray(r.guests)) {
+        r.guests.forEach(g => {
+          if (g.hasCompletedCheckin || g.signatureUrl || g.fnrhDocumentUuid) {
+            g.hasCompletedCheckin = false;
+            g.checkinCompletedAt = null;
+            g.signatureUrl = null;
+            g.needsReSignature = true;
+            delete g.fnrhPdfUrl;
+            delete g.fnrhDownloadUrl;
+            delete g.fnrhDocumentUuid;
+            delete g.fnrhSha256Hash;
+            delete g.fnrhVerifyUrl;
+            delete g.fnrhSignedAt;
+            delete g.fnrhAuditTrail;
+            delete g.fnrhFileName;
+            delete g.fnrhFilePath;
+            delete g.r2Url;
+            delete g.fnrhR2Url;
+          }
+        });
       }
     }
-
-    if (Array.isArray(item.keywords) && item.keywords.length > 0) {
-      const matchCount = item.keywords.filter(k => lower.includes(String(k).toLowerCase())).length;
-      if (matchCount >= 2) return true;
-    }
   }
-
-  return false;
-}
-
-export function findExistingPendingFaq(text, db, clientPhone) {
-  if (!db || !Array.isArray(db.faqItems) || !text) return null;
-  const lower = text.toLowerCase().trim();
-
-  return db.faqItems.find(item => {
-    if (item.status !== "pendente" && item.status !== "aguardando_aprovacao") return false;
-    const qLower = (item.question || "").toLowerCase().trim();
-    if (qLower === lower) return true;
-    if (item.sourceClientPhone && clientPhone && matchClientPhone(item.sourceClientPhone, clientPhone)) {
-      if (lower.includes(qLower) || qLower.includes(lower)) return true;
-    }
-    return false;
-  }) || null;
-}
-
-export function autoCreatePendingFaq({
-  db,
-  questionText,
-  senderPhone,
-  senderName,
-  saveDatabase,
-  createNotification
-}) {
-  if (!db) return null;
-  if (!Array.isArray(db.faqItems)) db.faqItems = [];
-
-  const text = (questionText || "").trim();
-  if (!text) return null;
-
-  const cleanPhone = cleanWhatsAppPhone(senderPhone) || String(senderPhone || "").replace(/\D/g, "");
-
-  const existing = findExistingPendingFaq(text, db, cleanPhone);
-  if (existing) {
-    if (Array.isArray(existing.variations) && !existing.variations.includes(text)) {
-      existing.variations.push(text);
-    }
-    existing.updatedAt = new Date().toISOString();
-    if (cleanPhone && !existing.clientPhones?.some(p => matchClientPhone(p, cleanPhone))) {
-      if (!Array.isArray(existing.clientPhones)) existing.clientPhones = [];
-      existing.clientPhones.push(cleanPhone);
-    }
-    if (typeof saveDatabase === "function") saveDatabase();
-    return existing;
-  }
-
-  const now = new Date().toISOString();
-  const category = inferFaqCategory(text);
-  const keywords = extractFaqKeywords(text);
-  const randomSuffix = Math.random().toString(36).substring(2, 7);
-
-  const newFaq = {
-    id: `faq_${Date.now()}_${randomSuffix}`,
-    question: text,
-    answer: "",
-    category,
-    keywords,
-    variations: [text],
-    status: "pendente",
-    source: "auto_aprendizado",
-    scope: "all",
-    clientPhones: cleanPhone ? [cleanPhone] : [],
-    sourceClientPhone: cleanPhone,
-    sourceClientName: senderName || "Hóspede",
-    metadata: {
-      customerPhone: cleanPhone,
-      customerName: senderName || "Hóspede",
-      askedAt: now
-    },
-    createdAt: now,
-    updatedAt: now
-  };
-
-  db.faqItems.push(newFaq);
-
-  if (typeof saveDatabase === "function") {
-    saveDatabase();
-  }
-
-  if (typeof createNotification === "function") {
-    createNotification({
-      title: `❓ Nova Dúvida Hóspede: ${senderName || cleanPhone}`,
-      message: `Pergunta não mapeada recebida: "${text.substring(0, 100)}". Registrada como pendente no FAQ.`,
-      type: "whatsapp_faq_pending",
-      link: "/whatsapp-automation"
-    });
-  }
-
-  console.log(`[Auto-Aprendizado FAQ] Nova dúvida não mapeada registrada como pendente: "${text}" (${cleanPhone})`);
-
-  return newFaq;
-}
 ```
 
-#### Modificar `processAiInboundMessage`
-Em `whatsapp-ai-service.mjs`, logo após `const aiResult = await generateAiWhatsAppResponse(...)`:
+**With Replacement Code**:
 ```javascript
-  // 6.5. Auto-Aprendizado: Detecção e Registro de Perguntas Não Mapeadas (R2)
-  const isQuestion = isPotentialGuestQuestion(incomingInfo.text);
-  const isMapped = isQuestionMappedInFaq(incomingInfo.text, db, cleanTarget);
-  const isFallback = aiResult.modelUsed === "heuristic_fallback" &&
-                     aiResult.replyText?.includes("Posso te ajudar com informações sobre *Wi-Fi, horários");
-  const needsHandoverOrFallback = Boolean(aiResult.shouldHandover || aiResult.requiresHandover || isFallback);
+  // Se datas ou flat mudarem na edição, invalida assinatura para nova conferência legal,
+  // preservando 100% dos dados cadastrais do hóspede no cadastro e na reserva.
+  const isDatesOrFlatChanged = Boolean(
+    (req.body.checkinDate && oldCheckin && req.body.checkinDate !== oldCheckin) ||
+    (req.body.checkoutDate && oldCheckout && req.body.checkoutDate !== oldCheckout) ||
+    (req.body.flatId !== undefined && oldFlatId !== undefined && Number(req.body.flatId) !== Number(oldFlatId)) ||
+    (req.body.flatNumber !== undefined && r.flatNumber !== undefined && String(req.body.flatNumber) !== String(r.flatNumber))
+  );
 
-  let unmappedFaq = null;
-  if (isQuestion && !isMapped && needsHandoverOrFallback) {
-    unmappedFaq = autoCreatePendingFaq({
-      db,
-      questionText: incomingInfo.text,
-      senderPhone: incomingInfo.senderPhone || cleanTarget,
-      senderName: incomingInfo.senderName || conv?.name || "Hóspede",
-      saveDatabase,
-      createNotification
+  if (isDatesOrFlatChanged) {
+    console.log(`[PMS Edição] Reserva ${r.code || r.id} teve alteração de flat/datas. Invalidando assinatura de check-in (needsReSignature = true) e preservando dados cadastrais.`);
+    invalidateReservationCheckinSignatures(r, "Alteração de acomodação (flat) ou período da estadia");
+  }
+```
+
+**And in lines 13875 (after field copying)**:
+```javascript
+  for (const f of fields) {
+    if (req.body[f] !== undefined) r[f] = req.body[f];
+  }
+
+  // Se houve alteração de flat ou datas, garante que req.body.guests não ressuscite flags de check-in concluído
+  if (isDatesOrFlatChanged) {
+    r.needsReSignature = true;
+    r.reSignatureReason = "Alteração de acomodação (flat) ou período da estadia";
+    r.fnhrCompleted = false;
+    r.preCheckinCompleted = false;
+    r.signatureUrl = null;
+    r.checkedInAt = null;
+    delete r.fnrhPdfUrl;
+    delete r.fnrhDocumentUuid;
+    delete r.fnrhSha256Hash;
+    if (Array.isArray(r.guests)) {
+      r.guests.forEach(g => {
+        g.needsReSignature = true;
+        g.hasCompletedCheckin = false;
+        g.signatureUrl = null;
+        g.checkinCompletedAt = null;
+        delete g.fnrhPdfUrl;
+        delete g.fnrhDocumentUuid;
+        delete g.fnrhSha256Hash;
+      });
+    }
+  }
+```
+
+### Chunk 3: Settlement of Modification Hold (`commitPendingModification`)
+**Target Location**: Lines 15737–15750.
+
+**Replace Existing Code**:
+```javascript
+  // 4. Invalidação Obrigatória de Assinatura (Requisito R3)
+  r.needsReSignature = true;
+  r.reSignatureReason = "Alteração no período da estadia ou flat";
+  r.fnhrCompleted = false;
+  r.preCheckinCompleted = false;
+  delete r.fnrhPdfUrl;
+  delete r.fnrhSha256Hash;
+  if (Array.isArray(r.guests)) {
+    r.guests.forEach(g => {
+      g.needsReSignature = true;
+      g.hasCompletedCheckin = false;
     });
   }
 ```
-E incluir `unmappedFaqCreated: Boolean(unmappedFaq), unmappedFaq` no retorno de ambos os ramos (`aiResult.shouldHandover` e resposta autônoma normal).
 
-### 6.2 `zapi-service.mjs` (em `artifacts/api-server/` e `scripts/`)
-
-Importar e re-exportar as funções em `zapi-service.mjs`:
+**With Replacement Code**:
 ```javascript
-import {
-  getWhatsAppAiConfig,
-  generateAiWhatsAppResponse,
-  processAiInboundMessage,
-  DEFAULT_AI_CONFIG,
-  autoCreatePendingFaq,
-  isPotentialGuestQuestion,
-  inferFaqCategory,
-  extractFaqKeywords,
-  isQuestionMappedInFaq,
-  findExistingPendingFaq
-} from "./whatsapp-ai-service.mjs";
-
-export {
-  autoCreatePendingFaq,
-  isPotentialGuestQuestion,
-  inferFaqCategory,
-  extractFaqKeywords,
-  isQuestionMappedInFaq,
-  findExistingPendingFaq
-};
+  // 4. Invalidação Obrigatória de Assinatura (Requisito R3 / M2)
+  invalidateReservationCheckinSignatures(r, "Alteração de acomodação (flat) ou período da estadia");
 ```
-Isso garante que os novos utilitários estejam universalmente acessíveis tanto para testes quanto para endpoints HTTP ou scripts de auditoria em ambos os pacotes espelhados (`artifacts/` e `scripts/`).
+
+### Chunk 4: Direct Zero-Cost Modification (`POST /api/pms/guest-portal/:code/modify`)
+**Target Location**: Lines 16903–16916.
+
+**Replace Existing Code**:
+```javascript
+  // 8. Invalidação Obrigatória de Assinatura (Requisito R3)
+  r.needsReSignature = true;
+  r.reSignatureReason = "Alteração no período da estadia ou acomodação";
+  r.fnhrCompleted = false;
+  r.preCheckinCompleted = false;
+  delete r.fnrhPdfUrl;
+  delete r.fnrhSha256Hash;
+  if (Array.isArray(r.guests)) {
+    r.guests.forEach(g => {
+      g.needsReSignature = true;
+      g.hasCompletedCheckin = false;
+    });
+  }
+```
+
+**With Replacement Code**:
+```javascript
+  // 8. Invalidação Obrigatória de Assinatura (Requisito R3 / M2)
+  invalidateReservationCheckinSignatures(r, "Alteração de acomodação (flat) ou período da estadia");
+```
+
+### Chunk 5: Pre-Checkin Submission (`POST /api/pms/pre-checkin`)
+**Target Location A (targetGuest setup)**: Around line 21016.
+
+**Replace**:
+```javascript
+  targetGuest.hasCompletedCheckin = true;
+  targetGuest.checkinCompletedAt = now;
+```
+**With**:
+```javascript
+  targetGuest.needsReSignature = false;
+  targetGuest.hasCompletedCheckin = true;
+  targetGuest.checkinCompletedAt = now;
+```
+
+**Target Location B (aggregate flags)**: Around lines 21053–21067.
+
+**Replace**:
+```javascript
+  // Atualiza flags agregadas da reserva
+  if (Number(guestIndex) === 1 || (Array.isArray(r.guests) && r.guests.some(g => g.hasCompletedCheckin))) {
+    r.hasPreCheckin = true;
+    r.preCheckinCompleted = true;
+  }
+  r.fnhrCompleted = r.guests.every(g => g.hasCompletedCheckin);
+```
+**With**:
+```javascript
+  // Atualiza flags agregadas da reserva
+  if (Number(guestIndex) === 1 || (Array.isArray(r.guests) && r.guests.some(g => g.hasCompletedCheckin))) {
+    r.hasPreCheckin = true;
+    r.preCheckinCompleted = true;
+  }
+  // M2: Re-assinatura renovada limpa o bloqueio (se for titular ou se todos tiverem re-assinado)
+  if (Number(guestIndex) === 1 || !r.guests.some(g => g.needsReSignature)) {
+    r.needsReSignature = false;
+    delete r.reSignatureReason;
+    r.fnhrCompleted = true;
+  } else {
+    r.fnhrCompleted = r.guests.every(g => g.hasCompletedCheckin);
+  }
+  if (!r.checkedInAt) {
+    r.checkedInAt = now;
+  }
+```
+
+**Target Location C (post-PDF document linking)**: Around lines 21196–21205.
+
+**Replace**:
+```javascript
+      targetGuest.status = "CHECKED_IN";
+      targetGuest.hasCompletedCheckin = true;
+
+      // Preserva status como "confirmada" caso não esteja in_house/checkin
+      if (!r.status || r.status === "CHECKED_IN" || r.status === "pre_reserva") {
+        r.status = "confirmada";
+      }
+      r.checkedInAt = fnrhDocument.signedAt;
+      if (Number(guestIndex) === 1) {
+        r.fnrhPdfUrl = fnrhDocument.fileUrl;
+```
+**With**:
+```javascript
+      targetGuest.status = "CHECKED_IN";
+      targetGuest.hasCompletedCheckin = true;
+      targetGuest.needsReSignature = false;
+
+      // Preserva status como "confirmada" caso não esteja in_house/checkin
+      if (!r.status || r.status === "CHECKED_IN" || r.status === "pre_reserva") {
+        r.status = "confirmada";
+      }
+      r.checkedInAt = fnrhDocument.signedAt;
+      if (Number(guestIndex) === 1) {
+        r.needsReSignature = false;
+        delete r.reSignatureReason;
+        r.fnhrCompleted = true;
+        r.fnrhPdfUrl = fnrhDocument.fileUrl;
+```
 
 ---
 
-## 7. Estratégia de Teste e Validação
+## 7. Cross-System Operational Ripple Effects
 
-Para comprovar a eficácia da Feature 5 sem afetar os testes existentes:
-1. **Teste de Detecção com Pergunta Inédita**:
-   Invocar `processAiInboundMessage` com texto `"O flat possui ferro de passar roupa disponível?"` para um cliente não cadastrado no FAQ.
-   *Resultado esperado*: `res.unmappedFaqCreated === true`, `db.faqItems` ganha 1 novo item com `status: "pendente"`, `category: "estrutura_flat"`, `source: "auto_aprendizado"`, `clientPhones: [phone]`.
-2. **Teste de Não-Detecção para Perguntas Mapeadas**:
-   Invocar com `"Qual a senha do wifi?"` para cliente com FAQ ativo disponível.
-   *Resultado esperado*: `res.unmappedFaqCreated === false`, nenhum item pendente adicionado.
-3. **Teste de Não-Detecção para Saudações e Confirmações**:
-   Invocar com `"Boa tarde, tudo bem?"` e `"ok obrigado"`.
-   *Resultado esperado*: `res.unmappedFaqCreated === false`.
-4. **Teste de Desduplicação**:
-   Enviar a mesma pergunta inédita duas vezes consecutivas.
-   *Resultado esperado*: apenas 1 item é mantido em `db.faqItems`, sem proliferação de IDs duplicados.
-5. **Verificação de Paridade SHA-256**:
-   Garantir hash idêntico entre os pares espelhados.
+1. **Zoho Mail & Background Queue (`mail-service.mjs`)**:
+   - `ensureReservationAttachmentsReady` checks `!reservation.needsReSignature && !titularGuestRecord?.needsReSignature`.
+   - When invalidated, dispatch of outdated FNRH PDFs to reception is blocked.
+   - When cleared upon re-signing, the newly generated PDF is attached and dispatched immediately (or queued for 07:00 on future arrival dates).
+2. **Reception Tablet (`reception-tablet.tsx` & `/api/reception/today`)**:
+   - Maps `hasCompletedCheckin: Boolean(r.fnhrCompleted && !r.needsReSignature)`.
+   - Displays clear warning and blocks check-in badge while `needsReSignature === true`.
+   - Immediately turns green and enables access card release upon renewed signature.
+3. **Garage Daily Sheet (`garage-dashboard.tsx` & `/api/pms/garage/daily-sheet`)**:
+   - Filters reservations strictly by active dates `r.checkinDate <= todayStr && r.checkoutDate >= todayStr`.
+   - Date modifications automatically shift vehicle presence without manual database reload.
+
+---
+
+## 8. Verification & Test Plan
+
+In strict adherence to `AGENTS.md` (no global or suite-wide test sweeps):
+1. **Targeted Unit Test Verification**:
+   Execute exclusively targeted tests directly exercising reservation modification and settlement:
+   ```bash
+   node --test tests/m1-reservation-modification-settlement.test.mjs
+   ```
+2. **Dedicated Milestone 2 Verification Test**:
+   Author and execute a dedicated test (e.g. `tests/m2-resign-lifecycle.test.mjs`) verifying:
+   - Modification via PUT `/api/pms/reservations/:id` sets `needsReSignature = true`, `signatureUrl = null`, deletes stale `fnrhPdfUrl`, and flags all guests with `needsReSignature = true`.
+   - Modification via `commitPendingModification` and `POST /modify` exhibits identical state invalidation.
+   - Subsequent submission of `POST /api/pms/pre-checkin` clears `needsReSignature = false`, sets `fnhrCompleted = true`, and sets `targetGuest.needsReSignature = false`.
+3. **Twin-Server SHA-256 Parity**:
+   Run hash verification:
+   ```bash
+   node -e "const crypto=require('crypto'), fs=require('fs'); console.log(crypto.createHash('sha256').update(fs.readFileSync('scripts/demo-server.mjs')).digest('hex') === crypto.createHash('sha256').update(fs.readFileSync('artifacts/api-server/demo-server.mjs')).digest('hex'));"
+   ```
+   Must output `true`.

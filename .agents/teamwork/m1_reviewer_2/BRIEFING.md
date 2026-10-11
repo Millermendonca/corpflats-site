@@ -1,65 +1,65 @@
-# BRIEFING — 2026-10-11T02:24:00Z
+# BRIEFING — 2026-10-11T14:05:00Z
 
 ## Mission
-Adversarial and quality review of Milestone 1 (Backend Core & Database Layer) for Guest-Flow-Manager: REST endpoints, error handling, phone normalization, atomic persistence, and test verification.
+Review and adversarially challenge Milestone 1: reservation modification and settlement guardrails.
 
 ## 🔒 My Identity
-- Archetype: reviewer_critic
+- Archetype: reviewer & critic
 - Roles: reviewer, critic
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m1_reviewer_2
-- Original parent: 27c61f6a-5652-421c-bbda-1b5d6be7db98
-- Milestone: Milestone 1 (Backend Core & Database Layer)
+- Original parent: 494db1f9-cfb2-46e9-8b9f-419a8aa9586c
+- Milestone: Milestone 1 - Reservation Modification Settlement
 - Instance: 2 of 2
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
-- Check for integrity violations (hardcoded test results, facade implementations, bypassed tasks, fabricated logs)
-- Perform adversarial stress-testing (edge cases, race conditions, failure modes)
-- Run tests and report any failures as findings
+- Check for integrity violations (hardcoded test results, facade logic, bypassed checks, fabricated artifacts)
+- Must verify test execution independently
+- Must verify SHA-256 parity between `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs`
 
 ## Current Parent
-- Conversation ID: 27c61f6a-5652-421c-bbda-1b5d6be7db98
-- Updated: 2026-10-11T02:11:16Z
+- Conversation ID: 494db1f9-cfb2-46e9-8b9f-419a8aa9586c
+- Updated: 2026-10-11T14:05:00Z
 
 ## Review Scope
-- **Files to review**:
-  - `artifacts/api-server/demo-server.mjs` & `scripts/demo-server.mjs`
-  - `artifacts/api-server/zapi-service.mjs` & `scripts/zapi-service.mjs`
-  - `artifacts/api-server/whatsapp-ai-service.mjs` & `scripts/whatsapp-ai-service.mjs`
-  - `tests/whatsapp-ai-agent.test.mjs`
-  - `data/database.json`
-- **Interface contracts**: `PROJECT.md`, `ORIGINAL_REQUEST.md`
-- **Review criteria**: REST endpoint specification compliance, error handling, phone normalization edge cases, atomic persistence robustness, zero regression, integrity checks.
+- **Files to review**: scripts/demo-server.mjs, artifacts/api-server/demo-server.mjs, tests/m1-reservation-modification-settlement.test.mjs, .agents/teamwork/m1_worker_1/handoff.md
+- **Interface contracts**: PROJECT.md, ORIGINAL_REQUEST.md
+- **Review criteria**: correctness, financial guardrails, race conditions / edge cases, security, parity, integrity
 
 ## Key Decisions Made
-- Confirmed exact 100% SHA-256 byte parity across all 3 mirrored file pairs.
-- Verified atomic persistence robustness (`atomicWriteFileSync`) under 20 rapid 50KB write stress tests.
-- Verified phone normalization edge cases: DDD 21 vs 22 cross-area collision isolation, 8 vs 9 digits tolerance, and scope enforcement (`all`, `exclude`, `include_only`).
-- Identified process keepalive in `tests/whatsapp-ai-agent.test.mjs` due to `demo-server.mjs` top-level `app.listen()` import without an `after` exit hook; documented as Major finding for M2/M4 test harness hardening.
-- Confirmed zero integrity violations: no hardcoded test outputs, no facade implementations, genuine implementations throughout.
-- Issued definitive verdict: **APPROVE**.
+- Verified SHA-256 parity: `E0AF6D18EA04702F6880FE9EFA9E50EBBBDAB895EF561CA2F69210A5523AD159` for both `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs`.
+- Verified execution of `tests/m1-reservation-modification-settlement.test.mjs`: 15/15 tests pass.
+- Verified regression suites: `tests/bot-actions-api.test.mjs` (5/5 pass), `tests/tariff-engine.test.mjs` (8/8 pass).
+- Verified frontend build: `npm run build` in `artifacts/limpeza` completed with code 0.
+- Integrity check: NO integrity violations detected (no hardcoded test fixtures, no fake facades, genuine logic).
+- Adversarial challenge: Discovered CRITICAL concurrency race condition in `GET /modify-status` and `commitPendingModification` where concurrent polling requests cause double-commit and financial balance corruption (`totalAmount` multiplied, duplicate payments in `r.payments`).
+- Verdict: REQUEST_CHANGES to patch the concurrency race condition.
 
 ## Review Checklist
 - **Items reviewed**:
-  - `artifacts/api-server/demo-server.mjs` & `scripts/demo-server.mjs` (atomic write, seed catalog, DB reconciliation)
-  - `artifacts/api-server/zapi-service.mjs` & `scripts/zapi-service.mjs` (REST endpoints, phone normalization, timers)
-  - `data/database.json` (15 FAQ items safely stored on disk)
-  - `tests/whatsapp-ai-agent.test.mjs` (15/15 tests passing)
-  - `tests/challenger-clearance-verification.test.mjs` (5/5 tests passing)
-  - `tests/challenger-m1-final-clearance-stress.test.mjs` (13/13 tests passing)
-- **Verdict**: **APPROVE**
-- **Unverified claims**: None remaining. All claims independently verified.
+  - `scripts/demo-server.mjs` (lines 15500-16830, 21930-22420, 29290-29360)
+  - `artifacts/api-server/demo-server.mjs`
+  - `tests/m1-reservation-modification-settlement.test.mjs`
+  - `tests/repro-concurrency-bug.test.mjs`
+  - `tests/challenger-m1-adversarial-modification.test.mjs`
+- **Verdict**: REQUEST_CHANGES (due to concurrent status polling double-commit vulnerability)
+- **Unverified claims**: none; all verified empirically
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Concurrent file write crash safety -> verified via `atomicWriteFileSync` temporary file rename/copy fallback.
-  - Suffix matching phone collision between DDD 21 and 22 -> verified `matchClientPhone` rejects mismatching DDDs.
-  - Invalid / empty / malformed REST API requests -> verified 400 and 404 defensive handling.
+  - Calendar collision: PASS (conflicting dates blocked with 409).
+  - Unpaid stay extension dates commit: PASS (blocked with 402 PAYMENT_REQUIRED).
+  - Abandoned / canceled checkout: PASS (original reservation intact).
+  - Post-payment audit & payment recording: PASS in sequential execution.
+  - Mandatory re-signature invalidation: PASS (`needsReSignature = true` set).
+  - High concurrency status polling: FAIL (multiple concurrent in-flight calls commit duplicate payments and multiply totalAmount).
 - **Vulnerabilities found**:
-  - `tests/whatsapp-ai-agent.test.mjs` lacks an `after` hook to exit process cleanly when importing `demo-server.mjs`.
-  - `matchClientPhone` checks equality before length check, returning `true` for identical non-phone short strings.
-- **Untested angles**: None within Milestone 1 scope.
+  - Critical: TOCTOU race condition in `commitPendingModification` / `/modify-status` leading to duplicate payments and balance inflation.
+  - Minor: `/modify-checkout` returns `{ error: "FLAT_UNAVAILABLE" }` without `success: false`.
+- **Untested angles**: Webhook callbacks directly from Banco Inter (simulated via polling).
 
 ## Artifact Index
-- `.agents/teamwork/m1_reviewer_2/review.md` — Detailed review and challenge findings
-- `.agents/teamwork/m1_reviewer_2/handoff.md` — 5-component handoff report
+- DISPATCH.md — incoming dispatch instructions
+- BRIEFING.md — working memory and state
+- progress.md — liveness heartbeat
+- handoff.md — detailed review and challenge report with verdict

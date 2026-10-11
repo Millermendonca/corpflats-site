@@ -62,9 +62,13 @@ export function getCheckinUrlSync(reservation, guestIndex = 1, baseUrl = "", dbI
   const hostBase = (baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || "https://corpflats.onrender.com").replace(/\/$/, "");
   const safeGuestIndex = Number(guestIndex) || 1;
   const resCode = reservation?.code || reservation?.id || "";
-  const internalCheckinUrl = `${hostBase}/pre-checkin/${resCode}?guest=${safeGuestIndex}`;
+  const isResign = Boolean(reservation?.needsReSignature);
+  const resignParam = isResign
+    ? (safeGuestIndex > 1 ? `?guest=${safeGuestIndex}&resign=1` : "?resign=1")
+    : `?guest=${safeGuestIndex}`;
+  const internalCheckinUrl = `${hostBase}/pre-checkin/${resCode}${resignParam}`;
 
-  if (currentProvider === "gov_fnrh" && (reservation?.serproPrecheckinUrl || reservation?.link_precheckin)) {
+  if (currentProvider === "gov_fnrh" && !isResign && (reservation?.serproPrecheckinUrl || reservation?.link_precheckin)) {
     return reservation.serproPrecheckinUrl || reservation.link_precheckin;
   }
 
@@ -7614,8 +7618,10 @@ export async function triggerImmediateWhatsApp(dbOrGetter, saveDatabase, eventNa
   try {
     const db = typeof dbOrGetter === "function" ? dbOrGetter() : dbOrGetter;
     if (!db) return;
-    if (!db.zapiConfig?.enabled) {
-      console.warn(`[WhatsApp Trigger] Evento '${eventName}' para reserva ${reservation?.code || reservation?.id} (${reservation?.guestName}) IGNORADO pois o motor de envio está desativado (zapiConfig.enabled = false).`);
+    const waEnabled = Boolean(db?.zapiConfig?.enabled);
+    const emailEnabled = db?.settings?.emailSettings?.enabled !== false;
+    if (!waEnabled && !emailEnabled) {
+      console.warn(`[Trigger] Evento '${eventName}' para reserva ${reservation?.code || reservation?.id} (${reservation?.guestName}) IGNORADO pois os motores de envio (WhatsApp e E-mail) estão desativados.`);
       return;
     }
     if (!reservation) return;

@@ -1,7 +1,7 @@
-# BRIEFING — 2026-10-11T06:31:00Z
+# BRIEFING — 2026-10-11T12:56:00Z
 
 ## Mission
-Coordenar e monitorar o desenvolvimento e verificação do framework de testes sintéticos E2E (End-to-End) autônomos para o ecossistema Guest-Flow-Manager (CorpFlats), cobrindo 100% das 45 telas, personas, jornadas anti-frustração, matriz pairwise e chaos testing em sandbox isolado.
+Coordenar e monitorar a implementação do fluxo seguro de modificação de reservas em múltiplas etapas no CorpFlats Guest Portal e PMS backend, garantindo simulação de disponibilidade, liquidação prévia de pagamentos, re-assinatura obrigatória em alterações de datas/flats e sincronização em tempo real de painéis e operações.
 
 ## 🔒 My Identity
 - Archetype: sentinel
@@ -16,6 +16,8 @@ Coordenar e monitorar o desenvolvimento e verificação do framework de testes s
 - Victory Auditor (bot_actions_api): 98db76b6-4e94-4f89-81fe-f38fc1a188ca
 - Orchestrator (faq_knowledge_base): 27c61f6a-5652-421c-bbda-1b5d6be7db98
 - Victory Auditor (faq_knowledge_base): 11d7cdc7-6e22-440f-9429-9a4936359d8e
+- Orchestrator (reservation_modification): 494db1f9-cfb2-46e9-8b9f-419a8aa9586c
+- Victory Auditor (reservation_modification): to be spawned on victory claim
 
 ## 🔒 Key Constraints
 - No technical decisions — relay only
@@ -24,37 +26,26 @@ Coordenar e monitorar o desenvolvimento e verificação do framework de testes s
 - Keep context ultra-light
 
 ## User Context
-- **Last user request**: Sistema completo e autônomo de testes sintéticos E2E (End-to-End) para o ecossistema CorpFlats (Guest-Flow-Manager), 100% como usuário real em browsers e canais externos, cobrindo 45 telas, personas e permutações de estado em sandbox isolado.
+- **Last user request**: Implementar fluxo seguro de modificação de reservas em múltiplas etapas no CorpFlats Guest Portal e backend PMS (simulação de disponibilidade, acerto financeiro antes de commit, re-assinatura obrigatória em mudança de datas/flat, e sincronização de painéis).
 - **Pending clarifications**: none
 - **Delivered results**:
-  - M1 Sandbox Isolado & Interceptadores: 11/11 testes aprovados. 0 byte DB drift.
-  - M2 Varredura Universal 45 Telas: 138/138 testes aprovados (Desktop, Tablet, Mobile).
-  - M3 Jornadas Humanas Anti-Frustração: 21/21 testes aprovados.
-  - M4 Matriz Combinatória de Estados (Pairwise): 12/12 testes aprovados.
-  - M5 Chaos Explorer & Relatório HTML: 12/12 testes aprovados. Relatório consolidado em e2e/reports/index.html.
-  - Quality Gate: Unanimously approved (Reviewer 1 & 2, Challenger 1 & 2, Forensic Auditor).
-  - Victory Audit: VICTORY CONFIRMED por auditor independente com zero compartilhamento de contexto.
+  - E2E Synthetic Testing Framework (anteriormente entregue e auditado com vitória confirmada).
 
 ## Project Status
-- **Phase**: complete
+- **Phase**: in progress
 - **Route**: General (teamwork_preview_orchestrator)
-- **Active Orchestrator Dir**: .agents/teamwork/orchestrator_3
-- **Active Orchestrator ID**: 5a1d1171-401e-4601-9229-45485822d731
-- **Cron 1 (Reporting)**: cancelled
-- **Cron 2 (Liveness)**: cancelled
+- **Active Orchestrator Dir**: .agents/teamwork/orchestrator_5
+- **Active Orchestrator ID**: 494db1f9-cfb2-46e9-8b9f-419a8aa9586c
+- **Cron 1 (Reporting)**: active (task-24)
+- **Cron 2 (Liveness)**: active (task-26)
 
 ## Victory Audit Status
-- **Triggered**: yes
-- **Verdict**: VICTORY CONFIRMED
-- **Auditor ID**: ab03b3dc-8b35-4553-bfeb-876319945f64
+- **Triggered**: no
+- **Verdict**: pending
+- **Auditor ID**: TBD
 - **Retry count**: 0
 
 ## Artifact Index
 - ORIGINAL_REQUEST.md — Authoritative record of user intent
-- orchestrator_3/progress.md — Live status tracking of orchestrator
-- orchestrator_3/handoff.md — Orchestrator completion handoff
-- victory_auditor_4/handoff.md — Independent victory audit report
-- e2e/reports/index.html — Consolidated HTML report
-- e2e/reports/modules-summary.json — Test metrics summary
-- handoff.md — Sentinel final completion handoff
-
+- orchestrator_5/context.md — Initial dispatch context
+- orchestrator_5/progress.md — Live status tracking of orchestrator

@@ -1,148 +1,104 @@
-# Handoff Report — Milestone 1 Explorer 2
-**Agent**: Milestone 1 Explorer 2 (Archetype: Explorer)
-**Working Directory**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m1_explorer_2`
-**Project Root**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`
-**Date**: 2026-10-11T01:46:00Z
+# Relatório de Handoff: Endpoint `/modify-checkout` e Motor de Hold Provisório (`r.pendingModification`)
+
+**Agente**: M1 Explorer 2  
+**Data**: 2026-10-11T13:26:00Z  
+**Destinatário**: Orchestrator / Suborch M1 / Worker M1  
+**Diretório de Trabalho**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m1_explorer_2`  
+**Documento Principal**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m1_explorer_2\analysis.md`
 
 ---
 
 ## 1. Observation
 
-### 1.1 SHA-256 Parity & Divergence
-- **Arquivos `zapi-service.mjs`**:
-  - `artifacts/api-server/zapi-service.mjs`: `SHA256: 301F4D859495BC0242EB7F3F050EB4C1BFE482B963D02BB166A5E86794C17007`
-  - `scripts/zapi-service.mjs`: `SHA256: 301F4D859495BC0242EB7F3F050EB4C1BFE482B963D02BB166A5E86794C17007`
-  - Status: **100% Idênticos**.
-- **Arquivos `whatsapp-ai-service.mjs`**:
-  - `artifacts/api-server/whatsapp-ai-service.mjs`: `SHA256: 6683557D7C735DEB3B23494EA41307BACFEBB33DF8252771274D4B24506653C8`
-  - `scripts/whatsapp-ai-service.mjs`: `SHA256: 1DD69090F7FF3AC2E0F513432EB53909DCBD9FD5A4B32853458B5D16B3EE2991`
-  - Status: **Divergentes**.
-- **Comando de diff executado**:
-  `git diff --no-index artifacts/api-server/whatsapp-ai-service.mjs scripts/whatsapp-ai-service.mjs`
-  Resultado:
-  ```diff
-  diff --git a/artifacts/api-server/whatsapp-ai-service.mjs b/scripts/whatsapp-ai-service.mjs
-  index e412459..c31bcca 100644
-  --- a/artifacts/api-server/whatsapp-ai-service.mjs
-  +++ b/scripts/whatsapp-ai-service.mjs
-  @@ -9,7 +9,7 @@
-   -import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES } from "./zapi-service.mjs";
-   +import { cleanWhatsAppPhone } from "./zapi-service.mjs";
-    import { getCheckinUrlSync as getSerproCheckinUrlSync } from "./fnrh-serpro-service.mjs";
-   
-  @@ -532,7 +532,8 @@ export async function processAiInboundMessage({
-    
-     // 2. Verifica se está em Modo de Teste
-     if (db.zapiConfig?.testModeOnly === true) {
-  -    const allowed = [...DEFAULT_TEST_ALLOWED_PHONES, ...String(db.zapiConfig.testAllowedPhones || "").split(/[,\s]+/)]
-  +    const allowed = String(db.zapiConfig.testAllowedPhones || "")
-  +      .split(/[,\s]+/)
-         .map(p => cleanWhatsAppPhone(p))
-         .filter(Boolean);
-       const targetNorm = cleanWhatsAppPhone(cleanTarget);
-  ```
-- **Execução do Teste 10 de Integridade**:
-  Comando:
-  `node -e "const crypto = require('crypto'); const fs = require('fs'); const assert = require('assert'); const getHash = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'); assert.equal(getHash('artifacts/api-server/whatsapp-ai-service.mjs'), getHash('scripts/whatsapp-ai-service.mjs'));"`
-  Resultado verbatim:
-  `AssertionError [ERR_ASSERTION]: '6683557d7c735deb3b23494ea41307bacfebb33df8252771274d4b24506653c8' == '1dd69090f7ff3ac2e0f513432eb53909dcbd9fd5a4b32853458b5d16b3ee2991'`
+1. **Vulnerabilidade no Endpoint Legado `/modify`**:
+   - Arquivo: `scripts/demo-server.mjs` e `artifacts/api-server/demo-server.mjs`, linhas 15.456 a 15.716.
+   - Linhas 15.615–15.616:
+     ```javascript
+     r.checkinDate = newCheckinDate;
+     r.checkoutDate = newCheckoutDate;
+     ```
+   - Linhas 15.528–15.529:
+     ```javascript
+     additionalAmountToPay += extraNights * dailyRate;
+     r.totalAmount = Number(r.totalAmount || 0) + additionalAmountToPay;
+     ```
+   - As datas e o total da reserva são mutados no banco de dados imediatamente antes de qualquer pagamento ser realizado, gerando risco financeiro e quebra da integridade das reservas caso o hóspede abandone o checkout.
 
-### 1.2 Função `cleanWhatsAppPhone` e Whitelist
-- Localizada em `scripts/zapi-service.mjs` e `artifacts/api-server/zapi-service.mjs` nas linhas 1069-1084:
-  - Remove caracteres não-dígito;
-  - Remove zeros à esquerda;
-  - Adiciona prefixo `"55"` para números de 10 ou 11 dígitos;
-- Constante `DEFAULT_TEST_ALLOWED_PHONES` em `zapi-service.mjs:1096-1099`:
-  - Contém `"22998505276"`, `"5522998505276"`, `"21997142513"`, `"5521997142513"`;
-- Matching de telefone no codebase: utiliza `.slice(-8)` e `.endsWith()` (ex: `zapi-service.mjs:3951`, `5284`, `6301`).
+2. **Infraestrutura de Pagamento PIX Existente**:
+   - `createInterPixCob`: Linhas 27.704–27.776 em `demo-server.mjs`. Gera cobrança imediata via API oficial mTLS Banco Inter na URL `https://cdpj.partners.bancointer.com.br/pix/v2/cob/${txid}`, retornando `{ txid, pixCopiaECola, ... }`.
+   - `generateStaticPixPayload`: Linhas 11.283–11.307 em `demo-server.mjs`. Gera linha digitável EMV BR Code com chave padrão `47964813000165` (`CORPFLATS LTDA`) e cálculo de CRC16.
+   - `QRCode.toDataURL`: Linhas 20.945 e 21.095 em `demo-server.mjs`. Gera string Base64 Data URI (`data:image/png;base64,...`) pronta para renderização direta em tags `<img>`.
 
-### 1.3 Estado de `data/database.json`
-- `db.faqItems` é atualmente `undefined` no arquivo bruto.
-- A função `ensureDbDefaults()` em `initWhatsAppEngine` (linha 4205 de `zapi-service.mjs`) atualmente inicializa `db.zapiConfig`, mas ainda não garante `db.faqItems = []`.
+3. **Infraestrutura de Pagamento Mercado Pago Existente**:
+   - `createMercadoPagoPreference`: Linhas 28.487–28.570 em `demo-server.mjs`.
+   - Propriedade `external_reference` (linha 28.517) recebe `reservationCode`.
+   - `checkMercadoPagoPaymentByRef(externalRef)`: Linhas 27.893–27.927. Busca ativa via `https://api.mercadopago.com/v1/payments/search?external_reference=${encodeURIComponent(externalRef)}`.
 
-### 1.4 Estrutura de Rotas em `initWhatsAppEngine`
-- Definida em `zapi-service.mjs:4201-6360`.
-- Os endpoints de IA existentes terminam na linha 6359 com `POST /api/whatsapp/chat/:phone/ai-suggest`.
-- A seção subsequente (linha 6362 em diante) contém o `setTimeout` de sincronização de webhooks e o `setInterval` de background runner.
+4. **Algoritmos de Verificação de Disponibilidade e Conflito**:
+   - `GET /api/reservations/availability`: Linhas 11.183–11.187 mapeiam ocupação em `(db.reservations || []).filter(r => r.status !== "cancelada" && r.checkinDate < checkout && r.checkoutDate > checkin)`.
+   - `GET /api/bot-actions/availability`: Linhas 20.756–20.764 mapeiam `busyFlatSet` limpando pré-reservas vencidas (`new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total"`).
+   - `POST /api/bot-actions/pre-reserve`: Linhas 21.002–21.007 verificam `hasConflict` considerando expiração de pré-reservas de 30 min.
+   - Atualmente, nenhum desses pontos verifica `r.pendingModification`, permitindo que outro usuário reserve um flat que está em processo de modificação.
+
+5. **Paridade Byte-a-Byte (Twin-Server Parity)**:
+   - Execução do comando:
+     `Get-FileHash "scripts/demo-server.mjs", "artifacts/api-server/demo-server.mjs"`
+   - Resultado: Ambos os arquivos possuem o hash SHA-256 idêntico `4FDDE099E92A3036D49E7C1ED5E1E57CF3568719D0E7573D4AC6F6AB9B92CAEB`.
 
 ---
 
 ## 2. Logic Chain
 
-1. **Origem da Divergência SHA-256**:
-   - `DEFAULT_TEST_ALLOWED_PHONES` foi exportado em `zapi-service.mjs:1096` para permitir que o desenvolvedor Miller Mendonça e telefones de teste homologados recebessem interações mesmo com o modo de teste ativo (`testModeOnly: true`).
-   - `artifacts/api-server/whatsapp-ai-service.mjs` foi atualizado para importar e utilizar essa constante em suas linhas 12 e 535.
-   - O arquivo espelho `scripts/whatsapp-ai-service.mjs` não recebeu esse commit, resultando na divergência observada no `git diff` e na falha de asserção estrita de hash.
-   - **Inferência**: A versão em `artifacts/` é a mais recente e funcionalmente correta; `scripts/` deve ser atualizado para espelhá-la fielmente.
-
-2. **Necessidade do `matchClientPhone`**:
-   - No Brasil, os números celulares podem ser representados com 8 ou 9 dígitos no assinante, com ou sem DDI 55, com ou sem DDD, e no WhatsApp podem vir com JID `@c.us`.
-   - Comparar apenas `slice(-8)` causa falso positivo se dois clientes em DDDs diferentes tiverem o mesmo número terminal (ex: DDD 21 vs DDD 22).
-   - O design de `matchClientPhone` compara o sufixo de 8 dígitos E valida que, se ambos os números possuem DDD identificável, os DDDs devem coincidir. Se um dos números for apenas local (8 ou 9 dígitos sem DDD), a comparação de sufixo prevalece.
-   - **Inferência**: Isso atende 100% dos requisitos de R4 e AC3 sem falso positivo.
-
-3. **Arquitetura do Motor `isFaqApplicableToClient`**:
-   - Conforme R4, se `scope === "all"` (ou omitido), a FAQ é universal (`true`).
-   - Se `scope === "exclude"`, a FAQ só é aplicável se o cliente **não** estiver na lista `clientPhones`.
-   - Se `scope === "include_only"`, a FAQ só é aplicável se o cliente estiver explicitamente na lista `clientPhones`.
-   - Se `status` for especificado e diferente de `"ativo"`, a FAQ deve ser rejeitada imediatamente.
-   - **Inferência**: O protótipo validou 13 casos de teste cobrindo todas as permutações e valores nulos/vazios com 100% de sucesso.
-
-4. **Contrato e Ponto de Montagem dos Endpoints REST**:
-   - `GET`, `POST`, `PUT`, `DELETE` em `/api/whatsapp/faq` e `POST /api/whatsapp/faq/:id/approve` devem ser registrados diretamente em `initWhatsAppEngine`.
-   - `ensureDbDefaults()` deve garantir `db.faqItems = []` para evitar `TypeError: Cannot read properties of undefined` em bancos que ainda não foram migrados.
-   - `POST .../approve` atende aos requisitos de 1-clique (R1 e R3), promovendo `suggestedAnswer` ou `body.answer` para `answer`, alterando status para `"ativo"` e carimbando `approvedAt`.
+1. **A partir da Observação 1**: Para impedir que as datas sejam atualizadas prematuramente quando `additionalAmountToPay > 0`, o endpoint de checkout não deve alterar `r.checkinDate`, `r.checkoutDate` nem `r.totalAmount`. Em vez disso, deve armazenar a proposta de alteração em um objeto anexo temporário: `r.pendingModification`.
+2. **A partir das Observações 2 e 3**: Para permitir que o hóspede pague a diferença via PIX ou Cartão no Guest Portal, `r.pendingModification` deve conter os identificadores e dados de cobrança de ambos os gateways: `pixTxId`, `pixCopiaECola`, `pixQrCodeUrl`, `mpPreferenceId` e `mpCheckoutUrl`.
+3. **A partir da Observação 3**: Se a preferência do Mercado Pago usasse simplesmente `reservationCode: r.code`, uma busca por pagamentos encontraria o pagamento inicial já aprovado da reserva original, gerando uma liquidação falsa positiva imediata. Portanto, a preferência de modificação deve obrigatoriamente usar `external_reference: "MOD-" + r.code`.
+4. **A partir da Observação 4**: Enquanto o hóspede estiver na janela de pagamento de 30 minutos (`expiresAt = now + 30m`), nenhum outro hóspede pode reservar o período solicitado no apartamento de destino. Logo, `isPendingHoldActive(other.pendingModification)` deve ser incorporado em `hasReservationConflict`, `GET /availability`, `GET /bot-actions/availability` e `POST /bot-actions/pre-reserve`.
+5. **A partir dos passos 1 e 4**: Como as datas originais `r.checkinDate` e `r.checkoutDate` nunca foram alteradas durante o hold, se os 30 minutos expirarem sem pagamento (`new Date(expiresAt).getTime() < nowMs`), o hold simplesmente passa para `status = 'expired'`. O bloqueio temporário desaparece e a reserva original permanece 100% preservada sem qualquer efeito colateral.
+6. **A partir da Observação 5**: Todas as alterações devem ser espelhadas de forma idêntica e simultânea em `scripts/demo-server.mjs` e `artifacts/api-server/demo-server.mjs`.
 
 ---
 
 ## 3. Caveats
 
-1. **Escopo Read-Only do Explorer**:
-   - Nenhuma modificação direta foi aplicada aos arquivos de código-fonte (`artifacts/`, `scripts/`, `data/`). As alterações foram preparadas como diffs concretos no relatório `analysis.md` para aplicação pelo Worker do Milestone 1.
-2. **Populamento Inicial de Seeds**:
-   - O seeding dos 9 itens de FAQ oficiais e perguntas pendentes em `data/database.json` é atribuição concorrente do Explorer 1 / Worker do Feature 1.
-3. **Persistência PostgreSQL Replicada**:
-   - O `saveDatabase()` salva atonicamente em disco e replica via `system_store` quando o servidor está rodando. O worker deve manter as chamadas de `saveDatabase()` nos 4 endpoints de mutação.
-4. **Modo de Execução dos Testes Node.js**:
-   - `tests/whatsapp-ai-agent.test.mjs` possui `after(() => process.exit(0))` na linha 329. Para evitar que os testes assíncronos sejam cancelados prematuramente pelo exit antes do término da asserção 10, o worker deve garantir que os testes assíncronos completem antes de invocar o exit do processo.
+1. **Ambiente Sandbox / Sem Credenciais Inter**:
+   Em ambiente local de testes ou se as chaves mTLS do Banco Inter não estiverem no disco, `createInterPixCob` lança exceção. O endpoint trata isso com fallback resiliente para o PIX estático via `generateStaticPixPayload`, garantindo que a emissão do QR Code e a linha digitável nunca falhem.
+2. **Concorrência entre Abas do Mesmo Hóspede**:
+   Se o mesmo hóspede submeter múltiplas requisições em `/modify-checkout` para datas diferentes, a nova requisição substitui o objeto `r.pendingModification` existente, reiniciando o cronômetro de 30 minutos e liberando o hold anterior.
+3. **Escopo de Liquidação e Commit**:
+   A efetivação atômica definitiva do pagamento (promover datas, registrar em `r.payments`, atualizar `modificationHistory` e marcar `r.needsReSignature = true`) é tratada na consulta de status (`/modify-status`), sob escopo de Explorer 3.
 
 ---
 
 ## 4. Conclusion
 
-O design da camada de normalização de telefone, motor de regras de exceção por cliente e endpoints REST da Base de Conhecimento está concluído, testado por prototipagem e pronto para implementação pelo Worker no Milestone 1.
-
-### Ações Imediatas para o Worker:
-1. **Restaurar Paridade SHA-256**:
-   - Atualizar `scripts/whatsapp-ai-service.mjs` com as linhas 12 e 534-540 de `artifacts/api-server/whatsapp-ai-service.mjs` (incluindo o re-export de `isFaqApplicableToClient` e `matchClientPhone`).
-2. **Implementar em `zapi-service.mjs`** (em ambos os caminhos `artifacts/` e `scripts/`):
-   - Adicionar `matchClientPhone` e `isFaqApplicableToClient` logo após `cleanWhatsAppPhone` (linha 1084);
-   - Adicionar `if (!Array.isArray(db.faqItems)) db.faqItems = [];` em `ensureDbDefaults()` (linha 4208);
-   - Adicionar os 5 endpoints REST do FAQ na linha 6360 de `initWhatsAppEngine`.
-3. **Verificar Paridade SHA-256**:
-   - Confirmar que `artifacts/api-server/zapi-service.mjs` e `scripts/zapi-service.mjs` continuam com SHA-256 100% idêntico.
-   - Confirmar que `artifacts/api-server/whatsapp-ai-service.mjs` e `scripts/whatsapp-ai-service.mjs` possuem SHA-256 100% idêntico.
+O design do endpoint `POST /api/pms/guest-portal/:code/modify-checkout` e da estrutura `r.pendingModification` foi completamente finalizado e documentado em `analysis.md`:
+- Estrutura completa de `r.pendingModification` com 13 campos obrigatórios (`pendingId`, `newCheckinDate`, `newCheckoutDate`, `newGuestCount`, `newFlatId`, `additionalAmountToPay`, `createdAt`, `expiresAt`, `status: 'pending'`, `pixTxId`, `pixQrCodeUrl`, `pixCopiaECola`, `mpPreferenceId`, `mpCheckoutUrl`) mais metadados de snapshot da reserva.
+- Prevenção total contra double-booking através de `hasReservationConflict` e `isPendingHoldActive`.
+- Auto-expiração em 30 minutos com preservação garantida das datas originais da reserva.
+- Código completo verbatim pronto para aplicação pelo Worker em `scripts/demo-server.mjs` e `artifacts/api-server/demo-server.mjs`.
 
 ---
 
 ## 5. Verification Method
 
-Para verificar de forma independente e automática as descobertas e recomendações deste relatório:
+Para verificar a integridade da implementação:
 
-### V1. Verificação da Divergência e Paridade Atual
-```powershell
-node -e "const crypto = require('crypto'); const fs = require('fs'); const assert = require('assert'); const h1 = crypto.createHash('sha256').update(fs.readFileSync('artifacts/api-server/whatsapp-ai-service.mjs')).digest('hex'); const h2 = crypto.createHash('sha256').update(fs.readFileSync('scripts/whatsapp-ai-service.mjs')).digest('hex'); console.log('Divergência confirmada:', h1 !== h2);"
-```
-*Critério de Invalidação*: Se `h1 === h2`, a discrepância já teria sido resolvida externamente.
+1. **Paridade Byte-a-Byte**:
+   ```powershell
+   Get-FileHash "scripts/demo-server.mjs", "artifacts/api-server/demo-server.mjs" | Select-Object Hash, Path
+   ```
+   *Critério de Invalidação*: Hashes divergentes invalidam o commit imediatamente.
 
-### V2. Verificação do Motor de Regras e Normalização (Suíte de Casos de Borda)
-```powershell
-node -e "const { matchClientPhone, isFaqApplicableToClient } = require('./.agents/teamwork/m1_explorer_2/analysis.md');" # Ou importar o protótipo contido na Seção 3.2 de analysis.md
-```
-Executar o script de teste unitário reproduzido na Seção 3.3 de `analysis.md`. Todos os 13 testes devem emitir `true`.
+2. **Execução da Bateria de Testes Automatizados**:
+   ```powershell
+   node --test tests/bot-actions-api.test.mjs
+   node --test tests/pre-reservation-payment-integrity.test.mjs
+   ```
 
-### V3. Verificação dos Endpoints REST após Aplicação pelo Worker
-```powershell
-node --test tests/whatsapp-ai-agent.test.mjs
-```
-O arquivo de teste deve rodar sem erros e a asserção de integridade 10 (SHA-256) deve passar com sucesso para todos os pares espelhados.
+3. **Verificação do Endpoint `/modify-checkout` e Hold no Banco**:
+   - Disparar requisição `POST /api/pms/guest-portal/:code/modify-checkout` com `{ newCheckinDate: "2026-11-01", newCheckoutDate: "2026-11-05", newGuestCount: 2 }`.
+   - Validar retorno HTTP 200 contendo `pendingId`, `expiresAt`, `pixCopiaECola`, `pixQrCodeUrl`.
+   - Inspecionar `data/database.json`:
+     - `r.checkinDate` e `r.checkoutDate` devem permanecer inalterados.
+     - `r.pendingModification` deve conter `status: "pending"` e `additionalAmountToPay > 0`.
+   - Chamar `GET /api/reservations/availability?checkin=2026-11-01&checkout=2026-11-05` e constatar que o apartamento de destino consta como ocupado devido ao hold provisório.

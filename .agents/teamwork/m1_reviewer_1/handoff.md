@@ -1,108 +1,125 @@
-# Handoff Report — Milestone 1 Reviewer 1 (Backend Core & Database Layer)
+# Handoff Report — Milestone 1 Reviewer 1 (Reservation Modification Settlement Engine)
 
-**Agent**: `m1_reviewer_1` (Roles: reviewer, critic)  
-**Date**: 2026-10-11T02:23:00Z  
-**Working Directory**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m1_reviewer_1`  
-**Project Root**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`  
-**Recipient**: Milestone 1 Orchestrator (`27c61f6a-5652-421c-bbda-1b5d6be7db98`)  
-**Status**: Hard Handoff (Review Complete — Verdict: `REQUEST_CHANGES`)
+**Agent**: m1_reviewer_1 (Roles: reviewer, critic)  
+**Parent Agent**: 494db1f9-cfb2-46e9-8b9f-419a8aa9586c  
+**Date**: 2026-10-11T14:03:00Z  
+**Type**: Hard (Task Complete)  
+**Verdict**: **REQUEST_CHANGES**
 
 ---
 
 ## 1. Observation
 
-1. **Execução de Testes Travada no Runner Node.js (`tests/whatsapp-ai-agent.test.mjs`)**:
-   - Comando executado: `node --test tests/whatsapp-ai-agent.test.mjs`
-   - Resultado do log do runner:
-     ```
-     ok 1 - Agente de IA para WhatsApp - Testes Unitários e de Integração
-       ---
-       duration_ms: 130.5904
-       type: 'suite'
-       ...
-     # [Z-API Init] Sincronizando webhooks e notifySentByMe com a Z-API...
-     # [Z-API Init] Webhooks e notifySentByMe sincronizados com sucesso!
-     ```
-   - O processo de teste não encerrou: após mais de 3 minutos, permaneceu em estado `RUNNING` no gerenciador de tarefas (`task-18`).
-   - Verificação de handles abertos no Node.js (`process._getActiveHandles()`):
-     ```
-     Active handles: [ 'Socket', 'Socket', 'TLSSocket' ]
-     ```
-   - Causa observada em `tests/whatsapp-ai-agent.test.mjs:16`:
-     ```javascript
-     import { getOfficialFaqSeed, seedInitialFaqItems, atomicWriteFileSync } from "../artifacts/api-server/demo-server.mjs";
-     ```
-     A importação de `demo-server.mjs` executa incondicionalmente no top-level:
-     - `httpServer = app.listen(PORT, "0.0.0.0", ...);` (`demo-server.mjs:30408`)
-     - `initWhatsAppEngine(app, () => db, saveDatabase, ...);` (`demo-server.mjs:245112`) que dispara timers e conexão de rede com a API da Z-API.
-     - `setInterval(..., 300000)` (`demo-server.mjs:30406`) sem desreferenciamento `.unref()`.
-   - O arquivo `tests/whatsapp-ai-agent.test.mjs` não possui um gancho `after()` para encerrar o processo (diferente de `tests/future-reservation-email-rules.test.mjs:168`, onde há `setTimeout(() => { process.exit(0); }, 50);`).
+- **Twin-Server SHA-256 Parity**:
+  - `Get-FileHash scripts/demo-server.mjs, artifacts/api-server/demo-server.mjs -Algorithm SHA256` output:
+    ```
+    Algorithm       Hash                                                             Path
+    ---------       ----                                                             ----
+    SHA256          E0AF6D18EA04702F6880FE9EFA9E50EBBBDAB895EF561CA2F69210A5523AD159 scripts/demo-server.mjs
+    SHA256          E0AF6D18EA04702F6880FE9EFA9E50EBBBDAB895EF561CA2F69210A5523AD159 artifacts/api-server/demo-server.mjs
+    ```
+    Strict byte-for-byte parity is verified (100% identical).
+  - Syntax check: `node --check scripts/demo-server.mjs` and `node --check artifacts/api-server/demo-server.mjs` exited 0.
 
-2. **Paridade Byte-a-Byte SHA-256 Confirmada em 100%**:
-   - Comando executado:
-     ```powershell
-     node -e "const crypto = require('crypto'); const fs = require('fs'); const getHash = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex'); const pairs = [ ['artifacts/api-server/whatsapp-ai-service.mjs', 'scripts/whatsapp-ai-service.mjs'], ['artifacts/api-server/zapi-service.mjs', 'scripts/zapi-service.mjs'], ['artifacts/api-server/demo-server.mjs', 'scripts/demo-server.mjs'] ]; pairs.forEach(([a, b]) => { const hA = getHash(a); const hB = getHash(b); if (hA !== hB) throw new Error('Mismatch: ' + a); console.log('MATCH:', a, hA); });"
-     ```
-   - Resultado:
-     ```
-     MATCH: artifacts/api-server/whatsapp-ai-service.mjs f3e412e254a116b72791ef68f1c506333b0889783702a8dd10788e0d5ab4cab5
-     MATCH: artifacts/api-server/zapi-service.mjs 1484762e845996379a2a80676dc6a1debe3f7105ecc1be0bb2c349799516742a
-     MATCH: artifacts/api-server/demo-server.mjs d3e69adb0c76aaa684a125988ac76fee653ff88961b8dc3b9ee8ea68ed00a5db
-     ```
+- **Automated Test Results**:
+  - `node --test tests/m1-reservation-modification-settlement.test.mjs`:
+    - Result: 15/15 subtests passed, 0 failed, duration 8.05s, exit code 0.
+  - `node --test tests/bot-actions-api.test.mjs`:
+    - Result: 5/5 subtests passed, 0 failed, duration 4.28s, exit code 0.
+  - `node --test tests/tariff-engine.test.mjs`:
+    - Result: 8/8 subtests passed, 0 failed, duration 5.75s, exit code 0.
+  - `npm run build` in `artifacts/limpeza`:
+    - Result: Compiled cleanly with Vite in 55.94s, exit code 0.
 
-3. **Verificação da Integridade da Base de Dados e Seeding (`data/database.json`)**:
-   - `data/database.json` contém exatamente 15 itens em `db.faqItems`.
-   - Validação de esquema executada via Node.js: todos os 15 itens possuem `id`, `question`, `answer`, `category` válida, `status` válido, `scope` válido, `keywords` array, `variations` array, `clientPhones` array, `createdAt` e `updatedAt`.
-   - Todos os 9 temas oficiais mandatórios estão presentes: Wi-Fi, café da manhã no quarto, recolhimento de louças, água no frigobar, regras de visitas, regras de pets, check-in 14h, early check-in para reservas diretas e check-out 12h.
+- **Adversarial Stress Test Results**:
+  - `node --test tests/challenger-m1-adversarial-modification.test.mjs`:
+    - Total tests: 25 subtests across 8 challenge suites.
+    - Result: 23 passed, 2 failed, exit code 1.
+    - **Failure 1 (Challenge 6.1 - Critical Race Condition)**:
+      ```
+      # Subtest: 6.1. 15 concurrent polling requests with payment confirmation commit exactly ONCE without duplicate payments or balance corruption
+      not ok 1 - 6.1. 15 concurrent polling requests with payment confirmation commit exactly ONCE without duplicate payments or balance corruption
+        ---
+        duration_ms: 3490.4961
+        failureType: 'testCodeFailure'
+        error: |-
+          Expected values to be strictly equal:
+          
+          6400 !== 800
+        operator: 'strictEqual'
+        expected: 800
+        actual: 6400
+      ```
+      When 15 concurrent requests polled `/modify-status` during payment verification, `commitPendingModification` executed 14+ times asynchronously, creating duplicate payments in `r.payments` and multiplying the reservation's `totalAmount` to R$ 6400 instead of R$ 800.
+    - **Failure 2 (Challenge 2.2 - Minor Clamping Edge Case)**:
+      ```
+      # Subtest: 2.2. Zero guest count (0) is gracefully clamped to 1 without crash
+      not ok 2 - 2.2. Zero guest count (0) is gracefully clamped to 1 without crash
+        error: Expected 1, actual 2
+      ```
+      Passing `newGuestCount: 0` fell back to existing `r.guestCount` (2) because `Number(0) || r.guestCount` treats 0 as falsy.
 
-4. **Suites Adversariais de Clearance**:
-   - `node --test tests/challenger-clearance-verification.test.mjs`: 5 testes executados, 5 aprovados, 0 falhas, exit code 0.
-   - `node --test tests/challenger-m1-final-clearance-stress.test.mjs`: 13 testes executados, 13 aprovados, 0 falhas, exit code 0.
+- **Integrity Inspection**:
+  - Searched for hardcoded test constants (`RES-M1`, `Carlos Alberto`, etc.) in `scripts/demo-server.mjs`. None found.
+  - Verification logic accurately queries `hasReservationConflict`, calculates real day differences, generates real EMV PIX Copia-e-Cola strings, and computes real QR Codes.
 
 ---
 
 ## 2. Logic Chain
 
-1. **Da avaliação de funcionalidade e interface (Observações 2, 3 e 4)**:
-   - A lógica implementada pelo worker atende integralmente a todos os requisitos de negócio estipulados em `ORIGINAL_REQUEST.md` e aos contratos de dados de `PROJECT.md`.
-   - Não há violações de integridade, código fachada, hardcoded cheating ou atalhos indevidos. A implementação em `zapi-service.mjs`, `whatsapp-ai-service.mjs` e `demo-server.mjs` é legítima e completa.
-
-2. **Do problema de processo no runner de testes (Observação 1)**:
-   - Em qualquer ambiente de integração contínua (CI/CD) ou pipeline automatizado, o comando `node --test tests/whatsapp-ai-agent.test.mjs` falhará por estourar o tempo limite (timeout), pois o processo Node.js nunca encerra após emitir o relatório de testes.
-   - A causa raiz é puramente a presença de sockets abertos e timers criados pela inicialização do servidor Express ao importar `demo-server.mjs` dentro do arquivo de teste, sem que haja uma cláusula de finalização de processo no encerramento da suite.
-   - Como a regra do agente revisor proíbe alterações no código de produção e testes ("Review-only — do NOT modify implementation code"), é dever formal do revisor emitir `REQUEST_CHANGES` apontando a correção necessária ao implementador.
+1. In Milestone 1, the reservation modification settlement engine is responsible for handling payment settlement and date commitment accurately.
+2. In production, polling requests to `/api/pms/guest-portal/:code/modify-status` occur automatically every 2-3 seconds from frontend portals and may overlap across multiple tabs, retries, or concurrent webhook notifications.
+3. In `scripts/demo-server.mjs` lines 16452-16456, `commitPendingModification` is invoked asynchronously. Because `r.pendingModification` is not synchronously locked or flagged as in-flight before awaiting payment checks and DB saves, parallel requests simultaneously enter `commitPendingModification`.
+4. In lines 15660-15682, `commitPendingModification` increments `r.totalAmount` and appends `payRecord` to `r.payments` unconditionally without checking if `pending.pendingId` has already been recorded in `r.payments` or marked as committed.
+5. In adversarial testing with 15 parallel requests, this race condition corrupted the customer reservation balance from R$ 800 to R$ 6400 and created multiple duplicate payment records.
+6. A financial engine that duplicates payments and corrupts balance totals under concurrent polling cannot be approved for production milestone clearance.
 
 ---
 
 ## 3. Caveats
 
-- **Escopo do teste de concorrência com PostgreSQL**: Os testes executados operaram sobre persistência local em disco (`data/database.json`) com pool mockado, sem conexão direta com o cluster remoto do PostgreSQL em nuvem.
-- **Frontend (Milestone 3)**: A interface gráfica e os componentes React em `artifacts/limpeza` serão avaliados no respectivo milestone; os 5 endpoints REST do backend foram testados e estão 100% disponíveis para consumo da UI.
-- No other caveats.
+- The worker's sequential test suite (`tests/m1-reservation-modification-settlement.test.mjs`) passed 15/15 tests because it tested single-threaded sequential polling where request N+1 occurs strictly after request N has finished. The flaw only surfaces when multiple requests arrive concurrently before the first request finishes deleting `r.pendingModification`.
+- The twin-server parity and functional endpoints for `/modify-preview`, `/modify-checkout`, `/modify-cancel-pending`, and direct `/modify` guards are otherwise well-designed and functional.
 
 ---
 
 ## 4. Conclusion
 
-O Milestone 1 (Backend Core & Database Layer) está funcionalmente e arquiteturalmente excelente, com persistência atômica blindada, integridade SHA-256 perfeita e motor de regras preciso.
+**Verdict: REQUEST_CHANGES**
 
-No entanto, o veredito emitido é **`REQUEST_CHANGES`** devido ao travamento incondicional do processo no comando de teste mandatório:
-- **Problema**: `node --test tests/whatsapp-ai-agent.test.mjs` conclui os 15 testes mas trava sem sair (hang no event loop por handles do `demo-server.mjs`).
-- **Ação Requerida**: O worker deve adicionar o hook `after(() => { setTimeout(() => { process.exit(0); }, 50); });` ao final do arquivo `tests/whatsapp-ai-agent.test.mjs` (ou isolar a importação de `demo-server.mjs`) para que o comando conclua com exit code 0 em ~150ms.
+The implementer (`m1_worker`) must remediate:
+1. **Critical Concurrency Flaw**: Add synchronous in-flight locking (`pending._committing = true`) and strict deduplication in `commitPendingModification` (check if `r.payments.some(p => p.pendingId === pending.pendingId)` or `pending._committed`) to ensure that concurrent polling requests execute the settlement mutation exactly once.
+2. **Guest Clamping Flaw**: Replace `Number(newGuestCount) || r.guestCount || 1` with an explicit check (`newGuestCount != null ? Number(newGuestCount) : r.guestCount`) so `0` is clamped to `1`.
+3. Ensure SHA-256 parity is strictly maintained between `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs`.
+4. Ensure both `node --test tests/m1-reservation-modification-settlement.test.mjs` and `node --test tests/challenger-m1-adversarial-modification.test.mjs` pass 100% with exit code 0.
 
 ---
 
 ## 5. Verification Method
 
-Para verificar a resolução do apontamento:
+To verify the remediation:
 
-1. Executar o comando de teste principal:
+1. **Verify SHA-256 Twin Parity**:
    ```powershell
-   node --test tests/whatsapp-ai-agent.test.mjs
+   Get-FileHash scripts/demo-server.mjs, artifacts/api-server/demo-server.mjs -Algorithm SHA256
    ```
-   *Critério de aprovação*: 15 testes aprovados, duração < 500ms, retorno imediato do prompt e exit code 0 (sem pendência em background).
+   Both hashes must match identically.
 
-2. Reconfirmar a paridade SHA-256:
-   ```powershell
-   node -e "const crypto = require('crypto'); const fs = require('fs'); const getHash = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex'); const pairs = [ ['artifacts/api-server/whatsapp-ai-service.mjs', 'scripts/whatsapp-ai-service.mjs'], ['artifacts/api-server/zapi-service.mjs', 'scripts/zapi-service.mjs'], ['artifacts/api-server/demo-server.mjs', 'scripts/demo-server.mjs'] ]; pairs.forEach(([a, b]) => { const hA = getHash(a); const hB = getHash(b); if (hA !== hB) throw new Error('Mismatch: ' + a); console.log('MATCH:', a, hA); });"
+2. **Run Milestone 1 Core Test Suite**:
+   ```bash
+   node --test tests/m1-reservation-modification-settlement.test.mjs
    ```
+   Expected: 15 passing tests, 0 failures, exit code 0.
+
+3. **Run Milestone 1 Adversarial Challenger Suite**:
+   ```bash
+   node --test tests/challenger-m1-adversarial-modification.test.mjs
+   ```
+   Expected: 25 passing tests, 0 failures, exit code 0 (specifically confirming Challenge 6.1 and Challenge 2.2 pass).
+
+4. **Run Baseline Integration Checks**:
+   ```bash
+   node --test tests/bot-actions-api.test.mjs
+   node --test tests/tariff-engine.test.mjs
+   ```
+   Expected: All passing, 0 regressions.

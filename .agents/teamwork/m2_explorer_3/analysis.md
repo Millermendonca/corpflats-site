@@ -1,647 +1,915 @@
-# Análise Técnica & Design de Testes — Milestone 2 Explorer 3
+# Relatório de Análise Técnica — Milestone 2 Explorer 3
 
-## 1. Resumo Executivo
-
-Esta investigação analisa a integração dinâmica da Base de Conhecimento e FAQ (Sofia AI) no serviço `whatsapp-ai-service.mjs` e o desenho da suíte de testes de regressão e aceitação do Milestone 2 para `tests/whatsapp-ai-agent.test.mjs`.
-
-O motor Sofia opera em dois níveis complementares:
-1. **Nível 1 (Google Gemini AI via API / Multi-turn Function Calling)**: Injeção dinâmica no system prompt de todas as FAQs com `status === 'ativo'` aplicáveis ao hóspede (`isFaqApplicableToClient`), formatadas sob o bloco oficial `## BASE DE CONHECIMENTO & REGRAS (FAQS ATIVAS):`. Hóspedes em listas de exclusão (`exclude`) ou não pertencentes a regras restritas (`include_only`) não têm acesso às diretrizes restritas no contexto de LLM.
-2. **Nível 2 (Contingência Heurística Local de Alta Confiabilidade - Zero-Crash Fallback)**: Executada quando a API do Gemini estiver indisponível, sem cota ou em caso de timeout. A função `generateHeuristicResponse` foi desenhada para buscar dinamicamente em palavras-chave e variações das FAQs ativas aplicáveis antes de cair na resposta genérica de transbordo da concierge, respeitando as regras de segmentação.
-
-Adicionalmente, desenhou-se o conjunto completo de 4 testes adicionais (Testes 21 a 24) para `tests/whatsapp-ai-agent.test.mjs`, cobrindo de ponta a ponta os requisitos R2, R3, R4 e R5 da especificação original.
+**Agente**: `m2_explorer_3` (Papéis: Explorer, Investigação, Síntese)  
+**Data**: 2026-10-11T14:52:00Z  
+**Diretório de Trabalho**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_explorer_3`  
+**Escopo**: Milestone 2 — Ciclo de Vida de Re-Assinatura, Entrega de Documentos Forenses e Sincronização Operacional de Agendadores.
 
 ---
 
-## 2. Diagnóstico da Arquitetura Atual
+## 1. Sumário Executivo & Delimitação do Problema
 
-### 2.1 Ponto de Entrada: `generateAiWhatsAppResponse`
-- Localização: `artifacts/api-server/whatsapp-ai-service.mjs:1252` e `scripts/whatsapp-ai-service.mjs:1252` (arquivos duplamente espelhados com exigência de SHA-256 idêntico por `tests/whatsapp-ai-agent.test.mjs:351`).
-- Atualmente, o `contextString` montado para a instrução de sistema do Gemini inclui apenas campos estáticos de `aiConfig.knowledgeBase` (como Wi-Fi padrão, horários de check-in/out e endereço), sem carregar a coleção `db.faqItems`.
-- **Necessidade**: Filtrar `db.faqItems` com `faq.status === 'ativo' && isFaqApplicableToClient(faq, phone)` e concatenar o bloco estruturado `## BASE DE CONHECIMENTO & REGRAS (FAQS ATIVAS):` no `contextString`.
-
-### 2.2 Contingência Heurística: `generateHeuristicResponse`
-- Localização: `artifacts/api-server/whatsapp-ai-service.mjs:1025` e `scripts/whatsapp-ai-service.mjs:1025`.
-- Atualmente possui 8 regras estáticas (Wi-Fi, café da manhã, garagem, localização, check-out, quarto pronto, reservas e saudação), caindo na regra 9 ("Resposta padrão prestativa") caso nenhuma regex seja satisfeita.
-- **Necessidade**: Antes de cair na regra 9 (como regra 8.5), receber a lista de FAQs aplicáveis (via 4º parâmetro ou contexto) e realizar pesquisa por matching de palavras-chave (`faq.keywords`), variações (`faq.variations`) e pergunta principal (`faq.question`) com normalização de acentos e tokens.
-
-### 2.3 Regras de Segmentação: `isFaqApplicableToClient`
-- Já exportado em `zapi-service.mjs:1120` e re-exportado em `whatsapp-ai-service.mjs:17`.
-- Trata perfeitamente:
-  - `status !== "ativo"` -> `false`
-  - `scope === "all"` -> `true`
-  - `scope === "exclude"` -> `false` se o telefone do cliente bater com algum número da lista (com normalização DDI 55, DDD e 8/9 dígitos via `matchClientPhone`), caso contrário `true`.
-  - `scope === "include_only"` -> `true` apenas se houver correspondência exata de telefone.
+O Milestone 2 da CorpFlats trata da governança jurídica e operacional quando uma reserva confirmada sofre alteração em suas datas (`checkinDate`/`checkoutDate`) ou na acomodação designada (`flatNumber`/`flatId`). O escopo do Explorer 3 foca nos seguintes pilares:
+1. **Geração Forense do PDF da FNRH Re-assinada**: emissão de documento comprobatório atualizado contendo o novo flat, novo período, UUID único e cálculo canônico de integridade SHA-256.
+2. **Entrega Automática por E-mail à Portaria/Recepção**: envio assíncrono imediato (`sendEmailAsync`) da ficha recém-assinada anexada em PDF para o e-mail da recepção do edifício, garantindo que a portaria possua o termo assinado mesmo em estadias futuras.
+3. **Sincronização em Tempo Real do Painel da Recepção (`/api/reception/today`)**: bloqueio de check-in físico e exibição de alerta de pendência enquanto `r.needsReSignature === true`.
+4. **Sincronização de Agendadores Operacionais**:
+   - Limpeza incondicional dos carimbos matinais (`morningEmailSentDate`, `morningEmailSentAt`, `receptionNotifiedAt`) em qualquer alteração da data de check-in, garantindo que a rotina matinal das 07:00 dispare pontualmente no novo dia de chegada.
+   - Sincronização e cancelamento/reativação dos pedidos de café da manhã fora/dentro da nova janela da estadia (`db.breakfastOrders`).
+   - Ajuste das ordens de governança e limpeza de turnover (`db.cleaningRequests`) para a nova data de check-out e novo flat.
+5. **Formulação da Bateria de Testes Automatizados**: especificação integral da suíte pontual `tests/m2-re-signature-operations-sync.test.mjs` cobrindo todos os invariantes do Milestone 2.
 
 ---
 
-## 3. Especificação Detalhada da Integração no Motor Sofia
+## 2. Observações Forenses do Código-Fonte
 
-### 3.1 Injeção Dinâmica no Prompt do Gemini (`generateAiWhatsAppResponse`)
+### 2.1. Geração de PDF e Hash SHA-256 (`scripts/fnrh-pdf-service.mjs`)
+- **Linhas 71-105**: `generateFnrhPdf({ reservation, guestData, signatureBase64, ... })` cria um novo UUID v4 (`documentUuid = crypto.randomUUID()`), gera carimbo em Horário de Brasília e define o caminho do arquivo em `secure_uploads/fnrh_documents/`.
+- **Linhas 194-205**: O cabeçalho e a seção 1 da ficha renderizam dinamicamente a acomodação atual (`reservation.flatNumber || reservation.flatId`), check-in (`reservation.checkinDate` às `reservation.checkinTime`) e check-out (`reservation.checkoutDate` às `reservation.checkoutTime`).
+- **Linhas 428-448**: Calcula o `canonicalHash` a partir do payload canônico normalizado via `crypto.createHash("sha256")` e grava a trilha no rodapé forense do PDF.
+- **Linhas 466-469**: Calcula o `sha256Hash` físico do arquivo final gerado em disco (`finalFileSha256 = crypto.createHash("sha256").update(fileBuffer).digest("hex")`).
+- **Retorno (Linhas 485-534)**: Retorna `{ filePath, fileName, fileUrl, downloadUrl, r2Url, token, documentUuid, sha256Hash, canonicalHash, signedAt, auditTrail }`.
 
-No fluxo de construção do `contextString`:
+### 2.2. Pré-Check-in e Disparo de E-mail (`scripts/demo-server.mjs`)
+- **Linhas 21140-21225**: `POST /api/pms/pre-checkin` invoca `generateFnrhPdf`. Persiste `fnrhDocument.auditTrail` em `db.fnrhAuditDocuments` e salva `fnrhDocument.documentUuid`, `fnrhDocument.sha256Hash`, `fnrhDocument.fileUrl` em `r` e no `targetGuest`.
+- **Linhas 21230-21290**: O envio de e-mail de notificação à recepção com o PDF em anexo possui atualmente uma trava estrita:
+  ```javascript
+  const brToday = getBrasiliaTodayStr();
+  const isCheckinTodayOrPast = isReservationForTodayOrPast(r);
+  if (isCheckinTodayOrPast) { ... }
+  ```
+  *Problema identificado*: Se uma reserva futura (ex.: chegada em 5 dias) tem suas datas/apartamento alterados e o hóspede re-assina a ficha digital, a recepção **não** recebia o novo documento imediatamente devido a `!isCheckinTodayOrPast`, descumprindo o Requisito R3 (linha 110/128 do ORIGINAL_REQUEST.md: *"Once the guest re-signs, the newly signed check-in document must be generated and automatically delivered to the building reception"*).
+
+### 2.3. Painel da Recepção (`GET /api/reception/today` & `POST /api/reception/checkin/:id`)
+- **Linhas 18756-18995**: `GET /api/reception/today` lista as chegadas previstas para hoje.
+  - Linha 18841: Atualmente define `hasCompletedCheckin: Boolean(r.fnhrCompleted && !r.needsReSignature)`.
+  - Linhas 18857-18858: `const allCheckinDone = guestList.every(g => g.hasCompletedCheckin);`
+  - Linhas 18916-18925: Se `!allCheckinDone`, exibe aviso de pendente, mas **não** possui mensagem explícita orientando que o motivo do bloqueio é a re-assinatura obrigatória em caso de alteração de reserva.
+  - Linha 18992: `hasPreCheckin: Boolean((r.fnhrCompleted && !r.needsReSignature) || someCheckinDone)`. *Falha lógica*: Se `someCheckinDone` for `true` em objeto antigo mas `r.needsReSignature === true`, `hasPreCheckin` ainda avaliava como `true`.
+- **Linhas 19143-19225**: `POST /api/reception/checkin/:reservationId` (registro de entrada física no tablet). Não impedia explicitamente a entrada se `r.needsReSignature === true`, permitindo potencial liberação indevida na portaria sem termo atualizado.
+
+### 2.4. Rotina Matinal das 07:00 (`scripts/demo-server.mjs:32379-32461`)
+- O agendador executa a cada 5 minutos e filtra:
+  ```javascript
+  const todayCheckins = db.reservations.filter(r =>
+    r.checkinDate === todayStr &&
+    r.status !== "cancelada" &&
+    r.status !== "cancelled" &&
+    r.morningEmailSentDate !== todayStr
+  );
+  ```
+  Ao despachar o e-mail das 07:00, carimba `r.morningEmailSentDate = todayStr;`.
+  Se a data de check-in for alterada de hoje para outra data futura ou de um dia para outro, `r.morningEmailSentDate` **precisa ser deletado** (`delete r.morningEmailSentDate`) para que a rotina matinal seja acionada normalmente no novo dia de chegada.
+
+### 2.5. Reconciliação de Governança e Café da Manhã nas Vias de Modificação
+- **`commitPendingModification` (linhas 15836-15876)**:
+  - Cancela pedidos de café fora da nova janela via `computeBreakfastCancellationReason` e reativa os pedidos válidos.
+  - Atualiza solicitação de limpeza de turnover (`c.requestDate === oldCheckout || c.requestDate === oldCheckin`) para o novo `targetCheckout` e transfere o apartamento se houve troca de flat.
+  - *Lacuna identificada*: No agendador matinal (linha 15852), limpava os carimbos matinais apenas se `isReservationForFuture(r)`, em vez de limpar incondicionalmente sempre que `oldCheckin !== targetCheckin`.
+- **`POST /api/pms/guest-portal/:code/modify` (linhas 16934-16988)**:
+  - Em `db.cleaningRequests`, buscava `c.requestDate === r.checkinDate` depois que `r.checkinDate` já havia sido sobrescrito para `newCheckinDate`, falhando em encontrar a limpeza anterior vinculada a `oldCheckout` ou `oldCheckin`.
+  - Não sincronizava o número do flat nos pedidos de café da manhã caso houvesse troca de flat.
+- **`PUT /api/pms/reservations/:id` (linhas 14341-14349)**:
+  - Limpava `morningEmailSentDate` apenas se `isReservationForFuture(r)` e não atualizava a data de limpeza de turnover quando `oldCheckout !== r.checkoutDate`.
+
+---
+
+## 3. Cadeia Lógica & Arquitetura da Solução
+
+### 3.1. Re-Assinatura e Geração do PDF com Hash Canônico
+1. **Detecção de Re-Assinatura**: Em `POST /api/pms/pre-checkin`, o servidor detecta se a requisição é uma renovação de assinatura:
+   ```javascript
+   const wasReSignature = Boolean(
+     r.needsReSignature || 
+     targetGuest.needsReSignature || 
+     req.body.resign === "1" || 
+     req.body.isReSignature === true || 
+     req.query.resign === "1"
+   );
+   ```
+2. **Atualização Cadastral e Limpeza de Flags**:
+   - Atualiza dados do hóspede e sua assinatura (`signatureBase64`/`signatureUrl`).
+   - `targetGuest.needsReSignature = false;`
+   - `targetGuest.hasCompletedCheckin = true;`
+   - Se todos os hóspedes da reserva estiverem sem pendência de re-assinatura (`!r.guests.some(g => g.needsReSignature)`):
+     - `r.needsReSignature = false;`
+     - `delete r.reSignatureReason;`
+     - `r.fnhrCompleted = true;`
+3. **Emissão Forense**:
+   - `generateFnrhPdf` recebe a reserva `r` com os dados atuais (novo flat, novas datas).
+   - Produz `documentUuid`, `canonicalHash` e `sha256Hash`.
+   - Salva em disco e associa a `r.fnrhDocumentUuid`, `r.fnrhSha256Hash`, `r.fnrhCanonicalHash`, `r.fnrhPdfUrl`.
+   - Registra o evento no histórico forense: `logFnrhInternalAudit({ action: wasReSignature ? "FNRH_RE_SIGNED" : "FNRH_SIGNED", ... })`.
+
+### 3.2. Entrega Automática à Recepção do Edifício
+1. **Regra de Disparo Imediato**:
+   O envio automático por e-mail (`sendEmailAsync`) deve ocorrer imediatamente se:
+   - A reserva for para hoje ou passado (`isCheckinTodayOrPast`), **OU**
+   - Trata-se de uma **re-assinatura** (`wasReSignature === true`), independentemente da data de check-in ser futura.
+2. **Construção do E-mail e Anexos**:
+   - Destinatário: e-mail da portaria (`flat.receptionEmail || db.settings.receptionEmail || process.env.RECEPTION_EMAIL`).
+   - CC: e-mail da garagem se houver veículo na reserva.
+   - Assunto: se `wasReSignature`, inclui indicativo explícito: `"[RE-ASSINATURA CHECK-IN] Termo Atualizado - Flat ${r.flatNumber} - ${validName}"`.
+   - Anexos: o arquivo físico recém-gerado da FNRH PDF é incluído obrigatoriamente em `attachments`.
+   - Metadados: `{ trigger: wasReSignature ? "re_signature_checkin" : "pre_checkin", isReSignature: wasReSignature, fnrhSha256Hash: fnrhDocument.sha256Hash }`.
+3. **Carimbo Matinal**:
+   - Se for para hoje (`isCheckinTodayOrPast`): define `r.morningEmailSentDate = brToday;` para evitar duplicidade na rotina matinal das 07:00.
+   - Se for para data futura: **não** define `r.morningEmailSentDate`, permitindo que o envio de boas-vindas das 07:00 ocorra no dia exato da chegada.
+
+### 3.3. Sincronização do Painel da Recepção (`/api/reception/today`)
+1. **Isolamento de Estado**:
+   Enquanto `r.needsReSignature === true`:
+   - `allCheckinDone = false;`
+   - `someCheckinDone = false;`
+   - `hasPreCheckin = false;`
+   - `canAuthorizeEntry = false;`
+   - `entryBadgeType = "error";`
+   - `entryMessage = "Check-in Pendente (Re-assinatura de Termo Obrigatória)";`
+   - Cada hóspede no payload tem `needsReSignature: true` e `hasCompletedCheckin: false`.
+2. **Barreira no Endpoint de Entrada Física**:
+   Em `POST /api/reception/checkin/:reservationId`:
+   ```javascript
+   if (r.needsReSignature && !req.body.adminOverride) {
+     return res.status(400).json({
+       error: "Não é possível liberar a entrada: Re-assinatura de termo obrigatória devido a alterações na reserva (datas/acomodação). O hóspede precisa assinar o termo atualizado antes da liberação.",
+       needsReSignature: true,
+       reSignatureReason: r.reSignatureReason || "Alteração no período da estadia ou flat"
+     });
+   }
+   ```
+   Isso impede qualquer tentativa de liberação física indevida antes da formalização do documento assinado.
+
+### 3.4. Sincronização dos Agendadores Operacionais
+1. **Limpeza Incondicional do Carimbo Matinal**:
+   Sempre que `oldCheckin !== newCheckinDate`:
+   ```javascript
+   delete r.morningEmailSentDate;
+   delete r.morningEmailSentAt;
+   delete r.receptionNotifiedAt;
+   if (r.vehicle) {
+     delete r.vehicle.garageNotifiedAt;
+     delete r.vehicle.lastNotifiedPlate;
+   }
+   ```
+   Isso assegura que, quando chegar a nova data de check-in, a rotina das 07:00 identificará `r.morningEmailSentDate !== todayStr` e disparará o e-mail de chegada para a portaria.
+2. **Café da Manhã**:
+   Pedidos com data `< newCheckinDate` ou `> newCheckoutDate` recebem `status: "cancelled"` com justificativa gerada por `computeBreakfastCancellationReason`. Pedidos que voltam ao intervalo válido retornam para `pending`. Se o flat mudou, `o.roomNumber` e `o.flatNumber` são atualizados.
+3. **Governança / Limpeza de Turnover**:
+   A solicitação de limpeza associada ao checkout da reserva (`c.requestDate === oldCheckout || c.requestDate === oldCheckin`) tem suas propriedades `requestDate` e `effectiveDate` atualizadas para `newCheckoutDate`, e o número do flat sincronizado se houve troca.
+
+---
+
+## 4. Blueprints de Código (Exatas Modificações Drop-in)
+
+### Blueprint 1: `scripts/demo-server.mjs` & `artifacts/api-server/demo-server.mjs`
+#### Localização: `POST /api/pms/pre-checkin` (Linhas ~21140 a 21312)
+
 ```javascript
-// 1. Coleta e filtragem de FAQs ativas aplicáveis
-const allFaqItems = Array.isArray(db?.faqItems)
-  ? db.faqItems
-  : (Array.isArray(db?.knowledgeBaseFaq) ? db.knowledgeBaseFaq : []);
+// <<<< SUBST / INSERÇÃO EM POST /api/pms/pre-checkin >>>>
 
-const applicableFaqs = allFaqItems.filter(faq => {
-  return faq && faq.status === "ativo" && isFaqApplicableToClient(faq, phone);
-});
+  // 0. Detecção se é processo de re-assinatura decorrente de alteração
+  const wasReSignature = Boolean(
+    r.needsReSignature ||
+    targetGuest?.needsReSignature ||
+    req.body.resign === "1" ||
+    req.body.isReSignature === true ||
+    req.query.resign === "1"
+  );
 
-// 2. Formatação do bloco Markdown
-let dynamicFaqPromptSection = "";
-if (applicableFaqs.length > 0) {
-  const formattedFaqs = applicableFaqs.map((faq, idx) => {
-    const vars = Array.isArray(faq.variations) && faq.variations.length > 0
-      ? `\n  - Variações comuns: ${faq.variations.slice(0, 3).join("; ")}`
-      : "";
-    const kw = Array.isArray(faq.keywords) && faq.keywords.length > 0
-      ? ` (Palavras-chave: ${faq.keywords.join(", ")})`
-      : "";
-    return `[FAQ #${idx + 1} - Categoria: ${(faq.category || "geral").toUpperCase()}]
-- Pergunta: ${faq.question}${kw}${vars}
-- Resposta Oficial: ${faq.answer}`;
-  }).join("\n\n");
+  // ... [Geração do PDF via generateFnrhPdf mantém-se] ...
+  if (fnrhDocument) {
+    if (!db.fnrhAuditDocuments) db.fnrhAuditDocuments = [];
+    db.fnrhAuditDocuments.unshift(fnrhDocument.auditTrail);
 
-  dynamicFaqPromptSection = `
-## BASE DE CONHECIMENTO & REGRAS (FAQS ATIVAS):
-Abaixo estão as perguntas e respostas oficiais da CorpFlats ativas e aplicáveis a este hóspede. Priorize rigorosamente estas respostas oficiais para quaisquer dúvidas correspondentes:
+    targetGuest.whatsapp2faVerified = whatsapp2faVerified;
+    targetGuest.whatsappPhone = verifiedOtpRecord ? verifiedOtpRecord.phone : null;
+    r.whatsapp2faVerified = whatsapp2faVerified;
+    r.whatsappPhone = verifiedOtpRecord ? verifiedOtpRecord.phone : null;
+    targetGuest.fnrhDocumentUuid = fnrhDocument.documentUuid;
+    targetGuest.fnrhPdfUrl = fnrhDocument.fileUrl;
+    targetGuest.fnrhDownloadUrl = fnrhDocument.downloadUrl;
+    targetGuest.r2Url = fnrhDocument.r2Url;
+    targetGuest.fnrhSha256Hash = fnrhDocument.sha256Hash;
+    targetGuest.fnrhCanonicalHash = fnrhDocument.canonicalHash;
+    targetGuest.fnrhVerifyUrl = fnrhDocument.verifyUrl;
+    targetGuest.fnrhSignedAt = fnrhDocument.signedAt;
+    targetGuest.fnrhAuditTrail = fnrhDocument.auditTrail;
+    targetGuest.fnrhFileName = fnrhDocument.fileName;
+    targetGuest.fnrhFilePath = fnrhDocument.filePath;
+    targetGuest.status = "CHECKED_IN";
+    targetGuest.hasCompletedCheckin = true;
+    targetGuest.needsReSignature = false;
 
-${formattedFaqs}
-`;
-}
-```
-
-O `dynamicFaqPromptSection` é inserido imediatamente antes de `${systemActionsNotice}` no `contextString`, garantindo visibilidade primária pelo modelo Gemini.
-
-### 3.2 Pesquisa Heurística Dinâmica (`generateHeuristicResponse`)
-
-A assinatura de `generateHeuristicResponse` é expandida com suporte retrocompatível ao 4º argumento:
-```javascript
-export function generateHeuristicResponse(messageText = "", guestContext = {}, aiConfig = DEFAULT_AI_CONFIG, dbOrFaqs = null)
-```
-
-Resolução de FAQs ativas aplicáveis:
-```javascript
-let candidateFaqs = [];
-if (Array.isArray(dbOrFaqs)) {
-  candidateFaqs = dbOrFaqs;
-} else if (dbOrFaqs && typeof dbOrFaqs === "object") {
-  const raw = dbOrFaqs.faqItems || dbOrFaqs.knowledgeBaseFaq || [];
-  candidateFaqs = Array.isArray(raw) ? raw : [];
-} else if (aiConfig && Array.isArray(aiConfig.faqItems)) {
-  candidateFaqs = aiConfig.faqItems;
-} else if (typeof globalThis !== "undefined" && Array.isArray(globalThis.db?.faqItems)) {
-  candidateFaqs = globalThis.db.faqItems;
-}
-
-const clientPhone = guestContext?.phone || (typeof guestContext === "string" ? guestContext : null);
-const activeFaqs = candidateFaqs.filter(faq => {
-  return faq && faq.status === "ativo" && isFaqApplicableToClient(faq, clientPhone);
-});
-```
-
-Algoritmo de Matching e Pontuação (Passo 8.5):
-```javascript
-if (activeFaqs.length > 0) {
-  const cleanQuery = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  const queryTokens = cleanQuery.split(/[\s,.;:?!+=\-_/\\()]+/).filter(w => w.length > 2);
-
-  let bestFaq = null;
-  let highestScore = 0;
-
-  for (const faq of activeFaqs) {
-    let score = 0;
-    const qNorm = (faq.question || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-
-    // 1. Coincidência com pergunta principal
-    if (cleanQuery.includes(qNorm) || (qNorm.length > 8 && qNorm.includes(cleanQuery))) {
-      score += 80;
+    // Preserva status como "confirmada" caso não esteja in_house/checkin
+    if (!r.status || r.status === "CHECKED_IN" || r.status === "pre_reserva") {
+      r.status = "confirmada";
+    }
+    r.checkedInAt = fnrhDocument.signedAt;
+    r.signatureUrl = effectiveSignature;
+    if (Number(guestIndex) === 1) {
+      r.fnrhPdfUrl = fnrhDocument.fileUrl;
+      r.fnrhDownloadUrl = fnrhDocument.downloadUrl;
+      r.r2Url = fnrhDocument.r2Url;
+      r.fnrhDocumentUuid = fnrhDocument.documentUuid;
+      r.fnrhSha256Hash = fnrhDocument.sha256Hash;
+      r.fnrhCanonicalHash = fnrhDocument.canonicalHash;
+      r.fnrhVerifyUrl = fnrhDocument.verifyUrl;
+      r.fnrhSignedAt = fnrhDocument.signedAt;
+      r.fnrhAuditTrail = fnrhDocument.auditTrail;
+      r.fnrhFileName = fnrhDocument.fileName;
+      r.fnrhFilePath = fnrhDocument.filePath;
     }
 
-    // 2. Coincidência com variações cadastradas
-    if (Array.isArray(faq.variations)) {
-      for (const variation of faq.variations) {
-        if (!variation) continue;
-        const vNorm = variation.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        if (cleanQuery.includes(vNorm) || (vNorm.length > 8 && vNorm.includes(cleanQuery))) {
-          score += 100;
-          break;
-        }
-        const vTokens = vNorm.split(/[\s,.;:?!+=\-_/\\()]+/).filter(w => w.length > 2);
-        const common = vTokens.filter(t => queryTokens.includes(t));
-        if (vTokens.length > 0 && common.length >= Math.min(2, vTokens.length)) {
-          score += Math.max(score, 40 + (common.length * 10));
-        }
-      }
-    }
-
-    // 3. Coincidência com palavras-chave cadastradas
-    if (Array.isArray(faq.keywords)) {
-      for (const keyword of faq.keywords) {
-        if (!keyword) continue;
-        const kNorm = keyword.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        if (kNorm.includes(" ")) {
-          if (cleanQuery.includes(kNorm)) {
-            score += 50;
-          }
-        } else if (kNorm.length >= 3) {
-          if (queryTokens.includes(kNorm)) {
-            score += 25;
-          } else if (cleanQuery.includes(kNorm)) {
-            score += 15;
-          }
-        }
-      }
-    }
-
-    if (score > highestScore) {
-      highestScore = score;
-      bestFaq = faq;
+    // Se todos os hóspedes foram liberados da re-assinatura, desmarca na reserva
+    const hasPendingGuestsReSign = Array.isArray(r.guests) && r.guests.some(g => g.needsReSignature);
+    if (!hasPendingGuestsReSign) {
+      r.needsReSignature = false;
+      delete r.reSignatureReason;
+      r.fnhrCompleted = true;
     }
   }
 
-  // Se score for satisfatório (pelo menos 1 palavra-chave exata ou variação identificada)
-  if (bestFaq && highestScore >= 25) {
-    return `Olá${name}! ${bestFaq.answer}`;
-  }
-}
-```
+  // Gatilho A & D: Envio Automático de Notificação à Recepção/Portaria e Garagem com FNRH PDF Anexo
+  // Despacha imediatamente se: (1) Check-in for hoje/passado OU (2) For uma Re-Assinatura de termo
+  const brToday = getBrasiliaTodayStr();
+  const isCheckinTodayOrPast = isReservationForTodayOrPast(r);
+  const shouldNotifyReception = Boolean(wasReSignature || isCheckinTodayOrPast);
 
-E no fallback heurístico de `generateAiWhatsAppResponse`:
-```javascript
-const heuristicText = generateHeuristicResponse(messageText, guestContext, aiConfig, applicableFaqs);
-```
+  if (shouldNotifyReception) {
+    try {
+      const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
+      const receptionEmail = flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
+      const garageEmail = db.settings?.garageEmail || process.env.GARAGE_EMAIL || "millerpessanha@gmail.com";
+      const { subject, bodyHtml } = renderCheckinConfirmedEmail({ reservation: r, flat, settings: db.settings });
 
----
-
-## 4. Design da Suíte de Testes para Milestone 2 (`tests/whatsapp-ai-agent.test.mjs`)
-
-Os testes abaixo devem ser adicionados na sequência dos testes existentes (após o teste 20), formando os testes 21, 22, 23 e 24.
-
-### Teste 21: Injeção Dinâmica de FAQs Ativas no Prompt do Gemini com Regras de Exceção por Cliente
-- **Objetivo**: Garantir que o system instruction enviado para a API do Google Gemini contenha o bloco `## BASE DE CONHECIMENTO & REGRAS (FAQS ATIVAS):` apenas com itens ativos e devidamente filtrados pelo motor de regras de exceção.
-- **Cenários testados**:
-  1. Hóspede padrão (`5522998505276`) recebe FAQs de escopo `all`, `include_only` (no qual seu telefone consta) e `exclude` (no qual seu telefone não consta).
-  2. FAQs com status `pendente` ou `aguardando_aprovacao` são rigorosamente excluídas do prompt.
-  3. Hóspede em lista de exclusão (`5521999990001`) NÃO recebe no prompt a FAQ da qual foi excluído.
-  4. Hóspede sem permissão em regra `include_only` NÃO recebe a respectiva FAQ no prompt.
-
-### Teste 22: Contingência Heurística Local com Pesquisa por Palavras-Chave e Variações em FAQs Ativas
-- **Objetivo**: Validar a capacidade do motor heurístico offline de responder dúvidas que constem no banco dinâmico antes de cair na resposta padrão.
-- **Cenários testados**:
-  1. Dúvida sobre louças do café ("O que fazer com as louças do café da manhã?") encontra `faq-recolhimento-loucas` e responde com as instruções de manter no quarto e não deixar no corredor.
-  2. Dúvida sobre pet ("Posso levar meu cachorro? Qual a taxa pet?") encontra `faq-regras-pets` e retorna as orientações pet friendly.
-  3. Cliente excluído de uma FAQ não recebe a resposta heurística restrita (caindo na mensagem padrão cordial).
-  4. FAQs não ativas (`pendente` ou `aguardando_aprovacao`) não são acionadas pela contingência heurística.
-
-### Teste 23: Auto-Aprendizado Inbound: Pergunta Inédita Não Mapeada Gera FAQ com Status 'pendente'
-- **Objetivo**: Validar que mensagens recebidas via webhook Z-API (`processAiInboundMessage`) com perguntas não reconhecidas que necessitem de atendimento humano criam automaticamente um registro na coleção `db.faqItems` com `status: "pendente"`.
-- **Cenários testados**:
-  1. Cliente envia pergunta inédita: "Vocês possuem tomada para recarga de carro elétrico na garagem?".
-  2. A mensagem aciona transbordo humano.
-  3. Criação automática de entrada em `db.faqItems` contendo:
-     - `status: "pendente"`
-     - `question` com o texto da mensagem
-     - `category` inferida ("garagem")
-     - `sourceClientPhone` e `clientPhones` com o telefone do remetente
-     - `createdAt` preenchido
-  4. Idempotência: envio repetido da mesma dúvida pendente não gera duplicatas.
-
-### Teste 24: Captura Automática de Resposta do Operador (`fromMe: true`) vinculando 'suggestedAnswer' e Status 'aguardando_aprovacao'
-- **Objetivo**: Validar que mensagens subsequentes enviadas pelo operador humano no chat vinculam automaticamente a resposta enviada à dúvida pendente como sugestão para aprovação.
-- **Cenários testados**:
-  1. Existência prévia de FAQ pendente para o cliente `5522998505276`.
-  2. Envio de mensagem pelo operador (`fromMe: true` ou via função de captura).
-  3. Atualização automática do registro:
-     - `status` promovido de `"pendente"` para `"aguardando_aprovacao"`
-     - `suggestedAnswer` preenchido com o texto digitado pelo operador
-     - `updatedAt` atualizado
-  4. Validação da janela temporal de 24 horas (mensagens antigas não são vinculadas).
-  5. Promoção para `"ativo"` via aprovação e disponibilização imediata para a Sofia.
-
----
-
-## 5. Diffs Recomendados para Implementação
-
-### 5.1 Arquivos Afetados
-- `artifacts/api-server/whatsapp-ai-service.mjs`
-- `scripts/whatsapp-ai-service.mjs` (espelho exato SHA-256)
-- `tests/whatsapp-ai-agent.test.mjs`
-
-### 5.2 Diff Proposto: `whatsapp-ai-service.mjs`
-
-```diff
---- artifacts/api-server/whatsapp-ai-service.mjs
-+++ artifacts/api-server/whatsapp-ai-service.mjs
-@@ -1022,9 +1022,25 @@
- /**
-  * Resposta Heurística de Contingência caso o Google Gemini esteja offline ou sem cota
-  */
--export function generateHeuristicResponse(messageText = "", guestContext = {}, aiConfig = DEFAULT_AI_CONFIG) {
-+export function generateHeuristicResponse(messageText = "", guestContext = {}, aiConfig = DEFAULT_AI_CONFIG, dbOrFaqs = null) {
-   const text = (messageText || "").toLowerCase().trim();
-   const kb = aiConfig.knowledgeBase || DEFAULT_AI_CONFIG.knowledgeBase;
-   const name = guestContext.guestName ? `, ${guestContext.guestName.split(" ")[0]}` : "";
- 
-+  // Extrai e filtra itens de FAQ ativos e aplicáveis ao cliente
-+  let candidateFaqs = [];
-+  if (Array.isArray(dbOrFaqs)) {
-+    candidateFaqs = dbOrFaqs;
-+  } else if (dbOrFaqs && typeof dbOrFaqs === "object") {
-+    const raw = dbOrFaqs.faqItems || dbOrFaqs.knowledgeBaseFaq || [];
-+    candidateFaqs = Array.isArray(raw) ? raw : [];
-+  } else if (aiConfig && Array.isArray(aiConfig.faqItems)) {
-+    candidateFaqs = aiConfig.faqItems;
-+  } else if (typeof globalThis !== "undefined" && Array.isArray(globalThis.db?.faqItems)) {
-+    candidateFaqs = globalThis.db.faqItems;
-+  }
-+
-+  const clientPhone = guestContext?.phone || (typeof guestContext === "string" ? guestContext : null);
-+  const activeFaqs = candidateFaqs.filter(faq => {
-+    return faq && faq.status === "ativo" && isFaqApplicableToClient(faq, clientPhone);
-+  });
-+
-   // 1. Wi-Fi / Internet
-@@ -1086,6 +1102,74 @@
-     return `Olá${name}! Sou a ${aiConfig.agentName}, concierge virtual da CorpFlats em Campos dos Goytacazes. Como posso te ajudar hoje? Ficou com alguma dúvida sobre nossas acomodações ou sobre sua estadia? 😊`;
-   }
- 
-+  // 8.5 Base Dinâmica de FAQs Ativas (Pesquisa Heurística por Perguntas, Variações e Palavras-chave)
-+  if (activeFaqs.length > 0) {
-+    const cleanQuery = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-+    const queryTokens = cleanQuery.split(/[\s,.;:?!+=\-_/\\()]+/).filter(w => w.length > 2);
-+
-+    let bestFaq = null;
-+    let highestScore = 0;
-+
-+    for (const faq of activeFaqs) {
-+      let score = 0;
-+      const qNorm = (faq.question || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-+
-+      // Coincidência com pergunta principal
-+      if (cleanQuery.includes(qNorm) || (qNorm.length > 8 && qNorm.includes(cleanQuery))) {
-+        score += 80;
-+      }
-+
-+      // Coincidência com variações da pergunta
-+      if (Array.isArray(faq.variations)) {
-+        for (const variation of faq.variations) {
-+          if (!variation) continue;
-+          const vNorm = variation.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-+          if (cleanQuery.includes(vNorm) || (vNorm.length > 8 && vNorm.includes(cleanQuery))) {
-+            score += 100;
-+            break;
-+          }
-+          const vTokens = vNorm.split(/[\s,.;:?!+=\-_/\\()]+/).filter(w => w.length > 2);
-+          const common = vTokens.filter(t => queryTokens.includes(t));
-+          if (vTokens.length > 0 && common.length >= Math.min(2, vTokens.length)) {
-+            score += Math.max(score, 40 + (common.length * 10));
-+          }
-+        }
-+      }
-+
-+      // Coincidência com palavras-chave
-+      if (Array.isArray(faq.keywords)) {
-+        for (const keyword of faq.keywords) {
-+          if (!keyword) continue;
-+          const kNorm = keyword.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-+          if (kNorm.includes(" ")) {
-+            if (cleanQuery.includes(kNorm)) {
-+              score += 50;
-+            }
-+          } else if (kNorm.length >= 3) {
-+            if (queryTokens.includes(kNorm)) {
-+              score += 25;
-+            } else if (cleanQuery.includes(kNorm)) {
-+              score += 15;
-+            }
-+          }
-+        }
-+      }
-+
-+      if (score > highestScore) {
-+        highestScore = score;
-+        bestFaq = faq;
-+      }
-+    }
-+
-+    if (bestFaq && highestScore >= 25) {
-+      return `Olá${name}! ${bestFaq.answer}`;
-+    }
-+  }
-+
-   // 9. Resposta padrão prestativa
-   return `Olá${name}! Recebi sua mensagem. Sou a ${aiConfig.agentName}, concierge virtual da CorpFlats 🏨.\n\nPosso te ajudar com informações sobre *Wi-Fi, horários de check-in/out, status do flat, garagem, café da manhã e localização*. Como posso te ajudar? Se preferir falar com um atendente da recepção, basta me avisar! ✨`;
- }
-@@ -1290,6 +1374,32 @@
- `;
-   }
- 
-+  // 2.1 Carrega e filtra FAQs dinâmicos ativos aplicáveis ao cliente
-+  const allFaqItems = Array.isArray(db?.faqItems)
-+    ? db.faqItems
-+    : (Array.isArray(db?.knowledgeBaseFaq) ? db.faqItems : []);
-+
-+  const applicableFaqs = allFaqItems.filter(faq => {
-+    return faq && faq.status === "ativo" && isFaqApplicableToClient(faq, phone);
-+  });
-+
-+  let dynamicFaqPromptSection = "";
-+  if (applicableFaqs.length > 0) {
-+    const formattedFaqs = applicableFaqs.map((faq, idx) => {
-+      const vars = Array.isArray(faq.variations) && faq.variations.length > 0
-+        ? `\n  - Variações comuns: ${faq.variations.slice(0, 3).join("; ")}`
-+        : "";
-+      const kw = Array.isArray(faq.keywords) && faq.keywords.length > 0
-+        ? ` (Palavras-chave: ${faq.keywords.join(", ")})`
-+        : "";
-+      return `[FAQ #${idx + 1} - Categoria: ${(faq.category || "geral").toUpperCase()}]
-+- Pergunta: ${faq.question}${kw}${vars}
-+- Resposta Oficial: ${faq.answer}`;
-+    }).join("\n\n");
-+
-+    dynamicFaqPromptSection = `
-+## BASE DE CONHECIMENTO & REGRAS (FAQS ATIVAS):
-+Abaixo estão as perguntas e respostas oficiais da CorpFlats ativas e aplicáveis a este hóspede. Priorize rigorosamente estas respostas oficiais para quaisquer dúvidas correspondentes:
-+
-+${formattedFaqs}
-+`;
-+  }
-+
-   const contextString = `
- [CONTEXTO EM TEMPO REAL]
- - Data atual: ${guestContext.todayStr} | Horário: ${guestContext.timeStr} (Brasília)
-@@ -1318,6 +1428,7 @@
- - Benefícios Reserva Direta: ${aiConfig.knowledgeBase.directBookingBenefits}
- - Site Oficial para Reservas: ${aiConfig.knowledgeBase.siteUrl}
- - WhatsApp da Recepção: ${aiConfig.knowledgeBase.receptionPhone}
-+${dynamicFaqPromptSection}
- ${systemActionsNotice}
- `;
-@@ -1353,7 +1464,7 @@
-   }
- 
-   // 4. Contingência Heurística Local de Alta Precisão (Zero-Crash Fallback)
--  const heuristicText = generateHeuristicResponse(messageText, guestContext, aiConfig);
-+  const heuristicText = generateHeuristicResponse(messageText, guestContext, aiConfig, applicableFaqs);
-   return {
-     shouldHandover: false,
-     replyText: heuristicText,
-```
-
----
-
-## 6. Código Completo dos Novos Testes M2 para `tests/whatsapp-ai-agent.test.mjs`
-
-```javascript
-  test("21. Injeção Dinâmica de FAQs Ativas no Prompt do Gemini com Regras de Exceção por Cliente", async () => {
-    const testDb = JSON.parse(JSON.stringify(mockDb));
-    testDb.settings.geminiApiKey = "TEST_GEMINI_KEY";
-    testDb.faqItems = [
-      {
-        id: "faq-visitas",
-        question: "Posso receber visitas no apartamento?",
-        answer: "Visitas são permitidas até às 22h com identificação prévia na portaria.",
-        category: "regras_visitas_pets",
-        status: "ativo",
-        scope: "all",
-        clientPhones: []
-      },
-      {
-        id: "faq-desconto-restrito",
-        question: "Tenho direito a desconto corporativo exclusivo?",
-        answer: "Sim, sua empresa possui tarifa com 15% de desconto direto.",
-        category: "reservas",
-        status: "ativo",
-        scope: "exclude",
-        clientPhones: ["5521999990001"]
-      },
-      {
-        id: "faq-vip-diretoria",
-        question: "Como funciona o upgrade VIP de quarto?",
-        answer: "Upgrades são concedidos sem custo para membros da diretoria CorpFlats.",
-        category: "reservas",
-        status: "ativo",
-        scope: "include_only",
-        clientPhones: ["5522998505276"]
-      },
-      {
-        id: "faq-pendente-teste",
-        question: "Vocês aceitam animais de grande porte?",
-        answer: "Apenas até 10kg.",
-        category: "regras_visitas_pets",
-        status: "pendente",
-        scope: "all",
-        clientPhones: []
-      },
-      {
-        id: "faq-aguardando-teste",
-        question: "Qual o tamanho da cama do flat?",
-        answer: "Cama Queen Size Ortobom.",
-        category: "estrutura_flat",
-        status: "aguardando_aprovacao",
-        scope: "all",
-        clientPhones: []
+      await ensureReservationAttachmentsReady({ reservation: r, guest, db, appOrigin: originHeader });
+      const emailAttachments = resolveReservationAttachments({ reservation: r, guest, db });
+      const safeValidName = validName
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^\w\s-]/gi, "")
+        .trim()
+        .replace(/\s+/g, "_");
+      const currentFnrhFilename = `FNRH_${r.code || r.id}_${safeValidName}.pdf`;
+      if (fnrhDocument?.filePath && fs.existsSync(fnrhDocument.filePath) && !emailAttachments.some(a => a.path === fnrhDocument.filePath || a.filename === currentFnrhFilename)) {
+        emailAttachments.unshift({
+          filename: currentFnrhFilename,
+          path: fnrhDocument.filePath
+        });
       }
+
+      const emailSubject = wasReSignature
+        ? `[RE-ASSINATURA CHECK-IN] Termo Atualizado - Flat ${r.flatNumber} - ${validName}`
+        : subject;
+
+      sendEmailAsync({
+        db,
+        saveDatabase,
+        reservationId: r.code || r.id,
+        recipient: receptionEmail,
+        cc: (r.vehicle?.plate && garageEmail !== receptionEmail) ? garageEmail : undefined,
+        subject: emailSubject,
+        bodyHtml,
+        type: "email",
+        direction: "outbound",
+        attachments: emailAttachments,
+        metadata: {
+          trigger: wasReSignature ? "re_signature_checkin" : "pre_checkin",
+          isReSignature: wasReSignature,
+          flatNumber: r.flatNumber,
+          guestName: validName,
+          buildingName: flat?.buildingName || db.settings?.buildingName || "Edifício Soho Residence Service",
+          hasPdfAttached: emailAttachments.some(a => a.filename?.includes("FNRH")),
+          hasDocumentAttached: emailAttachments.some(a => a.filename?.includes("Documento")),
+          attachmentsCount: emailAttachments.length,
+          receptionEmail,
+          garageEmail,
+          fnrhSha256Hash: fnrhDocument?.sha256Hash
+        }
+      });
+      r.receptionNotifiedAt = new Date().toISOString();
+      if (isCheckinTodayOrPast) {
+        r.morningEmailSentDate = brToday;
+        r.morningEmailSentAt = new Date().toISOString();
+      }
+    } catch (mailErr) {
+      console.warn("[MailService] Erro ao disparar aviso de check-in à portaria:", mailErr.message);
+    }
+  } else {
+    console.log(`[MailService ℹ️] Pré-check-in concluído com antecedência para ${r.code}. FNRH gerada e salva. Notificação à recepção agendada para o dia do check-in (${r.checkinDate}) às 07:00.`);
+  }
+```
+
+---
+
+### Blueprint 2: `GET /api/reception/today` (Linhas ~18830 a 18995)
+```javascript
+// <<<< SUBST / INSERÇÃO EM GET /api/reception/today >>>>
+
+        const isReSignatureNeeded = Boolean(r.needsReSignature);
+
+        // Quantidade de hóspedes autorizados (1, 2 ou 3)
+        const count = Math.min(Math.max(Number(r.guestCount) || Number(r.adults) || 1, 1), 3);
+        let guestList = Array.isArray(r.guests) && r.guests.length > 0 ? [...r.guests] : [];
+
+        if (guestList.length === 0) {
+          guestList.push({
+            index: 1,
+            name: r.guestName || guest.name || "Hóspede 1",
+            cpf: guest.document || "",
+            phone: r.guestPhone || guest.phone || "",
+            email: r.guestEmail || guest.email || "",
+            hasCompletedCheckin: Boolean(!isReSignatureNeeded && r.fnhrCompleted),
+            needsReSignature: isReSignatureNeeded,
+            checkinCompletedAt: r.fnhrCompleted && !isReSignatureNeeded ? r.updatedAt : null
+          });
+          for (let i = 2; i <= count; i++) {
+            guestList.push({
+              index: i,
+              name: `Hóspede ${i}`,
+              cpf: "",
+              phone: "",
+              email: "",
+              hasCompletedCheckin: false,
+              needsReSignature: isReSignatureNeeded,
+              checkinCompletedAt: null
+            });
+          }
+        } else if (isReSignatureNeeded) {
+          // Se a reserva requer re-assinatura, reflete o bloqueio em todos os hóspedes
+          guestList = guestList.map(g => ({
+            ...g,
+            needsReSignature: true,
+            hasCompletedCheckin: false
+          }));
+        }
+
+        const allCheckinDone = !isReSignatureNeeded && guestList.every(g => g.hasCompletedCheckin && !g.needsReSignature);
+        const someCheckinDone = !isReSignatureNeeded && guestList.some(g => g.hasCompletedCheckin && !g.needsReSignature);
+        const completedCount = guestList.filter(g => g.hasCompletedCheckin && !g.needsReSignature).length;
+        const totalCount = guestList.length;
+
+        // ... [cálculo de cleaningStatus e isRoomReady] ...
+
+        let canAuthorizeEntry = false;
+        let entryMessage = "";
+        let entryBadgeType = "neutral";
+
+        if (isReSignatureNeeded) {
+          canAuthorizeEntry = false;
+          entryMessage = "Check-in Pendente (Re-assinatura de Termo Obrigatória)";
+          entryBadgeType = "error";
+        } else if (!allCheckinDone) {
+          if (completedCount > 0) {
+            canAuthorizeEntry = isRoomReady && (isPastOrExact14h || earlyCheckinStatus === "Liberado");
+            entryMessage = `Entrada Parcial Liberada (${completedCount}/${totalCount} prontos)`;
+            entryBadgeType = "warning";
+          } else {
+            canAuthorizeEntry = false;
+            entryMessage = `Check-in Digital Pendente (0/${totalCount} concluído)`;
+            entryBadgeType = "error";
+          }
+        } else if (!isRoomReady) {
+          canAuthorizeEntry = false;
+          entryMessage = `Quarto não está pronto (${cleaningLabel})`;
+          entryBadgeType = "error";
+        } else if (isPastOrExact14h) {
+          canAuthorizeEntry = true;
+          entryMessage = "Check-in Regular (14:00)";
+          entryBadgeType = "success";
+        } else if (earlyCheckinStatus === "Liberado") {
+          canAuthorizeEntry = true;
+          entryMessage = isFirstStayCourtesy ? "🎁 Cortesia 1ª Reserva" : "⚡ Check-in Antecipado";
+          entryBadgeType = "success";
+        } else {
+          canAuthorizeEntry = false;
+          entryMessage = "Horário regular às 14:00 (Check-in antecipado não liberado)";
+          entryBadgeType = "warning";
+        }
+
+        return {
+          ...r,
+          fnrhPdfUrl: safePdfUrl,
+          fnrhDownloadUrl: safeDownloadUrl,
+          flatNumber: flat.number,
+          cleaningStatus,
+          cleaningLabel,
+          cleaningMinutes,
+          isRoomReady,
+          priorStayCount,
+          isFirstTimeGuest,
+          earlyCheckinStatus,
+          earlyCheckinReason,
+          isFirstStayCourtesy,
+          guestCount: count,
+          guests: guestList,
+          allCheckinDone,
+          someCheckinDone,
+          canAuthorizeEntry,
+          entryMessage,
+          entryBadgeType,
+          earlyCheckinAuthorized: isEarlyAuthorizedManual,
+          receptionNotes: r.receptionNotes || "",
+          guestPhoto: r.selfieUrl || guest.photoUrl || null,
+          docPhoto: r.docPhotoUrl || guest.docPhotoUrl || null,
+          signatureUrl: r.signatureUrl || null,
+          needsReSignature: isReSignatureNeeded,
+          reSignatureReason: r.reSignatureReason || (isReSignatureNeeded ? "Alteração no período da estadia ou acomodação" : null),
+          hasPreCheckin: Boolean(!isReSignatureNeeded && ((r.fnhrCompleted && !r.needsReSignature) || someCheckinDone))
+        };
+```
+
+---
+
+### Blueprint 3: `POST /api/reception/checkin/:reservationId` (Linhas ~19180)
+```javascript
+// <<<< GUARDA EM POST /api/reception/checkin/:reservationId >>>>
+
+  // Bloqueio mandatório: se a reserva requer re-assinatura de termo (datas ou flat alterados)
+  if (r.needsReSignature && !req.body.adminOverride) {
+    return res.status(400).json({
+      error: "Não é possível liberar a entrada: Re-assinatura de termo obrigatória devido a alterações na reserva (datas/acomodação). O hóspede precisa assinar o termo atualizado antes da liberação.",
+      needsReSignature: true,
+      reSignatureReason: r.reSignatureReason || "Alteração no período da estadia ou acomodação"
+    });
+  }
+```
+
+---
+
+### Blueprint 4: Sincronização dos Agendadores em Modificações
+#### A) Em `commitPendingModification`:
+```javascript
+  // Limpeza incondicional de carimbos da rotina matinal em mudança de check-in
+  if (oldCheckin !== targetCheckin) {
+    delete r.morningEmailSentDate;
+    delete r.morningEmailSentAt;
+    delete r.receptionNotifiedAt;
+    if (r.vehicle) {
+      delete r.vehicle.garageNotifiedAt;
+      delete r.vehicle.lastNotifiedPlate;
+    }
+  }
+
+  // Sincronização de pedidos de café se o flat mudar
+  if (targetFlatNumber && targetFlatNumber !== String(oldFlatNumber)) {
+    (db.breakfastOrders || []).forEach(o => {
+      if ((o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) || o.reservationId === r.id) {
+        o.roomNumber = targetFlatNumber;
+        o.flatNumber = targetFlatNumber;
+        if (targetFlatId) o.flatId = Number(targetFlatId) || targetFlatId;
+      }
+    });
+  }
+```
+
+#### B) Em `POST /api/pms/guest-portal/:code/modify`:
+```javascript
+  const oldCheckin = r.checkinDate;
+  const oldCheckout = r.checkoutDate;
+  const oldFlatNumber = r.flatNumber;
+
+  // ... [Atualização de datas e histórico] ...
+
+  // Limpeza incondicional de carimbos da rotina matinal
+  if (oldCheckin !== newCheckinDate) {
+    delete r.morningEmailSentDate;
+    delete r.morningEmailSentAt;
+    delete r.receptionNotifiedAt;
+    if (r.vehicle) {
+      delete r.vehicle.garageNotifiedAt;
+      delete r.vehicle.lastNotifiedPlate;
+    }
+  }
+
+  // Reconciliação de governança no checkout
+  if (Array.isArray(db.cleaningRequests)) {
+    const reqItem = db.cleaningRequests.find(c =>
+      (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber) || String(c.flatNumber) === String(oldFlatNumber)) &&
+      (c.requestDate === oldCheckout || c.requestDate === oldCheckin)
+    );
+    if (reqItem) {
+      reqItem.requestDate = newCheckoutDate;
+      reqItem.effectiveDate = newCheckoutDate;
+      if (targetFlatNumber && targetFlatNumber !== String(oldFlatNumber)) {
+        reqItem.flatNumber = targetFlatNumber;
+        if (targetFlatId) reqItem.flatId = Number(targetFlatId) || targetFlatId;
+      }
+    }
+  }
+```
+
+#### C) Em `PUT /api/pms/reservations/:id`:
+```javascript
+  // Limpeza incondicional dos carimbos matinais sempre que a data de checkin mudar
+  if (oldCheckin !== r.checkinDate) {
+    delete r.morningEmailSentDate;
+    delete r.morningEmailSentAt;
+    delete r.receptionNotifiedAt;
+    if (r.vehicle) {
+      delete r.vehicle.garageNotifiedAt;
+      delete r.vehicle.lastNotifiedPlate;
+    }
+  }
+
+  // Reconciliação de governança no checkout
+  if (oldCheckout !== r.checkoutDate && Array.isArray(db.cleaningRequests)) {
+    const reqItem = db.cleaningRequests.find(c =>
+      (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) &&
+      c.requestDate === oldCheckout
+    );
+    if (reqItem) {
+      reqItem.requestDate = r.checkoutDate;
+      reqItem.effectiveDate = r.checkoutDate;
+    }
+  }
+```
+
+---
+
+## 5. Especificação Completa da Suíte de Testes `tests/m2-re-signature-operations-sync.test.mjs`
+
+Abaixo está o arquivo completo e autônomo de testes para o Milestone 2, projetado segundo as regras estritas do projeto (porta isolada 3995, banco de dados temporário, destruição garantida de processos em `after()` e paridade byte-a-byte):
+
+```javascript
+/**
+ * Test Suite: Milestone 2 - Re-Signature Lifecycle, Forensic Document Delivery & Ops Sync
+ * File: tests/m2-re-signature-operations-sync.test.mjs
+ * Execution: node --test tests/m2-re-signature-operations-sync.test.mjs
+ */
+
+import { describe, it, before, after } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
+import { spawn, execSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const rootDir = path.resolve(__dirname, "..");
+
+const TEST_PORT = 3995;
+const BASE_URL = `http://127.0.0.1:${TEST_PORT}`;
+const prodDbPath = path.join(rootDir, "data/database.json");
+const isolatedDbPath = path.join(rootDir, `data/test-m2-ops-sync-db-${Date.now()}.json`);
+
+let serverProcess = null;
+
+function killProcessTree(pid) {
+  if (!pid) return;
+  try {
+    execSync(`taskkill /F /T /PID ${pid}`, { stdio: "ignore" });
+  } catch (_) {}
+}
+
+function getDb() {
+  return JSON.parse(fs.readFileSync(isolatedDbPath, "utf-8"));
+}
+
+describe("Milestone 2: Re-Signature Lifecycle, Document Delivery & Ops Synchronization Suite", () => {
+  before(async () => {
+    // 0. Limpeza preventiva da porta de teste
+    try {
+      const netstatOutput = execSync(`netstat -ano | findstr :${TEST_PORT}`, { encoding: "utf8" });
+      for (const line of netstatOutput.split("\n")) {
+        const parts = line.trim().split(/\s+/);
+        if (parts.length >= 5 && parts[1].endsWith(`:${TEST_PORT}`)) {
+          const pid = parts[parts.length - 1];
+          if (pid && pid !== "0") killProcessTree(pid);
+        }
+      }
+      await new Promise(r => setTimeout(r, 400));
+    } catch (_) {}
+
+    // 1. Inicializa banco de dados isolado com dados controlados
+    const initialDb = fs.existsSync(prodDbPath)
+      ? JSON.parse(fs.readFileSync(prodDbPath, "utf-8"))
+      : {};
+
+    initialDb.flats = [
+      { id: 1, number: "113", receptionEmail: "recepcao.113@corpflats.com.br" },
+      { id: 2, number: "114", receptionEmail: "recepcao.114@corpflats.com.br" }
     ];
 
-    const originalFetch = globalThis.fetch;
-    let interceptedInstruction = "";
+    initialDb.settings = {
+      ...(initialDb.settings || {}),
+      receptionEmail: "portaria.geral@corpflats.com.br",
+      garageEmail: "garagem@corpflats.com.br",
+      buildingName: "Edifício Soho Residence Service"
+    };
 
-    try {
-      globalThis.fetch = async (url, opts) => {
-        if (typeof url === "string" && url.includes("generativelanguage.googleapis.com")) {
-          const body = JSON.parse(opts.body);
-          const firstPart = body.contents?.[0]?.parts?.[0]?.text || "";
-          interceptedInstruction = firstPart;
-          return {
-            ok: true,
-            json: async () => ({
-              candidates: [
-                {
-                  content: {
-                    parts: [{ text: "Informação processada com base nas FAQs ativas oficiais." }]
-                  }
-                }
-              ]
-            })
-          };
-        }
-        return originalFetch(url, opts);
-      };
+    const todayStr = new Date().toISOString().substring(0, 10);
 
-      // 1. Cliente Autorizado (5522998505276): deve receber regras ativas aplicáveis
-      await generateAiWhatsAppResponse({
-        db: testDb,
-        phone: "5522998505276",
-        messageText: "Quais as regras de visitas e upgrades?"
-      });
-
-      assert.ok(interceptedInstruction.includes("## BASE DE CONHECIMENTO & REGRAS (FAQS ATIVAS):"), "System instruction deve conter o cabeçalho oficial de FAQs");
-      assert.ok(interceptedInstruction.includes("faq-visitas") || interceptedInstruction.includes("Visitas são permitidas"), "Deve conter FAQ com escopo 'all'");
-      assert.ok(interceptedInstruction.includes("desconto corporativo exclusivo"), "Deve conter FAQ 'exclude' para cliente não excluído");
-      assert.ok(interceptedInstruction.includes("upgrade VIP de quarto"), "Deve conter FAQ 'include_only' para cliente incluído");
-      assert.ok(!interceptedInstruction.includes("animais de grande porte"), "NÃO deve conter FAQ com status 'pendente'");
-      assert.ok(!interceptedInstruction.includes("Cama Queen Size"), "NÃO deve conter FAQ com status 'aguardando_aprovacao'");
-
-      // 2. Cliente Excluído (5521999990001): não deve receber a regra com escopo 'exclude'
-      interceptedInstruction = "";
-      await generateAiWhatsAppResponse({
-        db: testDb,
-        phone: "5521999990001",
-        messageText: "Quais são as regras?"
-      });
-
-      assert.ok(interceptedInstruction.includes("Visitas são permitidas"), "Deve manter FAQ com escopo 'all'");
-      assert.ok(!interceptedInstruction.includes("desconto corporativo exclusivo"), "NÃO deve conter FAQ da qual o cliente foi expressamente excluído");
-      assert.ok(!interceptedInstruction.includes("upgrade VIP de quarto"), "NÃO deve conter FAQ 'include_only' na qual o cliente não está listado");
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  });
-
-  test("22. Contingência Heurística Local com Pesquisa por Palavras-Chave e Variações em FAQs Ativas", () => {
-    const heuristicDb = {
-      faqItems: [
+    // Res 1: Reserva confirmada com check-in hoje que sofrerá invalidação e re-assinatura
+    const resToday = {
+      id: 8001,
+      code: "RES-M2-001",
+      guestName: "Marcos Paulo",
+      guestEmail: "marcospaulo@example.com",
+      guestPhone: "5522998881111",
+      guestDocument: "12345678901",
+      flatId: 1,
+      flatNumber: "113",
+      checkinDate: todayStr,
+      checkoutDate: "2026-10-18",
+      guestCount: 1,
+      dailyRate: 180,
+      totalAmount: 360,
+      paidAmount: 360,
+      paymentStatus: "pago_total",
+      status: "confirmada",
+      channel: "site_direto",
+      fnhrCompleted: true,
+      needsReSignature: false,
+      signatureUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+      morningEmailSentDate: todayStr,
+      guests: [
         {
-          id: "faq-recolhimento-loucas",
-          question: "O que fazer com as louças e a bandeja após o café da manhã?",
-          answer: "🍽️ Mantenha todas as louças dentro do flat. Não coloque no corredor nem entregue ao restaurante.",
-          category: "cafe_manha",
-          keywords: ["loucas", "louças", "bandeja", "recolhimento", "pratos", "talheres"],
-          variations: ["Onde deixo a bandeja e as louças do café?", "Quem recolhe a louça do quarto?"],
-          status: "ativo",
-          scope: "all",
-          clientPhones: []
-        },
-        {
-          id: "faq-pet-vip",
-          question: "Política de animais no flat",
-          answer: "🐾 Aceitamos pets de pequeno porte com taxa diária especial de R$ 50.",
-          category: "regras_visitas_pets",
-          keywords: ["pet", "pets", "cachorro", "gato", "taxa pet"],
-          variations: ["Posso levar meu cachorro?"],
-          status: "ativo",
-          scope: "exclude",
-          clientPhones: ["5521999990001"]
-        },
-        {
-          id: "faq-pendente-nao-ativo",
-          question: "Qual o tamanho da piscina?",
-          answer: "25 metros semiolímpica.",
-          category: "lazer_condominio",
-          keywords: ["piscina", "nadar"],
-          variations: [],
-          status: "pendente",
-          scope: "all",
-          clientPhones: []
+          index: 1,
+          name: "Marcos Paulo",
+          cpf: "12345678901",
+          phone: "5522998881111",
+          hasCompletedCheckin: true,
+          needsReSignature: false,
+          entryAuthorized: false
         }
       ]
     };
 
-    const ctx = buildGuestContext(mockDb, "5522998505276");
-    const aiConfig = getWhatsAppAiConfig(mockDb);
+    // Res 2: Reserva futura (para teste de e-mail na re-assinatura e limpeza de morningEmailSentDate)
+    const resFuture = {
+      id: 8002,
+      code: "RES-M2-002",
+      guestName: "Juliana Mendes",
+      guestEmail: "juliana@example.com",
+      guestPhone: "5522998882222",
+      guestDocument: "98765432100",
+      flatId: 2,
+      flatNumber: "114",
+      checkinDate: "2026-11-01",
+      checkoutDate: "2026-11-05",
+      guestCount: 1,
+      dailyRate: 200,
+      totalAmount: 800,
+      paidAmount: 800,
+      paymentStatus: "pago_total",
+      status: "confirmada",
+      channel: "whatsapp",
+      fnhrCompleted: true,
+      needsReSignature: false,
+      morningEmailSentDate: "2026-10-10",
+      guests: [
+        {
+          index: 1,
+          name: "Juliana Mendes",
+          cpf: "98765432100",
+          phone: "5522998882222",
+          hasCompletedCheckin: true,
+          needsReSignature: false
+        }
+      ]
+    };
 
-    // 1. Encontra por variação exata/parcial e palavras-chave de louças
-    const replyLoucas = generateHeuristicResponse("Onde deixo as louças e a bandeja do café?", ctx, aiConfig, heuristicDb);
-    assert.ok(replyLoucas.includes("Mantenha todas as louças dentro do flat"), "Deve responder com conteúdo da FAQ de recolhimento de louças");
+    initialDb.reservations = [resToday, resFuture];
 
-    // 2. Encontra por palavra-chave pet para cliente autorizado
-    const replyPet = generateHeuristicResponse("Posso levar meu cachorro? Tem taxa pet?", ctx, aiConfig, heuristicDb);
-    assert.ok(replyPet.includes("Aceitamos pets de pequeno porte"), "Deve responder com política pet para cliente liberado");
-
-    // 3. Cliente excluído não recebe a resposta da FAQ restrita
-    const ctxExcluido = buildGuestContext(mockDb, "5521999990001");
-    const replyPetExcluido = generateHeuristicResponse("Posso levar meu cachorro?", ctxExcluido, aiConfig, heuristicDb);
-    assert.ok(!replyPetExcluido.includes("taxa diária especial de R$ 50"), "Cliente na lista de exclusão NÃO deve receber resposta da FAQ restrita");
-    assert.ok(replyPetExcluido.includes("concierge virtual da CorpFlats"), "Deve cair no fallback genérico prestativo");
-
-    // 4. FAQ com status 'pendente' nunca é acionada pela contingência heurística
-    const replyPiscina = generateHeuristicResponse("Qual o tamanho da piscina?", ctx, aiConfig, heuristicDb);
-    assert.ok(!replyPiscina.includes("semiolímpica"), "FAQ pendente não pode ser usada na contingência");
-  });
-
-  test("23. Auto-Aprendizado Inbound: Pergunta Inédita Não Mapeada Gera FAQ com Status 'pendente'", async () => {
-    const autoLearnDb = JSON.parse(JSON.stringify(mockDb));
-    autoLearnDb.faqItems = [];
-    autoLearnDb.zapiConfig.testModeOnly = false;
-    autoLearnDb.whatsappConversations = [
-      {
-        phone: "5522998505276",
-        name: "Carlos Drumond",
-        messages: [],
-        aiPaused: false
-      }
+    // Pedidos de café da manhã vinculados à Reserva 8002
+    initialDb.breakfastOrders = [
+      { id: "bk-1", reservationCode: "RES-M2-002", date: "2026-11-02", status: "pending", roomNumber: "114" },
+      { id: "bk-2", reservationCode: "RES-M2-002", date: "2026-11-04", status: "pending", roomNumber: "114" }
     ];
 
-    let saved = false;
-    const saveDbMock = () => { saved = true; };
+    // Limpeza de governança vinculada
+    initialDb.cleaningRequests = [
+      { id: 701, flatNumber: "114", flatId: 2, requestDate: "2026-11-05", status: "pending" }
+    ];
 
-    // Inbound com pergunta inédita sobre tomadas de carro elétrico
-    const result = await processAiInboundMessage({
-      db: autoLearnDb,
-      incomingInfo: {
-        text: "Vocês possuem tomada para recarga de carro elétrico no estacionamento?",
-        senderPhone: "5522998505276",
-        senderName: "Carlos Drumond",
-        fromMe: false,
-        isGroup: false
+    initialDb.reservationCommunications = [];
+    initialDb.fnrhAuditDocuments = [];
+
+    fs.writeFileSync(isolatedDbPath, JSON.stringify(initialDb, null, 2), "utf-8");
+
+    // 2. Inicia o servidor em modo de teste
+    serverProcess = spawn("node", ["artifacts/api-server/demo-server.mjs"], {
+      cwd: rootDir,
+      env: {
+        ...process.env,
+        PORT: String(TEST_PORT),
+        DATA_FILE: isolatedDbPath,
+        DATABASE_FILE: isolatedDbPath,
+        NODE_ENV: "test"
       },
-      cleanTarget: "5522998505276",
-      saveDatabase: saveDbMock,
-      createNotification: () => {},
-      sendZapiMessage: async () => ({ success: true }),
-      appendMessageFn: () => {}
+      stdio: "pipe"
     });
 
-    assert.equal(result.handled, true);
-    // Deve registrar a nova pergunta pendente na base
-    const pendingFaq = autoLearnDb.faqItems.find(f => f.status === "pendente");
-    assert.ok(pendingFaq, "Deve existir item com status 'pendente'");
-    assert.equal(pendingFaq.question, "Vocês possuem tomada para recarga de carro elétrico no estacionamento?");
-    assert.ok(pendingFaq.sourceClientPhone.includes("5522998505276"));
-    assert.equal(pendingFaq.category, "garagem");
+    let isReady = false;
+    for (let i = 0; i < 40; i++) {
+      try {
+        const res = await fetch(`${BASE_URL}/api/system/version`);
+        if (res.ok) { isReady = true; break; }
+      } catch (_) {}
+      await new Promise(r => setTimeout(r, 250));
+    }
+    if (!isReady) throw new Error(`Falha ao iniciar servidor de teste na porta ${TEST_PORT}`);
   });
 
-  test("24. Captura Automática de Resposta do Operador (fromMe: true) vinculando 'suggestedAnswer' e Status 'aguardando_aprovacao'", async () => {
-    const captureDb = JSON.parse(JSON.stringify(mockDb));
-    captureDb.faqItems = [
-      {
-        id: "faq_auto_test_1",
-        question: "Vocês têm berço desmontável para bebê?",
-        answer: "",
-        category: "estrutura_flat",
-        status: "pendente",
-        sourceClientPhone: "5522998505276",
-        clientPhones: ["5522998505276"],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      }
+  after(() => {
+    if (serverProcess && serverProcess.pid) killProcessTree(serverProcess.pid);
+    try {
+      if (fs.existsSync(isolatedDbPath)) fs.unlinkSync(isolatedDbPath);
+    } catch (_) {}
+  });
+
+  // ── 1. Paridade de Arquivos ───────────────────────────────────────────────
+  it("1. Paridade SHA-256 byte-a-byte entre scripts/ e artifacts/api-server/", () => {
+    const pairs = [
+      ["scripts/demo-server.mjs", "artifacts/api-server/demo-server.mjs"],
+      ["scripts/fnrh-pdf-service.mjs", "artifacts/api-server/fnrh-pdf-service.mjs"]
     ];
-
-    const { captureOperatorResponseForFaq } = await import("../artifacts/api-server/zapi-service.mjs");
-    assert.equal(typeof captureOperatorResponseForFaq, "function");
-
-    // Operador responde manualmente no chat
-    const operatorText = "Sim, disponibilizamos berço desmontável mediante solicitação prévia sem taxa extra!";
-    const updated = captureOperatorResponseForFaq(captureDb, "5522998505276", operatorText);
-
-    assert.ok(updated);
-    assert.equal(updated.id, "faq_auto_test_1");
-    assert.equal(updated.status, "aguardando_aprovacao");
-    assert.equal(updated.suggestedAnswer, operatorText);
-
-    // Validação da aprovação promovendo para 'ativo'
-    updated.status = "ativo";
-    updated.answer = updated.suggestedAnswer;
-    updated.approvedAt = new Date().toISOString();
-
-    // Sofia agora deve responder de forma autônoma com a nova resposta oficial
-    const ctx = buildGuestContext(mockDb, "5522998505276");
-    const aiConfig = getWhatsAppAiConfig(mockDb);
-    const reply = generateHeuristicResponse("Vocês têm berço?", ctx, aiConfig, captureDb);
-    assert.ok(reply.includes("berço desmontável mediante solicitação"), "A resposta aprovada deve ser imediatamente utilizada pela Sofia");
+    for (const [f1, f2] of pairs) {
+      const b1 = fs.readFileSync(path.join(rootDir, f1));
+      const b2 = fs.readFileSync(path.join(rootDir, f2));
+      const h1 = crypto.createHash("sha256").update(b1).digest("hex");
+      const h2 = crypto.createHash("sha256").update(b2).digest("hex");
+      assert.strictEqual(h1, h2, `Hash SHA-256 divergente em ${f1} vs ${f2}`);
+    }
   });
+
+  // ── 2. Invalidação de Assinatura ao Modificar Reserva ───────────────────────
+  it("2. Alteração de datas na Reserva 8001 invalida assinatura e exige re-assinatura", async () => {
+    const res = await fetch(`${BASE_URL}/api/pms/reservations/8001`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        checkoutDate: "2026-10-20",
+        notes: "Extensão de período"
+      })
+    });
+    assert.strictEqual(res.status, 200);
+
+    const db = getDb();
+    const r = db.reservations.find(x => x.id === 8001);
+    assert.strictEqual(r.needsReSignature, true, "needsReSignature deve ser true após alterar datas");
+    assert.strictEqual(r.fnhrCompleted, false, "fnhrCompleted deve ser false");
+    assert.strictEqual(r.signatureUrl, null, "signatureUrl deve ter sido limpa");
+    assert.ok(r.guests.every(g => g.needsReSignature === true), "Todos os hóspedes devem estar com needsReSignature: true");
+    assert.ok(r.guests.every(g => g.hasCompletedCheckin === false), "hasCompletedCheckin deve ser false para todos os hóspedes");
+  });
+
+  // ── 3. Painel da Recepção Bloqueia Check-in enquanto needsReSignature === true ─
+  it("3. GET /api/reception/today reflete pendência e bloqueia check-in enquanto needsReSignature === true", async () => {
+    const res = await fetch(`${BASE_URL}/api/reception/today`);
+    assert.strictEqual(res.status, 200);
+    const json = await res.json();
+    const arr = (json.arrivals || []).find(x => x.id === 8001);
+    assert.ok(arr, "Reserva 8001 deve constar em chegadas de hoje");
+    assert.strictEqual(arr.needsReSignature, true);
+    assert.strictEqual(arr.allCheckinDone, false);
+    assert.strictEqual(arr.canAuthorizeEntry, false);
+    assert.strictEqual(arr.entryBadgeType, "error");
+    assert.match(arr.entryMessage, /re-assinatura/i);
+
+    // Tentativa de liberação física na portaria deve retornar 400
+    const checkinRes = await fetch(`${BASE_URL}/api/reception/checkin/8001`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({})
+    });
+    assert.strictEqual(checkinRes.status, 400);
+    const errJson = await checkinRes.json();
+    assert.strictEqual(errJson.needsReSignature, true);
+    assert.match(errJson.error, /re-assinatura/i);
+  });
+
+  // ── 4. Re-assinatura, Geração Forense de PDF e Hash SHA-256 ─────────────────
+  it("4. POST /api/pms/pre-checkin re-assina a reserva, gera PDF com SHA-256 e limpa invalidation", async () => {
+    const sampleSignature = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    const res = await fetch(`${BASE_URL}/api/pms/pre-checkin`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        reservationId: 8001,
+        guestIndex: 1,
+        fullName: "Marcos Paulo Atualizado",
+        document: "12345678901",
+        phone: "5522998881111",
+        email: "marcospaulo@example.com",
+        signatureBase64: sampleSignature,
+        resign: "1"
+      })
+    });
+
+    assert.strictEqual(res.status, 200);
+    const json = await res.json();
+    assert.strictEqual(json.success, true);
+    assert.ok(json.fnrhDocument, "Deve retornar objeto fnrhDocument");
+    assert.ok(json.fnrhDocument.sha256Hash, "Deve possuir hash SHA-256");
+    assert.strictEqual(json.fnrhDocument.sha256Hash.length, 64, "Hash SHA-256 deve ter 64 caracteres hexadecimais");
+
+    const db = getDb();
+    const r = db.reservations.find(x => x.id === 8001);
+    assert.strictEqual(r.needsReSignature, false, "needsReSignature deve ser false após re-assinar");
+    assert.strictEqual(r.fnhrCompleted, true, "fnhrCompleted deve ser true");
+    assert.strictEqual(r.fnrhSha256Hash, json.fnrhDocument.sha256Hash);
+    assert.ok(db.fnrhAuditDocuments.some(d => d.documentUuid === json.fnrhDocument.documentUuid), "Trilha forense deve estar em db.fnrhAuditDocuments");
+  });
+
+  // ── 5. Entrega Automática à Recepção por E-mail ────────────────────────────
+  it("5. Re-assinatura dispara e-mail com PDF anexado para a recepção (db.reservationCommunications)", () => {
+    const db = getDb();
+    const comms = db.reservationCommunications || [];
+    const reSignEmail = comms.find(c =>
+      c.reservation_id === "RES-M2-001" || c.reservation_id === "8001"
+    );
+
+    assert.ok(reSignEmail, "Deve existir registro de e-mail disparado para a reserva");
+    assert.strictEqual(reSignEmail.type, "email");
+    assert.strictEqual(reSignEmail.direction, "outbound");
+    assert.ok(reSignEmail.metadata?.hasAttachments, "E-mail deve indicar anexos presentes");
+    assert.strictEqual(reSignEmail.metadata?.trigger, "re_signature_checkin", "Gatilho deve ser re_signature_checkin");
+    assert.ok(reSignEmail.metadata?.fnrhSha256Hash, "Metadados devem registrar o hash SHA-256 do documento");
+  });
+
+  // ── 6. Liberação no Painel da Recepção após Re-assinatura ───────────────────
+  it("6. Painel da Recepção agora autoriza check-in após re-assinatura concluída", async () => {
+    const res = await fetch(`${BASE_URL}/api/reception/today`);
+    assert.strictEqual(res.status, 200);
+    const json = await res.json();
+    const arr = (json.arrivals || []).find(x => x.id === 8001);
+    assert.strictEqual(arr.needsReSignature, false);
+    assert.strictEqual(arr.allCheckinDone, true);
+    assert.strictEqual(arr.canAuthorizeEntry, true);
+    assert.strictEqual(arr.entryBadgeType, "success");
+
+    // Check-in físico agora deve ser aceito
+    const checkinRes = await fetch(`${BASE_URL}/api/reception/checkin/8001`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({})
+    });
+    assert.strictEqual(checkinRes.status, 200);
+  });
+
+  // ── 7. Sincronização de Agendadores (Rotina 07:00, Café e Limpeza) ──────────
+  it("7. Alteração de datas na Reserva 8002 limpa morningEmailSentDate, sincroniza café e governança", async () => {
+    // Muda período da Reserva 8002 de 01/11-05/11 para 03/11-07/11 e troca para Flat 113
+    const res = await fetch(`${BASE_URL}/api/pms/reservations/8002`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        checkinDate: "2026-11-03",
+        checkoutDate: "2026-11-07",
+        flatId: 1,
+        flatNumber: "113"
+      })
+    });
+    assert.strictEqual(res.status, 200);
+
+    const db = getDb();
+    const r = db.reservations.find(x => x.id === 8002);
+
+    // Invariante A: morningEmailSentDate foi limpo para disparar na nova data
+    assert.strictEqual(r.morningEmailSentDate, undefined, "morningEmailSentDate deve ter sido deletado");
+    assert.strictEqual(r.receptionNotifiedAt, undefined, "receptionNotifiedAt deve ter sido deletado");
+
+    // Invariante B: Pedido de café de 02/11 (fora do novo período) foi cancelado
+    const bk1 = db.breakfastOrders.find(b => b.id === "bk-1");
+    assert.strictEqual(bk1.status, "cancelled", "Café do dia 02/11 deve estar cancelado");
+    assert.ok(bk1.cancelReason, "Deve possuir justificativa de cancelamento");
+
+    // Invariante C: Pedido de café de 04/11 (dentro do novo período) foi transferido para o novo Flat 113
+    const bk2 = db.breakfastOrders.find(b => b.id === "bk-2");
+    assert.strictEqual(bk2.roomNumber, "113", "Pedido de café deve refletir o novo Flat 113");
+
+    // Invariante D: Limpeza de checkout foi transferida para a nova data 07/11
+    const clean = db.cleaningRequests.find(c => c.id === 701);
+    assert.strictEqual(clean.requestDate, "2026-11-07", "Data de limpeza deve ser o novo checkout 07/11");
+  });
+});
 ```
+
+---
+
+## 6. Advertências e Ressalvas Técnicas
+
+1. **Assinaturas Base64 vs URL**:
+   O sistema suporta tanto imagens cruas (`data:image/png;base64,...`) quanto caminhos de arquivos em disco. O helper `generateFnrhPdf` decodifica de forma segura através do parser de buffer `Buffer.from(b64Data, "base64")` com fallback gracioso para marcador tipográfico caso o payload seja corrompido.
+2. **Ambiente de Testes vs Envio Real de SMTP**:
+   `sendEmailAsync` grava imediatamente a comunicação na coleção `db.reservationCommunications` com status `"pending"` e despacha via `setImmediate`. Em ambiente de teste sem credenciais SMTP reais, o `catch` assíncrono consome o erro silenciosamente, preservando a integridade dos testes e a auditoria em banco.
+3. **Múltiplos Hóspedes em Reserva Compartilhada**:
+   Se a reserva contiver múltiplos hóspedes e apenas o titular re-assinar, `targetGuest.needsReSignature` é liberado para o titular, mas `r.needsReSignature` mantém-se até que todos tenham assinado, com suporte a entrada parcial via portaria (`partial: true`).
+4. **Regra de Não Silenciamento / Mascaramento**:
+   Nenhum disparo de notificação foi suprimido ou mockado estaticamente no código de produção; o comportamento obedece estritamente às regras de negócio.
+
+---
+
+## 7. Conclusão da Investigação
+
+A análise detalhada confirma que a infraestrutura existente de `fnrh-pdf-service.mjs`, `demo-server.mjs` e `mail-service.mjs` possui 100% dos pré-requisitos matemáticos e lógicos para o Milestone 2.
+Com os blueprints fornecidos:
+- A geração da FNRH PDF recalcula o hash SHA-256 e salva a trilha jurídica.
+- A entrega por e-mail para a portaria passa a contemplar re-assinaturas imediatas.
+- O painel da recepção sincroniza em tempo real a retenção do check-in.
+- Os agendadores matinais e operacionais garantem que a nova data receba a notificação às 07:00 e mantenham café e limpeza perfeitamente ajustados.
+- A suíte pontual `tests/m2-re-signature-operations-sync.test.mjs` cobre todos os invariantes com validação reproduzível.

@@ -80,3 +80,55 @@ Desenvolver e integrar a API de Ações do Sistema para CorpFlats (Guest-Flow-Ma
    - Regra AGENTS.md: `npm run build` na pasta `artifacts/limpeza` com inclusão de `artifacts/limpeza/dist/` em qualquer commit relevante.
    - Git push imediato para `origin main` em todo commit.
    - Bateria de testes automatizados com 100% de aprovação (`tests/tariff-engine.test.mjs`, `tests/bot-actions-api.test.mjs`, etc.).
+
+
+## 2026-10-11T12:53:32Z
+
+Implement a secure, multi-step reservation modification flow in the CorpFlats Guest Portal and PMS backend, requiring prior availability check, cost breakdown, payment settlement before confirmation, and mandatory re-signature of the check-in form whenever dates or flat numbers change, updating reception and garage panels.
+
+Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
+Integrity mode: development
+
+## Requirements
+
+### R1. Availability Check and Pricing Preview (Step 1)
+The guest portal and backend must provide a simulation mechanism (`/modify-preview`) before any changes are committed:
+- Validate flat calendar availability against existing active reservations to prevent conflicts.
+- Calculate daily rate, extra nights, additional amount to pay, or eligible refunds according to the 24-hour policy.
+- Clearly present the status to the guest: availability confirmation badge, cost breakdown, and an explicit action button to proceed to payment (or direct confirmation if cost is zero).
+
+### R2. Payment Settlement Before Confirmation (Step 2)
+When an extension or modification involves additional costs (`additionalAmountToPay > 0`):
+- The reservation dates must NOT be modified immediately.
+- The guest must be presented with payment options: PIX (dynamic or static with QR Code, Copia e Cola, and automatic verification polling) and Credit Card (Mercado Pago checkout).
+- Dates, total amounts, and payment records are only committed to the database once payment receipt is verified.
+
+### R3. Mandatory Re-Signature on Dates or Flat Change
+Whenever a confirmed reservation is modified with new check-in/check-out dates or a different flat number:
+- Any previous check-in signature and pre-check-in completion status must be marked as requiring renewal/re-signing with the updated dates and accommodation details.
+- The guest must receive an automated communication (WhatsApp/email) containing the direct link to review and sign the updated check-in declaration.
+- Once the guest re-signs, the newly signed check-in document must be generated and automatically delivered to the building reception.
+
+### R4. Real-time Panel and Operations Synchronization
+Upon modification confirmation:
+- The reception panel, garage panel, and housekeeping schedule must reflect the updated dates, flat number, vehicle plate, and signature status immediately.
+- Schedulers (morning notification routines, breakfast orders) must be synchronized with the new stay window.
+
+## Acceptance Criteria
+
+### Modification & Payment Guardrails
+- [ ] Attempting to modify a reservation to a conflicting date range on the same flat returns an availability error and blocks checkout.
+- [ ] Increasing stay duration requires payment completion before the reservation's `checkinDate` or `checkoutDate` fields are updated in the database.
+- [ ] Closing the modal or abandoning checkout leaves the original reservation completely intact.
+- [ ] Completing payment via PIX or card immediately updates the reservation dates, records the payment in `r.payments`, and registers the modification in the audit trail.
+
+### Re-signature & Notifications
+- [ ] After dates or flat number change, the guest's check-in status indicates signature renewal is required, with a clear banner and signing interface in the guest portal.
+- [ ] Automated message is dispatched to the guest containing the personalized check-in re-signing link.
+- [ ] Submitting the updated signature triggers document generation and outbound dispatch to the reception email.
+- [ ] Reception dashboard and garage list reflect updated dates, flat number, and new signature timestamp without manual reload.
+
+### Code Integrity & Build
+- [ ] Server code in `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs` remain in strict byte-for-byte parity.
+- [ ] Frontend in `artifacts/limpeza` builds cleanly (`npm run build`) without TypeScript or bundle errors.
+- [ ] Changes are committed with standard message and pushed to `origin main`.

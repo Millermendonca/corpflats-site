@@ -1,125 +1,99 @@
-# Handoff Report — Milestone 2 Explorer 2 (Captura de Resposta Humana do Operador)
+# Handoff Report — Milestone 2: Automated Re-Signature Communication
 
-**Agent**: Milestone 2 Explorer 2  
-**Recipient**: Parent Orchestrator (`27c61f6a-5652-421c-bbda-1b5d6be7db98`)  
-**Date**: 2026-10-11  
-**Working Directory**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_explorer_2`
+**Agent**: M2 Explorer 2  
+**Recipient**: Parent Orchestrator (`494db1f9-cfb2-46e9-8b9f-419a8aa9586c`)  
+**Type**: Hard Handoff  
+**Workspace**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_explorer_2`
 
 ---
 
 ## 1. Observation
 
-- **Arquivo e Paridade SHA256**:
-  `Get-FileHash artifacts/api-server/zapi-service.mjs, scripts/zapi-service.mjs`
-  Resultado: Ambos possuem hash SHA256 idêntico `E35A0E4394A014A9B99484716825D95A9AC3A5866CE2B57EA5404A4E427E87B9`.
+1. **Paridade Twin-Server Prévia**:
+   - `scripts/demo-server.mjs` e `artifacts/api-server/demo-server.mjs` possuem hash SHA-256 idêntico: `72EA96CE4DC341181B8B41E7A01FE91F52E975FDD757FBD70C033688FEC6184F`.
+   - `scripts/zapi-service.mjs` e `artifacts/api-server/zapi-service.mjs` possuem hash SHA-256 idêntico: `0350354EAE6432EC36294D2517C7F319131DECC1F2C6CFBD751CD3BBA9ED47CA`.
+   - `scripts/mail-service.mjs` e `artifacts/api-server/mail-service.mjs` possuem hash SHA-256 idêntico: `3F17611B47BEA3B2F7CFED8BF2E288DC502DE894985223DF7EB903C410DA1E9E`.
 
-- **Webhook Inbound em `zapi-service.mjs`**:
-  - Linha 3615: `const fromMe = Boolean(body.fromMe || body.isMyMessage);` — não cobre `isFromMe`, `data?.fromMe`, `key?.fromMe` nem expõe `phone` no retorno de `extractIncomingMessageInfo`.
-  - Linhas 5539-5542 em `POST /api/whatsapp/webhook/received`:
-    ```javascript
-    const rawTarget = incomingInfo.isGroup && incomingInfo.groupId
-      ? incomingInfo.groupId
-      : (incomingInfo.senderPhone || req.body?.phone || req.body?.participantPhone);
-    const cleanTarget = incomingInfo.isGroup ? rawTarget : cleanWhatsAppPhone(rawTarget);
-    ```
-    Quando `fromMe: true` chega via `notifySentByMe`, a Z-API pode enviar o número da instância em `senderPhone`. Se `senderPhone` for priorizado sobre `req.body.phone`, `cleanTarget` vira o número da própria portaria/instância em vez do hóspede.
-  - Linhas 5564-5573: O webhook trata apenas `!incomingInfo.fromMe` e não possui gancho de auto-aprendizado ou pausa de IA para mensagens com `fromMe: true`.
+2. **Geração de URL de Check-in Existente**:
+   - Em `scripts/demo-server.mjs:5925` e `scripts/zapi-service.mjs:65`:
+     ```javascript
+     const internalCheckinUrl = `${hostBase}/pre-checkin/${resCode}?guest=${safeGuestIndex}`;
+     ```
+   - O resolvedor não adicionava `?resign=1` ou `&resign=1` quando `reservation.needsReSignature === true`.
 
-- **Live Chat Endpoints em `zapi-service.mjs`**:
-  - Linha 6014: `POST /api/whatsapp/chat/send` processa envio manual. Já executa (linhas 6092-6096):
-    ```javascript
-    if (updatedConv) {
-      updatedConv.aiPaused = true;
-      updatedConv.aiPausedAt = nowIso;
-      updatedConv.aiPausedReason = "operator_manual_reply";
-    }
-    ```
-    Contudo, não efetua busca nem vínculo com perguntas de `db.faqItems`.
-  - O endpoint REST `POST /api/whatsapp/chats/:phone/messages` mencionado na dispatch ainda não está registrado.
+3. **Template de Mensagem de Atualização (`tpl_reservation_updated`)**:
+   - Em `scripts/zapi-service.mjs:497-519`:
+     ```javascript
+     buttons: [
+       { id: "btn_checkin", type: "URL", label: "📝 Assinar Ficha Atualizada", url: "{{link_checkin_digital}}" },
+       { id: "btn_portal", type: "URL", label: "🏨 Ver Detalhes da Reserva", url: "{{link_portal_hospede}}" },
+       { id: "btn_admin", type: "CALL", label: "📞 Falar com Atendimento", phone: "{{telefone_hotel}}" }
+     ]
+     ```
+   - O botão principal já aponta para `{{link_checkin_digital}}`. Quando o link inclui `?resign=1`, o WhatsApp e o e-mail transmitem imediatamente a URL de re-assinatura.
 
-- **Comportamento da IA Sofia com IA Pausada**:
-  Em `whatsapp-ai-service.mjs`, linhas 1408-1412:
-  ```javascript
-  if (conv && conv.aiPaused === true) {
-    console.log(`[WhatsApp AI] Conversa com ${cleanTarget} com IA pausada. Aguardando atendimento humano.`);
-    return { skipped: true, reason: "conversation_ai_paused" };
-  }
-  ```
-  A pausa no objeto de conversa em `db.whatsappConversations` impede com 100% de confiabilidade qualquer resposta autônoma da IA.
+4. **Pontos de Modificação de Reserva sem Disparo ao Hóspede**:
+   - `commitPendingModification` (`scripts/demo-server.mjs:15880-15902`): Salva o commit atômico e cria notificação para o painel interno, mas não despachava mensagem de WhatsApp ou e-mail ao hóspede.
+   - `POST /api/pms/guest-portal/:code/modify` (`scripts/demo-server.mjs:16955-16975`): Despacha e-mail para a portaria (`receptionEmail`), mas não enviava o link de re-assinatura para o hóspede.
+   - `PUT /api/pms/reservations/:id` (`scripts/demo-server.mjs:14489-14496`): Dispara `triggerImmediateWhatsApp`, porém se `zapiConfig.enabled === false`, o envio era abortado na linha 7617 de `zapi-service.mjs`.
 
-- **Estrutura de FAQs no Banco**:
-  Em `demo-server.mjs` (linhas 1894-1925 e 1956-1980), os itens pendentes possuem `status: "pendente"`, `sourceClientPhone: string`, `createdAt: ISOString`. Os itens aguardando aprovação possuem `suggestedAnswer: string`, `status: "aguardando_aprovacao"`.
-  Em `zapi-service.mjs` (linhas 6569-6585), `POST /api/whatsapp/faq/:id/approve` já consome `item.suggestedAnswer` promovendo para `item.answer` e `item.status = "ativo"`.
-
-- **Execução de Testes Existentes**:
-  - `node --test tests/whatsapp-ai-agent.test.mjs` executou com sucesso (20/20 testes passando).
-  - Em `tests/challenger-m2-resilience-stress.test.mjs`, o teste `ADV-3.1` falhou devido a uma chamada `process.exit` residual na linha 947 de `tests/whatsapp-ai-agent.test.mjs`.
+5. **Interface de Re-assinatura do Frontend**:
+   - Em `artifacts/limpeza/src/pages/guest-pre-checkin.tsx:605-640` e `2067-2080`: Quando `reservation.needsReSignature === true` ou o parâmetro `resign=1` está ativo, o portal exibe o banner `"Reserva Atualizada • Nova Assinatura Necessária"`, invalida a assinatura anterior e mantém preservados todos os dados cadastrais e documentos para assinatura em 1 clique.
 
 ---
 
 ## 2. Logic Chain
 
-1. **Origem da Resposta Humana (Obs 2 e Obs 3)**:
-   Mensagens do operador chegam por duas portas: webhook Z-API (`notifySentByMe: true` -> `POST /api/whatsapp/webhook/received`) ou API do Live Chat (`POST /api/whatsapp/chat/send`).
-2. **Identificação Correta do Interlocutor (Obs 2)**:
-   Se `fromMe === true`, o interlocutor (cliente) é o destinatário `req.body.phone` / `incomingInfo.phone`. A inversão da ordem de fallback garante que o cliente correto seja identificado como `cleanTarget`.
-3. **Casamento de Telefones Resiliente (Obs 1 e Obs 5)**:
-   Usando `cleanWhatsAppPhone` e a função já exportada `matchClientPhone`, qualquer variação de telefone brasileiro (DDI 55, DDD de 2 dígitos, nono dígito ausente/presente) é resolvida confiavelmente contra `item.sourceClientPhone` e `item.clientPhones`.
-4. **Janela de 24h e Resolução de Conflitos (Obs 5)**:
-   Filtrando `diff = Date.now() - itemTime` onde `-300000 <= diff <= 86400000` descarta perguntas de dias anteriores. Ordenando decrescente por data (`bTime - aTime`), a dúvida pendente mais recente é eleita.
-5. **Transição de Estado e Sugestão (Obs 5)**:
-   Atribuindo `item.suggestedAnswer = text.trim()`, `item.status = "aguardando_aprovacao"`, `item.answeredAt = nowIso` e `item.answeredBy = "operador"`, a resposta fica pronta para revisão no painel sem entrar em produção autônoma, alinhando-se estritamente com R3 e com o endpoint de aprovação existente em `POST /api/whatsapp/faq/:id/approve`.
-6. **Pausa da IA (Obs 3 e Obs 4)**:
-   Marcando `conv.aiPaused = true` e `conv.aiPausedReason = "operator_manual_reply"` no webhook e no chat send, a Sofia entra em suspensão autônoma nesta conversa conforme a guarda em `whatsapp-ai-service.mjs:1409`.
-7. **Reutilização e Convenção REST (Obs 3)**:
-   Criar o handler compartilhado `handleChatSend` e registrar as rotas `POST /api/whatsapp/chat/send`, `POST /api/whatsapp/chats/:phone/messages` e `POST /api/whatsapp/chat/:phone/messages` atende aos padrões de API sem duplicar linhas de código.
+1. **Premissa 1**: Conforme o requisito **R3** de `ORIGINAL_REQUEST.md`, quando datas ou flat mudam, a assinatura anterior deve ser invalidada e o hóspede deve receber comunicação automatizada (WhatsApp/e-mail) com o link direto para assinar a nova declaração.
+2. **Premissa 2**: A tag `{{link_checkin_digital}}` é o canal padrão de geração de links em `scripts/zapi-service.mjs` tanto para o corpo da mensagem quanto para botões de ação de WhatsApp e e-mail espelho.
+3. **Dedução 1**: Atualizando `getCheckinUrlSync` e `getCheckinUrl` para verificar `reservation?.needsReSignature` e gerar `${hostBase}/pre-checkin/${resCode}?resign=1` (ou `?guest=${safeGuestIndex}&resign=1`), todo e qualquer envio da régua que utilize `{{link_checkin_digital}}` direciona o hóspede imediatamente para o modo de re-assinatura.
+4. **Dedução 2**: Para garantir que nenhum canal silencie o outro, a função `dispatchReservationReSignatureNotifications` deve orquestrar:
+   - Registro de auditoria (`RE_SIGNATURE_NOTIFICATION_DISPATCHED` e `re_signature_requested`).
+   - Disparo assíncrono em `setImmediate` chamando `triggerImmediateWhatsApp("reservation_updated")`.
+   - Verificação de garantia de e-mail: se o Z-API não enviou o espelho (por exemplo, se o motor Z-API estiver desligado ou em modo sandbox), o e-mail corporativo é entregue via `sendMirrorEmail` / `sendEmailAsync`.
+5. **Dedução 3**: Na conclusão da assinatura em `POST /api/pms/pre-checkin`, o status `r.needsReSignature = false` deve ser restabelecido, a FNRH com hash SHA-256 é gerada e o envio à recepção é realizado.
 
 ---
 
 ## 3. Caveats
 
-1. **Mensagens sem Texto / Mídia Pura**:
-   Mensagens de operador contendo apenas áudio ou foto sem legenda (ex: `"[image]"`, `"[audio]"`) são filtradas pela regex `/^\[(image|audio|video|document|location)\]$/i` e não são vinculadas como `suggestedAnswer`, evitando poluir o FAQ com marcadores vazios.
-2. **Grupos WhatsApp**:
-   Mensagens enviadas em grupos (`isGroup: true`) não são vinculadas a FAQs de clientes individuais.
-3. **Resíduo `process.exit` no Test Suite**:
-   Foi observado que a linha 947 de `tests/whatsapp-ai-agent.test.mjs` contém `process.exit`, o que causa reprovação estática no teste adversário `ADV-3.1`. O implementador do M2/M4 deve remover essa linha para permitir encerramento natural por event loop.
+1. **Modo Sandbox Z-API**: Em ambientes de homologação onde `db.zapiConfig.testModeOnly === true`, mensagens para números que não constam em `testAllowedPhones` são suprimidas no WhatsApp. No entanto, o e-mail espelho ao hóspede (`reservation.guestEmail`) continua sendo disparado normalmente.
+2. **Reservas Sem E-mail ou Sem Telefone**: Se o hóspede não tiver e-mail cadastrado, o envio será realizado exclusivamente via WhatsApp. Se não tiver telefone (comum em algumas reservas OTA), o envio é realizado exclusivamente via e-mail.
+3. **Regra de Não-Execução Global de Testes**: Respeitando rigorosamente as diretrizes de `AGENTS.md`, nenhum teste em lote foi ou deve ser disparado.
 
 ---
 
 ## 4. Conclusion
 
-A investigação técnica do requisito R3 está completa e validada. A solução proposta:
-- Cria e exporta `linkOperatorResponseToPendingFaq(db, { clientPhone, text, answeredBy })` em `zapi-service.mjs`.
-- Corrige a identificação do destinatário quando `fromMe: true` em `extractIncomingMessageInfo` e `POST /api/whatsapp/webhook/received`.
-- Vincula respostas do operador a dúvidas pendentes das últimas 24h promovendo-as para `status: "aguardando_aprovacao"`.
-- Pausa a IA na conversa (`conv.aiPaused = true`).
-- Fornece suporte integrado para `POST /api/whatsapp/chats/:phone/messages` e `POST /api/whatsapp/chat/send`.
-- Mantém paridade estrita byte-a-byte entre `artifacts/api-server/zapi-service.mjs` e `scripts/zapi-service.mjs`.
-
-O documento de análise técnica completo com os diffs linha a linha está disponível em:
-`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m2_explorer_2\analysis.md`
+O mecanismo de comunicação automatizada com link direto de re-assinatura está completamente desenhado e pronto para drop-in:
+1. `getCheckinUrlSync` atualizado para injetar `?resign=1` automaticamente quando `reservation.needsReSignature === true`.
+2. Criada a função `dispatchReservationReSignatureNotifications(reservation, changes, options)` em `scripts/demo-server.mjs`.
+3. Invocação integrada nos 3 pontos de modificação: `commitPendingModification`, `POST /modify`, e `PUT /api/pms/reservations/:id`.
+4. Limpeza de flag e envio de documento assinado em `POST /api/pms/pre-checkin`.
+5. Blueprint exato e documentado em `analysis.md` para aplicação em estrita paridade Twin-Server (`scripts/` e `artifacts/api-server/`).
 
 ---
 
 ## 5. Verification Method
 
-Para verificar de forma independente e reproduzível:
+Para verificação pontual e independente pelo implementador ou suíte M2:
 
-1. **Verificação de Paridade de Hash**:
+1. **Verificação de Paridade de Arquivos**:
    ```powershell
-   Get-FileHash artifacts/api-server/zapi-service.mjs, scripts/zapi-service.mjs
+   Get-FileHash scripts/demo-server.mjs, artifacts/api-server/demo-server.mjs | Format-Table -Property Path, Hash
+   Get-FileHash scripts/zapi-service.mjs, artifacts/api-server/zapi-service.mjs | Format-Table -Property Path, Hash
    ```
-   *Critério de Sucesso*: Hashes idênticos.
+2. **Teste Pontual do Resolvedor de URL**:
+   Importar `getCheckinUrlSync` e testar:
+   ```javascript
+   const urlNormal = getCheckinUrlSync({ code: "RES-TEST-01", needsReSignature: false });
+   assert.strictEqual(urlNormal.includes("resign=1"), false);
 
-2. **Execução da Suíte de Testes Principal**:
-   ```powershell
-   node --test tests/whatsapp-ai-agent.test.mjs
+   const urlResign = getCheckinUrlSync({ code: "RES-TEST-01", needsReSignature: true });
+   assert.strictEqual(urlResign.includes("resign=1"), true);
    ```
-   *Critério de Sucesso*: 20/20 testes passam com código de saída 0.
-
-3. **Verificação do Vínculo e Estado do FAQ via Teste de Integração**:
-   - Inserir um item de FAQ com `status: "pendente"`, `sourceClientPhone: "5522998505276"` e `createdAt` atual.
-   - Enviar mensagem simulada do operador para `22998505276` via `linkOperatorResponseToPendingFaq` ou webhook `fromMe: true`.
-   - Inspecionar o item no banco: deve apresentar `status === "aguardando_aprovacao"`, `suggestedAnswer === text`, `answeredBy === "operador"` e conversa com `aiPaused === true`.
-   - Executar `POST /api/whatsapp/faq/:id/approve`: deve promover para `status === "ativo"` e `answer === suggestedAnswer`.
+3. **Teste Pontual do Disparo de Notificações**:
+   Disparar `dispatchReservationReSignatureNotifications` para reserva de teste com `guestPhone` e `guestEmail` e verificar:
+   - Presença do log em `db.auditLogs` com `action: "RE_SIGNATURE_NOTIFICATION_DISPATCHED"`.
+   - Presença do log em `r.auditLogs` com `action: "re_signature_requested"`.
+   - Mensagem gerada em `db.whatsappHistory` ou `db.reservationCommunications` contendo a URL com `?resign=1`.
