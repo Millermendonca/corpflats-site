@@ -262,12 +262,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 7913,
+                      "duration": 29197,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:02:56.373Z",
+                      "startTime": "2026-10-11T04:23:31.874Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -314,12 +314,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 5633,
+                      "duration": 3041,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:03:05.504Z",
+                      "startTime": "2026-10-11T04:24:01.667Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -366,12 +366,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 5795,
+                      "duration": 5439,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:03:11.176Z",
+                      "startTime": "2026-10-11T04:24:04.758Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -418,12 +418,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4057,
+                      "duration": 3972,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:03:17.013Z",
+                      "startTime": "2026-10-11T04:24:10.237Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -470,12 +470,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 28678,
+                      "duration": 21663,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:03:21.112Z",
+                      "startTime": "2026-10-11T04:24:14.269Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -499,6 +499,58 @@
             },
             {
               "title": "Jornada 6: Upload Mobile Resiliente & Canvas Signature - touch-action: none sem scroll e compressão de imagem",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
+                        "line": 25,
+                        "column": 15
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "Desktop-1920",
+                  "projectName": "Desktop-1920",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 5448,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-11T04:24:35.978Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
+                            "line": 25,
+                            "column": 15
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "84ff382c39dc6b6a77f3-a18b16a488c8e53bd28c",
+              "file": "02-human-journeys.spec.mjs",
+              "line": 341,
+              "column": 3
+            },
+            {
+              "title": "Jornada 7: Isolamento Estrito de Acompanhantes - Hóspede 2 não sobrescreve Hóspede 1",
               "ok": false,
               "tags": [],
               "tests": [
@@ -522,31 +574,31 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 12941,
+                      "duration": 19140,
                       "error": {
-                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32mtrue\u001b[39m\nReceived: \u001b[31mfalse\u001b[39m",
-                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32mtrue\u001b[39m\nReceived: \u001b[31mfalse\u001b[39m\n    at C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs:395:30",
+                        "message": "TimeoutError: apiRequestContext.post: Timeout 15000ms exceeded.\nCall log:\n\u001b[2m  - → POST http://127.0.0.1:5055/api/pms/pre-checkin\u001b[22m\n\u001b[2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 CorpFlatsDesktop/1.0\u001b[22m\n\u001b[2m    - accept: */*\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n\u001b[2m    - content-type: application/json\u001b[22m\n\u001b[2m    - content-length: 326\u001b[22m\n",
+                        "stack": "TimeoutError: apiRequestContext.post: Timeout 15000ms exceeded.\nCall log:\n\u001b[2m  - → POST http://127.0.0.1:5055/api/pms/pre-checkin\u001b[22m\n\u001b[2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 CorpFlatsDesktop/1.0\u001b[22m\n\u001b[2m    - accept: */*\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n\u001b[2m    - content-type: application/json\u001b[22m\n\u001b[2m    - content-length: 326\u001b[22m\n\n    at C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs:472:53",
                         "location": {
                           "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                          "column": 30,
-                          "line": 395
+                          "column": 53,
+                          "line": 472
                         },
-                        "snippet": "\u001b[0m \u001b[90m 393 |\u001b[39m         \u001b[36mreturn\u001b[39m imgData\u001b[33m.\u001b[39msome(channel \u001b[33m=>\u001b[39m channel \u001b[33m>\u001b[39m \u001b[35m0\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m 394 |\u001b[39m       })\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 395 |\u001b[39m       expect(canvasNotEmpty)\u001b[33m.\u001b[39mtoBe(\u001b[36mtrue\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                              \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 396 |\u001b[39m\n \u001b[90m 397 |\u001b[39m       \u001b[90m// 6. Test browser image compression utility in page context\u001b[39m\n \u001b[90m 398 |\u001b[39m       \u001b[36mconst\u001b[39m compressionResult \u001b[33m=\u001b[39m \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mevaluate(\u001b[36masync\u001b[39m () \u001b[33m=>\u001b[39m {\u001b[0m"
+                        "snippet": "\u001b[0m \u001b[90m 470 |\u001b[39m     \u001b[36mtry\u001b[39m {\n \u001b[90m 471 |\u001b[39m       \u001b[90m// 1. Submit pre-checkin for Companion (Guest Index 2)\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 472 |\u001b[39m       \u001b[36mconst\u001b[39m companionSubmitRes \u001b[33m=\u001b[39m \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mrequest\u001b[33m.\u001b[39mpost(\u001b[32m`${baseURL}/api/pms/pre-checkin`\u001b[39m\u001b[33m,\u001b[39m {\n \u001b[90m     |\u001b[39m                                                     \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 473 |\u001b[39m         data\u001b[33m:\u001b[39m {\n \u001b[90m 474 |\u001b[39m           code\u001b[33m:\u001b[39m \u001b[32m\"RES-TEST-COMPANION-ISO\"\u001b[39m\u001b[33m,\u001b[39m\n \u001b[90m 475 |\u001b[39m           guestIndex\u001b[33m:\u001b[39m \u001b[35m2\u001b[39m\u001b[33m,\u001b[39m\u001b[0m"
                       },
                       "errors": [
                         {
                           "location": {
                             "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                            "column": 30,
-                            "line": 395
+                            "column": 53,
+                            "line": 472
                           },
-                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32mtrue\u001b[39m\nReceived: \u001b[31mfalse\u001b[39m\n\n  393 |         return imgData.some(channel => channel > 0);\n  394 |       });\n> 395 |       expect(canvasNotEmpty).toBe(true);\n      |                              ^\n  396 |\n  397 |       // 6. Test browser image compression utility in page context\n  398 |       const compressionResult = await page.evaluate(async () => {\n    at C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs:395:30"
+                          "message": "TimeoutError: apiRequestContext.post: Timeout 15000ms exceeded.\nCall log:\n\u001b[2m  - → POST http://127.0.0.1:5055/api/pms/pre-checkin\u001b[22m\n\u001b[2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 CorpFlatsDesktop/1.0\u001b[22m\n\u001b[2m    - accept: */*\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n\u001b[2m    - content-type: application/json\u001b[22m\n\u001b[2m    - content-length: 326\u001b[22m\n\n\n  470 |     try {\n  471 |       // 1. Submit pre-checkin for Companion (Guest Index 2)\n> 472 |       const companionSubmitRes = await page.request.post(`${baseURL}/api/pms/pre-checkin`, {\n      |                                                     ^\n  473 |         data: {\n  474 |           code: \"RES-TEST-COMPANION-ISO\",\n  475 |           guestIndex: 2,\n    at C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs:472:53"
                         }
                       ],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:03:49.833Z",
+                      "startTime": "2026-10-11T04:24:41.489Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -561,80 +613,37 @@
                         {
                           "name": "screenshot",
                           "contentType": "image/png",
-                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-94df2-roll-e-compressão-de-imagem-Desktop-1920\\test-failed-1.png"
+                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-dca85-2-não-sobrescreve-Hóspede-1-Desktop-1920\\test-failed-1.png"
                         },
                         {
                           "name": "video",
                           "contentType": "video/webm",
-                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-94df2-roll-e-compressão-de-imagem-Desktop-1920\\video.webm"
+                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-dca85-2-não-sobrescreve-Hóspede-1-Desktop-1920\\video.webm"
                         },
                         {
                           "name": "error-context",
                           "contentType": "text/markdown",
-                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-94df2-roll-e-compressão-de-imagem-Desktop-1920\\error-context.md"
+                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-dca85-2-não-sobrescreve-Hóspede-1-Desktop-1920\\error-context.md"
                         },
                         {
                           "name": "trace",
                           "contentType": "application/zip",
-                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-94df2-roll-e-compressão-de-imagem-Desktop-1920\\trace.zip"
+                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-dca85-2-não-sobrescreve-Hóspede-1-Desktop-1920\\trace.zip"
                         }
                       ],
                       "errorLocation": {
                         "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                        "column": 30,
-                        "line": 395
+                        "column": 53,
+                        "line": 472
                       }
                     }
                   ],
                   "status": "unexpected"
                 }
               ],
-              "id": "84ff382c39dc6b6a77f3-a18b16a488c8e53bd28c",
-              "file": "02-human-journeys.spec.mjs",
-              "line": 338,
-              "column": 3
-            },
-            {
-              "title": "Jornada 7: Isolamento Estrito de Acompanhantes - Hóspede 2 não sobrescreve Hóspede 1",
-              "ok": true,
-              "tags": [],
-              "tests": [
-                {
-                  "timeout": 60000,
-                  "annotations": [
-                    {
-                      "type": "serial",
-                      "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                        "line": 25,
-                        "column": 15
-                      }
-                    }
-                  ],
-                  "expectedStatus": "passed",
-                  "projectId": "Desktop-1920",
-                  "projectName": "Desktop-1920",
-                  "results": [
-                    {
-                      "workerIndex": -1,
-                      "parallelIndex": -1,
-                      "status": "skipped",
-                      "duration": 0,
-                      "errors": [],
-                      "stdout": [],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2026-10-11T04:04:03.964Z",
-                      "annotations": [],
-                      "attachments": []
-                    }
-                  ],
-                  "status": "skipped"
-                }
-              ],
               "id": "84ff382c39dc6b6a77f3-09133d4bca5c4111b149",
               "file": "02-human-journeys.spec.mjs",
-              "line": 457,
+              "line": 467,
               "column": 3
             },
             {
@@ -662,12 +671,12 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3681,
+                      "duration": 5899,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:04:06.271Z",
+                      "startTime": "2026-10-11T04:25:08.993Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -714,12 +723,12 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2518,
+                      "duration": 2703,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:04:11.176Z",
+                      "startTime": "2026-10-11T04:25:17.907Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -766,12 +775,12 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4276,
+                      "duration": 4596,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:04:13.749Z",
+                      "startTime": "2026-10-11T04:25:20.663Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -795,58 +804,6 @@
             },
             {
               "title": "Jornada 4: Gestão de Acesso e Fechadura Digital - Bloqueio antes das 14h com aviso e liberação destacada após 14h",
-              "ok": true,
-              "tags": [],
-              "tests": [
-                {
-                  "timeout": 60000,
-                  "annotations": [
-                    {
-                      "type": "serial",
-                      "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                        "line": 25,
-                        "column": 15
-                      }
-                    }
-                  ],
-                  "expectedStatus": "passed",
-                  "projectId": "Tablet-768",
-                  "projectName": "Tablet-768",
-                  "results": [
-                    {
-                      "workerIndex": 1,
-                      "parallelIndex": 0,
-                      "status": "passed",
-                      "duration": 2952,
-                      "errors": [],
-                      "stdout": [],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2026-10-11T04:04:18.073Z",
-                      "annotations": [
-                        {
-                          "type": "serial",
-                          "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                            "line": 25,
-                            "column": 15
-                          }
-                        }
-                      ],
-                      "attachments": []
-                    }
-                  ],
-                  "status": "expected"
-                }
-              ],
-              "id": "84ff382c39dc6b6a77f3-3391316a6b036720f1ed",
-              "file": "02-human-journeys.spec.mjs",
-              "line": 224,
-              "column": 3
-            },
-            {
-              "title": "Jornada 5: Resiliência de Pagamento PIX - Confirmação em tempo real sem reload e regeneração de QR Code",
               "ok": false,
               "tags": [],
               "tests": [
@@ -870,31 +827,31 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "failed",
-                      "duration": 26565,
+                      "duration": 18522,
                       "error": {
-                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('button:has-text(\\'Copiar Código PIX\\')').first()\nExpected: visible\nTimeout: 15000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" locator('button:has-text(\\'Copiar Código PIX\\')').first() with timeout 15000ms\u001b[22m\n\u001b[2m  - waiting for locator('button:has-text(\\'Copiar Código PIX\\')').first()\u001b[22m\n",
-                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('button:has-text(\\'Copiar Código PIX\\')').first()\nExpected: visible\nTimeout: 15000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" locator('button:has-text(\\'Copiar Código PIX\\')').first() with timeout 15000ms\u001b[22m\n\u001b[2m  - waiting for locator('button:has-text(\\'Copiar Código PIX\\')').first()\u001b[22m\n\n    at C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs:288:32",
+                        "message": "Error: [Zero White Screen Violation] #root is completely empty or has 0 children after 15000ms. HTML: \"\"",
+                        "stack": "Error: [Zero White Screen Violation] #root is completely empty or has 0 children after 15000ms. HTML: \"\"\n    at Object.assertZeroWhiteScreen (C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\fixtures\\error-guard.mjs:173:15)\n    at C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs:252:7",
                         "location": {
-                          "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                          "column": 32,
-                          "line": 288
+                          "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\fixtures\\error-guard.mjs",
+                          "column": 15,
+                          "line": 173
                         },
-                        "snippet": "\u001b[0m \u001b[90m 286 |\u001b[39m       \u001b[90m// 2. Assert pending payment UI is displayed\u001b[39m\n \u001b[90m 287 |\u001b[39m       \u001b[36mconst\u001b[39m copyPixBtn \u001b[33m=\u001b[39m page\u001b[33m.\u001b[39mlocator(\u001b[32m\"button:has-text('Copiar Código PIX')\"\u001b[39m)\u001b[33m.\u001b[39mfirst()\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 288 |\u001b[39m       \u001b[36mawait\u001b[39m expect(copyPixBtn)\u001b[33m.\u001b[39mtoBeVisible({ timeout\u001b[33m:\u001b[39m \u001b[35m15000\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                                \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 289 |\u001b[39m\n \u001b[90m 290 |\u001b[39m       \u001b[36mconst\u001b[39m initialText \u001b[33m=\u001b[39m \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mlocator(\u001b[32m\"#root\"\u001b[39m)\u001b[33m.\u001b[39minnerText()\u001b[33m;\u001b[39m\n \u001b[90m 291 |\u001b[39m       expect(initialText)\u001b[33m.\u001b[39mtoContain(\u001b[32m\"PIX\"\u001b[39m)\u001b[33m;\u001b[39m\u001b[0m"
+                        "snippet": "\u001b[90m   at \u001b[39m..\\fixtures\\error-guard.mjs:173\n\n\u001b[0m \u001b[90m 171 |\u001b[39m         \u001b[90m// Capture innerHTML for forensics\u001b[39m\n \u001b[90m 172 |\u001b[39m         \u001b[36mconst\u001b[39m rootHtml \u001b[33m=\u001b[39m \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mevaluate(() \u001b[33m=>\u001b[39m document\u001b[33m.\u001b[39mgetElementById(\u001b[32m\"root\"\u001b[39m)\u001b[33m?\u001b[39m\u001b[33m.\u001b[39minnerHTML \u001b[33m||\u001b[39m \u001b[32m\"\"\u001b[39m)\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 173 |\u001b[39m         \u001b[36mthrow\u001b[39m \u001b[36mnew\u001b[39m \u001b[33mError\u001b[39m(\u001b[32m`[Zero White Screen Violation] #root is completely empty or has 0 children after ${timeoutMs}ms. HTML: \"${rootHtml.slice(0, 200)}\"`\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m               \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 174 |\u001b[39m       }\n \u001b[90m 175 |\u001b[39m     }\n \u001b[90m 176 |\u001b[39m   }\u001b[33m;\u001b[39m\u001b[0m"
                       },
                       "errors": [
                         {
                           "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                            "column": 32,
-                            "line": 288
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\fixtures\\error-guard.mjs",
+                            "column": 15,
+                            "line": 173
                           },
-                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('button:has-text(\\'Copiar Código PIX\\')').first()\nExpected: visible\nTimeout: 15000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" locator('button:has-text(\\'Copiar Código PIX\\')').first() with timeout 15000ms\u001b[22m\n\u001b[2m  - waiting for locator('button:has-text(\\'Copiar Código PIX\\')').first()\u001b[22m\n\n\n  286 |       // 2. Assert pending payment UI is displayed\n  287 |       const copyPixBtn = page.locator(\"button:has-text('Copiar Código PIX')\").first();\n> 288 |       await expect(copyPixBtn).toBeVisible({ timeout: 15000 });\n      |                                ^\n  289 |\n  290 |       const initialText = await page.locator(\"#root\").innerText();\n  291 |       expect(initialText).toContain(\"PIX\");\n    at C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs:288:32"
+                          "message": "Error: [Zero White Screen Violation] #root is completely empty or has 0 children after 15000ms. HTML: \"\"\n\n   at ..\\fixtures\\error-guard.mjs:173\n\n  171 |         // Capture innerHTML for forensics\n  172 |         const rootHtml = await page.evaluate(() => document.getElementById(\"root\")?.innerHTML || \"\");\n> 173 |         throw new Error(`[Zero White Screen Violation] #root is completely empty or has 0 children after ${timeoutMs}ms. HTML: \"${rootHtml.slice(0, 200)}\"`);\n      |               ^\n  174 |       }\n  175 |     }\n  176 |   };\n    at Object.assertZeroWhiteScreen (C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\fixtures\\error-guard.mjs:173:15)\n    at C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs:252:7"
                         }
                       ],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:04:21.068Z",
+                      "startTime": "2026-10-11T04:25:25.301Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -909,32 +866,75 @@
                         {
                           "name": "screenshot",
                           "contentType": "image/png",
-                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-3aaa9-ad-e-regeneração-de-QR-Code-Tablet-768\\test-failed-1.png"
+                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-a79cc-iberação-destacada-após-14h-Tablet-768\\test-failed-1.png"
                         },
                         {
                           "name": "video",
                           "contentType": "video/webm",
-                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-3aaa9-ad-e-regeneração-de-QR-Code-Tablet-768\\video.webm"
+                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-a79cc-iberação-destacada-após-14h-Tablet-768\\video.webm"
                         },
                         {
                           "name": "error-context",
                           "contentType": "text/markdown",
-                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-3aaa9-ad-e-regeneração-de-QR-Code-Tablet-768\\error-context.md"
+                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-a79cc-iberação-destacada-após-14h-Tablet-768\\error-context.md"
                         },
                         {
                           "name": "trace",
                           "contentType": "application/zip",
-                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-3aaa9-ad-e-regeneração-de-QR-Code-Tablet-768\\trace.zip"
+                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-a79cc-iberação-destacada-após-14h-Tablet-768\\trace.zip"
                         }
                       ],
                       "errorLocation": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                        "column": 32,
-                        "line": 288
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\fixtures\\error-guard.mjs",
+                        "column": 15,
+                        "line": 173
                       }
                     }
                   ],
                   "status": "unexpected"
+                }
+              ],
+              "id": "84ff382c39dc6b6a77f3-3391316a6b036720f1ed",
+              "file": "02-human-journeys.spec.mjs",
+              "line": 224,
+              "column": 3
+            },
+            {
+              "title": "Jornada 5: Resiliência de Pagamento PIX - Confirmação em tempo real sem reload e regeneração de QR Code",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
+                        "line": 25,
+                        "column": 15
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "Tablet-768",
+                  "projectName": "Tablet-768",
+                  "results": [
+                    {
+                      "workerIndex": -1,
+                      "parallelIndex": -1,
+                      "status": "skipped",
+                      "duration": 0,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-11T04:25:44.452Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "skipped"
                 }
               ],
               "id": "84ff382c39dc6b6a77f3-a2f5d99d380fba0dac6d",
@@ -972,7 +972,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:04:48.726Z",
+                      "startTime": "2026-10-11T04:25:44.452Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -982,7 +982,7 @@
               ],
               "id": "84ff382c39dc6b6a77f3-e53bd4852525e5a21784",
               "file": "02-human-journeys.spec.mjs",
-              "line": 338,
+              "line": 341,
               "column": 3
             },
             {
@@ -1015,7 +1015,7 @@
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:04:48.727Z",
+                      "startTime": "2026-10-11T04:25:44.453Z",
                       "annotations": [],
                       "attachments": []
                     }
@@ -1025,7 +1025,7 @@
               ],
               "id": "84ff382c39dc6b6a77f3-618e8ce7e9f8ae03a71f",
               "file": "02-human-journeys.spec.mjs",
-              "line": 457,
+              "line": 467,
               "column": 3
             },
             {
@@ -1053,12 +1053,12 @@
                       "workerIndex": 2,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3369,
+                      "duration": 15814,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:04:50.413Z",
+                      "startTime": "2026-10-11T04:25:46.244Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -1105,12 +1105,12 @@
                       "workerIndex": 2,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2503,
+                      "duration": 2237,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:04:54.907Z",
+                      "startTime": "2026-10-11T04:26:02.643Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -1157,12 +1157,12 @@
                       "workerIndex": 2,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3205,
+                      "duration": 2873,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:04:57.452Z",
+                      "startTime": "2026-10-11T04:26:04.918Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -1209,12 +1209,12 @@
                       "workerIndex": 2,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3940,
+                      "duration": 2685,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:05:00.709Z",
+                      "startTime": "2026-10-11T04:26:07.839Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -1238,7 +1238,7 @@
             },
             {
               "title": "Jornada 5: Resiliência de Pagamento PIX - Confirmação em tempo real sem reload e regeneração de QR Code",
-              "ok": false,
+              "ok": true,
               "tags": [],
               "tests": [
                 {
@@ -1260,32 +1260,13 @@
                     {
                       "workerIndex": 2,
                       "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 17853,
-                      "error": {
-                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('button:has-text(\\'Copiar Código PIX\\')').first()\nExpected: visible\nTimeout: 15000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" locator('button:has-text(\\'Copiar Código PIX\\')').first() with timeout 15000ms\u001b[22m\n\u001b[2m  - waiting for locator('button:has-text(\\'Copiar Código PIX\\')').first()\u001b[22m\n",
-                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('button:has-text(\\'Copiar Código PIX\\')').first()\nExpected: visible\nTimeout: 15000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" locator('button:has-text(\\'Copiar Código PIX\\')').first() with timeout 15000ms\u001b[22m\n\u001b[2m  - waiting for locator('button:has-text(\\'Copiar Código PIX\\')').first()\u001b[22m\n\n    at C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs:288:32",
-                        "location": {
-                          "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                          "column": 32,
-                          "line": 288
-                        },
-                        "snippet": "\u001b[0m \u001b[90m 286 |\u001b[39m       \u001b[90m// 2. Assert pending payment UI is displayed\u001b[39m\n \u001b[90m 287 |\u001b[39m       \u001b[36mconst\u001b[39m copyPixBtn \u001b[33m=\u001b[39m page\u001b[33m.\u001b[39mlocator(\u001b[32m\"button:has-text('Copiar Código PIX')\"\u001b[39m)\u001b[33m.\u001b[39mfirst()\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 288 |\u001b[39m       \u001b[36mawait\u001b[39m expect(copyPixBtn)\u001b[33m.\u001b[39mtoBeVisible({ timeout\u001b[33m:\u001b[39m \u001b[35m15000\u001b[39m })\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m                                \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 289 |\u001b[39m\n \u001b[90m 290 |\u001b[39m       \u001b[36mconst\u001b[39m initialText \u001b[33m=\u001b[39m \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mlocator(\u001b[32m\"#root\"\u001b[39m)\u001b[33m.\u001b[39minnerText()\u001b[33m;\u001b[39m\n \u001b[90m 291 |\u001b[39m       expect(initialText)\u001b[33m.\u001b[39mtoContain(\u001b[32m\"PIX\"\u001b[39m)\u001b[33m;\u001b[39m\u001b[0m"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                            "column": 32,
-                            "line": 288
-                          },
-                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: locator('button:has-text(\\'Copiar Código PIX\\')').first()\nExpected: visible\nTimeout: 15000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" locator('button:has-text(\\'Copiar Código PIX\\')').first() with timeout 15000ms\u001b[22m\n\u001b[2m  - waiting for locator('button:has-text(\\'Copiar Código PIX\\')').first()\u001b[22m\n\n\n  286 |       // 2. Assert pending payment UI is displayed\n  287 |       const copyPixBtn = page.locator(\"button:has-text('Copiar Código PIX')\").first();\n> 288 |       await expect(copyPixBtn).toBeVisible({ timeout: 15000 });\n      |                                ^\n  289 |\n  290 |       const initialText = await page.locator(\"#root\").innerText();\n  291 |       expect(initialText).toContain(\"PIX\");\n    at C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs:288:32"
-                        }
-                      ],
+                      "status": "passed",
+                      "duration": 8790,
+                      "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:05:04.695Z",
+                      "startTime": "2026-10-11T04:26:10.577Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -1296,36 +1277,10 @@
                           }
                         }
                       ],
-                      "attachments": [
-                        {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-3aaa9-ad-e-regeneração-de-QR-Code-Mobile-375\\test-failed-1.png"
-                        },
-                        {
-                          "name": "video",
-                          "contentType": "video/webm",
-                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-3aaa9-ad-e-regeneração-de-QR-Code-Mobile-375\\video.webm"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-3aaa9-ad-e-regeneração-de-QR-Code-Mobile-375\\error-context.md"
-                        },
-                        {
-                          "name": "trace",
-                          "contentType": "application/zip",
-                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-3aaa9-ad-e-regeneração-de-QR-Code-Mobile-375\\trace.zip"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                        "column": 32,
-                        "line": 288
-                      }
+                      "attachments": []
                     }
                   ],
-                  "status": "unexpected"
+                  "status": "expected"
                 }
               ],
               "id": "84ff382c39dc6b6a77f3-17396317ec554d2e1d3e",
@@ -1355,25 +1310,34 @@
                   "projectName": "Mobile-375",
                   "results": [
                     {
-                      "workerIndex": -1,
-                      "parallelIndex": -1,
-                      "status": "skipped",
-                      "duration": 0,
+                      "workerIndex": 2,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 2497,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:05:23.559Z",
-                      "annotations": [],
+                      "startTime": "2026-10-11T04:26:19.408Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
+                            "line": 25,
+                            "column": 15
+                          }
+                        }
+                      ],
                       "attachments": []
                     }
                   ],
-                  "status": "skipped"
+                  "status": "expected"
                 }
               ],
               "id": "84ff382c39dc6b6a77f3-6f6f68f259d9c0b243f4",
               "file": "02-human-journeys.spec.mjs",
-              "line": 338,
+              "line": 341,
               "column": 3
             },
             {
@@ -1398,25 +1362,34 @@
                   "projectName": "Mobile-375",
                   "results": [
                     {
-                      "workerIndex": -1,
-                      "parallelIndex": -1,
-                      "status": "skipped",
-                      "duration": 0,
+                      "workerIndex": 2,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 3372,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:05:23.559Z",
-                      "annotations": [],
+                      "startTime": "2026-10-11T04:26:21.946Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
+                            "line": 25,
+                            "column": 15
+                          }
+                        }
+                      ],
                       "attachments": []
                     }
                   ],
-                  "status": "skipped"
+                  "status": "expected"
                 }
               ],
               "id": "84ff382c39dc6b6a77f3-7943e4ebc0369ec1938b",
               "file": "02-human-journeys.spec.mjs",
-              "line": 457,
+              "line": 467,
               "column": 3
             }
           ]
@@ -1426,11 +1399,11 @@
   ],
   "errors": [],
   "stats": {
-    "startTime": "2026-10-11T04:02:53.116Z",
-    "duration": 150549.361,
-    "expected": 13,
-    "skipped": 5,
-    "unexpected": 3,
+    "startTime": "2026-10-11T04:23:29.638Z",
+    "duration": 176246.62699999998,
+    "expected": 16,
+    "skipped": 3,
+    "unexpected": 2,
     "flaky": 0
   }
 }

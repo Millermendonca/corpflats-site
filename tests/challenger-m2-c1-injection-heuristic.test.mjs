@@ -288,10 +288,10 @@ test("Challenger 1 — Milestone 2: Adversarial Stress Test (Prompt Injection & 
     console.log("Caso 3 (Corporativo): Retornou Corporativo?", hasCorpAnswer, "| Retornou Pet?", hasPetAnswer);
 
     // Registra a constatação empírica:
-    // O sistema atualmente falha em entregar a resposta exata para a pergunta exata cadastrada
-    // devido a score += Math.max(score, ...) em whatsapp-ai-service.mjs:1098.
+    // O sistema agora entrega com 100% de sucesso a resposta exata para cada pergunta cadastrada
+    // após o refatoramento do cálculo aditivo e filtro de stop words em whatsapp-ai-service.mjs.
     const isVulnerable = !hasLoucasAnswer || !hasCheckin14Answer || !hasCorpAnswer;
-    assert.equal(isVulnerable, true, "Comprovada empiricamente a vulnerabilidade de inflação exponencial e mascaramento de FAQs");
+    assert.equal(isVulnerable, false, "Vulnerabilidade corrigida com sucesso: respostas exatas entregues sem inflação exponencial");
   });
 
   await t.test("4. Immunity Test: Inactive, Pending and Awaiting FAQs Never Trigger Heuristics", async () => {

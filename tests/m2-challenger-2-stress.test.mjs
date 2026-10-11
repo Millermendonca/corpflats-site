@@ -82,30 +82,27 @@ describe("Milestone 2 Challenger 2 — Bateria Empírica de Auto-Aprendizado & C
     assert.equal(inferFaqCategory("Tem ferro de passar roupa?"), "estrutura_flat");
   });
 
-  test("C1.2: PROVA EMPÍRICA DE BUG: 'Tudo bem?' é classificado erroneamente como pergunta para FAQ", () => {
+  test("C1.2: VERIFICAÇÃO R2: 'Tudo bem?' é descartado como saudação e NÃO gera pergunta para FAQ", () => {
     // DISPATCH.md exige: "Send greetings ('Oi', 'Bom dia', 'Tudo bem?'). Verify NO pending FAQ is created."
-    // No código atual:
-    // 'Tudo bem?' contém '?' e não está na regex de descarte de saudações pura.
     const isTudoBemClassifiedAsQuestion = isPotentialGuestQuestion("Tudo bem?");
-    // Registramos a falha observada:
     assert.equal(
       isTudoBemClassifiedAsQuestion,
-      true,
-      "FALHA CONFIRMADA: 'Tudo bem?' é classificado como pergunta devido a '?' e ausência na regex de saudações"
+      false,
+      "VERIFICADO: 'Tudo bem?' é descartado como saudação e não cria pergunta pendente"
     );
   });
 
-  test("C1.3: PROVA EMPÍRICA DE BUG: 'Aceitam pet no apartamento?' é categorizado como estrutura_flat em vez de regras_visitas_pets", () => {
-    // No código atual, /flat|quarto|apartamento/ em estrutura_flat é avaliado ANTES de regras_visitas_pets
+  test("C1.3: VERIFICAÇÃO R2: 'Aceitam pet no apartamento?' é categorizado como regras_visitas_pets", () => {
+    // Categorias específicas têm precedência estrita sobre palavras genéricas de acomodação
     const category = inferFaqCategory("Aceitam cachorro no apartamento?");
     assert.equal(
       category,
-      "estrutura_flat",
-      "FALHA CONFIRMADA: palavras genéricas 'apartamento/quarto/flat' em estrutura_flat mascaram regras_visitas_pets"
+      "regras_visitas_pets",
+      "VERIFICADO: 'Aceitam cachorro no apartamento?' é categorizado como regras_visitas_pets"
     );
   });
 
-  test("C1.4: PROVA EMPÍRICA DE BUG: Deduplicação falha quando há diferenças de acentuação ('têm' vs 'tem')", () => {
+  test("C1.4: VERIFICAÇÃO R2: Deduplicação com normalização de acentuação ('têm' vs 'tem')", () => {
     const db = JSON.parse(JSON.stringify(mockDb));
     // 1ª vez: pergunta com 'tem' sem acento
     const f1 = autoCreatePendingFaq({
@@ -124,11 +121,11 @@ describe("Milestone 2 Challenger 2 — Bateria Empírica de Auto-Aprendizado & C
       senderName: "Carlos Drumond"
     });
 
-    // Como lower.includes(qLower) não normaliza acentos ("têm" !== "tem"), a deduplicação falha!
-    assert.notEqual(
+    // Com normalização NFD em findExistingPendingFaq, deduplica com sucesso!
+    assert.equal(
       f2.id,
       f1.id,
-      "FALHA CONFIRMADA: Sem normalização de acentos em findExistingPendingFaq, cria FAQ pendente duplicada"
+      "VERIFICADO: Normalização de acentos em findExistingPendingFaq previne duplicata e reutiliza ID existente"
     );
   });
 

@@ -61,6 +61,9 @@ export function attachErrorGuard(page, options = {}) {
             text.includes("/guest-auth/me") ||
             text.includes("accounts.google.com")
           ))
+        )) ||
+        (Array.isArray(options.allowedApiStatuses) && options.allowedApiStatuses.some(st => 
+          text.includes(`status of ${st}`) || text.includes(`${st} (`)
         ))
       ) {
         return;

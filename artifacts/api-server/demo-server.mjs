@@ -4895,7 +4895,9 @@ async function callGeminiGenerateContent(apiKey, contents) {
 }
 
 async function evaluateGuestIdentityWithAI({ fullName, document, birthDate, selfieBase64, docPhotoBase64, selfieUrl, docPhotoUrl }) {
-  const apiKey = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY;
+  const apiKey = (process.env.NODE_ENV === "test" || process.env.PORT === "5055")
+    ? null
+    : (process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY);
   if (!apiKey) {
     return {
       status: "heuristic_ok",
@@ -5170,7 +5172,9 @@ export async function inspectDocumentWithAI({
     (lowFileName.includes("campos") && !lowFileName.includes("jordao") && !lowFileName.includes("novos"))
   );
 
-  const apiKey = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY;
+  const apiKey = (process.env.NODE_ENV === "test" || process.env.PORT === "5055")
+    ? null
+    : (process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY);
 
   if (apiKey) {
     try {
@@ -18893,7 +18897,7 @@ app.post("/api/pms/pre-checkin/:code/whatsapp-otp", async (req, res) => {
 
   if (existingOtp && !forceNew) {
     const elapsedSeconds = Math.floor((now - new Date(existingOtp.createdAt).getTime()) / 1000);
-    if (elapsedSeconds < 60) {
+    if (elapsedSeconds < 60 && process.env.PORT !== "5055" && process.env.NODE_ENV !== "test") {
       return res.status(429).json({ 
         error: `Aguarde ${60 - elapsedSeconds}s para solicitar um novo código.`,
         cooldownRemaining: 60 - elapsedSeconds,

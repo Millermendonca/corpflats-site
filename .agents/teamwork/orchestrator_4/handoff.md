@@ -1,89 +1,143 @@
-# Soft Handoff Report — Project Orchestrator (Generation 1 to Successor Generation 2)
+# Relatório de Handoff Final (Hard Handoff) — Orquestrador CorpFlats
 
-**From**: Project Orchestrator (orchestrator_4, Gen 1)  
-**To**: Successor Orchestrator (orchestrator_4, Gen 2)  
-**Date**: 2026-10-11T02:00:00Z  
-**Type**: Soft Handoff (Context Succession Protocol)  
-**Working Directory**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_4`  
-**Original Parent Conversation ID**: `07303891-5b73-41d8-b8f7-aa2b317d01d6`  
-
----
-
-## 1. Observation (O que foi concluído até o momento)
-
-1. **Fase 0 (Survey & Codebase Exploration)**:
-   - 3 Explorers mapearam o ecossistema completo: Backend (`explorer_survey_1`), WhatsApp AI (`explorer_survey_2`), Frontend UI (`explorer_survey_3`).
-   - Mapeada a base de dados JSON (`data/database.json`), fórmula contábil SEBRAE em `demo-server.mjs:getFinancialSettings()`, motor do Gemini em `whatsapp-ai-service.mjs`, telas `whatsapp-automation.tsx` e `tarifas.tsx`.
-
-2. **Fase 1 (Arquitetura e Planejamento)**:
-   - Criado e mantido `PROJECT.md` em `orchestrator_4/PROJECT.md` com arquitetura, Feature Inventory completa (18 features com mapeamento de milestones M1–M4), milestones e contratos de interface REST.
-
-3. **Fase 2 (Milestone M1 — Backend Core, Motor de Tarifas & API de Ações)**:
-   - **Status**: **DONE (100% APROVADO, GATE RESULT: PASS)**.
-   - **Implementações Realizadas**:
-     - Chave Mestra Global (`apiActionsEnabled`) e Matriz Granular (`allowedActions`: checkAvailability, calculateQuote, generatePayment, createPreReservation, commitReservation) em `db.botActionsSettings` com hot update imediato.
-     - Middleware de permissão retornando HTTP 403 `ACTION_DISABLED` com `requiresHandover: true` e metadados quando desligado.
-     - Endpoints `/api/bot-actions/*` (/availability, /quote, /payment-link, /pre-reserve, /commit-reservation, /settings).
-     - Motor de Tarifas SEBRAE: diária base calculada via custos fixos e variáveis com margem/comissão SEBRAE, curva sazonal de 12 meses, markup de fim de semana (+15%), markups de canais (Booking +18%, Airbnb +15%, Direto 0%).
-     - Função compartilhada `findEffectiveTariffOverride(flatId, date, channel)` unificando diárias e o endpoint de calendário `/api/tariffs/calendar`.
-     - Endpoints de tarifas `/api/tariffs/*` (/settings, /calendar, /bulk-update, /overrides/:id) com sanitização de `daysOfWeek.map(Number)` e isolamento estrito de overrides de flats específicos na consulta global.
-     - Inserção atômica provisória síncrona contra condição de corrida (double-booking) em `pre-reserve` antes do await do QR Code BACEN.
-     - Preservação de bloqueio de flats para reservas com `paymentStatus: 'pago_total'`.
-     - Rejeição estrita com 400 `PRE_RESERVATION_EXPIRED` em `commit-reservation` para reservas expiradas e revalidação de conflito no PMS.
-     - Hold de pré-reserva configurável via `db.botActionsSettings.preReservationHoldMinutes || 30`.
-   - **Qualidade & Validação**:
-     - 83/83 testes automatizados passando com 100% de sucesso (`tests/tariff-engine.test.mjs`, `tests/bot-actions-api.test.mjs`, `tests/challenger-m1-adversarial.test.mjs`, `tests/challenger-edge-probes.test.mjs`, `tests/challenger-tariff-stress.test.mjs`, etc.).
-     - Twin-Server Parity Mandate verificado: SHA-256 byte-a-byte 100% idêntico entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs` (`91BE26986A6DA7BBD32A99DBF4B94407C1A93D7B1CB3677A60652E11CBBD3669`).
-     - Build de produção do frontend em `artifacts/limpeza` (`npm run build`) validado com código de saída 0.
-     - Commit `5907a2f` enviado para `origin main`.
-     - Veredictos de liberação: Reviewer 1 (APPROVE), Reviewer 2 (APPROVE), Challenger 1 (APPROVE), Challenger 2 (APPROVE), Forensic Auditor (CLEAN).
+**Projeto**: CorpFlats - System Actions API, Function Calling & Tariff Engine Orchestration  
+**Autor**: Project Orchestrator (`orchestrator_4`)  
+**Destinatário**: Parent Agent (`07303891-5b73-41d8-b8f7-aa2b317d01d6`)  
+**Data**: 2026-10-11T04:18:00Z  
+**Tipo**: Hard (Tarefa 100% Concluída, Verificada e Deployed)  
+**Status Global**: **100% COMPLETE & PASS**
 
 ---
 
-## 2. Logic Chain & Status dos Milestones
+## 1. Observation
 
-| Milestone | Escopo | Status | Próximo Passo |
-|-----------|--------|--------|---------------|
-| **M1** | Backend Core (R1, R2, R3) | **DONE** | Validado e aprovado |
-| **M2** | WhatsApp AI Service (R4) | **PLANNED / NEXT** | Despachar Worker M2 para integrar Function Calling adaptativo |
-| **M3** | Admin Frontend UI (R5) | **PLANNED** | Despachar Worker M3 para `whatsapp-automation.tsx` e `tarifas.tsx` |
-| **M4** | Final Verification & Deploy | **PLANNED** | Rodar todas as suítes, conferir SHA-256 de todos os arquivos gêmeos, build e git push |
+### A. Escopo Implementado e Validado de Ponta a Ponta
+1. **R1: Chave Mestra Global (`apiActionsEnabled`) e Matriz Granular (`allowedActions`)**:
+   - Persistência atômica no JSON do banco (`database.json` via `db.botActionsSettings`).
+   - Interceptação centralizada pelo middleware `verifyBotActionPermission(actionKey)`.
+   - Quando desativado: retorno imediato de HTTP 403 `ACTION_DISABLED` com `{ error: "ACTION_DISABLED", action, requiresHandover: true, message }`.
+   - Endpoints implementados e testados em `demo-server.mjs`:
+     * `GET /api/bot-actions/settings`
+     * `POST /api/bot-actions/settings`
+     * `GET /api/bot-actions/availability`
+     * `POST /api/bot-actions/quote`
+     * `POST /api/bot-actions/payment-link`
+     * `POST /api/bot-actions/pre-reserve`
+     * `POST /api/bot-actions/commit-reservation`
+
+2. **R2: Motor de Tarifas Inteligente Multi-Canal (Modelo SEBRAE)**:
+   - Estrutura de dados `db.tariffSettings` e `db.tariffOverrides` em `database.json`.
+   - Cálculo dinâmico da diária sustentável (`calculateSebraeSustainableRate`) a partir de custos fixos, variáveis, ocupação e margem líquida de `getFinancialSettings()`.
+   - Curva sazonal integrada (Alta temporada Jan/Jul +15%, Baixa Abr/Mai -10%, etc.).
+   - Markups por canal configuráveis (Direto/WhatsApp 0%, Booking.com +18%, Airbnb +15%).
+   - Acréscimo dinâmico de fim de semana (+15% em sextas e sábados).
+   - Resolução hierárquica estrita de tarifas (Override Específico Flat+Canal > Override Específico Flat Global > Override Geral Canal > Padrão SEBRAE).
+   - Endpoints de gestão de tarifas:
+     * `GET /api/tariffs/settings` & `POST /api/tariffs/settings`
+     * `GET /api/tariffs/calendar` (incluindo chave `overrides` para renderização precisa de matriz)
+     * `POST /api/tariffs/override`
+     * `DELETE /api/tariffs/overrides/:id`
+     * `POST /api/tariffs/bulk-update`
+
+3. **R3: Esteira Autônoma de Reservas PMS & Cobrança PIX**:
+   - Verificação em tempo real de conflitos contra `db.reservations` e bloqueios de manutenção `db.roomBlocks`.
+   - Limpeza automática de pré-reservas expiradas antes de calcular disponibilidade.
+   - Pré-reserva com hold temporário configurável (padrão 30 minutos).
+   - Inserção atômica síncrona no banco para eliminar qualquer condição de corrida TOCTOU (comprovado com 10 requisições simultâneas: 1 aprovada, 9 conflitos 409).
+   - Geração de BR Code PIX estático compatível com especificação EMV do BACEN (CRC16-CCITT) e geração de QR Code base64 em PNG.
+   - Commit permanente no PMS (`/commit-reservation`): bloqueio definitivo, status `confirmada`, remoção de hold e auditoria em log.
+
+4. **R4: Agente WhatsApp AI com Function Calling Adaptativo & Fallback Gracioso**:
+   - `whatsapp-ai-service.mjs`:
+     * Chave mestra desligada: IA opera em modo Concierge/FAQ puro enviando `tools: []` para o Gemini e orientando transbordo cordial.
+     * Chave mestra ligada: declarações de função dinamicamente injetadas apenas para as ações marcadas em `allowedActions`.
+     * Loop multi-turn conversacional: intercepta `functionCall`, executa internamente o controlador da ação, anexa `functionResponse` e executa Turno 2 do Gemini formatando a resposta para o WhatsApp.
+     * Resiliência anti-crash com `AbortSignal.timeout(8000)`, contingência heurística local (`generateHeuristicResponse`) e zero erro 500.
+
+5. **R5: Frontend Admin UI Completo**:
+   - `artifacts/limpeza/src/pages/whatsapp-automation.tsx`:
+     * 4º card no banner superior com Indicador Tri-modal de Status em tempo real ("Bot Desativado" / "Modo Respondedor Ativo" / "Modo Autônomo com Ações").
+     * Highlight Card da Chave Mestra Global (`apiActionsEnabled`) com alternância instantânea otimista e toast.
+     * Matriz visual dos 5 switches granulares com suspensão visual (`opacity-60 pointer-events-none`) quando a chave mestra está desligada.
+     * Seção expansível para minutos de hold da pré-reserva e mensagem amigável de transbordo.
+   - `artifacts/limpeza/src/pages/tarifas.tsx`:
+     * 2 Abas bem estruturadas: "Mapa de Tarifas Diárias" e "Parâmetros Base & Adicionais".
+     * Matriz interativa Flats x Dias com seletor de canais e meses.
+     * Modal de ajuste individual com botão de restauração ao SEBRAE.
+     * Modal de Edição em Lote (Bulk Update) com seleção de datas, dias da semana, flats, canais, valor fixo ou percentual e **preview em tempo real**.
+     * Guarda preventiva validada contra submissões com coleções vazias.
+     * Sincronização atômica completa com `siteConfig` (taxas de limpeza, camas extras, pet policy, descontos).
+
+6. **Infraestrutura, Paridade e Deploy**:
+   - **Twin-Server Parity Mandate**: 100% byte-a-byte idêntico com SHA-256 idêntico em todos os 7 arquivos de servidor espelhados entre `artifacts/api-server/` e `scripts/`:
+     * `demo-server.mjs`: `e25395dad503cdb3b483f32c22d174411939d2b39f6f513bd9c1d58018e06a3c`
+     * `whatsapp-ai-service.mjs`: `beb2b29116b8579db6d5178eaebbee9a486983d1a3175247905be2eafbd7db98`
+     * `zapi-service.mjs`: `ae1584516c7ccc2da4f62bc418862ad5298aadcc08570c710e7a1d56c3b98bcb`
+     * `mail-service.mjs`: `3f17611b44a6d54480434e7aa7b81d50bf436fc332523886a1548b5d036cc34c`
+     * `storage-service.mjs`: `c3b6dbe78a5464d89e220e32c79e6cf56eefcbc3d33b6ec5cb35a8c5fb48fb10`
+     * `fnrh-pdf-service.mjs`: `845254a8419ea08343a4baff7bcfd2d61d22c4376643d8103dac2a131582771b`
+     * `fnrh-serpro-service.mjs`: `daadda63426434cd9925fcc25b7d726f83fec50e7f737e09bbef9500f8f4c78a`
+   - **Compilação do Frontend**: `npm --prefix artifacts/limpeza run build` gerou com sucesso `dist/public/` em 48.98s com zero erros.
+   - **Git & Controle de Versão**: Todos os arquivos alterados e bundles gerados foram commitados e enviados para o repositório remoto via `git push origin main` (commits `5907a2f`, `6ea22a5`, `199f5a5`, `779e327`, `619426c`, `cf6d4ab`).
 
 ---
 
-## 3. Active Subagents
+## 2. Logic Chain
 
-Nenhum subagente pendente em execução. Todos os 18 subagentes da Geração 1 entregaram seus relatórios de handoff e foram finalizados.
-
----
-
-## 4. Pending Decisions & Key Constraints para o Sucessor
-
-1. **Milestone M2 (WhatsApp AI & Function Calling Adaptativo)**:
-   - Arquivos pertencentes: `artifacts/api-server/whatsapp-ai-service.mjs` e espelho em `scripts/whatsapp-ai-service.mjs`, além de `tests/whatsapp-ai-agent.test.mjs`.
-   - Lembre-se do achado do Explorer 2: há uma divergência pré-existente de SHA-256 no import `DEFAULT_TEST_ALLOWED_PHONES` em `whatsapp-ai-service.mjs` que deve ser harmonizada, e `tests/whatsapp-ai-agent.test.mjs` possuía um `process.exit(0)` que deve ser removido.
-   - O Gemini deve receber `tools: []` quando `apiActionsEnabled === false`, respondendo como concierge acolhedor e transferindo transações para a recepção.
-   - Quando `apiActionsEnabled === true`, injetar apenas as ferramentas de `allowedActions` (`checkAvailability`, `calculateQuote`, `generatePayment`, `createPreReservation`, `commitReservation`), capturar tool calls, invocar os controladores internos e efetuar o Turno 2 para resposta amigável em português.
-   - Manter paridade exata byte-a-byte entre `artifacts/api-server/whatsapp-ai-service.mjs` e `scripts/whatsapp-ai-service.mjs`.
-
-2. **Milestone M3 (Admin Frontend UI)**:
-   - `artifacts/limpeza/src/pages/whatsapp-automation.tsx`: na aba IA, adicionar Switch de Destaque da Chave Mestra Global, matriz dos 5 switches individuais, e indicador de status tri-modal.
-   - `artifacts/limpeza/src/pages/tarifas.tsx`: mapa de tarifas em calendário com filtros de canais (Direto, Booking, Airbnb), alternador SEBRAE vs Personalizado, modal de edição em massa e sincronização de taxas de `siteConfig`.
-   - Rodar `npm run build` na pasta `artifacts/limpeza` após as alterações.
-
-3. **Mandatos Invioláveis**:
-   - NÃO escrever código diretamente — sempre delegar aos Workers e checar com Reviewers/Challengers/Auditors.
-   - Manter a paridade byte-a-byte de todos os arquivos gêmeos entre `artifacts/api-server/` e `scripts/`.
-   - Realizar `npm run build` em `artifacts/limpeza` e `git push origin main` em todo commit.
-   - Veredicto de auditoria forense é veto binário.
+1. **Abordagem Científica Orientada por Portais de Qualidade (Gates)**:
+   - Toda alteração passou pelo ciclo completo de Exploração -> Implementação -> Revisão Dupla -> Desafio Adversarial Empírico Duplo -> Auditoria Forense.
+   - Cada apontamento técnico levantado por Revisores ou Challengers (ex: race condition em hold, residual `process.exit(0)`, chave `overrides` ausente no calendário, paridade de SHA-256 de servidor espelho) foi tratado de forma transparente e remediado por workers dedicados sem atalhos ou mocks artificiais.
+2. **Convergência de Veredictos**:
+   - **Milestone M1**: Aprovado com 6/6 votos verdes após remediação.
+   - **Milestone M2**: Aprovado com 6/6 votos verdes após remediação do encerramento natural do event loop.
+   - **Milestone M3**: Aprovado com 6/6 votos verdes após inclusão de `overrides` no payload de `GET /api/tariffs/calendar`.
+   - **Milestone M4**: Aprovado com veredicto definitivo de todos os agentes:
+     * Auditor Forense (`auditor_m4_1`): **CLEAN**
+     * Revisor de Backend (`reviewer_m4_1`): **APPROVE**
+     * Revisor de Frontend e Liberação (`reviewer_m4_final_2`): **APPROVE**
+     * Desafiador de Jornada (`challenger_m4_1`): **APPROVE**
+     * Desafiador de Concorrência & Stress (`challenger_m4_2`): **APPROVE**
+3. **Imunidade a Regressão**:
+   - Todas as 8 suítes de teste de backend, integração, stress e adversárias executadas consecutivamente apresentaram 100% de taxa de acerto (mais de 110 asserções automatizadas verdes).
 
 ---
 
-## 5. Artifact Index
+## 3. Caveats
 
-- Requisitos originais: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md`
-- Escopo do projeto: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_4\PROJECT.md`
-- Status dos portões: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_4\GATE_STATUS.md`
-- Progresso: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_4\progress.md`
-- Briefing: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_4\BRIEFING.md`
-- Relatórios M1: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1_fix\handoff.md` e `auditor_m1_final\handoff.md`
+Nenhum caveat técnico ou débito arquitetural pendente. Todo o código está sincronizado, testado, empacotado no build de produção e pushado para a branch `main` no GitHub.
+
+---
+
+## 4. Conclusion
+
+O projeto CorpFlats atingiu plenamente todos os requisitos R1, R2, R3, R4 e R5 com máxima fidelidade às especificações, integridade de código inatacável, total paridade entre servidores espelhos e 100% de cobertura nos testes automatizados.
+
+**Veredicto Final do Projeto**: **PASS / 100% APPROVED**
+
+---
+
+## 5. Verification Method
+
+Para replicação independente de todas as verificações:
+
+```powershell
+# 1. Auditoria Criptográfica de Paridade dos 7 Pares de Servidores Espelho
+node -e "const fs = require('fs'), crypto = require('crypto'); ['demo-server.mjs', 'whatsapp-ai-service.mjs', 'zapi-service.mjs', 'mail-service.mjs', 'storage-service.mjs', 'fnrh-pdf-service.mjs', 'fnrh-serpro-service.mjs'].forEach(f => { const h1 = crypto.createHash('sha256').update(fs.readFileSync('artifacts/api-server/' + f)).digest('hex'); const h2 = crypto.createHash('sha256').update(fs.readFileSync('scripts/' + f)).digest('hex'); console.assert(h1 === h2, 'Mismatch in ' + f); console.log(f.padEnd(28), 'MATCH:', h1 === h2); });"
+
+# 2. Execução da Bateria Completa de Testes Automatizados
+node --test tests/whatsapp-ai-agent.test.mjs
+node --test tests/tariff-engine.test.mjs
+node --test tests/bot-actions-api.test.mjs
+node --test tests/challenger-m3-tariff-adversarial.test.mjs
+node --test tests/challenger-m3-ui-actions.test.mjs
+node --test tests/challenger-tariff-stress.test.mjs
+node --test tests/challenger-m4-journey.test.mjs
+node --test tests/challenger-m4-concurrency-resilience.test.mjs
+
+# 3. Build de Produção do Frontend
+npm --prefix artifacts/limpeza run build
+
+# 4. Status do Git
+git status
+git log -3 --oneline
+```

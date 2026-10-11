@@ -34,7 +34,7 @@
 | M1 | Backend Core: System Actions API & Tariff Engine & Autonomous Pipeline | R1 (Master switch & `/api/bot-actions/*`), R2 (Tariff Engine & SEBRAE), R3 (PMS Reservation & PIX Pipeline) | none | DONE |
 | M2 | WhatsApp AI Service: Adaptive Function Calling & Fallback | R4 (Gemini tool calling, multi-turn, courteous handover, mirror parity) | M1 | DONE |
 | M3 | Frontend Admin: AI Switches & Multi-Channel Tariff Calendar | R5 (`whatsapp-automation.tsx` & `tarifas.tsx`) | M1 | DONE |
-| M4 | Final Milestone: Full Verification, Parity Audit, Build & Deploy | 100% tests pass, SHA-256 twin server parity, `npm run build`, git commit & push | M1, M2, M3 | IN_PROGRESS |
+| M4 | Final Milestone: Full Verification, Parity Audit, Build & Deploy | 100% tests pass, SHA-256 twin server parity, `npm run build`, git commit & push | M1, M2, M3 | DONE |
 
 ## Interface Contracts
 ### Bot Actions API ↔ Consumers (WhatsApp Bot & External)
