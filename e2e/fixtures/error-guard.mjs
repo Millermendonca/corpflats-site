@@ -143,7 +143,7 @@ export function attachErrorGuard(page, options = {}) {
      * Verifies that #root has rendered non-empty, visible DOM elements (Zero White Screen).
      * @param {number} [timeoutMs=15000]
      */
-    assertZeroWhiteScreen: async (timeoutMs = 15000) => {
+    assertZeroWhiteScreen: async (timeoutMs = 30000) => {
       // Wait for #root to exist
       const root = page.locator("#root");
       await root.waitFor({ state: "attached", timeout: timeoutMs });

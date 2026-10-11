@@ -67,12 +67,10 @@ export function buildAuthCookie(roleOrUser, domain = "127.0.0.1") {
  * @param {string} [domain='127.0.0.1']
  */
 export async function injectAuthSession(context, roleOrUser, domain = "127.0.0.1") {
+  await context.clearCookies();
   const cookie = buildAuthCookie(roleOrUser, domain);
   if (cookie) {
     await context.addCookies([cookie]);
-  } else {
-    // Clear cookies for public persona
-    await context.clearCookies();
   }
 }
 

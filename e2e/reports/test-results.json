@@ -262,12 +262,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 29197,
+                      "duration": 3389,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:23:31.874Z",
+                      "startTime": "2026-10-11T04:53:35.962Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -314,12 +314,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3041,
+                      "duration": 14584,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:24:01.667Z",
+                      "startTime": "2026-10-11T04:53:40.409Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -366,12 +366,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 5439,
+                      "duration": 18747,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:24:04.758Z",
+                      "startTime": "2026-10-11T04:53:55.032Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -390,7 +390,7 @@
               ],
               "id": "84ff382c39dc6b6a77f3-d08b77c7c7ad5f2438dc",
               "file": "02-human-journeys.spec.mjs",
-              "line": 149,
+              "line": 162,
               "column": 3
             },
             {
@@ -418,12 +418,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3972,
+                      "duration": 3756,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:24:10.237Z",
+                      "startTime": "2026-10-11T04:54:13.826Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -442,7 +442,7 @@
               ],
               "id": "84ff382c39dc6b6a77f3-a38f5603f1cb1459e934",
               "file": "02-human-journeys.spec.mjs",
-              "line": 224,
+              "line": 237,
               "column": 3
             },
             {
@@ -470,12 +470,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 21663,
+                      "duration": 20834,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:24:14.269Z",
+                      "startTime": "2026-10-11T04:54:17.644Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -494,7 +494,7 @@
               ],
               "id": "84ff382c39dc6b6a77f3-798cfc28adbaeb8ed154",
               "file": "02-human-journeys.spec.mjs",
-              "line": 274,
+              "line": 290,
               "column": 3
             },
             {
@@ -522,12 +522,12 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 5448,
+                      "duration": 2460,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:24:35.978Z",
+                      "startTime": "2026-10-11T04:54:38.534Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -546,12 +546,12 @@
               ],
               "id": "84ff382c39dc6b6a77f3-a18b16a488c8e53bd28c",
               "file": "02-human-journeys.spec.mjs",
-              "line": 341,
+              "line": 357,
               "column": 3
             },
             {
               "title": "Jornada 7: Isolamento Estrito de Acompanhantes - Hóspede 2 não sobrescreve Hóspede 1",
-              "ok": false,
+              "ok": true,
               "tags": [],
               "tests": [
                 {
@@ -573,32 +573,13 @@
                     {
                       "workerIndex": 0,
                       "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 19140,
-                      "error": {
-                        "message": "TimeoutError: apiRequestContext.post: Timeout 15000ms exceeded.\nCall log:\n\u001b[2m  - → POST http://127.0.0.1:5055/api/pms/pre-checkin\u001b[22m\n\u001b[2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 CorpFlatsDesktop/1.0\u001b[22m\n\u001b[2m    - accept: */*\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n\u001b[2m    - content-type: application/json\u001b[22m\n\u001b[2m    - content-length: 326\u001b[22m\n",
-                        "stack": "TimeoutError: apiRequestContext.post: Timeout 15000ms exceeded.\nCall log:\n\u001b[2m  - → POST http://127.0.0.1:5055/api/pms/pre-checkin\u001b[22m\n\u001b[2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 CorpFlatsDesktop/1.0\u001b[22m\n\u001b[2m    - accept: */*\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n\u001b[2m    - content-type: application/json\u001b[22m\n\u001b[2m    - content-length: 326\u001b[22m\n\n    at C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs:472:53",
-                        "location": {
-                          "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                          "column": 53,
-                          "line": 472
-                        },
-                        "snippet": "\u001b[0m \u001b[90m 470 |\u001b[39m     \u001b[36mtry\u001b[39m {\n \u001b[90m 471 |\u001b[39m       \u001b[90m// 1. Submit pre-checkin for Companion (Guest Index 2)\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 472 |\u001b[39m       \u001b[36mconst\u001b[39m companionSubmitRes \u001b[33m=\u001b[39m \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mrequest\u001b[33m.\u001b[39mpost(\u001b[32m`${baseURL}/api/pms/pre-checkin`\u001b[39m\u001b[33m,\u001b[39m {\n \u001b[90m     |\u001b[39m                                                     \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 473 |\u001b[39m         data\u001b[33m:\u001b[39m {\n \u001b[90m 474 |\u001b[39m           code\u001b[33m:\u001b[39m \u001b[32m\"RES-TEST-COMPANION-ISO\"\u001b[39m\u001b[33m,\u001b[39m\n \u001b[90m 475 |\u001b[39m           guestIndex\u001b[33m:\u001b[39m \u001b[35m2\u001b[39m\u001b[33m,\u001b[39m\u001b[0m"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                            "column": 53,
-                            "line": 472
-                          },
-                          "message": "TimeoutError: apiRequestContext.post: Timeout 15000ms exceeded.\nCall log:\n\u001b[2m  - → POST http://127.0.0.1:5055/api/pms/pre-checkin\u001b[22m\n\u001b[2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 CorpFlatsDesktop/1.0\u001b[22m\n\u001b[2m    - accept: */*\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n\u001b[2m    - content-type: application/json\u001b[22m\n\u001b[2m    - content-length: 326\u001b[22m\n\n\n  470 |     try {\n  471 |       // 1. Submit pre-checkin for Companion (Guest Index 2)\n> 472 |       const companionSubmitRes = await page.request.post(`${baseURL}/api/pms/pre-checkin`, {\n      |                                                     ^\n  473 |         data: {\n  474 |           code: \"RES-TEST-COMPANION-ISO\",\n  475 |           guestIndex: 2,\n    at C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs:472:53"
-                        }
-                      ],
+                      "status": "passed",
+                      "duration": 4328,
+                      "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:24:41.489Z",
+                      "startTime": "2026-10-11T04:54:41.040Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -609,41 +590,15 @@
                           }
                         }
                       ],
-                      "attachments": [
-                        {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-dca85-2-não-sobrescreve-Hóspede-1-Desktop-1920\\test-failed-1.png"
-                        },
-                        {
-                          "name": "video",
-                          "contentType": "video/webm",
-                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-dca85-2-não-sobrescreve-Hóspede-1-Desktop-1920\\video.webm"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-dca85-2-não-sobrescreve-Hóspede-1-Desktop-1920\\error-context.md"
-                        },
-                        {
-                          "name": "trace",
-                          "contentType": "application/zip",
-                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-dca85-2-não-sobrescreve-Hóspede-1-Desktop-1920\\trace.zip"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
-                        "column": 53,
-                        "line": 472
-                      }
+                      "attachments": []
                     }
                   ],
-                  "status": "unexpected"
+                  "status": "expected"
                 }
               ],
               "id": "84ff382c39dc6b6a77f3-09133d4bca5c4111b149",
               "file": "02-human-journeys.spec.mjs",
-              "line": 467,
+              "line": 483,
               "column": 3
             },
             {
@@ -671,12 +626,12 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 5899,
+                      "duration": 2973,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:25:08.993Z",
+                      "startTime": "2026-10-11T04:54:58.028Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -723,12 +678,12 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2703,
+                      "duration": 1586,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:25:17.907Z",
+                      "startTime": "2026-10-11T04:55:01.465Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -775,12 +730,12 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4596,
+                      "duration": 3960,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:25:20.663Z",
+                      "startTime": "2026-10-11T04:55:03.096Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -799,12 +754,12 @@
               ],
               "id": "84ff382c39dc6b6a77f3-c0c74f08eb6f5f2ee1fb",
               "file": "02-human-journeys.spec.mjs",
-              "line": 149,
+              "line": 162,
               "column": 3
             },
             {
               "title": "Jornada 4: Gestão de Acesso e Fechadura Digital - Bloqueio antes das 14h com aviso e liberação destacada após 14h",
-              "ok": false,
+              "ok": true,
               "tags": [],
               "tests": [
                 {
@@ -826,32 +781,13 @@
                     {
                       "workerIndex": 1,
                       "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 18522,
-                      "error": {
-                        "message": "Error: [Zero White Screen Violation] #root is completely empty or has 0 children after 15000ms. HTML: \"\"",
-                        "stack": "Error: [Zero White Screen Violation] #root is completely empty or has 0 children after 15000ms. HTML: \"\"\n    at Object.assertZeroWhiteScreen (C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\fixtures\\error-guard.mjs:173:15)\n    at C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs:252:7",
-                        "location": {
-                          "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\fixtures\\error-guard.mjs",
-                          "column": 15,
-                          "line": 173
-                        },
-                        "snippet": "\u001b[90m   at \u001b[39m..\\fixtures\\error-guard.mjs:173\n\n\u001b[0m \u001b[90m 171 |\u001b[39m         \u001b[90m// Capture innerHTML for forensics\u001b[39m\n \u001b[90m 172 |\u001b[39m         \u001b[36mconst\u001b[39m rootHtml \u001b[33m=\u001b[39m \u001b[36mawait\u001b[39m page\u001b[33m.\u001b[39mevaluate(() \u001b[33m=>\u001b[39m document\u001b[33m.\u001b[39mgetElementById(\u001b[32m\"root\"\u001b[39m)\u001b[33m?\u001b[39m\u001b[33m.\u001b[39minnerHTML \u001b[33m||\u001b[39m \u001b[32m\"\"\u001b[39m)\u001b[33m;\u001b[39m\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 173 |\u001b[39m         \u001b[36mthrow\u001b[39m \u001b[36mnew\u001b[39m \u001b[33mError\u001b[39m(\u001b[32m`[Zero White Screen Violation] #root is completely empty or has 0 children after ${timeoutMs}ms. HTML: \"${rootHtml.slice(0, 200)}\"`\u001b[39m)\u001b[33m;\u001b[39m\n \u001b[90m     |\u001b[39m               \u001b[31m\u001b[1m^\u001b[22m\u001b[39m\n \u001b[90m 174 |\u001b[39m       }\n \u001b[90m 175 |\u001b[39m     }\n \u001b[90m 176 |\u001b[39m   }\u001b[33m;\u001b[39m\u001b[0m"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\fixtures\\error-guard.mjs",
-                            "column": 15,
-                            "line": 173
-                          },
-                          "message": "Error: [Zero White Screen Violation] #root is completely empty or has 0 children after 15000ms. HTML: \"\"\n\n   at ..\\fixtures\\error-guard.mjs:173\n\n  171 |         // Capture innerHTML for forensics\n  172 |         const rootHtml = await page.evaluate(() => document.getElementById(\"root\")?.innerHTML || \"\");\n> 173 |         throw new Error(`[Zero White Screen Violation] #root is completely empty or has 0 children after ${timeoutMs}ms. HTML: \"${rootHtml.slice(0, 200)}\"`);\n      |               ^\n  174 |       }\n  175 |     }\n  176 |   };\n    at Object.assertZeroWhiteScreen (C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\fixtures\\error-guard.mjs:173:15)\n    at C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs:252:7"
-                        }
-                      ],
+                      "status": "passed",
+                      "duration": 4050,
+                      "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:25:25.301Z",
+                      "startTime": "2026-10-11T04:55:07.096Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -862,41 +798,15 @@
                           }
                         }
                       ],
-                      "attachments": [
-                        {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-a79cc-iberação-destacada-após-14h-Tablet-768\\test-failed-1.png"
-                        },
-                        {
-                          "name": "video",
-                          "contentType": "video/webm",
-                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-a79cc-iberação-destacada-após-14h-Tablet-768\\video.webm"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-a79cc-iberação-destacada-após-14h-Tablet-768\\error-context.md"
-                        },
-                        {
-                          "name": "trace",
-                          "contentType": "application/zip",
-                          "path": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\artifacts\\02-human-journeys-Mileston-a79cc-iberação-destacada-após-14h-Tablet-768\\trace.zip"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\fixtures\\error-guard.mjs",
-                        "column": 15,
-                        "line": 173
-                      }
+                      "attachments": []
                     }
                   ],
-                  "status": "unexpected"
+                  "status": "expected"
                 }
               ],
               "id": "84ff382c39dc6b6a77f3-3391316a6b036720f1ed",
               "file": "02-human-journeys.spec.mjs",
-              "line": 224,
+              "line": 237,
               "column": 3
             },
             {
@@ -921,25 +831,34 @@
                   "projectName": "Tablet-768",
                   "results": [
                     {
-                      "workerIndex": -1,
-                      "parallelIndex": -1,
-                      "status": "skipped",
-                      "duration": 0,
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 9711,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:25:44.452Z",
-                      "annotations": [],
+                      "startTime": "2026-10-11T04:55:11.187Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
+                            "line": 25,
+                            "column": 15
+                          }
+                        }
+                      ],
                       "attachments": []
                     }
                   ],
-                  "status": "skipped"
+                  "status": "expected"
                 }
               ],
               "id": "84ff382c39dc6b6a77f3-a2f5d99d380fba0dac6d",
               "file": "02-human-journeys.spec.mjs",
-              "line": 274,
+              "line": 290,
               "column": 3
             },
             {
@@ -964,25 +883,34 @@
                   "projectName": "Tablet-768",
                   "results": [
                     {
-                      "workerIndex": -1,
-                      "parallelIndex": -1,
-                      "status": "skipped",
-                      "duration": 0,
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 3535,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:25:44.452Z",
-                      "annotations": [],
+                      "startTime": "2026-10-11T04:55:20.940Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
+                            "line": 25,
+                            "column": 15
+                          }
+                        }
+                      ],
                       "attachments": []
                     }
                   ],
-                  "status": "skipped"
+                  "status": "expected"
                 }
               ],
               "id": "84ff382c39dc6b6a77f3-e53bd4852525e5a21784",
               "file": "02-human-journeys.spec.mjs",
-              "line": 341,
+              "line": 357,
               "column": 3
             },
             {
@@ -1007,25 +935,34 @@
                   "projectName": "Tablet-768",
                   "results": [
                     {
-                      "workerIndex": -1,
-                      "parallelIndex": -1,
-                      "status": "skipped",
-                      "duration": 0,
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 3111,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:25:44.453Z",
-                      "annotations": [],
+                      "startTime": "2026-10-11T04:55:24.524Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\02-human-journeys.spec.mjs",
+                            "line": 25,
+                            "column": 15
+                          }
+                        }
+                      ],
                       "attachments": []
                     }
                   ],
-                  "status": "skipped"
+                  "status": "expected"
                 }
               ],
               "id": "84ff382c39dc6b6a77f3-618e8ce7e9f8ae03a71f",
               "file": "02-human-journeys.spec.mjs",
-              "line": 467,
+              "line": 483,
               "column": 3
             },
             {
@@ -1053,12 +990,12 @@
                       "workerIndex": 2,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 15814,
+                      "duration": 3190,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:25:46.244Z",
+                      "startTime": "2026-10-11T04:55:29.935Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -1105,12 +1042,12 @@
                       "workerIndex": 2,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2237,
+                      "duration": 1997,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:26:02.643Z",
+                      "startTime": "2026-10-11T04:55:34.217Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -1157,12 +1094,12 @@
                       "workerIndex": 2,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2873,
+                      "duration": 13873,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:26:04.918Z",
+                      "startTime": "2026-10-11T04:55:36.258Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -1181,7 +1118,7 @@
               ],
               "id": "84ff382c39dc6b6a77f3-69cda26aa8880b718d6e",
               "file": "02-human-journeys.spec.mjs",
-              "line": 149,
+              "line": 162,
               "column": 3
             },
             {
@@ -1209,12 +1146,12 @@
                       "workerIndex": 2,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2685,
+                      "duration": 2588,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:26:07.839Z",
+                      "startTime": "2026-10-11T04:55:50.174Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -1233,7 +1170,7 @@
               ],
               "id": "84ff382c39dc6b6a77f3-2fe7d3cffb335bf5b53a",
               "file": "02-human-journeys.spec.mjs",
-              "line": 224,
+              "line": 237,
               "column": 3
             },
             {
@@ -1261,12 +1198,12 @@
                       "workerIndex": 2,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 8790,
+                      "duration": 8860,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:26:10.577Z",
+                      "startTime": "2026-10-11T04:55:52.800Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -1285,7 +1222,7 @@
               ],
               "id": "84ff382c39dc6b6a77f3-17396317ec554d2e1d3e",
               "file": "02-human-journeys.spec.mjs",
-              "line": 274,
+              "line": 290,
               "column": 3
             },
             {
@@ -1313,12 +1250,12 @@
                       "workerIndex": 2,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 2497,
+                      "duration": 2670,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:26:19.408Z",
+                      "startTime": "2026-10-11T04:56:01.705Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -1337,7 +1274,7 @@
               ],
               "id": "84ff382c39dc6b6a77f3-6f6f68f259d9c0b243f4",
               "file": "02-human-journeys.spec.mjs",
-              "line": 341,
+              "line": 357,
               "column": 3
             },
             {
@@ -1365,12 +1302,12 @@
                       "workerIndex": 2,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 3372,
+                      "duration": 3525,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T04:26:21.946Z",
+                      "startTime": "2026-10-11T04:56:04.418Z",
                       "annotations": [
                         {
                           "type": "serial",
@@ -1389,7 +1326,7 @@
               ],
               "id": "84ff382c39dc6b6a77f3-7943e4ebc0369ec1938b",
               "file": "02-human-journeys.spec.mjs",
-              "line": 467,
+              "line": 483,
               "column": 3
             }
           ]
@@ -1399,11 +1336,11 @@
   ],
   "errors": [],
   "stats": {
-    "startTime": "2026-10-11T04:23:29.638Z",
-    "duration": 176246.62699999998,
-    "expected": 16,
-    "skipped": 3,
-    "unexpected": 2,
+    "startTime": "2026-10-11T04:53:34.020Z",
+    "duration": 154472.17899999997,
+    "expected": 21,
+    "skipped": 0,
+    "unexpected": 0,
     "flaky": 0
   }
 }

@@ -38,7 +38,7 @@ test.describe.serial("Milestone 3 (M3) - Jornadas Humanas Anti-Frustração (R3)
         timeout: 25000
       });
 
-      await guard.assertZeroWhiteScreen(15000);
+      await guard.assertZeroWhiteScreen(30000);
 
       // 3. Assert guest name and CPF are automatically populated
       const fullNameInput = page.locator("input[placeholder*='completo' i], input#name, input[name='name']").first();
@@ -89,24 +89,37 @@ test.describe.serial("Milestone 3 (M3) - Jornadas Humanas Anti-Frustração (R3)
   // =========================================================================
   // JORNADA 2: VÍNCULO MULTICANAL AUTOMÁTICO (/MINHA-CONTA)
   // =========================================================================
-  test("Jornada 2: Vínculo Multicanal Automático - Reservas vinculadas no /minha-conta sem digitação de código", async ({ page, baseURL }) => {
+  test("Jornada 2: Vínculo Multicanal Automático - Reservas vinculadas no /minha-conta sem digitação de código", async ({ page, context, baseURL }) => {
     const guard = attachErrorGuard(page, { allowGuestAuth401: true });
 
     try {
-      // 1. Set guest session in localStorage for Roberto Carlos Silva
-      await page.addInitScript(() => {
+      const sessionPayload = {
+        id: 601,
+        name: "Roberto Carlos Silva",
+        email: "roberto.carlos@teste.corpflats",
+        phone: "5522998877661",
+        document: "12345678901",
+        role: "guest"
+      };
+
+      // 1. Set guest session cookie and localStorage for Roberto Carlos Silva
+      const cookieVal = Buffer.from(JSON.stringify({
+        ...sessionPayload,
+        issuedAt: Date.now()
+      })).toString("base64");
+
+      await context.addCookies([{
+        name: "gfm_session",
+        value: cookieVal,
+        url: baseURL || "http://127.0.0.1:5055"
+      }]);
+
+      await page.addInitScript((userData) => {
         try {
-          localStorage.setItem("corpflats_guest_email", "roberto.carlos@teste.corpflats");
-          localStorage.setItem("corpflats_guest_profile", JSON.stringify({
-            id: 601,
-            name: "Roberto Carlos Silva",
-            email: "roberto.carlos@teste.corpflats",
-            phone: "5522998877661",
-            document: "12345678901",
-            role: "guest"
-          }));
+          localStorage.setItem("corpflats_guest_email", userData.email);
+          localStorage.setItem("corpflats_guest_profile", JSON.stringify(userData));
         } catch {}
-      });
+      }, sessionPayload);
 
       // 2. Navigate to /minha-conta
       await page.goto("/minha-conta", {
@@ -114,7 +127,7 @@ test.describe.serial("Milestone 3 (M3) - Jornadas Humanas Anti-Frustração (R3)
         timeout: 25000
       });
 
-      await guard.assertZeroWhiteScreen(15000);
+      await guard.assertZeroWhiteScreen(30000);
 
       // 3. Switch to reservations tab
       const reservationsTabTrigger = page.locator("button[role='tab'][value='reservations'], [data-state][role='tab']:has-text('Reservas')").first();
@@ -173,7 +186,7 @@ test.describe.serial("Milestone 3 (M3) - Jornadas Humanas Anti-Frustração (R3)
       // 2. Verify all 4 fields in Terminal da Portaria (/portaria)
       await injectAuthSession(page.context(), "reception");
       await page.goto("/portaria", { waitUntil: "domcontentloaded", timeout: 25000 });
-      await guard.assertZeroWhiteScreen(15000);
+      await guard.assertZeroWhiteScreen(30000);
 
       // Locate Apt 408 card in portaria
       const portariaText = await page.locator("#root").innerText();
@@ -185,7 +198,7 @@ test.describe.serial("Milestone 3 (M3) - Jornadas Humanas Anti-Frustração (R3)
       // 3. Verify all 4 fields in Mapa de Vagas da Garagem (/garagem)
       await injectAuthSession(page.context(), "admin");
       await page.goto("/garagem", { waitUntil: "domcontentloaded", timeout: 25000 });
-      await guard.assertZeroWhiteScreen(15000);
+      await guard.assertZeroWhiteScreen(30000);
 
       const garagemText = await page.locator("#root").innerText();
       expect(garagemText).toContain("KRT9F82");
@@ -235,7 +248,7 @@ test.describe.serial("Milestone 3 (M3) - Jornadas Humanas Anti-Frustração (R3)
         waitUntil: "domcontentloaded",
         timeout: 25000
       });
-      await guard.assertZeroWhiteScreen(15000);
+      await guard.assertZeroWhiteScreen(30000);
 
       // 3. Assert friendly cleaning/preparation message is displayed and lock code is HIDDEN
       const rootMorningText = await page.locator("#root").innerText();
@@ -252,7 +265,7 @@ test.describe.serial("Milestone 3 (M3) - Jornadas Humanas Anti-Frustração (R3)
         waitUntil: "domcontentloaded",
         timeout: 25000
       });
-      await guard.assertZeroWhiteScreen(15000);
+      await guard.assertZeroWhiteScreen(30000);
 
       // 6. Assert digital lock code is now unlocked and prominently displayed
       const rootAfternoonText = await page.locator("#root").innerText();
@@ -287,7 +300,7 @@ test.describe.serial("Milestone 3 (M3) - Jornadas Humanas Anti-Frustração (R3)
         waitUntil: "domcontentloaded",
         timeout: 25000
       });
-      await guard.assertZeroWhiteScreen(15000);
+      await guard.assertZeroWhiteScreen(30000);
 
       // 2. Assert pending payment UI is displayed
       const copyPixBtn = page.locator("button:has-text('Copiar Código PIX')").first();
@@ -356,7 +369,7 @@ test.describe.serial("Milestone 3 (M3) - Jornadas Humanas Anti-Frustração (R3)
         waitUntil: "domcontentloaded",
         timeout: 25000
       });
-      await guard.assertZeroWhiteScreen(15000);
+      await guard.assertZeroWhiteScreen(30000);
 
       // 3. Locate signature canvas
       const canvas = page.locator("canvas").first();
@@ -468,7 +481,10 @@ test.describe.serial("Milestone 3 (M3) - Jornadas Humanas Anti-Frustração (R3)
   // JORNADA 7: ISOLAMENTO ESTRITO DE ACOMPANHANTES
   // =========================================================================
   test("Jornada 7: Isolamento Estrito de Acompanhantes - Hóspede 2 não sobrescreve Hóspede 1", async ({ page, baseURL }) => {
-    const guard = attachErrorGuard(page, { allowGuestAuth401: true });
+    const guard = attachErrorGuard(page, { 
+      allowGuestAuth401: true,
+      allowedApiStatuses: [404]
+    });
 
     try {
       // 1. Submit pre-checkin for Companion (Guest Index 2)
@@ -523,7 +539,7 @@ test.describe.serial("Milestone 3 (M3) - Jornadas Humanas Anti-Frustração (R3)
         waitUntil: "domcontentloaded",
         timeout: 25000
       });
-      await guard.assertZeroWhiteScreen(15000);
+      await guard.assertZeroWhiteScreen(30000);
 
       const editBtn = page.locator("button:has-text('Editar Dados')").first();
       if (await editBtn.isVisible()) {

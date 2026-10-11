@@ -105,8 +105,8 @@
       <p>Varredura Universal de Telas & Sanidade • Multi-Viewport & Multi-Persona</p>
     </div>
     <div>
-      <span class="badge badge-fail">
-        2 TESTS FAILED
+      <span class="badge badge-pass">
+        ALL CHECKS PASSED
       </span>
     </div>
   </div>
@@ -114,19 +114,19 @@
   <div class="grid">
     <div class="card">
       <div class="card-label">Taxa de Sucesso</div>
-      <div class="card-value fail">76.2%</div>
+      <div class="card-value pass">100.0%</div>
     </div>
     <div class="card">
       <div class="card-label">Testes Aprovados</div>
-      <div class="card-value pass">16 <span style="font-size: 1rem; color: var(--text-muted);">/ 21</span></div>
+      <div class="card-value pass">21 <span style="font-size: 1rem; color: var(--text-muted);">/ 21</span></div>
     </div>
     <div class="card">
       <div class="card-label">Falhas Críticas</div>
-      <div class="card-value fail">2</div>
+      <div class="card-value pass">0</div>
     </div>
     <div class="card">
       <div class="card-label">Duração Total</div>
-      <div class="card-value" style="color: #60a5fa;">175.8s</div>
+      <div class="card-value" style="color: #60a5fa;">154.1s</div>
     </div>
   </div>
 
@@ -137,12 +137,12 @@
         
           <div style="display: flex; justify-content: space-between; margin-bottom: 0.4rem; font-size: 0.85rem;">
             <span><strong>Desktop-1920</strong></span>
-            <span><span style="color: var(--pass); font-weight: 600;">6</span> / 7 (86%)</span>
+            <span><span style="color: var(--pass); font-weight: 600;">7</span> / 7 (100%)</span>
           </div>
         
           <div style="display: flex; justify-content: space-between; margin-bottom: 0.4rem; font-size: 0.85rem;">
             <span><strong>Tablet-768</strong></span>
-            <span><span style="color: var(--pass); font-weight: 600;">3</span> / 7 (43%)</span>
+            <span><span style="color: var(--pass); font-weight: 600;">7</span> / 7 (100%)</span>
           </div>
         
           <div style="display: flex; justify-content: space-between; margin-bottom: 0.4rem; font-size: 0.85rem;">
@@ -158,7 +158,7 @@
         
           <div style="display: flex; justify-content: space-between; margin-bottom: 0.4rem; font-size: 0.85rem;">
             <span><strong>unknown</strong></span>
-            <span><span style="color: var(--pass); font-weight: 600;">16</span> / 21 (76%)</span>
+            <span><span style="color: var(--pass); font-weight: 600;">21</span> / 21 (100%)</span>
           </div>
         
       </div>
@@ -188,7 +188,7 @@
               <div>Jornada 1: Zero Amnésia - Hóspede recorrente reutiliza documentos sem re-envio forçado</div>
               
             </td>
-            <td>29197ms</td>
+            <td>3389ms</td>
           </tr>
         
           <tr class="test-row">
@@ -199,7 +199,7 @@
               <div>Jornada 2: Vínculo Multicanal Automático - Reservas vinculadas no /minha-conta sem digitação de código</div>
               
             </td>
-            <td>3041ms</td>
+            <td>14584ms</td>
           </tr>
         
           <tr class="test-row">
@@ -210,7 +210,7 @@
               <div>Jornada 3: Persistência Completa de Veículo - Placa, marca, modelo e cor em Portaria, Garagem e Mock SMTP</div>
               
             </td>
-            <td>5439ms</td>
+            <td>18747ms</td>
           </tr>
         
           <tr class="test-row">
@@ -221,7 +221,7 @@
               <div>Jornada 4: Gestão de Acesso e Fechadura Digital - Bloqueio antes das 14h com aviso e liberação destacada após 14h</div>
               
             </td>
-            <td>3972ms</td>
+            <td>3756ms</td>
           </tr>
         
           <tr class="test-row">
@@ -232,7 +232,7 @@
               <div>Jornada 5: Resiliência de Pagamento PIX - Confirmação em tempo real sem reload e regeneração de QR Code</div>
               
             </td>
-            <td>21663ms</td>
+            <td>20834ms</td>
           </tr>
         
           <tr class="test-row">
@@ -243,26 +243,18 @@
               <div>Jornada 6: Upload Mobile Resiliente & Canvas Signature - touch-action: none sem scroll e compressão de imagem</div>
               
             </td>
-            <td>5448ms</td>
+            <td>2460ms</td>
           </tr>
         
           <tr class="test-row">
-            <td><span class="status-pill status-failed">failed</span></td>
+            <td><span class="status-pill status-passed">passed</span></td>
             <td><strong>Desktop-1920</strong></td>
             <td><code>unknown</code></td>
             <td>
               <div>Jornada 7: Isolamento Estrito de Acompanhantes - Hóspede 2 não sobrescreve Hóspede 1</div>
-              <div class="error-box">TimeoutError: apiRequestContext.post: Timeout 15000ms exceeded.
-Call log:
-[2m  - → POST http://127.0.0.1:5055/api/pms/pre-checkin[22m
-[2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 CorpFlatsDesktop/1.0[22m
-[2m    - accept: */*[22m
-[2m    - accept-encoding: gzip,deflate,br[22m
-[2m    - content-type: application/json[22m
-[2m    - content-length: 326[22m
-</div>
+              
             </td>
-            <td>19140ms</td>
+            <td>4328ms</td>
           </tr>
         
           <tr class="test-row">
@@ -273,7 +265,7 @@ Call log:
               <div>Jornada 1: Zero Amnésia - Hóspede recorrente reutiliza documentos sem re-envio forçado</div>
               
             </td>
-            <td>5899ms</td>
+            <td>2973ms</td>
           </tr>
         
           <tr class="test-row">
@@ -284,7 +276,7 @@ Call log:
               <div>Jornada 2: Vínculo Multicanal Automático - Reservas vinculadas no /minha-conta sem digitação de código</div>
               
             </td>
-            <td>2703ms</td>
+            <td>1586ms</td>
           </tr>
         
           <tr class="test-row">
@@ -295,51 +287,51 @@ Call log:
               <div>Jornada 3: Persistência Completa de Veículo - Placa, marca, modelo e cor em Portaria, Garagem e Mock SMTP</div>
               
             </td>
-            <td>4596ms</td>
+            <td>3960ms</td>
           </tr>
         
           <tr class="test-row">
-            <td><span class="status-pill status-failed">failed</span></td>
+            <td><span class="status-pill status-passed">passed</span></td>
             <td><strong>Tablet-768</strong></td>
             <td><code>unknown</code></td>
             <td>
               <div>Jornada 4: Gestão de Acesso e Fechadura Digital - Bloqueio antes das 14h com aviso e liberação destacada após 14h</div>
-              <div class="error-box">Error: [Zero White Screen Violation] #root is completely empty or has 0 children after 15000ms. HTML: ""</div>
+              
             </td>
-            <td>18522ms</td>
+            <td>4050ms</td>
           </tr>
         
           <tr class="test-row">
-            <td><span class="status-pill status-skipped">skipped</span></td>
+            <td><span class="status-pill status-passed">passed</span></td>
             <td><strong>Tablet-768</strong></td>
             <td><code>unknown</code></td>
             <td>
               <div>Jornada 5: Resiliência de Pagamento PIX - Confirmação em tempo real sem reload e regeneração de QR Code</div>
               
             </td>
-            <td>0ms</td>
+            <td>9711ms</td>
           </tr>
         
           <tr class="test-row">
-            <td><span class="status-pill status-skipped">skipped</span></td>
+            <td><span class="status-pill status-passed">passed</span></td>
             <td><strong>Tablet-768</strong></td>
             <td><code>unknown</code></td>
             <td>
               <div>Jornada 6: Upload Mobile Resiliente & Canvas Signature - touch-action: none sem scroll e compressão de imagem</div>
               
             </td>
-            <td>0ms</td>
+            <td>3535ms</td>
           </tr>
         
           <tr class="test-row">
-            <td><span class="status-pill status-skipped">skipped</span></td>
+            <td><span class="status-pill status-passed">passed</span></td>
             <td><strong>Tablet-768</strong></td>
             <td><code>unknown</code></td>
             <td>
               <div>Jornada 7: Isolamento Estrito de Acompanhantes - Hóspede 2 não sobrescreve Hóspede 1</div>
               
             </td>
-            <td>0ms</td>
+            <td>3111ms</td>
           </tr>
         
           <tr class="test-row">
@@ -350,7 +342,7 @@ Call log:
               <div>Jornada 1: Zero Amnésia - Hóspede recorrente reutiliza documentos sem re-envio forçado</div>
               
             </td>
-            <td>15814ms</td>
+            <td>3190ms</td>
           </tr>
         
           <tr class="test-row">
@@ -361,7 +353,7 @@ Call log:
               <div>Jornada 2: Vínculo Multicanal Automático - Reservas vinculadas no /minha-conta sem digitação de código</div>
               
             </td>
-            <td>2237ms</td>
+            <td>1997ms</td>
           </tr>
         
           <tr class="test-row">
@@ -372,7 +364,7 @@ Call log:
               <div>Jornada 3: Persistência Completa de Veículo - Placa, marca, modelo e cor em Portaria, Garagem e Mock SMTP</div>
               
             </td>
-            <td>2873ms</td>
+            <td>13873ms</td>
           </tr>
         
           <tr class="test-row">
@@ -383,7 +375,7 @@ Call log:
               <div>Jornada 4: Gestão de Acesso e Fechadura Digital - Bloqueio antes das 14h com aviso e liberação destacada após 14h</div>
               
             </td>
-            <td>2685ms</td>
+            <td>2588ms</td>
           </tr>
         
           <tr class="test-row">
@@ -394,7 +386,7 @@ Call log:
               <div>Jornada 5: Resiliência de Pagamento PIX - Confirmação em tempo real sem reload e regeneração de QR Code</div>
               
             </td>
-            <td>8790ms</td>
+            <td>8860ms</td>
           </tr>
         
           <tr class="test-row">
@@ -405,7 +397,7 @@ Call log:
               <div>Jornada 6: Upload Mobile Resiliente & Canvas Signature - touch-action: none sem scroll e compressão de imagem</div>
               
             </td>
-            <td>2497ms</td>
+            <td>2670ms</td>
           </tr>
         
           <tr class="test-row">
@@ -416,7 +408,7 @@ Call log:
               <div>Jornada 7: Isolamento Estrito de Acompanhantes - Hóspede 2 não sobrescreve Hóspede 1</div>
               
             </td>
-            <td>3372ms</td>
+            <td>3525ms</td>
           </tr>
         
       </tbody>
