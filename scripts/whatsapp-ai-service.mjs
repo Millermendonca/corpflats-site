@@ -1045,6 +1045,96 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     return faq && faq.status === "ativo" && isFaqApplicableToClient(faq, clientPhone);
   });
 
+  // Base Dinâmica de FAQs Ativas (Prioridade Máxima para Perguntas, Variações e Palavras-chave Oficiais)
+  if (activeFaqs.length > 0) {
+    const cleanQuery = text
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^\w\s]/g, " ")
+      .trim();
+    const queryTokens = cleanQuery.split(/\s+/).filter(w => w.length > 2);
+
+    let bestFaq = null;
+    let highestScore = 0;
+
+    for (const faq of activeFaqs) {
+      let score = 0;
+      const qNorm = (faq.question || "")
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^\w\s]/g, " ")
+        .trim();
+      const qTokens = qNorm.split(/\s+/).filter(w => w.length > 2);
+
+      // Coincidência com pergunta principal
+      if (cleanQuery.includes(qNorm) || (qNorm.length > 5 && qNorm.includes(cleanQuery))) {
+        score += 80;
+      } else {
+        const commonWithQ = qTokens.filter(t => queryTokens.includes(t));
+        const significantCommon = commonWithQ.filter(t => !["que", "com", "para", "tem", "voces", "qual", "onde"].includes(t));
+        if (significantCommon.length > 0) {
+          score += significantCommon.length * 30;
+        }
+      }
+
+      // Coincidência com variações da pergunta
+      if (Array.isArray(faq.variations)) {
+        for (const variation of faq.variations) {
+          if (!variation) continue;
+          const vNorm = variation
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/[^\w\s]/g, " ")
+            .trim();
+          if (cleanQuery.includes(vNorm) || (vNorm.length > 5 && vNorm.includes(cleanQuery))) {
+            score += 100;
+            break;
+          }
+          const vTokens = vNorm.split(/\s+/).filter(w => w.length > 2);
+          const common = vTokens.filter(t => queryTokens.includes(t));
+          if (vTokens.length > 0 && common.length >= Math.min(2, vTokens.length)) {
+            score += Math.max(score, 40 + (common.length * 10));
+          }
+        }
+      }
+
+      // Coincidência com palavras-chave
+      if (Array.isArray(faq.keywords)) {
+        for (const keyword of faq.keywords) {
+          if (!keyword) continue;
+          const kNorm = keyword
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/[^\w\s]/g, " ")
+            .trim();
+          if (kNorm.includes(" ")) {
+            if (cleanQuery.includes(kNorm)) {
+              score += 50;
+            }
+          } else if (kNorm.length >= 3) {
+            if (queryTokens.includes(kNorm)) {
+              score += 25;
+            } else if (cleanQuery.includes(kNorm)) {
+              score += 15;
+            }
+          }
+        }
+      }
+
+      if (score > highestScore) {
+        highestScore = score;
+        bestFaq = faq;
+      }
+    }
+
+    if (bestFaq && highestScore >= 25) {
+      return `Olá${name}! ${bestFaq.answer}`;
+    }
+  }
+
   // 1. Wi-Fi / Internet
   if (/wifi|wi-fi|internet|senha(?:\s+do\s+wi-?fi)?|conectar/i.test(text)) {
     return `Olá${name}! 📶 Aqui estão as informações de conexão:\n\n*Rede:* ${kb.wifiNetwork}\n*Senha:* \`${kb.wifiPassword}\`\n\nA rede é de alta velocidade e fica disponível em todo o apartamento. Se precisar de algo mais, estou à disposição! ✨`;
@@ -1102,70 +1192,6 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
       return `Olá${name}! Tudo bem? Sou a ${aiConfig.agentName}, concierge virtual da CorpFlats. Como posso tornar a sua estadia ainda mais agradável hoje? 🏨✨`;
     }
     return `Olá${name}! Sou a ${aiConfig.agentName}, concierge virtual da CorpFlats em Campos dos Goytacazes. Como posso te ajudar hoje? Ficou com alguma dúvida sobre nossas acomodações ou sobre sua estadia? 😊`;
-  }
-
-  // 8.5 Base Dinâmica de FAQs Ativas (Pesquisa Heurística por Perguntas, Variações e Palavras-chave)
-  if (activeFaqs.length > 0) {
-    const cleanQuery = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    const queryTokens = cleanQuery.split(/[\s,.;:?!+=\-_/\\()]+/).filter(w => w.length > 2);
-
-    let bestFaq = null;
-    let highestScore = 0;
-
-    for (const faq of activeFaqs) {
-      let score = 0;
-      const qNorm = (faq.question || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-
-      // Coincidência com pergunta principal
-      if (cleanQuery.includes(qNorm) || (qNorm.length > 8 && qNorm.includes(cleanQuery))) {
-        score += 80;
-      }
-
-      // Coincidência com variações da pergunta
-      if (Array.isArray(faq.variations)) {
-        for (const variation of faq.variations) {
-          if (!variation) continue;
-          const vNorm = variation.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-          if (cleanQuery.includes(vNorm) || (vNorm.length > 8 && vNorm.includes(cleanQuery))) {
-            score += 100;
-            break;
-          }
-          const vTokens = vNorm.split(/[\s,.;:?!+=\-_/\\()]+/).filter(w => w.length > 2);
-          const common = vTokens.filter(t => queryTokens.includes(t));
-          if (vTokens.length > 0 && common.length >= Math.min(2, vTokens.length)) {
-            score += Math.max(score, 40 + (common.length * 10));
-          }
-        }
-      }
-
-      // Coincidência com palavras-chave
-      if (Array.isArray(faq.keywords)) {
-        for (const keyword of faq.keywords) {
-          if (!keyword) continue;
-          const kNorm = keyword.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-          if (kNorm.includes(" ")) {
-            if (cleanQuery.includes(kNorm)) {
-              score += 50;
-            }
-          } else if (kNorm.length >= 3) {
-            if (queryTokens.includes(kNorm)) {
-              score += 25;
-            } else if (cleanQuery.includes(kNorm)) {
-              score += 15;
-            }
-          }
-        }
-      }
-
-      if (score > highestScore) {
-        highestScore = score;
-        bestFaq = faq;
-      }
-    }
-
-    if (bestFaq && highestScore >= 25) {
-      return `Olá${name}! ${bestFaq.answer}`;
-    }
   }
 
   // 9. Resposta padrão prestativa

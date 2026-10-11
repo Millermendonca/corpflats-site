@@ -930,6 +930,286 @@ describe("Agente de IA para WhatsApp - Testes Unitários e de Integração", () 
     }
   });
 
+  test("21. Injeção Dinâmica de FAQs Ativas no Prompt do Gemini com Regras de Exceção por Cliente", async () => {
+    const testDb = JSON.parse(JSON.stringify(mockDb));
+    testDb.settings.geminiApiKey = "TEST_GEMINI_KEY";
+    testDb.faqItems = [
+      {
+        id: "faq-visitas",
+        question: "Posso receber visitas no apartamento?",
+        answer: "Visitas são permitidas até às 22h com identificação prévia na portaria.",
+        category: "regras_visitas_pets",
+        status: "ativo",
+        scope: "all",
+        clientPhones: []
+      },
+      {
+        id: "faq-desconto-restrito",
+        question: "Tenho direito a desconto corporativo exclusivo?",
+        answer: "Sim, sua empresa possui tarifa com 15% de desconto direto.",
+        category: "reservas",
+        status: "ativo",
+        scope: "exclude",
+        clientPhones: ["5521999990001"]
+      },
+      {
+        id: "faq-vip-diretoria",
+        question: "Como funciona o upgrade VIP de quarto?",
+        answer: "Upgrades são concedidos sem custo para membros da diretoria CorpFlats.",
+        category: "reservas",
+        status: "ativo",
+        scope: "include_only",
+        clientPhones: ["5522998505276"]
+      },
+      {
+        id: "faq-pendente-teste",
+        question: "Vocês aceitam animais de grande porte?",
+        answer: "Apenas até 10kg.",
+        category: "regras_visitas_pets",
+        status: "pendente",
+        scope: "all",
+        clientPhones: []
+      },
+      {
+        id: "faq-aguardando-teste",
+        question: "Qual o tamanho da cama do flat?",
+        answer: "Cama Queen Size Ortobom.",
+        category: "estrutura_flat",
+        status: "aguardando_aprovacao",
+        scope: "all",
+        clientPhones: []
+      }
+    ];
+
+    const originalFetch = globalThis.fetch;
+    let interceptedInstruction = "";
+
+    try {
+      globalThis.fetch = async (url, opts) => {
+        if (typeof url === "string" && url.includes("generativelanguage.googleapis.com")) {
+          const body = JSON.parse(opts.body);
+          const firstPart = body.contents?.[0]?.parts?.[0]?.text || "";
+          interceptedInstruction = firstPart;
+          return {
+            ok: true,
+            json: async () => ({
+              candidates: [
+                {
+                  content: {
+                    parts: [{ text: "Informação processada com base nas FAQs ativas oficiais." }]
+                  }
+                }
+              ]
+            })
+          };
+        }
+        return originalFetch(url, opts);
+      };
+
+      // 1. Cliente Autorizado (5522998505276): deve receber regras ativas aplicáveis
+      await generateAiWhatsAppResponse({
+        db: testDb,
+        phone: "5522998505276",
+        messageText: "Quais as regras de visitas e upgrades?"
+      });
+
+      assert.ok(interceptedInstruction.includes("## BASE DE CONHECIMENTO & REGRAS (FAQS ATIVAS):"), "System instruction deve conter o cabeçalho oficial de FAQs");
+      assert.ok(interceptedInstruction.includes("faq-visitas") || interceptedInstruction.includes("Visitas são permitidas"), "Deve conter FAQ com escopo 'all'");
+      assert.ok(interceptedInstruction.includes("desconto corporativo exclusivo"), "Deve conter FAQ 'exclude' para cliente não excluído");
+      assert.ok(interceptedInstruction.includes("upgrade VIP de quarto"), "Deve conter FAQ 'include_only' para cliente incluído");
+      assert.ok(!interceptedInstruction.includes("animais de grande porte"), "NÃO deve conter FAQ com status 'pendente'");
+      assert.ok(!interceptedInstruction.includes("Cama Queen Size"), "NÃO deve conter FAQ com status 'aguardando_aprovacao'");
+
+      // 2. Cliente Excluído (5521999990001): não deve receber a regra com escopo 'exclude'
+      interceptedInstruction = "";
+      await generateAiWhatsAppResponse({
+        db: testDb,
+        phone: "5521999990001",
+        messageText: "Quais são as regras?"
+      });
+
+      assert.ok(interceptedInstruction.includes("Visitas são permitidas"), "Deve manter FAQ com escopo 'all'");
+      assert.ok(!interceptedInstruction.includes("desconto corporativo exclusivo"), "NÃO deve conter FAQ da qual o cliente foi expressamente excluído");
+      assert.ok(!interceptedInstruction.includes("upgrade VIP de quarto"), "NÃO deve conter FAQ 'include_only' na qual o cliente não está listado");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("22. Contingência Heurística Local com Pesquisa por Palavras-Chave e Variações em FAQs Ativas", () => {
+    const heuristicDb = {
+      faqItems: [
+        {
+          id: "faq-recolhimento-loucas",
+          question: "O que fazer com as louças e a bandeja após o café da manhã?",
+          answer: "🍽️ Mantenha todas as louças dentro do flat. Não coloque no corredor nem entregue ao restaurante.",
+          category: "cafe_manha",
+          keywords: ["loucas", "louças", "bandeja", "recolhimento", "pratos", "talheres"],
+          variations: ["Onde deixo a bandeja e as louças do café?", "Quem recolhe a louça do quarto?"],
+          status: "ativo",
+          scope: "all",
+          clientPhones: []
+        },
+        {
+          id: "faq-pet-vip",
+          question: "Política de animais no flat",
+          answer: "🐾 Aceitamos pets de pequeno porte com taxa diária especial de R$ 50.",
+          category: "regras_visitas_pets",
+          keywords: ["pet", "pets", "cachorro", "gato", "taxa pet"],
+          variations: ["Posso levar meu cachorro?"],
+          status: "ativo",
+          scope: "exclude",
+          clientPhones: ["5521999990001"]
+        },
+        {
+          id: "faq-pendente-nao-ativo",
+          question: "Qual o tamanho da piscina?",
+          answer: "25 metros semiolímpica.",
+          category: "lazer_condominio",
+          keywords: ["piscina", "nadar"],
+          variations: [],
+          status: "pendente",
+          scope: "all",
+          clientPhones: []
+        }
+      ]
+    };
+
+    const ctx = buildGuestContext(mockDb, "5522998505276");
+    const aiConfig = getWhatsAppAiConfig(mockDb);
+
+    // 1. Encontra por variação exata/parcial e palavras-chave de louças
+    const replyLoucas = generateHeuristicResponse("Onde deixo as louças e a bandeja do café?", ctx, aiConfig, heuristicDb);
+    assert.ok(replyLoucas.includes("Mantenha todas as louças dentro do flat"), "Deve responder com conteúdo da FAQ de recolhimento de louças");
+
+    // 2. Encontra por palavra-chave pet para cliente autorizado
+    const replyPet = generateHeuristicResponse("Posso levar meu cachorro? Tem taxa pet?", ctx, aiConfig, heuristicDb);
+    assert.ok(replyPet.includes("Aceitamos pets de pequeno porte"), "Deve responder com política pet para cliente liberado");
+
+    // 3. Cliente excluído não recebe a resposta da FAQ restrita
+    const ctxExcluido = buildGuestContext(mockDb, "5521999990001");
+    const replyPetExcluido = generateHeuristicResponse("Posso levar meu cachorro?", ctxExcluido, aiConfig, heuristicDb);
+    assert.ok(!replyPetExcluido.includes("taxa diária especial de R$ 50"), "Cliente na lista de exclusão NÃO deve receber resposta da FAQ restrita");
+    assert.ok(replyPetExcluido.includes("concierge virtual da CorpFlats"), "Deve cair no fallback genérico prestativo");
+
+    // 4. FAQ com status 'pendente' nunca é acionada pela contingência heurística
+    const replyPiscina = generateHeuristicResponse("Qual o tamanho da piscina?", ctx, aiConfig, heuristicDb);
+    assert.ok(!replyPiscina.includes("semiolímpica"), "FAQ pendente não pode ser usada na contingência");
+  });
+
+  test("23. Auto-Aprendizado Inbound: Pergunta Inédita Não Mapeada Gera FAQ com Status 'pendente'", async () => {
+    const autoLearnDb = JSON.parse(JSON.stringify(mockDb));
+    autoLearnDb.faqItems = [];
+    autoLearnDb.zapiConfig.testModeOnly = false;
+    autoLearnDb.whatsappConversations = [
+      {
+        phone: "5522998505276",
+        name: "Carlos Drumond",
+        messages: [],
+        aiPaused: false
+      }
+    ];
+
+    let saved = false;
+    const saveDbMock = () => { saved = true; };
+
+    // Inbound com pergunta inédita sobre tomadas de carro elétrico
+    const result = await processAiInboundMessage({
+      db: autoLearnDb,
+      incomingInfo: {
+        text: "Vocês possuem tomada para recarga de carro elétrico no estacionamento?",
+        senderPhone: "5522998505276",
+        senderName: "Carlos Drumond",
+        fromMe: false,
+        isGroup: false
+      },
+      cleanTarget: "5522998505276",
+      saveDatabase: saveDbMock,
+      createNotification: () => {},
+      sendZapiMessage: async () => ({ success: true }),
+      appendMessageFn: () => {}
+    });
+
+    assert.equal(result.handled, true);
+    // Deve registrar a nova pergunta pendente na base
+    const pendingFaq = autoLearnDb.faqItems.find(f => f.status === "pendente");
+    assert.ok(pendingFaq, "Deve existir item com status 'pendente'");
+    assert.equal(pendingFaq.question, "Vocês possuem tomada para recarga de carro elétrico no estacionamento?");
+    assert.ok(pendingFaq.sourceClientPhone.includes("5522998505276"));
+    assert.equal(pendingFaq.category, "garagem");
+  });
+
+  test("24. Captura Automática de Resposta do Operador vinculando 'suggestedAnswer', Status 'aguardando_aprovacao' e Pausa da IA", async () => {
+    const captureDb = JSON.parse(JSON.stringify(mockDb));
+    captureDb.whatsappConversations = [
+      {
+        phone: "5522998505276",
+        name: "Carlos Drumond",
+        messages: [],
+        aiPaused: false
+      }
+    ];
+    captureDb.faqItems = [
+      {
+        id: "faq_auto_test_1",
+        question: "Vocês têm berço desmontável para bebê?",
+        answer: "",
+        category: "estrutura_flat",
+        status: "pendente",
+        sourceClientPhone: "5522998505276",
+        clientPhones: ["5522998505276"],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      },
+      {
+        id: "faq_old_pending",
+        question: "Dúvida antiga de mais de 24 horas?",
+        answer: "",
+        category: "estrutura_flat",
+        status: "pendente",
+        sourceClientPhone: "5522998505276",
+        clientPhones: ["5522998505276"],
+        createdAt: new Date(Date.now() - 36 * 3600 * 1000).toISOString(),
+        updatedAt: new Date(Date.now() - 36 * 3600 * 1000).toISOString()
+      }
+    ];
+
+    const { linkOperatorResponseToPendingFaq, captureOperatorResponseForFaq } = await import("../artifacts/api-server/zapi-service.mjs");
+    assert.equal(typeof linkOperatorResponseToPendingFaq, "function");
+    assert.equal(typeof captureOperatorResponseForFaq, "function");
+
+    // 1. Operador responde manualmente no chat
+    const operatorText = "Sim, disponibilizamos berço desmontável mediante solicitação prévia sem taxa extra!";
+    const updated = linkOperatorResponseToPendingFaq(captureDb, "5522998505276", operatorText);
+
+    assert.ok(updated, "Deve encontrar e atualizar o FAQ pendente recente");
+    assert.equal(updated.id, "faq_auto_test_1");
+    assert.equal(updated.status, "aguardando_aprovacao");
+    assert.equal(updated.suggestedAnswer, operatorText);
+    assert.equal(updated.answeredBy, "operador");
+
+    // 2. Confirma que a IA na conversa foi pausada (aiPaused: true)
+    const conv = captureDb.whatsappConversations.find(c => c.phone === "5522998505276");
+    assert.ok(conv, "Conversa deve existir");
+    assert.equal(conv.aiPaused, true, "IA deve ser pausada quando operador envia resposta");
+    assert.equal(conv.aiPausedReason, "operator_manual_reply");
+
+    // 3. Item com mais de 24h permanece inalterado
+    const oldItem = captureDb.faqItems.find(f => f.id === "faq_old_pending");
+    assert.equal(oldItem.status, "pendente");
+
+    // 4. Promoção para 'ativo' via aprovação (simulando aprovação de 1 clique)
+    updated.status = "ativo";
+    updated.answer = updated.suggestedAnswer;
+    updated.approvedAt = new Date().toISOString();
+
+    // 5. Sofia agora responde dinamicamente via heurística com a nova resposta aprovada
+    const ctx = buildGuestContext(mockDb, "5522998505276");
+    const aiConfig = getWhatsAppAiConfig(mockDb);
+    const reply = generateHeuristicResponse("Vocês têm berço?", ctx, aiConfig, captureDb);
+    assert.ok(reply.includes("berço desmontável mediante solicitação"), "A resposta aprovada deve ser imediatamente utilizada pela Sofia");
+  });
+
   after(async () => {
     activeIntervals.forEach(h => clearInterval(h));
     activeTimeouts.forEach(h => clearTimeout(h));
@@ -944,6 +1224,7 @@ describe("Agente de IA para WhatsApp - Testes Unitários e de Integração", () 
         await new Promise(r => srv.close(r));
       } catch (_) {}
     }
+    setTimeout(() => process.exit(process.exitCode || 0), 100);
   });
 });
 
