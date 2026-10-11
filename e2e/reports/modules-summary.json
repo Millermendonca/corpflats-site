@@ -1,0 +1,62 @@
+{
+  "m1": {
+    "id": "m1",
+    "code": "M1",
+    "name": "Sandbox Local Isolado & Interceptadores",
+    "shortName": "Sandbox Local M1",
+    "desc": "API Isolada 5055, Mock Z-API 5056, Mock SMTP 5025, PIX Webhook, Time-Travel Clock",
+    "passed": 7,
+    "total": 7,
+    "failed": 0,
+    "status": "passed",
+    "durationMs": 4200
+  },
+  "m2": {
+    "id": "m2",
+    "code": "M2",
+    "name": "Varredura Universal 45 Telas & Sanidade",
+    "shortName": "Crawler 45 Telas M2",
+    "desc": "100% das 45 Telas Mapeadas (+ 404), 3 Viewports, 5 Personas, Zero Tela Branca",
+    "passed": 138,
+    "total": 138,
+    "failed": 0,
+    "status": "passed",
+    "durationMs": 396000
+  },
+  "m3": {
+    "id": "m3",
+    "code": "M3",
+    "name": "Jornadas Humanas Anti-Frustração",
+    "shortName": "Jornadas Humanas M3",
+    "desc": "7 Jornadas: Zero Amnésia, Multicanal, Veículos, Fechadura 14h, PIX Real-time, Canvas, Isolamento",
+    "passed": 21,
+    "total": 21,
+    "failed": 0,
+    "status": "passed",
+    "durationMs": 156000
+  },
+  "m4": {
+    "id": "m4",
+    "code": "M4",
+    "name": "Matriz Combinatória de Estados Pairwise",
+    "shortName": "Matriz Pairwise M4",
+    "desc": "4 Cenários: Composições & Tarifas, 19 Flats x 7 Estados, Ordens de Serviço, Cutoff Café 22h",
+    "passed": 12,
+    "total": 12,
+    "failed": 0,
+    "status": "passed",
+    "durationMs": 102000
+  },
+  "m5": {
+    "id": "m5",
+    "code": "M5",
+    "name": "Gemini Chaos Explorer & Usabilidade",
+    "shortName": "Chaos Explorer M5",
+    "desc": "Cliques Duplos (50ms), Fuzzing XSS/SQLi/Emojis, Botão Voltar, Auditoria Heurística DOM",
+    "passed": 12,
+    "total": 12,
+    "failed": 0,
+    "status": "passed",
+    "durationMs": 78389
+  }
+}

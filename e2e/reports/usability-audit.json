@@ -1,0 +1,318 @@
+{
+  "title": "CorpFlats Heuristic Usability & Chaos Audit",
+  "generatedAt": "2026-10-11T06:31:15.385Z",
+  "viewport": {
+    "width": 375,
+    "height": 812
+  },
+  "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1 CorpFlatsMobile/1.0",
+  "screensAudited": [
+    "Dashboard de Governança (/dashboard)",
+    "Pré-Checkin Digital (/pre-checkin)",
+    "Portal do Hóspede (/minha-reserva)",
+    "Motor de Reservas (/reservar)"
+  ],
+  "summary": {
+    "totalScreens": 4,
+    "totalElementsScanned": 1232,
+    "totalFindings": 33,
+    "bySeverity": {
+      "critical": 0,
+      "warning": 14,
+      "info": 19
+    },
+    "byCategory": {
+      "conteudo_truncado": 3,
+      "acessibilidade_rotulos": 11,
+      "sobreposicao_elementos": 0,
+      "formularios_labels": 19
+    },
+    "usabilityScore": 70
+  },
+  "findings": [
+    {
+      "type": "missing_accessible_label",
+      "category": "acessibilidade_rotulos",
+      "severity": "warning",
+      "screen": "Dashboard de Governança (/dashboard)",
+      "element": "button.inline-flex",
+      "hasSvg": true,
+      "recommendation": "Elemento interativo sem rótulo textual legível por leitores de tela. Adicionar aria-label ou title."
+    },
+    {
+      "type": "missing_accessible_label",
+      "category": "acessibilidade_rotulos",
+      "severity": "warning",
+      "screen": "Dashboard de Governança (/dashboard)",
+      "element": "button.inline-flex",
+      "hasSvg": true,
+      "recommendation": "Elemento interativo sem rótulo textual legível por leitores de tela. Adicionar aria-label ou title."
+    },
+    {
+      "type": "input_without_label",
+      "category": "formularios_labels",
+      "severity": "info",
+      "screen": "Dashboard de Governança (/dashboard)",
+      "element": "input[name='']",
+      "recommendation": "Campo de formulário sem label vinculado, placeholder ou aria-label."
+    },
+    {
+      "type": "input_without_label",
+      "category": "formularios_labels",
+      "severity": "info",
+      "screen": "Dashboard de Governança (/dashboard)",
+      "element": "input[name='']",
+      "recommendation": "Campo de formulário sem label vinculado, placeholder ou aria-label."
+    },
+    {
+      "type": "input_without_label",
+      "category": "formularios_labels",
+      "severity": "info",
+      "screen": "Dashboard de Governança (/dashboard)",
+      "element": "input[name='']",
+      "recommendation": "Campo de formulário sem label vinculado, placeholder ou aria-label."
+    },
+    {
+      "type": "input_without_label",
+      "category": "formularios_labels",
+      "severity": "info",
+      "screen": "Dashboard de Governança (/dashboard)",
+      "element": "input[name='']",
+      "recommendation": "Campo de formulário sem label vinculado, placeholder ou aria-label."
+    },
+    {
+      "type": "input_without_label",
+      "category": "formularios_labels",
+      "severity": "info",
+      "screen": "Dashboard de Governança (/dashboard)",
+      "element": "input[name='']",
+      "recommendation": "Campo de formulário sem label vinculado, placeholder ou aria-label."
+    },
+    {
+      "type": "input_without_label",
+      "category": "formularios_labels",
+      "severity": "info",
+      "screen": "Dashboard de Governança (/dashboard)",
+      "element": "input[name='']",
+      "recommendation": "Campo de formulário sem label vinculado, placeholder ou aria-label."
+    },
+    {
+      "type": "input_without_label",
+      "category": "formularios_labels",
+      "severity": "info",
+      "screen": "Dashboard de Governança (/dashboard)",
+      "element": "input[name='']",
+      "recommendation": "Campo de formulário sem label vinculado, placeholder ou aria-label."
+    },
+    {
+      "type": "input_without_label",
+      "category": "formularios_labels",
+      "severity": "info",
+      "screen": "Dashboard de Governança (/dashboard)",
+      "element": "input[name='']",
+      "recommendation": "Campo de formulário sem label vinculado, placeholder ou aria-label."
+    },
+    {
+      "type": "input_without_label",
+      "category": "formularios_labels",
+      "severity": "info",
+      "screen": "Dashboard de Governança (/dashboard)",
+      "element": "input[name='']",
+      "recommendation": "Campo de formulário sem label vinculado, placeholder ou aria-label."
+    },
+    {
+      "type": "input_without_label",
+      "category": "formularios_labels",
+      "severity": "info",
+      "screen": "Dashboard de Governança (/dashboard)",
+      "element": "input[name='']",
+      "recommendation": "Campo de formulário sem label vinculado, placeholder ou aria-label."
+    },
+    {
+      "type": "input_without_label",
+      "category": "formularios_labels",
+      "severity": "info",
+      "screen": "Dashboard de Governança (/dashboard)",
+      "element": "input[name='']",
+      "recommendation": "Campo de formulário sem label vinculado, placeholder ou aria-label."
+    },
+    {
+      "type": "input_without_label",
+      "category": "formularios_labels",
+      "severity": "info",
+      "screen": "Dashboard de Governança (/dashboard)",
+      "element": "input[name='']",
+      "recommendation": "Campo de formulário sem label vinculado, placeholder ou aria-label."
+    },
+    {
+      "type": "input_without_label",
+      "category": "formularios_labels",
+      "severity": "info",
+      "screen": "Dashboard de Governança (/dashboard)",
+      "element": "input[name='']",
+      "recommendation": "Campo de formulário sem label vinculado, placeholder ou aria-label."
+    },
+    {
+      "type": "input_without_label",
+      "category": "formularios_labels",
+      "severity": "info",
+      "screen": "Dashboard de Governança (/dashboard)",
+      "element": "input[name='']",
+      "recommendation": "Campo de formulário sem label vinculado, placeholder ou aria-label."
+    },
+    {
+      "type": "input_without_label",
+      "category": "formularios_labels",
+      "severity": "info",
+      "screen": "Dashboard de Governança (/dashboard)",
+      "element": "input[name='']",
+      "recommendation": "Campo de formulário sem label vinculado, placeholder ou aria-label."
+    },
+    {
+      "type": "input_without_label",
+      "category": "formularios_labels",
+      "severity": "info",
+      "screen": "Dashboard de Governança (/dashboard)",
+      "element": "input[name='']",
+      "recommendation": "Campo de formulário sem label vinculado, placeholder ou aria-label."
+    },
+    {
+      "type": "input_without_label",
+      "category": "formularios_labels",
+      "severity": "info",
+      "screen": "Dashboard de Governança (/dashboard)",
+      "element": "input[name='']",
+      "recommendation": "Campo de formulário sem label vinculado, placeholder ou aria-label."
+    },
+    {
+      "type": "truncated_text",
+      "category": "conteudo_truncado",
+      "severity": "warning",
+      "screen": "Pré-Checkin Digital (/pre-checkin)",
+      "element": "div.min-h-screen",
+      "textSnippet": "CF\nCorpFlats\nCheck-in Digital Registrado • Apt 211\nWhatsApp\nCheck-in D",
+      "scrollWidth": 423,
+      "clientWidth": 375,
+      "recommendation": "Dado crítico (moeda, data ou código) truncado por text-overflow. Adicionar tooltip ou quebra responsiva."
+    },
+    {
+      "type": "missing_accessible_label",
+      "category": "acessibilidade_rotulos",
+      "severity": "warning",
+      "screen": "Pré-Checkin Digital (/pre-checkin)",
+      "element": "button.justify-center",
+      "hasSvg": true,
+      "recommendation": "Elemento interativo sem rótulo textual legível por leitores de tela. Adicionar aria-label ou title."
+    },
+    {
+      "type": "missing_accessible_label",
+      "category": "acessibilidade_rotulos",
+      "severity": "warning",
+      "screen": "Pré-Checkin Digital (/pre-checkin)",
+      "element": "button.inline-flex",
+      "hasSvg": true,
+      "recommendation": "Elemento interativo sem rótulo textual legível por leitores de tela. Adicionar aria-label ou title."
+    },
+    {
+      "type": "missing_accessible_label",
+      "category": "acessibilidade_rotulos",
+      "severity": "warning",
+      "screen": "Pré-Checkin Digital (/pre-checkin)",
+      "element": "button.inline-flex",
+      "hasSvg": true,
+      "recommendation": "Elemento interativo sem rótulo textual legível por leitores de tela. Adicionar aria-label ou title."
+    },
+    {
+      "type": "truncated_text",
+      "category": "conteudo_truncado",
+      "severity": "warning",
+      "screen": "Portal do Hóspede (/minha-reserva)",
+      "element": "div.bg-gradient-to-br",
+      "textSnippet": "ATENDIMENTO & CONCIERGE 24H\nDúvidas ou solicitações na estadia?\n\nFale ",
+      "scrollWidth": 389,
+      "clientWidth": 341,
+      "recommendation": "Dado crítico (moeda, data ou código) truncado por text-overflow. Adicionar tooltip ou quebra responsiva."
+    },
+    {
+      "type": "truncated_text",
+      "category": "conteudo_truncado",
+      "severity": "warning",
+      "screen": "Motor de Reservas (/reservar)",
+      "element": "div.min-h-screen",
+      "textSnippet": "⭐ Melhor Tarifa Garantida Sempre pelo Nosso Site Oficial\nCF\nCorpFlats\n",
+      "scrollWidth": 456,
+      "clientWidth": 375,
+      "recommendation": "Dado crítico (moeda, data ou código) truncado por text-overflow. Adicionar tooltip ou quebra responsiva."
+    },
+    {
+      "type": "missing_accessible_label",
+      "category": "acessibilidade_rotulos",
+      "severity": "warning",
+      "screen": "Motor de Reservas (/reservar)",
+      "element": "button.h-14",
+      "hasSvg": true,
+      "recommendation": "Elemento interativo sem rótulo textual legível por leitores de tela. Adicionar aria-label ou title."
+    },
+    {
+      "type": "missing_accessible_label",
+      "category": "acessibilidade_rotulos",
+      "severity": "warning",
+      "screen": "Motor de Reservas (/reservar)",
+      "element": "button.h-14",
+      "hasSvg": true,
+      "recommendation": "Elemento interativo sem rótulo textual legível por leitores de tela. Adicionar aria-label ou title."
+    },
+    {
+      "type": "missing_accessible_label",
+      "category": "acessibilidade_rotulos",
+      "severity": "warning",
+      "screen": "Motor de Reservas (/reservar)",
+      "element": "button.h-14",
+      "hasSvg": true,
+      "recommendation": "Elemento interativo sem rótulo textual legível por leitores de tela. Adicionar aria-label ou title."
+    },
+    {
+      "type": "missing_accessible_label",
+      "category": "acessibilidade_rotulos",
+      "severity": "warning",
+      "screen": "Motor de Reservas (/reservar)",
+      "element": "button.h-14",
+      "hasSvg": true,
+      "recommendation": "Elemento interativo sem rótulo textual legível por leitores de tela. Adicionar aria-label ou title."
+    },
+    {
+      "type": "missing_accessible_label",
+      "category": "acessibilidade_rotulos",
+      "severity": "warning",
+      "screen": "Motor de Reservas (/reservar)",
+      "element": "button.h-14",
+      "hasSvg": true,
+      "recommendation": "Elemento interativo sem rótulo textual legível por leitores de tela. Adicionar aria-label ou title."
+    },
+    {
+      "type": "missing_accessible_label",
+      "category": "acessibilidade_rotulos",
+      "severity": "warning",
+      "screen": "Motor de Reservas (/reservar)",
+      "element": "button.h-14",
+      "hasSvg": true,
+      "recommendation": "Elemento interativo sem rótulo textual legível por leitores de tela. Adicionar aria-label ou title."
+    },
+    {
+      "type": "input_without_label",
+      "category": "formularios_labels",
+      "severity": "info",
+      "screen": "Motor de Reservas (/reservar)",
+      "element": "input[name='']",
+      "recommendation": "Campo de formulário sem label vinculado, placeholder ou aria-label."
+    },
+    {
+      "type": "input_without_label",
+      "category": "formularios_labels",
+      "severity": "info",
+      "screen": "Motor de Reservas (/reservar)",
+      "element": "input[name='']",
+      "recommendation": "Campo de formulário sem label vinculado, placeholder ou aria-label."
+    }
+  ]
+}

@@ -77,6 +77,34 @@ export default function GuestPreCheckin() {
     }
     return 1
   })
+
+  // Synchronize browser history and popstate for out-of-order Back button navigation
+  useEffect(() => {
+    const handlePopState = () => {
+      if (typeof window !== "undefined") {
+        const sp = new URLSearchParams(window.location.search)
+        const st = parseInt(sp.get("step") || "1", 10)
+        if (st >= 1 && st <= 3) {
+          setStep(st)
+        }
+      }
+    }
+    window.addEventListener("popstate", handlePopState)
+    return () => window.removeEventListener("popstate", handlePopState)
+  }, [])
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const url = new URL(window.location.href)
+        const currentUrlStep = parseInt(url.searchParams.get("step") || "1", 10)
+        if (currentUrlStep !== step) {
+          url.searchParams.set("step", String(step))
+          window.history.pushState({ step }, "", url.toString())
+        }
+      } catch {}
+    }
+  }, [step])
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
   const [isCompleted, setIsCompleted] = useState(false)
