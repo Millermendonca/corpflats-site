@@ -1,7 +1,7 @@
 # Progress — Milestone 3 Worker
 
-Last visited: 2026-10-11T04:34:30Z
-Status: In Progress - Running build
+Last visited: 2026-10-11T04:38:25Z
+Status: In Progress - Rebuilding frontend with FaqKnowledgeBase in whatsapp-automation.tsx
 
 ## Completed Steps
 - [x] Reviewed ORIGINAL_REQUEST.md, DISPATCH.md, and explorer handoffs.
@@ -12,9 +12,9 @@ Status: In Progress - Running build
 - [x] Task 4: Updated `artifacts/limpeza/src/pages/whatsapp-automation.tsx` (6th tab and FaqKnowledgeBase component).
 
 ## Current Step
-- [ ] Task 5: Build verification: `npm run build` running in `artifacts/limpeza`.
+- [ ] Task 5: Running `npm run build` in `artifacts/limpeza` (task-136).
 
 ## Next Steps
-- [ ] Task 5 (cont): Run `node --test tests/whatsapp-ai-agent.test.mjs`.
+- [ ] Task 5 (cont): Confirm clean build and run `node --test tests/whatsapp-ai-agent.test.mjs`.
 - [ ] Task 6: Commit and git push.
 - [ ] Task 7: Handoff and send_message.

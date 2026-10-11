@@ -55,6 +55,7 @@ import {
 } from "lucide-react"
 import { AccessDenied } from "@/components/access-denied"
 import { useQuickMessages, WhatsAppQuickMessage, renderQuickMessage } from "@/hooks/use-quick-messages"
+import { FaqKnowledgeBase } from "@/components/faq-knowledge-base"
 
 interface ButtonAction {
   id: string
@@ -1693,7 +1694,7 @@ export default function WhatsappAutomation() {
 
         {/* Tabs Principais */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid grid-cols-2 md:grid-cols-5 w-full md:w-auto rounded-xl p-1 bg-muted/60">
+          <TabsList className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 w-full md:w-auto rounded-xl p-1 bg-muted/60">
             <TabsTrigger value="ai_agent" className="rounded-lg text-xs font-bold gap-1.5">
               <Bot className="w-3.5 h-3.5 text-blue-500" />
               🤖 Agente de IA
@@ -1701,6 +1702,10 @@ export default function WhatsappAutomation() {
             <TabsTrigger value="rules" className="rounded-lg text-xs font-bold gap-1.5">
               <Zap className="w-3.5 h-3.5 text-amber-500" />
               Régua Automática
+            </TabsTrigger>
+            <TabsTrigger value="faq" className="rounded-lg text-xs font-bold gap-1.5 relative">
+              <HelpCircle className="w-3.5 h-3.5 text-indigo-500" />
+              📚 Base & FAQ
             </TabsTrigger>
             <TabsTrigger value="quick_messages" className="rounded-lg text-xs font-bold gap-1.5 relative">
               <MessageSquare className="w-3.5 h-3.5 text-emerald-500" />
@@ -3539,6 +3544,13 @@ export default function WhatsappAutomation() {
               </div>
 
             </div>
+          </TabsContent>
+
+          {/* ════════════════════════════════════════════════════════════════════
+              ABA: BASE DE CONHECIMENTO & FAQ DINÂMICO (SOFIA AI)
+          ════════════════════════════════════════════════════════════════════ */}
+          <TabsContent value="faq" className="space-y-6">
+            <FaqKnowledgeBase />
           </TabsContent>
 
           {/* ════════════════════════════════════════════════════════════════════
