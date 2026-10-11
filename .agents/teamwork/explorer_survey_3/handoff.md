@@ -1,161 +1,152 @@
-# Handoff Report — Database & Multi-Flat Integrity Explorer
-
-- **Date**: 2026-09-29T05:25:00Z
-- **Working Directory**: `c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/explorer_survey_3`
-- **Handoff Type**: Hard (Investigation & Diagnosis Complete)
-- **Primary Report**: `c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/explorer_survey_3/survey_database.md`
+# Handoff Report: Infraestrutura de Testes, Casos de Teste e Estado Git
+**Subagente**: Explorer Survey 3  
+**Data**: 2026-10-11T01:32:30Z  
+**Diretório de Trabalho**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_3`  
+**Destinatário**: Orchestrator (`27c61f6a-5652-421c-bbda-1b5d6be7db98`)
 
 ---
 
 ## 1. Observation
 
-1. **Flat 313 (Cleaning ID 1358 vs ID 1336 & Reservation 301)**:
-   - In `data/database.json`, Cleaning Request ID 1358 has:
+1. **Framework e Comando de Testes**:
+   - O projeto possui 43 arquivos em `tests/`, todos estruturados com ESM `.mjs` importando nativamente `node:test` e `node:assert/strict` (ou `node:assert`).
+   - `package.json` raiz (`c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\package.json`) define:
      ```json
-     {
-       "id": 1358,
-       "flatId": 7,
-       "flatNumber": "313",
-       "requestDate": "2026-09-25",
-       "status": "dirty",
-       "source": "checkout",
-       "leavingGuest": "Leonardo Primo de Sousa",
-       "adminNote": "Limpeza de check-out gerada automaticamente para o Flat 313 (Reserva RES-313-0267)"
+     "scripts": {
+       "build": "npm --prefix artifacts/limpeza run build",
+       "postinstall": "npm --prefix artifacts/limpeza run build",
+       "start": "node server.mjs"
      }
      ```
-   - Flat 313 already had Cleaning Request ID 1336 on 2026-09-26:
-     ```json
-     {
-       "id": 1336,
-       "flatId": 7,
-       "flatNumber": "313",
-       "requestDate": "2026-09-26",
-       "status": "clean",
-       "assignedUserId": 3,
-       "assignedUsername": "Grazi",
-       "completedAt": "2026-09-26T14:05:00.000Z",
-       "adminNote": "Limpeza realizada por Grazi"
-     }
+     Não há script `"test"`. O comando `npm test` falhou com:
      ```
-   - Current guest Felipe is in Reservation ID 301 (`checkinDate: "2026-09-28"`, `checkoutDate: "2026-10-02"`), with future checkout Cleaning ID 1341 on 2026-10-02.
-   - In `artifacts/api-server/demo-server.mjs:1694-1733`, `reconcileUniversalIntegrity` verifies checkouts strictly matching `c.requestDate === checkoutDate || c.effectiveDate === checkoutDate`. Because checkout was 25/09 and Grazi's cleaning was on 26/09, the engine created ID 1358 as `dirty`.
-   - In `demo-server.mjs:5843-5883`, `getRequestsForDate` drags any non-clean cleaning request from prior dates as `isPendingFromPreviousDay: true`.
+     npm ERR! Missing script: "test"
+     ```
+   - O comando de execução direta de testes é `node --test <caminho-do-teste>`.
 
-2. **Flat 511 & Maid Shift Roster on 26/09 (Card ID 1338 vs ID 1324)**:
-   - In `data/database.json`, Card ID 1338 is:
-     ```json
-     {
-       "id": 1338,
-       "flatId": 11,
-       "flatNumber": "511",
-       "requestDate": "2026-09-26",
-       "status": "clean",
-       "assignedUserId": 3,
-       "assignedUsername": "Grazi",
-       "adminNote": "Limpeza realizada por Grazi",
-       "addedBy": "admin",
-       "addedAt": "2026-09-28T05:58:27.626Z"
-     }
+2. **Execução de `tests/whatsapp-ai-agent.test.mjs`**:
+   - Comando executado: `node --test tests/whatsapp-ai-agent.test.mjs`.
+   - Resultado: Código de saída `0`, duração de 983ms, 1 teste com subtestes passando.
+   - Observou-se nas linhas 328-330 do arquivo:
+     ```javascript
+     after(() => {
+       process.exit(0);
+     });
      ```
-   - In backup `data/backups/database_backup_pre_dia26_1790575107604.json`, Card ID 1324 was:
-     ```json
-     {
-       "id": 1324,
-       "flatId": 11,
-       "flatNumber": "511",
-       "requestDate": "2026-09-26",
-       "status": "clean",
-       "assignedUserId": 2,
-       "assignedUsername": "Cris",
-       "adminNote": "Limpeza concluída por Cris (recuperada da auditoria)",
-       "completedAt": "2026-09-26T18:00:00.000Z"
-     }
+
+3. **Descoberta de Desalinhamento SHA-256 e Falha Mascarada**:
+   - No arquivo `tests/m2-messaging-checkin-url.test.mjs`, o teste de espelhamento falhou:
      ```
-   - In `db.maidStatementEntries`, Cris has entry `pay_1790528959693_pnzhpy` (User ID 2, Cleaning ID 1324, Flat 511, R$ 22.50, 2026-09-26).
-   - Script `scripts/apply_maid_cleanings_dia26.mjs` ran on 2026-09-28 and inserted ID 1338 for Grazi and statement entry `stmt_3_1338_20260928` (User ID 3, Flat 511, R$ 23.25, 2026-09-26).
-   - The same script duplicated cleanings for Grazi on Flat 907 (ID 1339 vs Cris ID 1323) and Flat 1004 (ID 1340 vs Cris ID 1322), creating double credits totaling R$ 69.75 for Grazi while she was off.
-
-3. **Flat 512 & 712 (`RES-712-0291` & Loop de Reabertura)**:
-   - In `data/database.json`, Reservation ID 291 has:
-     ```json
-     {
-       "id": 291,
-       "code": "RES-712-0291",
-       "flatNumber": "512",
-       "flatId": 12,
-       "guestName": "Miller Mendonça Pessanha",
-       "checkinDate": "2026-10-12",
-       "checkoutDate": "2026-10-13",
-       "breakfastToken": "bfk_res7120291"
-     }
+     not ok 3 - 100% byte-for-byte identical: artifacts/api-server/whatsapp-ai-service.mjs <==> scripts/whatsapp-ai-service.mjs
+     AssertionError [ERR_ASSERTION]: 'SHA-256 mismatch for artifacts/api-server/whatsapp-ai-service.mjs vs scripts/whatsapp-ai-service.mjs'
+     expected: '1dd69090f7ff3ac2e0f513432eb53909dcbd9fd5a4b32853458b5d16b3ee2991'
+     actual: '6683557d7c735deb3b23494ea41307bacfebb33df8252771274d4b24506653c8'
      ```
-   - Cleaning Request ID 1351 has `flatId: 12`, `flatNumber: "512"`, `adminNote: "Limpeza de check-out gerada automaticamente para o Flat 512 (Reserva RES-712-0291)"`.
-   - In `artifacts/api-server/demo-server.mjs:1736-1753`, the auto-correction rule forces any recent automatic checkout cleaning marked `clean` with `!c.assignedUserId && !c.completedAt` back to `dirty`.
+   - O diff entre os dois arquivos via `git diff --no-index artifacts/api-server/whatsapp-ai-service.mjs scripts/whatsapp-ai-service.mjs` mostrou:
+     ```diff
+     --- a/artifacts/api-server/whatsapp-ai-service.mjs
+     +++ b/scripts/whatsapp-ai-service.mjs
+     @@ -12,1 +12,1 @@
+     -import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES } from "./zapi-service.mjs";
+     +import { cleanWhatsAppPhone } from "./zapi-service.mjs";
+     @@ -535,1 +535,2 @@
+     -const allowed = [...DEFAULT_TEST_ALLOWED_PHONES, ...String(db.zapiConfig.testAllowedPhones || "").split(/[,\s]+/)]
+     +const allowed = String(db.zapiConfig.testAllowedPhones || "")
+     +  .split(/[,\s]+/)
+     ```
+   - Em `tests/whatsapp-ai-agent.test.mjs`, o Teste 10 compara exatamente esses arquivos:
+     ```javascript
+     test("10. Integridade dos Arquivos Duplos Espelhados (SHA256)", async () => {
+       const hashAiApi = getHash("artifacts/api-server/whatsapp-ai-service.mjs");
+       const hashAiScript = getHash("scripts/whatsapp-ai-service.mjs");
+       assert.equal(hashAiApi, hashAiScript, "whatsapp-ai-service.mjs deve ser idêntico em artifacts e scripts");
+     });
+     ```
+     Porém, devido ao `process.exit(0)` síncrono no hook `after()`, o processo era finalizado antes da captura e reporte da rejeição assíncrona.
 
-4. **18h Date Transition in Dashboard (`dashboard.tsx`)**:
-   - `artifacts/limpeza/src/pages/dashboard.tsx:37-43`: `getDefaultDate()` advances date by 1 day if `now.getHours() >= 18`.
-   - Lines 314-317 show only `displayDate` and `{isToday && <div>Hoje</div>}` with no notification or badge indicating night mode / tomorrow view.
+4. **Estado do Repositório Git e Diretrizes**:
+   - `git status`: Branch `main`, sincronizada com `origin/main`.
+   - `git remote -v`:
+     `origin: https://github.com/Millermendonca/corpflats-site.git`
+     `gitsafe-backup: git://gitsafe:5418/backup.git`
+   - `git log -n 1`: Commit `ab9386d5f676059c6ab0af2c659cec7f93b76359` (`feat(m1): implement Bot Actions API, master switch and Tariff Engine with SEBRAE pricing`).
+   - `AGENTS.md`: Exige `git push` obrigatório após qualquer commit e build do frontend (`npm run build` na pasta `artifacts/limpeza`) com arquivos de `dist/public` adicionados ao commit.
 
-5. **Universal Flat Inventory (All 19 Flats)**:
-   - 4 past phantom dirty cleanings identified: ID 1362 (Flat 408, 24/09, Yan no-show), ID 1364 (Flat 113, 26/09, Thayla), ID 1358 (Flat 313, 25/09, Leonardo Primo), ID 1361 (Flat 712, 25/09, Angelo).
-   - 17 reservations have prefix code differing from `flatNumber`: 16 are valid PMS room transfers (drag & drop), 1 (`RES-712-0291`) is an incorrect allocation that belongs to Flat 712.
+5. **Build do Frontend (`artifacts/limpeza`)**:
+   - Comando executado: `npm run build` em `artifacts/limpeza`.
+   - Resultado: Sucesso (código de saída `0`) em 47.09s, gerando `dist/public/index.html` (2.65 kB), `dist/public/assets/index.css` (380.67 kB) e `dist/public/assets/index.js` (3,172.70 kB).
+
+6. **Estrutura Atual do Banco de Dados para FAQ**:
+   - `grep_search` por `"faq"` e `"knowledgeBase"` em `data/database.json` retornou `No results found`.
+   - A coleção `db.faqItems` ainda não existe no arquivo e deve ser inicializada na carga do banco (`loadDatabase` em `demo-server.mjs`).
 
 ---
 
 ## 2. Logic Chain
 
-1. **Step 1 (Flat 313)**: Observation 1 shows that Leonardo Primo left 25/09, Grazi cleaned Flat 313 on 26/09 (ID 1336), and Felipe arrived 28/09. Because `reconcileUniversalIntegrity` only searches `requestDate === "2026-09-25"`, it generated a redundant dirty card ID 1358. Since 1358 is dirty, `getRequestsForDate` drags it forward as `isPendingFromPreviousDay`. -> *Conclusion: Removing or resolving ID 1358 as satisfied by ID 1336 and enhancing `reconcileUniversalIntegrity` eliminates the ghost pending status.*
-2. **Step 2 (Flat 511)**: Observation 2 shows Cris was on duty on 26/09 (ID 1324, statement `pnzhpy`). Script `apply_maid_cleanings_dia26.mjs` mistakenly assumed Grazi worked on 26/09, creating ID 1338 and double credits for Grazi. -> *Conclusion: Reattribute ID 1338 to Cris, update statement reference to 1338, and remove Grazi's off-duty credit `stmt_3_1338_20260928`.*
-3. **Step 3 (Flat 512 & 712)**: Observation 3 shows `RES-712-0291` has code 712 but flatId 12 (Flat 512), producing Cleaning 1351 on Flat 512. Observation 3 also demonstrates that `demo-server.mjs:1736-1753` forcibly reverts manually cleared checkouts to dirty if lacking assigned maid/completion timestamps. -> *Conclusion: Update reservation 291 and cleaning 1351 to Flat 712 (`flatId: 14`, `flatNumber: "712"`), and eliminate/refactor the blind reversion loop in `reconcileUniversalIntegrity`.*
-4. **Step 4 (Dashboard 18h Transition)**: Observation 4 proves that when the dashboard advances to tomorrow after 18:00, it lacks an explicit "Amanhã" indicator, causing users to mistake tomorrow's checkout queue for stale orders. -> *Conclusion: Add an explicit visual badge and a quick-switch toggle in `dashboard.tsx`.*
+1. **Da observação 1 para o método de execução de testes**:
+   Como não há script `"test"` no `package.json` raiz e todos os arquivos em `tests/` usam `import { test, describe } from "node:test"`, qualquer validação automatizada das mudanças de R2 a R5 deve ser acionada via `node --test tests/whatsapp-ai-agent.test.mjs`.
+
+2. **Da observação 2 e 3 para a integridade de testes e espelhamento**:
+   A falha no teste `m2-messaging-checkin-url.test.mjs` comprova que `artifacts/api-server/whatsapp-ai-service.mjs` e `scripts/whatsapp-ai-service.mjs` estão fora de sincronia. A presença de `process.exit(0)` no hook `after()` de `tests/whatsapp-ai-agent.test.mjs` mascara essa inconsistência, permitindo falsos positivos. Para garantir que novas falhas não sejam engolidas, o hook `after()` deve aguardar a conclusão de todos os testes ou unref'ar timers pendentes, e o time de implementação precisa sincronizar imediatamente ambos os arquivos.
+
+3. **Das observações 3 e 4 para a governança de código de IA e Z-API**:
+   O sistema de espelhamento duplo é estrito no projeto (arquivos em `artifacts/api-server/` e `scripts/` devem ser rigorosamente idênticos). Quaisquer modificações para R2-R5 em `whatsapp-ai-service.mjs`, `zapi-service.mjs` ou `demo-server.mjs` devem ser aplicadas em ambos os diretórios simultaneamente, sob pena de quebra de testes de integridade.
+
+4. **Da observação 6 para os requisitos de persistência de R1/R5**:
+   Como `db.faqItems` não existe atualmente no banco `database.json`, o backend precisa:
+   - Inicializar `if (!Array.isArray(db.faqItems)) db.faqItems = getInitialFaqItems();` na inicialização do servidor (`loadDatabase`).
+   - Carregar dinamicamente `db.faqItems` no motor da Sofia (`getWhatsAppAiConfig` e `generateAiWhatsAppResponse`).
+   - Disponibilizar endpoints REST para CRUD, auto-aprendizado e aprovação.
+
+5. **Das observações 1 a 6 para os critérios de aceitação e novos testes**:
+   Para cumprir os critérios de aceitação de `ORIGINAL_REQUEST.md`:
+   - Devem ser adicionados testes unitários e de integração específicos cobrindo R2 (detecção automática de dúvida não mapeada e inserção com status `"pendente"`), R3 (captura de resposta do operador com status `"aguardando_aprovacao"` e aprovação para `"ativo"`), R4 (motor de regras `scope: exclude` e `scope: include_only` com normalização de telefones) e R5 (pesquisa dinâmica heurística e montagem do prompt Gemini com FAQs do banco).
 
 ---
 
 ## 3. Caveats
 
-- **No Caveats**: All 19 flats, all 240 cleanings, all 195 reservations, and all 341 statement entries were parsed and analyzed directly against `data/database.json` and historic backups in `data/backups/`.
-- No code or database changes were made during this investigation (strict read-only compliance).
+1. **Ambiente Real da API Z-API e Gemini**: Em ambiente de teste unitário, chamadas à API Z-API e ao Google Gemini são mockadas (com `geminiApiKey: ""`). Testes com chamadas ativas à API externa do Gemini não foram executados em rede para não consumir cotas ou depender de credenciais externas.
+2. **Dependência de Transbordo**: O fluxo de detecção de pergunta inédita (R2) depende de distinguir perguntas genuínas sem mapeamento de mensagens genéricas ou saudações. Os testes devem cobrir uma amostra diversificada de frases para evitar falsos positivos de auto-aprendizado.
+3. **Outros Arquivos não rastreados**: Existem arquivos modificados em `.agents/teamwork/` relativos ao trabalho dos outros agentes da equipe. Nenhuma alteração de código de aplicação foi realizada neste survey (estrito modo read-only).
 
 ---
 
 ## 4. Conclusion
 
-The database and engine issues are fully scoped and resolved in theory. Implementation requires:
-1. Saneamento de dados em `data/database.json`:
-   - Flat 313: Excluir a limpeza órfã ID 1358.
-   - Flat 511: Reatribuir card 1338 para Cris (User 2), remover crédito indevido de Grazi (`stmt_3_1338_20260928`). Fazer o mesmo para Flats 907 (1339) e 1004 (1340).
-   - Flat 512/712: Corrigir `RES-712-0291` e limpeza 1351 para Flat 712 (`flatId: 14`, `flatNumber: "712"`).
-   - Saneamento geral: Purgar limpezas fantasmas ID 1362 (408, Yan no-show) e ID 1364 (113, Thayla).
-2. Ajuste no motor de integridade (`artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`):
-   - Remover regra de reversão cega de clean para dirty (linhas 1736-1753).
-   - Validar se o quarto já foi limpo após o checkout antes de instanciar nova ordem dirty (linhas 1694-1698).
-3. Ajuste no frontend (`artifacts/limpeza/src/pages/dashboard.tsx`):
-   - Inserir badge visual de turno noturno ("Amanhã - Prévia das 18h") e botão "Ver Hoje".
+1. A infraestrutura de testes do projeto é baseada em `node:test` e está operacional, executando `tests/whatsapp-ai-agent.test.mjs` em menos de 1 segundo.
+2. Existe um bug de sincronização ativo entre `artifacts/api-server/whatsapp-ai-service.mjs` e `scripts/whatsapp-ai-service.mjs`, o qual deve ser resolvido na primeira intervenção de implementação para manter o SHA-256 alinhado.
+3. A suíte `tests/whatsapp-ai-agent.test.mjs` fornece o arcabouço ideal para expansão de cobertura para os requisitos R2 a R5, bastando injetar os novos casos de teste propostos na Seção 7 do `analysis.md`.
+4. As regras de governança (`git push` automático, build de frontend em `artifacts/limpeza` com inclusão de `dist/public`, e manutenção do espelhamento de arquivos em `scripts/`) estão claras e validadas.
 
 ---
 
 ## 5. Verification Method
 
-To verify after implementation:
-1. **Node Database Query**:
-   ```powershell
-   node -e "const db = JSON.parse(require('fs').readFileSync('data/database.json', 'utf8'));
-   console.log('Flat 313 cleanings:', db.cleaningRequests.filter(c => c.flatNumber === '313' && c.status === 'dirty').map(c => c.id));
-   console.log('Flat 511 maid:', db.cleaningRequests.find(c => c.id === 1338)?.assignedUsername);
-   console.log('RES-712-0291 flat:', db.reservations.find(r => r.id === 291)?.flatNumber);
-   console.log('Cleaning 1351 flat:', db.cleaningRequests.find(c => c.id === 1351)?.flatNumber);
-   console.log('Grazi 26/09 credits:', db.maidStatementEntries.filter(s => s.userId === 3 && s.entryDate === '2026-09-26').length);
-   "
-   ```
-   **Expected**:
-   - Flat 313 dirty cleanings: only `[1341]` (Felipe, 02/10). ID 1358 is gone.
-   - Flat 511 maid: `"Cris"`.
-   - RES-712-0291 flat: `"712"`.
-   - Cleaning 1351 flat: `"712"`.
-   - Grazi 26/09 credits: `0` (or only valid non-duplicated entries).
+Para verificar de forma independente e empírica as conclusões deste relatório:
 
-2. **Server & Frontend Integrity Build**:
+1. **Verificar Execução da Suíte Existente**:
    ```powershell
-   npm run build --prefix artifacts/limpeza
+   node --test tests/whatsapp-ai-agent.test.mjs
    ```
-   **Expected**: Exit code 0, no compilation errors.
+   *Resultado esperado*: Sai com código 0 e reporta a execução dos testes unitários da IA.
+
+2. **Verificar Desalinhamento SHA-256 Atual de `whatsapp-ai-service.mjs`**:
+   ```powershell
+   node --test tests/m2-messaging-checkin-url.test.mjs
+   ```
+   *Resultado esperado*: Falha no subteste `1.3 100% byte-for-byte identical: artifacts/api-server/whatsapp-ai-service.mjs <==> scripts/whatsapp-ai-service.mjs`.
+
+3. **Verificar Build do Frontend**:
+   ```powershell
+   npm --prefix artifacts/limpeza run build
+   ```
+   *Resultado esperado*: Compila em ~45s com código 0 gerando arquivos em `artifacts/limpeza/dist/public/`.
+
+4. **Verificar Status do Git**:
+   ```powershell
+   git status
+   git remote -v
+   ```
+   *Resultado esperado*: Branch `main` rastreando `origin/main`.

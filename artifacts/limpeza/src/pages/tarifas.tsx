@@ -228,6 +228,24 @@ export default function TarifasEditor() {
       return
     }
 
+    if (bulkFlatMode === "selected" && bulkSelectedFlats.length === 0) {
+      toast({
+        title: "Nenhum flat selecionado",
+        description: "Selecione ao menos um flat para aplicar a edição em lote.",
+        variant: "destructive"
+      })
+      return
+    }
+
+    if (bulkChannelMode === "selected" && bulkSelectedChannels.length === 0) {
+      toast({
+        title: "Nenhum canal selecionado",
+        description: "Selecione ao menos um canal de venda para aplicar a edição em lote.",
+        variant: "destructive"
+      })
+      return
+    }
+
     let finalRate = bulkValue
     if (bulkAdjustmentType === "percent") {
       const base = tariffSettings?.baseDailyRate || 237

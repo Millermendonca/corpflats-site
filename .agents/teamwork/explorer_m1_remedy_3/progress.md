@@ -1,11 +1,14 @@
-# Progress - Explorer M1 Remedy 3
+# Progress — explorer_m1_remedy_3
 
-- [x] Initialized DISPATCH.md and BRIEFING.md
-- [x] Reading required context files (ORIGINAL_REQUEST.md, PROJECT.md, challenger_m1_1/handoff.md)
-- [x] Inspecting finish endpoint implementation and photo array handling
-- [x] Inspecting tests/adversarial-milestone1.test.mjs and boundary test scripts created by Challenger 1
-- [x] Formulating exact verification instructions for Worker and Reviewers
-- [x] Writing handoff.md and updating BRIEFING.md
-- [/] Sending completion message to parent
-
-Last visited: 2026-09-30T19:22:30-03:00
+- Last visited: 2026-10-11T01:26:30Z
+- Status: Investigation Completed. Writing handoff report.
+- Completed steps:
+  - Created DISPATCH.md and initialized BRIEFING.md
+  - Read ORIGINAL_REQUEST.md and Challenger 1 handoff report
+  - Investigated demo-server.mjs (artifacts and scripts)
+  - Executed tests/challenger-edge-probes.test.mjs, confirming all 3 defects empirically
+  - Executed tests/tariff-engine.test.mjs, tests/bot-actions-api.test.mjs, and tests/challenger-tariff-stress.test.mjs
+  - Designed both Option A (shared helper function) and Option B (inline fixes) with exact code snippets
+  - Updated BRIEFING.md
+- Current step:
+  - Writing handoff.md with 5-component report

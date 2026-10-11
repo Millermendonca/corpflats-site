@@ -1,24 +1,29 @@
-## 2026-09-30T21:45:34Z
-You are Explorer 1: Backend Survey Explorer.
-Your working directory is: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_backend
-You MUST read:
-1. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-2. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_1\PROJECT.md
+# Task Assignment: Survey Backend & Sandbox Isolation Points
 
-Your mission:
-Map the backend architecture in artifacts/api-server/demo-server.mjs, scripts/demo-server.mjs, data/database.json, and supporting services.
-Investigate:
-1. Database loading, reading, writing, and saving mechanisms (data/database.json, db object in memory, saveDb/persist functions).
-2. Existing authentication & authorization middleware (how admin routes are protected, tokens, sessions, or headers).
-3. The exact structure and insertion points for the new admin routes (/api/service-orders/*) and public routes (/api/service/public/:token/*).
-4. How GET /api/flats is implemented and how serviceInProgress should be injected.
-5. How notifications work: inspect artifacts/api-server/zapi-service.mjs, artifacts/api-server/mail-service.mjs, and how internal notifications (db.notifications or audit logs) are emitted. Find where reception phone and email configs are stored.
-6. How uploadImageToStorage is implemented and used for file/photo uploads.
-7. How scripts/demo-server.mjs and artifacts/api-server/demo-server.mjs are kept in sync.
+## Instructions
+Read `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (specifically section `## 2026-10-11T00:38:03Z`).
 
-Scope boundaries:
-Do NOT modify any files. You are strictly read-only.
-Write your findings and actionable recommendations to:
-c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_backend\analysis.md and complete with handoff.md.
-Update progress.md with timestamps during your work.
-When finished, send a brief message with your key findings and paths to your reports.
+Your mission is to explore and map the backend architecture and external integration points in `artifacts/api-server/demo-server.mjs`, `scripts/`, `data/`, etc., to design the R1 Local Sandbox & Interceptors.
+
+### Tasks to Investigate:
+1. Examine `artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, and related service files (`zapi-service.mjs`, `mail-service.mjs`, `fnrh-serpro-service.mjs`, etc.).
+2. Map all external calls:
+   - Z-API / WhatsApp endpoints and credentials
+   - SMTP / Nodemailer configuration
+   - Payment gateways / PIX (MercadoPago, EFI, webhooks)
+   - SERPRO / FNRH gov.br API
+   - NFS-e prefeitura integration
+3. Check database storage mechanism (`data/database.json`) and how to isolate it completely for testing (e.g., `data/database.test.json`, environment variable `DATA_PATH` or test flag/config).
+4. Analyze how server port is configured (PORT env var, default 3000 / 3001) and how to run a dedicated isolated test API server instance on an independent port without altering `data/database.json`.
+5. Investigate time/clock mechanisms in the server: how time checks (18:00 turno, 22:00 café, 14:00 check-in lock) are implemented, and how a time-travel endpoint or hook can be plugged in or simulated for testing.
+6. Write your complete findings to `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_backend\handoff.md`.
+
+Working Directory: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_backend`
+
+
+## 2026-10-11T00:40:39Z
+Você é o Explorer 2 (Survey Backend & Sandbox Isolation Points).
+Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_backend
+Leia com atenção o arquivo de instruções c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_backend\DISPATCH.md e o arquivo c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md.
+Investigue a fundo a arquitetura do backend em artifacts/api-server/demo-server.mjs, scripts/, database.json, chamadas externas (Z-API WhatsApp, SMTP Nodemailer, webhooks PIX, SERPRO FNRH, NFS-e) e como subir um sandbox isolado em porta dedicada com database.test.json e time-travel sem alterar a base de produção.
+Escreva seu relatório completo em c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_backend\handoff.md e envie uma mensagem com o resumo dos seus achados para o orchestrator.

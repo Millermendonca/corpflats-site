@@ -1,41 +1,49 @@
-# BRIEFING — 2026-09-29T05:27:00Z
+# BRIEFING — 2026-10-11T01:33:00Z
 
 ## Mission
-Thoroughly investigate `data/database.json` and multi-flat integrity issues across all 19 active flats in Guest-Flow-Manager, focusing on Flat 313, 511, 512, 712, orphaned/duplicate cleanings, maid schedules, and code-flat mismatches.
+Investigar infraestrutura de testes em `tests/` (especialmente `tests/whatsapp-ai-agent.test.mjs` e outros), scripts e runners de teste (Node test runner, mocha, etc.), organização de mocks, stubs e fixtures de WhatsApp webhook e serviço de IA, estado do Git (branch, commits, remote) e regras do `AGENTS.md`, e mapeamento dos requisitos de teste para R2-R5 e critérios de aceitação do FAQ dinâmico & auto-aprendizado.
 
 ## 🔒 My Identity
 - Archetype: explorer
-- Roles: Database Integrity Explorer, Data Auditor
-- Working directory: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/explorer_survey_3
-- Original parent: 5ad82d68-5382-4b5d-b3af-ea9aa33373f7
-- Milestone: Explorer Survey
+- Roles: frontend investigator, survey analyzer, testing infra & test cases investigator
+- Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_3
+- Original parent: 3364a657-c855-42a7-a46e-a5463bc245b7
+- Milestone: Survey Phase - FAQ & Testing Infra
 
 ## 🔒 Key Constraints
-- Read-only investigation — do NOT implement
-- Do NOT edit or write source code or data files outside our designated folder
-- Write full investigation report to `survey_database.md` in our working directory
-- Write `handoff.md` and keep `progress.md` updated with timestamps
-- Communicate via `send_message` with recipient `5ad82d68-5382-4b5d-b3af-ea9aa33373f7`
+- Read-only investigation — do NOT implement code changes in the source code
+- Always follow the communication and handoff protocols
+- Deliver structured analysis in `analysis.md` and handoff in `handoff.md`
 
 ## Current Parent
-- Conversation ID: 5ad82d68-5382-4b5d-b3af-ea9aa33373f7
-- Updated: 2026-09-29T05:27:00Z
+- Conversation ID: 27c61f6a-5652-421c-bbda-1b5d6be7db98
+- Updated: 2026-10-11T01:33:00Z
 
 ## Investigation State
-- **Explored paths**: `data/database.json`, `data/backups/`, `artifacts/api-server/demo-server.mjs`, `scripts/apply_maid_cleanings_dia26.mjs`, `scripts/apply_cleaning_updates.mjs`, `artifacts/limpeza/src/pages/dashboard.tsx`.
+- **Explored paths**:
+  - `tests/` (43 arquivos analisados; `tests/whatsapp-ai-agent.test.mjs`, `tests/bot-actions-api.test.mjs`, `tests/companion-and-email-mirror.test.mjs`, `tests/m2-messaging-checkin-url.test.mjs`, `tests/governance-integrity.test.mjs`)
+  - `package.json` raiz e subpastas (sem script `"test"` no raiz; uso nativo de `node --test`)
+  - `artifacts/api-server/whatsapp-ai-service.mjs` e `scripts/whatsapp-ai-service.mjs`
+  - `artifacts/api-server/zapi-service.mjs` e `scripts/zapi-service.mjs`
+  - `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`
+  - `artifacts/limpeza/package.json` e execução do build Vite
+  - Git status, log e remotes
 - **Key findings**:
-  1. Flat 313: Cleaning ID 1358 was created automatically as dirty because Leonardo Primo checked out 25/09, while Grazi cleaned on 26/09 (ID 1336). `reconcileUniversalIntegrity` strictly matched date 25/09, creating a redundant dirty request dragged as pending while Felipe is in-house.
-  2. Flat 511: Card 1338 was created by `apply_maid_cleanings_dia26.mjs` assigning Grazi on 26/09, when Cris was on duty and cleaned 511 (ID 1324). Grazi received R$ 23.25 duplicate credit (`stmt_3_1338_20260928`).
-  3. Flat 512 & 712: Reservation `RES-712-0291` was allocated to Flat 512 instead of 712, creating Cleaning ID 1351 on Flat 512. Loop of reopening caused by lines 1736-1753 reverting clean checkouts to dirty if lacking assigned maid/timestamp.
-  4. Flat 904: 18h date switch advances default date to tomorrow in `dashboard.tsx` without an explicit "Amanhã" badge, causing tomorrow's checkout queue to be perceived as stale.
-  5. Universal 19 Flats: 4 phantom dirty cleanings identified (1358, 1362, 1364, 1361) and 17 reservation code mismatches analyzed.
-- **Unexplored areas**: None. Universal survey complete.
+  - Test runner padrão é o `node:test` nativo do Node.js (`node --test tests/<arquivo>.test.mjs`).
+  - Descoberto desalinhamento SHA-256 ativo entre `artifacts/api-server/whatsapp-ai-service.mjs` e `scripts/whatsapp-ai-service.mjs`, que quebra `m2-messaging-checkin-url.test.mjs` e vinha sendo mascarado por `process.exit(0)` em `whatsapp-ai-agent.test.mjs`.
+  - Mocks de WhatsApp e IA usam `mockDb`, stubs de `sendZapiMessage`, `createNotification` e `geminiApiKey: ""` para forçar contingência heurística local offline e rápida (<1s).
+  - Git na branch `main`, sincronizada com GitHub `origin/main`.
+  - Regras de `AGENTS.md` validadas: `git push` obrigatório, build de `artifacts/limpeza` com inclusão de `dist/public`, e sincronização de espelho duplo obrigatória.
+  - Mapeados 10 novos casos de teste para os requisitos R2-R5 em `analysis.md`.
+- **Unexplored areas**: Nenhuma no escopo deste subagente explorer.
 
 ## Key Decisions Made
-- Fully documented root causes and concrete remediation steps in `survey_database.md` and `handoff.md`.
+- Relatório técnico detalhado produzido em `analysis.md`.
+- Relatório de handoff 5 componentes produzido em `handoff.md`.
+- Notificação de conclusão enviada ao orchestrator com o resumo das conclusões e apontamento do desalinhamento SHA-256.
 
 ## Artifact Index
-- `survey_database.md` — Full database integrity survey report
-- `handoff.md` — 5-component handoff report
-- `progress.md` — Liveness and step tracking
-- `DISPATCH.md` — Inbound message log
+- analysis.md — Relatório técnico aprofundado da infraestrutura de testes, mocks e git
+- handoff.md — Relatório de handoff estruturado com os 5 componentes
+- DISPATCH.md — Registro histórico das instruções recebidas
+- progress.md — Registro de liveness e passos concluídos

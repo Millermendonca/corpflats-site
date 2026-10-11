@@ -1019,6 +1019,17 @@ export async function executeBotAction(db, actionName, args = {}) {
   }
 }
 
+const PORTUGUESE_STOP_WORDS = new Set([
+  "o", "a", "os", "as", "um", "uma", "uns", "umas",
+  "de", "do", "da", "dos", "das",
+  "em", "no", "na", "nos", "nas",
+  "por", "pelo", "pela", "pelos", "pelas",
+  "com", "para", "pra", "pro",
+  "e", "que", "se", "como", "qual", "quais",
+  "quando", "onde", "quem", "tem", "ha", "eh",
+  "voce", "voces"
+]);
+
 /**
  * Resposta Heurística de Contingência caso o Google Gemini esteja offline ou sem cota
  */
@@ -1052,7 +1063,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
       .replace(/[\u0300-\u036f]/g, "")
       .replace(/[^\w\s]/g, " ")
       .trim();
-    const queryTokens = cleanQuery.split(/\s+/).filter(w => w.length > 2);
+    const queryTokens = cleanQuery.split(/\s+/).filter(w => w.length > 2 && !PORTUGUESE_STOP_WORDS.has(w));
 
     let bestFaq = null;
     let highestScore = 0;
@@ -1065,21 +1076,21 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
         .replace(/[\u0300-\u036f]/g, "")
         .replace(/[^\w\s]/g, " ")
         .trim();
-      const qTokens = qNorm.split(/\s+/).filter(w => w.length > 2);
+      const qTokens = qNorm.split(/\s+/).filter(w => w.length > 2 && !PORTUGUESE_STOP_WORDS.has(w));
 
-      // Coincidência com pergunta principal
+      // Coincidência com pergunta principal (match dominante)
       if (cleanQuery.includes(qNorm) || (qNorm.length > 5 && qNorm.includes(cleanQuery))) {
-        score += 80;
+        score += 200;
       } else {
         const commonWithQ = qTokens.filter(t => queryTokens.includes(t));
-        const significantCommon = commonWithQ.filter(t => !["que", "com", "para", "tem", "voces", "qual", "onde"].includes(t));
-        if (significantCommon.length > 0) {
-          score += significantCommon.length * 30;
+        if (commonWithQ.length > 0) {
+          score += commonWithQ.length * 30;
         }
       }
 
       // Coincidência com variações da pergunta
       if (Array.isArray(faq.variations)) {
+        let bestVarScore = 0;
         for (const variation of faq.variations) {
           if (!variation) continue;
           const vNorm = variation
@@ -1089,18 +1100,19 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
             .replace(/[^\w\s]/g, " ")
             .trim();
           if (cleanQuery.includes(vNorm) || (vNorm.length > 5 && vNorm.includes(cleanQuery))) {
-            score += 100;
+            bestVarScore = Math.max(bestVarScore, 150);
             break;
           }
-          const vTokens = vNorm.split(/\s+/).filter(w => w.length > 2);
+          const vTokens = vNorm.split(/\s+/).filter(w => w.length > 2 && !PORTUGUESE_STOP_WORDS.has(w));
           const common = vTokens.filter(t => queryTokens.includes(t));
           if (vTokens.length > 0 && common.length >= Math.min(2, vTokens.length)) {
-            score += Math.max(score, 40 + (common.length * 10));
+            bestVarScore = Math.max(bestVarScore, 40 + (common.length * 10));
           }
         }
+        score += bestVarScore;
       }
 
-      // Coincidência com palavras-chave
+      // Coincidência com palavras-chave com boost para termos distintivos
       if (Array.isArray(faq.keywords)) {
         for (const keyword of faq.keywords) {
           if (!keyword) continue;
@@ -1110,15 +1122,26 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
             .replace(/[\u0300-\u036f]/g, "")
             .replace(/[^\w\s]/g, " ")
             .trim();
+          if (!kNorm || PORTUGUESE_STOP_WORDS.has(kNorm)) continue;
+
+          // Boost para keywords distintivas que diferenciam temas específicos (louças/bandeja, pet, convênio, early check-in)
+          const isDistinctive = [
+            "loucas", "louças", "bandeja", "recolhimento", "pratos", "talheres",
+            "convenio", "corporativo", "faturamento", "empresa", "tarifa corporativa",
+            "pet", "pets", "cachorro", "cao", "gato", "taxa pet",
+            "early check in", "early checkin", "checkin antecipado", "entrada antecipada"
+          ].includes(kNorm);
+          const boost = isDistinctive ? 40 : 0;
+
           if (kNorm.includes(" ")) {
             if (cleanQuery.includes(kNorm)) {
-              score += 50;
+              score += 60 + boost;
             }
           } else if (kNorm.length >= 3) {
             if (queryTokens.includes(kNorm)) {
-              score += 25;
+              score += 30 + boost;
             } else if (cleanQuery.includes(kNorm)) {
-              score += 15;
+              score += 15 + Math.floor(boost / 2);
             }
           }
         }
@@ -1512,10 +1535,11 @@ export function isPotentialGuestQuestion(text) {
 
   const lower = t.toLowerCase();
 
-  // Descartar saudações puras ou confirmações simples
-  if (/^(oi|ol[aá]|bom dia|boa tarde|boa noite|opa|ei|hello|hi)[!.\s]*$/i.test(lower)) return false;
-  if (/^(ok|obrigad[oa]|valeu|show|beleza|perfeito|entendi|combinado|certo|t[aá] bom|blz|agrade[cç]o|sim|n[aã]o|positivo)[!.\s]*$/i.test(lower)) return false;
-  if (/^(?:quero|preciso|gostaria)?\s*(?:de\s+)?(?:falar\s+com\s+)?(?:um\s+|uma\s+)?(?:humano|atendente|pessoa|algu[eé]m|recep[cç][aã]o|recepcionista|gerente|operador)(?:\s+urgente)?[!.\s]*$/i.test(lower)) return false;
+  // Descartar saudações puras, cortesias ou confirmações simples (mesmo com pontuação ou interrogação)
+  if (/^(?:(?:oi|ol[aá]|opa|ei|hello|hi|bom dia|boa tarde|boa noite)\s*,?\s*)?(?:tudo\s+b[eé]m|tudo\s+bom|como\s+vai|como\s+est[aá]|beleza)[?!.\s]*$/i.test(lower)) return false;
+  if (/^(oi|ol[aá]|bom dia|boa tarde|boa noite|opa|ei|hello|hi)[?!.\s]*$/i.test(lower)) return false;
+  if (/^(ok|obrigad[oa]|valeu|show|beleza|perfeito|entendi|combinado|certo|t[aá] bom|blz|agrade[cç]o|sim|n[aã]o|positivo)[?!.\s]*$/i.test(lower)) return false;
+  if (/^(?:quero|preciso|gostaria)?\s*(?:de\s+)?(?:falar\s+com\s+)?(?:um\s+|uma\s+)?(?:humano|atendente|pessoa|algu[eé]m|recep[cç][aã]o|recepcionista|gerente|operador)(?:\s+urgente)?[?!.\s]*$/i.test(lower)) return false;
 
   // Interrogação explícita
   if (t.includes("?")) return true;
@@ -1541,9 +1565,9 @@ export function inferFaqCategory(text) {
   if (/garagem|estacionamento|vaga|carro|ve[ií]culo|placa|moto|estacionar|recarga/i.test(lower)) return "garagem";
   if (/check-?in|entrada|cheg(?:ada|ar)|portaria|chave|cart[aã]o|fechadura|acesso|port[aã]o|early|entrar\s+no\s+quarto/i.test(lower)) return "checkin_acesso";
   if (/check-?out|sa[ií]da|desocupa|deixar\s+o\s+flat|entregar\s+(?:chave|cart[aã]o)|late\s+check/i.test(lower)) return "checkout";
-  if (/flat|quarto|apartamento|frigobar|[aá]gua|ar[- ]condicionado|ar\s+condicionado|tomada|voltagem|110|220|ferro|t[aá]bua|secador|toalha|cama|travesseiro|len[cç]ol|chuveiro|banheiro|cozinha|micro-ondas|utens[ií]lio|panela|copo|fog[aã]o|ber[cç]o/i.test(lower)) return "estrutura_flat";
   if (/visit(?:a|ante)|convidad|pet|cachorro|c[aã]o|gato|animal|fumo|fumar|cigarro|pernoite|barulho|norma|regra/i.test(lower)) return "regras_visitas_pets";
   if (/piscina|jacuzzi|sauna|academia|cobertura|lazer|churrasqueira|sal[aã]o|condom[ií]nio|pr[eé]dio|edif[ií]cio/i.test(lower)) return "lazer_condominio";
+  if (/flat|quarto|apartamento|frigobar|[aá]gua|ar[- ]condicionado|ar\s+condicionado|tomada|voltagem|110|220|ferro|t[aá]bua|secador|toalha|cama|travesseiro|len[cç]ol|chuveiro|banheiro|cozinha|micro-ondas|utens[ií]lio|panela|copo|fog[aã]o|ber[cç]o/i.test(lower)) return "estrutura_flat";
 
   return "reservas";
 }
@@ -1611,12 +1635,20 @@ export function isQuestionMappedInFaq(text, db, clientPhone) {
 
 export function findExistingPendingFaq(text, db, clientPhone) {
   if (!db || !Array.isArray(db.faqItems) || !text) return null;
-  const lower = text.toLowerCase().trim();
+  const lower = text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
   const cleanPhone = clientPhone ? cleanWhatsAppPhone(clientPhone) : null;
 
   return db.faqItems.find(item => {
     if (!item || (item.status !== "pendente" && item.status !== "aguardando_aprovacao")) return false;
-    const qLower = (item.question || "").toLowerCase().trim();
+    const qLower = (item.question || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim();
     if (qLower === lower) return true;
     if (cleanPhone && (item.sourceClientPhone || (Array.isArray(item.clientPhones) && item.clientPhones.length > 0))) {
       const phoneMatches = (item.sourceClientPhone && matchClientPhone(item.sourceClientPhone, cleanPhone)) ||
@@ -1869,8 +1901,11 @@ export async function processAiInboundMessage({
   }
 
   // 8. Resposta Autônoma Normal:
-  const delayMs = Math.max(1000, (aiConfig.responseDelaySeconds || 3) * 1000);
-  await new Promise(resolve => setTimeout(resolve, delayMs));
+  const delaySec = typeof aiConfig.responseDelaySeconds === "number" ? aiConfig.responseDelaySeconds : 3;
+  const delayMs = (process.env.NODE_ENV === "test" || delaySec === 0) ? 0 : Math.max(500, delaySec * 1000);
+  if (delayMs > 0) {
+    await new Promise(resolve => setTimeout(resolve, delayMs));
+  }
 
   if (typeof sendZapiMessage === "function") {
     await sendZapiMessage(db.zapiConfig, {

@@ -1,60 +1,58 @@
-# BRIEFING — 2026-10-07T16:44:45Z
+# BRIEFING — 2026-10-11T01:21:00Z
 
 ## Mission
-Empirically challenge edge cases and data integrity for Milestone 1 (FNRH SERPRO Gov.br Check-in Provider Toggle & Resilient Link Unification).
+Adversarial empirical testing of M1 CorpFlats bot actions API, kill switches/toggles permutations, pre-reservation lifecycle/expiration, and concurrency races.
 
 ## 🔒 My Identity
-- Archetype: EMPIRICAL CHALLENGER
+- Archetype: empirical-challenger
 - Roles: critic, specialist
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m1_2
-- Original parent: 2a43f791-5cc7-4933-bdd2-688af9234cb1
-- Milestone: Milestone 1 (Backend Data & API)
+- Original parent: 3364a657-c855-42a7-a46e-a5463bc245b7
+- Milestone: M1
 - Instance: 2 of 2
-- Milestone 1_2 parent: 0a1ba31b-b6bc-466b-8394-2ba72ae85fb5
-- Run timestamp: 2026-10-07T16:34:37Z
 
 ## 🔒 Key Constraints
-- Review-only — do NOT modify implementation code
-- Must empirically verify all claims with code execution
-- Do not trust worker claims or logs without reproduction
-- Layout compliance: tests go to tests/, metadata only in .agents/teamwork/
+- Review-only — do NOT modify implementation code (report findings/bugs, do not fix them)
+- Write metadata only to .agents/teamwork/challenger_m1_2 (never put source/test code in .agents/teamwork/)
+- Empirically verify everything by writing and executing tests
+- Final report at .agents/teamwork/challenger_m1_2/handoff.md with verdict APPROVE or REQUEST_CHANGES
+- Send message to parent orchestrator (3364a657-c855-42a7-a46e-a5463bc245b7)
 
 ## Current Parent
-- Conversation ID: 0a1ba31b-b6bc-466b-8394-2ba72ae85fb5
-- Updated: 2026-10-07T16:44:45Z
+- Conversation ID: 3364a657-c855-42a7-a46e-a5463bc245b7
+- Updated: 2026-10-11T01:21:00Z
 
 ## Review Scope
-- **Files reviewed**: `artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, `scripts/fnrh-serpro-service.mjs`, `artifacts/api-server/fnrh-serpro-service.mjs`, `data/database.json`
-- **Target modules**:
-  1. Malformed reservations: missing code/id, missing dates, invalid date formats, zero guests, negative guests.
-  2. Concurrency stress: simultaneous `getCheckinUrl` and `registerReservation`, race condition resilience, timeout fallback.
-  3. Twin mirror bitwise parity: `artifacts/api-server/demo-server.mjs` vs `scripts/demo-server.mjs`, and SERPRO client mirrors.
-  4. Database integrity: `data/database.json` JSON structure, settings, serproConfig, serviceOrders, serviceWorkers, reservations.
-- **Review criteria**: Absolute robustness, fail-safe fallback, zero unhandled exceptions, exact twin parity.
+- **Files to review**: `artifacts/api-server/demo-server.mjs` and mirror `scripts/demo-server.mjs` (/api/bot-actions/*)
+- **Interface contracts**: ORIGINAL_REQUEST.md, orchestrator_4/PROJECT.md, worker_m1/handoff.md
+- **Review criteria**: Permutation enforcement, pre-reservation lifecycle and expiration, concurrency race safety
+
+## Key Decisions Made
+- Executed adversarial test suite `tests/challenger-m1-adversarial.test.mjs` covering all switch permutations, expiration lifecycle, and concurrency.
+- Verdict: REQUEST_CHANGES based on 4 confirmed empirical bugs (concurrency double-booking race condition, paid pre-reservation expiration bug, commit of expired reservations, and ignored hold minutes configuration).
+
+## Artifact Index
+- DISPATCH.md — incoming dispatch instructions
+- BRIEFING.md — persistent state index
+- progress.md — liveness heartbeat
+- tests/challenger-m1-adversarial.test.mjs — executable reproduction harness
+- handoff.md — final handoff report
 
 ## Attack Surface
 - **Hypotheses tested**:
-  1. Malformed reservations with missing code or missing/invalid dates reject with descriptive error in `registerReservation`, while `getCheckinUrl` activates fallback to internal URL without throwing any unhandled exceptions (CONFIRMED PASS).
-  2. Reservations with zero, negative, or non-numeric guests are safely normalized to >= 1 adult by `registerReservation` (CONFIRMED PASS).
-  3. 50 concurrent invocations of `registerReservation` generate 50 unique links without race condition or state corruption (CONFIRMED PASS).
-  4. 50 concurrent invocations of `getCheckinUrl` on the same shared reservation resolve identically without duplication or corruption (CONFIRMED PASS).
-  5. 30 concurrent invocations of `getCheckinUrl` under simulated timeout fall back in parallel cleanly (CONFIRMED PASS).
-  6. 100-request high-throughput burst across diverse conditions resolves completely in under 2.5s with 100% accuracy (CONFIRMED PASS).
-  7. Exact 100% bitwise parity exists between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`, and between SERPRO client mirrors (CONFIRMED PASS).
-  8. `data/database.json` maintains strict JSON validity, complete required schema, and correct initialization state (CONFIRMED PASS).
-- **Vulnerabilities found**: None. System is resilient to all tested adversarial edge cases and concurrent stress.
-- **Untested angles**: All mandated areas empirically verified via automated suite `tests/challenger-m1-2-serpro-integrity.test.mjs`.
+  1. Toggle matrix permutations (master switch + 5 individual actions): PASSED.
+  2. Unpaid expired pre-reservation release: PASSED.
+  3. Pre-reservation hold time configurability: FAILED (hardcoded 30 min).
+  4. Paid pre-reservation expiration bypass: FAILED (line 20189 omits paymentStatus check).
+  5. Committing expired reservation: FAILED (commit-reservation allows confirming expired reservations).
+  6. Concurrency race condition on pre-reserve: FAILED (TOCTOU race via async QRCode.toDataURL allows multiple 200 OK double-bookings).
+- **Vulnerabilities found**:
+  1. Critical: TOCTOU race condition in `POST /api/bot-actions/pre-reserve` allows simultaneous double-bookings on identical flats and dates.
+  2. High: `GET /api/bot-actions/availability` and `POST /api/bot-actions/pre-reserve` free flats with paid pre-reservations once `expiresAt` passes.
+  3. High: `POST /api/bot-actions/commit-reservation` accepts and confirms reservations with status `expirada`.
+  4. Medium: `preReservationHoldMinutes` configured in settings is completely ignored by `POST /api/bot-actions/pre-reserve`.
+- **Untested angles**:
+  - Out of scope for M1: Gemini AI Tool Calling multi-turn prompts (scheduled for M2).
 
 ## Loaded Skills
-- None requested
-
-## Key Decisions Made
-- Authored and executed dedicated empirical suite `tests/challenger-m1-2-serpro-integrity.test.mjs` (25/25 passed).
-- Verified full suite regression: `tests/m1-backend-serpro-verification.test.mjs` (11/11), `tests/service-orders.test.mjs` (12/12) totaling 48 passing tests with 0 failures.
-- Verdict: APPROVE.
-
-## Artifact Index
-- DISPATCH.md — Initial and latest dispatch messages
-- progress.md — Liveness heartbeat
-- tests/challenger-m1-2-serpro-integrity.test.mjs — Comprehensive empirical challenge suite (25 tests)
-- handoff.md — 5-Component Handoff Report with verdict and execution logs
+- None

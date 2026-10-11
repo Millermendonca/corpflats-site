@@ -240,7 +240,7 @@ function Router() {
         <StaffRoute path="/lista-compras" component={ShoppingListPage} />
         <StaffRoute path="/compras" component={ShoppingListPage} />
         <StaffRoute path="/extrato" component={Reports} />
-        <StaffRoute path="/meu-extrato" component={Reports} />
+        <StaffRoute path="/meu-extrato" component={MaidStatementPage} />
         <StaffRoute path="/extrato-camareiras" component={Reports} />
         <StaffRoute path="/fechamento" component={Reports} />
         <StaffRoute path="/fechamento-limpeza" component={Reports} />

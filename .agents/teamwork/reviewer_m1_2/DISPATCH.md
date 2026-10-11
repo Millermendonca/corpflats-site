@@ -1,24 +1,17 @@
-## 2026-10-07T16:34:36Z
-You are teamwork_preview_reviewer (Reviewer M1_2).
-Your working directory: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/reviewer_m1_2
-Parent conversation ID: 0a1ba31b-b6bc-466b-8394-2ba72ae85fb5
+## 2026-10-11T01:13:51Z
+Você é o Reviewer 2 para o Milestone M1 do CorpFlats.
+Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m1_2
+O arquivo de requisitos originais autoritativo é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
+O arquivo de escopo é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_4\PROJECT.md
+O relatório do worker é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md
+Você DEVE LER ORIGINAL_REQUEST.md antes de iniciar.
 
-MANDATORY: Read the authoritative request at:
-c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/ORIGINAL_REQUEST.md (specifically the latest entry from 2026-10-07T15:33:29Z).
-
-Read:
-- Project Plan: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/orchestrator_2/PROJECT.md
-- Worker M1 handoff: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/worker_m1_backend_2/handoff.md
-
-YOUR MISSION FOR MILESTONE 1 REVIEW:
-1. Conduct an independent, rigorous review of Milestone 1 backend code.
-2. Verify:
-   - Endpoint `GET /api/fnrh-serpro/status` behavior and error handling.
-   - Reservation creation hooks in `POST /api/pms/reservations` and `POST /api/reservations/direct-booking` when `checkinProvider === 'gov_fnrh'`.
-   - Polymorphic handling of `logAuditEvent` and `createNotification`.
-   - Performance and resilience: ensure no unhandled promise rejections or infinite loops.
-   - Mirror parity between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`.
-3. Run test verification and syntax checks.
-4. Give your verdict: APPROVE or REQUEST_CHANGES.
-5. Write your report and `handoff.md` in your working directory.
-6. Send a message to parent (0a1ba31b-b6bc-466b-8394-2ba72ae85fb5) with your verdict.
+Missão de Revisão:
+1. Avalie de forma independente a qualidade do código, testes e conformidade com os requisitos R1, R2, R3 do documento original:
+   - Valide se os parâmetros SEBRAE foram preservados fielmente.
+   - Valide se a expiração de pré-reservas em 30 minutos funciona e libera UHs.
+   - Valide se a geração de PIX Copia-e-Cola e QR Code respeita os formatos oficiais.
+   - Valide a paridade do servidor espelho em scripts/demo-server.mjs.
+2. Execute os testes: node --test tests/tariff-engine.test.mjs e node --test tests/bot-actions-api.test.mjs.
+3. Escreva seu relatório em c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m1_2\handoff.md com veredicto APPROVE ou REQUEST_CHANGES.
+Envie mensagem para o orchestrator (3364a657-c855-42a7-a46e-a5463bc245b7).

@@ -1,15 +1,26 @@
 # Progress Heartbeat - explorer_survey_backend
 
-- **Status**: Investigation completed, generating analysis and handoff reports
-- **Last visited**: 2026-09-30T18:53:00-03:00
-- **Current Step**: Writing analysis.md and handoff.md
+- **Status**: Investigation completed, generating final handoff report
+- **Last visited**: 2026-10-11T00:50:00Z
+- **Current Step**: Final handoff report generation and orchestrator messaging
 - **Completed Steps**:
-  - Initialized DISPATCH.md, BRIEFING.md, progress.md
-  - Read ORIGINAL_REQUEST.md and orchestrator_1/PROJECT.md
-  - Investigated DB loading, reading, writing, and saving mechanisms (`DB_FILE`, `db`, `saveDatabase`, `reconcileUniversalIntegrity`)
-  - Investigated session auth and admin role verification (`AUTH_COOKIE_NAME`, `getAuthUser`, `AUTH_SESSION_VERSION`)
-  - Identified exact insertion point for admin and public service routes (line ~7587)
-  - Mapped `GET /api/flats` implementation and `serviceInProgress` injection logic
-  - Analyzed `zapi-service.mjs`, `mail-service.mjs`, `createNotification`, and reception contact configs
-  - Analyzed `storage-service.mjs` and `uploadImageToStorage` pattern across app
-  - Discovered sync relationship and test assertions between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`
+  - Received dispatch for E2E Synthetic Tests & Sandbox Isolation Points (R1)
+  - Updated DISPATCH.md and reviewed ORIGINAL_REQUEST.md
+  - Analyzed `artifacts/api-server/demo-server.mjs` and mirror `scripts/demo-server.mjs`
+  - Verified exact file hash match between main and mirror (`True`)
+  - Audited database storage mechanisms (`DB_FILE`, `DATABASE_FILE`, `DATA_FILE`, `loadDatabase()`, `saveDatabase()`)
+  - Audited PostgreSQL pool initialization and bypass (`DATABASE_URL=""` guarantees `pgPool === null`)
+  - Verified port binding (`PORT` env var, default 5000) and lifecycle management on Windows
+  - Mapped external calls:
+    - Z-API / WhatsApp: outbound endpoints, inbound webhooks, local emulator design with queue and inbound simulator
+    - SMTP / Nodemailer: `mail-service.mjs`, `sendEmailAsync`, `db.reservationCommunications` internal audit store, mock SMTP port routing
+    - Payment Gateways: Banco Inter mTLS, static PIX generator (`generateStaticPixPayload`), webhooks (`/api/pms/inter/webhook`, `/api/pms/mercadopago/webhook`)
+    - SERPRO / FNRH gov.br: `fnrh-serpro-service.mjs`, `FnrhSerproClient` built-in mock mode (`SERPRO_MOCK=true`), mock UUID and link generation, fallback to `/pre-checkin/:code`
+    - NFS-e: GissOnline SOAP (`giss-soap.mjs`), certificate loading, National ADN (`national-nfse.mjs`)
+    - Microsoft Graph: `microsoft-graph-service.mjs`, OneDrive Excel sheet syncing
+  - Traced time/clock mechanisms:
+    - 18:00 turno (governance daily summary & quinzena closing)
+    - 22:00 / 05:00 breakfast ordering cutoffs
+    - 14:00 check-in lock & door code unmasking
+    - Designed deterministic `POST /api/test/time-travel` endpoint with simulated offset and immediate ticker invocation
+  - Documented complete architecture survey in `analysis.md`

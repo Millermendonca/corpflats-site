@@ -1,4 +1,5 @@
 process.env.PORT = "0";
+process.env.NODE_ENV = "test";
 
 import { test, describe, before, beforeEach, after } from "node:test";
 import assert from "node:assert/strict";
@@ -1113,30 +1114,44 @@ describe("Agente de IA para WhatsApp - Testes Unitários e de Integração", () 
     let saved = false;
     const saveDbMock = () => { saved = true; };
 
-    // Inbound com pergunta inédita sobre tomadas de carro elétrico
-    const result = await processAiInboundMessage({
-      db: autoLearnDb,
-      incomingInfo: {
-        text: "Vocês possuem tomada para recarga de carro elétrico no estacionamento?",
-        senderPhone: "5522998505276",
-        senderName: "Carlos Drumond",
-        fromMe: false,
-        isGroup: false
-      },
-      cleanTarget: "5522998505276",
-      saveDatabase: saveDbMock,
-      createNotification: () => {},
-      sendZapiMessage: async () => ({ success: true }),
-      appendMessageFn: () => {}
-    });
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async (url) => {
+        if (typeof url === "string" && url.includes("generativelanguage.googleapis.com")) {
+          const err = new Error("The operation was aborted due to timeout");
+          err.name = "TimeoutError";
+          throw err;
+        }
+        return originalFetch(url);
+      };
 
-    assert.equal(result.handled, true);
-    // Deve registrar a nova pergunta pendente na base
-    const pendingFaq = autoLearnDb.faqItems.find(f => f.status === "pendente");
-    assert.ok(pendingFaq, "Deve existir item com status 'pendente'");
-    assert.equal(pendingFaq.question, "Vocês possuem tomada para recarga de carro elétrico no estacionamento?");
-    assert.ok(pendingFaq.sourceClientPhone.includes("5522998505276"));
-    assert.equal(pendingFaq.category, "garagem");
+      // Inbound com pergunta inédita sobre tomadas de carro elétrico
+      const result = await processAiInboundMessage({
+        db: autoLearnDb,
+        incomingInfo: {
+          text: "Vocês possuem tomada para recarga de carro elétrico no estacionamento?",
+          senderPhone: "5522998505276",
+          senderName: "Carlos Drumond",
+          fromMe: false,
+          isGroup: false
+        },
+        cleanTarget: "5522998505276",
+        saveDatabase: saveDbMock,
+        createNotification: () => {},
+        sendZapiMessage: async () => ({ success: true }),
+        appendMessageFn: () => {}
+      });
+
+      assert.equal(result.handled, true);
+      // Deve registrar a nova pergunta pendente na base
+      const pendingFaq = autoLearnDb.faqItems.find(f => f.status === "pendente");
+      assert.ok(pendingFaq, "Deve existir item com status 'pendente'");
+      assert.equal(pendingFaq.question, "Vocês possuem tomada para recarga de carro elétrico no estacionamento?");
+      assert.ok(pendingFaq.sourceClientPhone.includes("5522998505276"));
+      assert.equal(pendingFaq.category, "garagem");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   test("24. Captura Automática de Resposta do Operador vinculando 'suggestedAnswer', Status 'aguardando_aprovacao' e Pausa da IA", async () => {
@@ -1224,7 +1239,6 @@ describe("Agente de IA para WhatsApp - Testes Unitários e de Integração", () 
         await new Promise(r => srv.close(r));
       } catch (_) {}
     }
-    setTimeout(() => process.exit(process.exitCode || 0), 100);
   });
 });
 

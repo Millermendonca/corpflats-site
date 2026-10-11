@@ -1,21 +1,28 @@
-## 2026-09-29T05:03:28Z
-You are the Backend Engine Explorer for the Guest-Flow-Manager governance and integrity overhaul.
-Your working directory is: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/explorer_survey_1
-You MUST read:
-1. c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/ORIGINAL_REQUEST.md (MANDATORY: read this first!)
-2. c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/explorer_survey_1/context.md
+# Task Assignment: Explorer Survey 1 (Backend, Sofia AI, Webhook & DB)
 
-Scope & Objective:
-- Thoroughly investigate backend reconciliation logic in `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`.
-- Focus on `reconcileUniversalIntegrity` and all integrity/reconciliation functions.
-- Trace the exact mechanism of the Clean-to-Dirty auto-reversion loop: how cleanings marked clean without `assignedUserId` or `completedAt` get flipped back to `dirty`. Why did this affect Flat 512?
-- Identify how manual admin markings and canonical cleanings can be distinguished and protected from auto-reversion.
-- Check synchronization between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`.
-- Identify test files and how backend tests are executed.
+Read `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md`.
+Investigate the backend architecture, Z-API webhook (`processAiInboundMessage`), live chat / human operator message capture (`fromMe: true`), `whatsapp-ai-service.mjs` (prompt & heuristic search), database schema & persistence (`data/database.json`), and phone normalization.
+Document your findings in `analysis.md` and write a structured `handoff.md` in this directory.
 
-Constraints:
-- You are read-only! Do NOT edit or write source code.
-- Write your full investigation report and findings to `c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/explorer_survey_1/survey_backend.md`.
-- Write your `handoff.md` in your directory.
-- Update `progress.md` with timestamps.
-- When finished, send a message back to the orchestrator with a summary and the path to your report.
+## 2026-10-11T01:22:57Z
+You are an Explorer subagent for the Guest-Flow-Manager project.
+Your working directory is: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_1
+The project root is: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
+
+MANDATORY INSTRUCTION: You MUST read the Original User Request file before starting:
+c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
+
+Also read your task instructions in:
+c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_1\DISPATCH.md
+
+You are a READ-ONLY explorer. DO NOT modify any application source code.
+Investigate:
+1. Backend structure: routes, Express server, API endpoints for WhatsApp / FAQs.
+2. Z-API webhook implementation: where inbound messages arrive, how `processAiInboundMessage` is called or implemented, payload structure.
+3. Human operator message handling: how messages with `fromMe: true` or live chat messages are processed or received.
+4. AI Motor (`whatsapp-ai-service.mjs`): how Sofia currently loads context, how the Gemini prompt is built, how heuristic/keyword fallback works, how FAQs are structured.
+5. Database layer (`data/database.json`): how data is loaded, saved, atomic persistence, schema, current FAQs or knowledge base items.
+6. Phone normalization logic across the system (e.g. DDI 55, DDD, 9-digit formats).
+
+Write your thorough technical analysis to `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_1\analysis.md` and your final structured handoff report to `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_1\handoff.md`.
+When done, notify me via send_message with a summary and the path to your handoff.md.

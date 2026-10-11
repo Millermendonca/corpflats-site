@@ -1,15 +1,15 @@
-## 2026-09-30T22:18:33Z
-You are Explorer M1 Remedy 2.
-Your working directory is: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_m1_remedy_2
+## 2026-10-11T01:21:56Z
+Você é o Explorer 2 de Remediação do Milestone M1.
+Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_m1_remedy_2
+O arquivo de requisitos originais autoritativo é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
+O relatório do Challenger 2 é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m1_2\handoff.md
+Você DEVE LER ORIGINAL_REQUEST.md antes de iniciar.
 
-You MUST read:
-1. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
-2. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_1\PROJECT.md
-3. c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_m1_1\handoff.md
-
-Your mission:
-Analyze Reviewer 1 & 2's findings on edge case defenses:
-1. In POST /api/service/public/:token/flats/:flatId/start: check if order.status === "closed" and return 400 with descriptive error if closed.
-2. In PATCH /api/service-orders/:id: sanitize title to reject empty/whitespace-only updates.
-Confirm line numbers and exact code changes needed in demo-server.mjs.
-Do NOT modify source files. Write report to your handoff.md.
+Missão de Exploração Técnica:
+Investigar as falhas de ciclo de vida de pré-reservas em `artifacts/api-server/demo-server.mjs`:
+1. Pré-reservas com `paymentStatus === "pago_total"` não devem ser descartadas/expiradas na consulta de disponibilidade e pré-reserva, mesmo que `expiresAt < Date.now()` (uma pré-reserva paga deve manter o bloqueio até confirmação).
+2. `POST /api/bot-actions/commit-reservation`: se a reserva já estiver com status `"expirada"`, deve retornar erro 400 PRE_RESERVATION_EXPIRED, ou revalidar conflito com reservas existentes antes de efetivar.
+3. Hold configurável: ler `db.botActionsSettings.preReservationHoldMinutes` (com fallback para 30) em vez de fixar 30 minutos hardcoded.
+- Recomende o código exato e a estratégia para o Worker implementar.
+Escreva seu relatório em `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_m1_remedy_2\handoff.md`.
+Envie mensagem para o orchestrator (3364a657-c855-42a7-a46e-a5463bc245b7).

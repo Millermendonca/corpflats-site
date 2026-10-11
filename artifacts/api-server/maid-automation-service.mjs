@@ -78,7 +78,8 @@ Por favor, confira os quartos acima. Caso haja qualquer divergência, avise a ad
 // ── Utilitários de Data e Moeda ─────────────────────────────────────────────
 
 export function getBrasiliaNow() {
-  const now = new Date();
+  const offset = Number(global.__simulatedTimeOffsetMs || 0);
+  const now = new Date(Date.now() + offset);
   const dateStr = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(now);
   const timeParts = new Intl.DateTimeFormat("pt-BR", {
     timeZone: "America/Sao_Paulo",

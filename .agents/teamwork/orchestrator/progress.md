@@ -1,44 +1,28 @@
-# Progress Tracker — Project Orchestrator
+# Orchestrator Progress
 
 ## Current Status
-Last visited: 2026-09-29T06:03:00Z
-Phase: Complete / Victory Claimed
-Focus: Full project overhaul completed, all gate criteria satisfied, commit `bf108ba` pushed to origin main, reporting victory to Sentinel.
+Last visited: 2026-10-11T04:00:20Z
 
 ## Iteration Status
-Current iteration: 1 / 32 (Completed on Iteration 1)
+Current iteration: 3 / 32
 
 ## Checklist
-- [x] Initialized Project Orchestrator state and files (`DISPATCH.md`, `BRIEFING.md`, `plan.md`)
-- [x] Started heartbeat cron (`5ad82d68-5382-4b5d-b3af-ea9aa33373f7/task-15`)
-- [x] Phase 0: Survey codebase with 3 parallel Explorers (all 3 completed)
-- [x] Synthesized findings into `PROJECT.md` with Feature Inventory and Interface Contracts
-- [x] Created `TEST_INFRA.md`
-- [x] Phase 1: Test Track setup & publish `TEST_READY.md` (90 tests created, 100% passing)
-- [x] Milestone 1: R1 Clean-to-dirty loop elimination (worker_m1 completed, tests passing)
-- [x] Milestone 2: R2 18:00 Date Switchover handling (worker_m2 completed, build passing, dist updated)
-- [x] Milestone 3: R3 Ghost cleanings & maid assignments (worker_m3 completed, database sanitized)
-- [x] Milestone 4: R4 Universal Integrity Audit across all 19 flats (`RES-712-0291` fix, database sync)
-- [x] Phase 3: Final E2E Test Suite verification & Adversarial hardening (113/113 tests PASS, Gate PASS)
-- [x] Build `artifacts/limpeza` (`npm run build`) and stage dist (compiled into dist/public in 15.13s)
-- [x] Forensic integrity audit passing (Auditor verdict: CLEAN)
-- [x] Commit & git push per `AGENTS.md` (commit `bf108ba` pushed to `origin main`)
-- [x] Victory report to Sentinel
+- [x] Received dispatch message and initialized state (DISPATCH.md, BRIEFING.md)
+- [x] Start recurring heartbeat cron (10 minutes)
+- [x] Step 0: Survey codebase with 3 parallel Explorers (completed)
+- [x] Synthesize Survey findings into PROJECT.md (Architecture, Feature Inventory, Milestones, Interface Contracts, Code Layout)
+- [x] Milestone 1: Backend Core & DB Layer
+  - [x] Iteration 1: Worker completed features, Reviewer 1 requested changes on test runner hang
+  - [x] Iteration 2: Clean audit + Reviewer APPROVE, but Challengers requested changes on 3 precise edge cases
+  - [x] Iteration 3: Worker fixed edge cases, Reviewer 1 & 2 APPROVE, Challenger 1 & 2 APPROVE, Auditor 1 CLEAN. Gate: PASS!
+- [/] Milestone 2: Auto-Learning & Sofia AI Integration
+  - [x] Iteration 1: Worker completed features, Reviewer 1 APPROVE, Auditor CLEAN, but Reviewer 2 & Challengers requested changes on heuristic scoring and auto-learning edge cases
+  - [/] Iteration 2:
+    - [/] m2_r2_worker (10c47576-5927-4b00-b633-723516595295): Fixing variation scoring, stop words, greeting regex, category order, accent deduplication, and test 23 fetch mock [Running]
+    - [ ] m2_r2_reviewers (2): Independent review
+    - [ ] m2_r2_challengers (2): Adversarial verification
+    - [ ] m2_r2_auditor (1): Forensic integrity audit
+- [ ] Milestone 3: Frontend UI & Build Delivery
+- [ ] Milestone 4: Final Milestone (100% E2E test pass, adversarial hardening, clean forensic audit, git commit and push)
+- [ ] Deliver victory/completion report to Sentinel
 
-## Verification & Gate Summary
-- **Forensic Auditor (`auditor_1`)**: **CLEAN** (0 cheats, 0 facades, 0 divergence, authentic logic)
-- **Reviewer 1 (`reviewer_1`)**: **APPROVE** (All ACs satisfied, 113/113 tests pass)
-- **Reviewer 2 (`reviewer_2`)**: **APPROVE** (Independent review passed, full parity verified)
-- **Challenger 1 (`challenger_1`)**: **CONFIRMED** (Stress-tested immunity, switchover, 112/112 pass)
-- **Challenger 2 (`challenger_2`)**: **CONFIRMED** (Stress-tested 19 flats consistency, 113/113 pass)
-- **Gate Result**: **PASS**
-
-## Retrospective Notes
-- **What Worked**:
-  - The parallel Survey Phase (Phase 0) with 3 specialized Explorers (backend, frontend, database) accurately pinpointed root causes in minutes without code guessing.
-  - Strict write boundaries between workers prevented any merge conflicts or overlapping edits.
-  - The dual-track strategy (building the E2E test suite in parallel with milestone implementation) provided immediate defect isolation and rapid feedback.
-  - The 5-agent verification gate (2 Reviewers, 2 Challengers, 1 Forensic Auditor) guaranteed absolute empirical rigor and integrity.
-- **Lessons Learned**:
-  - In `evaluateDateSwitchover`, using `d.toISOString()` in local timezone tests caused a timezone offset discrepancy on 23:59:59 that was promptly fixed by matching `date-fns format(...)` local time formatting.
-  - Hardening `reconcileUniversalIntegrity` with explicit immunity flags permanently eliminates regression risks when new features are added.

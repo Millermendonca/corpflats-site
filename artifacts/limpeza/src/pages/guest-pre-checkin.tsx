@@ -69,7 +69,14 @@ export default function GuestPreCheckin() {
   const code = getQueryCode()
   const [searchCodeInput, setSearchCodeInput] = useState("")
 
-  const [step, setStep] = useState(1)
+  const [step, setStep] = useState(() => {
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search)
+      const st = parseInt(sp.get("step") || "1", 10)
+      if (st >= 1 && st <= 3) return st
+    }
+    return 1
+  })
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
   const [isCompleted, setIsCompleted] = useState(false)
@@ -119,9 +126,9 @@ export default function GuestPreCheckin() {
   const [city, setCity] = useState("")
   const [state, setState] = useState("RJ")
   const [transportMethod, setTransportMethod] = useState("")
-  const [travelReason, setTravelReason] = useState("")
   // Qualquer opção de carro (inclui o valor legado "carro") habilita o cadastro completo do veículo
   const isCarTransport = ["carro", "Carro próprio", "Carro alugado"].includes(transportMethod)
+  const [travelReason, setTravelReason] = useState("")
   const [originCity, setOriginCity] = useState("")
   const [originState, setOriginState] = useState("RJ")
   const [originCountry, setOriginCountry] = useState("Brasil")
@@ -464,6 +471,24 @@ export default function GuestPreCheckin() {
     setCity(currentG?.city || (isTitular ? (guest.city || res.guestCity || "") : ""))
     setState(currentG?.state || (isTitular ? (guest.state || res.guestState || "RJ") : "RJ"))
     setCep(currentG?.cep || (isTitular ? (guest.cep || res.guestCep || "") : ""))
+
+    const travelReasonVal = currentG?.travelReason || (isTitular ? (guest.travelReason || res.travelReason || "") : "")
+    if (travelReasonVal) setTravelReason(travelReasonVal)
+
+    const transportVal = currentG?.transportMethod || (isTitular ? (guest.transportMethod || res.transportMethod || "") : "")
+    if (transportVal) setTransportMethod(transportVal)
+
+    const originCityVal = currentG?.originCity || (isTitular ? (guest.originCity || res.originCity || "") : "")
+    if (originCityVal) setOriginCity(originCityVal)
+
+    const originStateVal = currentG?.originState || (isTitular ? (guest.originState || res.originState || "RJ") : "RJ")
+    if (originStateVal) setOriginState(originStateVal)
+
+    const destCityVal = currentG?.destinationCity || (isTitular ? (guest.destinationCity || res.destinationCity || "") : "")
+    if (destCityVal) setDestinationCity(destCityVal)
+
+    const destStateVal = currentG?.destinationState || (isTitular ? (guest.destinationState || res.destinationState || "RJ") : "RJ")
+    if (destStateVal) setDestinationState(destStateVal)
 
     setMinorKinship(currentG?.minorKinship || "filho")
     setMinorAuthDocPhoto(currentG?.minorAuthDocUrl || null)
@@ -2560,13 +2585,13 @@ export default function GuestPreCheckin() {
                     if (!travelReason) {
                       alert("Por favor, selecione o Motivo da Viagem (exigência legal do Ministério do Turismo).")
                       return
-                    if (isCarTransport && !vehiclePlate.trim()) {
-                      alert("Por favor, informe a Placa do Veículo para liberarmos sua entrada na garagem.")
-                      return
-                    }
                     }
                     if (!transportMethod) {
                       alert("Por favor, selecione o Meio de Transporte utilizado (exigência legal do Ministério do Turismo).")
+                      return
+                    }
+                    if (isCarTransport && !vehiclePlate.trim()) {
+                      alert("Por favor, informe a Placa do Veículo para liberarmos sua entrada na garagem.")
                       return
                     }
                     if (!originCity.trim() || !originState.trim()) {
@@ -2853,7 +2878,8 @@ export default function GuestPreCheckin() {
                   onTouchStart={startDrawing}
                   onTouchMove={draw}
                   onTouchEnd={stopDrawing}
-                  className="w-full h-36 cursor-crosshair bg-white"
+                  style={{ touchAction: "none" }}
+                  className="w-full h-36 cursor-crosshair bg-white touch-none"
                 />
                 <button
                   type="button"

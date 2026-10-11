@@ -565,6 +565,9 @@ export default function GuestPortal() {
 
   const { isFlatClean, canDoEarlyCheckin, hasEarlyCheckinBenefit, canClaimFreeEarlyCheckin, breakfastOrder, preCheckinStatus, termsAndRules, adminWhatsApp } = data
 
+  const currentHour = data?.currentHour ?? data?.brasilia?.hour ?? (typeof window !== "undefined" ? new Date().getHours() : 14)
+  const isPastOrExact14h = Boolean(data?.isPastOrExact14h ?? (currentHour >= 14))
+
   const checkinFormatted = reservation.checkinDate ? format(parseISO(reservation.checkinDate), "dd 'de' MMMM 'de' yyyy", { locale: ptBR }) : ""
   const checkoutFormatted = reservation.checkoutDate ? format(parseISO(reservation.checkoutDate), "dd 'de' MMMM 'de' yyyy", { locale: ptBR }) : ""
   const nights = reservation.checkinDate && reservation.checkoutDate ? Math.max(1, differenceInDays(parseISO(reservation.checkoutDate), parseISO(reservation.checkinDate))) : 1
@@ -2170,13 +2173,13 @@ export default function GuestPortal() {
               isCancelled
                 ? "bg-rose-50 text-rose-700 border-rose-200 font-bold text-xs"
                 : data.isCheckinToday 
-                  ? (isFlatClean ? "bg-emerald-50 text-emerald-700 border-emerald-200 font-bold text-xs" : "bg-amber-50 text-amber-700 border-amber-200 font-bold text-xs")
+                  ? (isFlatClean || isPastOrExact14h ? "bg-emerald-50 text-emerald-700 border-emerald-200 font-bold text-xs" : "bg-amber-50 text-amber-700 border-amber-200 font-bold text-xs")
                   : "bg-emerald-50 text-emerald-700 border-emerald-200 font-bold text-xs"
             }>
               {isCancelled
                 ? "✕ Reserva Cancelada"
                 : data.isCheckinToday 
-                  ? (isFlatClean ? "✨ Flat Pronto e Limpo" : "🧹 Em Higienização")
+                  ? (isFlatClean ? "✨ Flat Pronto e Limpo" : (isPastOrExact14h ? "🔑 Check-in Liberado" : "🧹 Em Higienização"))
                   : "✨ Flat Confirmado & Preparado"
               }
             </Badge>
@@ -2198,7 +2201,7 @@ export default function GuestPortal() {
                 </div>
               </div>
 
-              {accessCode && isPaid && (
+              {Boolean(accessCode && isPaid && (!data.isCheckinToday || isPastOrExact14h || isFlatClean)) && (
                 <div className="p-3 bg-white rounded-xl border border-slate-200 flex items-center gap-3 shadow-2xs">
                   <div>
                     <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">
@@ -2225,7 +2228,7 @@ export default function GuestPortal() {
             {/* Status de Check-in e Governança no Dia da Chegada */}
             {data.isCheckinToday && !isCancelled && (
               <>
-                {!isFlatClean ? (
+                {!isFlatClean && !isPastOrExact14h ? (
                   <div className="space-y-3">
                     <div className="p-3.5 bg-amber-50/90 border border-amber-200/80 rounded-xl flex items-start gap-2.5 text-xs text-amber-900">
                       <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
@@ -2342,7 +2345,7 @@ export default function GuestPortal() {
                     )}
                   </div>
                 ) : (
-                  (data.canDoEarlyCheckin && !data.isPastOrExact14h) ? (
+                  (data.canDoEarlyCheckin && !isPastOrExact14h) ? (
                     <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-start gap-2.5 text-xs text-emerald-800">
                       <Sparkles className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
                       <div className="space-y-1">
@@ -2367,9 +2370,13 @@ export default function GuestPortal() {
                     <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-start gap-2.5 text-xs text-emerald-900">
                       <Sparkles className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
                       <div className="space-y-1">
-                        <span className="font-bold block text-emerald-950">Apartamento Limpo & Liberado! 🔑✨</span>
+                        <span className="font-bold block text-emerald-950">
+                          {isFlatClean ? "Apartamento Limpo & Liberado! 🔑✨" : "Check-in Liberado na Portaria 24h! 🔑✨"}
+                        </span>
                         <p className="leading-relaxed">
-                          A governança já concluiu a higienização da unidade. Seu apartamento já está <strong>100% preparado e liberado</strong> na portaria 24h.
+                          {isFlatClean
+                            ? "A governança já concluiu a higienização da unidade. Seu apartamento já está 100% preparado e liberado na portaria 24h."
+                            : "O horário oficial de check-in (a partir das 14:00) foi iniciado. Seu acesso à portaria 24h e ao flat está liberado."}
                         </p>
                       </div>
                     </div>

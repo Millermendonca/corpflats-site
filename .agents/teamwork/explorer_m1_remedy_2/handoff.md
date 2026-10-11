@@ -1,308 +1,352 @@
-# Handoff Report: Explorer M1 Remedy 2 — Edge Case Defenses Analysis
+# Relatório de Handoff — Explorer 2 (Remediação Milestone M1)
 
-**Agent**: Explorer M1 Remedy 2  
-**Role**: Explorer, Synthesizer  
-**Target Recipient**: Orchestrator (`2a43f791-5cc7-4933-bdd2-688af9234cb1`)  
-**Working Directory**: `.agents/teamwork/explorer_m1_remedy_2/`  
-**Timestamp**: 2026-09-30T22:22:00Z  
+**Agente:** Explorer 2 (Remediation Explorer: pre-reservation lifecycle specialist)  
+**Milestone:** M1 — Backend Core: System Actions API, Tariff Engine & Autonomous Pipeline  
+**Data:** 2026-10-11T01:27:00Z  
+**Diretório de Trabalho:** `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_m1_remedy_2`  
+**Destinatário:** Orchestrator (`3364a657-c855-42a7-a46e-a5463bc245b7`) / Worker  
 
 ---
 
 ## 1. Observation
 
-### 1.1 Files Inspected & Parity Baseline
-- Primary monolith: `artifacts/api-server/demo-server.mjs` (25,607 lines)
-- Mirror monolith: `scripts/demo-server.mjs` (25,607 lines)
-- Baseline mirror parity verified via `git diff --no-index artifacts/api-server/demo-server.mjs scripts/demo-server.mjs`:
-  - Result: **0 bytes difference** (100% byte-for-byte identical).
-- Reviewer reports reviewed:
-  - Reviewer 1 (`reviewer_m1_1/handoff.md` §Finding 1 & §Challenge 1)
-  - Reviewer 2 (`reviewer_m1_2/handoff.md` §Finding 2)
+Durante a investigação empírica do servidor monolítico em `artifacts/api-server/demo-server.mjs` (e seu arquivo espelho `scripts/demo-server.mjs`), foram analisadas as 3 falhas de ciclo de vida de pré-reservas identificadas no relatório do Challenger 2 (`challenger_m1_2/handoff.md`). A reprodução empírica direta foi executada via `node --test tests/challenger-m1-adversarial.test.mjs`, gerando os seguintes resultados:
 
----
+### 1.1 Falha 1: Pré-reservas com `paymentStatus === "pago_total"` liberadas indevidamente após `expiresAt`
+- **Comando executado:** `node --test tests/challenger-m1-adversarial.test.mjs` (Subtest 2.3)
+- **Erro verbatim obtido:**
+  ```
+  error: 'Flat 211 must NOT be available because reservation was paid'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  actual:
+    id: 4
+    number: '211'
+    name: '211 de casal'
+    isOccupied: false
+  operator: 'strictEqual'
+  ```
+- **Código fonte inspecionado:**
+  - `artifacts/api-server/demo-server.mjs` (linha 20199):
+    ```javascript
+    20197:     const busyFlatSet = new Set();
+    20198:     (db.reservations || []).forEach(r => {
+    20199:       if (r.status === "cancelada" || r.status === "expirada") return;
+    20200:       if (r.status === "pre_reserva" && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs) return;
+    20201:
+    20202:       if (r.checkinDate < outDate && r.checkoutDate > inDate) {
+    20203:         if (r.flatId != null) busyFlatSet.add(String(r.flatId));
+    20204:         if (r.flatNumber != null) busyFlatSet.add(String(r.flatNumber));
+    20205:       }
+    20206:     });
+    ```
+  - `artifacts/api-server/demo-server.mjs` (linha 20433):
+    ```javascript
+    20431:     const hasConflict = (db.reservations || []).some(r => {
+    20432:       if (r.status === "cancelada" || r.status === "expirada") return false;
+    20433:       if (r.status === "pre_reserva" && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs) return false;
+    20434:       if (String(r.flatId) !== String(flat.id) && String(r.flatNumber) !== String(flat.number)) return false;
+    20435:       return r.checkinDate < outDate && r.checkoutDate > inDate;
+    20436:     });
+    ```
+- **Constatação:** Na etapa de limpeza (linha 20184), pré-reservas com `paymentStatus === "pago_total"` são poupadas e não recebem o status `"expirada"`. No entanto, na verificação de conflito (linhas 20200 e 20433), o código ignora sumariamente qualquer pré-reserva com `expiresAt < nowMs`, **sem verificar se ela foi paga**. Como consequência, o flat de uma reserva paga tem seu bloqueio removido e volta a constar como livre para qualquer outro hóspede.
 
-### 1.2 Issue 1: Closed Service Orders in Public Flat Start Endpoint
+### 1.2 Falha 2: Efetivação de Pré-Reserva Expirada via `commit-reservation` sem validação de status ou conflito
+- **Comando executado:** `node --test tests/challenger-m1-adversarial.test.mjs` (Subtest 2.6)
+- **Log e erro verbatim obtidos:**
+  ```
+  # [COMMIT EXPIRED RESERVATION RESULT] Status: 200, Body: {
+  #   success: true,
+  #   reservationId: 70001,
+  #   code: 'CF-EXPIRED-70001',
+  #   status: 'confirmada',
+  #   paymentStatus: 'pago_total',
+  #   paidAmount: 400,
+  #   flatNumber: '114',
+  #   pmsConfirmed: true,
+  #   message: 'Reserva efetivada com sucesso no PMS, UH bloqueada permanentemente e recepção notificada.'
+  # }
+  # [DEFECT CONFIRMED] commit-reservation confirmed an expired reservation with 200 OK! Status in PMS became: confirmada
+  error: 'commit-reservation should reject expired reservations, but returned 200 and confirmed it in PMS!'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  ```
+- **Código fonte inspecionado:**
+  - `artifacts/api-server/demo-server.mjs` (linhas 20545–20557):
+    ```javascript
+    20545:     if (reservation.status === "cancelada") {
+    20546:       return res.status(400).json({
+    20547:         error: "RESERVATION_CANCELLED",
+    20548:         message: "Esta reserva está cancelada e não pode ser efetivada."
+    20549:       });
+    20550:     }
+    20551:
+    20552:     reservation.status = "confirmada";
+    20553:     reservation.paymentStatus = "pago_total";
+    20554:     reservation.paidAmount = reservation.totalAmount;
+    20555:     reservation.pmsConfirmed = true;
+    ```
+- **Constatação:** O endpoint `commit-reservation` valida unicamente se `reservation.status === "cancelada"`. Reservas com `status === "expirada"` (ou reservas cujo hold expirou no tempo sem pagamento) são confirmadas com HTTP 200 OK, alterando o status para `"confirmada"` e criando overbooking silencioso caso o flat já tenha sido reatribuído. Além disso, nenhuma revalidação de conflito de datas com outras reservas ativas ou bloqueios de manutenção (`db.roomBlocks`) é realizada antes da confirmação.
 
-#### Exact Code Observed in `artifacts/api-server/demo-server.mjs` (lines 8126–8141) and `scripts/demo-server.mjs` (lines 8126–8141):
-```javascript
-8126: // POST /api/service/public/:token/flats/:flatId/start — Inicia serviço no apartamento
-8127: app.post("/api/service/public/:token/flats/:flatId/start", async (req, res) => {
-8128:   const { token, flatId } = req.params;
-8129:   const order = (db.serviceOrders || []).find(o => o.token === token);
-8130:   if (!order) return res.status(404).json({ error: "Ordem de serviço não encontrada ou link inválido." });
-8131: 
-8132:   // 1. Prestador deve ter registro em serviceWorkers para aquele token (se não tiver → 403)
-8133:   const worker = (db.serviceWorkers || []).find(w => (w.token === token || w.serviceOrderId === order.id) && w.mainWorker?.name && w.mainWorker?.cpf);
-8134:   if (!worker) {
-8135:     return res.status(403).json({ error: "Prestador deve se identificar antes de iniciar o serviço." });
-8136:   }
-8137: 
-8138:   const fId = Number(flatId);
-8139:   const flat = (order.flats || []).find(f => Number(f.flatId) === fId || String(f.flatNumber) === String(flatId));
-8140:   if (!flat) return res.status(404).json({ error: "Apartamento não encontrado nesta ordem de serviço." });
-```
+### 1.3 Falha 3: `preReservationHoldMinutes` ignorado pelo endpoint `pre-reserve`
+- **Comando executado:** `node --test tests/challenger-m1-adversarial.test.mjs` (Subtest 2.5)
+- **Log e erro verbatim obtidos:**
+  ```
+  # [PRE-RESERVE HOLD MINUTES] Configured: 15 min, Result diffMinutes: 30, Response holdMinutes: 30
+  # [DEFECT CONFIRMED] preReservationHoldMinutes is configured to 15, but pre-reserve generated expiresAt with ~30 minutes hold and holdMinutes=30
+  error: 'preReservationHoldMinutes in settings (15m) should be respected by pre-reserve endpoint, but got 30m (holdMinutes: 30)'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  ```
+- **Código fonte inspecionado:**
+  - `artifacts/api-server/demo-server.mjs` (linhas 20448–20450 e 20517):
+    ```javascript
+    20448:     const code = `CF-${Math.floor(100000 + Math.random() * 900000)}`;
+    20449:     const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    ...
+    20492:           description: `Pré-reserva criada via API com hold de 30 minutos (expira em ${expiresAt})`
+    ...
+    20517:       holdMinutes: 30
+    ```
+  - E também em `POST /api/bot-actions/payment-link` (linha 20379):
+    ```javascript
+    20379:     const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    ```
+- **Constatação:** Embora a configuração `db.botActionsSettings.preReservationHoldMinutes` seja persistida corretamente via `POST /api/bot-actions/settings`, o endpoint `pre-reserve` hardcoda o cálculo em `30 * 60 * 1000`, a descrição da auditoria em "30 minutos" e o campo de resposta em `holdMinutes: 30`.
 
-#### Related Downstream Code in `artifacts/api-server/demo-server.mjs`:
-1. Lines 5199–5200 (`getFlatServiceInProgress`):
-   ```javascript
-   for (const order of db.serviceOrders) {
-     if (order.status !== "active") continue;
-   ```
-2. Lines 8197–8199 (start endpoint status transition):
-   ```javascript
-   if (order.status === "draft") {
-     order.status = "active";
-   }
-   ```
-3. Line 9979 (`GET /api/pms/calendar`):
-   ```javascript
-   for (const order of db.serviceOrders) {
-     if (order.status !== "active") continue;
-   ```
-
----
-
-### 1.3 Issue 2: Empty/Whitespace-only Title in Admin PATCH Endpoint
-
-#### Exact Code Observed in `artifacts/api-server/demo-server.mjs` (lines 7886–7905) and `scripts/demo-server.mjs` (lines 7886–7905):
-```javascript
-7886: // PATCH /api/service-orders/:id — Atualiza ordem de serviço (Admin)
-7887: app.patch("/api/service-orders/:id", (req, res) => {
-7888:   const userAuth = getAuthUser(req);
-7889:   if (!userAuth) return res.status(401).json({ error: "Não autenticado." });
-7890:   if (userAuth.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
-7891: 
-7892:   const { id } = req.params;
-7893:   const order = (db.serviceOrders || []).find(o => o.id === id || o.token === id);
-7894:   if (!order) return res.status(404).json({ error: "Ordem de serviço não encontrada." });
-7895: 
-7896:   const body = req.body || {};
-7897:   if (body.title !== undefined) order.title = String(body.title).trim();
-7898:   if (body.status !== undefined && ["draft", "active", "closed"].includes(body.status)) order.status = body.status;
-7899:   if (body.cleanFlatMode !== undefined && ["never", "priority", "always"].includes(body.cleanFlatMode)) order.cleanFlatMode = body.cleanFlatMode;
-7900:   if (body.maxSimultaneousFlats !== undefined) order.maxSimultaneousFlats = Math.max(1, parseInt(body.maxSimultaneousFlats, 10) || 2);
-```
-
-#### Contrast with `POST /api/service-orders` (lines 7807–7809):
-```javascript
-7807:   if (!title || !String(title).trim()) {
-7808:     return res.status(400).json({ error: "Título do serviço é obrigatório." });
-7809:   }
-```
+### 1.4 Teste de Paridade Byte-a-Byte
+- O teste `tests/pre-reservation-payment-integrity.test.mjs` (linha 50) exige estrita paridade byte-a-byte entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`:
+  ```javascript
+  assert.strictEqual(fs.readFileSync(serverPath).equals(fs.readFileSync(mirrorPath)), true);
+  ```
+  Atualmente, o teste passa (12/12 aprovados). Qualquer alteração no servidor deve ser rigorosamente replicada em ambos os arquivos.
 
 ---
 
 ## 2. Logic Chain
 
-### 2.1 Logic Chain for Issue 1: Closed Service Orders Check in POST /start
+1. **Da retenção de bloqueio para pré-reservas pagas:**
+   - Observação 1.1 mostra que a limpeza em `availability` não marca como expirada se `r.paymentStatus === "pago_total"`.
+   - Contudo, na linha 20199 (`availability`) e na linha 20433 (`pre-reserve`), o critério para descartar a reserva como bloqueio é apenas:  
+     `if (r.status === "pre_reserva" && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs) return;`
+   - Como falta a cláusula `&& r.paymentStatus !== "pago_total"`, o código ignora a reserva paga e deixa de adicioná-la a `busyFlatSet`.
+   - **Dedução lógica:** Adicionar `&& r.paymentStatus !== "pago_total"` em ambas as checagens garante que pré-reservas pagas nunca sejam ignoradas, mantendo o flat permanentemente bloqueado até a confirmação definitiva ou cancelamento formal.
 
-1. **Premise**: In business operations, once an admin sets an order's `status` to `"closed"`, work on that order is officially terminated or concluded.
-2. **Current Flaw**: Line 8130 confirms the order exists, but does not check `order.status`.
-3. **Desynchronization Hazard**:
-   - If a worker has the portal open or bookmarked and clicks "Iniciar Serviço", the backend modifies `flat.status = "in_progress"` (line 8185), sets `flat.startedAt` (line 8186), dispatches notifications (line 8204), and persists the database.
-   - Because `order.status` is `"closed"` (not `"draft"`), lines 8197–8199 do NOT alter `order.status`. The order remains `"closed"`.
-   - However, `getFlatServiceInProgress()` (line 5200) and the PMS calendar builder (line 9979) strictly filter with `if (order.status !== "active") continue;`.
-   - Consequently, `GET /api/flats`, `GET /api/reservations/checkouts` (Maid Dashboard), and `GET /api/pms/calendar` will **NOT** display the flat as having an active service in progress.
-   - The worker is in the room, but the hotel governance staff, maids, and reception have no visibility of the lock, allowing maids to enter or double-bookings to occur.
-4. **Resolution**:
-   - At line 8131, immediately after confirming `order` existence, verify:
-     ```javascript
-     if (order.status === "closed") {
-       return res.status(400).json({ error: "Esta ordem de serviço está encerrada." });
-     }
-     ```
-   - This prevents any state alteration on closed orders and returns a clear, descriptive HTTP 400 error.
+2. **Da rejeição de commit para reservas expiradas e revalidação de conflito:**
+   - Observação 1.2 demonstra que `commit-reservation` aceita reservas com `status === "expirada"` e com hold vencido sem pagamento, retornando 200 OK.
+   - Pela especificação do sistema e do teste adversarial, uma reserva com status `"expirada"` ou com hold vencido no momento da chamada (e sem pagamento comprovado) deve retornar HTTP 400 com payload `{ error: "PRE_RESERVATION_EXPIRED", message: ... }`.
+   - Além disso, antes de efetivar definitivamente no PMS (`reservation.status = "confirmada"`), o sistema deve revalidar conflitos temporais de datas contra outras reservas ativas e contra bloqueios de manutenção (`db.roomBlocks`). Havendo sobreposição, o endpoint deve retornar HTTP 409 `{ error: "FLAT_UNAVAILABLE", message: ... }`.
+   - **Dedução lógica:** Inserir a guarda de status/tempo expirado antes da confirmação e a revalidação de sobreposição protege o PMS contra double-booking tardio.
 
----
-
-### 2.2 Logic Chain for Issue 2: Empty/Whitespace Title Sanitization in PATCH /api/service-orders/:id
-
-1. **Premise**: `order.title` is a mandatory identifier required across the application:
-   - WhatsApp notifications: `🔧 *Serviço iniciado* — ${order.title}` (line 5275)
-   - Reception email notifications: `[CorpFlats] Serviço iniciado: ${order.title}` (line 5328)
-   - PMS calendar block label: `title: "🔧 " + order.title` (line 9993)
-   - Maid dashboard badge: displays `serviceTitle` (line 5208)
-   - Admin UI (`/servicos`): cards and table headers.
-2. **Current Flaw**: Line 7897 executes:
-   ```javascript
-   if (body.title !== undefined) order.title = String(body.title).trim();
-   ```
-   If a client sends `{ title: "" }` or `{ title: "   " }`, `String(body.title).trim()` yields `""`.
-   `order.title` is overwritten with an empty string, corrupting notification messages, calendar blocks, and UI cards.
-3. **Resolution**:
-   - When `body.title !== undefined`, validate that the trimmed value is non-empty.
-   - If empty or whitespace-only, reject the request with HTTP 400:
-     ```javascript
-     if (body.title !== undefined) {
-       const trimmedTitle = String(body.title).trim();
-       if (!trimmedTitle) {
-         return res.status(400).json({ error: "Título do serviço não pode ser vazio." });
-       }
-       order.title = trimmedTitle;
-     }
-     ```
-   - This matches the creation invariant from `POST /api/service-orders` (lines 7807–7809) and prevents saving a headless/titleless order.
+3. **Da configurabilidade do hold de pré-reserva:**
+   - Observação 1.3 mostra que `pre-reserve` ignora o valor configurado em `db.botActionsSettings.preReservationHoldMinutes`.
+   - O helper existente `getBotActionsSettings()` retorna as configurações atuais com fallback seguro para `{ preReservationHoldMinutes: 30 }`.
+   - **Dedução lógica:** Obter `holdMinutes` a partir de `getBotActionsSettings().preReservationHoldMinutes || 30` e utilizá-lo para calcular `expiresAt`, a mensagem de auditoria e a propriedade `holdMinutes` no JSON de resposta satisfaz integralmente o teste 2.5 e o requisito R3.
 
 ---
 
-## 3. Caveats & Design Options
+## 3. Caveats
 
-### 3.1 Alternative Interpretation for PATCH Title Sanitization
-- **Option 1 (Recommended — Explicit HTTP 400 Rejection)**:
-  - If `body.title !== undefined` and `!String(body.title).trim()`, return `res.status(400).json({ error: "Título do serviço não pode ser vazio." })`.
-  - **Pros**: Follows standard REST validation semantics; informs the client explicitly why the request was rejected; prevents silent discrepancy between UI form input and persisted backend state.
-  - **Cons**: Requires the client to handle the 400 error if it accidentally sends an empty title.
-- **Option 2 (Silent Ignore / Fallback)**:
-  - `if (body.title !== undefined && String(body.title).trim()) order.title = String(body.title).trim();`
-  - **Pros**: Does not abort PATCH requests if multiple fields are updated simultaneously and title was mistakenly sent empty.
-  - **Cons**: Silently succeeds (HTTP 200) without applying the title change, hiding potential frontend bugs.
-- **Recommendation**: **Option 1** is strongly recommended as it strictly enforces "reject empty/whitespace-only updates". Both options are provided with exact code snippets below.
-
-### 3.2 Ordering of Checks in POST /start
-- Placing `if (order.status === "closed")` at line 8131 (before `serviceWorkers` lookup at line 8133) is optimal because if the order itself is closed, no operation can proceed regardless of who is attempting it.
-
-### 3.3 Strict Mirror Parity
-- Every modification to `artifacts/api-server/demo-server.mjs` must be replicated identically in `scripts/demo-server.mjs`.
+- **Escopo deste relatório:** Este relatório foca estritamente nas 3 falhas de ciclo de vida e configuração de pré-reservas (Subtests 2.3, 2.5 e 2.6). A falha de concorrência / race condition no `pre-reserve` (Subtests 3.1 e 3.2) foi tratada em paralelo pelo Explorer 1 de Remediação.
+- **Não-modificação de código de produção:** Em estrita observância às regras de agente Explorer (Read-only investigation), nenhuma linha de código foi alterada em arquivos de produção nesta etapa. As correções detalhadas abaixo devem ser aplicadas pelo Worker.
 
 ---
 
-## 4. Conclusion & Exact Code Changes
+## 4. Conclusion & Recomendações para o Worker
 
-### Summary Table of Proposed Changes
+As 3 falhas de ciclo de vida de pré-reservas possuem diagnóstico 100% mapeado e correções cirúrgicas prontas para implementação imediata pelo Worker.
 
-| # | Target Endpoint | File(s) | Existing Line(s) | Action | Description |
-|---|-----------------|---------|------------------|--------|-------------|
-| 1 | `POST /api/service/public/:token/flats/:flatId/start` | `artifacts/api-server/demo-server.mjs` & `scripts/demo-server.mjs` | 8130–8131 | Insert check after line 8130 | Reject flat start with HTTP 400 if `order.status === "closed"` |
-| 2 | `PATCH /api/service-orders/:id` | `artifacts/api-server/demo-server.mjs` & `scripts/demo-server.mjs` | 7897 | Replace line 7897 | Reject empty/whitespace-only `title` with HTTP 400 (or sanitize) |
+### 4.1 Estratégia de Implementação e Código Exato
 
----
+O Worker deve aplicar as seguintes alterações em **`artifacts/api-server/demo-server.mjs`** e replicá-las identicamente em **`scripts/demo-server.mjs`**:
 
-### Detailed Code Diffs
+#### A. Corrigir filtro de reservas pagas em `availability`
+- **Arquivo:** `artifacts/api-server/demo-server.mjs` (linha ~20199) e `scripts/demo-server.mjs` (linha ~20199)
+- **Código Atual (Antes):**
+  ```javascript
+      if (r.status === "cancelada" || r.status === "expirada") return;
+      if (r.status === "pre_reserva" && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs) return;
 
-#### Change 1: Closed Order Guard in `POST /api/service/public/:token/flats/:flatId/start`
+      if (r.checkinDate < outDate && r.checkoutDate > inDate) {
+  ```
+- **Código Corrigido (Depois):**
+  ```javascript
+      if (r.status === "cancelada" || r.status === "expirada") return;
+      if ((r.status === "pre_reserva" || r.status === "pendente") && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") return;
 
-**Target Files**:
-- `artifacts/api-server/demo-server.mjs`
-- `scripts/demo-server.mjs`
+      if (r.checkinDate < outDate && r.checkoutDate > inDate) {
+  ```
 
-**Location**: Lines 8127–8136
+#### B. Corrigir verificação de conflito para reservas pagas e aplicar `preReservationHoldMinutes` em `pre-reserve`
+- **Arquivo:** `artifacts/api-server/demo-server.mjs` (linhas ~20431–20518) e `scripts/demo-server.mjs` (linhas ~20431–20518)
+- **Código Atual (Antes):**
+  ```javascript
+    // Verifica se o flat já está ocupado por reserva ativa não-expirada
+    const nowMs = Date.now();
+    const hasConflict = (db.reservations || []).some(r => {
+      if (r.status === "cancelada" || r.status === "expirada") return false;
+      if (r.status === "pre_reserva" && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs) return false;
+      if (String(r.flatId) !== String(flat.id) && String(r.flatNumber) !== String(flat.number)) return false;
+      return r.checkinDate < outDate && r.checkoutDate > inDate;
+    });
 
-```diff
- // POST /api/service/public/:token/flats/:flatId/start — Inicia serviço no apartamento
- app.post("/api/service/public/:token/flats/:flatId/start", async (req, res) => {
-   const { token, flatId } = req.params;
-   const order = (db.serviceOrders || []).find(o => o.token === token);
-   if (!order) return res.status(404).json({ error: "Ordem de serviço não encontrada ou link inválido." });
-+
-+  if (order.status === "closed") {
-+    return res.status(400).json({ error: "Esta ordem de serviço está encerrada." });
-+  }
- 
-   // 1. Prestador deve ter registro em serviceWorkers para aquele token (se não tiver → 403)
-   const worker = (db.serviceWorkers || []).find(w => (w.token === token || w.serviceOrderId === order.id) && w.mainWorker?.name && w.mainWorker?.cpf);
-```
+    if (hasConflict) {
+      return res.status(409).json({
+        error: "FLAT_UNAVAILABLE",
+        message: `O Flat ${flat.number} já possui reserva ou bloqueio para o período selecionado.`
+      });
+    }
 
----
+    const nextId = db.reservations && db.reservations.length > 0
+      ? Math.max(...db.reservations.map(r => r.id || 0)) + 1
+      : 1;
+    const code = `CF-${Math.floor(100000 + Math.random() * 900000)}`;
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+  ```
+- **Código Corrigido (Depois):**
+  ```javascript
+    // Verifica se o flat já está ocupado por reserva ativa não-expirada
+    const nowMs = Date.now();
+    const hasConflict = (db.reservations || []).some(r => {
+      if (r.status === "cancelada" || r.status === "expirada") return false;
+      if ((r.status === "pre_reserva" || r.status === "pendente") && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") return false;
+      if (String(r.flatId) !== String(flat.id) && String(r.flatNumber) !== String(flat.number)) return false;
+      return r.checkinDate < outDate && r.checkoutDate > inDate;
+    });
 
-#### Change 2: Title Sanitization & Rejection in `PATCH /api/service-orders/:id`
+    if (hasConflict) {
+      return res.status(409).json({
+        error: "FLAT_UNAVAILABLE",
+        message: `O Flat ${flat.number} já possui reserva ou bloqueio para o período selecionado.`
+      });
+    }
 
-**Target Files**:
-- `artifacts/api-server/demo-server.mjs`
-- `scripts/demo-server.mjs`
+    const nextId = db.reservations && db.reservations.length > 0
+      ? Math.max(...db.reservations.map(r => r.id || 0)) + 1
+      : 1;
+    const code = `CF-${Math.floor(100000 + Math.random() * 900000)}`;
+    const botSettings = getBotActionsSettings();
+    const holdMinutes = (typeof botSettings?.preReservationHoldMinutes === "number" && botSettings.preReservationHoldMinutes > 0)
+      ? botSettings.preReservationHoldMinutes
+      : 30;
+    const expiresAt = new Date(Date.now() + holdMinutes * 60 * 1000).toISOString();
+  ```
+- **E na auditoria e resposta de `pre-reserve`:**
+  - Em `auditLogs`:
+    ```javascript
+    description: `Pré-reserva criada via API com hold de ${holdMinutes} minutos (expira em ${expiresAt})`
+    ```
+  - Em `res.json(...)`:
+    ```javascript
+    holdMinutes: holdMinutes
+    ```
 
-**Location**: Line 7897
+- **Opcional recomendável em `POST /api/bot-actions/payment-link` (linha ~20379):**
+  - Substituir `const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();` por:
+    ```javascript
+    const botSettings = getBotActionsSettings();
+    const holdMinutes = (typeof botSettings?.preReservationHoldMinutes === "number" && botSettings.preReservationHoldMinutes > 0)
+      ? botSettings.preReservationHoldMinutes
+      : 30;
+    const expiresAt = new Date(Date.now() + holdMinutes * 60 * 1000).toISOString();
+    ```
 
-##### Option 1 (Recommended — Explicit HTTP 400 Rejection):
-```diff
-   const body = req.body || {};
--  if (body.title !== undefined) order.title = String(body.title).trim();
-+  if (body.title !== undefined) {
-+    const trimmedTitle = String(body.title).trim();
-+    if (!trimmedTitle) {
-+      return res.status(400).json({ error: "Título do serviço não pode ser vazio." });
-+    }
-+    order.title = trimmedTitle;
-+  }
-   if (body.status !== undefined && ["draft", "active", "closed"].includes(body.status)) order.status = body.status;
-```
+#### C. Bloquear commit de reservas expiradas e revalidar conflitos em `commit-reservation`
+- **Arquivo:** `artifacts/api-server/demo-server.mjs` (linhas ~20545–20555) e `scripts/demo-server.mjs` (linhas ~20545–20555)
+- **Código Atual (Antes):**
+  ```javascript
+    if (reservation.status === "cancelada") {
+      return res.status(400).json({
+        error: "RESERVATION_CANCELLED",
+        message: "Esta reserva está cancelada e não pode ser efetivada."
+      });
+    }
 
-##### Option 2 (Alternative — Silent Ignore Sanitization):
-```diff
-   const body = req.body || {};
--  if (body.title !== undefined) order.title = String(body.title).trim();
-+  if (body.title !== undefined && String(body.title).trim()) {
-+    order.title = String(body.title).trim();
-+  }
-   if (body.status !== undefined && ["draft", "active", "closed"].includes(body.status)) order.status = body.status;
-```
+    reservation.status = "confirmada";
+    reservation.paymentStatus = "pago_total";
+  ```
+- **Código Corrigido (Depois):**
+  ```javascript
+    if (reservation.status === "cancelada") {
+      return res.status(400).json({
+        error: "RESERVATION_CANCELLED",
+        message: "Esta reserva está cancelada e não pode ser efetivada."
+      });
+    }
+
+    const nowMs = Date.now();
+    const isExpiredByTime = (reservation.status === "pre_reserva" || reservation.status === "pendente") &&
+      reservation.expiresAt &&
+      new Date(reservation.expiresAt).getTime() < nowMs &&
+      reservation.paymentStatus !== "pago_total";
+
+    if (reservation.status === "expirada" || isExpiredByTime) {
+      if (reservation.status !== "expirada") {
+        reservation.status = "expirada";
+        reservation.updatedAt = new Date().toISOString();
+        saveDatabase("commit_reservation_expired_auto");
+      }
+      return res.status(400).json({
+        error: "PRE_RESERVATION_EXPIRED",
+        message: "Esta pré-reserva expirou e não pode ser efetivada."
+      });
+    }
+
+    // Revalidação de conflito com outras reservas ativas no PMS antes de efetivar definitivamente
+    const hasConflict = (db.reservations || []).some(r => {
+      if (String(r.id) === String(reservation.id) || String(r.code) === String(reservation.code)) return false;
+      if (r.status === "cancelada" || r.status === "expirada") return false;
+      if ((r.status === "pre_reserva" || r.status === "pendente") && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") return false;
+      if (String(r.flatId) !== String(reservation.flatId) && String(r.flatNumber) !== String(reservation.flatNumber)) return false;
+      return r.checkinDate < reservation.checkoutDate && r.checkoutDate > reservation.checkinDate;
+    });
+
+    if (hasConflict) {
+      return res.status(409).json({
+        error: "FLAT_UNAVAILABLE",
+        message: `O Flat ${reservation.flatNumber || reservation.flatId} já possui outra reserva confirmada para o período selecionado.`
+      });
+    }
+
+    const hasBlockConflict = (db.roomBlocks || []).some(b => {
+      if (String(b.flatId) !== String(reservation.flatId) && String(b.flatNumber) !== String(reservation.flatNumber)) return false;
+      return b.startDate < reservation.checkoutDate && b.endDate > reservation.checkinDate;
+    });
+
+    if (hasBlockConflict) {
+      return res.status(409).json({
+        error: "FLAT_UNAVAILABLE",
+        message: `O Flat ${reservation.flatNumber || reservation.flatId} possui bloqueio de manutenção para o período selecionado.`
+      });
+    }
+
+    reservation.status = "confirmada";
+    reservation.paymentStatus = "pago_total";
+  ```
 
 ---
 
 ## 5. Verification Method
 
-### 5.1 Verification Commands
-Once the implementer applies the changes, run:
+Para verificar a implementação pelo Worker e comprovar a resolução das 3 falhas:
 
-```powershell
-# 1. Syntax check for both primary and mirror servers
-node -c artifacts/api-server/demo-server.mjs
-node -c scripts/demo-server.mjs
+1. **Executar a suíte adversarial:**
+   ```bash
+   node --test tests/challenger-m1-adversarial.test.mjs
+   ```
+   - **Condição de aprovação dos testes de ciclo de vida:**
+     - Subtest 2.3: passa com sucesso (Flat 211 permanece bloqueado para reserva paga vencida).
+     - Subtest 2.5: passa com sucesso (`holdMinutes` configurado para 15 minutos é respeitado pelo endpoint).
+     - Subtest 2.6: passa com sucesso (tentativa de commit da reserva 70001 retorna HTTP 400 `PRE_RESERVATION_EXPIRED`).
 
-# 2. Strict byte-for-byte mirror parity check (must produce 0 output)
-git diff --no-index artifacts/api-server/demo-server.mjs scripts/demo-server.mjs
+2. **Verificar testes de regressão de API:**
+   ```bash
+   node --test tests/bot-actions-api.test.mjs
+   ```
+   - Todos os 5 testes devem continuar passando com status 200/403/409 apropriados.
 
-# 3. Existing static contract tests
-node --test tests/service-orders.test.mjs
-
-# 4. Existing live integration tests
-node --test tests/service-orders-api-live.test.mjs
-
-# 5. Core regression tests
-node --test tests/checkout-occupancy-rule.test.mjs
-node --test tests/governance-integrity.test.mjs
-```
-
-### 5.2 Dedicated Test Cases to Add in Test Suite
-The following automated tests can be appended to `tests/service-orders-api-live.test.mjs` to verify both defenses:
-
-```javascript
-it('POST /start rejects with 400 when order.status is closed', async () => {
-  // Set order status to closed
-  await fetch(`${BASE_URL}/api/service-orders/${createdOrder.id}`, {
-    method: 'PATCH',
-    headers: adminHeaders,
-    body: JSON.stringify({ status: 'closed' })
-  });
-
-  const res = await fetch(`${BASE_URL}/api/service/public/${orderToken}/flats/3/start`, {
-    method: 'POST',
-    headers: publicHeaders
-  });
-  assert.strictEqual(res.status, 400);
-  const data = await res.json();
-  assert.match(data.error, /encerrada/i);
-
-  // Revert back to active for remaining tests
-  await fetch(`${BASE_URL}/api/service-orders/${createdOrder.id}`, {
-    method: 'PATCH',
-    headers: adminHeaders,
-    body: JSON.stringify({ status: 'active' })
-  });
-});
-
-it('PATCH /api/service-orders/:id rejects empty or whitespace title with 400', async () => {
-  const resEmpty = await fetch(`${BASE_URL}/api/service-orders/${createdOrder.id}`, {
-    method: 'PATCH',
-    headers: adminHeaders,
-    body: JSON.stringify({ title: '   ' })
-  });
-  assert.strictEqual(resEmpty.status, 400);
-  const data = await resEmpty.json();
-  assert.match(data.error, /vazio|obrigatório/i);
-});
-```
-
-### 5.3 Invalidation Conditions
-This analysis is invalidated if:
-1. The route signature for `app.post("/api/service/public/:token/flats/:flatId/start")` or `app.patch("/api/service-orders/:id")` is moved to a different controller or route file.
-2. The mirror file `scripts/demo-server.mjs` is intentionally deprecated by architectural directive (currently strictly required).
+3. **Verificar paridade byte-a-byte entre os arquivos espelho:**
+   ```bash
+   node --test tests/pre-reservation-payment-integrity.test.mjs
+   ```
+   - Subtest 1 ("Paridade byte-a-byte entre demo-server.mjs e scripts/demo-server.mjs") deve retornar `ok 1`.

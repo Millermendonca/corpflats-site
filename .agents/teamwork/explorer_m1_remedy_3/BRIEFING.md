@@ -1,43 +1,47 @@
-# BRIEFING — 2026-09-30T22:18:33Z
+# BRIEFING — 2026-10-11T01:26:00Z
 
 ## Mission
-Analyze photo array sanitization and test verification for POST finish endpoint and Challenger 1 test scripts.
+Investigar defeitos de calendário e bulk-update em demo-server.mjs (flatId, channel toLowerCase, daysOfWeek com .map(Number)) e recomendar código exato para Worker.
 
 ## 🔒 My Identity
-- Archetype: Explorer
-- Roles: Investigation, Synthesis
+- Archetype: explorer
+- Roles: Teamwork explorer, read-only investigation
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_m1_remedy_3
-- Original parent: 2a43f791-5cc7-4933-bdd2-688af9234cb1
-- Milestone: Milestone 1 Remedy
+- Original parent: 3364a657-c855-42a7-a46e-a5463bc245b7
+- Milestone: M1 Remediation
 
 ## 🔒 Key Constraints
-- Read-only investigation — do NOT implement / modify source files
-- Write report to handoff.md
+- Read-only investigation — do NOT implement
+- Write ONLY to .agents/teamwork/explorer_m1_remedy_3
+- Produce structured 5-component handoff report
 
 ## Current Parent
-- Conversation ID: 2a43f791-5cc7-4933-bdd2-688af9234cb1
+- Conversation ID: 3364a657-c855-42a7-a46e-a5463bc245b7
 - Updated: not yet
 
 ## Investigation State
 - **Explored paths**:
-  - `artifacts/api-server/demo-server.mjs` (lines 8150-8330, 5256-5330, 9970-9995)
-  - `scripts/demo-server.mjs` (mirror parity verified)
-  - `tests/adversarial-milestone1.test.mjs` (Suite 5 & Suite 7)
-  - `tests/test-midnight-logic-audit.mjs` (reproduced & verified)
-  - `tests/test-calendar-timezone-audit.mjs` (reproduced & verified)
-  - `tests/challenger-m1-cleanflat-integrations.test.mjs` (verified)
+  - `artifacts/api-server/demo-server.mjs` (lines 19760-20050, 20265-20295)
+  - `scripts/demo-server.mjs` (exact mirror of demo-server.mjs)
+  - `tests/challenger-edge-probes.test.mjs` (Probes A, B, C executed and verified)
+  - `tests/challenger-tariff-stress.test.mjs` (26/26 tests executed and verified)
+  - `tests/tariff-engine.test.mjs` (8/8 tests executed and verified)
+  - `tests/bot-actions-api.test.mjs` (5/5 tests executed and verified)
 - **Key findings**:
-  - `POST .../finish` accepts arrays with only empty strings or whitespace (e.g. `["   "]`), bypassing `order.requirePhotos: true` validation and storing dirty strings in `flat.photos`.
-  - Filtering with `.filter(p => typeof p === "string").map(p => p.trim()).filter(p => p.length > 0)` cleanly solves bypass and ensures trimmed valid photo URLs.
-  - Formulated comprehensive test case for Suite 7 in `tests/adversarial-milestone1.test.mjs`.
-  - Reconciled timezone fixes from Challenger 1 (`getExecutionDateStr` at line 8159 and lines 9981-9982).
-- **Unexplored areas**: None for this scoped mission.
+  - Defect 1: In `GET /api/tariffs/calendar`, `(!flatId || String(o.flatId) === String(flatId))` evaluated to true when `flatId` was missing, capturing UH-specific overrides in general calendar queries while `rate` calculated general base rate.
+  - Defect 2: Strict case comparison `String(o.channel) === channel` in calendar route failed when channel query was `"Booking"` instead of `"booking"`, causing `hasOverride: false` despite override rate being calculated.
+  - Defect 3: `daysOfWeek` in `POST /api/tariffs/bulk-update` lacked `.map(Number)`, failing `includes(dayOfWeek)` when strings like `["5", "6"]` were passed, silently updating 0 days.
+  - Additional Finding: `settings.baseDailyRate || 237` resets rate 0 to 237; requires nullish check `settings.baseDailyRate != null ? settings.baseDailyRate : 237`.
+  - Replicas: `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs` share identical SHA256 and both must be patched by Worker.
+- **Unexplored areas**: None. Complete evidence chain established.
 
 ## Key Decisions Made
-- Formulate exact before/after code snippets for Worker M1.
-- Provide step-by-step verification commands for both Worker and Reviewers.
+- Recommend Option A (Shared helper `findEffectiveTariffOverride` used by both `calculateDailyRate` and `/api/tariffs/calendar`) as best-practice architectural solution.
+- Provide Option B (localized inline edits) as minimal-diff alternative.
+- Formulate precise code diffs and concrete assertion updates for test probes.
 
 ## Artifact Index
-- handoff.md — Final investigation and verification report
-- progress.md — Liveness heartbeat
-- DISPATCH.md — Initial dispatch log
+- `DISPATCH.md` — Initial dispatch message
+- `BRIEFING.md` — Agent working memory
+- `progress.md` — Liveness & status tracking
+- `handoff.md` — 5-component handoff report for orchestrator and Worker

@@ -1,50 +1,83 @@
-# Project: Guest-Flow-Manager Governance & Integrity Overhaul
+# Project: Guest-Flow-Manager Dynamic FAQ & Knowledge Base
 
 ## Architecture
-The system comprises three primary tiers:
-1. **Frontend (`artifacts/limpeza`)**: React 18, TypeScript, Tailwind CSS, Vite. Housekeeping dashboard (`dashboard.tsx`), flat cards (`flat-card.tsx`), login (`login.tsx`). Consumes the REST API and PMS calendar.
-2. **Backend Engine (`artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`)**: Node.js HTTP/Express API server managing reservations, cleaning requests, PMS synchronization, financial statements, and universal integrity reconciliation (`reconcileUniversalIntegrity`). Both server files must remain byte-for-byte synchronized.
-3. **Persistent Data Store (`data/database.json`)**: JSON document database maintaining 19 active flats, reservations, cleaning requests, maid user accounts, schedules, audit logs, and financial ledger (`maidStatementEntries`).
+- **Backend & API Layer**: Node.js ESM Express server (`artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`) integrating with Z-API engine (`zapi-service.mjs`). Dual-mirrored byte-for-byte codebase between `artifacts/api-server/` and `scripts/`.
+- **Database & Persistence**: In-memory JSON database loaded from and atomic-saved to `data/database.json` and replicated to PostgreSQL (`system_store`). `db.faqItems` collection stores knowledge base items.
+- **Auto-Learning Engine**:
+  - Inbound webhook (`processAiInboundMessage`) detects unmapped queries requiring human handover and persists them as `"pendente"`.
+  - Outbound human response (`fromMe: true` via webhook or live chat API) captures operator response as `suggestedAnswer` with status `"aguardando_aprovacao"`.
+  - 1-click approval promotes status to `"ativo"`.
+- **Rule Engine & Client Exception**: `isFaqApplicableToClient` normalizes phone numbers (Brazilian DDI 55, DDD, 8/9 digit variants) and enforces scopes (`all`, `exclude`, `include_only`).
+- **Sofia AI Motor**: `whatsapp-ai-service.mjs` dynamically injects applicable active FAQs into Google Gemini context and prioritizes them in local heuristic search.
+- **Frontend UI Layer**: React + Vite 7 + Tailwind v4 + wouter in `artifacts/limpeza`. Dedicated tab "Base de Conhecimento & FAQ" on `/whatsapp-automation` with category cards/table, status filters, create/edit modal with exception config, and 1-click approval.
+- **Build & CI**: `npm run build` in `artifacts/limpeza` emits to `dist/public/`. Strict git push policy per `AGENTS.md`.
 
 ## Feature Inventory
 | # | Feature | Description | Milestone | Source |
 |---|---------|-------------|-----------|--------|
-| 1 | F1: Immunity Guards & Auto-Reversion Elimination | Protect cleanings marked clean by admin, manual entries, canonical cleanings, or records with completion timestamps from being flipped back to dirty in `reconcileUniversalIntegrity`. Prevent note copy-pollution in `reconcileCleaningRequests`. Update status patch route. | M1 | ORIGINAL_REQUEST §R1 |
-| 2 | F2: Dual-Server Synchronization | Ensure `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs` are identical and maintained simultaneously. | M1 | ORIGINAL_REQUEST §R4 |
-| 3 | F3: Retroactive Checkout Creation Guard | In `reconcileUniversalIntegrity`, check if a flat has already been cleaned (`status: "clean"`) between a past checkout and current date before generating a duplicate dirty checkout cleaning. | M1 | ORIGINAL_REQUEST §R1, R3 |
-| 4 | F4: 18:00 Date Switchover UI Indicator | Add explicit visual mode banner and badge ("Modo Previsão - Próximo Turno") when viewing tomorrow, provide 1-click "Ver Hoje" toggle, and prevent operational confusion in `dashboard.tsx`. | M2 | ORIGINAL_REQUEST §R2 |
-| 5 | F5: Intelligent Card Semantics & Occupancy Precedence | In `flat-card.tsx`, replace past-tense "Saiu: [Hóspede]" with "Saída Prevista: [Hóspede]" for future checkouts. Display "Entra Amanhã". Prioritize `flat.isOccupied` over `request.isVacant` for future dates. Clarify carry-over badge ("Pendente do turno de hoje"). | M2 | ORIGINAL_REQUEST §R2 |
-| 6 | F6: Frontend Production Build | Run `npm run build` in `artifacts/limpeza` to produce updated assets in `artifacts/limpeza/dist/public` and include in commit per `AGENTS.md`. | M2 | AGENTS.md, ORIGINAL_REQUEST §AC |
-| 7 | F7: Flat 313 Sanitization | Purge or sanitize phantom dirty cleaning ID 1358 (Leonardo Primo, 25/09) so it no longer drags as carry-over into Felipe's active stay (checkout 02/10). | M3 | ORIGINAL_REQUEST §R3 |
-| 8 | F8: Flat 511 Maid Schedule & Financial Realignment | Reassign cleaning ID 1338 to Cris (ID 2), update notes, remove unearned duplicate credit `stmt_3_1338_20260928` from Grazi in `maidStatementEntries`, restore Cris payment linkage (apply same fix to 907 ID 1339 and 1004 ID 1340). | M3 | ORIGINAL_REQUEST §R3 |
-| 9 | F9: Flat 512 & 712 Code Mismatch Resolution | Fix reservation `RES-712-0291` to `flatNumber: "712"` and `flatId: 14`. Reallocate cleaning ID 1351 from Flat 512 to Flat 712. Ensure Flat 512 remains clean. | M3 | ORIGINAL_REQUEST §R4 |
-| 10 | F10: Universal 19-Flat Database Sanitization | Audit all 19 flats, purge phantom dirty cleanings (ID 1362 on 408, ID 1364 on 113, ID 1361 on 712), verify zero orphaned checkouts and zero off-duty maid assignments across the entire database. | M3 | ORIGINAL_REQUEST §R4 |
-| 11 | F11: Automated E2E Test Suite & Adversarial Verification | Comprehensive test harness executing Node tests covering all requirements R1, R2, R3, R4 and forensic audit checks. | M4 | ORIGINAL_REQUEST §AC |
+| 1 | DB FAQ Collection & Seed | `db.faqItems` persistence in `data/database.json` initialized with official FAQs and pending items | M1 | ORIGINAL_REQUEST §R5, AC1 |
+| 2 | Phone Normalization & Rule Engine | `isFaqApplicableToClient` supporting scopes `all`, `exclude`, `include_only` with DDI/DDD normalization | M1 | ORIGINAL_REQUEST §R4, AC3 |
+| 3 | REST API Endpoints | `GET`, `POST`, `PUT`, `DELETE` on `/api/whatsapp/faq` and `POST /api/whatsapp/faq/:id/approve` | M1 | ORIGINAL_REQUEST §R1, AC1 |
+| 4 | Mirrored Code Parity | Ensure exact SHA-256 byte-for-byte identity between `artifacts/api-server/` and `scripts/` | M1 | Explorer Survey 3, AC4 |
+| 5 | Unmapped Inbound Detection | Detect unmapped guest questions in `processAiInboundMessage` and persist with status `"pendente"` | M2 | ORIGINAL_REQUEST §R2, AC2 |
+| 6 | Operator Response Capture | Capture `fromMe: true` operator responses linking `suggestedAnswer` and changing status to `"aguardando_aprovacao"` | M2 | ORIGINAL_REQUEST §R3, AC2 |
+| 7 | Sofia Motor Dynamic Integration | Dynamic injection of active FAQs into Gemini prompt and heuristic keyword fallback | M2 | ORIGINAL_REQUEST §R5, AC2 |
+| 8 | Frontend Route Alias | Declare `<AdminRoute path="/whatsapp-automation" ... />` in `artifacts/limpeza/src/App.tsx` | M3 | Explorer Survey 2, ORIGINAL_REQUEST §R1 |
+| 9 | UI Hook `use-faq` | React hook for FAQ state management, cache, API calls, and toast alerts | M3 | Explorer Survey 2 |
+| 10 | Knowledge Base & FAQ UI Tab | Tab in `/whatsapp-automation` with 9 category cards, table view, 4 status filters, modal, and 1-click approve | M3 | ORIGINAL_REQUEST §R1 |
+| 11 | Frontend Build & Dist Sync | Build frontend via `npm run build` in `artifacts/limpeza` generating `dist/public` | M3 | AGENTS.md, AC4 |
+| 12 | E2E Testing Suite | Comprehensive test suite in `tests/whatsapp-ai-agent.test.mjs` verifying R1-R5 | M4 | ORIGINAL_REQUEST AC4 |
+| 13 | Adversarial Coverage & Hardening | Stress testing corner cases, phone formats, and exception rules | M4 | Project Pattern Phase 2 |
+| 14 | Forensic Integrity & Git Push | Clean forensic audit, git commit and mandatory `git push` | M4 | AGENTS.md, ORIGINAL_REQUEST AC4 |
 
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| M1 | Backend Reconciliation Engine & Auto-Reversion Elimination | F1, F2, F3 (`artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`) | none | DONE |
-| M2 | Frontend Date Switchover & Dashboard UI Overhaul | F4, F5, F6 (`artifacts/limpeza/src/...`, `artifacts/limpeza/dist/...`) | none | DONE |
-| M3 | Database Integrity Sanitization across all 19 Flats | F7, F8, F9, F10 (`data/database.json`) | M1 | DONE |
-| M4 | Final E2E Test Suite & Forensic Audit Verification | F11 (Full regression suite, test pass, forensic audit, git commit + push) | M1, M2, M3 | DONE |
+| M1 | Backend Core & Database Layer | Features 1, 2, 3, 4: Schema, seed, CRUD API, phone normalization & rule engine, code parity | none | DONE |
+| M2 | Auto-Learning & Sofia Motor Integration | Features 5, 6, 7: Inbound unmapped question detection, operator response capture, Sofia Gemini/heuristic integration | M1 | IN_PROGRESS |
+| M3 | Frontend UI & Build Delivery | Features 8, 9, 10, 11: Route alias, use-faq hook, FAQ tab, modal with rules, 1-click approval, build | M1, M2 | PLANNED |
+| M4 | Final Milestone: E2E Tests, Hardening & Git Push | Features 12, 13, 14: 100% E2E test pass, adversarial hardening, clean forensic audit, git commit and push | M1, M2, M3 | PLANNED |
 
 ## Interface Contracts
-### Backend Engine ↔ Housekeeping Dashboard
-- `GET /api/cleaning/checkouts?date=YYYY-MM-DD`: Returns list of checkouts and cleanings. For dates > today, flats occupied today must return `flat.isOccupied: true` and `request.isVacant: false` unless explicitly vacated.
-- `PATCH /api/cleaning/assignments/:requestId/status`: Accepts `{ status, completedAt, markedByAdmin }`. When `status === "clean"`, permanently persists `markedByAdmin: true`, sets `completedAt`, and clears automated generation notes so subsequent `reconcileUniversalIntegrity()` runs never revert it to dirty.
-- `GET /api/flats`: Calls `reconcileUniversalIntegrity()`. Must return all 19 flats with accurate statuses without modifying cleanly resolved records.
+### Backend ↔ Frontend API Contract
+- `GET /api/whatsapp/faq`: Returns `{ success: true, count: number, items: FaqItem[] }`
+- `POST /api/whatsapp/faq`: Body `{ question, answer, category, keywords?, variations?, scope?, clientPhones?, status? }` -> Returns `{ success: true, item: FaqItem }`
+- `PUT /api/whatsapp/faq/:id`: Body `{ question?, answer?, category?, keywords?, variations?, scope?, clientPhones?, status? }` -> Returns `{ success: true, item: FaqItem }`
+- `DELETE /api/whatsapp/faq/:id`: Returns `{ success: true, id: string }`
+- `POST /api/whatsapp/faq/:id/approve`: Body `{ answer?, category? }` -> Returns `{ success: true, item: FaqItem }` (sets `status: "ativo"`, `approvedAt: ISOString`)
 
-### Database Records ↔ Reconciliation Engine
-- `db.cleaningRequests`: Records with `markedByAdmin === true`, `source === "admin_manual"`, or non-null `completedAt` are immune to auto-reversion.
-- `db.reservations`: `flatId` and `flatNumber` must match the flat identified by the reservation code prefix. `RES-712-0291` maps strictly to Flat 712 (`flatId: 14`).
-- `db.maidStatementEntries`: Only maids on scheduled duty may have daily cleaning credits. Off-duty duplicate credits must be purged.
+### FaqItem Schema
+```typescript
+interface FaqItem {
+  id: string;
+  question: string;
+  answer: string;
+  category: "reservas" | "checkin_acesso" | "wifi_tecnologia" | "cafe_manha" | "garagem" | "estrutura_flat" | "regras_visitas_pets" | "lazer_condominio" | "checkout";
+  keywords: string[];
+  variations: string[];
+  status: "ativo" | "inativo" | "pendente" | "aguardando_aprovacao";
+  scope: "all" | "exclude" | "include_only";
+  clientPhones: string[];
+  suggestedAnswer?: string;
+  sourceClientPhone?: string;
+  sourceClientName?: string;
+  createdAt: string;
+  updatedAt: string;
+  approvedAt?: string;
+}
+```
+
+### Auto-Learning Inbound/Outbound Contract
+- Inbound: `processAiInboundMessage({ db, incomingInfo, cleanTarget, ... })` -> if unmapped question & handover, push to `db.faqItems` with `status: "pendente"`.
+- Outbound: `onOperatorMessage({ db, phone, text })` -> if open pending item exists for phone in last 24h, set `suggestedAnswer = text`, `status = "aguardando_aprovacao"`.
 
 ## Code Layout
-- `artifacts/api-server/demo-server.mjs`: Primary backend server and integrity engine (owned by M1 Worker)
-- `scripts/demo-server.mjs`: Synchronized server mirror (owned by M1 Worker)
-- `artifacts/limpeza/src/pages/dashboard.tsx`: Housekeeping dashboard page (owned by M2 Worker)
-- `artifacts/limpeza/src/components/flat-card.tsx`: Cleaning card component (owned by M2 Worker)
-- `artifacts/limpeza/dist/`: Compiled production frontend assets (owned by M2 Worker)
-- `data/database.json`: Persistent application data store (owned by M3 Worker)
-- `tests/`: Automated tests and verification scripts (owned by Test Writer / M4)
+- `artifacts/api-server/zapi-service.mjs` & `scripts/zapi-service.mjs`: Z-API webhook, live chat, and FAQ REST API endpoints.
+- `artifacts/api-server/whatsapp-ai-service.mjs` & `scripts/whatsapp-ai-service.mjs`: AI motor, prompt injection, heuristic search, unmapped question auto-detection.
+- `artifacts/api-server/demo-server.mjs` & `scripts/demo-server.mjs`: Database initialization, seed FAQs in `db.faqItems`.
+- `data/database.json`: Persistent database state.
+- `artifacts/limpeza/src/App.tsx`: Route declaration for `/whatsapp-automation`.
+- `artifacts/limpeza/src/hooks/use-faq.ts`: FAQ state management hook.
+- `artifacts/limpeza/src/components/faq-knowledge-base.tsx` or `artifacts/limpeza/src/pages/whatsapp-automation.tsx`: UI tab, category cards, table, modal, 1-click approve.
+- `artifacts/limpeza/dist/`: Compiled production assets.
+- `tests/whatsapp-ai-agent.test.mjs`: Test suite covering R1-R5.

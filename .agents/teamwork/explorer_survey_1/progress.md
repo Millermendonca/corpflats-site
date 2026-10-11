@@ -1,14 +1,17 @@
-# Progress — Backend Engine Explorer
+# Progress — Explorer Survey 1 (FAQ & Knowledge Base Auto-Learning)
 
-Last visited: 2026-09-29T05:16:30Z
+Last visited: 2026-10-11T01:33:30Z
 
-- [x] Initialized BRIEFING.md, DISPATCH.md, and progress.md
-- [x] Investigate `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`
-- [x] Trace `reconcileUniversalIntegrity` and all integrity/reconciliation functions
-- [x] Uncover Clean-to-Dirty auto-reversion loop and Flat 512 trigger
-- [x] Determine how to distinguish and protect manual admin markings / canonical cleanings
-- [x] Check synchronization between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`
-- [x] Identify test files, runners, and execution methods
-- [x] Synthesize findings into `survey_backend.md`
-- [x] Write 5-component `handoff.md`
-- [x] Send completion message to orchestrator
+- [x] Leitura de ORIGINAL_REQUEST.md
+- [x] Atualização de DISPATCH.md e BRIEFING.md
+- [x] Item 1: Backend structure: routes, Express server, API endpoints for WhatsApp / FAQs
+- [x] Item 2: Z-API webhook implementation: inbound messages, `processAiInboundMessage` payload & flow
+- [x] Item 3: Human operator message handling: `fromMe: true` and live chat message capture
+- [x] Item 4: AI Motor (`whatsapp-ai-service.mjs`): context loading, Gemini prompt, heuristics & FAQs
+- [x] Item 5: Database layer (`data/database.json`): loading, saving, atomic persistence, schema, FAQ items
+- [x] Item 6: Phone normalization logic across the system
+- [x] Redação de `analysis.md`
+- [x] Redação de `handoff.md`
+- [x] Validação de testes existentes (`tests/whatsapp-ai-agent.test.mjs` passou com sucesso)
+- [x] Validação de build do frontend (`artifacts/limpeza` compilou com sucesso gerando `dist/`)
+- [x] Envio de relatório ao orquestrador

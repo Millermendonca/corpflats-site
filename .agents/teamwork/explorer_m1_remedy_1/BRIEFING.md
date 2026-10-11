@@ -1,46 +1,43 @@
-# BRIEFING — 2026-09-30T19:23:00-03:00
+# BRIEFING — 2026-10-11T01:28:30Z
 
 ## Mission
-Investigate timezone date boundary issues in artifacts/api-server/demo-server.mjs flagged by Challenger 1, examine getExecutionDateStr, and recommend exact fix strategy and diff for Worker M1 Fix.
+Investigar e desenhar a remediação técnica definitiva para a race condition / concorrência em POST /api/bot-actions/pre-reserve em artifacts/api-server/demo-server.mjs.
 
 ## 🔒 My Identity
 - Archetype: explorer
-- Roles: explorer, synthesis
+- Roles: investigation, synthesis
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_m1_remedy_1
-- Original parent: 2a43f791-5cc7-4933-bdd2-688af9234cb1
-- Milestone: Milestone 1 Remedy Analysis
+- Original parent: 3364a657-c855-42a7-a46e-a5463bc245b7
+- Milestone: M1 Remedy
 
 ## 🔒 Key Constraints
-- Read-only investigation — do NOT implement / modify source files
-- Write report to handoff.md in working directory
+- Read-only investigation — do NOT implement directly in production files
+- Follow Handoff Protocol (5 components)
+- Propose exact, verifiable code solution for the Worker agent
 
 ## Current Parent
-- Conversation ID: 2a43f791-5cc7-4933-bdd2-688af9234cb1
-- Updated: 2026-09-30T19:19:00-03:00
+- Conversation ID: 3364a657-c855-42a7-a46e-a5463bc245b7
+- Updated: 2026-10-11T01:28:30Z
 
 ## Investigation State
 - **Explored paths**:
-  - `artifacts/api-server/demo-server.mjs` (lines 59-95, 5256-5350, 7770-8300, 9970-10020)
-  - `scripts/demo-server.mjs` (mirror parity verified)
-  - `tests/test-midnight-logic-audit.mjs` (reproduced line 8159 failure)
-  - `tests/test-calendar-timezone-audit.mjs` (reproduced line 9981-9982 failure)
-  - `tests/adversarial-milestone1.test.mjs` (suite 5 confirms bug proof)
-  - `tests/challenger-m1-cleanflat-integrations.test.mjs` (9/9 pass)
-  - `tests/service-orders-api-live.test.mjs` (16/16 pass)
-  - `tests/service-orders.test.mjs` (12/12 pass)
+  - `tests/challenger-m1-adversarial.test.mjs` (reprodução empírica das 5 falhas)
+  - `artifacts/api-server/demo-server.mjs` (linhas 20120–20600)
+  - `scripts/demo-server.mjs` (verificação de paridade de hash SHA-256)
+  - `tests/tariff-engine.test.mjs` e `tests/bot-actions-api.test.mjs` (baseline 13/13 passando)
 - **Key findings**:
-  - Confirmed: Line 8159 `f.finishedAt.substring(0, 10) === todayStr` compares UTC date to Brazil date `todayStr`. Between 21:00 and 23:59:59 BRT, UTC date is already tomorrow (`YYYY-MM-(DD+1)`), causing late-night finished flats to bypass the daily limit and falsely consume the next day's quota.
-  - Confirmed: Lines 9981-9982 `oflat.startedAt.substring(0, 10)` and `oflat.estimatedFinishAt.substring(0, 10)` in PMS calendar blocks extract UTC dates, shifting service blocks started between 21:00 and 23:59:59 BRT to tomorrow, leaving the flat unblocked on today's calendar.
-  - Investigated `getExecutionDateStr(isoString)` at line 71: it uses `BRAZIL_DATE_FORMATTER` (`Intl.DateTimeFormat` with `en-CA` and `timeZone: "America/Sao_Paulo"`). When given an ISO timestamp with time, it properly converts UTC to Brazil local `YYYY-MM-DD`.
-  - Discovered edge-case in `getExecutionDateStr`: if passed a date-only string like `"2026-09-30"`, JS parses it as UTC midnight, rolling back to `"2026-09-29"` in Brazil. Hardening `getExecutionDateStr` with regex guard `/^\d{4}-\d{2}-\d{2}$/` makes it immune to date-only rollbacks across all 15 server call sites.
-- **Unexplored areas**: None for Milestone 1 Backend Remedy scope.
+  - TOCTOU em `pre-reserve` decorre de ceder o Event Loop em `await QRCode.toDataURL(pixPayload)` antes da inserção em `db.reservations`.
+  - A estratégia superior é inserir e persistir a pré-reserva síncronamente antes do `await QRCode`, com rollback em bloco `catch` se a geração do QR falhar.
+  - Corrigidas brechas correlatas: filtro de pré-reserva paga vencida em `availability` e `pre-reserve`, respeito a `preReservationHoldMinutes`, e bloqueio de commit de pré-reservas expiradas em `commit-reservation`.
+- **Unexplored areas**: Nenhuma. Diagnóstico 100% completo e validado.
 
 ## Key Decisions Made
-- Confirmed Challenger 1's findings are 100% accurate and empirically reproducible.
-- Formulated exact diffs for Worker M1 to apply to both `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`.
+- Adotada Estratégia A (inserção atômica no banco síncrona antes do `await QRCode` com rollback) por ser zero overhead e eliminar 100% das colisões.
+- Gerado patch aplicável `remedy.patch` e relatório de handoff completo com código exato para o Worker.
 
 ## Artifact Index
-- DISPATCH.md — record of incoming dispatch
-- BRIEFING.md — persistent working memory
-- progress.md — liveness heartbeat
-- handoff.md — comprehensive remedy analysis report with exact patch diffs
+- `DISPATCH.md` — Incoming mission dispatch
+- `BRIEFING.md` — Persistent context & state
+- `progress.md` — Liveness heartbeat
+- `remedy.patch` — Unified diff patch machine-applicable
+- `handoff.md` — Relatório de Handoff Técnico (5 componentes)

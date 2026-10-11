@@ -1,0 +1,167 @@
+--- artifacts/api-server/demo-server.mjs
++++ artifacts/api-server/demo-server.mjs
+@@ -20162,3 +20162,3 @@
+-    const guests = Number(req.query.guests || req.query.guestsCount || 1);
++    const guests = Math.max(1, Number(req.query.guests || req.query.guestsCount || 1));
+ 
+@@ -20199,3 +20199,3 @@
+       if (r.status === "cancelada" || r.status === "expirada") return;
+-      if (r.status === "pre_reserva" && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs) return;
++      if (r.status === "pre_reserva" && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") return;
+ 
+@@ -20268,2 +20268,9 @@
+     }
++
++    const nightsDiff = Math.round((end.getTime() - start.getTime()) / 86400000);
++    if (nightsDiff > 90) {
++      return res.status(400).json({
++        error: "MAX_STAY_EXCEEDED",
++        message: "O período máximo para cotação automatizada é de 90 noites."
++      });
++    }
+ 
+@@ -20412,3 +20419,3 @@
+     const channel = req.body.channel || "whatsapp";
+-    const guests = Number(req.body.guests || req.body.guestsCount || 1);
++    const guests = Math.max(1, Number(req.body.guests || req.body.guestsCount || 1));
+ 
+@@ -20433,3 +20440,3 @@
+       if (r.status === "cancelada" || r.status === "expirada") return false;
+-      if (r.status === "pre_reserva" && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs) return false;
++      if (r.status === "pre_reserva" && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") return false;
+       if (String(r.flatId) !== String(flat.id) && String(r.flatNumber) !== String(flat.number)) return false;
+@@ -20443,2 +20450,14 @@
+     }
++
++    const hasRoomBlock = (db.roomBlocks || []).some(b => {
++      if (String(b.flatId) !== String(flat.id) && String(b.flatNumber) !== String(flat.number)) return false;
++      return b.startDate < outDate && b.endDate > inDate;
++    });
++
++    if (hasRoomBlock) {
++      return res.status(409).json({
++        error: "FLAT_UNAVAILABLE",
++        message: `O Flat ${flat.number} possui bloqueio de manutenção para o período selecionado.`
++      });
++    }
+ 
+@@ -20445,3 +20464,5 @@
+     const nextId = db.reservations && db.reservations.length > 0
+       ? Math.max(...db.reservations.map(r => r.id || 0)) + 1
+       : 1;
++    const botSettings = getBotActionsSettings();
++    const holdMinutes = Number(botSettings.preReservationHoldMinutes) || 30;
+     const code = `CF-${Math.floor(100000 + Math.random() * 900000)}`;
+-    const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
++    const expiresAt = new Date(Date.now() + holdMinutes * 60 * 1000).toISOString();
+ 
+@@ -20459,2 +20480,26 @@
+-    const qrCodeBase64 = await QRCode.toDataURL(pixPayload);
+-
+     const newReservation = {
++      id: nextId,
++      code,
++      flatId: flat.id,
++      flatNumber: String(flat.number),
++      guestName: String(guestName).trim(),
++      guestPhone: cleanWhatsAppPhone(guestPhone || ""),
++      phone: cleanWhatsAppPhone(guestPhone || ""),
++      guestsCount: guests,
++      checkinDate: inDate,
++      checkoutDate: outDate,
++      channel,
++      status: "pre_reserva",
++      paymentStatus: "pendente",
++      totalAmount: total,
++      paidAmount: 0,
++      expiresAt,
++      pixCopiaECola: pixPayload,
++      pixTxId: cleanTxId,
++      createdBy: {
++        userName: "Bot Actions API",
++        role: "bot",
++        source: "bot-actions",
++        createdAt: new Date().toISOString()
++      },
++      auditLogs: [
++        {
++          id: `audit_${Date.now()}`,
++          timestamp: new Date().toISOString(),
++          action: "pre_reserva_bot",
++          actor: { name: "Bot Actions API", role: "system" },
++          description: `Pré-reserva criada via API com hold de ${holdMinutes} minutos (expira em ${expiresAt})`
++        }
++      ],
++      createdAt: new Date().toISOString(),
++      updatedAt: new Date().toISOString()
++    };
++
++    if (!Array.isArray(db.reservations)) db.reservations = [];
++    db.reservations.unshift(newReservation);
++    saveDatabase("bot_pre_reserve");
++
++    let qrCodeBase64 = "";
++    try {
++      qrCodeBase64 = await QRCode.toDataURL(pixPayload);
++    } catch (qrErr) {
++      console.error("[pre-reserve] Falha ao gerar QRCode PIX:", qrErr);
++      const rollbackIdx = db.reservations.findIndex(r => r.id === newReservation.id);
++      if (rollbackIdx !== -1) {
++        db.reservations.splice(rollbackIdx, 1);
++        saveDatabase("bot_pre_reserve_rollback");
++      }
++      throw qrErr;
++    }
++
+     res.json({
+@@ -20503,16 +20548,2 @@
+     res.json({
+       success: true,
+       reservationId: newReservation.id,
+       code: newReservation.code,
+       flatId: newReservation.flatId,
+       flatNumber: newReservation.flatNumber,
+       checkIn: newReservation.checkinDate,
+       checkOut: newReservation.checkoutDate,
+       guestName: newReservation.guestName,
+       total: newReservation.totalAmount,
+       status: "pre_reserva",
+       expiresAt: newReservation.expiresAt,
+       pixCopiaECola: pixPayload,
+       qrCodeBase64,
+-      holdMinutes: 30
++      holdMinutes
+     });
+@@ -20546,2 +20577,25 @@
+     if (reservation.status === "cancelada") {
+       return res.status(400).json({
+         error: "RESERVATION_CANCELLED",
+         message: "Esta reserva está cancelada e não pode ser efetivada."
+       });
+     }
++
++    const nowMs = Date.now();
++    const isExpired = reservation.status === "expirada" ||
++      (reservation.status === "pre_reserva" && reservation.expiresAt && new Date(reservation.expiresAt).getTime() < nowMs && reservation.paymentStatus !== "pago_total");
++
++    if (isExpired) {
++      return res.status(400).json({
++        error: "RESERVATION_EXPIRED",
++        message: "Esta pré-reserva expirou e não pode ser efetivada. Realize uma nova cotação."
++      });
++    }
++
++    const hasConflict = (db.reservations || []).some(r => {
++      if (r.id === reservation.id) return false;
++      if (r.status === "cancelada" || r.status === "expirada") return false;
++      if (r.status === "pre_reserva" && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") return false;
++      if (String(r.flatId) !== String(reservation.flatId) && String(r.flatNumber) !== String(reservation.flatNumber)) return false;
++      return r.checkinDate < reservation.checkoutDate && r.checkoutDate > reservation.checkinDate;
++    });
++
++    if (hasConflict) {
++      return res.status(409).json({
++        error: "FLAT_UNAVAILABLE",
++        message: "A unidade selecionada já foi ocupada por outra reserva durante o período."
++      });
++    }

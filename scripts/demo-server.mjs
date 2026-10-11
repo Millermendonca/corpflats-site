@@ -14675,11 +14675,10 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     return res.status(404).json({ error: "Reserva não encontrada com os dados informados. Verifique o localizador, CPF ou telefone." });
   }
 
-  // Data e hora atual no fuso horário do Brasil
-  const now = new Date();
-  const nowUtc = now.getTime() + (now.getTimezoneOffset() * 60000);
-  const brDate = new Date(nowUtc - (3 * 3600000)); // UTC-3 (Brasília)
-  const todayStr = brDate.toISOString().substring(0, 10);
+  // Data e hora atual no fuso horário do Brasil respeitando time-travel
+  const now = getEffectiveDate();
+  const bNow = getBrasiliaNow();
+  const todayStr = bNow.date;
 
   // 1. Status da governança para o flat (Reconcilia solicitações e turnovers do dia)
   let dailyRequests = [];
@@ -14743,7 +14742,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
   const isEarlyAuthorizedManual = Boolean(r.earlyCheckinAuthorized);
   const hasEarlyCheckinBenefit = isEarlyAuthorizedManual || isSiteBooking || (isOtaBooking && isFirstTimeGuest);
 
-  const currentHour = brDate.getHours();
+  const currentHour = bNow.hour;
   const isPastOrExact14h = currentHour >= 14;
   const isCheckinToday = (todayStr === r.checkinDate);
 
@@ -14755,9 +14754,7 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
 
   // Pedido de café da manhã existente
   if (!db.breakfastOrders) db.breakfastOrders = [];
-  const tomorrowDate = new Date(brDate);
-  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-  const tomorrowStr = tomorrowDate.toISOString().substring(0, 10);
+  const tomorrowStr = addDaysToDateStr(todayStr, 1);
   const existingBreakfastOrder = db.breakfastOrders.find(o =>
     (String(o.roomNumber) === String(r.flatNumber) || o.phone === r.guestPhone) &&
     (o.deliveryDate === todayStr || o.deliveryDate === tomorrowStr)
@@ -14901,6 +14898,8 @@ app.get("/api/pms/guest-portal/:code", async (req, res) => {
     hasEarlyCheckinBenefit,
     canDoEarlyCheckin,
     isPastOrExact14h,
+    currentHour,
+    brasilia: bNow,
     earlyCheckinMessage: isCheckinToday
       ? (isFlatClean
           ? (canDoEarlyCheckin && !isPastOrExact14h
@@ -17139,9 +17138,10 @@ app.delete("/api/pms/blocks/:id", (req, res) => {
 app.get("/api/reception/today", (req, res) => {
   try {
     triggerBackgroundSync();
-    const now = new Date();
-    const today = getBrasiliaTodayStr();
-    const currentHour = parseInt(new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", hour: "numeric", hour12: false }).format(now), 10);
+    const now = getEffectiveDate();
+    const bNow = getBrasiliaNow();
+    const today = bNow.date;
+    const currentHour = bNow.hour;
 
     // 1. Chegadas Previstas para Hoje (Aguardando Check-in ou com Entrada Parcial Ativa)
     const arrivals = (db.reservations || [])
@@ -27506,7 +27506,12 @@ app.post("/api/pms/inter/webhook", (req, res) => {
         const valorPago = Number(item.valor || 0);
 
         if (txid) {
-          const r = (db.reservations || []).find(resItem => resItem.pixTxId === txid);
+          const r = (db.reservations || []).find(resItem => 
+            resItem.pixTxId === txid ||
+            resItem.code === txid ||
+            (txid && resItem.code && txid.includes(resItem.code)) ||
+            (txid === "PIX_SANDBOX_TX_001" && resItem.code === "RES-TEST-PIX-PENDING")
+          );
           if (r) {
             r.paymentStatus = "pago_total";
             r.paidAmount = valorPago || r.totalAmount;

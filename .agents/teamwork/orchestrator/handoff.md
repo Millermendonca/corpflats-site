@@ -1,129 +1,97 @@
-# Final Handoff Report: Guest-Flow-Manager Governance & Integrity Overhaul
+# Orchestrator Soft Handoff — Generation 1 to Generation 2
 
-**Agent**: Project Orchestrator  
-**Role**: Project Orchestrator, user_liaison, human_reporter  
-**Date**: 2026-09-29T06:03:00Z  
-**Parent Sentinel Conversation ID**: `4f48472b-930e-4e16-b352-6f3016400015`  
-**Git Commit**: `bf108ba` pushed to `origin/main`  
-
----
-
-## 1. Observation
-
-A full governance, integrity, and operational audit was executed across the Guest-Flow-Manager system to address critical issues reported in Flats 904, 313, 511, 512, and across all 19 active apartments:
-
-1. **R1: Clean-to-Dirty Auto-Reversion Loop (Flat 512 & Universal Engine)**:
-   - In `reconcileUniversalIntegrity` (`artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`), cleanings within the past 7 days (`requestDate >= recentWindow`) marked as `clean` without `assignedUserId` or `completedAt` were forcibly reverted to `dirty` if `adminNote.includes("Limpeza de check-out gerada automaticamente")`.
-   - When administrators marked flats as clean via dashboard or PATCH routes, `markedByAdmin: true` was not persisted and automated notes were retained, causing flats (e.g., Flat 512) to cyclically re-open and drag as carry-over indefinitely.
-   - Note copy-pollution in `reconcileCleaningRequests()` merged automated checkout trigger phrases into clean records.
-
-2. **R2: 18:00 Date Switchover (Flat 904 & Dashboard)**:
-   - In `dashboard.tsx`, `getDefaultDate()` silently advanced to tomorrow (`D+1`) after 18:00 without visual indication or forecast mode labels.
-   - In Flat 904, Jorge arrived 28/09 with checkout 29/09. At 18:00 on 28/09, the dashboard loaded 29/09, displaying "Saiu: Jorge" (past tense), status "Sujo", and "Desocupado", creating false alarms as if Jorge had left early or a cleaning was overdue.
-   - `flat-card.tsx` prioritized `request.isVacant` over `flat.isOccupied`, erroneously forcing vacant indicators on occupied rooms.
-
-3. **R3: Ghost Cleanings & Maid Assignments (Flats 313 & 511)**:
-   - Flat 313: Leonardo Primo departed 25/09; Grazi cleaned the flat on 26/09 (ID 1336). When Leonardo's reservation was synchronized, `reconcileUniversalIntegrity` generated a duplicate dirty cleaning ID 1358 on 25/09, which dragged continuously as carry-over into Felipe's active stay (28/09 - 02/10).
-   - Flat 511: Script `apply_maid_cleanings_dia26.mjs` attributed cleaning ID 1338 to Grazi on Saturday 26/09 (when Grazi was off-duty and Cris was the sole working maid), creating duplicate statement credits of R$ 23.25 for Grazi. Same occurred on Flats 907 (ID 1339) and 1004 (ID 1340).
-
-4. **R4: Universal Integrity & Data Sync across 19 Flats**:
-   - Reservation `RES-712-0291` was recorded with `flatNumber: "512"` and `flatId: 12`, generating errant cleaning request ID 1351 on Flat 512.
-   - Phantom dirty cleanings existed in `data/database.json`: ID 1362 (Flat 408), ID 1364 (Flat 113), and ID 1361 (Flat 712).
+**Date**: 2026-10-11T02:39:00Z  
+**From**: Project Orchestrator (Gen 1, Conversation ID: `27c61f6a-5652-421c-bbda-1b5d6be7db98`)  
+**To**: Successor Project Orchestrator (Gen 2)  
+**Parent (Sentinel)**: `1aa464ed-a997-4a70-aa13-b562642f836a`  
+**Workspace**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator`  
+**Project Root**: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager`  
 
 ---
 
-## 2. Logic Chain
-
-The overhaul was decomposed and executed through specialized subagents adhering strictly to the Project Pattern:
-
-1. **Phase 0 (Survey)**:
-   - 3 parallel Explorers mapped backend reconciliation, frontend UI date transitions, and multi-flat database consistency, establishing root causes with byte-level and line-level precision (`survey_backend.md`, `survey_frontend.md`, `survey_database.md`).
-   - Project specifications `PROJECT.md` and `TEST_INFRA.md` were established with 100% of features assigned to milestones.
-
-2. **Milestone 1 (Backend Reconciliation Engine & Dual-Server Parity)**:
-   - `worker_m1` fortified `reconcileUniversalIntegrity()` with strict immunity guards (`markedByAdmin: true`, `isCanonical: true`, `source: "admin_manual"`, `source: "manual"`, `addedBy: "admin"`, `completedAt`, `assignedUserId`).
-   - Stopped note copy-pollution in `reconcileCleaningRequests()`.
-   - Updated `/api/cleaning/assignments/:requestId/status` to enforce `markedByAdmin: true`, populate `completedAt`, and clear automated generation notes.
-   - Added retroactive checkout creation guard checking for prior clean turnover (`hasCleanBetween`).
-   - Synchronized `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs` to 100% byte-for-byte identity (SHA-256: `b4b54fe1afb0c801c956f802843c8f00669f83ee00ea2bab1cc52a87b2e1ddc4`).
-
-3. **Milestone 2 (Frontend UI Overhaul & 18:00 Transition)**:
-   - `worker_m2` overhauled `dashboard.tsx`: added prominent "Modo Previsão (Próximo Turno)" gradient banner, quick 1-click toggle buttons (`[ 🟢 Hoje ]` and `[ 🔮 Amanhã ]`), dynamic subtitles, and URL query parameter support.
-   - In `flat-card.tsx`: replaced past-tense labels with "Check-out amanhã: {guest}" / "Saída Prevista", "🟢 Entra Amanhã", prioritized `flat.isOccupied` over `request.isVacant`, and clarified carry-over badges ("Pendente do turno de hoje").
-   - Rebuilt frontend assets (`npm run build` in `artifacts/limpeza`): 0 TypeScript errors, production bundles compiled into `dist/public/`.
-
-4. **Milestone 3 (Database Integrity Sanitization across all 19 Flats)**:
-   - `worker_m3` backed up `data/database.json`.
-   - Purged phantom dirty cleaning ID 1358 on Flat 313.
-   - Reassigned cleanings 1338 (511), 1339 (907), 1340 (1004) to Cris (`assignedUserId: 2`, `assignedUsername: "Cris"`). Removed unearned credits from Grazi on 26/09 in `maidStatementEntries` and linked Cris's payments.
-   - Reallocated `RES-712-0291` and cleaning ID 1351 to Flat 712 (`flatId: 14`, `flatNumber: "712"`).
-   - Purged/resolved phantom cleanings 1362, 1364, and 1361. Verified all 19 canonical flats.
-
-5. **Milestone 4 (Final E2E Test Suite, Verification Gate & Remote Push)**:
-   - `test_writer_1` and `test_writer_2` implemented `tests/governance-integrity.test.mjs` with 90 tests across 20 suites covering all 4 tiers, achieving 100% pass (90/90).
-   - Independent verification gate passed unconditionally:
-     - **Forensic Auditor (`auditor_1`)**: **CLEAN** (0 cheats, 0 facades, 0 server divergence, authentic logic).
-     - **Reviewer 1 (`reviewer_1`)**: **APPROVE** (All requirements satisfied, 113/113 tests pass).
-     - **Reviewer 2 (`reviewer_2`)**: **APPROVE** (Full architectural and data integrity approval).
-     - **Challenger 1 (`challenger_1`)**: **CONFIRMED** (Stress tests passed, 112/112 pass).
-     - **Challenger 2 (`challenger_2`)**: **CONFIRMED** (Multi-flat chaos testing passed, 113/113 pass).
-   - `worker_git_push` executed `npm run build` in `artifacts/limpeza` (exit code 0), staged all files, committed (`bf108ba`), and pushed immediately to `origin main` per `AGENTS.md`.
+## 1. Milestone State
+| Milestone | Scope | Dependencies | Status |
+|-----------|-------|-------------|--------|
+| Step 0: Survey | Codebase discovery, requirements mapping, PROJECT.md | none | DONE |
+| M1: Backend Core & DB Layer | Schema, seed, atomic persistence, rule engine, REST endpoints, SHA-256 parity, test exit fix | none | READY_FOR_VERIFICATION |
+| M2: Auto-Learning & Sofia AI | Webhook unmapped question detection (`pendente`), operator response capture (`aguardando_aprovacao`), Sofia Gemini prompt & heuristic search | M1 | PLANNED |
+| M3: Frontend UI & Build | Route alias, `use-faq` hook, FAQ tab in `/whatsapp-automation`, cards/table, modal, 1-click approve, `npm run build` | M1, M2 | PLANNED |
+| M4: Final Milestone | 100% E2E tests, adversarial coverage hardening, forensic audit, git commit and `git push` | M1, M2, M3 | PLANNED |
 
 ---
 
-## 3. Caveats
+## 2. Completed Work (Observation & Logic Chain)
 
-- All changes are committed and pushed to remote `origin main`.
-- The database backup is preserved at `data/backups/database_backup_pre_governance_m3_20260929.json`.
-- `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs` must continue to be updated together in any future development.
+### Step 0 Survey
+- Conducted with 3 parallel Explorers (`explorer_survey_1`, `explorer_survey_2`, `explorer_survey_3`).
+- Created `PROJECT.md` at project root with 14 inventoried features, 4 milestones, architecture, interface contracts, and code layout.
+
+### Milestone 1 Implementation (Backend Core & DB)
+- **Database & Persistence (`demo-server.mjs`)**:
+  - `db.faqItems` initialized in base state and `loadDatabase()`.
+  - Populated with 15 canonical FAQ items (9 official required topics + pending + awaiting approval + exception test items) via idempotent `seedInitialFaqItems(dbInstance)`.
+  - `atomicWriteFileSync` implemented in `saveDatabase()` via temporary file renaming to prevent corrupting the 1.17MB `database.json`.
+  - Protected against legacy PostgreSQL snapshot hydration overwriting local FAQs.
+- **Rules Engine & REST API (`zapi-service.mjs`)**:
+  - `matchClientPhone(phoneA, phoneB)` handles Brazilian phone formats (DDI 55, DDD, 8/9 digit variants) and discriminates DDDs to prevent collisions between DDD 21 and 22.
+  - `isFaqApplicableToClient(faqItem, clientPhone)` evaluates scopes `all`, `exclude`, and `include_only`.
+  - 5 REST endpoints in `initWhatsAppEngine`: `GET /api/whatsapp/faq`, `POST /api/whatsapp/faq`, `PUT /api/whatsapp/faq/:id`, `DELETE /api/whatsapp/faq/:id`, `POST /api/whatsapp/faq/:id/approve`.
+- **Code Parity**:
+  - Resolved existing SHA-256 divergence in `whatsapp-ai-service.mjs`.
+  - 100% byte-for-byte SHA-256 identity confirmed across all mirrored pairs in `artifacts/api-server/` and `scripts/`.
+- **Test Runner Clean Exit (`tests/whatsapp-ai-agent.test.mjs`)**:
+  - Milestone 1 Round 2 Worker updated the `after()` teardown hook with `srv.closeAllConnections?.()` and `setTimeout(() => process.exit(process.exitCode || 0), 100)`.
+  - Running `node --test tests/whatsapp-ai-agent.test.mjs` executes all 20 tests with 100% pass (`# pass 20`, `# fail 0`) and exits cleanly in ~3.1 seconds with code 0. Zero leaked sockets on port 5000.
 
 ---
 
-## 4. Conclusion
-
-All requirements (R1, R2, R3, R4) and all Acceptance Criteria specified in `ORIGINAL_REQUEST.md` are 100% satisfied:
-- Flat 512 remains clean definitively without auto-reversion.
-- Flat 904 displays cleaning orders on correct dates with visual mode banners and quick toggles in the dashboard.
-- Flat 313 carries zero false pending cleanings from 25/09 and displays Felipe's active stay.
-- Flat 511 has maid assignments and statement credits corrected to Cris with zero unearned credits for Grazi on 26/09.
-- Reservation `RES-712-0291` and cleaning ID 1351 belong to Flat 712.
-- 100% of integration and adversarial tests pass (113/113).
-- Frontend production build and git push are complete.
+## 3. Active Subagents
+None. All 16 subagents spawned in Generation 1 have delivered their handoff reports and are retired.
 
 ---
 
-## 5. Verification Method
+## 4. Pending Decisions & Key Constraints
+- **DISPATCH-ONLY Orchestrator**: You MUST NOT write source code or run build/test commands directly. Delegate ALL work to subagents via `invoke_subagent`.
+- **Integrity Forensics**: Forensic Auditor has a binary veto. If audit reports violation, the milestone fails unconditionally.
+- **AGENTS.md Rules**:
+  - Always `git commit` and `git push` to remote repository (`origin main`).
+  - When modifying `artifacts/limpeza/src`, run `npm run build` and include `artifacts/limpeza/dist/` in the commit.
+- **Pass ORIGINAL_REQUEST.md path verbatim** in all subagent prompts:
+  `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md`
+- **Subagent TypeName**: Use `teamwork_preview_explorer`, `teamwork_preview_worker`, `teamwork_preview_reviewer`, `teamwork_preview_challenger`, `teamwork_preview_auditor`, `teamwork_preview_spec_miner`, `teamwork_preview_test_writer`.
 
-To verify the overhaul independently:
+---
 
-1. **E2E Integration Test Suite**:
-   ```powershell
-   node --test tests/governance-integrity.test.mjs
-   ```
-   *Result*: 90/90 tests passing (100% pass rate).
+## 5. Remaining Work (Concrete Next Steps for Successor)
 
-2. **Adversarial Stress Test Suite**:
-   ```powershell
-   node --test tests/adversarial-stress.test.mjs
-   ```
-   *Result*: 23/23 tests passing (100% pass rate).
+1. **Milestone 1 Verification & Gate Pass**:
+   - Dispatch Milestone 1 Verification (2 Reviewers, 2 Challengers, 1 Forensic Auditor) to verify the clean test suite and approve Milestone 1.
+   - Record verdicts in `GATE_STATUS.md`. With 20/20 passing tests and 100% SHA-256 parity, evaluate gate pass and set Milestone 1 Status to `DONE` in `PROJECT.md` and `progress.md`.
+2. **Milestone 2: Auto-Learning & Sofia AI Integration**:
+   - Dispatch Worker (or Explorers -> Worker) to implement:
+     - Inbound unmapped question auto-detection in `processAiInboundMessage` (`whatsapp-ai-service.mjs` / `zapi-service.mjs`) adding items with status `"pendente"`.
+     - Human operator response capture (`fromMe: true`) in webhook and Live Chat linking `suggestedAnswer` with status `"aguardando_aprovacao"`.
+     - Dynamic FAQ injection into Gemini prompt and heuristic keyword search in `whatsapp-ai-service.mjs`.
+     - Ensure byte-for-byte SHA-256 parity between `artifacts/` and `scripts/`.
+   - Gate verification for Milestone 2.
+3. **Milestone 3: Frontend UI & Build**:
+   - Add route alias `/whatsapp-automation` in `artifacts/limpeza/src/App.tsx`.
+   - Implement `use-faq.ts` hook and FAQ tab in `/whatsapp-automation` (`whatsapp-automation.tsx` / `faq-knowledge-base.tsx`): category cards/table, filters, create/edit modal with exception configuration (`all`, `exclude`, `include_only`), 1-click approval button.
+   - Run `npm run build` in `artifacts/limpeza` to generate `artifacts/limpeza/dist/public`.
+   - Gate verification for Milestone 3.
+4. **Milestone 4: Final Milestone (100% E2E Pass, Hardening, Audit & Git Delivery)**:
+   - Run full E2E test suite.
+   - Adversarial coverage hardening.
+   - Clean Forensic Audit.
+   - Execute `git commit` and `git push` to `origin main` per `AGENTS.md`.
+   - Send victory/completion report to Sentinel (`1aa464ed-a997-4a70-aa13-b562642f836a`).
 
-3. **Dual Server Identity Check**:
-   ```powershell
-   git diff --no-index artifacts/api-server/demo-server.mjs scripts/demo-server.mjs
-   ```
-   *Result*: 0 differences.
+---
 
-4. **Frontend Production Build**:
-   ```powershell
-   cd "artifacts/limpeza"
-   npm run build
-   ```
-   *Result*: Exit code 0, bundles updated in `artifacts/limpeza/dist/public/`.
-
-5. **Git Synchronization**:
-   ```powershell
-   git status
-   git log -1
-   ```
-   *Result*: Working tree clean, commit `bf108ba` pushed to `origin main`.
+## 6. Key Artifacts
+- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md`
+- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md`
+- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator\GATE_STATUS.md`
+- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator\BRIEFING.md`
+- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator\progress.md`
+- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m1_r2_worker\handoff.md`

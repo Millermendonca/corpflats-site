@@ -1,48 +1,53 @@
-# BRIEFING — 2026-09-29T02:13:10-03:00
+# BRIEFING — 2026-10-11T01:29:40Z
 
 ## Mission
-Investigate frontend date switchover logic (18:00 switchover, getDefaultDate), pending/overdue rendering, Flat 904 scenario, and build requirements for artifacts/limpeza to propose a robust UI governance architecture.
+Investigar arquitetura frontend em `artifacts/limpeza`, tela `/whatsapp-automation`, tabs, componentes de UI, chamadas de API, pipeline de build e mapear todos os requisitos de R1 (Base de Conhecimento & FAQ) para implementação.
 
 ## 🔒 My Identity
-- Archetype: explorer
-- Roles: Frontend UI Explorer / Investigator & Synthesizer
-- Working directory: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/explorer_survey_2
-- Original parent: 5ad82d68-5382-4b5d-b3af-ea9aa33373f7
-- Milestone: M1 - Survey and Investigation
+- Archetype: Explorer
+- Roles: Frontend investigation, UI component analysis, API integration patterns, synthesis and handoff
+- Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\explorer_survey_2
+- Original parent: 27c61f6a-5652-421c-bbda-1b5d6be7db98
+- Milestone: Survey Phase - Frontend UI, WhatsApp Automation Page & Build (R1)
 
 ## 🔒 Key Constraints
-- Read-only investigation — do NOT implement source code changes.
-- Write survey report to `survey_frontend.md`.
-- Follow handoff protocol (`handoff.md` with 5 components).
-- Update `progress.md` with timestamps.
+- Read-only investigation — do NOT implement or modify application source code
+- Strictly write only within .agents/teamwork/explorer_survey_2/
+- Follow Handoff Protocol (Observation, Logic Chain, Caveats, Conclusion, Verification Method)
+- Communicate with parent via send_message
 
 ## Current Parent
-- Conversation ID: 5ad82d68-5382-4b5d-b3af-ea9aa33373f7
-- Updated: 2026-09-29T02:13:10-03:00
+- Conversation ID: 27c61f6a-5652-421c-bbda-1b5d6be7db98
+- Updated: 2026-10-11T01:29:40Z
 
 ## Investigation State
 - **Explored paths**:
-  - `artifacts/limpeza/src/pages/dashboard.tsx`
-  - `artifacts/limpeza/src/components/flat-card.tsx`
-  - `artifacts/limpeza/src/pages/login.tsx`
-  - `artifacts/api-server/demo-server.mjs` (endpoints `/api/reservations/checkouts`, `/api/dashboard/summary`, `getRequestsForDate`)
-  - `data/database.json` (Flat 904 reservation RES-904-0297, cleaning request 1345)
-  - `artifacts/limpeza/package.json` & `vite.config.ts`
+  - `artifacts/limpeza/package.json`
+  - `artifacts/limpeza/vite.config.ts`
+  - `artifacts/limpeza/src/App.tsx`
+  - `artifacts/limpeza/src/pages/whatsapp-automation.tsx`
+  - `artifacts/limpeza/src/pages/whatsapp-chat.tsx`
+  - `artifacts/limpeza/src/components/layout.tsx`
+  - `artifacts/limpeza/src/components/ui/` (card, table, dialog, badge, switch, etc.)
+  - `artifacts/limpeza/src/hooks/use-quick-messages.ts`
+  - `artifacts/limpeza/src/hooks/use-toast.ts`
+  - `artifacts/limpeza/dist/public/`
 - **Key findings**:
-  - `getDefaultDate()` in `dashboard.tsx:37-43` shifts to tomorrow at 18:00 without visual indicator.
-  - When shifted, the header loses "Hoje" pill and displays no replacement tag ("Amanhã" / "Previsão"). Subtitle still says "hoje".
-  - Flat 904 card displayed "Saiu: Jorge" (past tense), "Desocupado", and "Sujo", causing panic that Jorge left or that this was an overdue cleaning from yesterday.
-  - Backend carry-over displays "Não limpo em 28/09" on the evening of 28/09 when viewing 29/09.
-  - `npm run build` succeeds cleanly in 15.66s, compiling to `dist/public`.
-- **Unexplored areas**: None within the survey scope.
+  - Stack: React + TypeScript + Vite 7 + Tailwind CSS v4 + wouter + shadcn/ui.
+  - Tela `/whatsapp-automation` é implementada em `pages/whatsapp-automation.tsx` (rotas `/whatsapp` e `/automacao-whatsapp` em `App.tsx`). Recomendado registrar alias `/whatsapp-automation`.
+  - Abas atuais: `ai_agent`, `rules`, `quick_messages`, `queue`, `history`.
+  - Nova aba para R1: `faq` ("Base de Conhecimento & FAQ") com 9 categorias oficiais, 4 filtros de status, modal de criação/edição com motor de regras de exceção e aprovação em 1 clique.
+  - Hook recomendado: `use-faq.ts` seguindo o modelo de `use-quick-messages.ts`.
+  - Pipeline de build: `npm run build` testado e validado com sucesso (exit code 0 em 44.76s).
+- **Unexplored areas**: Nenhuma pendência investigativa no frontend.
 
 ## Key Decisions Made
-- Produced exhaustive survey report in `survey_frontend.md`.
-- Produced 5-component hard handoff in `handoff.md`.
+- Finalização da investigação com relatório detalhado em `analysis.md` e handoff formal de 5 seções em `handoff.md`.
+- Notificação do orchestrator via `send_message`.
 
 ## Artifact Index
-- DISPATCH.md — Dispatch log
-- BRIEFING.md — Situational awareness
-- progress.md — Liveness heartbeat
-- survey_frontend.md — Full investigation report
-- handoff.md — 5-component handoff report
+- DISPATCH.md — Mensagem original do orchestrator
+- BRIEFING.md — Memória de trabalho do agente
+- progress.md — Heartbeat e checklist de execução
+- analysis.md — Relatório detalhado de análise técnica do frontend e R1
+- handoff.md — Relatório de handoff estruturado de 5 componentes

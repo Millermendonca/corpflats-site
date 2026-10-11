@@ -1,25 +1,16 @@
-## 2026-10-07T16:34:37Z
+## 2026-10-11T01:13:51Z
+Você é o Challenger 1 para o Milestone M1 do CorpFlats.
+Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m1_1
+O arquivo de requisitos originais autoritativo é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
+O arquivo de escopo é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_4\PROJECT.md
+O relatório do worker é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1\handoff.md
+Você DEVE LER ORIGINAL_REQUEST.md antes de iniciar.
 
-You are teamwork_preview_challenger (Challenger M1_1).
-Your working directory: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/challenger_m1_1
-Parent conversation ID: 0a1ba31b-b6bc-466b-8394-2ba72ae85fb5
-
-MANDATORY: Read the authoritative request at:
-c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/ORIGINAL_REQUEST.md (specifically the latest entry from 2026-10-07T15:33:29Z).
-
-Read:
-- Project Plan: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/orchestrator_2/PROJECT.md
-- Worker M1 handoff: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/worker_m1_backend_2/handoff.md
-
-YOUR MISSION:
-Empirically stress-test and challenge Milestone 1:
-1. Write and run stress/adversarial test scripts testing:
-   - Provider toggling: 'proprio' -> 'gov_fnrh' -> invalid ('xyz') -> 'proprio'.
-   - SERPRO API simulation: simulated HTTP 500, network error, 401 unauthorized.
-   - Timeout condition: simulate SERPRO hanging for > 5000ms. Verify `getCheckinUrl` aborts and triggers immediate fallback returning internal URL within ~5s without throwing.
-   - Verify audit log entry `FNRH_SERPRO_FALLBACK` is appended.
-   - Verify reception alert notification is created.
-   - Check multi-guest URL resolution (`guestIndex = 2`).
-2. Document all results and give your verdict: APPROVE or REQUEST_CHANGES.
-3. Write your report and `handoff.md` in your working directory.
-4. Send a message to parent (0a1ba31b-b6bc-466b-8394-2ba72ae85fb5) with your findings and verdict.
+Missão de Teste Adversarial:
+1. Desafie empiricamente o Motor de Tarifas (calculateDailyRate e /api/tariffs/bulk-update):
+   - Teste casos de borda: datas inválidas, virada de mês/ano, dias de semana vs fins de semana, múltiplos canais (Booking, Airbnb, Direto, canal desconhecido).
+   - Teste sobreposições de overrides: override de flat x canal vs override de todos os flats x todos os canais.
+   - Teste valores extremos (margens zero, descontos).
+2. Escreva scripts de teste de estresse ou harness temporário e execute contra o código.
+3. Escreva seu relatório em c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m1_1\handoff.md com veredicto APPROVE ou REQUEST_CHANGES.
+Envie mensagem para o orchestrator (3364a657-c855-42a7-a46e-a5463bc245b7).

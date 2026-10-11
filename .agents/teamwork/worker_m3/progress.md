@@ -1,25 +1,28 @@
-# Progress Tracker - Worker M3 (Database Integrity Worker)
+# Progress - Worker M3 (Frontend Admin UI - R5)
 
-Last visited: 2026-09-29T05:46:30Z
+Last visited: 2026-10-11T03:09:10Z
 
 ## Status
-All M3 database integrity tasks successfully completed, verified via automated test harness (89/90 passing; 100% of M3 database tests passing).
-
-## Milestones
-- [x] 1. Read mandatory documentation & surveys (ORIGINAL_REQUEST.md, PROJECT.md, context.md, survey_database.md)
-- [x] 2. Backup `data/database.json` -> `data/backups/database_backup_pre_governance_m3_20260929.json`
-- [x] 3. Examine current state of records in `data/database.json`
-- [x] 4. Perform Task 2: Flat 313 phantom cleaning request ID 1358 purged; Leonardo Primo carry-over eliminated; Felipe stayover preserved
-- [x] 5. Perform Task 3: Flats 511, 907, 1004 (26/09) maid schedule & statement realignment
-  - In `db.cleaningRequests`: Reassigned ID 1338 (511), 1339 (907), 1340 (1004) plus 1336, 1337 on 26/09 to Cris (`assignedUserId: 2`, `assignedUsername: "Cris"`). Updated notes to "Limpeza concluída por Cris em 26/09".
-  - In `db.maidStatementEntries`: Removed unearned off-duty credits for Grazi on 26/09 (`stmt_3_1338_20260928`, `stmt_3_1339_20260929`, `stmt_3_1340_20260930`, etc.). Re-linked Cris's statement entries (`pay_1790528959693_pnzhpy`, `pay_1790528959693_pt1nsb`, `pay_1790528959693_wqst1p`) to requests 1338, 1339, 1340.
-- [x] 6. Perform Task 4: Flat 512 & 712 code mismatch resolution
-  - In `db.reservations`: On reservation ID 291 (`RES-712-0291`), fixed `flatId: 14` and `flatNumber: "712"`.
-  - In `db.cleaningRequests`: On cleaning ID 1351, fixed `flatId: 14`, `flatNumber: "712"`, and updated `adminNote` to reference Flat 712.
-  - Aligned reservation code prefixes for transferred reservations to match their actual assigned flat, eliminating regex assertion failures without creating room collisions.
-- [x] 7. Perform Task 5: Universal 19-flat database sanitization
-  - Purged phantom dirty cleanings ID 1362 (Flat 408), ID 1364 (Flat 113).
-  - Resolved cleaning ID 1361 (Flat 712, 25/09 Angelo) as clean completed by Cris, preventing automated reactivation.
-  - Audited all 19 flats: validated JSON syntax, 19 active canonical flats, zero off-duty maid assignments on 26/09.
-- [x] 8. Verify database integrity and syntax via `node --test tests/governance-integrity.test.mjs` (89/90 passing, 0 M3 failures). Tested server startup (`artifacts/api-server/demo-server.mjs`) without auto-reversion.
-- [x] 9. Write handoff.md and notify orchestrator
+- [x] Initialized DISPATCH.md and BRIEFING.md
+- [x] Read Explorer handoffs (explorer_m3_1, explorer_m3_2, explorer_m3_3) and ORIGINAL_REQUEST.md
+- [x] Implement WhatsApp AI automation UI additions (`whatsapp-automation.tsx`):
+  - Added `BotActionsSettings` types and `BOT_ACTIONS_METADATA`
+  - Added tri-modal operational status calculator (`getBotOperationalMode`)
+  - Added 4th card in top banner ("Modo Operacional Tri-modal")
+  - Added Highlight Card for Master Switch (`apiActionsEnabled`) with visual suspension when off
+  - Added 5 granular switches matrix (`checkAvailability`, `calculateQuote`, `generatePayment`, `createPreReservation`, `commitReservation`)
+  - Added collapsible advanced parameters for hold minutes and handover message
+  - Added initial load via `GET /api/bot-actions/settings`
+- [x] Implement Tarifas multi-channel matrix and bulk update UI (`tarifas.tsx`):
+  - Restructured into 2 tabs: "Mapa de Tarifas Diárias" and "Parâmetros Base & Adicionais"
+  - Added multi-channel toolbar (Direto 0%, Booking +18%, Airbnb +15%), monthly/weekly toggle, navigation
+  - Added flats x days matrix with sticky "Apartamento" column and Geral row
+  - Added single-cell override modal with "Voltar ao SEBRAE" (`DELETE /api/tariffs/overrides/:id`)
+  - Added bulk update modal with date range, days of week, flat selection, channel selection, fixed/percent adjustment with live preview
+  - Added base pricing engine card (SEBRAE auto vs manual fixed, base rate, weekend markup %)
+  - Synchronized with `siteConfig` (breakfast rate plans, cleaning fee, extra bed 3rd guest, twin beds, pet policy, direct/PIX discount)
+  - Unified parameter saving via `POST /api/tariffs/settings` and `PUT /api/site-content`
+- [x] Run backend verification tests (33/33 tests passing across 3 test suites)
+- [x] Run frontend build (`npm run build` in `artifacts/limpeza` - exit 0, dist/public gerado)
+- [x] Git commit and push (`git commit` + `git push origin main` - commit 199f5a5)
+- [x] Complete handoff.md and notify orchestrator

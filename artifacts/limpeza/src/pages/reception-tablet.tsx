@@ -10,7 +10,7 @@ import {
   LogOut, Clock, RefreshCw, FileText, ArrowRight, ShieldCheck, Undo2, 
   Sparkles, BedDouble, Calendar, UserCheck, KeyRound, AlertCircle, MessageSquare,
   ZoomIn, Eye, ExternalLink, X, Gift, MessageCircle, Download, QrCode, Send, Loader2,
-  Copy, Check
+  Copy, Check, Car
 } from "lucide-react"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
@@ -424,6 +424,20 @@ export default function ReceptionTablet() {
                               <MessageCircle className="w-3.5 h-3.5 text-emerald-400 inline shrink-0" />
                               <span>{item.guestPhone}</span>
                             </a>
+                          </div>
+                        )}
+                        {item.vehicle && item.vehicle.plate && (
+                          <div className="mt-2 p-2 bg-slate-900/90 rounded-xl border border-slate-700/80 text-xs flex items-center justify-between">
+                            <div className="flex items-center gap-1.5 text-slate-300 truncate">
+                              <Car className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                              <span className="font-mono font-bold text-white bg-slate-950 px-2 py-0.5 rounded border border-slate-700">{item.vehicle.plate}</span>
+                              <span className="text-slate-300 truncate font-semibold">{item.vehicle.brand} {item.vehicle.model}</span>
+                            </div>
+                            {item.vehicle.color && (
+                              <Badge variant="outline" className="text-[10px] text-slate-400 border-slate-700 ml-1 shrink-0">
+                                {item.vehicle.color}
+                              </Badge>
+                            )}
                           </div>
                         )}
                       </div>
@@ -1237,6 +1251,28 @@ export default function ReceptionTablet() {
                       <span className="font-semibold text-slate-200">{selectedItem.checkoutDate}</span>
                     </div>
                   </div>
+
+                  {selectedItem.vehicle && selectedItem.vehicle.plate && (
+                    <div className="pt-2 border-t border-slate-800 space-y-1">
+                      <span className="text-slate-500 block text-[10px] uppercase font-bold">Veículo Autorizado (Garagem)</span>
+                      <div className="flex items-center justify-between p-2.5 bg-slate-900 rounded-xl border border-slate-800">
+                        <div className="flex items-center gap-2">
+                          <Car className="w-4 h-4 text-sky-400 shrink-0" />
+                          <span className="font-mono font-bold text-white bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-700 text-xs">
+                            {selectedItem.vehicle.plate}
+                          </span>
+                          <span className="text-slate-200 font-semibold text-xs">
+                            {selectedItem.vehicle.brand} {selectedItem.vehicle.model}
+                          </span>
+                        </div>
+                        {selectedItem.vehicle.color && (
+                          <Badge variant="outline" className="text-[10px] text-slate-400 border-slate-700">
+                            {selectedItem.vehicle.color}
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Status dos Hóspedes */}

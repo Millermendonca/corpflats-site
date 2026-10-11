@@ -1,134 +1,155 @@
-# Handoff Report: Empirical Challenger M1_1 (Adversarial Stress Test)
+# Relatório de Handoff — Challenger M1 (Adversarial Testing & Verification)
 
-**Agent ID:** challenger_m1_1  
-**Parent Conversation ID:** 0a1ba31b-b6bc-466b-8394-2ba72ae85fb5  
-**Date:** 2026-10-07T16:47:00Z  
-**Verdict:** **APPROVE**  
-**Type:** Hard (Task complete)  
+**Agente:** Challenger M1 (critic, specialist)  
+**Milestone:** M1 — Motor de Tarifas & API de Ações do Bot  
+**Data:** 2026-10-11T01:22:00Z  
+**Diretório de Trabalho:** `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_m1_1`  
+**Veredicto:** **REQUEST_CHANGES**
 
 ---
 
 ## 1. Observation
 
-1. **Adversarial Test Suite Execution (`tests/challenger-m1-adversarial.test.mjs`):**
-   - Created and executed a dedicated adversarial test harness with 16 automated tests across 7 test suites.
-   - Command:
-     ```bash
-     node --test tests/challenger-m1-adversarial.test.mjs
-     ```
-   - Verbatim Output:
-     ```
-     # Subtest: Adversarial Stress Test: Milestone M1 Backend Implementation
-         # Subtest: Suite 1: Provider Toggling Lifecycle & Boundary Validation
-             ok 1 - 1.1 Initial settings have checkinProvider === 'proprio'
-             ok 2 - 1.2 Toggling 'proprio' -> 'gov_fnrh' succeeds (200) and persists immediately
-             ok 3 - 1.3 Toggling to invalid 'xyz' is rejected with HTTP 400 and state remains 'gov_fnrh'
-             ok 4 - 1.4 Malformed and edge-case values for checkinProvider are all rejected with 400
-             ok 5 - 1.5 Toggling back to 'proprio' succeeds (200) and persists
-         ok 1 - Suite 1: Provider Toggling Lifecycle & Boundary Validation
-         # Subtest: Suite 2: SERPRO API Error Simulations (HTTP 500, Network Error, 401)
-             ok 1 - 2.1 Simulated HTTP 500 triggers graceful fallback without throwing
-             ok 2 - 2.2 Simulated Network Error (ECONNREFUSED) triggers graceful fallback
-             ok 3 - 2.3 Simulated 401 Unauthorized triggers graceful fallback and checkHealth reflects auth_error
-         ok 2 - Suite 2: SERPRO API Error Simulations (HTTP 500, Network Error, 401)
-         # Subtest: Suite 3: Timeout Condition & Hanging Server Stress Test
-             ok 1 - 3.1 When SERPRO hangs for >5000ms (7000ms), getCheckinUrl aborts and falls back within ~5s
-             ok 2 - 3.2 Mock timeout flag (setMockTimeout) triggers immediate ETIMEDOUT fallback
-         ok 3 - Suite 3: Timeout Condition & Hanging Server Stress Test
-         # Subtest: Suite 4: Audit Log (FNRH_SERPRO_FALLBACK) Verification
-             ok 1 - 4.1 FNRH_SERPRO_FALLBACK audit log is appended when fallback occurs
-         ok 4 - Suite 4: Audit Log (FNRH_SERPRO_FALLBACK) Verification
-         # Subtest: Suite 5: Reception Alert Notification Verification
-             ok 1 - 5.1 Reception alert notification is created in notifications central upon fallback
-         ok 5 - Suite 5: Reception Alert Notification Verification
-         # Subtest: Suite 6: Multi-Guest URL Resolution (guestIndex = 2)
-             ok 1 - 6.1 In 'proprio' mode, guestIndex = 2 resolves to ?guest=2
-             ok 2 - 6.2 In 'gov_fnrh' fallback mode, guestIndex = 2 resolves to ?guest=2
-             ok 3 - 6.3 Guest index boundary values (string '2', undefined, 0, null) coerced correctly
-             ok 4 - 6.4 When official SERPRO link is available, returns Gov.br link directly
-         ok 6 - Suite 6: Multi-Guest URL Resolution (guestIndex = 2)
-     # tests 16 # suites 7 # pass 16 # fail 0 # duration_ms 8033.9022
-     ```
+Durante a auditoria adversarial empírica, foram criadas e executadas duas novas suítes de teste:
+1. `tests/challenger-tariff-stress.test.mjs` (26 testes de estresse cobrindo viradas de ano/mês, sazonalidade, fim de semana, múltiplos canais, colisão de 4 níveis de overrides, validações de range e cargas de 360+ registros).
+2. `tests/challenger-edge-probes.test.mjs` (3 probes direcionados a comportamentos de borda).
 
-2. **Provider Toggling & Validation (`artifacts/api-server/demo-server.mjs:10290-10298`):**
-   - `PATCH /api/settings` with `{ checkinProvider: 'gov_fnrh' }` returns HTTP 200 and immediately persists.
-   - `PATCH /api/settings` with `{ checkinProvider: 'xyz' }` returns HTTP 400 `{ error: "checkinProvider inválido. Deve ser 'proprio' ou 'gov_fnrh'." }` without altering state.
-   - Additional invalid values (`""`, `null`, `123`, `true`, `false`, `{}`, `[]`, `"PROPRIO"`, `"gov_fnrh "`) are all rejected with HTTP 400.
-   - Reverting to `'proprio'` succeeds with HTTP 200 and reflects instantaneously in `GET /api/settings`.
+### Testes Executados e Resultados:
+- `node --test tests/tariff-engine.test.mjs`: 8/8 aprovados.
+- `node --test tests/bot-actions-api.test.mjs`: 5/5 aprovados.
+- `node --test tests/challenger-tariff-stress.test.mjs`: 26/26 aprovados (tempo de execução: 4.4s).
+- `node --test tests/challenger-edge-probes.test.mjs`: 3/3 executados com resultados diagnósticos.
 
-3. **SERPRO API Failure Simulations:**
-   - **HTTP 500 Simulation:** When SERPRO returns HTTP 500, `getCheckinUrl` catches the error, sets `reservation.serproError = "SERPRO_API_ERROR [HTTP 500]: ..."`, and returns `${baseUrl}/pre-checkin/${code}?guest=1` without throwing.
-   - **Network Error (ECONNREFUSED) Simulation:** Connecting to an unused port (`54329`) triggers `fetch failed` which is safely caught, returning the internal pre-checkin URL.
-   - **401 Unauthorized Simulation:** Mock server returning HTTP 401 causes `fnrhSerproService.checkHealth()` to report `{ ok: false, status: "auth_error", statusCode: 401 }` and `getCheckinUrl` to fall back cleanly to internal URL.
+### Defeitos Empíricos Identificados:
 
-4. **Strict Timeout Abort & Hanging Server Stress:**
-   - Simulated remote SERPRO hanging for 7000ms.
-   - `Promise.race` in `demo-server.mjs:5061-5072` aborted at `5029ms` (within the strict ~5000ms budget).
-   - Returned internal pre-checkin URL cleanly without unhandled rejection or thread stalling.
+#### Defeito 1: Vazamento de Override de Flat Específico no Calendário Geral (`GET /api/tariffs/calendar`)
+- **Arquivo**: `artifacts/api-server/demo-server.mjs`, linhas 19909–19925:
+  ```javascript
+  19909: const rate = calculateDailyRate(flatId || null, dayStr, channel);
+  19910: 
+  19911: const override = overrides.find(o =>
+  19912:   o.date === dayStr &&
+  19913:   (!flatId || String(o.flatId) === String(flatId)) &&
+  19914:   (String(o.channel) === channel || !o.channel || String(o.channel) === "all")
+  19915: );
+  ```
+- **Evidência Empírica (`tests/challenger-edge-probes.test.mjs` - Probe A)**:
+  Quando existe um override apenas para o flat 1 (`flatId: 1, rate: 999`) e o cliente consulta o calendário geral sem especificar flat (`GET /api/tariffs/calendar?month=2026-11&channel=direct`):
+  - `calculateDailyRate(null, dayStr, channel)` retorna `163.43` (tarifa base geral).
+  - Porém, na linha 19913, como `flatId` é `undefined`, `!flatId` avalia como `true`.
+  - O `overrides.find` captura o override pertencente ao flat 1.
+  - O payload JSON retornado para o dia exibe:
+    ```json
+    {
+      "rate": 163.43,
+      "hasOverride": true,
+      "override": {
+        "flatId": 1,
+        "rate": 999
+      }
+    }
+    ```
+  - **Inconsistência**: O calendário geral exibe `hasOverride: true` com objeto de override de 999 pertencente a uma UH isolada, enquanto a diária do dia (`rate`) é 163.43.
 
-5. **Audit Logging & Reception Alert Verification:**
-   - Entry appended to `db.auditLogs` and queryable via `GET /api/audit-logs`:
-     - `action: "FNRH_SERPRO_FALLBACK"`
-     - `category: "integration"`, `level: "warning"`
-     - `details: { reservationCode: "RES-AUDIT-VERIF", guestIndex: 2, error: "..." }`
-   - Entry created in `db.notifications` and queryable via `GET /api/notifications`:
-     - `title: "⚠️ Contingência FNRH SERPRO"`
-     - `category: "system_error"`, `severity: "warning"`
-     - `message: "Falha SERPRO FNRH: Check-in fallback ativado para reserva ..."`
-     - `targetUrl: "/reservas?code=..."`
+#### Defeito 2: Sensibilidade a Maiúsculas/Minúsculas no Lookup de Overrides do Calendário
+- **Arquivo**: `artifacts/api-server/demo-server.mjs`, linha 19914:
+  ```javascript
+  (String(o.channel) === channel || !o.channel || String(o.channel) === "all")
+  ```
+- **Evidência Empírica (`tests/challenger-edge-probes.test.mjs` - Probe C)**:
+  - No banco, overrides salvos via `bulk-update` possuem `channel: "booking"` (minúsculo).
+  - Se o endpoint for chamado com `GET /api/tariffs/calendar?month=2026-11&channel=Booking` (B maiúsculo, comum em selects de frontend ou URLs):
+    - `calculateDailyRate` usa `.toLowerCase()` e calcula a tarifa de override `777`.
+    - No entanto, a linha 19914 compara `o.channel === "Booking"` de forma estrita (`===`), resultando em `false`.
+    - Resultado retornado: `{ rate: 777, hasOverride: false, override: null }`.
+  - **Inconsistência**: O preço do dia reflete o override (777), mas `hasOverride` retorna `false`.
 
-6. **Multi-Guest Resolution:**
-   - In `'proprio'` mode: `guestIndex = 2` resolves to `${baseUrl}/pre-checkin/${code}?guest=2`.
-   - In `'gov_fnrh'` fallback mode: `guestIndex = 2` resolves to `${baseUrl}/pre-checkin/${code}?guest=2`.
-   - String coercion: `"2"` coerces to `guest=2`.
-   - Edge cases: `undefined`, `null`, `0` default cleanly to `guest=1`.
-   - Official link: returns `https://fnrh.turismo.gov.br/precheckin/...`.
+#### Defeito 3: Falha Silenciosa em `POST /api/tariffs/bulk-update` com Array de Strings em `daysOfWeek`
+- **Arquivo**: `artifacts/api-server/demo-server.mjs`, linhas 19964 e 19984:
+  ```javascript
+  19964: const targetDaysOfWeek = Array.isArray(daysOfWeek) && daysOfWeek.length > 0 ? daysOfWeek : [0, 1, 2, 3, 4, 5, 6];
+  ...
+  19984: if (targetDaysOfWeek.includes(dayOfWeek)) {
+  ```
+- **Evidência Empírica (`tests/challenger-edge-probes.test.mjs` - Probe B)**:
+  - `dayOfWeek` é retornado por `cur.getUTCDay()`, que é um número `5` (sexta) ou `6` (sábado).
+  - Se o payload da API contiver strings numéricas `daysOfWeek: ["5", "6"]`:
+    - `["5", "6"].includes(5)` avalia como `false` devido à comparação estrita de tipos do JavaScript.
+    - O endpoint retorna `HTTP 200 OK`, porém com `updatedCount: 0`. Nenhuma diária é atualizada e nenhum erro de validação é informado.
 
-7. **Regression and Peer Test Verification:**
-   - `tests/m1-backend-serpro-verification.test.mjs` + `tests/service-orders.test.mjs`: 23/23 passed.
-   - `tests/challenger-m1-2-serpro-integrity.test.mjs`: 25/25 passed.
+#### Observação Adicional: `baseDailyRate: 0` em modo manual
+- **Arquivo**: `artifacts/api-server/demo-server.mjs`, linha 19825:
+  ```javascript
+  baseRate = Number(settings.baseDailyRate || 237);
+  ```
+  Se o valor configurado for `0`, a coerção booleana `0 || 237` redefine o valor para `237`. Recomenda-se utilizar o operador nullish `settings.baseDailyRate != null ? settings.baseDailyRate : 237`.
 
 ---
 
 ## 2. Logic Chain
 
-1. **Observation 1 & 2** prove that provider switching is strictly validated against allowed enum values (`'proprio'`, `'gov_fnrh'`), resists injection/fuzzing, updates state in-memory and on disk, and reflects instantaneously without requiring a server reboot.
-2. **Observation 3** proves that all major HTTP and network failure scenarios (server errors, connection refused, authentication failures) are safely trapped and fail-safe fallback is applied without crashing or exposing errors to guests.
-3. **Observation 4** proves that the timeout guard implemented via `Promise.race` enforces a 5000ms ceiling against unresponsive external SERPRO endpoints, returning within 5029ms without hanging the event loop.
-4. **Observation 5** proves that the fallback event is audited via `FNRH_SERPRO_FALLBACK` and proactively alerts reception personnel via the notification center.
-5. **Observation 6** proves that URL resolution accurately preserves multi-guest targeting (`?guest=2`) both during standard operations and during fallback contingency.
-6. **Observation 7** proves that existing external service orders and peer challenger suites remain 100% green with zero regressions.
-7. Therefore, all requirements for Milestone M1 Backend Implementation are fully satisfied and resilient under empirical adversarial pressure.
+1. **A partir da Observação 1 (Defeito 1)**:
+   A intenção do endpoint `GET /api/tariffs/calendar` sem o parâmetro `flatId` é fornecer a visão geral tarifária do empreendimento. Ao utilizar a condição `(!flatId || String(o.flatId) === String(flatId))`, qualquer override específico de UH é capturado quando `flatId` é nulo. Isso faz com que a flag `hasOverride` seja ligada indevidamente para todas as UHs na visão geral, exibindo um valor de override divergente da diária vigente (`rate: 163.43` vs `override.rate: 999`).
+   *Correção necessária*: Na ausência de `flatId`, o override considerado para o dia deve ser estritamente global:
+   `(!flatId ? (!o.flatId || String(o.flatId) === "all") : (String(o.flatId) === String(flatId) || ...))`
+
+2. **A partir da Observação 2 (Defeito 2)**:
+   O motor de cálculo `calculateDailyRate` normaliza o canal para lowercase (`String(channel || "direct").toLowerCase()`). Porém, a verificação do override no loop do calendário compara diretamente com a variável crua `channel`. A discrepância de case resulta em dessincronização visual onde o dia tem taxa de override mas `hasOverride` reporta `false`.
+   *Correção necessária*: Normalizar o canal na rota do calendário:
+   `const normChannel = String(channel || "direct").toLowerCase();` e comparar `String(o.channel).toLowerCase() === normChannel`.
+
+3. **A partir da Observação 3 (Defeito 3)**:
+   Em APIs REST em JSON, filtros de dias da semana frequentemente chegam como `["0", "5", "6"]` (strings) a partir de formulários web ou query params serializados. O uso de `.includes` estrito sem `map(Number)` descarta todos os dias silenciosamente, gerando atualização vazia (`updatedCount: 0`) sem alerta ao usuário.
+   *Correção necessária*: Converter os elementos para números inteiros:
+   `const targetDaysOfWeek = (Array.isArray(daysOfWeek) && daysOfWeek.length > 0) ? daysOfWeek.map(Number) : [0, 1, 2, 3, 4, 5, 6];`
+
+4. **A partir dos Testes Positivos**:
+   O núcleo de regras de negócio (cálculo SEBRAE, sazonalidade Jan/Mai/Jul, acréscimo de fins de semana, colisão hierárquica L1 > L2 > L3 > L4, geração de PIX, hold de 30min de pré-reserva, chave mestra e switches granulares) está matematicamente sólido e superou todos os 26 testes de estresse adversarial. As falhas estão restritas à camada de consulta do calendário e coerção de entrada do bulk update.
 
 ---
 
 ## 3. Caveats
 
-- **ESM Twin Instance Scope:** The standalone utility function `getCheckinUrl` in `scripts/fnrh-serpro-service.mjs` handles basic URL resolution and fallback but does not directly access server-scoped `db.auditLogs` or `db.notifications`. Downstream modules (Milestone M2) executing inside the server process should reference `globalThis.getCheckinUrl` or import from `demo-server.mjs` to ensure audit logging and reception notifications trigger as expected.
-- No other caveats.
+- **Escopo M2**: O serviço WhatsApp AI Agent (`whatsapp-ai-service.mjs`) e as chamadas de ferramenta do Gemini foram validados apenas no nível de interface de API (`/api/bot-actions/*`), conforme definido para o Milestone M1. O teste end-to-end do Gemini pertence ao Milestone M2.
+- **Não modificação pelo Challenger**: Em estrita conformidade com a restrição de papel (*"Review-only — do NOT modify implementation code directly; report any failures as findings — do NOT fix them yourself"*), nenhum código foi alterado pelo Challenger em `demo-server.mjs`.
 
 ---
 
 ## 4. Conclusion
 
-**Verdict: APPROVE**.
-Milestone 1 backend implementation meets all architectural, functional, and resilience criteria specified in the authoritative request and PROJECT.md. The system is ready to proceed to Milestone M2 (Universal Communication Channels & Triggers).
+Veredicto: **REQUEST_CHANGES**
+
+O código do Milestone M1 implementou a quase totalidade das funções com alta performance e robustez (360 overrides processados em 37ms, tolerância a colisões complexas confirmada). Contudo, foram comprovados empiricamente 3 defeitos que afetam a integridade da API de tarifas:
+1. **Defeito 1 (Médio)**: Vazamento de override de flat específico no calendário geral sem `flatId`.
+2. **Defeito 2 (Médio)**: Falha de case-sensitivity no casamento de overrides de canal no calendário.
+3. **Defeito 3 (Baixo/Médio)**: Falha silenciosa de `daysOfWeek` com array de strings numéricas em `POST /api/tariffs/bulk-update`.
+
+Recomenda-se que o **Worker M1** aplique as três correções pontuais em `artifacts/api-server/demo-server.mjs` e garanta a paridade em `scripts/demo-server.mjs`.
 
 ---
 
 ## 5. Verification Method
 
-Execute the automated test suite in powershell or bash:
+Para reproduzir os achados e verificar a posterior correção pelo Worker:
 
-```bash
-# 1. Run Challenger M1_1 Adversarial Stress Test
-node --test tests/challenger-m1-adversarial.test.mjs
+1. **Executar a suíte de probes direcionados**:
+   ```bash
+   node --test tests/challenger-edge-probes.test.mjs
+   ```
+   *Condição de falha atual:*
+   - Probe A demonstra `{ rate: 163.43, hasOverride: true, override: { flatId: 1, rate: 999 } }`.
+   - Probe B demonstra `updatedCount: 0` quando enviado `["5", "6"]`.
+   - Probe C demonstra `{ hasOverride: false }` para canal `"Booking"`.
 
-# 2. Run Challenger M1_2 Integrity Test
-node --test tests/challenger-m1-2-serpro-integrity.test.mjs
+2. **Executar a suíte completa de testes de estresse adversarial**:
+   ```bash
+   node --test tests/challenger-tariff-stress.test.mjs
+   ```
+   *Critério de aprovação:* 26/26 testes passando.
 
-# 3. Run Worker M1 Verification & Regression Tests
-node --test tests/m1-backend-serpro-verification.test.mjs tests/service-orders.test.mjs
-```
-
-*Expected Result:* All tests pass with 0 failures.
+3. **Executar as suítes originais do projeto**:
+   ```bash
+   node --test tests/tariff-engine.test.mjs
+   node --test tests/bot-actions-api.test.mjs
+   ```
+   *Critério de aprovação:* 13/13 testes passando.

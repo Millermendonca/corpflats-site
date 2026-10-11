@@ -1,396 +1,381 @@
-# Backend Survey Report: External Service Orders & Maintenance Module
+# Backend Survey Report: Architecture & Sandbox Isolation Points
 
-**Explorer**: Explorer 1 (Backend Survey Explorer)  
-**Date**: 2026-09-30  
+**Explorer**: Explorer 2 (Backend Survey & Sandbox Isolation Points)  
+**Date**: 2026-10-11  
 **Target System**: Guest-Flow-Manager / CorpFlats  
 **Working Directory**: `.agents/teamwork/explorer_survey_backend/`
 
 ---
 
-## Executive Summary
+## 1. Executive Summary
 
-The backend architecture is a Node.js/Express monolith centered on `artifacts/api-server/demo-server.mjs` (24,812 lines), backed by an in-memory database object `db` persisted synchronously to `data/database.json` and optionally replicated to PostgreSQL. An identical mirror file `scripts/demo-server.mjs` must remain byte-for-byte identical at all times (enforced by automated tests).
+The CorpFlats / Guest-Flow-Manager backend is a Node.js/Express monolith centered on `artifacts/api-server/demo-server.mjs` (28,781 lines, ~1.25 MB) with an exact byte-for-byte mirror at `scripts/demo-server.mjs`.
 
-This investigation surveyed all 7 critical areas requested, providing the exact insertion points, schemas, authentication middleware, validation rules, notification hooks, storage integrations, and mirror synchronization mechanics needed for Milestone 1.
-
----
-
-## 1. Database Persistence & Memory Model
-
-### Current Mechanism
-- **File location**: `data/database.json`, resolved via `DATA_DIR = path.resolve(__dirname, "../../data")` and `DB_FILE = path.join(DATA_DIR, "database.json")` (`artifacts/api-server/demo-server.mjs:457-461`).
-- **In-memory state**: Global object `db` declared at line 469. Contains root collections (`users`, `flats`, `cleaningRequests`, `reservations`, `notifications`, `auditLogs`, `settings`, etc.).
-- **Startup Loading**: `loadDatabase()` (`demo-server.mjs:2630`):
-  1. Reads `DB_FILE` synchronously via `fs.readFileSync(DB_FILE, "utf-8")`.
-  2. Parses JSON and assigns to in-memory state: `Object.assign(db, loaded)`.
-  3. If PostgreSQL is configured (`pgPool`), attempts to read from `system_store` table where `key = 'db_state'`. Reconciles data and sets `pgHydratedSuccessfully = true`.
-- **Saving / Persistence**: `saveDatabase(reason = "auto_save")` (`demo-server.mjs:3680`):
-  1. Calls `reconcileCleaningRequests()`.
-  2. Serializes in-memory `db`: `const stateJson = JSON.stringify(db, null, 2);`.
-  3. Writes to disk synchronously: `fs.writeFileSync(DB_FILE, stateJson, "utf-8");`.
-  4. If `pgPool` is active and hydrated, updates `system_store` and creates a snapshot in `system_store_backups` (retaining the latest 100 snapshots).
-
-### Service Orders Schema Insertion (R1)
-To add `serviceOrders` and `serviceWorkers`:
-1. **In `artifacts/api-server/demo-server.mjs` (and mirror)**:
-   - Line 469 (initial `db` declaration): Add `serviceOrders: []` and `serviceWorkers: []`.
-   - Line 2807 (inside `loadDatabase()`): Add defensive hydration guards:
-     ```javascript
-     if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
-     if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
-     ```
-2. **In `data/database.json`**:
-   - Add `"serviceOrders": []` and `"serviceWorkers": []` at the root object level.
-3. **Data Schema**:
-   - `serviceOrders`:
-     ```typescript
-     interface ServiceOrder {
-       id: string; // e.g. "so_1727734800000_abc1" or auto-increment number
-       title: string;
-       token: string; // 24-character hexadecimal (crypto.randomBytes(12).toString("hex"))
-       status: "draft" | "active" | "closed";
-       createdAt: string; // ISO 8601
-       createdBy: string | number; // Admin user ID or name
-       cleanFlatMode: "never" | "priority" | "always";
-       maxSimultaneousFlats: number; // default 2
-       maxFlatsPerDay: number; // default 4
-       requirePhotos: boolean;
-       estimatedDurationHours: number | null;
-       instructionFormat: "text" | "list";
-       flats: Array<{
-         flatId: number;
-         flatNumber: string;
-         instructions: string;
-         status: "pending" | "in_progress" | "done";
-         startedAt: string | null;
-         finishedAt: string | null;
-         workerName: string | null;
-         workerCpf: string | null;
-         estimatedFinishAt: string | null;
-         observations: string | null;
-         photos: string[];
-         needsCleaning: boolean | null;
-       }>;
-     }
-     ```
-   - `serviceWorkers`:
-     ```typescript
-     interface ServiceWorker {
-       id: string; // e.g. "sw_1727734800000_xyz9"
-       serviceOrderId: string;
-       token: string;
-       mainWorker: {
-         name: string;
-         cpf: string;
-       };
-       collaborators: Array<{
-         name: string;
-         cpf: string;
-       }>;
-       registeredAt: string; // ISO 8601
-     }
-     ```
+To enable the synthetic autonomous End-to-End (E2E) testing framework described in R1 without polluting production data or contacting real external parties (WhatsApp numbers, bank gateways, Zoho SMTP, SERPRO gov.br, or GissOnline Prefeitura), this investigation audited:
+1. **Database isolation**: How in-memory `db` loads and persists via `DATABASE_FILE` / `DATA_FILE` and how PostgreSQL is bypassed cleanly with `DATABASE_URL=""`.
+2. **Dedicated test port execution**: How `PORT` env var configures the listener and how child process instances can be spawned and terminated safely on Windows.
+3. **External communication endpoints**: Complete inventory of every outbound HTTP/HTTPS/SOAP/SMTP call, credentials used, and concrete interception designs (Z-API emulator, SMTP interceptor, PIX webhook simulator, SERPRO mock mode, NFS-e mock).
+4. **Time-travel mechanics**: Detailed trace of how 18:00 (maid shift closing), 22:00/05:00 (breakfast order cutoff), and 14:00 (check-in lock and door password release) are checked, and how a deterministic time-travel hook/endpoint can be plugged in.
 
 ---
 
-## 2. Authentication & Authorization Middleware
+## 2. Monolith Architecture & Mirror Constraint
 
-### Existing Pattern
-- **Session Auth Helper**: `getAuthUser(req)` at `artifacts/api-server/demo-server.mjs:3858`:
+- **Primary file**: `artifacts/api-server/demo-server.mjs` (28,781 lines).
+- **Mandatory mirror**: `scripts/demo-server.mjs` (must remain 100% byte-for-byte identical; verified by file hash `(Get-FileHash ...).Hash`).
+- **Core dependencies**: Express 4/5, CORS, Cookie-Parser, Nodemailer, node-forge, xml-crypto, pdfkit, xlsx, pg.
+- **Service modules**:
+  - `artifacts/api-server/zapi-service.mjs` (~7,376 lines): Z-API WhatsApp automation, message queues, trigger rules, AI concierge.
+  - `artifacts/api-server/mail-service.mjs` (~1,640 lines): Nodemailer Zoho transport, HTML templating, audit queue.
+  - `artifacts/api-server/fnrh-serpro-service.mjs` (~760 lines): SERPRO FNRH v2.4.2 API client with built-in mock mode.
+  - `artifacts/api-server/inter-pix-service.mjs`: Banco Inter mTLS banking client.
+  - `artifacts/api-server/giss-soap.mjs`: GissOnline SOAP client with A1 certificate signing.
+  - `artifacts/api-server/national-nfse.mjs`: ADN National NFS-e payload builder and Danfse HTML renderer.
+  - `artifacts/api-server/maid-automation-service.mjs`: Maid productivity notifications and quinzena closing.
+  - `artifacts/api-server/microsoft-graph-service.mjs`: OneDrive/SharePoint Excel sheet buffer synchronization.
+
+---
+
+## 3. Database Persistence & Complete Isolation (R1)
+
+### 3.1 Persistence Mechanism
+In `demo-server.mjs`:
+- **File resolution (Lines 515–519)**:
   ```javascript
-  const AUTH_COOKIE_NAME = "gfm_session_v2";
-  const AUTH_SESSION_VERSION = 2;
-
-  function getAuthUser(req) {
-    const token = req.cookies?.[AUTH_COOKIE_NAME] || req.headers?.["authorization"]?.replace("Bearer ", "");
-    if (!token) return null;
+  const DATA_DIR = path.resolve(__dirname, "../../data");
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+  const DB_FILE = process.env.DATA_FILE || process.env.DATABASE_FILE || path.join(DATA_DIR, "database.json");
+  ```
+- **PostgreSQL Pool initialization (Lines 215–237)**:
+  ```javascript
+  if (process.env.DATABASE_URL) {
     try {
-      const raw = Buffer.from(token, "base64").toString("utf-8");
-      const data = JSON.parse(raw);
-      if (data.v !== AUTH_SESSION_VERSION) return null; // Invalidates legacy sessions
-      const found = db.users.find(u => u.id === data.id);
-      if (!found) return null;
-      return { id: found.id, username: found.username, role: found.role };
-    } catch {
-      return null;
-    }
+      pgPool = new Pool({ ... });
+    } ...
   }
   ```
-- **Admin Guard Enforcement**:
-  Every admin route in `demo-server.mjs` checks:
+  *Key Finding*: If `process.env.DATABASE_URL` is empty (`DATABASE_URL=""`) or undefined, `pgPool` remains `null`. The server never attempts any connection to remote PostgreSQL.
+- **Startup Loading (`loadDatabase()`, Lines 3384–3395)**:
   ```javascript
-  const userAuth = getAuthUser(req);
-  if (!userAuth) return res.status(401).json({ error: "Não autenticado." });
-  if (userAuth.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
+  if (fs.existsSync(DB_FILE)) {
+    const content = fs.readFileSync(DB_FILE, "utf-8");
+    const loaded = JSON.parse(content);
+    Object.assign(db, loaded);
+  }
   ```
-  This returns `401` when unauthenticated and `403` when authenticated as non-admin, exactly satisfying Acceptance Criteria:
-  > `GET /api/service-orders retorna 200 com autenticação admin; retorna 401/403 sem autenticação`
+- **Synchronous Write (`saveDatabase()`, Lines 4955–4960)**:
+  ```javascript
+  function saveDatabase(reason = "auto_save") {
+    reconcileCleaningRequests();
+    pruneDatabase();
+    const stateJson = JSON.stringify(db);
+    fs.writeFileSync(DB_FILE, stateJson, "utf-8");
+    if (pgPool) { ... }
+  }
+  ```
+
+### 3.2 Sandbox Isolation Protocol
+To run the server without modifying or reading `data/database.json`:
+1. Copy `data/database.json` to a dedicated sandbox replica, e.g. `data/database.test.json`.
+2. Launch the backend process with environment variables:
+   ```json
+   {
+     "DATABASE_FILE": "c:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\data\\database.test.json",
+     "DATABASE_URL": "",
+     "PORT": "5055",
+     "NODE_ENV": "test",
+     "SERPRO_MOCK": "true"
+   }
+   ```
+3. During execution, every `saveDatabase()` writes exclusively to `database.test.json`.
+4. Production `database.json` remains completely untouched.
+5. On teardown, delete `database.test.json` or keep it as a test execution artifact.
 
 ---
 
-## 3. Structure & Insertion Points for New Routes
+## 4. Port Configuration & Dedicated Test API Process
 
-### Optimal Insertion Location
-- **Location**: Line ~7587 in `artifacts/api-server/demo-server.mjs`.
-- **Context**: Directly follows `// ── Periodic Tasks` (lines 7428–7586) and precedes `// ── Observations / Issues` (line 7588). This is the dedicated operational/maintenance section of the server.
-
-### Route Catalog to Implement
-
-#### A. Admin Routes (Protected by `getAuthUser` + `role === "admin"`)
-1. `GET /api/service-orders`:
-   - Returns all service orders sorted by creation date descending (`db.serviceOrders || []`).
-2. `POST /api/service-orders`:
-   - Validates `title` (required) and `flats` (array).
-   - Generates unique 24-hex token: `crypto.randomBytes(12).toString("hex")`.
-   - Populates initial flat structures with `status: "pending"`, `photos: []`, `needsCleaning: null`.
-   - Appends to `db.serviceOrders`, persists with `saveDatabase("create_service_order")`, returns `201`.
-3. `GET /api/service-orders/:id`:
-   - Returns order details by ID or token. Returns `404` if not found.
-4. `PATCH /api/service-orders/:id`:
-   - Updates mutable fields (`title`, `status`, `cleanFlatMode`, `maxSimultaneousFlats`, `maxFlatsPerDay`, `requirePhotos`, `estimatedDurationHours`, `instructionFormat`, `flats`).
-   - Persists with `saveDatabase("update_service_order")`.
-5. `DELETE /api/service-orders/:id`:
-   - Removes order from `db.serviceOrders` and removes associated workers from `db.serviceWorkers`.
-   - Persists with `saveDatabase("delete_service_order")`.
-6. `GET /api/service-orders/:id/progress`:
-   - Returns aggregated progress statistics (`totalFlats`, `doneFlats`, `inProgressFlats`, `pendingFlats`, `percentage`) along with each flat's execution details, worker name, finish time, and photos.
-7. `POST /api/service-orders/:id/flats/:flatId/reset`:
-   - Helper for Tab 3 admin action: resets a flat back to `status: "pending"`, clearing `startedAt`, `finishedAt`, `photos`, and `observations`.
-
-#### B. Public Routes (No Authentication)
-1. `GET /api/service/public/:token`:
-   - Looks up `order` by `token`. If not found, returns `404 { error: "Ordem de serviço não encontrada ou link inválido." }`.
-   - Finds matching worker in `db.serviceWorkers` by `token`.
-   - Returns `{ success: true, order, worker: worker || null }`.
-2. `POST /api/service/public/:token/register`:
-   - Validates `mainWorker.name` and `mainWorker.cpf`.
-   - Finds or creates worker entry in `db.serviceWorkers`.
-   - Updates `mainWorker`, `collaborators` (array), and `registeredAt: new Date().toISOString()`.
-   - Persists with `saveDatabase("register_service_worker")`.
-   - Returns `{ success: true, worker }`.
-3. `POST /api/service/public/:token/flats/:flatId/start`:
-   - **Validation 1**: Verifies worker registration exists for this order/token in `db.serviceWorkers`. If missing -> returns `403 { error: "Prestador deve se identificar antes de iniciar o serviço." }`.
-   - **Validation 2**: Counts flats currently `in_progress` in this order -> if `>= order.maxSimultaneousFlats` (default 2) -> returns `400 { error: "Limite de apartamentos simultâneos atingido (máximo: X)." }`.
-   - **Validation 3**: Counts flats completed today (`status === "done"` and `finishedAt.substring(0, 10) === todayStr`) -> if `>= order.maxFlatsPerDay` (default 4) -> returns `400 { error: "Limite diário de apartamentos atingido para hoje (máximo: X)." }`.
-   - **Validation 4 (`cleanFlatMode`)**:
-     - Determines if flat is dirty/turnover via helper `isFlatDirty(flatId, flatNumber)`.
-     - `"never"`: If flat is clean -> returns `400 { error: "Este serviço não permite intervenção em apartamentos limpos." }`.
-     - `"priority"`: If flat is clean, checks if ANY other flat in the service order is dirty. If any is dirty -> returns `400 { error: "Existem outros flats deste serviço que estão com check-out ou sujos. Finalize-os primeiro." }`.
-     - `"always"`: Allowed to start any flat (response sets `prioritySuggested: true` if dirty).
-   - **Execution**: Sets `flat.status = "in_progress"`, `flat.startedAt = new Date().toISOString()`, `flat.workerName = worker.mainWorker.name`, `flat.workerCpf = worker.mainWorker.cpf`.
-   - Calculates `estimatedFinishAt`: if `order.estimatedDurationHours` is set, `startedAt + estimatedDurationHours * 3600000`.
-   - Calls `saveDatabase()`.
-   - Dispatches multi-channel notifications (WhatsApp admin + WhatsApp reception + Email reception + `createNotification`).
-   - Returns `{ success: true, flat }`.
-4. `POST /api/service/public/:token/flats/:flatId/finish`:
-   - Checks that flat is currently `in_progress`.
-   - **Validation 1 (`needsCleaning`)**: If flat was originally clean (was not dirty when started, e.g. occupied or vacant clean) -> `req.body.needsCleaning` is strictly mandatory (`typeof req.body.needsCleaning === "boolean"`). If missing -> returns `400 { error: "O campo 'needsCleaning' (precisa de limpeza de camareira) é obrigatório para flats que estavam limpos." }`.
-   - **Validation 2 (`photos`)**: If `order.requirePhotos === true` -> `photos` array must not be empty. If empty -> returns `400 { error: "É obrigatório anexar pelo menos 1 foto para finalizar este serviço." }`.
-   - **Execution**: Sets `flat.status = "done"`, `flat.finishedAt = new Date().toISOString()`, `flat.observations = req.body.observations || ""`, `flat.photos = req.body.photos || []`, `flat.needsCleaning = req.body.needsCleaning ?? null`.
-   - Clears maid lock on this flat.
-   - If `needsCleaning === true`, ensures a cleaning request with `status: "dirty"` is queued for the housekeeping dashboard.
-   - Removes active `estimatedFinishAt` lock on PMS calendar.
-   - Calls `saveDatabase()`.
-   - Dispatches multi-channel notifications (WhatsApp admin + WhatsApp reception + Email reception + `createNotification`).
-   - Returns `{ success: true, flat }`.
-5. `POST /api/service/public/:token/flats/:flatId/photos`:
-   - Receives photo base64 string(s) or payload.
-   - Calls `uploadImageToStorage(photoBase64, "service_" + flatId, db, "services")`.
-   - Returns `{ success: true, url, urls }`.
-
----
-
-## 4. `GET /api/flats` & `serviceInProgress` Injection
-
-### Current Implementation
-- `artifacts/api-server/demo-server.mjs:5189`:
-  ```javascript
-  app.get("/api/flats", (req, res) => {
-    res.set("Cache-Control", "no-store, no-cache, must-revalidate");
-    if (reconcileUniversalIntegrity()) saveDatabase();
-    const activeFlats = (db.flats || []).filter(f => f.isActive !== false);
-    triggerBackgroundSync();
-    res.json(activeFlats);
-  });
-  ```
-
-### Proposed Enhancement
-Inject `serviceInProgress: { serviceTitle, workerName, serviceOrderId } | null` onto each returned flat:
+### 4.1 Port Resolution
+Line 240 of `demo-server.mjs`:
 ```javascript
-app.get("/api/flats", (req, res) => {
-  res.set("Cache-Control", "no-store, no-cache, must-revalidate");
-  if (reconcileUniversalIntegrity()) saveDatabase();
-  
-  // Find all currently active service orders
-  const activeOrders = (db.serviceOrders || []).filter(o => o.status === "active");
+const app = express();
+const PORT = process.env.PORT || 5000;
+```
+- In development/production, default is `5000`.
+- The test harness can assign any high-range port (e.g., `PORT=5055` for API, `PORT=5056` for mock Z-API, `PORT=5025` for mock SMTP).
 
-  const activeFlats = (db.flats || []).filter(f => f.isActive !== false).map(flat => {
-    let serviceInProgress = null;
-    for (const order of activeOrders) {
-      const activeFlat = (order.flats || []).find(oflat =>
-        (Number(oflat.flatId) === Number(flat.id) || String(oflat.flatNumber) === String(flat.number)) &&
-        oflat.status === "in_progress"
-      );
-      if (activeFlat) {
-        serviceInProgress = {
-          serviceTitle: order.title,
-          workerName: activeFlat.workerName || "Prestador Externo",
-          serviceOrderId: order.id
-        };
-        break;
-      }
-    }
-    return {
-      ...flat,
-      serviceInProgress
-    };
+### 4.2 Lifecycle Management (Windows Compatible)
+- **Spawn command**:
+  ```javascript
+  const serverProcess = spawn('node', ['artifacts/api-server/demo-server.mjs'], {
+    env: { ...process.env, PORT: '5055', DATABASE_URL: '', DATABASE_FILE: testDbPath, NODE_ENV: 'test' },
+    stdio: 'pipe'
   });
+  ```
+- **Readiness probe**:
+  Poll `GET http://127.0.0.1:5055/api/system/version` or `GET http://127.0.0.1:5055/api/flats` with 250ms intervals (max 40 retries / 10s).
+- **Clean teardown**:
+  On Windows, child processes spawned by Node may leave zombie tree processes. Must use:
+  ```javascript
+  execSync(`taskkill /F /T /PID ${serverProcess.pid}`, { stdio: 'ignore' });
+  ```
 
-  triggerBackgroundSync();
-  res.json(activeFlats);
+---
+
+## 5. External Integration Points & Mock World Design (R1)
+
+### 5.1 Z-API / WhatsApp
+- **Configuration source**: `db.zapiConfig` inside `database.json`.
+  - Keys: `instanceId`, `token`, `clientToken`, `baseUrl` (default: `"https://api.z-api.io"`), `testModeOnly: true`, `testAllowedPhones`.
+- **Outbound calls**:
+  - `POST ${baseUrl}/instances/${instanceId}/token/${token}/send-text`
+  - `POST ${baseUrl}/instances/${instanceId}/token/${token}/send-button-list`
+  - `POST ${baseUrl}/instances/${instanceId}/token/${token}/send-document/${ext}`
+  - `POST ${baseUrl}/instances/${instanceId}/token/${token}/send-message-location`
+  - `POST ${baseUrl}/instances/${instanceId}/token/${token}/send-button-otp`
+  - `POST ${baseUrl}/instances/${instanceId}/token/${token}/send-button-pix`
+  - `POST ${baseUrl}/instances/${instanceId}/token/${token}/send-option-list`
+  - `GET ${baseUrl}/instances/${instanceId}/token/${token}/status`
+  - `GET ${baseUrl}/instances/${instanceId}/token/${token}/device`
+  - `GET ${baseUrl}/instances/${instanceId}/token/${token}/qr-code/image`
+- **Inbound Webhook routes on demo-server**:
+  - `POST /api/whatsapp/webhook/received`: Receives incoming guest messages, handled by AI concierge (`Sofia`) or forwarded to admin.
+  - `POST /api/whatsapp/webhook/connected` & `/disconnected`.
+- **Local Emulator Strategy**:
+  - Launch a lightweight Express mock server on `http://127.0.0.1:5056`.
+  - In `database.test.json`, set `db.zapiConfig.baseUrl = "http://127.0.0.1:5056"`.
+  - Mock server routes:
+    - Capture all `POST /instances/:instanceId/token/:token/*` requests into an in-memory queue (`mockZapiQueue`).
+    - Provide query endpoints: `GET /mock/zapi/queue` and `DELETE /mock/zapi/queue`.
+    - Provide helper `POST /mock/zapi/simulate-incoming` which posts a formatted payload to the main server's `/api/whatsapp/webhook/received`.
+  - Result: 0 external requests to WhatsApp servers, 100% verifiable outbound queue, ability to test conversation flows.
+
+### 5.2 SMTP / Nodemailer
+- **Configuration source**:
+  `mail-service.mjs:getSmtpConfig()` checks `process.env.SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` and `db.settings.emailSettings`.
+- **Outbound execution**:
+  `mail-service.mjs:sendEmailAsync()`:
+  1. Instantly writes the email object to `db.reservationCommunications` with `status: "pending"`, recipient, subject, body HTML, and metadata.
+  2. In `setImmediate`, calls `createTransporter(db, overrides)` and `transporter.sendMail(...)`.
+- **Internal Audit Store**:
+  Every email generated (vouchers, check-in confirmations, garage authorizations, WhatsApp mirrors) is recorded in `db.reservationCommunications`.
+- **Local Interception Strategy**:
+  - Set `SMTP_HOST="127.0.0.1"`, `SMTP_PORT="5025"`, `SMTP_USER="test"`, `SMTP_PASS="test"`.
+  - Run a lightweight mock SMTP server (using Node `net.createServer` or `smtp-server`) on port 5025 that accepts connections, acknowledges DATA commands, and stores received emails in memory.
+  - Alternatively/in addition, the E2E runner can inspect `GET /api/pms/reservations/:id/communications` or query `db.reservationCommunications` directly.
+
+### 5.3 Payment Gateways / PIX
+- **Dynamic Banco Inter PIX**:
+  - Handled by `inter-pix-service.mjs`. If certificates or credentials are not configured, it throws cleanly and triggers the built-in fallback to `generateStaticPixPayload`.
+- **Static PIX Generation**:
+  - `generateStaticPixPayload({ pixKey, amount, merchantName, merchantCity, txid })` (lines 142–160 in `zapi-service.mjs`).
+  - Generates valid EMV QR Code strings locally without any network connection.
+- **Payment Webhook Endpoints on demo-server**:
+  - `POST /api/pms/inter/webhook`:
+    Accepts `{ pix: [ { txid, valor, horario, endToEndId } ] }`.
+    Finds reservation where `r.pixTxId === txid`, updates `r.paymentStatus = "pago_total"`, `r.paidAmount = valor`, `r.paidAt = horario`, triggers notification, and calls `saveDatabase()`.
+  - `POST /api/pms/mercadopago/webhook`:
+    Accepts `{ type: "payment", data: { id: "..." } }`.
+  - `POST /api/finance/payments/reconcile/:code`:
+    Manual admin reconciliation.
+- **Simulator Strategy**:
+  - To test instant PIX payment:
+    POST to `http://127.0.0.1:5055/api/pms/inter/webhook` with `{ pix: [{ txid: reservation.pixTxId, valor: reservation.totalAmount, horario: new Date().toISOString(), endToEndId: "E00000000000000000" }] }`.
+  - The UI (via React Query polling or websocket/refresh) immediately updates to `pago_total`.
+  - For expiration / regeneration: Call `/api/pms/reservations/:code/pix` or simulate expiration of txid.
+
+### 5.4 SERPRO / FNRH gov.br API
+- **Configuration source**:
+  `fnrh-serpro-service.mjs`: `FnrhSerproClient`.
+- **Existing Mock Mode**:
+  `fnrh-serpro-service.mjs` lines 121–180 ALREADY contains full mock support:
+  ```javascript
+  const mock = Boolean(
+    this.mockMode ||
+    process.env.SERPRO_MOCK === "true" ||
+    serproConfig.mock ||
+    settingsOverride?.mock
+  );
+  ```
+  When `mock: true`, it does not touch the network. Instead:
+  - Generates deterministic UUIDs: `634eecb8-5973-47fd-a8a6-${cleanSuffix}`.
+  - Returns `link_precheckin`: `https://fnrh.turismo.gov.br/precheckin/${mockUuid}`.
+  - Returns `situacao_reserva_id: "CRIADA"`.
+  - Latency: 15ms.
+- **Fail-safe Fallback Testing**:
+  Setting `mockTimeout: true` or `mockError: "Service Unavailable"` allows testing the requirement where Gov.br fails and the system transparently falls back to internal check-in (`/pre-checkin/:code`).
+
+### 5.5 NFS-e Prefeitura & National ADN
+- **GissOnline SOAP**:
+  `giss-soap.mjs:emitirNfseGissReal` loads `loadCert()` (`storage/certs/certificado_corpflats_a1.pfx` or `CERT_PFX_BASE64`) and connects to `ws-homologacao-rtc.giss.com.br` or `ws-goytacazes.giss.com.br`.
+- **National NFS-e**:
+  `national-nfse.mjs` generates DPS XML and Danfse HTML locally.
+- **Mock Strategy for Testing**:
+  In sandbox mode, `/api/nfse/emit` can check `process.env.NODE_ENV === "test"` or `process.env.GISS_MOCK === "true"` to return simulated RPS/DPS numbers without attempting SOAP network transmission.
+
+---
+
+## 6. Time & Clock Mechanisms (Time-Travel Architecture)
+
+### 6.1 Critical Time Checkpoints Mapped in Code
+
+1. **Turno das 18:00 (Governança & Fechamento de Quinzena)**:
+   - File: `artifacts/api-server/maid-automation-service.mjs` (Lines 530–660).
+   - Trigger 2: "Resumo Diário de Produtividade" (`scheduledTime: "18:00"`).
+     ```javascript
+     const isPastOrAtDailyTime = (bNow.hour > 18) || (bNow.hour === 18 && bNow.minute >= 0);
+     ```
+   - Trigger 3: "Relatório de Fechamento de Quinzena" (`scheduledTime: "18:00"` on Day 15 and last day of month).
+     ```javascript
+     const isClosingDay = (currD === 15 || currD === lastDayOfMonth);
+     const isPastOrAtClosingTime = (bNow.hour > 18) || (bNow.hour === 18 && bNow.minute >= 0);
+     ```
+   - When reached: Dispatches productivity summaries to all active maids with WhatsApp.
+
+2. **Horário Limite do Café da Manhã (22:00 e 05:00 do dia seguinte)**:
+   - File: `artifacts/api-server/demo-server.mjs` (Lines 21731–21740 & Lines 22731–22746).
+   - Ordering cutoff: Orders for today cannot be placed after 05:00:
+     ```javascript
+     if (tDate === todayStr && nowBrl.hour >= 5) {
+       return res.status(400).json({
+         error: `O horário limite para pedidos de hoje (${todayStr}) foi encerrado às 05:00. O próximo café da manhã disponível é para amanhã.`
+       });
+     }
+     ```
+   - In guest portal (`guest-breakfast.tsx:825`): Informs guests that ordering for today is closed.
+
+3. **Check-in Lock & Senha da Fechadura (14:00)**:
+   - File: `artifacts/api-server/demo-server.mjs` (Lines 14150–14155 & Lines 14307–14316).
+     ```javascript
+     const currentHour = brDate.getHours();
+     const isPastOrExact14h = currentHour >= 14;
+     const isCheckinToday = (todayStr === r.checkinDate);
+     const canDoEarlyCheckin = isCheckinToday && isFlatClean && hasEarlyCheckinBenefit;
+     ```
+   - Frontend rule (`guest-portal.tsx:2180–2240`):
+     - Before 14:00, if flat is not cleaned or early check-in not granted: Door password is NOT revealed; UI shows banner: "Apartamento em Preparação & Higienização 🧹 - O horário oficial de check-in é a partir das 14:00".
+     - At or after 14:00 (or when flat is clean + early check-in benefit): Door password badge appears with copy button.
+
+### 6.2 Current Time Computation Helpers
+In `demo-server.mjs`:
+- Line 102–111:
+  ```javascript
+  const BRAZIL_DATE_FORMATTER = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric", month: "2-digit", day: "2-digit"
+  });
+  function getTodayStr() {
+    return BRAZIL_DATE_FORMATTER.format(new Date());
+  }
+  ```
+- Line 142–162:
+  ```javascript
+  function getBrasiliaNow() {
+    const now = new Date();
+    const dateStr = BRAZIL_DATE_FORMATTER.format(now);
+    const timeParts = new Intl.DateTimeFormat("pt-BR", {
+      timeZone: "America/Sao_Paulo",
+      hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false
+    }).formatToParts(now);
+    ...
+    return { date: dateStr, hour, minute, second, timeStr: `${...}:${...}` };
+  }
+  ```
+
+### 6.3 Time-Travel Endpoint Design
+To enable synthetic tests to travel through time deterministically without altering system time on Windows:
+Add a controllable time offset in `demo-server.mjs` (and mirror in `scripts/demo-server.mjs`):
+
+```javascript
+// ── Simulated Clock & Time-Travel Hook (Active when NODE_ENV === 'test') ─────
+let __simulatedTimeOffsetMs = 0;
+
+export function getEffectiveNow() {
+  return new Date(Date.now() + __simulatedTimeOffsetMs);
+}
+
+function getTodayStr() {
+  return BRAZIL_DATE_FORMATTER.format(getEffectiveNow());
+}
+
+function getBrasiliaNow() {
+  const now = getEffectiveNow();
+  const dateStr = BRAZIL_DATE_FORMATTER.format(now);
+  const timeParts = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false
+  }).formatToParts(now);
+  const hour = Number(timeParts.find(p => p.type === "hour")?.value || "0");
+  const minute = Number(timeParts.find(p => p.type === "minute")?.value || "0");
+  const second = Number(timeParts.find(p => p.type === "second")?.value || "0");
+  return {
+    date: dateStr,
+    hour, minute, second,
+    timeStr: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+  };
+}
+```
+
+And add endpoint:
+```javascript
+app.post("/api/test/time-travel", (req, res) => {
+  if (process.env.NODE_ENV !== "test") {
+    return res.status(403).json({ error: "Time-travel is only allowed in test mode." });
+  }
+  const { targetDate, offsetHours, reset } = req.body || {};
+
+  if (reset) {
+    __simulatedTimeOffsetMs = 0;
+  } else if (targetDate) {
+    __simulatedTimeOffsetMs = new Date(targetDate).getTime() - Date.now();
+  } else if (typeof offsetHours === "number") {
+    __simulatedTimeOffsetMs += offsetHours * 3600000;
+  }
+
+  const currentNow = getBrasiliaNow();
+  res.json({
+    ok: true,
+    simulatedNow: currentNow,
+    offsetMs: __simulatedTimeOffsetMs,
+    offsetHours: __simulatedTimeOffsetMs / 3600000
+  });
 });
 ```
+This enables test scripts to jump to:
+- 13:50 (Flat locked) -> jump to 14:01 (Flat unlocked, door code displayed).
+- 17:55 -> jump to 18:05 (Maid productivity report dispatched).
+- 21:55 -> jump to 22:05 (Breakfast cutoff triggered).
+- Jump 3 days forward (Test overdue checkout / reservation expiration).
 
-### Calendar PMS Blocking Integration (`GET /api/pms/calendar`)
-In `artifacts/api-server/demo-server.mjs:9234`, `GET /api/pms/calendar` queries `db.roomBlocks`.  
-To reflect active service orders with `estimatedFinishAt`:
-```javascript
-const serviceOrderBlocks = [];
-for (const order of (db.serviceOrders || []).filter(o => o.status === "active")) {
-  for (const oflat of (order.flats || [])) {
-    if (oflat.status === "in_progress" && oflat.startedAt) {
-      const startDate = oflat.startedAt.substring(0, 10);
-      const endDate = oflat.estimatedFinishAt ? oflat.estimatedFinishAt.substring(0, 10) : startDate;
-      serviceOrderBlocks.push({
-        id: `service_block_${order.id}_${oflat.flatId}`,
-        flatId: oflat.flatId,
-        flatNumber: oflat.flatNumber,
-        startDate,
-        endDate,
-        reason: `🔧 ${order.title}`,
-        notes: `Serviço em andamento: ${order.title} (${oflat.workerName || "Prestador"})`,
-        isServiceOrder: true,
-        serviceOrderId: order.id,
-        createdAt: oflat.startedAt
-      });
-    }
-  }
-}
-// Merge serviceOrderBlocks with db.roomBlocks in response
+---
+
+## 7. Recommended Sandbox Architecture for Milestone 2+
+
+```
+                    ┌──────────────────────────────────────────────┐
+                    │               Test Runner / E2E              │
+                    │               (Playwright / Node)            │
+                    └───────────────┬──────────────────────────────┘
+                                    │
+           ┌────────────────────────┼────────────────────────┐
+           │                        │                        │
+           ▼                        ▼                        ▼
+┌──────────────────────┐ ┌──────────────────────┐ ┌──────────────────────┐
+│  Mock Z-API Server   │ │  Mock SMTP Server    │ │ Isolated API Server  │
+│  (Port 5056)         │ │  (Port 5025)         │ │ (Port 5055)          │
+│                      │ │                      │ │                      │
+│ - Queue: GET /queue  │ │ - Captures Nodemailer│ │ - DATA_FILE:         │
+│ - Inbound simulator  │ │   transports in mem  │ │   database.test.json │
+│                      │ │ - Inspectable        │ │ - DATABASE_URL: ""   │
+└──────────┬───────────┘ └──────────┬───────────┘ │ - SERPRO_MOCK: true  │
+           ▲                        ▲             │ - Time-Travel API    │
+           │ (baseUrl)              │ (SMTP_PORT) └──────────┬───────────┘
+           └────────────────────────┴────────────────────────┘
 ```
 
----
-
-## 5. Notification Architecture & Reception Configs
-
-### 1. Z-API WhatsApp Engine (`artifacts/api-server/zapi-service.mjs`)
-- Primary dispatch function: `sendZapiMessage(config, options)` (`line 2025`).
-- Required options:
-  ```javascript
-  await sendZapiMessage(db.zapiConfig, {
-    phone: targetPhone,
-    message: formattedText,
-    bypassTestMode: true // Essential: prevents test-mode blocking for staff/admin alerts
-  });
-  ```
-- **Fallback safety**: If Z-API is not configured or in sandbox, `sendZapiMessage` returns `{ success: true, simulated: true }` without crashing or throwing.
-
-### 2. Email Service (`artifacts/api-server/mail-service.mjs`)
-- Primary dispatch function: `sendEmailAsync(options)` (`line 620`).
-- Runs in background queue without blocking HTTP response, logs directly to `db.reservationCommunications`:
-  ```javascript
-  sendEmailAsync({
-    db,
-    saveDatabase,
-    reservationId: "0",
-    recipient: receptionEmail,
-    subject: `[CorpFlats] Serviço ${action === "start" ? "Iniciado" : "Finalizado"} - Flat ${flatNumber} (${order.title})`,
-    bodyHtml: htmlContent,
-    metadata: {
-      category: "service_order",
-      serviceOrderId: order.id,
-      flatNumber: flatNumber
-    }
-  });
-  ```
-
-### 3. Internal Notifications & Audit Logs
-- Central engine function: `createNotification(options)` (`artifacts/api-server/demo-server.mjs:3778`).
-- Behavior:
-  - Writes to `db.notifications` (prepends, caps at 250 items, sets `read: false`, timestamps with ISO 8601).
-  - Automatically calls `logAuditEvent()` to persist event to `db.auditLogs`, local `audit_logs.jsonl`, and PostgreSQL.
-  - Automatically calls `saveDatabase()`.
-  - Dispatches webhook if configured in `db.notificationSettings.webhookUrl`.
-  - Served directly to UI via `GET /api/notifications` (`demo-server.mjs:12466`).
-
-### 4. Reception & Admin Contact Configurations
-- **Admin WhatsApp**: Explicitly mandated as `5522998505276` in R3.
-- **Reception WhatsApp / Phone**:
-  - Found in `db.settings.receptionPhone` or `db.settings.receptionWhatsApp` or `db.siteConfig.branding.whatsapp` or `db.users.find(u => u.role === "recepcao").whatsapp` or fallback `db.settings.adminWhatsApp || "5522997124021"`.
-- **Reception Email**:
-  - Found in `flat?.receptionEmail || db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com"` (verified across lines 2753, 5207, 8090, 10850, 11899, 14647, 15609, 24749).
-
----
-
-## 6. Photo Uploads & Storage Pipeline
-
-### Storage Mechanism (`artifacts/api-server/storage-service.mjs`)
-- Function: `uploadImageToStorage(base64Data, filenamePrefix, db, folder)` (`line 92`).
-- Parameters:
-  1. `base64Data`: Base64 string (e.g. `data:image/jpeg;base64,...`) or URL.
-  2. `filenamePrefix`: e.g. `service_flat_${flatId}`.
-  3. `db`: Global DB object (reads `db?.storageConfig?.r2` credentials).
-  4. `folder`: e.g. `"services"`.
-- Behavior:
-  - If input is already an HTTP(S) URL, returns it directly.
-  - Generates unique key: `${folder}/${filenamePrefix}_${timestamp}_${random}.${ext}`.
-  - Attempts upload to Cloudflare R2 via SigV4 (`uploadToCloudflareR2Direct`).
-  - If R2 is unconfigured or fails, gracefully falls back to returning the base64 Data URL.
-- Server Limits: `demo-server.mjs:185-186` sets `express.json({ limit: "50mb" })` and `express.urlencoded({ limit: "50mb", extended: true })`.
-- Frontend Convention: All photo uploads across `Guest-Flow-Manager` (`flat-card.tsx:502`, `lost-and-found.tsx:218`, `guest-pre-checkin.tsx:605`) read files into Base64 via `FileReader.readAsDataURL()` and send JSON bodies with `photoBase64: string` or `photos: string[]`. Supporting JSON base64 payloads on `POST /api/service/public/:token/flats/:flatId/photos` integrates seamlessly with both the frontend components and `uploadImageToStorage`.
-
----
-
-## 7. Server Mirror Synchronization (`artifacts` vs `scripts`)
-
-### Current Relationship
-- Primary server file: `artifacts/api-server/demo-server.mjs`.
-- Mirror file: `scripts/demo-server.mjs`.
-- Integrity tests:
-  - `tests/checkout-occupancy-rule.test.mjs:11-15`:
-    ```javascript
-    it('1. Deve ter paridade estrita entre demo-server.mjs em artifacts e scripts', () => {
-      const serverCode = fs.readFileSync(serverPath, 'utf8');
-      const scriptsCode = fs.readFileSync(scriptsServerPath, 'utf8');
-      assert.strictEqual(serverCode, scriptsCode, 'demo-server.mjs deve ser idêntico em artifacts/api-server e scripts/');
-    });
-    ```
-  - `tests/governance-integrity.test.mjs:255`: Checks exact SHA-256 hash match between primary and mirror.
-  - `tests/adversarial-stress.test.mjs:19-20`: Checks dual-server parity.
-
-### Critical Finding
-- Running `node --test tests/checkout-occupancy-rule.test.mjs` currently fails Subtest 1 because uncommitted modifications exist in `artifacts/api-server/demo-server.mjs` (survey overhaul) that were not yet synced to `scripts/demo-server.mjs`.
-- **Mandate for M1 Implementation**:
-  Every modification made to `artifacts/api-server/demo-server.mjs` MUST be mirrored byte-for-byte to `scripts/demo-server.mjs` before committing.
-  Verification command:
-  ```powershell
-  node --test tests/checkout-occupancy-rule.test.mjs
-  ```
-
----
-
-## Actionable Recommendations for Milestone 1
-
-1. **Database Schema Setup**:
-   Add `"serviceOrders": []` and `"serviceWorkers": []` to `data/database.json`. In `demo-server.mjs` lines 469 and 2807, initialize `db.serviceOrders = []` and `db.serviceWorkers = []`.
-2. **Helper Functions**:
-   Implement helper functions before line 7587:
-   - `isFlatDirty(flatId, flatNumber)`: Checks cleaning requests and checkout reservations.
-   - `formatServiceDuration(startIso, endIso)`: Generates friendly duration string.
-   - `dispatchServiceOrderNotification(event, order, flat, worker, extra)`: Orchestrates WhatsApp to admin (`5522998505276`), WhatsApp to reception, email to reception, and `createNotification`.
-3. **Route Implementation**:
-   Insert the 6 admin endpoints and 5 public endpoints at line 7587 in `artifacts/api-server/demo-server.mjs`.
-4. **Flats API & Calendar**:
-   Update `GET /api/flats` (line 5189) with `serviceInProgress` and `GET /api/pms/calendar` (line 9234) with service block synthesis.
-5. **Mirror Sync**:
-   Copy `artifacts/api-server/demo-server.mjs` to `scripts/demo-server.mjs` and execute `node --test tests/checkout-occupancy-rule.test.mjs` to ensure 100% parity.
+1. **Isolation Guarantee**: Zero external network egress.
+2. **Determinism**: Fully seedable database replica (`database.test.json`).
+3. **Speed**: Sub-second startup, no external network latency.
+4. **Mirror Safety**: Changes strictly synced between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`.
