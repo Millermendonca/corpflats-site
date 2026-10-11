@@ -1,63 +1,57 @@
-# BRIEFING — 2026-09-30T23:28:00Z
+# BRIEFING — 2026-10-11T02:26:30Z
 
 ## Mission
-Implement the Frontend Admin UI for External Service Orders (Ordens de Serviço de Terceirizados / Manutenção), including routes, navigation sidebar link, and full 3-tab interface (Lista, Criar/Editar, Acompanhamento) with full backend API integration, build verification, and git push.
+Implementar Milestone M2: R4 - IA com Function Calling Adaptativo & Fallback Gracioso, reconciliação de paridade de arquivos gêmeos e suite de testes robusta sem falhas ou mascaramento.
 
 ## 🔒 My Identity
 - Archetype: worker
 - Roles: implementer, qa, specialist
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m2
-- Original parent: 2a43f791-5cc7-4933-bdd2-688af9234cb1
-- Milestone: M2 - Frontend Admin Implementer
+- Original parent: 3364a657-c855-42a7-a46e-a5463bc245b7
+- Milestone: M2
 
 ## 🔒 Key Constraints
-- Write ownership strictly limited to:
-  * artifacts/limpeza/src/pages/service-orders.tsx
-  * artifacts/limpeza/src/App.tsx
-  * artifacts/limpeza/src/components/layout.tsx
-- No shortcuts or facades; genuine real-state implementations only.
-- Build verification: `npm run build` in `artifacts/limpeza` must pass with code 0.
-- Per AGENTS.md: Always `git commit` and `git push` to `origin main` with generated `dist/`.
+- DO NOT CHEAT. All implementations must be genuine.
+- Maintain 100% byte-a-byte parity (identical SHA-256) between `artifacts/api-server/whatsapp-ai-service.mjs` and `scripts/whatsapp-ai-service.mjs`.
+- Always git push to origin main after git commit as per repository rules.
+- Remove `process.exit(0)` in `tests/whatsapp-ai-agent.test.mjs` and ensure clean node --test execution.
+- Zero regressions in existing suites (`tariff-engine.test.mjs`, `bot-actions-api.test.mjs`).
+- Graceful fallback with timeout and heuristic preservation.
 
 ## Current Parent
-- Conversation ID: 2a43f791-5cc7-4933-bdd2-688af9234cb1
-- Updated: 2026-09-30T23:28:00Z
+- Conversation ID: 3364a657-c855-42a7-a46e-a5463bc245b7
+- Updated: 2026-10-11T02:26:30Z
 
 ## Task Summary
-- **What to build**: Full Frontend Admin page for Service Orders (`service-orders.tsx`) with 3 tabs (Lista, Criar/Editar, Acompanhamento com polling/filtros/modal de detalhes/reset flat), register route in `App.tsx`, add navigation menu item in `layout.tsx`.
-- **Success criteria**: Clean compilation, zero lint/TS errors, functional backend integration with full adherence to R4 requirements.
-- **Interface contracts**: API routes defined in PROJECT.md (`/api/service-orders`, `/api/service-orders/:id`, `/api/service-orders/:id/flats/:flatId/reset`, `/api/flats`, etc.).
-- **Code layout**: `artifacts/limpeza/src/pages/service-orders.tsx`, `artifacts/limpeza/src/App.tsx`, `artifacts/limpeza/src/components/layout.tsx`.
+- **What to build**: Function calling adaptativo no `whatsapp-ai-service.mjs`, acionado conforme configurações em `db.botActionsSettings`. Suporte a loop multi-turn, tratamento de ações desabilitadas/erros, fallback heurístico sob timeout/falha. Sincronização de paridade dos arquivos gêmeos e novos testes completos.
+- **Success criteria**: Testes passam 100%, paridade SHA-256 verificada, push realizado.
+- **Interface contracts**: `PROJECT.md` & `ORIGINAL_REQUEST.md`.
 
 ## Key Decisions Made
-- Tab 1: Implemented search, status filtering, order cards with progress bar, copyable public link (`${window.location.origin}/servico/${token}`), action buttons ("Ver Progresso", "Editar", "Encerrar/Reativar", "Excluir").
-- Tab 2: Implemented comprehensive form with 3 clear explanatory options for `cleanFlatMode` (never, priority, always), `maxSimultaneousFlats`, `maxFlatsPerDay`, `requirePhotos`, `estimatedDurationHours`, 19-flat checkbox grid, general instructions + individual flat instructions option, and `instructionFormat` toggle ("text" | "list").
-- Tab 3: Implemented real-time tracking panel polling every 10s via TanStack Query, KPI counters, order selector, status filters, complete table with status badges and timestamps, clickable rows opening rich Dialog modal with photo viewer and zoom, and admin button to reset flat to "pending" via `POST /api/service-orders/:id/flats/:flatId/reset`.
+- `buildGeminiTools` lê `db.botActionsSettings` e retorna `tools: []` quando desativado; quando ativado, inclui apenas declarações permitidas em `allowedActions`.
+- Loop multi-turn no `callGeminiAi` executa `executeBotAction` (com os 5 controladores: `checkAvailability`, `calculateQuote`, `createPreReservation`, `generatePayment`, `commitReservation`), anexa `functionResponse` e aciona o Turno 2 com timeout de 8s.
+- `executeBotAction` retorna `{ error: "ACTION_DISABLED", requiresHandover: true }` quando uma ação estiver inativa, orientando transbordo cordial.
+- Fallback heurístico inteligente é acionado em falhas/timeout sem travar o servidor (zero crash).
+- Arquivos espelhados `artifacts/api-server/whatsapp-ai-service.mjs` e `scripts/whatsapp-ai-service.mjs` mantidos em paridade estrita SHA-256 (`F3E412E254A116B72791EF68F1C506333B0889783702A8DD10788E0D5AB4CAB5`).
+- `process.exit(0)` removido de `tests/whatsapp-ai-agent.test.mjs`, e encerramento limpo alcançado gerenciando timers e servidores http criados por importação.
 
 ## Artifact Index
-- `.agents/teamwork/worker_m2/DISPATCH.md` — Assignment instructions
-- `.agents/teamwork/worker_m2/progress.md` — Liveness and execution progress
-- `.agents/teamwork/worker_m2/BRIEFING.md` — Situational awareness and state
-- `.agents/teamwork/worker_m2/handoff.md` — Final completion report
-- `artifacts/limpeza/src/pages/service-orders.tsx` — Admin page implementation
-- `artifacts/limpeza/src/App.tsx` — Registered AdminRoute for /servicos
-- `artifacts/limpeza/src/components/layout.tsx` — Sidebar navigation item
-- `tests/service-orders-admin-frontend.test.mjs` — Automated verification tests
+- `.agents/teamwork/worker_m2/DISPATCH.md` — Despacho do orquestrador
+- `.agents/teamwork/worker_m2/progress.md` — Log de progresso e batimento cardíaco
+- `.agents/teamwork/worker_m2/handoff.md` — Relatório final de handoff
 
 ## Change Tracker
 - **Files modified**:
-  * `artifacts/limpeza/src/pages/service-orders.tsx` (created): Admin page with 3 tabs and full API integration
-  * `artifacts/limpeza/src/App.tsx`: Added AdminRoute for `/servicos` and `/service-orders`
-  * `artifacts/limpeza/src/components/layout.tsx`: Added sidebar navigation link under Governança & Camareiras
-  * `tests/service-orders-admin-frontend.test.mjs` (created): Test suite verifying all R4 requirements
-  * `artifacts/limpeza/dist/`: Updated production build bundle
-- **Build status**: PASS (npm run build exit 0, tests 8/8 pass, regression 34/34 pass)
+  - `artifacts/api-server/whatsapp-ai-service.mjs`: implementado function calling adaptativo, multi-turn loop, bot actions controllers e fallback
+  - `scripts/whatsapp-ai-service.mjs`: espelho 100% byte-a-byte idêntico com mesmo hash SHA-256
+  - `tests/whatsapp-ai-agent.test.mjs`: removido process.exit(0), adicionados testes 16-20
+- **Build status**: Pass (20/20 testes em whatsapp-ai-agent, 13/13 em tariff-engine + bot-actions-api)
 - **Pending issues**: None
 
 ## Quality Status
-- **Build/test result**: PASS (100%)
-- **Lint status**: Clean compilation
-- **Tests added/modified**: `tests/service-orders-admin-frontend.test.mjs` (8 tests)
+- **Build/test result**: Pass (100% aprovação)
+- **Lint status**: clean
+- **Tests added/modified**: 5 novos testes para R4 (chave mestra off, chave mestra on, multi-turn, action disabled, anti-crash fallback)
 
 ## Loaded Skills
 - None

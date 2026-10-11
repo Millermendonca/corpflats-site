@@ -6,11 +6,15 @@
  * - Transbordo Humano Inteligente: Pausa automática da IA ao detectar pedido de atendente ou intervenção humana
  * - Reconhecimento de Contexto do Hóspede: Consulta em tempo real de reservas, flats e status de limpeza/liberação
  * - Google Gemini AI com cascata de modelos e Contingência Heurística Local garantida
+ * - Function Calling Adaptativo: Chave mestra e ações granulares (checkAvailability, calculateQuote, generatePayment, createPreReservation, commitReservation)
+ * - Loop Multi-Turn de Execução de Ferramentas com fallback gracioso e proteção anti-crash
  * - Base de conhecimento rica sobre o CorpFlats (Wi-Fi, garagem, café, horários, localização, comodidades)
  */
 
-import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES } from "./zapi-service.mjs";
+import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES, isFaqApplicableToClient, matchClientPhone, generateStaticPixPayload } from "./zapi-service.mjs";
 import { getCheckinUrlSync as getSerproCheckinUrlSync } from "./fnrh-serpro-service.mjs";
+
+export { isFaqApplicableToClient, matchClientPhone };
 
 /**
  * Resolução dinâmica e unificada de URL de check-in para o agente de IA WhatsApp
@@ -84,6 +88,7 @@ DIRETRIZES DE ATENDIMENTO:
  * Garante e retorna a configuração do Agente de IA em db.zapiConfig.aiAgent
  */
 export function getWhatsAppAiConfig(db) {
+  if (!db) return JSON.parse(JSON.stringify(DEFAULT_AI_CONFIG));
   if (!db.zapiConfig) {
     db.zapiConfig = {};
   }
@@ -168,7 +173,7 @@ export function buildGuestContext(db, phone) {
   const timeStr = brDate.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 
   let matchedReservation = null;
-  const reservations = Array.isArray(db.reservations) ? db.reservations : [];
+  const reservations = Array.isArray(db?.reservations) ? db.reservations : [];
 
   // 1. Busca reserva que coincida com o telefone
   if (cleanPhone) {
@@ -199,7 +204,7 @@ export function buildGuestContext(db, phone) {
 
   // 2. Busca cadastro de hóspede
   let guestRecord = null;
-  if (Array.isArray(db.guests) && cleanPhone) {
+  if (Array.isArray(db?.guests) && cleanPhone) {
     guestRecord = db.guests.find(g => {
       const gPhone = normalizePhone(g.phone || g.whatsapp || "");
       return gPhone && (cleanPhone.endsWith(gPhone.slice(-8)) || gPhone.endsWith(cleanPhone.slice(-8)));
@@ -232,7 +237,7 @@ export function buildGuestContext(db, phone) {
     }
 
     // Consulta governança se for check-in hoje ou em estadia
-    if (flatNumber && Array.isArray(db.cleaningRequests)) {
+    if (flatNumber && Array.isArray(db?.cleaningRequests)) {
       const cleanReq = db.cleaningRequests.find(c => 
         (String(c.flatNumber) === String(flatNumber) || c.flatId === flatId) &&
         (c.requestDate === todayStr || c.effectiveDate === todayStr)
@@ -242,7 +247,7 @@ export function buildGuestContext(db, phone) {
         isRoomReady = cleanReq.status === "clean" || cleanReq.completedAt != null;
       } else {
         // Se não há chamado de limpeza hoje, verifica status do flat
-        const flatObj = (db.flats || []).find(f => String(f.number) === String(flatNumber) || f.id === flatId);
+        const flatObj = (db?.flats || []).find(f => String(f.number) === String(flatNumber) || f.id === flatId);
         if (flatObj && flatObj.status === "clean") {
           cleaningStatus = "clean";
           isRoomReady = true;
@@ -278,6 +283,740 @@ export function buildGuestContext(db, phone) {
     cleaningStatus,
     isRoomReady
   };
+}
+
+/**
+ * Lê e sanitiza as configurações de ações do bot (Chave Mestra e Ações Granulares)
+ */
+export function getBotActionsSettings(db) {
+  if (db?.botActionsSettings) {
+    const s = db.botActionsSettings;
+    return {
+      apiActionsEnabled: s.apiActionsEnabled !== false,
+      allowedActions: {
+        checkAvailability: s.allowedActions?.checkAvailability !== false,
+        calculateQuote: s.allowedActions?.calculateQuote !== false,
+        generatePayment: s.allowedActions?.generatePayment !== false,
+        createPreReservation: s.allowedActions?.createPreReservation !== false,
+        commitReservation: s.allowedActions?.commitReservation !== false,
+        ...(s.allowedActions || {})
+      },
+      preReservationHoldMinutes: Number(s.preReservationHoldMinutes) || 30,
+      handoverMessage: s.handoverMessage || "Esta ação do sistema está pausada ou requer atendimento humano."
+    };
+  }
+  return {
+    apiActionsEnabled: true,
+    allowedActions: {
+      checkAvailability: true,
+      calculateQuote: true,
+      generatePayment: true,
+      createPreReservation: true,
+      commitReservation: true
+    },
+    preReservationHoldMinutes: 30,
+    handoverMessage: "Esta ação do sistema está pausada ou requer atendimento humano."
+  };
+}
+
+/**
+ * Constrói as declarações de ferramentas (Function Calling) do Gemini adaptativamente
+ * de acordo com a chave mestra e as permissões granulares ativas.
+ */
+export function buildGeminiTools(actionsSettings = {}) {
+  if (!actionsSettings || actionsSettings.apiActionsEnabled === false) {
+    return [];
+  }
+
+  const allowed = actionsSettings.allowedActions || {};
+  const declarations = [];
+
+  if (allowed.checkAvailability !== false && allowed.checkAvailability) {
+    declarations.push({
+      name: "checkAvailability",
+      description: "Consulta a disponibilidade de flats para um intervalo de datas (check-in e check-out) e quantidade de hóspedes.",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          checkIn: {
+            type: "STRING",
+            description: "Data de check-in (formato YYYY-MM-DD)"
+          },
+          checkOut: {
+            type: "STRING",
+            description: "Data de check-out (formato YYYY-MM-DD)"
+          },
+          guests: {
+            type: "INTEGER",
+            description: "Número total de hóspedes (opcional, padrão 1)"
+          }
+        },
+        required: ["checkIn", "checkOut"]
+      }
+    });
+  }
+
+  if (allowed.calculateQuote !== false && allowed.calculateQuote) {
+    declarations.push({
+      name: "calculateQuote",
+      description: "Calcula o orçamento completo e detalhado (diárias com motor tarifário inteligente, taxas e valor total) para uma estadia.",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          checkIn: {
+            type: "STRING",
+            description: "Data de entrada (formato YYYY-MM-DD)"
+          },
+          checkOut: {
+            type: "STRING",
+            description: "Data de saída (formato YYYY-MM-DD)"
+          },
+          guests: {
+            type: "INTEGER",
+            description: "Número total de hóspedes (opcional, padrão 1)"
+          },
+          flatId: {
+            type: "STRING",
+            description: "ID ou número do flat desejado (opcional)"
+          },
+          channel: {
+            type: "STRING",
+            description: "Canal de venda (ex: 'direct', 'whatsapp')"
+          },
+          ratePlan: {
+            type: "STRING",
+            description: "Plano tarifário ('room_only' ou 'with_breakfast')"
+          }
+        },
+        required: ["checkIn", "checkOut"]
+      }
+    });
+  }
+
+  if (allowed.createPreReservation !== false && allowed.createPreReservation) {
+    declarations.push({
+      name: "createPreReservation",
+      description: "Cria uma pré-reserva provisória com bloqueio temporário (hold de 30 minutos) no PMS e gera cobrança PIX para garantia.",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          checkIn: {
+            type: "STRING",
+            description: "Data de entrada (YYYY-MM-DD)"
+          },
+          checkOut: {
+            type: "STRING",
+            description: "Data de saída (YYYY-MM-DD)"
+          },
+          guestName: {
+            type: "STRING",
+            description: "Nome completo do hóspede"
+          },
+          guestPhone: {
+            type: "STRING",
+            description: "Telefone/WhatsApp do hóspede com DDD"
+          },
+          flatId: {
+            type: "STRING",
+            description: "ID ou número do flat escolhido"
+          },
+          total: {
+            type: "NUMBER",
+            description: "Valor total da reserva"
+          },
+          guests: {
+            type: "INTEGER",
+            description: "Número de hóspedes (padrão 1)"
+          }
+        },
+        required: ["checkIn", "checkOut", "guestName", "flatId"]
+      }
+    });
+  }
+
+  if (allowed.generatePayment !== false && allowed.generatePayment) {
+    declarations.push({
+      name: "generatePayment",
+      description: "Gera ou recupera dados de pagamento PIX (código Copia e Cola e QR Code) para uma pré-reserva ou reserva.",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          reservationId: {
+            type: "STRING",
+            description: "Código ou ID da reserva/pré-reserva (ex: 'CF-123456')"
+          },
+          amount: {
+            type: "NUMBER",
+            description: "Valor a pagar (opcional se já constar na reserva)"
+          },
+          guestName: {
+            type: "STRING",
+            description: "Nome do hóspede (opcional)"
+          }
+        },
+        required: ["reservationId"]
+      }
+    });
+  }
+
+  if (allowed.commitReservation !== false && allowed.commitReservation) {
+    declarations.push({
+      name: "commitReservation",
+      description: "Efetiva e confirma definitivamente uma pré-reserva no PMS após a confirmação do pagamento, realizando o bloqueio permanente das datas.",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          reservationId: {
+            type: "STRING",
+            description: "Código ou ID da pré-reserva a ser confirmada"
+          }
+        },
+        required: ["reservationId"]
+      }
+    });
+  }
+
+  if (declarations.length === 0) {
+    return [];
+  }
+
+  return [
+    {
+      functionDeclarations: declarations
+    }
+  ];
+}
+
+/**
+ * Calcula a diária efetiva considerando motor tarifário, overrides e markup de canais
+ */
+export function computeDailyRate(db, flatId, dateStr, channel = "direct") {
+  const normDate = String(dateStr).substring(0, 10);
+  let normChan = String(channel || "direct").toLowerCase().trim();
+  if (["whatsapp", "site", "direta", "direto"].includes(normChan)) {
+    normChan = "direct";
+  }
+
+  // 1. Overrides
+  const overrides = Array.isArray(db?.tariffOverrides) ? db.tariffOverrides : [];
+  let targetFlatId = flatId ? String(flatId) : null;
+  let targetFlatNumber = null;
+  if (targetFlatId && Array.isArray(db?.flats)) {
+    const fObj = db.flats.find(f => String(f.id) === targetFlatId || String(f.number) === targetFlatId);
+    if (fObj) {
+      targetFlatId = String(fObj.id);
+      targetFlatNumber = String(fObj.number);
+    }
+  }
+
+  let matchedOverride = null;
+  if (targetFlatId || targetFlatNumber) {
+    matchedOverride = overrides.find(o =>
+      o.date === normDate &&
+      (String(o.flatId) === targetFlatId || (targetFlatNumber && String(o.flatNumber) === targetFlatNumber)) &&
+      String(o.channel || "").toLowerCase() === normChan
+    ) || overrides.find(o =>
+      o.date === normDate &&
+      (String(o.flatId) === targetFlatId || (targetFlatNumber && String(o.flatNumber) === targetFlatNumber)) &&
+      (!o.channel || String(o.channel).toLowerCase() === "all")
+    );
+  }
+
+  if (!matchedOverride) {
+    matchedOverride = overrides.find(o =>
+      o.date === normDate &&
+      (!o.flatId || String(o.flatId) === "all" || o.flatId === null) &&
+      String(o.channel || "").toLowerCase() === normChan
+    ) || overrides.find(o =>
+      o.date === normDate &&
+      (!o.flatId || String(o.flatId) === "all" || o.flatId === null) &&
+      (!o.channel || String(o.channel).toLowerCase() === "all")
+    );
+  }
+
+  if (matchedOverride && matchedOverride.rate != null) {
+    return Math.round(Number(matchedOverride.rate) * 100) / 100;
+  }
+
+  // 2. Base rate
+  const tSettings = db?.tariffSettings || {};
+  let baseRate = Number(tSettings.baseDailyRate != null ? tSettings.baseDailyRate : 237);
+
+  // 3. Weekend markup (Sexta=5, Sábado=6)
+  const dParts = normDate.split("-").map(Number);
+  const dateObj = new Date(Date.UTC(dParts[0], (dParts[1] || 1) - 1, dParts[2] || 1, 12, 0, 0));
+  const dayOfWeek = dateObj.getUTCDay();
+  const isWeekend = (dayOfWeek === 5 || dayOfWeek === 6);
+  let weekendMarkup = 0;
+  if (isWeekend) {
+    const weekendPct = Number(tSettings.weekendMarkupPct != null ? tSettings.weekendMarkupPct : 0.15);
+    weekendMarkup = baseRate * weekendPct;
+  }
+
+  const rateBeforeChan = baseRate + weekendMarkup;
+
+  // 4. Channel markup
+  const chanCfg = tSettings.channelMarkups?.[normChan] ||
+    (normChan === "direct" ? { markupPct: 0.0 } :
+     normChan === "booking" ? { markupPct: 0.18 } :
+     normChan === "airbnb" ? { markupPct: 0.15 } : { markupPct: 0.0 });
+  const chanPct = Number(chanCfg.markupPct || 0);
+  const finalRate = rateBeforeChan * (1 + chanPct);
+
+  return Math.round(finalRate * 100) / 100;
+}
+
+// ── Handlers Internos para Bot Actions ──────────────────────────────────────
+
+function handleCheckAvailability(db, args = {}) {
+  const inDate = args.checkIn || args.checkin;
+  const outDate = args.checkOut || args.checkout;
+  const guests = Math.max(1, Number(args.guests || args.guestsCount || 1));
+
+  if (!inDate || !outDate) {
+    return {
+      error: "MISSING_DATES",
+      message: "checkIn e checkOut são obrigatórios no formato YYYY-MM-DD."
+    };
+  }
+
+  if (inDate >= outDate) {
+    return {
+      error: "INVALID_DATE_RANGE",
+      message: "checkIn deve ser anterior a checkOut."
+    };
+  }
+
+  const nowMs = Date.now();
+  // 1. Limpeza de pré-reservas vencidas
+  (db?.reservations || []).forEach(r => {
+    if ((r.status === "pre_reserva" || r.status === "pendente") && r.expiresAt) {
+      if (new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") {
+        r.status = "expirada";
+        r.updatedAt = new Date().toISOString();
+      }
+    }
+  });
+
+  // 2. Mapeamento de conflitos
+  const busyFlatSet = new Set();
+  (db?.reservations || []).forEach(r => {
+    if (r.status === "cancelada" || r.status === "expirada") return;
+    if ((r.status === "pre_reserva" || r.status === "pendente") && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") return;
+
+    if (r.checkinDate < outDate && r.checkoutDate > inDate) {
+      if (r.flatId != null) busyFlatSet.add(String(r.flatId));
+      if (r.flatNumber != null) busyFlatSet.add(String(r.flatNumber));
+    }
+  });
+
+  (db?.roomBlocks || []).forEach(b => {
+    if (b.startDate < outDate && b.endDate > inDate) {
+      if (b.flatId != null) busyFlatSet.add(String(b.flatId));
+      if (b.flatNumber != null) busyFlatSet.add(String(b.flatNumber));
+    }
+  });
+
+  // 3. Unidades habitacionais disponíveis
+  const allFlats = (db?.flats || []).filter(f => !f.status || f.status !== "manutencao_bloqueada");
+  const siteCfg = db?.siteConfig || {};
+  const maxCapacity = siteCfg?.extraBedConfig?.enabled ? (siteCfg.extraBedConfig.maxGuests || 3) : 2;
+
+  const availableFlats = allFlats.filter(f => {
+    const isBusy = busyFlatSet.has(String(f.id)) || busyFlatSet.has(String(f.number));
+    if (isBusy) return false;
+    if (guests > maxCapacity) return false;
+    return true;
+  });
+
+  return {
+    success: true,
+    available: availableFlats.length > 0,
+    totalAvailable: availableFlats.length,
+    checkIn: inDate,
+    checkOut: outDate,
+    guests,
+    flats: availableFlats.map(f => ({
+      id: f.id,
+      number: f.number,
+      name: f.colName || `Flat ${f.number}`,
+      isOccupied: false
+    }))
+  };
+}
+
+function handleCalculateQuote(db, args = {}) {
+  const inDate = args.checkIn || args.checkin;
+  const outDate = args.checkOut || args.checkout;
+  const guests = Math.max(1, Number(args.guests || args.guestsCount || 1));
+  const flatId = args.flatId || null;
+  const channel = args.channel || "direct";
+  const ratePlan = args.ratePlan || "room_only";
+
+  if (!inDate || !outDate) {
+    return {
+      error: "MISSING_DATES",
+      message: "checkIn e checkOut são obrigatórios."
+    };
+  }
+
+  const start = new Date(inDate + "T12:00:00Z");
+  const end = new Date(outDate + "T12:00:00Z");
+  if (isNaN(start.getTime()) || isNaN(end.getTime()) || start >= end) {
+    return {
+      error: "INVALID_DATE_RANGE",
+      message: "checkIn deve ser uma data anterior a checkOut."
+    };
+  }
+
+  const nightsDiff = Math.round((end.getTime() - start.getTime()) / 86400000);
+  if (nightsDiff > 90) {
+    return {
+      error: "MAX_STAY_EXCEEDED",
+      message: "O período máximo para cotação automatizada é de 90 noites."
+    };
+  }
+
+  const dailyRates = [];
+  const cur = new Date(start);
+  while (cur < end) {
+    const dStr = cur.toISOString().substring(0, 10);
+    const rate = computeDailyRate(db, flatId, dStr, channel);
+    dailyRates.push({
+      date: dStr,
+      rate
+    });
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+
+  const nights = dailyRates.length;
+  const roomTotal = Math.round(dailyRates.reduce((acc, n) => acc + n.rate, 0) * 100) / 100;
+
+  const siteCfg = db?.siteConfig || {};
+  const plans = siteCfg.ratePlans || {};
+  const selectedPlan = plans[ratePlan] || plans["room_only"] || { cleaningFeeAmount: 70 };
+
+  let cleaningFee = 0;
+  if (ratePlan !== "with_breakfast" && selectedPlan.cleaningFeeEnabled !== false) {
+    cleaningFee = Number(selectedPlan.cleaningFeeAmount != null ? selectedPlan.cleaningFeeAmount : 70);
+  }
+
+  let extraBedFee = 0;
+  const extraBedCfg = siteCfg.extraBedConfig || { enabled: true, feeAmount: 60 };
+  if (guests > 2 && extraBedCfg.enabled) {
+    extraBedFee = Number(extraBedCfg.feeAmount || 60);
+  }
+
+  let breakfastFee = 0;
+  if (ratePlan === "with_breakfast") {
+    const planBreakfastRate = Number(plans.with_breakfast?.dailyRate || 225);
+    const planRoomOnlyRate = Number(plans.room_only?.dailyRate || 190);
+    const breakfastDiffPerNight = Math.max(35, planBreakfastRate - planRoomOnlyRate);
+    breakfastFee = Math.round(breakfastDiffPerNight * nights * 100) / 100;
+  }
+
+  const total = Math.round((roomTotal + cleaningFee + extraBedFee + breakfastFee) * 100) / 100;
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+
+  return {
+    success: true,
+    quoteId: `quote_${Date.now()}`,
+    checkIn: inDate,
+    checkOut: outDate,
+    nights,
+    guests,
+    flatId,
+    channel,
+    ratePlan,
+    roomTotal,
+    cleaningFee,
+    extraBedFee,
+    breakfastFee,
+    total,
+    dailyRates,
+    expiresAt
+  };
+}
+
+async function handleCreatePreReservation(db, args = {}) {
+  const inDate = args.checkIn || args.checkin;
+  const outDate = args.checkOut || args.checkout;
+  const guestName = args.guestName;
+  const guestPhone = args.guestPhone || "";
+  const flatId = args.flatId;
+  const total = Number(args.total || 0);
+  const channel = args.channel || "whatsapp";
+  const guests = Math.max(1, Number(args.guests || args.guestsCount || 1));
+
+  if (!inDate || !outDate || !guestName || !flatId) {
+    return {
+      error: "MISSING_FIELDS",
+      message: "flatId, checkIn, checkOut e guestName são obrigatórios."
+    };
+  }
+
+  const flat = (db?.flats || []).find(f => String(f.id) === String(flatId) || String(f.number) === String(flatId));
+  if (!flat) {
+    return {
+      error: "FLAT_NOT_FOUND",
+      message: "Apartamento informado não foi encontrado."
+    };
+  }
+
+  // Verificação de conflito
+  const nowMs = Date.now();
+  const hasConflict = (db?.reservations || []).some(r => {
+    if (r.status === "cancelada" || r.status === "expirada") return false;
+    if ((r.status === "pre_reserva" || r.status === "pendente") && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") return false;
+    if (String(r.flatId) !== String(flat.id) && String(r.flatNumber) !== String(flat.number)) return false;
+    return r.checkinDate < outDate && r.checkoutDate > inDate;
+  });
+
+  if (hasConflict) {
+    return {
+      error: "FLAT_UNAVAILABLE",
+      message: `O Flat ${flat.number} já possui reserva ou bloqueio para o período selecionado.`
+    };
+  }
+
+  const botSettings = getBotActionsSettings(db);
+  const holdMinutes = botSettings.preReservationHoldMinutes || 30;
+  const expiresAt = new Date(Date.now() + holdMinutes * 60 * 1000).toISOString();
+
+  const nextId = db?.reservations && db.reservations.length > 0
+    ? Math.max(...db.reservations.map(r => r.id || 0)) + 1
+    : 1;
+  const code = `CF-${Math.floor(100000 + Math.random() * 900000)}`;
+  const cleanTxId = code.replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
+
+  const pixPayload = generateStaticPixPayload({
+    pixKey: db?.settings?.interConfig?.pixKey || "47964813000165",
+    amount: total,
+    merchantName: "CORPFLATS LTDA",
+    merchantCity: "CAMPOS DOS GOYTACAZES",
+    txid: cleanTxId
+  });
+
+  let qrCodeBase64 = "";
+  try {
+    const qrcodeMod = await import("qrcode").catch(() => null);
+    const QRCode = qrcodeMod?.default || qrcodeMod;
+    if (QRCode && typeof QRCode.toDataURL === "function") {
+      qrCodeBase64 = await QRCode.toDataURL(pixPayload);
+    }
+  } catch (_) {}
+
+  const newReservation = {
+    id: nextId,
+    code,
+    flatId: flat.id,
+    flatNumber: String(flat.number),
+    guestName: String(guestName).trim(),
+    guestPhone: cleanWhatsAppPhone(guestPhone || ""),
+    phone: cleanWhatsAppPhone(guestPhone || ""),
+    guestsCount: guests,
+    checkinDate: inDate,
+    checkoutDate: outDate,
+    channel,
+    status: "pre_reserva",
+    paymentStatus: "pendente",
+    totalAmount: total,
+    paidAmount: 0,
+    expiresAt,
+    pixCopiaECola: pixPayload,
+    pixTxId: cleanTxId,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+
+  if (!Array.isArray(db.reservations)) db.reservations = [];
+  db.reservations.unshift(newReservation);
+
+  return {
+    success: true,
+    reservationId: newReservation.id,
+    code: newReservation.code,
+    flatId: newReservation.flatId,
+    flatNumber: newReservation.flatNumber,
+    checkIn: newReservation.checkinDate,
+    checkOut: newReservation.checkoutDate,
+    guestName: newReservation.guestName,
+    total: newReservation.totalAmount,
+    status: "pre_reserva",
+    expiresAt: newReservation.expiresAt,
+    pixCopiaECola: pixPayload,
+    qrCodeBase64,
+    holdMinutes
+  };
+}
+
+async function handleGeneratePayment(db, args = {}) {
+  const targetId = args.reservationId || args.reservationCode || args.code;
+  let resObj = null;
+  if (targetId) {
+    resObj = (db?.reservations || []).find(r =>
+      String(r.id) === String(targetId) || String(r.code) === String(targetId)
+    );
+  }
+
+  const resolvedAmount = Number(args.amount || resObj?.totalAmount || 0);
+  if (isNaN(resolvedAmount) || resolvedAmount <= 0) {
+    return {
+      error: "INVALID_AMOUNT",
+      message: "O valor do pagamento deve ser maior que zero."
+    };
+  }
+
+  const resolvedGuestName = args.guestName || resObj?.guestName || "Hospede CorpFlats";
+  const cleanTxId = (resObj?.code || `PIX${Date.now()}`).replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
+
+  const pixPayload = generateStaticPixPayload({
+    pixKey: db?.settings?.interConfig?.pixKey || "47964813000165",
+    amount: resolvedAmount,
+    merchantName: "CORPFLATS LTDA",
+    merchantCity: "CAMPOS DOS GOYTACAZES",
+    txid: cleanTxId
+  });
+
+  let qrCodeBase64 = "";
+  try {
+    const qrcodeMod = await import("qrcode").catch(() => null);
+    const QRCode = qrcodeMod?.default || qrcodeMod;
+    if (QRCode && typeof QRCode.toDataURL === "function") {
+      qrCodeBase64 = await QRCode.toDataURL(pixPayload);
+    }
+  } catch (_) {}
+
+  const botSettings = getBotActionsSettings(db);
+  const holdMinutes = botSettings.preReservationHoldMinutes || 30;
+  const expiresAt = new Date(Date.now() + holdMinutes * 60 * 1000).toISOString();
+
+  if (resObj) {
+    resObj.pixCopiaECola = pixPayload;
+    resObj.pixTxId = cleanTxId;
+    resObj.updatedAt = new Date().toISOString();
+  }
+
+  return {
+    success: true,
+    reservationId: resObj ? resObj.id : null,
+    reservationCode: resObj ? resObj.code : null,
+    amount: resolvedAmount,
+    guestName: resolvedGuestName,
+    pixCopiaECola: pixPayload,
+    qrCodeBase64,
+    expiresAt
+  };
+}
+
+function handleCommitReservation(db, args = {}) {
+  const targetId = args.reservationId || args.reservationCode || args.code;
+  if (!targetId) {
+    return {
+      error: "MISSING_RESERVATION_ID",
+      message: "reservationId é obrigatório."
+    };
+  }
+
+  const reservation = (db?.reservations || []).find(r =>
+    String(r.id) === String(targetId) || String(r.code) === String(targetId)
+  );
+
+  if (!reservation) {
+    return {
+      error: "RESERVATION_NOT_FOUND",
+      message: "Reserva não encontrada."
+    };
+  }
+
+  if (reservation.status === "cancelada") {
+    return {
+      error: "RESERVATION_CANCELLED",
+      message: "Esta reserva está cancelada e não pode ser efetivada."
+    };
+  }
+
+  const nowMs = Date.now();
+  const isExpired = reservation.status === "expirada" ||
+    ((reservation.status === "pre_reserva" || reservation.status === "pendente") &&
+      reservation.expiresAt &&
+      new Date(reservation.expiresAt).getTime() < nowMs &&
+      reservation.paymentStatus !== "pago_total");
+
+  if (isExpired) {
+    reservation.status = "expirada";
+    reservation.updatedAt = new Date().toISOString();
+    return {
+      error: "PRE_RESERVATION_EXPIRED",
+      message: "Esta pré-reserva expirou e não pode ser efetivada. Realize uma nova cotação."
+    };
+  }
+
+  const hasConflict = (db?.reservations || []).some(r => {
+    if (String(r.id) === String(reservation.id) || String(r.code) === String(reservation.code)) return false;
+    if (r.status === "cancelada" || r.status === "expirada") return false;
+    if ((r.status === "pre_reserva" || r.status === "pendente") && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") return false;
+    if (String(r.flatId) !== String(reservation.flatId) && String(r.flatNumber) !== String(reservation.flatNumber)) return false;
+    return r.checkinDate < reservation.checkoutDate && r.checkoutDate > reservation.checkinDate;
+  });
+
+  if (hasConflict) {
+    return {
+      error: "FLAT_UNAVAILABLE",
+      message: `O Flat ${reservation.flatNumber || reservation.flatId} já possui outra reserva confirmada para o período selecionado.`
+    };
+  }
+
+  reservation.status = "confirmada";
+  reservation.paymentStatus = "pago_total";
+  reservation.paidAmount = reservation.totalAmount;
+  reservation.pmsConfirmed = true;
+  reservation.confirmedAt = new Date().toISOString();
+  reservation.updatedAt = new Date().toISOString();
+
+  return {
+    success: true,
+    reservationId: reservation.id,
+    code: reservation.code,
+    status: "confirmada",
+    flatNumber: reservation.flatNumber,
+    pmsConfirmed: true
+  };
+}
+
+/**
+ * Executa uma ação interna do bot com checagem de permissão e chave mestra
+ */
+export async function executeBotAction(db, actionName, args = {}) {
+  const settings = getBotActionsSettings(db);
+
+  if (!settings.apiActionsEnabled || !settings.allowedActions?.[actionName]) {
+    return {
+      error: "ACTION_DISABLED",
+      action: actionName,
+      requiresHandover: true,
+      message: settings.handoverMessage || "Esta ação do sistema está pausada ou requer atendimento humano."
+    };
+  }
+
+  switch (actionName) {
+    case "checkAvailability":
+      return handleCheckAvailability(db, args);
+    case "calculateQuote":
+      return handleCalculateQuote(db, args);
+    case "createPreReservation":
+      return handleCreatePreReservation(db, args);
+    case "generatePayment":
+      return handleGeneratePayment(db, args);
+    case "commitReservation":
+      return handleCommitReservation(db, args);
+    default:
+      return {
+        error: "UNKNOWN_ACTION",
+        action: actionName,
+        message: `Ação '${actionName}' não é reconhecida.`
+      };
+  }
 }
 
 /**
@@ -327,16 +1066,6 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     }
   }
 
-  // 5. Garagem / Estacionamento / Carro
-  if (/garagem|estacionamento|vaga|carro|veiculo|veículo|placa/i.test(text)) {
-    return `Olá${name}! 🚗 ${kb.garageInfo}\n\nSe ainda não informou os dados do veículo, pode mandar aqui a *Placa, Modelo e Cor* que já providenciamos a autorização na portaria!`;
-  }
-
-  // 6. Localização / Endereço / Onde fica
-  if (/endereco|endereço|localizacao|localização|onde fica|como chegar|mapa|local/i.test(text)) {
-    return `Olá${name}! 📍 Estamos localizados na *${kb.address}*.\n\nÉ um ponto nobre e privilegiado no coração da Pelinca em Campos dos Goytacazes! Se precisar de instruções de rota, nos avise. 🏨`;
-  }
-
   // 7. Cotação / Nova Reserva / Preço
   if (/reserva|diaria|diária|preco|preço|valor|alugar|vaga|disponibilidade/i.test(text)) {
     return `Olá${name}! ✨ Será um enorme prazer receber você no CorpFlats!\n\nDispomos de 19 flats executivos finamente decorados, equipados com ar-condicionado Split, cozinha completa, Wi-Fi veloz e vaga de garagem no melhor ponto de Campos/RJ.\n\nPara consultar disponibilidade exata e garantir a melhor tarifa direta sem taxas de intermediários, acesse nosso site oficial:\n👉 ${kb.siteUrl}\n\nOu me informe as datas desejadas (entrada e saída) que posso te ajudar! 🏨`;
@@ -362,9 +1091,9 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
 }
 
 /**
- * Chama o Google Gemini com lista de candidatos para resposta inteligente
+ * Chama o Google Gemini com lista de candidatos e suporte multi-turn a Function Calling
  */
-async function callGeminiAi({ apiKey, systemInstruction, prompt, history = [], db }) {
+export async function callGeminiAi({ apiKey, systemInstruction, prompt, history = [], db, tools = [] }) {
   if (!apiKey) return { ok: false, error: "Sem chave Gemini" };
 
   const candidateModels = [
@@ -376,15 +1105,11 @@ async function callGeminiAi({ apiKey, systemInstruction, prompt, history = [], d
   ];
 
   // Monta histórico de mensagens
-  const contents = [];
-
-  // Instrução do sistema + histórico recente
   const formattedHistory = (history || []).slice(-6).map(m => ({
     role: m.fromMe ? "model" : "user",
     parts: [{ text: String(m.text || "") }]
   })).filter(c => c.parts[0].text.trim().length > 0);
 
-  // Adiciona instrução do sistema no primeiro prompt ou como system_instruction
   const fullPrompt = `${systemInstruction}\n\n[MENSAGEM ATUAL DO HÓSPEDE]:\n${prompt}\n\n[INSTRUÇÃO DE RESPOSTA]: Responda diretamente ao hóspede de forma concisa, educada e pronta para envio no WhatsApp.`;
 
   for (const { ver, model } of candidateModels) {
@@ -396,22 +1121,121 @@ async function callGeminiAi({ apiKey, systemInstruction, prompt, history = [], d
         ],
         generationConfig: {
           temperature: 0.4,
-          maxOutputTokens: 600
+          maxOutputTokens: 800
         }
       };
+
+      if (Array.isArray(tools) && tools.length > 0) {
+        bodyPayload.tools = tools;
+      }
 
       const response = await fetch(`https://generativelanguage.googleapis.com/${ver}/models/${model}:generateContent?key=${apiKey}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(bodyPayload)
+        body: JSON.stringify(bodyPayload),
+        signal: AbortSignal.timeout(8000)
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!response.ok) {
+        continue;
+      }
+
+      const data = await response.json();
+      const candidate = data.candidates?.[0];
+      const parts = candidate?.content?.parts || [];
+
+      // Verifica se houve solicitação de chamada de ferramenta (Function Calling)
+      const callPart = parts.find(p => p.functionCall);
+
+      if (!callPart) {
+        const text = parts.find(p => p.text)?.text || "";
         if (text && text.trim().length > 0) {
           return { ok: true, text: text.trim(), model };
         }
+        continue;
+      }
+
+      // ── Loop Multi-Turn de Execução de Ferramentas ──
+      const fnName = callPart.functionCall.name;
+      const fnArgs = callPart.functionCall.args || {};
+
+      let actionResult;
+      try {
+        actionResult = await executeBotAction(db, fnName, fnArgs);
+      } catch (actErr) {
+        actionResult = {
+          error: "ACTION_FAILED",
+          action: fnName,
+          requiresHandover: true,
+          message: actErr.message || "Erro interno ao executar a ação do sistema."
+        };
+      }
+
+      // Anexa as partes ao histórico:
+      // Turno 1 Model: functionCall
+      // Turno 2 Function: functionResponse
+      const turn2Contents = [
+        ...formattedHistory,
+        { role: "user", parts: [{ text: fullPrompt }] },
+        { role: "model", parts },
+        {
+          role: "function",
+          parts: [
+            {
+              functionResponse: {
+                name: fnName,
+                response: actionResult
+              }
+            }
+          ]
+        }
+      ];
+
+      const turn2Payload = {
+        contents: turn2Contents,
+        generationConfig: {
+          temperature: 0.4,
+          maxOutputTokens: 800
+        }
+      };
+
+      if (Array.isArray(tools) && tools.length > 0) {
+        turn2Payload.tools = tools;
+      }
+
+      const turn2Response = await fetch(`https://generativelanguage.googleapis.com/${ver}/models/${model}:generateContent?key=${apiKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(turn2Payload),
+        signal: AbortSignal.timeout(8000)
+      });
+
+      if (turn2Response.ok) {
+        const turn2Data = await turn2Response.json();
+        const turn2Parts = turn2Data.candidates?.[0]?.content?.parts || [];
+        const turn2Text = turn2Parts.find(p => p.text)?.text || "";
+        if (turn2Text && turn2Text.trim().length > 0) {
+          return {
+            ok: true,
+            text: turn2Text.trim(),
+            model,
+            functionCall: { name: fnName, args: fnArgs },
+            functionResult: actionResult,
+            requiresHandover: Boolean(actionResult?.requiresHandover || actionResult?.error === "ACTION_DISABLED")
+          };
+        }
+      }
+
+      // Se o Turno 2 não responder texto mas requer transbordo:
+      if (actionResult?.requiresHandover || actionResult?.error === "ACTION_DISABLED") {
+        return {
+          ok: true,
+          text: actionResult.message || "Esta operação do sistema requer acompanhamento humano. Já estou transferindo para a recepção! 🛎️",
+          model,
+          functionCall: { name: fnName, args: fnArgs },
+          functionResult: actionResult,
+          requiresHandover: true
+        };
       }
     } catch (e) {
       console.warn(`[Gemini WhatsApp AI] Falha no modelo ${model}:`, e.message);
@@ -443,6 +1267,29 @@ export async function generateAiWhatsAppResponse({ db, phone, messageText, histo
   }
 
   // 2. Prepara o contexto estruturado para o prompt
+  const botSettings = getBotActionsSettings(db);
+  const tools = buildGeminiTools(botSettings);
+
+  let systemActionsNotice = "";
+  if (!botSettings.apiActionsEnabled) {
+    systemActionsNotice = `
+[STATUS DO SISTEMA: OPERAÇÕES AUTOMATIZADAS PAUSADAS]
+Atenção: O acesso a operações diretas do sistema (consulta de disponibilidade em tempo real, cálculo de cotação/tarifas, geração de pagamento PIX e criação/confirmação de reservas) está TEMPORARIAMENTE DESATIVADO pela administração.
+DIRETRIZES ESPECÍFICAS:
+- Responda normalmente a dúvidas institucionais, localização, comodidades, horários e políticas usando a BASE DE CONHECIMENTO.
+- Para qualquer solicitação de reserva, cotação, checagem de vagas ou pagamento, oriente com extrema cordialidade que as operações automatizadas estão em manutenção e que você está transferindo o contato para a equipe humana da recepção assumir com máxima atenção.
+`;
+  } else {
+    const activeActionsList = Object.keys(botSettings.allowedActions || {}).filter(k => botSettings.allowedActions[k]).join(", ");
+    systemActionsNotice = `
+[STATUS DO SISTEMA: OPERAÇÕES AUTOMATIZADAS ATIVAS]
+Você tem acesso a ferramentas de sistema (Function Calling) autorizadas: ${activeActionsList || "nenhuma"}.
+DIRETRIZES ESPECÍFICAS:
+- Use essas ferramentas de forma precisa quando o hóspede solicitar cotação, consulta de disponibilidade de datas, pré-reserva ou pagamento PIX.
+- Formate a resposta final com os dados retornados de maneira acolhedora, clara e pronta para leitura no WhatsApp.
+`;
+  }
+
   const contextString = `
 [CONTEXTO EM TEMPO REAL]
 - Data atual: ${guestContext.todayStr} | Horário: ${guestContext.timeStr} (Brasília)
@@ -471,32 +1318,41 @@ ${guestContext.hasReservation ? `- Flat atribuído: ${guestContext.flatNumber ||
 - Benefícios Reserva Direta: ${aiConfig.knowledgeBase.directBookingBenefits}
 - Site Oficial para Reservas: ${aiConfig.knowledgeBase.siteUrl}
 - WhatsApp da Recepção: ${aiConfig.knowledgeBase.receptionPhone}
+${systemActionsNotice}
 `;
 
-  const apiKey = process.env.GEMINI_API_KEY || db.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY || db?.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY;
 
-  // 3. Tenta responder via Google Gemini
+  // 3. Tenta responder via Google Gemini (com Function Calling adaptativo se disponível)
   if (apiKey) {
-    const geminiRes = await callGeminiAi({
-      apiKey,
-      systemInstruction: `${aiConfig.systemPrompt}\n\n${contextString}`,
-      prompt: messageText,
-      history,
-      db
-    });
+    try {
+      const geminiRes = await callGeminiAi({
+        apiKey,
+        systemInstruction: `${aiConfig.systemPrompt}\n\n${contextString}`,
+        prompt: messageText,
+        history,
+        db,
+        tools
+      });
 
-    if (geminiRes.ok && geminiRes.text) {
-      return {
-        shouldHandover: false,
-        replyText: geminiRes.text,
-        guestContext,
-        modelUsed: geminiRes.model,
-        source: "gemini"
-      };
+      if (geminiRes.ok && geminiRes.text) {
+        return {
+          shouldHandover: Boolean(geminiRes.requiresHandover),
+          requiresHandover: Boolean(geminiRes.requiresHandover),
+          replyText: geminiRes.text,
+          guestContext,
+          modelUsed: geminiRes.model,
+          source: "gemini",
+          functionCall: geminiRes.functionCall || null,
+          functionResult: geminiRes.functionResult || null
+        };
+      }
+    } catch (err) {
+      console.warn("[WhatsApp AI] Falha inesperada ao invocar Gemini AI:", err?.message || err);
     }
   }
 
-  // 4. Contingência Heurística Local de Alta Precisão
+  // 4. Contingência Heurística Local de Alta Precisão (Zero-Crash Fallback)
   const heuristicText = generateHeuristicResponse(messageText, guestContext, aiConfig);
   return {
     shouldHandover: false,
@@ -531,7 +1387,7 @@ export async function processAiInboundMessage({
   }
 
   // 2. Verifica se está em Modo de Teste
-  if (db.zapiConfig?.testModeOnly === true) {
+  if (db?.zapiConfig?.testModeOnly === true) {
     const allowed = [...DEFAULT_TEST_ALLOWED_PHONES, ...String(db.zapiConfig.testAllowedPhones || "").split(/[,\s]+/)]
       .map(p => cleanWhatsAppPhone(p))
       .filter(Boolean);
@@ -544,7 +1400,7 @@ export async function processAiInboundMessage({
   }
 
   // 3. Obtém ou cria a conversa
-  const conv = (db.whatsappConversations || []).find(c => {
+  const conv = (db?.whatsappConversations || []).find(c => {
     const p = cleanWhatsAppPhone(c.phone);
     return p && (p.endsWith(cleanTarget.slice(-8)) || cleanTarget.endsWith(p.slice(-8)));
   });

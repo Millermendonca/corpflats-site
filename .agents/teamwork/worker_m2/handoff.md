@@ -1,125 +1,119 @@
-# Handoff Report: Milestone 2 — Frontend Admin Implementer
+# Handoff Report: Milestone M2 - WhatsApp AI Service (Adaptive Function Calling & Fallback)
 
-**Agent**: Worker M2 (Frontend Admin Implementer)  
-**Type**: Hard Handoff (Task Complete)  
-**Timestamp**: 2026-09-30T23:28:00Z  
-**Target Recipient**: Orchestrator / Worker M3 / Forensic Auditor  
-**Working Directory**: `.agents/teamwork/worker_m2/`  
+**Data**: 2026-10-11T02:27:00Z  
+**Autor**: Worker M2 (`worker_m2`)  
+**Para**: Orchestrator Agent (`3364a657-c855-42a7-a46e-a5463bc245b7`)  
+**Status**: Hard Handoff (Implementação & Verificação 100% Concluídas)
 
 ---
 
 ## 1. Observation
 
-1. **Page Implementation (`artifacts/limpeza/src/pages/service-orders.tsx`)**:
-   - Built a comprehensive, responsive React component wrapping inside `<Shell>` from `components/layout.tsx`.
-   - Built a 3-tab navigation using Radix UI `Tabs` (`components/ui/tabs.tsx`):
-     * **Tab 1 — Lista de Serviços**:
-       - Filter toolbar with text search and status filter (`all`, `active`, `closed`, `draft`).
-       - Order cards displaying title, status badges (`● Ativo` in emerald, `Encerrado` in slate, `Rascunho`), created date, and rule tags (`cleanFlatMode`, max simultaneous, max per day, photo requirement).
-       - Visual progress bar `<Progress value={percent} />` showing completed vs. total flats with percentage and status counters (done, in_progress, pending).
-       - Copyable portal link displaying `${window.location.origin}/servico/${order.token}` with dedicated copy button (with clipboard API + fallback) and external link button.
-       - Action buttons: "Ver Progresso" (activates Tab 3 with this order selected), "Editar" (loads order into Tab 2 form), "Encerrar/Reativar" (calls `PATCH /api/service-orders/:id`), and "Excluir" (with confirmation modal).
-     * **Tab 2 — Criar / Editar Serviço**:
-       - `title`: text input for service name.
-       - `cleanFlatMode`: 3 selectable interactive cards with detailed explanations:
-         1. `"never"`: Bloquear se o flat estiver limpo (não tem pós-checkout nem dirty).
-         2. `"priority"`: Só liberar flat limpo se nenhum outro flat do serviço estiver sujo (prioriza desocupados/sujos).
-         3. `"always"`: Liberar qualquer flat a qualquer momento (com sugestão de prioridade visual no portal).
-       - `maxSimultaneousFlats`: numeric input (min 1, max 19).
-       - `maxFlatsPerDay`: numeric input (min 1, max 19).
-       - `requirePhotos`: `<Switch>` toggle requiring photos on flat finish.
-       - `estimatedDurationHours`: numeric input (hours, optional) for PMS calendar blocking calculation.
-       - Flat selection: 19 active flats checkbox grid fetched dynamically via `useListFlats()`, with "Selecionar Todos" and "Desmarcar Todos" buttons.
-       - `defaultInstructions`: textarea applying instructions to all selected flats.
-       - `formHasCustomInstructions`: toggle to define flat-specific instructions per room.
-       - `instructionFormat`: toggle between `"text"` (texto corrido) and `"list"` (lista de itens).
-       - Save button calling `POST /api/service-orders` (create) or `PATCH /api/service-orders/:id` (edit) with loading spinner and error handling.
-     * **Tab 3 — Painel de Acompanhamento (Tracking Panel)**:
-       - Real-time polling with TanStack Query (`refetchInterval: 10000`, 10 seconds) and manual "Atualizar Agora" button.
-       - Service order selector dropdown.
-       - 5 KPI summary metric cards: Total Flats, Pendentes, Em Andamento, Finalizados, Prestador Responsável (name & CPF).
-       - Filter toolbar: filter flats by status (Todos, Pendente, Em Andamento, Finalizado).
-       - Real-time `<Table>` with columns:
-         `Flat` | `Status` | `Prestador` | `Início` | `Fim / Duração` | `Precisa Camareira?` | `Observações` | `Fotos` | `Ação`
-       - Status badges: Pendente (slate), Em Andamento (sky blue with pulsating indicator), Finalizado (emerald with check).
-       - Precisa Camareira: `Sim, chamar faxina` (amber) vs. `Mantido limpo` (emerald).
-       - Clickable rows opening `<Dialog>` modal with full details, worker CPF, timestamps, elapsed duration, observations, instructions, and interactive photo gallery with zoom modal.
-       - Admin button with `RotateCcw` icon calling `POST /api/service-orders/:id/flats/:flatId/reset` with confirmation modal, reopening flat to `pending`.
+1. **Paridade de Espelhamento dos Arquivos Gêmeos**:
+   - Execução do comando de cálculo de hash SHA-256:
+     ```powershell
+     Get-FileHash artifacts/api-server/whatsapp-ai-service.mjs, scripts/whatsapp-ai-service.mjs | Format-Table -Wrap
+     ```
+   - Resultado:
+     ```
+     Algorithm Hash                                                             Path
+     --------- ----                                                             ----
+     SHA256    F3E412E254A116B72791EF68F1C506333B0889783702A8DD10788E0D5AB4CAB5   ...\artifacts\api-server\whatsapp-ai-service.mjs
+     SHA256    F3E412E254A116B72791EF68F1C506333B0889783702A8DD10788E0D5AB4CAB5   ...\scripts\whatsapp-ai-service.mjs
+     ```
+   - Paridade byte-a-byte rigorosamente mantida (100% idêntica).
 
-2. **Route Registration (`artifacts/limpeza/src/App.tsx`)**:
-   - Imported `ServiceOrders from '@/pages/service-orders';`.
-   - Registered `<AdminRoute path="/servicos" component={ServiceOrders} moduleName="a Gestão de Ordens de Serviço" />`.
-   - Registered alias `<AdminRoute path="/service-orders" component={ServiceOrders} moduleName="a Gestão de Ordens de Serviço" />`.
+2. **Implementação de Function Calling Adaptativo em `whatsapp-ai-service.mjs`**:
+   - Leitura de `db.botActionsSettings` via `getBotActionsSettings(db)` sanitizando `apiActionsEnabled` e matriz de 5 ações em `allowedActions`.
+   - Função exportada `buildGeminiTools(actionsSettings)`:
+     - Quando `apiActionsEnabled === false`: retorna array vazio `tools: []`.
+     - Quando `apiActionsEnabled === true`: retorna apenas declarações de função para ações ativas (`checkAvailability`, `calculateQuote`, `createPreReservation`, `generatePayment`, `commitReservation`) com parâmetros e descrições estruturados.
+   - Loop Multi-Turn em `callGeminiAi`:
+     - Detecta `part.functionCall` na resposta do Turno 1 do Gemini.
+     - Executa o controlador interno correspondente via `executeBotAction(db, fnName, fnArgs)`.
+     - Se a ação estiver desativada ou falhar: retorna `{ error: "ACTION_DISABLED", requiresHandover: true, message: ... }`.
+     - Anexa `model` com `functionCall` e `function` com `functionResponse` ao histórico e despacha a requisição de Turno 2 com `AbortSignal.timeout(8000)`.
+     - O Turno 2 sintetiza resposta conversacional e acolhedora em português para o WhatsApp.
+   - Proteção Anti-Crash e Fallback:
+     - `AbortSignal.timeout(8000)` e bloco `try/catch` global que preserva o fallback heurístico local (`generateHeuristicResponse`) sem gerar erro 500 nem travar o servidor.
 
-3. **Navigation Integration (`artifacts/limpeza/src/components/layout.tsx`)**:
-   - Imported `Wrench` from `lucide-react`.
-   - Added `{ title: "Serviços Externos", label: "Serviços Externos", href: "/servicos", icon: Wrench, description: "Ordens de serviço, manutenção e prestadores" }` to `navCategories` under `"🧹 Governança & Camareiras"`.
+3. **Remoção de Mascaramento em `tests/whatsapp-ai-agent.test.mjs`**:
+   - `process.exit(0)` em `after()` foi completamente removido.
+   - Servidores HTTP (`app.listen`) e timers assíncronos (`setInterval`, `setTimeout`) criados durante imports de módulos são rastreados e devidamente desarmados/fechados no hook `after(async () => ...)`.
+   - Execução do comando `node --test tests/whatsapp-ai-agent.test.mjs`:
+     ```
+     # tests 20
+     # suites 1
+     # pass 20
+     # fail 0
+     # cancelled 0
+     # skipped 0
+     # todo 0
+     # duration_ms 3452.0161
+     ```
+     Encerramento limpo em ~3.4s sem qualquer processo travado.
 
-4. **Build & Test Verification**:
-   - Ran `npm run build` in `artifacts/limpeza`: Exit code 0, 3343 modules transformed, production assets generated cleanly in `dist/`.
-   - Added automated frontend test suite: `tests/service-orders-admin-frontend.test.mjs` (8/8 passed).
-   - Ran regression backend test suites: `tests/service-orders.test.mjs` and `tests/checkout-occupancy-rule.test.mjs` (34/34 passed).
-   - Git commit: `632c229` with message `feat(service-orders): implement Frontend Admin page (R4) with 3 tabs, routes, nav link, and live tracking`.
-   - Git push: `git push origin main` executed successfully to `https://github.com/Millermendonca/corpflats-site.git`.
+4. **Regressão Zero em Suítes Existentes**:
+   - Execução do comando `node --test tests/tariff-engine.test.mjs tests/bot-actions-api.test.mjs`:
+     ```
+     # tests 13
+     # suites 2
+     # pass 13
+     # fail 0
+     # cancelled 0
+     # skipped 0
+     # todo 0
+     # duration_ms 5188.9484
+     ```
+     Zero regressões em toda a suíte.
 
 ---
 
 ## 2. Logic Chain
 
-1. **Adherence to Scope & R4 Contracts**:
-   - R4 required three specific tabs: Lista, Criar/Editar, and Painel de Acompanhamento.
-   - All requested UI controls (`cleanFlatMode` with 3 explicit choices, simultaneous and daily limits, photo requirements, duration, 19-flat checkbox grid, instructions, format toggle, polling table, detail modal, and reset button) were implemented with full fidelity and no shortcuts.
-2. **Guarded Routing with Access Control**:
-   - Using `<AdminRoute>` guarantees that only authenticated users with `role === "admin"` can access `/servicos`. Non-admin staff or maids attempting to access the route will see the standardized `<AccessDenied moduleName="a Gestão de Ordens de Serviço" />` screen.
-3. **Real-time UX without Full Reloads**:
-   - TanStack Query v5 polling at 10-second intervals ensures hotel administrators observe painter/contractor progress in real-time as flats are started and finished, without needing to refresh the page.
-   - Mutations invalidate the relevant query caches (`["service-orders"]` and `["service-order-progress", id]`) to trigger immediate UI reactivity.
-4. **Strict Repository Governance**:
-   - Following `AGENTS.md`, `npm run build` was run to compile the TypeScript SPA, `dist/` was staged alongside the source files, and a push to `origin main` was performed immediately.
+1. **Adaptação de Ferramentas sob Chave Mestra**:
+   - A partir da observação de que o orquestrador e os requisitos exigem controle dinâmico da IA sobre operações do sistema, `buildGeminiTools` inspeciona a configuração do banco. Se `apiActionsEnabled` for falso, nenhuma ferramenta é injetada no modelo e o prompt do sistema instrui a direcionar transbordos à recepção. Se verdadeiro, apenas ferramentas marcadas em `allowedActions` são fornecidas.
+2. **Ciclo Multi-Turn Fidedigno**:
+   - No Turno 1, o Gemini indica a intenção de consultar ou executar uma ação do sistema. A execução via `executeBotAction` aplica validações reais sobre `db.reservations`, `db.flats`, `db.roomBlocks` e regras tarifárias. No Turno 2, o modelo recebe a resposta estruturada e redige o texto final humanizado para o cliente.
+3. **Resiliência e Tolerância a Falhas**:
+   - Caso uma ação individual esteja desativada, ela retorna `requiresHandover: true`, sinalizando ao Gemini e ao controller do WhatsApp (`processAiInboundMessage`) que a conversa deve transbordar para atendimento humano após o envio da resposta cordial.
+   - Caso o Gemini atinja timeout de 8 segundos ou ocorra erro de rede, o fluxo cai suavemente na contingência heurística (`generateHeuristicResponse`), garantindo que o hóspede receba atendimento imediato e o servidor não sofra crash.
+4. **Encerramento Limpo da Suíte de Testes**:
+   - Identificou-se que a presença histórica de `process.exit(0)` decorria do fato de que carregar `demo-server.mjs` iniciava um servidor Express em listening e timers periódicos. Ao interceptar o fechamento do servidor e aplicar unref nos timers assíncronos dentro da suíte, os testes encerram naturalmente sem artifícios ou mascaramento.
 
 ---
 
 ## 3. Caveats
 
-1. **Public Worker Portal (Milestone M3)**:
-   - The portal links (`/servico/:token`) generated on the admin screen route to `artifacts/limpeza/src/pages/service-worker-portal.tsx`, which is scheduled for Milestone M3.
-2. **Device Hardware Access**:
-   - High-resolution photo upload and camera capture in the public worker portal will be handled by Worker M3 using `image-compression.ts`. On the Admin tracking page, photos uploaded by contractors are rendered with thumbnail previews and full-screen modal zoom.
+- A simulação de chamadas do Google Gemini nos testes automatizados utiliza interceptação de `globalThis.fetch` para garantir execução determinística e rápida em ambiente de CI/CD sem dependência de cotas de rede ou credenciais de produção ao vivo.
+- O serviço está totalmente compatível com as credenciais reais de Gemini (`process.env.GEMINI_API_KEY` ou `db.settings.geminiApiKey`) quando executado em ambiente real.
 
 ---
 
 ## 4. Conclusion
 
-Milestone 2 (Frontend Admin Implementer) is 100% complete and fully verified.
-- The Admin Service Orders page is live at `/servicos`.
-- The sidebar navigation link "Serviços Externos" is available under Governança & Camareiras.
-- The 3-tab interface (Lista, Criar/Editar, Acompanhamento) is fully functional and connected to the backend API.
-- All builds and automated tests pass with 0 errors, and changes have been pushed to `main`.
+O Milestone M2 está 100% implementado, rigorosamente testado e com paridade byte-a-byte idêntica (SHA-256 `F3E412E254A116B72791EF68F1C506333B0889783702A8DD10788E0D5AB4CAB5`) entre `artifacts/api-server/whatsapp-ai-service.mjs` e `scripts/whatsapp-ai-service.mjs`. Todos os 20 testes da suíte de IA passam com sucesso sem mascaramento, e as suítes de tarifário e bot actions mantiveram 100% de aprovação.
 
 ---
 
 ## 5. Verification Method
 
-To independently verify the implementation:
+Para reproduzir e auditar independentemente os resultados:
 
-1. **Run M2 Frontend Test Suite**:
+1. **Verificação de Paridade SHA-256**:
    ```powershell
-   node --test tests/service-orders-admin-frontend.test.mjs
+   Get-FileHash artifacts/api-server/whatsapp-ai-service.mjs, scripts/whatsapp-ai-service.mjs | Format-Table -Wrap
    ```
+   *Critério de aprovação*: Ambos os hashes devem ser idênticos.
 
-2. **Run Full Regression Test Suite**:
-   ```powershell
-   node --test tests/service-orders.test.mjs tests/checkout-occupancy-rule.test.mjs
+2. **Execução da Suíte do Agente de IA**:
+   ```bash
+   node --test tests/whatsapp-ai-agent.test.mjs
    ```
+   *Critério de aprovação*: 20 testes aprovados, 0 falhas, saída limpa sem timeouts ou process.exit.
 
-3. **Verify Frontend Build**:
-   ```powershell
-   cd artifacts/limpeza
-   npm run build
+3. **Execução de Verificação de Não-Regressão**:
+   ```bash
+   node --test tests/tariff-engine.test.mjs tests/bot-actions-api.test.mjs
    ```
-
-4. **Verify Git Sync**:
-   ```powershell
-   git status
-   git log -n 1
-   ```
+   *Critério de aprovação*: 13 testes aprovados, 0 falhas.
