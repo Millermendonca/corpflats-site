@@ -315,6 +315,16 @@ app.post("/api/test/db-reset", (req, res) => {
   }
 });
 
+app.get("/api/notifications/alerts", (req, res) => {
+  res.json([]);
+});
+
+app.get("/api/notifications", (req, res) => {
+  const notifs = db.notifications || [];
+  const unreadCount = notifs.filter(n => !n.read).length;
+  res.json({ notifications: notifs, unreadCount });
+});
+
 app.get("/api/system/db-status", async (req, res) => {
   let pgStatus = "disconnected";
   let pgError = null;
@@ -19749,21 +19759,18 @@ export function calculateSebraeSustainableRate(customMonth = null) {
   return Math.round(sustainableMinRate * 100) / 100;
 }
 
-export function calculateDailyRate(flatId, date, channel = "direct") {
-  const settings = getTariffSettings();
+export function findEffectiveTariffOverride(flatId, date, channel = "direct") {
   const overrides = getTariffOverrides();
-
-  // Normalização do Canal
   let normChannel = String(channel || "direct").toLowerCase().trim();
   if (normChannel === "whatsapp" || normChannel === "site" || normChannel === "direta" || normChannel === "direto") {
     normChannel = "direct";
   }
 
-  // Normalização do Flat
-  let targetFlatId = flatId != null ? String(flatId) : null;
+  const isGlobalFlat = !flatId || String(flatId).toLowerCase() === "all" || String(flatId).toLowerCase() === "null";
+  let targetFlatId = !isGlobalFlat ? String(flatId) : null;
   let targetFlatNumber = null;
-  if (flatId != null && Array.isArray(db.flats)) {
-    const fObj = db.flats.find(f => String(f.id) === String(flatId) || String(f.number) === String(flatId));
+  if (targetFlatId && Array.isArray(db.flats)) {
+    const fObj = db.flats.find(f => String(f.id) === targetFlatId || String(f.number) === targetFlatId);
     if (fObj) {
       targetFlatId = String(fObj.id);
       targetFlatNumber = String(fObj.number);
@@ -19771,20 +19778,17 @@ export function calculateDailyRate(flatId, date, channel = "direct") {
   }
 
   const dateStr = String(date).substring(0, 10);
-
-  // 1. Resolução de Overrides com Prioridade Estrita
-  // P1: Flat específico + data exata + canal exato
-  // P2: Flat específico + data exata + canal "all"
-  // P3: Flat global (null/'all') + data exata + canal exato
-  // P4: Flat global (null/'all') + data exata + canal "all"
   let matchedOverride = null;
 
+  // 1. Resolução para Flat Específico (apenas se flatId foi fornecido e não é global/all)
   if (targetFlatId || targetFlatNumber) {
+    // P1: Flat específico + Canal exato
     matchedOverride = overrides.find(o =>
       o.date === dateStr &&
       (String(o.flatId) === targetFlatId || (targetFlatNumber && String(o.flatNumber) === targetFlatNumber)) &&
       (String(o.channel).toLowerCase() === normChannel)
     );
+    // P2: Flat específico + Canal "all"
     if (!matchedOverride) {
       matchedOverride = overrides.find(o =>
         o.date === dateStr &&
@@ -19794,7 +19798,9 @@ export function calculateDailyRate(flatId, date, channel = "direct") {
     }
   }
 
+  // 2. Resolução Global (aplica para visão geral ou como fallback para flat específico)
   if (!matchedOverride) {
+    // P3: Flat global (null/'all') + Canal exato
     matchedOverride = overrides.find(o =>
       o.date === dateStr &&
       (!o.flatId || String(o.flatId).toLowerCase() === "all" || o.flatId === null) &&
@@ -19803,6 +19809,7 @@ export function calculateDailyRate(flatId, date, channel = "direct") {
   }
 
   if (!matchedOverride) {
+    // P4: Flat global (null/'all') + Canal "all"
     matchedOverride = overrides.find(o =>
       o.date === dateStr &&
       (!o.flatId || String(o.flatId).toLowerCase() === "all" || o.flatId === null) &&
@@ -19810,9 +19817,24 @@ export function calculateDailyRate(flatId, date, channel = "direct") {
     );
   }
 
+  return matchedOverride || null;
+}
+
+export function calculateDailyRate(flatId, date, channel = "direct") {
+  const settings = getTariffSettings();
+
+  // 1. Resolução de Overrides via função compartilhada
+  const matchedOverride = findEffectiveTariffOverride(flatId, date, channel);
   if (matchedOverride && matchedOverride.rate !== undefined && matchedOverride.rate !== null) {
     return Math.round(Number(matchedOverride.rate) * 100) / 100;
   }
+
+  let normChannel = String(channel || "direct").toLowerCase().trim();
+  if (normChannel === "whatsapp" || normChannel === "site" || normChannel === "direta" || normChannel === "direto") {
+    normChannel = "direct";
+  }
+
+  const dateStr = String(date).substring(0, 10);
 
   // 2. Determinação da Diária Base
   let baseRate = 0;
@@ -19822,7 +19844,7 @@ export function calculateDailyRate(flatId, date, channel = "direct") {
   if (settings.mode === "auto") {
     baseRate = calculateSebraeSustainableRate(monthIdx);
   } else {
-    baseRate = Number(settings.baseDailyRate || 237);
+    baseRate = Number(settings.baseDailyRate != null ? settings.baseDailyRate : 237);
   }
 
   // 3. Fim de semana (+15% em sextas e sábados)
@@ -19907,12 +19929,7 @@ app.get("/api/tariffs/calendar", (req, res) => {
     const dayOfWeek = dObj.getUTCDay();
     const isWeekend = (dayOfWeek === 5 || dayOfWeek === 6);
     const rate = calculateDailyRate(flatId || null, dayStr, channel);
-
-    const override = overrides.find(o =>
-      o.date === dayStr &&
-      (!flatId || String(o.flatId) === String(flatId)) &&
-      (String(o.channel) === channel || !o.channel || String(o.channel) === "all")
-    );
+    const override = findEffectiveTariffOverride(flatId || null, dayStr, channel);
 
     days.push({
       date: dayStr,
@@ -19961,7 +19978,7 @@ app.post("/api/tariffs/bulk-update", (req, res) => {
   }
 
   const overrides = getTariffOverrides();
-  const targetDaysOfWeek = Array.isArray(daysOfWeek) && daysOfWeek.length > 0 ? daysOfWeek : [0, 1, 2, 3, 4, 5, 6];
+  const targetDaysOfWeek = Array.isArray(daysOfWeek) && daysOfWeek.length > 0 ? daysOfWeek.map(Number) : [0, 1, 2, 3, 4, 5, 6];
   const targetFlatIds = Array.isArray(flatIds) && flatIds.length > 0 ? flatIds : ["all"];
   const targetChannels = Array.isArray(channels) && channels.length > 0 ? channels : ["all"];
 
@@ -20149,7 +20166,7 @@ app.get("/api/bot-actions/availability", verifyBotActionPermission("checkAvailab
   try {
     const inDate = req.query.checkIn || req.query.checkin;
     const outDate = req.query.checkOut || req.query.checkout;
-    const guests = Number(req.query.guests || req.query.guestsCount || 1);
+    const guests = Math.max(1, Number(req.query.guests || req.query.guestsCount || 1));
 
     if (!inDate || !outDate) {
       return res.status(400).json({
@@ -20186,7 +20203,7 @@ app.get("/api/bot-actions/availability", verifyBotActionPermission("checkAvailab
     const busyFlatSet = new Set();
     (db.reservations || []).forEach(r => {
       if (r.status === "cancelada" || r.status === "expirada") return;
-      if (r.status === "pre_reserva" && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs) return;
+      if ((r.status === "pre_reserva" || r.status === "pendente") && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") return;
 
       if (r.checkinDate < outDate && r.checkoutDate > inDate) {
         if (r.flatId != null) busyFlatSet.add(String(r.flatId));
@@ -20236,7 +20253,7 @@ app.post("/api/bot-actions/quote", verifyBotActionPermission("calculateQuote"), 
   try {
     const inDate = req.body.checkIn || req.body.checkin;
     const outDate = req.body.checkOut || req.body.checkout;
-    const guests = Number(req.body.guests || req.body.guestsCount || 1);
+    const guests = Math.max(1, Number(req.body.guests || req.body.guestsCount || 1));
     const flatId = req.body.flatId;
     const channel = req.body.channel || "direct";
     const ratePlan = req.body.ratePlan || "room_only";
@@ -20254,6 +20271,14 @@ app.post("/api/bot-actions/quote", verifyBotActionPermission("calculateQuote"), 
       return res.status(400).json({
         error: "INVALID_DATE_RANGE",
         message: "checkIn deve ser uma data anterior a checkOut."
+      });
+    }
+
+    const nightsDiff = Math.round((end.getTime() - start.getTime()) / 86400000);
+    if (nightsDiff > 90) {
+      return res.status(400).json({
+        error: "MAX_STAY_EXCEEDED",
+        message: "O período máximo para cotação automatizada é de 90 noites."
       });
     }
 
@@ -20366,7 +20391,11 @@ app.post("/api/bot-actions/payment-link", verifyBotActionPermission("generatePay
     });
 
     const qrCodeBase64 = await QRCode.toDataURL(pixPayload);
-    const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    const botSettings = getBotActionsSettings();
+    const holdMinutes = (typeof botSettings?.preReservationHoldMinutes === "number" && botSettings.preReservationHoldMinutes > 0)
+      ? botSettings.preReservationHoldMinutes
+      : (Number(botSettings?.preReservationHoldMinutes) || 30);
+    const expiresAt = new Date(Date.now() + holdMinutes * 60 * 1000).toISOString();
 
     if (resObj) {
       resObj.pixCopiaECola = pixPayload;
@@ -20399,7 +20428,7 @@ app.post("/api/bot-actions/pre-reserve", verifyBotActionPermission("createPreRes
     const flatId = req.body.flatId;
     const total = Number(req.body.total || 0);
     const channel = req.body.channel || "whatsapp";
-    const guests = Number(req.body.guests || req.body.guestsCount || 1);
+    const guests = Math.max(1, Number(req.body.guests || req.body.guestsCount || 1));
 
     if (!inDate || !outDate || !guestName || !flatId) {
       return res.status(400).json({
@@ -20416,11 +20445,11 @@ app.post("/api/bot-actions/pre-reserve", verifyBotActionPermission("createPreRes
       });
     }
 
-    // Verifica se o flat já está ocupado por reserva ativa não-expirada
+    // 1. Verificação SÍNCRONA de conflito no PMS (Reservas ativas e RoomBlocks)
     const nowMs = Date.now();
     const hasConflict = (db.reservations || []).some(r => {
       if (r.status === "cancelada" || r.status === "expirada") return false;
-      if (r.status === "pre_reserva" && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs) return false;
+      if ((r.status === "pre_reserva" || r.status === "pendente") && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") return false;
       if (String(r.flatId) !== String(flat.id) && String(r.flatNumber) !== String(flat.number)) return false;
       return r.checkinDate < outDate && r.checkoutDate > inDate;
     });
@@ -20432,11 +20461,29 @@ app.post("/api/bot-actions/pre-reserve", verifyBotActionPermission("createPreRes
       });
     }
 
+    const hasRoomBlock = (db.roomBlocks || []).some(b => {
+      if (String(b.flatId) !== String(flat.id) && String(b.flatNumber) !== String(flat.number)) return false;
+      return b.startDate < outDate && b.endDate > inDate;
+    });
+
+    if (hasRoomBlock) {
+      return res.status(409).json({
+        error: "FLAT_UNAVAILABLE",
+        message: `O Flat ${flat.number} possui bloqueio de manutenção para o período selecionado.`
+      });
+    }
+
+    // 2. Parâmetros configuráveis de hold e payload PIX
+    const botSettings = getBotActionsSettings();
+    const holdMinutes = (typeof botSettings?.preReservationHoldMinutes === "number" && botSettings.preReservationHoldMinutes > 0)
+      ? botSettings.preReservationHoldMinutes
+      : (Number(botSettings?.preReservationHoldMinutes) || 30);
+    const expiresAt = new Date(Date.now() + holdMinutes * 60 * 1000).toISOString();
+
     const nextId = db.reservations && db.reservations.length > 0
       ? Math.max(...db.reservations.map(r => r.id || 0)) + 1
       : 1;
     const code = `CF-${Math.floor(100000 + Math.random() * 900000)}`;
-    const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
 
     const cleanTxId = code.replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
     const pixPayload = generateStaticPixPayload({
@@ -20446,7 +20493,6 @@ app.post("/api/bot-actions/pre-reserve", verifyBotActionPermission("createPreRes
       merchantCity: "CAMPOS DOS GOYTACAZES",
       txid: cleanTxId
     });
-    const qrCodeBase64 = await QRCode.toDataURL(pixPayload);
 
     const newReservation = {
       id: nextId,
@@ -20479,16 +20525,31 @@ app.post("/api/bot-actions/pre-reserve", verifyBotActionPermission("createPreRes
           timestamp: new Date().toISOString(),
           action: "pre_reserva_bot",
           actor: { name: "Bot Actions API", role: "system" },
-          description: `Pré-reserva criada via API com hold de 30 minutos (expira em ${expiresAt})`
+          description: `Pré-reserva criada via API com hold de ${holdMinutes} minutos (expira em ${expiresAt})`
         }
       ],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
 
+    // 3. PERSISTÊNCIA ATÔMICA IMEDIATA: Registra na coleção de reservas antes de ceder o Event Loop
     if (!Array.isArray(db.reservations)) db.reservations = [];
     db.reservations.unshift(newReservation);
     saveDatabase("bot_pre_reserve");
+
+    // 4. Geração assíncrona do QRCode com proteção de Rollback
+    let qrCodeBase64 = "";
+    try {
+      qrCodeBase64 = await QRCode.toDataURL(pixPayload);
+    } catch (qrErr) {
+      console.error("[pre-reserve] Falha ao gerar QRCode PIX:", qrErr);
+      const rollbackIdx = db.reservations.findIndex(r => r.id === newReservation.id);
+      if (rollbackIdx !== -1) {
+        db.reservations.splice(rollbackIdx, 1);
+        saveDatabase("bot_pre_reserve_rollback");
+      }
+      throw qrErr;
+    }
 
     res.json({
       success: true,
@@ -20504,7 +20565,7 @@ app.post("/api/bot-actions/pre-reserve", verifyBotActionPermission("createPreRes
       expiresAt: newReservation.expiresAt,
       pixCopiaECola: pixPayload,
       qrCodeBase64,
-      holdMinutes: 30
+      holdMinutes
     });
   } catch (err) {
     res.status(500).json({ error: "INTERNAL_ERROR", message: err.message });
@@ -20536,6 +20597,53 @@ app.post("/api/bot-actions/commit-reservation", verifyBotActionPermission("commi
       return res.status(400).json({
         error: "RESERVATION_CANCELLED",
         message: "Esta reserva está cancelada e não pode ser efetivada."
+      });
+    }
+
+    const nowMs = Date.now();
+    const isExpired = reservation.status === "expirada" ||
+      ((reservation.status === "pre_reserva" || reservation.status === "pendente") &&
+        reservation.expiresAt &&
+        new Date(reservation.expiresAt).getTime() < nowMs &&
+        reservation.paymentStatus !== "pago_total");
+
+    if (isExpired) {
+      if (reservation.status !== "expirada") {
+        reservation.status = "expirada";
+        reservation.updatedAt = new Date().toISOString();
+        saveDatabase("commit_reservation_expired_auto");
+      }
+      return res.status(400).json({
+        error: "PRE_RESERVATION_EXPIRED",
+        message: "Esta pré-reserva expirou e não pode ser efetivada. Realize uma nova cotação."
+      });
+    }
+
+    // Revalidação de conflito com outras reservas ativas no PMS antes de efetivar definitivamente
+    const hasConflict = (db.reservations || []).some(r => {
+      if (String(r.id) === String(reservation.id) || String(r.code) === String(reservation.code)) return false;
+      if (r.status === "cancelada" || r.status === "expirada") return false;
+      if ((r.status === "pre_reserva" || r.status === "pendente") && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") return false;
+      if (String(r.flatId) !== String(reservation.flatId) && String(r.flatNumber) !== String(reservation.flatNumber)) return false;
+      return r.checkinDate < reservation.checkoutDate && r.checkoutDate > reservation.checkinDate;
+    });
+
+    if (hasConflict) {
+      return res.status(409).json({
+        error: "FLAT_UNAVAILABLE",
+        message: `O Flat ${reservation.flatNumber || reservation.flatId} já possui outra reserva confirmada para o período selecionado.`
+      });
+    }
+
+    const hasBlockConflict = (db.roomBlocks || []).some(b => {
+      if (String(b.flatId) !== String(reservation.flatId) && String(b.flatNumber) !== String(reservation.flatNumber)) return false;
+      return b.startDate < reservation.checkoutDate && b.endDate > reservation.checkinDate;
+    });
+
+    if (hasBlockConflict) {
+      return res.status(409).json({
+        error: "FLAT_UNAVAILABLE",
+        message: `O Flat ${reservation.flatNumber || reservation.flatId} possui bloqueio de manutenção para o período selecionado.`
       });
     }
 
@@ -28330,12 +28438,29 @@ app.use((err, req, res, next) => {
 const distPath = path.resolve(__dirname, "../limpeza/dist/public");
 const fallbackDistPath = path.resolve(__dirname, "../limpeza/dist");
 
+let cachedIndexHtml = null;
+
 function serveSpaWithMetadata(distFolder, req, res) {
-  const indexPath = path.join(distFolder, "index.html");
-  if (!fs.existsSync(indexPath)) return res.status(404).send("index.html not found");
+  const candidateIndexPaths = [
+    path.join(distFolder, "index.html"),
+    path.resolve(process.cwd(), "artifacts/limpeza/dist/public/index.html"),
+    path.resolve(process.cwd(), "artifacts/limpeza/dist/index.html"),
+    path.resolve(__dirname, "../limpeza/dist/public/index.html"),
+    path.resolve(__dirname, "../../artifacts/limpeza/dist/public/index.html")
+  ];
+  let indexPath = candidateIndexPaths.find(p => fs.existsSync(p));
+  if (!indexPath && !cachedIndexHtml) return res.status(404).send("index.html not found");
 
   try {
-    let html = fs.readFileSync(indexPath, "utf-8");
+    let html = cachedIndexHtml;
+    if (indexPath) {
+      try {
+        html = fs.readFileSync(indexPath, "utf-8");
+        cachedIndexHtml = html;
+      } catch (readErr) {
+        if (!html) throw readErr;
+      }
+    }
     const rawPath = (req.path || "").toLowerCase();
 
     // 1. Extrair código de reserva da URL (query param ou segmento do path)
@@ -28655,7 +28780,7 @@ if (fs.existsSync(distPath)) {
     }
   }));
   app.use((req, res, next) => {
-    if (req.method === "GET" && !req.path.startsWith("/api")) {
+    if (req.method === "GET" && !req.path.startsWith("/api") && !path.extname(req.path)) {
       return serveSpaWithMetadata(distPath, req, res);
     }
     next();
@@ -28672,7 +28797,7 @@ if (fs.existsSync(distPath)) {
     }
   }));
   app.use((req, res, next) => {
-    if (req.method === "GET" && !req.path.startsWith("/api")) {
+    if (req.method === "GET" && !req.path.startsWith("/api") && !path.extname(req.path)) {
       return serveSpaWithMetadata(fallbackDistPath, req, res);
     }
     next();
@@ -29396,7 +29521,7 @@ app.get("/api/maids/:userId/statement", (req, res) => {
 
 app.get("/api/maids/all-balances", (req, res) => {
   const authUser = getAuthUser(req);
-  if (!authUser || authUser.role !== "admin") {
+  if (!authUser || (authUser.role !== "admin" && authUser.role !== "camareira")) {
     return res.status(403).json({ error: "Acesso negado." });
   }
 

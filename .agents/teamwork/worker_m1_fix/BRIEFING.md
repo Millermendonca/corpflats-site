@@ -1,58 +1,52 @@
-# BRIEFING — 2026-09-30T19:31:00-03:00
+# BRIEFING — 2026-10-11T01:41:20Z
 
 ## Mission
-Implement backend remediation fixes in artifacts/api-server/demo-server.mjs and mirror to scripts/demo-server.mjs, verify test suite, commit and push.
+Remediation of CorpFlats Milestone M1 defects and edge cases across demo-server, tariff engine, and bot actions API with 100% test pass rate and twin-server parity.
 
 ## 🔒 My Identity
-- Archetype: worker_m1_fix
+- Archetype: worker
 - Roles: implementer, qa, specialist
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1_fix
-- Original parent: 2a43f791-5cc7-4933-bdd2-688af9234cb1
-- Milestone: Milestone 1 Remediation
+- Original parent: 3364a657-c855-42a7-a46e-a5463bc245b7
+- Milestone: M1 Remediation
 
 ## 🔒 Key Constraints
-- Own exclusively artifacts/api-server/demo-server.mjs and scripts/demo-server.mjs
-- Keep artifacts/api-server/demo-server.mjs and scripts/demo-server.mjs 100% byte-for-byte identical (governance-integrity test requires this)
-- Follow minimal change principle
-- Genuine implementation only, no cheating or facades
-- Run tests and commit & git push origin main per AGENTS.md
+- Genuine implementation only, no cheating or hardcoding test results.
+- Twin-server byte parity: `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs` must have identical SHA-256.
+- Git commit followed by `git push` by default per AGENTS.md rule.
+- 100% pass on all test suites: `tests/tariff-engine.test.mjs`, `tests/bot-actions-api.test.mjs`, `tests/challenger-m1-adversarial.test.mjs`, `tests/challenger-edge-probes.test.mjs`, `tests/challenger-tariff-stress.test.mjs`.
 
 ## Current Parent
-- Conversation ID: 2a43f791-5cc7-4933-bdd2-688af9234cb1
-- Updated: 2026-09-30T19:31:00-03:00
+- Conversation ID: 3364a657-c855-42a7-a46e-a5463bc245b7
+- Updated: 2026-10-11T01:28:08Z
 
 ## Task Summary
-- **What to build**: Fix backend edge cases in demo-server.mjs (date str timezone fix in start limit, calendar flat dates, closed order re-start rejection, empty title validation in PATCH, photo array sanitization in finish), mirror to scripts/demo-server.mjs.
-- **Success criteria**: All tests pass (tests/adversarial-milestone1.test.mjs, tests/service-orders.test.mjs, tests/service-orders-api-live.test.mjs, tests/checkout-occupancy-rule.test.mjs, tests/governance-integrity.test.mjs), git pushed.
-- **Interface contracts**: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_1\PROJECT.md
-- **Code layout**: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\orchestrator_1\PROJECT.md
+- **What to build**: Fixed race condition in pre-reserve via atomic synchronous placeholder reservation insertion before async QR code generation; handle pre-reservation lifecycle (`paymentStatus === "pago_total"` retention, expired reservation handling in commit-reservation, configurable hold minutes); fixed calendar without flatId to only apply global overrides; normalized channel comparison in calendar; supported numeric string daysOfWeek in bulk-update.
+- **Success criteria**: All 5 test suites pass cleanly with 100% green (55/55 tests passed), zero regressions, byte-identical twin servers, committed and pushed.
+- **Interface contracts**: `ORIGINAL_REQUEST.md`, explorer reports 1, 2, 3.
 
 ## Key Decisions Made
-- Hardened getExecutionDateStr with regex check to preserve already-formatted YYYY-MM-DD strings.
-- Applied getExecutionDateStr(f.finishedAt) === todayStr in start endpoint daily limit check.
-- Used getExecutionDateStr for startDate and endDate in GET /api/pms/calendar service blocks.
-- Guarded start endpoint against closed orders with 400 error.
-- Validated trimmed title in PATCH /api/service-orders/:id to reject empty strings with 400 error.
-- Sanitized photos array in finish endpoint with filter/map/filter.
-- Mirrored artifacts/api-server/demo-server.mjs to scripts/demo-server.mjs (0 byte diff verified).
-- Successfully ran all 159 tests.
-- Pushed commit a284945 to origin main.
+- Selected Strategy A for concurrency: atomic synchronous insertion into `db.reservations` prior to `await QRCode.toDataURL` with rollback in catch block.
+- Extracted `findEffectiveTariffOverride` shared function used identically by `calculateDailyRate` and `GET /api/tariffs/calendar`.
+- Supported numeric strings in `daysOfWeek` via `.map(Number)`.
 
 ## Artifact Index
-- DISPATCH.md — Assignment instructions
-- BRIEFING.md — Situational awareness
-- progress.md — Liveness heartbeat
-- handoff.md — Final 5-component report
+- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1_fix\DISPATCH.md`
+- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1_fix\progress.md`
+- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1_fix\handoff.md`
 
 ## Change Tracker
-- **Files modified**: artifacts/api-server/demo-server.mjs, scripts/demo-server.mjs
-- **Build status**: All 159 tests passed (100% pass)
-- **Pending issues**: None
+- **Files modified**:
+  - `artifacts/api-server/demo-server.mjs`: atomic pre-reserve, lifecycle checks, configurable hold, findEffectiveTariffOverride, bulk-update map(Number).
+  - `scripts/demo-server.mjs`: mirrored 100% byte-for-byte with identical SHA-256.
+  - `tests/challenger-edge-probes.test.mjs`: added strict assertions for Probes A, B, C.
+- **Build status**: 55/55 tests PASSING (100%), twin match TRUE, frontend build PASSING.
+- **Pending issues**: None.
 
 ## Quality Status
-- **Build/test result**: PASS (159 tests in adversarial, static, live, and governance suites)
-- **Lint status**: PASS (node -c clean on both files)
-- **Tests added/modified**: Verified against full suite
+- **Build/test result**: PASS (55/55 passed across all 5 M1 suites; 56/56 passed on additional regression suites).
+- **Lint status**: Zero errors.
+- **Tests added/modified**: Strengthened assertions in `tests/challenger-edge-probes.test.mjs`.
 
 ## Loaded Skills
-None
+- None requested
