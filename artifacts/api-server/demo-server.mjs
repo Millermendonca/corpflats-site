@@ -5911,20 +5911,50 @@ function createNotification(arg1, arg2, arg3) {
     let payload = {};
     if (typeof arg1 === "string") {
       // Suporte à chamada posicional: createNotification("alerta", "Mensagem...", { metadata })
-      const cat = arg1 === "alerta" ? "system_error" : arg1;
+      const isAlert = arg1 === "alerta" || arg1 === "error";
+      const cat = isAlert ? "contingency" : arg1;
       payload = {
         category: cat,
-        title: "⚠️ Contingência FNRH SERPRO",
+        title: arg1 === "alerta" ? "⚠️ Contingência FNRH SERPRO" : (arg1 === "reserva" ? "📅 Reserva Confirmada" : (arg1 === "demanda_ia" ? "📋 Demanda Mapeada" : "Notificação")),
         message: String(arg2 || ""),
-        severity: "warning",
+        severity: isAlert ? "warning" : "info",
         metadata: typeof arg3 === "object" ? (arg3 || {}) : {},
-        targetUrl: arg3?.reservationCode ? `/reservas?code=${arg3.reservationCode}` : "/reservas"
+        targetUrl: arg3?.reservationCode ? `/reservas?code=${arg3.reservationCode}` : (arg3?.link || "/reservas")
       };
     } else if (arg1 && typeof arg1 === "object") {
       payload = arg1;
     }
 
-    const { category = "system_error", title = "Notificação", message = "", severity = "info", metadata = {}, targetUrl = "" } = payload;
+    let deducedCategory = payload.category;
+    if (!deducedCategory) {
+      const typeStr = String(payload.type || "").toLowerCase();
+      if (typeStr.startsWith("whatsapp") || typeStr.includes("chat") || typeStr.includes("sms") || typeStr.includes("faq")) {
+        deducedCategory = "whatsapp";
+      } else if (typeStr.includes("checkout")) {
+        deducedCategory = "checkout";
+      } else if (typeStr.includes("checkin") || typeStr.includes("pre_checkin") || typeStr.includes("arrival") || typeStr.includes("reserva") || typeStr.includes("reservation")) {
+        deducedCategory = "reservation";
+      } else if (typeStr.includes("cleaning") || typeStr.includes("limpeza")) {
+        deducedCategory = "cleaning_alert";
+      } else if (typeStr.includes("defect") || typeStr.includes("defeito") || typeStr.includes("avaria")) {
+        deducedCategory = "defect";
+      } else if (typeStr.includes("lost_item") || typeStr.includes("perdido")) {
+        deducedCategory = "lost_item";
+      } else if (typeStr.includes("breakfast") || typeStr.includes("cafe")) {
+        deducedCategory = "breakfast";
+      } else if (payload.severity === "danger" || payload.severity === "error") {
+        deducedCategory = "system_error";
+      } else {
+        deducedCategory = "general";
+      }
+    }
+
+    const category = deducedCategory;
+    const title = payload.title || "Notificação";
+    const message = payload.message || "";
+    const severity = payload.severity || "info";
+    const metadata = payload.metadata || {};
+    const targetUrl = payload.targetUrl || payload.link || "";
 
     const categoryMap = {
       breakfast: settings.notifyOnBreakfast !== false,
@@ -5934,12 +5964,30 @@ function createNotification(arg1, arg2, arg3) {
       system_error: settings.notifyOnSystemError !== false,
       abandoned_cart: settings.notifyOnAbandonedCart !== false,
       cleaning_alert: settings.notifyOnOvertimeCleaning !== false,
+      whatsapp: true,
+      communication: true,
+      general: true,
+      reservation: true,
+      checkin: true,
+      pre_checkin: true,
+      contingency: true,
+      service_order: true,
+      cleaning_priority: true,
+      cleaning_info: true,
+      guest_alert: true
     };
 
-    // Registra no Audit Log Fail-Safe simultaneamente
+    // Registra no Audit Log Fail-Safe simultaneamente com categoria adequada
+    const auditCategory = 
+      ["checkout", "abandoned_cart", "reservation", "checkin", "pre_checkin", "guest_alert"].includes(category) ? "reservation" :
+      ["whatsapp", "communication"].includes(category) ? "communication" :
+      ["contingency", "fnrh_contingency"].includes(category) ? "integration" :
+      category === "system_error" ? "system" :
+      category === "breakfast" ? "breakfast" : "cleaning";
+
     logAuditEvent({
       level: severity === "danger" || severity === "error" ? "error" : (severity === "warning" ? "warning" : (severity === "success" ? "success" : "info")),
-      category: category === "checkout" || category === "abandoned_cart" ? "reservation" : (category === "system_error" ? "system" : "cleaning"),
+      category: auditCategory,
       action: `NOTIFICATION_${String(category).toUpperCase()}`,
       details: { title, message, metadata, targetUrl }
     });

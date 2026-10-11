@@ -2121,9 +2121,11 @@ export function autoCreatePendingFaq({
   if (typeof createNotification === "function") {
     try {
       createNotification({
+        category: "whatsapp",
         title: `❓ Nova Dúvida Hóspede: ${senderName || cleanPhone}`,
         message: `Pergunta não mapeada recebida: "${text.substring(0, 100)}". Registrada como pendente no FAQ.`,
         type: "whatsapp_faq_pending",
+        targetUrl: "/whatsapp-automation",
         link: "/whatsapp-automation"
       });
     } catch (_) {}
@@ -2305,9 +2307,11 @@ export async function processAiInboundMessage({
     // Notificação de alta prioridade para o operador
     if (typeof createNotification === "function") {
       createNotification({
+        category: "whatsapp",
         title: `🚨 Transbordo Humano: ${conv?.name || cleanTarget}`,
         message: `Hóspede solicitou atendimento humano no WhatsApp ("${incomingInfo.text}"). IA pausada na conversa.`,
         type: "whatsapp_handover",
+        targetUrl: `/whatsapp-chat?phone=${cleanTarget}`,
         link: `/whatsapp-chat?phone=${cleanTarget}`
       });
     }

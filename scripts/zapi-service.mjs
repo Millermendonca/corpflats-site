@@ -5791,9 +5791,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
       if (typeof createNotification === "function") {
         createNotification({
+          category: "whatsapp",
           title: `⚠️ WhatsApp Alerta: ${senderName || phone}`,
           message: cleanText.substring(0, 120),
           type: "guest_negative_sentiment",
+          targetUrl: `/avaliacoes-ia`,
           link: `/avaliacoes-ia`
         });
       }
@@ -5887,9 +5889,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       if (!incomingInfo.fromMe && typeof createNotification === "function") {
         const preview = incomingInfo.text || (incomingInfo.type === "audio" ? "🎵 Áudio recebido" : (incomingInfo.type === "image" ? "📷 Foto recebida" : (incomingInfo.type === "document" ? "📄 Documento recebido" : "Nova mensagem")));
         createNotification({
+          category: "whatsapp",
           title: `WhatsApp: ${incomingInfo.senderName || updatedConv?.name || cleanTarget}`,
           message: preview.substring(0, 120),
           type: "whatsapp_message",
+          targetUrl: `/whatsapp-chat?phone=${cleanTarget}`,
           link: `/whatsapp-chat?phone=${cleanTarget}`
         });
       }
@@ -5916,9 +5920,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
             console.log(`[Z-API Webhook fromMe] Resposta do operador vinculada ao FAQ [${linkedFaq.id}] ("${linkedFaq.question.substring(0, 40)}...") -> aguardando aprovação.`);
             if (typeof createNotification === "function") {
               createNotification({
+                category: "whatsapp",
                 title: "💡 Sugestão de FAQ Capturada",
                 message: `Resposta do operador para "${linkedFaq.question.substring(0, 60)}" aguardando aprovação no painel de FAQ.`,
                 type: "faq_suggestion",
+                targetUrl: "/whatsapp-automation?tab=faq",
                 link: "/whatsapp-automation?tab=faq"
               });
             }
@@ -6040,6 +6046,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
 
             if (typeof createNotification === "function") {
               createNotification({
+                category: wasPrioritized ? "cleaning_priority" : "cleaning_info",
                 title: wasPrioritized
                   ? `🚨 PRIORIDADE: Flat ${flatNum} - Chegada ${arrivalInfo.formatted}`
                   : `🕒 Previsão Chegada: Flat ${flatNum} - ${arrivalInfo.formatted}`,
@@ -6047,6 +6054,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
                   ? `${todayRes.guestName} informou via WhatsApp chegada para ${arrivalInfo.formatted}. Flat ${flatNum} marcado como PRIORIDADE no quadro!`
                   : `${todayRes.guestName} informou via WhatsApp previsão de chegada para ${arrivalInfo.formatted}.`,
                 type: wasPrioritized ? "cleaning_priority" : "cleaning_info",
+                targetUrl: "/limpeza",
                 link: "/limpeza"
               });
             }
@@ -6157,9 +6165,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
           });
           if (!incomingInfo.fromMe && typeof createNotification === "function") {
             createNotification({
+              category: "whatsapp",
               title: `WhatsApp: ${incomingInfo.senderName || cleanTarget}`,
               message: (incomingInfo.text || "Nova mensagem recebida").substring(0, 100),
               type: "whatsapp_message",
+              targetUrl: `/whatsapp-chat?phone=${cleanTarget}`,
               link: `/whatsapp-chat?phone=${cleanTarget}`
             });
           }
@@ -6493,9 +6503,11 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         console.log(`[WhatsApp Live Chat] Resposta do operador vinculada ao FAQ [${linkedFaq.id}] ("${linkedFaq.question.substring(0, 40)}...") -> aguardando aprovação.`);
         if (typeof createNotification === "function") {
           createNotification({
+            category: "whatsapp",
             title: "💡 Sugestão de FAQ Capturada",
             message: `Resposta do operador para "${linkedFaq.question.substring(0, 60)}" aguardando aprovação no painel de FAQ.`,
             type: "faq_suggestion",
+            targetUrl: "/whatsapp-automation?tab=faq",
             link: "/whatsapp-automation?tab=faq"
           });
         }
@@ -8012,9 +8024,11 @@ export async function checkAndTriggerCleaningDelayAlerts(dbOrGetter, saveDatabas
 
       if (typeof createNotification === "function") {
         createNotification({
+          category: "cleaning_alert",
           title: `⚠️ 14h: Flat ${flatNum} ainda em limpeza`,
           message: `Hóspede ${resv.guestName} (Reserva ${resv.code}) notificado(a) no WhatsApp para envio de previsão de chegada. Flat ${flatNum} ainda pendente de limpeza.`,
           type: "cleaning_governance",
+          targetUrl: "/limpeza",
           link: "/limpeza"
         });
       }
