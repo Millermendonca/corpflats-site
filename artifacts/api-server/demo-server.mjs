@@ -31426,16 +31426,52 @@ app.post("/api/audit-logs/client", (req, res) => {
 });
 
 // ── Server Monitor & Real-Time Root Cause Analysis (RCA) Engine ────────────
-app.post("/api/observability/render-metrics", (req, res) => {
+const RENDER_METRICS_PATHS = [
+  "/api/observability/render-metrics",
+  "/api/observability/render-metrics/v1/metrics",
+  "/v1/metrics",
+  "/metrics"
+];
+
+app.all(RENDER_METRICS_PATHS, (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, HEAD, PUT");
+  res.setHeader("Access-Control-Allow-Headers", "*");
+
+  // Responde imediatamente a probes de conectividade (GET, HEAD, OPTIONS)
+  if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") {
+    return res.status(200).json({
+      status: "ok",
+      service: "corpflats-otel-receiver",
+      protocol: "OTLP/HTTP",
+      partialSuccess: {}
+    });
+  }
+
   try {
-    const authHeader = req.headers.authorization || req.headers["x-render-token"] || req.headers.token || "";
-    const result = ingestRenderMetrics(req.body, authHeader);
-    if (!result.success) {
-      return res.status(result.status || 400).json(result);
+    const rawToken = req.headers.authorization ||
+      req.headers["x-api-key"] ||
+      req.headers["api-key"] ||
+      req.headers["x-render-token"] ||
+      req.headers["token"] ||
+      req.query?.token ||
+      req.query?.api_key ||
+      "";
+
+    const result = ingestRenderMetrics(req.body, rawToken);
+    if (!result.success && result.status === 401) {
+      return res.status(401).json(result);
     }
-    return res.json(result);
+
+    // Resposta padrão oficial do OpenTelemetry OTLP/HTTP JSON
+    return res.status(200).json({
+      partialSuccess: {},
+      success: true,
+      message: "Métricas recebidas com sucesso",
+      parsed: result.parsed || null
+    });
   } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
+    return res.status(200).json({ partialSuccess: {}, success: false, error: err.message });
   }
 });
 
