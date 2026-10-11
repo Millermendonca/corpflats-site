@@ -1,73 +1,64 @@
-# BRIEFING — 2026-09-30T22:07:45Z
+# BRIEFING — 2026-10-11T01:10:00Z
 
 ## Mission
-Implement backend data and API for the External Service Orders feature (OS de Serviços Externos - R1, R2, R3, R6, R7), including database initialization, admin endpoints, public worker endpoints, integrations with existing endpoints, validations, notifications, test coverage, and synchronization between artifacts and scripts demo-server.
+Implementar o Milestone M1: Chave Mestra e Ações do Bot, Motor de Tarifas Inteligente SEBRAE multi-canal, endpoints REST, sincronização twin-server e testes automatizados 100% aprovados.
 
 ## 🔒 My Identity
-- Archetype: implementer
+- Archetype: worker
 - Roles: implementer, qa, specialist
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1
-- Original parent: 2a43f791-5cc7-4933-bdd2-688af9234cb1
-- Milestone: M1 - Backend Data & API Implementer
+- Original parent: 3364a657-c855-42a7-a46e-a5463bc245b7
+- Milestone: M1
 
 ## 🔒 Key Constraints
-- Own exclusively: data/database.json, artifacts/api-server/demo-server.mjs, scripts/demo-server.mjs.
-- scripts/demo-server.mjs must be byte-for-byte identical to artifacts/api-server/demo-server.mjs.
-- Genuine implementations only: no hardcoding, no facades, real state transitions.
-- All admin endpoints require auth + role === 'admin'.
-- All public endpoints are unauthenticated and scoped to token.
-- Git commit rule: always git push by default after commit.
-- Verification tests must be comprehensive and passing.
+- Twin-server parity: `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs` byte-a-byte identical SHA-256.
+- Always run `git push` on every `git commit`.
+- Full genuine implementations: no hardcoding or mock shortcuts.
+- Node native test suite: `tests/tariff-engine.test.mjs` and `tests/bot-actions-api.test.mjs` 100% pass.
+- 403 ACTION_DISABLED with requiresHandover when apiActionsEnabled=false or individual action disabled.
 
 ## Current Parent
-- Conversation ID: 2a43f791-5cc7-4933-bdd2-688af9234cb1
-- Updated: 2026-09-30T22:07:45Z
+- Conversation ID: 3364a657-c855-42a7-a46e-a5463bc245b7
+- Updated: 2026-10-11T00:56:22Z
 
 ## Task Summary
-- **What to build**:
-  1. Add serviceOrders and serviceWorkers to database.json and loadDatabase().
-  2. Implement Admin REST API: GET, POST (24 hex token), GET :id, PATCH :id, DELETE :id, GET :id/progress, POST :id/flats/:flatId/reset.
-  3. Implement Public REST API: GET public/:token, POST register, POST flats/:flatId/start, POST flats/:flatId/finish, POST flats/:flatId/photos.
-  4. Inject serviceInProgress into GET /api/flats and GET /api/reservations/checkouts; inject synthetic service blocks into GET /api/pms/calendar.
-  5. Business logic validations (maxSimultaneousFlats, maxFlatsPerDay, cleanFlatMode, needsCleaning on clean flat finish, requirePhotos) and notifications (WhatsApp bypassTestMode: true, email, internal notification).
-  6. Mirror demo-server.mjs to scripts/demo-server.mjs.
-  7. Verification via tests.
-- **Success criteria**: All endpoints functional, strict validation, notifications dispatched, tests passing, mirror files identical.
-- **Interface contracts**: PROJECT.md, analysis.md, handoff.md from explorer_survey_backend.
-- **Code layout**: Backend in artifacts/api-server/demo-server.mjs & scripts/demo-server.mjs, DB in data/database.json.
+- **What to build**: Milestone M1 backend: Bot Actions settings and guarded endpoints (availability, quote, payment-link, pre-reserve, commit), Tariff Engine with SEBRAE calculation, channel markups, weekend markup, overrides, tariff endpoints, and comprehensive test suite.
+- **Success criteria**: 100% passing tests for tariff engine and bot actions API, twin-server parity, clean DB persistence.
+- **Interface contracts**: PROJECT.md and ORIGINAL_REQUEST.md.
+- **Code layout**: artifacts/api-server/demo-server.mjs, scripts/demo-server.mjs, data/database.json, tests/*.
 
 ## Key Decisions Made
-- Added `serviceOrders: []` and `serviceWorkers: []` to `data/database.json` and initial `db` schema with defensive guards in `loadDatabase()`.
-- Implemented Admin REST endpoints under `/api/service-orders` requiring `getAuthUser(req)` with `role === "admin"`.
-- Implemented Public REST endpoints under `/api/service/public/:token` with full business logic (limits, cleanFlatMode, registration check, photo upload, finish rules).
-- Multi-channel notification pipeline dispatches to Admin WhatsApp (`5522998505276`), Reception WhatsApp, Reception Email (`mail-service.mjs`), and internal audit logs/system notifications (`createNotification`).
-- Injected `serviceInProgress` on `GET /api/flats` and `GET /api/reservations/checkouts`; synthetic service blocks on `GET /api/pms/calendar`.
-- Fixed pre-existing syntax error (missing async on `/api/cleaning/assignments/:requestId/status`) and synchronized `scripts/demo-server.mjs` to exact byte-for-byte SHA256 parity.
-- Created unit/contract tests (`tests/service-orders.test.mjs`) and live HTTP API integration tests (`tests/service-orders-api-live.test.mjs`), with all tests passing 100%.
-- Committed changes and executed `git push origin main`.
+- Implemented `db.tariffSettings` (mode auto/manual, channelMarkups, weekendMarkupPct) and `db.tariffOverrides` (date, flatId, channel, rate).
+- Implemented `calculateDailyRate(flatId, date, channel)` with strict precedence: specific flat + date + channel > specific flat + date + all > global date + channel > global date + all > SEBRAE seasonal calculation / manual baseRate + weekend markup + channel markup.
+- Synchronized fee additions with `db.siteConfig` (cleaning fee per ratePlan, extra bed fee for >2 guests, breakfast difference).
+- Implemented `db.botActionsSettings` with master toggle `apiActionsEnabled` and 5 granular switches `allowedActions`.
+- Created standardized 403 ACTION_DISABLED error response with `requiresHandover: true` and polite fallback message.
+- Implemented 5 REST endpoints in `/api/bot-actions/*`: `/availability`, `/quote`, `/payment-link`, `/pre-reserve` (30m hold), `/commit-reservation` (PMS permanent lock).
+- Built native test suites `tests/tariff-engine.test.mjs` (8 tests) and `tests/bot-actions-api.test.mjs` (5 tests). All 13 tests passed 100%.
+- Verified twin-server SHA-256 parity match between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`.
 
 ## Artifact Index
-- .agents/teamwork/worker_m1/DISPATCH.md — assignment dispatch
-- .agents/teamwork/worker_m1/BRIEFING.md — persistent situational awareness
-- .agents/teamwork/worker_m1/progress.md — liveness heartbeat
-- .agents/teamwork/worker_m1/handoff.md — final handoff report
-- tests/service-orders.test.mjs — static and contract tests
-- tests/service-orders-api-live.test.mjs — live HTTP API end-to-end tests
+- .agents/teamwork/worker_m1/DISPATCH.md - Orchestrator assignment
+- .agents/teamwork/worker_m1/BRIEFING.md - Situational awareness and state tracker
+- .agents/teamwork/worker_m1/progress.md - Heartbeat and step log
+- .agents/teamwork/worker_m1/handoff.md - 5-component handoff report
+- tests/tariff-engine.test.mjs - Automated test suite for tariff engine
+- tests/bot-actions-api.test.mjs - Automated test suite for bot actions API
 
 ## Change Tracker
 - **Files modified**:
-  * data/database.json: added serviceOrders: [] and serviceWorkers: []
-  * artifacts/api-server/demo-server.mjs: added helpers, serviceOrders & serviceWorkers init, injected serviceInProgress into flats & checkouts, injected service blocks into calendar, added 12 REST routes
-  * scripts/demo-server.mjs: byte-for-byte identical mirror of demo-server.mjs
-  * tests/service-orders.test.mjs: contract & logic tests
-  * tests/service-orders-api-live.test.mjs: live HTTP API tests
-- **Build status**: PASS (all 35/35 unit tests pass, all 16/16 live API tests pass)
-- **Pending issues**: None
+  - `artifacts/api-server/demo-server.mjs`: Added Tariff Engine and Bot Actions endpoints, helpers, permissions, and exports.
+  - `scripts/demo-server.mjs`: Byte-a-byte SHA-256 identical twin mirror.
+  - `data/database.json`: Added initial structures for `tariffSettings`, `tariffOverrides`, `botActionsSettings`.
+  - `tests/tariff-engine.test.mjs`: New test suite for SEBRAE pricing, markups, overrides, bulk update.
+  - `tests/bot-actions-api.test.mjs`: New test suite for master switch, individual switches, and autonomous pipeline.
+- **Build status**: 13/13 tests pass (100% success).
+- **Pending issues**: none.
 
 ## Quality Status
-- **Build/test result**: PASS (node -c clean, checkout-occupancy-rule: 22/22, service-orders: 12/12, service-orders-api-live: 16/16, surveys-reformed: 1/1, governance-integrity: 90/90)
-- **Lint status**: Clean
-- **Tests added/modified**: tests/service-orders.test.mjs, tests/service-orders-api-live.test.mjs
+- **Build/test result**: 13 passed, 0 failed.
+- **Lint status**: 0 errors (`node --check` passed).
+- **Tests added/modified**: `tests/tariff-engine.test.mjs` (8 tests), `tests/bot-actions-api.test.mjs` (5 tests).
 
 ## Loaded Skills
 - None

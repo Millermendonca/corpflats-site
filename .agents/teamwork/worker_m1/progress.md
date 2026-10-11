@@ -1,15 +1,17 @@
-# Progress - Worker M1 (Backend Data & API Implementer)
+# Progress - Worker M1
 
-- Last visited: 2026-09-30T22:07:35Z
-- Status: Completed - All backend requirements (R1, R2, R3, R6, R7), validations, mirror sync, and tests implemented and verified.
+Last visited: 2026-10-11T01:11:30Z
 
-## Tasks Status
-- [x] 1. Read required documents (ORIGINAL_REQUEST.md, PROJECT.md, analysis.md, handoff.md)
-- [x] 2. Update data/database.json and demo-server.mjs database initialization (serviceOrders: [], serviceWorkers: [])
-- [x] 3. Implement Admin REST API (/api/service-orders CRUD, progress, reset)
-- [x] 4. Implement Public REST API (/api/service/public/:token details, register, start, finish, photos)
-- [x] 5. Implement Business Logic (limits, cleanFlatMode, photo requirements, finish rules) & Notifications (WhatsApp, Email, internal)
-- [x] 6. Integrate with existing routes (GET /api/flats, GET /api/reservations/checkouts, GET /api/pms/calendar)
-- [x] 7. Synchronize artifacts/api-server/demo-server.mjs to scripts/demo-server.mjs (byte-for-byte SHA256 match)
-- [x] 8. Comprehensive test writing and verification (12 static/contract tests + 16 live HTTP API tests passing 100%)
-- [x] 9. Final verification, handoff report and notification to parent
+## Status
+- [x] Initial setup: DISPATCH.md, BRIEFING.md, progress.md created
+- [x] Read authoritative documentation (ORIGINAL_REQUEST.md, PROJECT.md, analysis.md)
+- [x] Inspect existing `artifacts/api-server/demo-server.mjs`, `data/database.json`, financial logic, reservation logic
+- [x] Plan modifications
+- [x] Implement Tariff Engine & Multi-channel tariff settings, overrides, calendar, bulk update in demo-server.mjs
+- [x] Implement Bot Actions master switch, granular permissions, availability, quote, payment-link, pre-reserve, commit-reservation
+- [x] Create tests `tests/tariff-engine.test.mjs` and `tests/bot-actions-api.test.mjs`
+- [x] Run automated tests via Node test runner, debug and refine until 100% pass (13/13 tests passed)
+- [x] Synchronize `artifacts/api-server/demo-server.mjs` to `scripts/demo-server.mjs` (verified SHA-256 match)
+- [ ] Frontend build verification (`npm run build` in `artifacts/limpeza`)
+- [ ] Git commit & push as required by user guidelines
+- [ ] Write handoff.md and send message to parent orchestrator

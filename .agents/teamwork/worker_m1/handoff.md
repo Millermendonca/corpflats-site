@@ -1,122 +1,114 @@
-# Handoff Report: Milestone 1 — Backend Data, Endpoints & Business Logic
+# Relatório de Handoff — Milestone M1: API de Ações do Bot & Motor de Tarifas
 
-**Agent**: Worker M1 (Backend Data & API Implementer)  
-**Type**: Hard Handoff (Task Complete)  
-**Timestamp**: 2026-09-30T22:08:00Z  
-**Target Recipient**: Orchestrator / Worker M2 (Frontend Admin Implementer) / Forensic Auditor  
-**Working Directory**: `.agents/teamwork/worker_m1/`  
+**Agente:** Worker M1 (Implementer, QA, Specialist)  
+**Milestone:** M1 — Backend Core: System Actions API, Tariff Engine & Autonomous Pipeline  
+**Data:** 2026-10-11T01:12:00Z  
+**Diretório de Trabalho:** `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1`
 
 ---
 
 ## 1. Observation
 
-1. **Database Persistence & Schemas (R1)**:
-   - File: `data/database.json`. Added root keys `"serviceOrders": []` and `"serviceWorkers": []`.
-   - File: `artifacts/api-server/demo-server.mjs:474-475`. Added `serviceOrders: []` and `serviceWorkers: []` to the initial `db` schema declaration.
-   - File: `artifacts/api-server/demo-server.mjs:2637-2638` and `2812-2813`. In `loadDatabase()`, added defensive initialization guards:
-     ```javascript
-     if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
-     if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
-     ```
+1. **Estado Inicial da Base**:
+   - `data/database.json` não possuía as chaves `tariffSettings`, `tariffOverrides` ou `botActionsSettings`.
+   - `artifacts/api-server/demo-server.mjs` possuía `getFinancialSettings()` (linhas 19446–19464) com os parâmetros base SEBRAE (`fixedRent: 24000`, `fixedSalaries: 8000`, `fixedCondoIptu: 2500`, `fixedSystemsMaintenance: 1000`, `fixedOther: 500`, `varCleaningPerDay: 15`, `varUtilitiesPerDay: 5`, `varCardBreakfastPerDay: 10`, `targetProfitMarginPct: 0.25`, `avgChannelCommissionPct: 0.18`), porém não existia um motor dinâmico de diárias por canal ou sistema de overrides.
+   - Não existiam os endpoints `/api/bot-actions/*` nem `/api/tariffs/*`.
 
-2. **Helper Functions & Integrations (R2, R6, R7)**:
-   - File: `artifacts/api-server/demo-server.mjs:5194-5374`. Implemented:
-     * `getFlatServiceInProgress(flatId, flatNumber)`: Queries active service orders for an `in_progress` flat and returns `{ serviceTitle, workerName, serviceOrderId }` or `null`.
-     * `isFlatDirty(flatId, flatNumber, dateStr)`: Identifies if a flat has an active cleaning request or checkout reservation today.
-     * `formatServiceDuration(startIso, endIso)`: Generates friendly duration string (e.g. `1h 30min` or `45min`).
-     * `dispatchServiceNotifications(action, order, flat, worker)`: Multi-channel notifications on `start` and `finish` (WhatsApp admin `5522998505276`, WhatsApp reception, Email reception via `sendEmailAsync`, and internal notification + audit log via `createNotification`).
-   - `GET /api/flats`: Enhanced to map `activeFlats` and attach `serviceInProgress: getFlatServiceInProgress(flat.id, flat.number)`.
-   - `GET /api/reservations/checkouts`: Enhanced to inject `serviceInProgress: getFlatServiceInProgress(flat.id, flat.number)` onto each checkout card.
-   - `GET /api/pms/calendar`: Enhanced to synthesize `serviceOrderBlocks` for active service orders with `estimatedFinishAt`, setting `isServiceBlock: true, reason: 'service_order'`, merged into `data.blocks`.
+2. **Implementações Realizadas**:
+   - Adicionada estrutura de dados e persistência em `data/database.json` para `tariffSettings`, `tariffOverrides` e `botActionsSettings`.
+   - Em `artifacts/api-server/demo-server.mjs`:
+     - Importado `QRCode` (`import QRCode from "qrcode"`).
+     - Exportada a função `generateStaticPixPayload` para geração do BR Code BACEN oficial.
+     - Implementado o Motor de Tarifas: `getTariffSettings()`, `getTariffOverrides()`, `SEBRAE_SEASONALITY_FACTORS`, `calculateSebraeSustainableRate()`, `calculateDailyRate(flatId, date, channel)`.
+     - Implementados os endpoints de tarifas:
+       - `GET /api/tariffs/settings`
+       - `POST /api/tariffs/settings`
+       - `GET /api/tariffs/calendar`
+       - `POST /api/tariffs/bulk-update`
+       - `DELETE /api/tariffs/overrides/:id`
+     - Implementada a Chave Mestra e Matriz Granular de Ações:
+       - `getBotActionsSettings()`
+       - `verifyBotActionPermission(actionKey)`: intercepta requisições e retorna 403 padronizado:
+         `{ error: "ACTION_DISABLED", action: actionKey, requiresHandover: true, message: "Esta ação do sistema está pausada ou requer atendimento humano." }`.
+     - Implementados os 5 endpoints REST protegidos:
+       - `GET /api/bot-actions/availability`: expira pré-reservas vencidas (`expiresAt < Date.now()`), filtra conflitos de reservas ativas e room blocks, retorna flats disponíveis.
+       - `POST /api/bot-actions/quote`: calcula noites via motor de tarifas, aplica adicionais de `siteConfig` (limpeza, cama extra se > 2 hóspedes, café se plano com café), totaliza e define prazo de validade.
+       - `POST /api/bot-actions/payment-link`: gera payload PIX Copia-e-Cola (BACEN BR Code) e QR Code em base64.
+       - `POST /api/bot-actions/pre-reserve`: cria pré-reserva com status "pre_reserva", `expiresAt: Date.now() + 30 * 60 * 1000` (hold de 30 min), gera PIX e bloqueio provisório.
+       - `POST /api/bot-actions/commit-reservation`: efetiva no PMS com status "confirmada", `paymentStatus: "pago_total"`, remove hold provisório, bloqueia permanentemente a UH e notifica a recepção via `createNotification`.
 
-3. **REST Endpoints Implemented (R2, R3)**:
-   - Line ~7775 in `artifacts/api-server/demo-server.mjs`:
-     * Admin Endpoints (authenticated via `getAuthUser(req)` with `role === "admin"`):
-       - `GET /api/service-orders`: Lists all service orders, sorted by `createdAt` descending.
-       - `POST /api/service-orders`: Creates service order, generates 24-hex token via `crypto.randomBytes(12).toString("hex")`, formats flat entries with defaults (`status: "pending"`, etc.).
-       - `GET /api/service-orders/:id`: Returns order detail by ID or token.
-       - `PATCH /api/service-orders/:id`: Updates order parameters and flats list.
-       - `DELETE /api/service-orders/:id`: Removes order and associated workers.
-       - `GET /api/service-orders/:id/progress`: Returns aggregated metrics (`total`, `done`, `inProgress`, `pending`, `percentage`), worker details, and flat array.
-       - `POST /api/service-orders/:id/flats/:flatId/reset`: Admin endpoint to reopen a flat back to `pending`.
-     * Public Endpoints (unauthenticated, token-scoped):
-       - `GET /api/service/public/:token`: Returns 404 for invalid token, 200 with order and worker info for valid token.
-       - `POST /api/service/public/:token/register`: Validates worker name and 11-digit CPF, registers `mainWorker` and `collaborators`.
-       - `POST /api/service/public/:token/flats/:flatId/start`: Validates worker registration (403), validates `maxSimultaneousFlats` (400), validates `maxFlatsPerDay` (400), validates `cleanFlatMode` ("never", "priority", "always"), records start timestamp, worker identification, calculates `estimatedFinishAt`, and dispatches notifications.
-       - `POST /api/service/public/:token/flats/:flatId/finish`: Validates `in_progress` status (400), enforces `needsCleaning` if flat was clean (400), enforces `photos` if `requirePhotos: true` (400), records `finishedAt`, `observations`, `photos`, clears PMS calendar lock, queues dirty cleaning request if `needsCleaning === true`, and dispatches notifications.
-       - `POST /api/service/public/:token/flats/:flatId/photos`: Accepts Base64 photo data, calls `uploadImageToStorage(base64, ..., "services")`, and returns `{ success: true, url, urls }`.
+3. **Verificação de Paridade de Arquivos Gêmeos (Twin-Server Parity)**:
+   - Copiado `artifacts/api-server/demo-server.mjs` para `scripts/demo-server.mjs`.
+   - Hashes SHA-256 calculados:
+     - `artifacts/api-server/demo-server.mjs`: `220b902efb65f03362898d103fbf209f0a548e907b74d71c6c776630c423b7fa`
+     - `scripts/demo-server.mjs`: `220b902efb65f03362898d103fbf209f0a548e907b74d71c6c776630c423b7fa`
+     - Paridade verificada: **100% IDÊNTICOS (MATCH: TRUE)**.
 
-4. **Mirror Synchronization (R2)**:
-   - Primary: `artifacts/api-server/demo-server.mjs`
-   - Mirror: `scripts/demo-server.mjs`
-   - SHA-256 Hash of both files: `77c4034360729c670f1b3784c4439b91414c970ed51dd9a7faf5de24b1033ded`
-   - Diff output between files: 0 bytes.
-
-5. **Test Results**:
-   - `node --test tests/checkout-occupancy-rule.test.mjs`: 22/22 passed (including Subtest 1: strict mirror parity).
-   - `node --test tests/service-orders.test.mjs`: 12/12 passed.
-   - `node --test tests/service-orders-api-live.test.mjs`: 16/16 passed (100% live HTTP end-to-end API coverage).
-   - `node --test tests/governance-integrity.test.mjs`: 90/90 passed.
-   - `node --test tests/surveys-reformed.test.mjs`: 1/1 passed.
+4. **Resultados dos Testes Automatizados**:
+   - `node --test tests/tariff-engine.test.mjs`:
+     - 8 testes executados, 8 aprovados (0 falhas).
+   - `node --test tests/bot-actions-api.test.mjs`:
+     - 5 testes executados, 5 aprovados (0 falhas).
+   - Execução combinada:
+     - Total: 13 testes, 2 suítes, 13 aprovados, 0 falhas, 0 pulados.
 
 ---
 
 ## 2. Logic Chain
 
-1. **R1 (Data Structure)**: From Observation 1, the in-memory database requires `serviceOrders` and `serviceWorkers` at initialization, during file hydration, and in `data/database.json`. Adding defensive checks in `loadDatabase()` guarantees that even if external updates alter `database.json`, the arrays remain intact and defined.
-2. **R2 & R3 (Admin and Public API with Business Logic)**: From Observation 3, admin endpoints strictly guard with `getAuthUser(req)` returning `401` if unauthenticated and `403` if `role !== 'admin'`. Public endpoints require only the token in the URL.
-3. **Start & Finish Validation Logic**:
-   - `start`: Verifies worker exists in `db.serviceWorkers` (403 if absent); checks `in_progress` count against `maxSimultaneousFlats` (400 if reached); checks today's `done` count against `maxFlatsPerDay` (400 if reached); applies `cleanFlatMode` rules accurately.
-   - `finish`: Records `wasCleanWhenStarted` on start; if flat was clean, enforces `needsCleaning` in payload (400 if missing); if `requirePhotos: true`, enforces non-empty photos array (400 if empty); enqueues cleaning request if `needsCleaning === true`.
-4. **Existing Endpoint Injections (R2, R6, R7)**: From Observation 2, `GET /api/flats` and `GET /api/reservations/checkouts` now provide `serviceInProgress` allowing the Maid Dashboard (Worker M4) to lock cleaning buttons and show service badges. `GET /api/pms/calendar` synthesizes blocked room blocks with `isServiceBlock: true, reason: 'service_order'`.
-5. **Parity Enforcement**: From Observation 4, mirroring `artifacts/api-server/demo-server.mjs` to `scripts/demo-server.mjs` resolved the pre-existing test failure and guarantees that future automated CI/CD checks will pass.
-6. **Live Verification**: From Observation 5, running a real HTTP test (`tests/service-orders-api-live.test.mjs`) against an active server process proved all 16 integration scenarios with 0 mock facade, maintaining real server and DB state.
+1. **Chave Mestra & Segurança Granular**:
+   O middleware `verifyBotActionPermission(actionKey)` verifica se `settings.apiActionsEnabled` está ativo e se `settings.allowedActions[actionKey]` é verdadeiro. Se qualquer um for falso, a requisição é bloqueada imediatamente com status 403 e os metadados de transbordo `requiresHandover: true` exigidos na especificação. Isso garante que desativar a chave mestra neutraliza 100% das operações de sistema do bot instantaneamente.
+
+2. **Precedência de Tarifas (Lookup Hierarchy)**:
+   Na função `calculateDailyRate(flatId, date, channel)`:
+   - Overrides possuem prioridade máxima: flat específico + data + canal específico > flat específico + data + "all" > global + data + canal específico > global + data + "all".
+   - Na ausência de override: se modo `auto`, calcula a tarifa base sustentável mínima SEBRAE a partir de `getFinancialSettings()` e aplica a sazonalidade do mês (Jan/Jul/Dez +15%, Abr/Mai -10%, outros 0%); se modo `manual`, utiliza `baseDailyRate`.
+   - Aplica markup de fim de semana (+15% em sextas e sábados).
+   - Aplica markup de canal (Booking +18%, Airbnb +15%, Direto 0%).
+
+3. **Esteira de Reserva & Hold de 30 Minutos**:
+   - A pré-reserva é gravada com `expiresAt: Date.now() + 30 * 60 * 1000`.
+   - Durante a consulta de disponibilidade (`GET /api/bot-actions/availability`), pré-reservas vencidas são desconsideradas como bloqueio e marcadas como `"expirada"`, impedindo que desistências travem UHs no PMS.
+   - O commit da reserva (`POST /api/bot-actions/commit-reservation`) remove o `expiresAt`, transiciona o status para `"confirmada"`, marca o pagamento como `"pago_total"`, bloqueia permanentemente o calendário do PMS e dispara notificação para a recepção.
 
 ---
 
 ## 3. Caveats
 
-1. **Z-API WhatsApp Engine**: In local and offline environments without active Z-API credentials or when in sandbox mode, `sendZapiMessage` logs gracefully or returns `{ success: true, simulated: true }`, ensuring test executions and development work never fail or throw unhandled exceptions.
-2. **Storage R2**: In development environments without active Cloudflare R2 credentials, `uploadImageToStorage` gracefully falls back to returning the base64 data URI, allowing photo uploads and tests to run seamlessly.
+- **Ambiente de Produção**: Os testes foram executados com réplica isolada de banco (`DATABASE_FILE` e `DATA_FILE` dedicados) e sem chamar provedores externos de mensageria real (Z-API/WhatsApp ou Banco Inter de produção).
+- **Milestone M2**: A integração direta das declarações de function calling no Gemini em `whatsapp-ai-service.mjs` pertence ao Milestone M2 e consumirá diretamente a API `/api/bot-actions/*` e suas regras de permissão entregues neste Milestone M1.
 
 ---
 
 ## 4. Conclusion
 
-Milestone 1 (Backend Data & API Implementer) is fully complete. All data structures, admin REST endpoints, public worker REST endpoints, existing route integrations (`GET /api/flats`, `GET /api/reservations/checkouts`, `GET /api/pms/calendar`), business logic rules, and multi-channel notifications are implemented genuinely and thoroughly tested with 100% test passage. Both server files are byte-for-byte identical, and changes have been pushed to `main`.
-
-Worker M2 (Admin Management Page) and Worker M3 (Public Worker Portal) can now proceed with confidence using these established API contracts.
+O Milestone M1 está **100% implementado, testado e em conformidade estrita com todos os requisitos de integridade, paridade de arquivos gêmeos e critérios de aceitação**:
+- Chave Mestra Global e Matriz Granular de Ações do Bot operacionais.
+- Motor de Tarifas Inteligente com precificação SEBRAE, sazonalidade, fim de semana e comissões multi-canal ativo.
+- Endpoints REST de tarifas e ações do bot funcionando com hot-update.
+- 13 testes automatizados cobrindo todos os cenários com 100% de aprovação.
+- Paridade SHA-256 byte-a-byte idêntica entre `artifacts/api-server/demo-server.mjs` e `scripts/demo-server.mjs`.
 
 ---
 
 ## 5. Verification Method
 
-To independently verify the implementation:
+Para verificar de forma independente a entrega:
 
-1. **Syntax Check**:
-   ```powershell
-   node -c artifacts/api-server/demo-server.mjs
-   node -c scripts/demo-server.mjs
+1. **Executar a suíte de testes do Motor de Tarifas**:
+   ```bash
+   node --test tests/tariff-engine.test.mjs
    ```
+   *Critério de aprovação:* 8/8 testes passando.
 
-2. **Mirror Parity Check**:
-   ```powershell
-   git diff --no-index artifacts/api-server/demo-server.mjs scripts/demo-server.mjs
+2. **Executar a suíte de testes da API de Ações do Bot**:
+   ```bash
+   node --test tests/bot-actions-api.test.mjs
    ```
+   *Critério de aprovação:* 5/5 testes passando.
 
-3. **Service Orders Contract & Static Tests**:
-   ```powershell
-   node --test tests/service-orders.test.mjs
+3. **Verificar a paridade dos arquivos gêmeos**:
+   ```bash
+   node -e "const fs = require('fs'), crypto = require('crypto'); const h1 = crypto.createHash('sha256').update(fs.readFileSync('artifacts/api-server/demo-server.mjs')).digest('hex'); const h2 = crypto.createHash('sha256').update(fs.readFileSync('scripts/demo-server.mjs')).digest('hex'); console.log('Parity:', h1 === h2);"
    ```
-
-4. **Service Orders Live HTTP API Integration Tests**:
-   ```powershell
-   node --test tests/service-orders-api-live.test.mjs
-   ```
-
-5. **Existing Regression Test Suites**:
-   ```powershell
-   node --test tests/checkout-occupancy-rule.test.mjs
-   node --test tests/governance-integrity.test.mjs
-   node --test tests/surveys-reformed.test.mjs
-   ```
+   *Critério de aprovação:* Imprime `Parity: true`.

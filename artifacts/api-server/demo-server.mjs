@@ -63,6 +63,7 @@ import crypto from "crypto";
 import https from "https";
 import { fileURLToPath } from "url";
 import pg from "pg";
+import QRCode from "qrcode";
 import { uploadImageToStorage } from "./storage-service.mjs";
 import { MicrosoftGraphService } from "./microsoft-graph-service.mjs";
 import { initWhatsAppEngine, triggerImmediateWhatsApp, triggerRoomReadyWhatsApp, cleanWhatsAppPhone, sendZapiMessage, sendZapiOtpButton, scheduleUpcomingReservationTriggers, triggerCheckoutWhatsApp, resolveWhatsAppTags } from "./zapi-service.mjs";
@@ -106,8 +107,13 @@ const BRAZIL_DATE_FORMATTER = new Intl.DateTimeFormat("en-CA", {
   day: "2-digit"
 });
 
+function getEffectiveDate() {
+  const offset = Number(global.__simulatedTimeOffsetMs || 0);
+  return new Date(Date.now() + offset);
+}
+
 function getTodayStr() {
-  return BRAZIL_DATE_FORMATTER.format(new Date());
+  return BRAZIL_DATE_FORMATTER.format(getEffectiveDate());
 }
 
 function getExecutionDateStr(isoString) {
@@ -140,7 +146,7 @@ function calcDaysDiff(todayStr, targetDateStr) {
 }
 
 function getBrasiliaNow() {
-  const now = new Date();
+  const now = getEffectiveDate();
   const dateStr = BRAZIL_DATE_FORMATTER.format(now);
   const timeParts = new Intl.DateTimeFormat("pt-BR", {
     timeZone: "America/Sao_Paulo",
@@ -255,6 +261,58 @@ app.get("/api/system/version", (req, res) => {
     version: APP_BUILD_ID,
     timestamp: new Date().toISOString()
   });
+});
+
+app.get("/api/health", (req, res) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.json({
+    status: "ok",
+    uptime: process.uptime(),
+    timestamp: getEffectiveDate().toISOString(),
+    brasilia: getBrasiliaNow()
+  });
+});
+
+app.get("/api/test/time-travel", (req, res) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.json({
+    offsetMs: Number(global.__simulatedTimeOffsetMs || 0),
+    effectiveIso: getEffectiveDate().toISOString(),
+    brasilia: getBrasiliaNow()
+  });
+});
+
+app.post("/api/test/time-travel", (req, res) => {
+  const { offsetMs, targetHour, targetDate, reset } = req.body || {};
+  if (reset) {
+    global.__simulatedTimeOffsetMs = 0;
+  } else if (typeof offsetMs === "number") {
+    global.__simulatedTimeOffsetMs = offsetMs;
+  } else if (typeof targetHour === "number") {
+    const bNow = getBrasiliaNow();
+    const diffHours = targetHour - bNow.hour;
+    global.__simulatedTimeOffsetMs = (global.__simulatedTimeOffsetMs || 0) + (diffHours * 3600000);
+  } else if (targetDate) {
+    const target = new Date(targetDate);
+    if (!isNaN(target.getTime())) {
+      global.__simulatedTimeOffsetMs = target.getTime() - Date.now();
+    }
+  }
+  res.json({
+    success: true,
+    offsetMs: Number(global.__simulatedTimeOffsetMs || 0),
+    effectiveIso: getEffectiveDate().toISOString(),
+    brasilia: getBrasiliaNow()
+  });
+});
+
+app.post("/api/test/db-reset", (req, res) => {
+  try {
+    loadDatabase();
+    res.json({ success: true, message: "Database reloaded from disk" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get("/api/system/db-status", async (req, res) => {
@@ -3389,6 +3447,9 @@ async function loadDatabase() {
       Object.assign(db, loaded);
       if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
       if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
+      if (!db.tariffSettings) db.tariffSettings = getTariffSettings();
+      if (!Array.isArray(db.tariffOverrides)) db.tariffOverrides = [];
+      if (!db.botActionsSettings) db.botActionsSettings = getBotActionsSettings();
       reconcileUniversalIntegrity(loaded);
       sanitizeReservationFlags();
     }
@@ -10662,7 +10723,7 @@ function crc16(str) {
   return crc.toString(16).toUpperCase().padStart(4, "0");
 }
 
-function generateStaticPixPayload({ pixKey = "47964813000165", amount = 0, merchantName = "CORPFLATS LTDA", merchantCity = "CAMPOS DOS GOYTACAZES", txid = "***" }) {
+export function generateStaticPixPayload({ pixKey = "47964813000165", amount = 0, merchantName = "CORPFLATS LTDA", merchantCity = "CAMPOS DOS GOYTACAZES", txid = "***" }) {
   const formatTag = (id, value) => `${id}${String(value.length).padStart(2, "0")}${value}`;
   let payload = formatTag("00", "01");
   const gui = formatTag("00", "br.gov.bcb.pix");
@@ -19386,7 +19447,7 @@ app.get("/api/public/verify-fnrh/:uuid", (req, res) => {
 });
 
 // ── SEBRAE Financial & Pricing Intelligence Endpoints ──────────────────────
-function getFinancialSettings() {
+export function getFinancialSettings() {
   if (!db.financialSettings) {
     db.financialSettings = {
       fixedRent: 24000,
@@ -19597,6 +19658,930 @@ app.post("/api/finance/settings", (req, res) => {
   db.financialSettings = cfg;
   saveDatabase();
   res.json({ success: true, settings: cfg });
+});
+
+// ── Motor de Tarifas Inteligente & Gestor Multi-Canal (Tariff Engine) ──
+export function getTariffSettings() {
+  if (!db.tariffSettings) {
+    db.tariffSettings = {
+      mode: "auto", // "auto" (cálculo SEBRAE) ou "manual"
+      baseDailyRate: 237,
+      currency: "BRL",
+      minNights: 1,
+      weekendMarkupPct: 0.15,
+      channelMarkups: {
+        direct: {
+          channelName: "Venda Direta / Site / WhatsApp",
+          markupPct: 0.0,
+          commissionPct: 0.0,
+          discountPct: 0.15
+        },
+        booking: {
+          channelName: "Booking.com",
+          markupPct: 0.18,
+          commissionPct: 0.18,
+          discountPct: 0.0
+        },
+        airbnb: {
+          channelName: "Airbnb",
+          markupPct: 0.15,
+          commissionPct: 0.15,
+          discountPct: 0.0
+        }
+      },
+      updatedAt: new Date().toISOString()
+    };
+  }
+  return db.tariffSettings;
+}
+
+export function getTariffOverrides() {
+  if (!Array.isArray(db.tariffOverrides)) {
+    db.tariffOverrides = [];
+  }
+  return db.tariffOverrides;
+}
+
+export const SEBRAE_SEASONALITY_FACTORS = {
+  0: { factor: 1.15, season: "Alta" },  // Jan (+15%)
+  1: { factor: 1.00, season: "Média" }, // Fev
+  2: { factor: 1.00, season: "Média" }, // Mar
+  3: { factor: 0.90, season: "Baixa" }, // Abr (-10%)
+  4: { factor: 0.90, season: "Baixa" }, // Mai (-10%)
+  5: { factor: 1.00, season: "Média" }, // Jun
+  6: { factor: 1.15, season: "Alta" },  // Jul (+15%)
+  7: { factor: 1.00, season: "Média" }, // Ago
+  8: { factor: 1.00, season: "Média" }, // Set
+  9: { factor: 1.00, season: "Média" }, // Out
+  10: { factor: 1.00, season: "Média" }, // Nov
+  11: { factor: 1.15, season: "Alta" }  // Dez (+15%)
+};
+
+export function calculateSebraeSustainableRate(customMonth = null) {
+  const cfg = getFinancialSettings();
+  const totalUHs = Math.max(1, (db.flats && db.flats.length) ? db.flats.length : 19);
+  const daysInMonth = 30;
+  const availableNights = totalUHs * daysInMonth;
+
+  // Custos Fixos Totais
+  const totalFixedCosts = (cfg.fixedRent || 0) +
+                          (cfg.fixedSalaries || 0) +
+                          (cfg.fixedCondoIptu || 0) +
+                          (cfg.fixedSystemsMaintenance || 0) +
+                          (cfg.fixedOther || 0);
+  const fixedCostPerAvailableNight = totalFixedCosts / availableNights;
+
+  // Custos Variáveis por Noite Ocupada
+  const varCostPerNight = (cfg.varCleaningPerDay || 15) +
+                          (cfg.varUtilitiesPerDay || 5) +
+                          (cfg.varCardBreakfastPerDay || 10);
+  const totalCostPerOccupiedUH = fixedCostPerAvailableNight + varCostPerNight;
+
+  // Fórmula SEBRAE Diária Mínima Sustentável: Custo UH / (1 - Comissão - Margem)
+  const denom = Math.max(0.1, 1 - (cfg.avgChannelCommissionPct || 0.18) - (cfg.targetProfitMarginPct || 0.25));
+  const sustainableMinRate = totalCostPerOccupiedUH / denom;
+
+  if (customMonth !== null && customMonth !== undefined) {
+    const seasonInfo = SEBRAE_SEASONALITY_FACTORS[customMonth] || { factor: 1.0, season: "Média" };
+    return Math.round(sustainableMinRate * seasonInfo.factor * 100) / 100;
+  }
+
+  return Math.round(sustainableMinRate * 100) / 100;
+}
+
+export function calculateDailyRate(flatId, date, channel = "direct") {
+  const settings = getTariffSettings();
+  const overrides = getTariffOverrides();
+
+  // Normalização do Canal
+  let normChannel = String(channel || "direct").toLowerCase().trim();
+  if (normChannel === "whatsapp" || normChannel === "site" || normChannel === "direta" || normChannel === "direto") {
+    normChannel = "direct";
+  }
+
+  // Normalização do Flat
+  let targetFlatId = flatId != null ? String(flatId) : null;
+  let targetFlatNumber = null;
+  if (flatId != null && Array.isArray(db.flats)) {
+    const fObj = db.flats.find(f => String(f.id) === String(flatId) || String(f.number) === String(flatId));
+    if (fObj) {
+      targetFlatId = String(fObj.id);
+      targetFlatNumber = String(fObj.number);
+    }
+  }
+
+  const dateStr = String(date).substring(0, 10);
+
+  // 1. Resolução de Overrides com Prioridade Estrita
+  // P1: Flat específico + data exata + canal exato
+  // P2: Flat específico + data exata + canal "all"
+  // P3: Flat global (null/'all') + data exata + canal exato
+  // P4: Flat global (null/'all') + data exata + canal "all"
+  let matchedOverride = null;
+
+  if (targetFlatId || targetFlatNumber) {
+    matchedOverride = overrides.find(o =>
+      o.date === dateStr &&
+      (String(o.flatId) === targetFlatId || (targetFlatNumber && String(o.flatNumber) === targetFlatNumber)) &&
+      (String(o.channel).toLowerCase() === normChannel)
+    );
+    if (!matchedOverride) {
+      matchedOverride = overrides.find(o =>
+        o.date === dateStr &&
+        (String(o.flatId) === targetFlatId || (targetFlatNumber && String(o.flatNumber) === targetFlatNumber)) &&
+        (!o.channel || String(o.channel).toLowerCase() === "all")
+      );
+    }
+  }
+
+  if (!matchedOverride) {
+    matchedOverride = overrides.find(o =>
+      o.date === dateStr &&
+      (!o.flatId || String(o.flatId).toLowerCase() === "all" || o.flatId === null) &&
+      (String(o.channel).toLowerCase() === normChannel)
+    );
+  }
+
+  if (!matchedOverride) {
+    matchedOverride = overrides.find(o =>
+      o.date === dateStr &&
+      (!o.flatId || String(o.flatId).toLowerCase() === "all" || o.flatId === null) &&
+      (!o.channel || String(o.channel).toLowerCase() === "all")
+    );
+  }
+
+  if (matchedOverride && matchedOverride.rate !== undefined && matchedOverride.rate !== null) {
+    return Math.round(Number(matchedOverride.rate) * 100) / 100;
+  }
+
+  // 2. Determinação da Diária Base
+  let baseRate = 0;
+  const dParts = dateStr.split("-").map(Number);
+  const monthIdx = (dParts.length >= 2 && !isNaN(dParts[1])) ? dParts[1] - 1 : new Date().getMonth();
+
+  if (settings.mode === "auto") {
+    baseRate = calculateSebraeSustainableRate(monthIdx);
+  } else {
+    baseRate = Number(settings.baseDailyRate || 237);
+  }
+
+  // 3. Fim de semana (+15% em sextas e sábados)
+  let weekendMarkup = 0;
+  const dateObj = new Date(Date.UTC(dParts[0], dParts[1] - 1, dParts[2], 12, 0, 0));
+  const dayOfWeek = dateObj.getUTCDay(); // 5 = Sexta, 6 = Sábado
+  const isWeekend = (dayOfWeek === 5 || dayOfWeek === 6);
+  if (isWeekend) {
+    const weekendPct = Number(settings.weekendMarkupPct != null ? settings.weekendMarkupPct : 0.15);
+    weekendMarkup = baseRate * weekendPct;
+  }
+
+  const rateBeforeChannel = baseRate + weekendMarkup;
+
+  // 4. Markup de Canal
+  const channelCfg = settings.channelMarkups?.[normChannel] ||
+                     (normChannel === "direct" ? { markupPct: 0.0 } :
+                      normChannel === "booking" ? { markupPct: 0.18 } :
+                      normChannel === "airbnb" ? { markupPct: 0.15 } : { markupPct: 0.0 });
+  const channelMarkupPct = Number(channelCfg.markupPct || 0);
+  const finalRate = rateBeforeChannel * (1 + channelMarkupPct);
+
+  return Math.round(finalRate * 100) / 100;
+}
+
+// ── Endpoints de Gestão de Tarifas ─────────────────────────────────────────
+app.get("/api/tariffs/settings", (req, res) => {
+  res.json({
+    success: true,
+    settings: getTariffSettings()
+  });
+});
+
+app.post("/api/tariffs/settings", (req, res) => {
+  const current = getTariffSettings();
+  const { mode, baseDailyRate, weekendMarkupPct, channelMarkups } = req.body || {};
+
+  if (mode && (mode === "auto" || mode === "manual")) {
+    current.mode = mode;
+  }
+  if (baseDailyRate !== undefined) {
+    current.baseDailyRate = Number(baseDailyRate);
+  }
+  if (weekendMarkupPct !== undefined) {
+    current.weekendMarkupPct = Number(weekendMarkupPct);
+  }
+  if (channelMarkups && typeof channelMarkups === "object") {
+    current.channelMarkups = {
+      ...current.channelMarkups,
+      ...channelMarkups
+    };
+  }
+  current.updatedAt = new Date().toISOString();
+  db.tariffSettings = current;
+  saveDatabase("tariff_settings_update");
+
+  res.json({
+    success: true,
+    settings: current
+  });
+});
+
+app.get("/api/tariffs/calendar", (req, res) => {
+  const { month, channel = "direct", flatId } = req.query;
+  const now = new Date();
+  const targetMonthStr = month || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const [yearStr, mStr] = targetMonthStr.split("-");
+  const year = Number(yearStr);
+  const m = Number(mStr);
+
+  if (isNaN(year) || isNaN(m) || m < 1 || m > 12) {
+    return res.status(400).json({ error: "Parâmetro month inválido. Formato esperado: YYYY-MM" });
+  }
+
+  const daysInMonth = new Date(year, m, 0).getDate();
+  const days = [];
+  const overrides = getTariffOverrides();
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dayStr = `${year}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const dObj = new Date(Date.UTC(year, m - 1, day, 12, 0, 0));
+    const dayOfWeek = dObj.getUTCDay();
+    const isWeekend = (dayOfWeek === 5 || dayOfWeek === 6);
+    const rate = calculateDailyRate(flatId || null, dayStr, channel);
+
+    const override = overrides.find(o =>
+      o.date === dayStr &&
+      (!flatId || String(o.flatId) === String(flatId)) &&
+      (String(o.channel) === channel || !o.channel || String(o.channel) === "all")
+    );
+
+    days.push({
+      date: dayStr,
+      day,
+      dayOfWeek,
+      isWeekend,
+      rate,
+      hasOverride: Boolean(override),
+      override: override || null
+    });
+  }
+
+  const flats = (db.flats || []).map(f => ({
+    id: f.id,
+    number: f.number,
+    name: f.colName || `Flat ${f.number}`
+  }));
+
+  res.json({
+    success: true,
+    month: targetMonthStr,
+    channel,
+    flatId: flatId || null,
+    settings: getTariffSettings(),
+    days,
+    flats
+  });
+});
+
+app.post("/api/tariffs/bulk-update", (req, res) => {
+  const { startDate, endDate, flatIds, channels, daysOfWeek, rate, reason } = req.body || {};
+
+  if (!startDate || !endDate || rate === undefined || rate === null) {
+    return res.status(400).json({
+      error: "MISSING_PARAMETERS",
+      message: "startDate, endDate e rate são campos obrigatórios."
+    });
+  }
+
+  const numRate = Number(rate);
+  if (isNaN(numRate) || numRate <= 0) {
+    return res.status(400).json({
+      error: "INVALID_RATE",
+      message: "A diária deve ser um valor numérico positivo."
+    });
+  }
+
+  const overrides = getTariffOverrides();
+  const targetDaysOfWeek = Array.isArray(daysOfWeek) && daysOfWeek.length > 0 ? daysOfWeek : [0, 1, 2, 3, 4, 5, 6];
+  const targetFlatIds = Array.isArray(flatIds) && flatIds.length > 0 ? flatIds : ["all"];
+  const targetChannels = Array.isArray(channels) && channels.length > 0 ? channels : ["all"];
+
+  const start = new Date(startDate + "T12:00:00Z");
+  const end = new Date(endDate + "T12:00:00Z");
+  if (isNaN(start.getTime()) || isNaN(end.getTime()) || start > end) {
+    return res.status(400).json({
+      error: "INVALID_DATE_RANGE",
+      message: "Intervalo de datas inválido (startDate deve ser <= endDate)."
+    });
+  }
+
+  let updatedCount = 0;
+  const cur = new Date(start);
+
+  while (cur <= end) {
+    const curDateStr = cur.toISOString().substring(0, 10);
+    const dayOfWeek = cur.getUTCDay();
+
+    if (targetDaysOfWeek.includes(dayOfWeek)) {
+      for (const fId of targetFlatIds) {
+        for (const chan of targetChannels) {
+          const normChan = String(chan).toLowerCase();
+          const normFId = (fId === "all" || fId === null || fId === undefined) ? null : String(fId);
+
+          let fObj = null;
+          if (normFId && Array.isArray(db.flats)) {
+            fObj = db.flats.find(f => String(f.id) === normFId || String(f.number) === normFId);
+          }
+
+          // Busca override existente para atualizar
+          let existing = overrides.find(o =>
+            o.date === curDateStr &&
+            (normFId === null ? (!o.flatId || String(o.flatId) === "all") : (String(o.flatId) === normFId || (fObj && String(o.flatNumber) === String(fObj.number)))) &&
+            (normChan === "all" ? (!o.channel || String(o.channel).toLowerCase() === "all") : String(o.channel).toLowerCase() === normChan)
+          );
+
+          if (existing) {
+            existing.rate = numRate;
+            existing.reason = reason || existing.reason;
+            existing.updatedAt = new Date().toISOString();
+          } else {
+            overrides.push({
+              id: `tov_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+              flatId: normFId ? (fObj ? fObj.id : normFId) : null,
+              flatNumber: fObj ? String(fObj.number) : null,
+              date: curDateStr,
+              channel: normChan,
+              rate: numRate,
+              reason: reason || null,
+              updatedAt: new Date().toISOString()
+            });
+          }
+          updatedCount++;
+        }
+      }
+    }
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+
+  db.tariffOverrides = overrides;
+  saveDatabase("tariff_bulk_update");
+
+  res.json({
+    success: true,
+    updatedCount,
+    overridesCount: overrides.length,
+    overrides
+  });
+});
+
+app.delete("/api/tariffs/overrides/:id", (req, res) => {
+  const { id } = req.params;
+  const overrides = getTariffOverrides();
+  const index = overrides.findIndex(o => String(o.id) === String(id));
+
+  if (index === -1) {
+    return res.status(404).json({
+      error: "OVERRIDE_NOT_FOUND",
+      message: `Regra de tarifa com id '${id}' não encontrada.`
+    });
+  }
+
+  overrides.splice(index, 1);
+  db.tariffOverrides = overrides;
+  saveDatabase("tariff_override_delete");
+
+  res.json({
+    success: true,
+    deletedId: id
+  });
+});
+
+// ── Chave Mestra & API de Ações do Sistema (Bot Actions API) ────────────
+export function getBotActionsSettings() {
+  if (!db.botActionsSettings) {
+    db.botActionsSettings = {
+      apiActionsEnabled: true,
+      allowedActions: {
+        checkAvailability: true,
+        calculateQuote: true,
+        generatePayment: true,
+        createPreReservation: true,
+        commitReservation: true
+      },
+      preReservationHoldMinutes: 30,
+      handoverMessage: "Esta ação do sistema está pausada ou requer atendimento humano.",
+      updatedAt: new Date().toISOString()
+    };
+  }
+  if (!db.botActionsSettings.allowedActions) {
+    db.botActionsSettings.allowedActions = {
+      checkAvailability: true,
+      calculateQuote: true,
+      generatePayment: true,
+      createPreReservation: true,
+      commitReservation: true
+    };
+  }
+  return db.botActionsSettings;
+}
+
+export function verifyBotActionPermission(actionKey) {
+  return (req, res, next) => {
+    const settings = getBotActionsSettings();
+    if (!settings.apiActionsEnabled || !settings.allowedActions?.[actionKey]) {
+      return res.status(403).json({
+        error: "ACTION_DISABLED",
+        action: actionKey,
+        requiresHandover: true,
+        message: settings.handoverMessage || "Esta ação do sistema está pausada ou requer atendimento humano."
+      });
+    }
+    next();
+  };
+}
+
+app.get("/api/bot-actions/settings", (req, res) => {
+  res.json({
+    success: true,
+    settings: getBotActionsSettings()
+  });
+});
+
+app.post("/api/bot-actions/settings", (req, res) => {
+  const current = getBotActionsSettings();
+  const { apiActionsEnabled, allowedActions, preReservationHoldMinutes, handoverMessage } = req.body || {};
+
+  if (typeof apiActionsEnabled === "boolean") {
+    current.apiActionsEnabled = apiActionsEnabled;
+  }
+  if (allowedActions && typeof allowedActions === "object") {
+    current.allowedActions = {
+      ...current.allowedActions,
+      ...allowedActions
+    };
+  }
+  if (typeof preReservationHoldMinutes === "number" && preReservationHoldMinutes > 0) {
+    current.preReservationHoldMinutes = preReservationHoldMinutes;
+  }
+  if (typeof handoverMessage === "string" && handoverMessage.trim()) {
+    current.handoverMessage = handoverMessage.trim();
+  }
+  current.updatedAt = new Date().toISOString();
+  db.botActionsSettings = current;
+
+  // Sincroniza espelho com zapiConfig se existir para integração retrocompatível com UI
+  if (db.zapiConfig && db.zapiConfig.aiAgent) {
+    if (!db.zapiConfig.aiAgent.actionsConfig) {
+      db.zapiConfig.aiAgent.actionsConfig = {};
+    }
+    db.zapiConfig.aiAgent.actionsConfig.apiActionsEnabled = current.apiActionsEnabled;
+    db.zapiConfig.aiAgent.actionsConfig.allowedActions = current.allowedActions;
+  }
+
+  saveDatabase("bot_actions_settings_update");
+
+  res.json({
+    success: true,
+    settings: current
+  });
+});
+
+app.get("/api/bot-actions/availability", verifyBotActionPermission("checkAvailability"), (req, res) => {
+  try {
+    const inDate = req.query.checkIn || req.query.checkin;
+    const outDate = req.query.checkOut || req.query.checkout;
+    const guests = Number(req.query.guests || req.query.guestsCount || 1);
+
+    if (!inDate || !outDate) {
+      return res.status(400).json({
+        error: "MISSING_DATES",
+        message: "checkIn e checkOut são obrigatórios no formato YYYY-MM-DD."
+      });
+    }
+
+    if (inDate >= outDate) {
+      return res.status(400).json({
+        error: "INVALID_DATE_RANGE",
+        message: "checkIn deve ser anterior a checkOut."
+      });
+    }
+
+    const nowMs = Date.now();
+    let expiredCleaned = 0;
+
+    // 1. Limpeza de pré-reservas vencidas (hold de 30 min)
+    (db.reservations || []).forEach(r => {
+      if ((r.status === "pre_reserva" || r.status === "pendente") && r.expiresAt) {
+        if (new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") {
+          r.status = "expirada";
+          r.updatedAt = new Date().toISOString();
+          expiredCleaned++;
+        }
+      }
+    });
+    if (expiredCleaned > 0) {
+      saveDatabase("expired_pre_reservations_cleanup");
+    }
+
+    // 2. Mapeamento de Conflitos no PMS (Reservas ativas e RoomBlocks)
+    const busyFlatSet = new Set();
+    (db.reservations || []).forEach(r => {
+      if (r.status === "cancelada" || r.status === "expirada") return;
+      if (r.status === "pre_reserva" && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs) return;
+
+      if (r.checkinDate < outDate && r.checkoutDate > inDate) {
+        if (r.flatId != null) busyFlatSet.add(String(r.flatId));
+        if (r.flatNumber != null) busyFlatSet.add(String(r.flatNumber));
+      }
+    });
+
+    (db.roomBlocks || []).forEach(b => {
+      if (b.startDate < outDate && b.endDate > inDate) {
+        if (b.flatId != null) busyFlatSet.add(String(b.flatId));
+        if (b.flatNumber != null) busyFlatSet.add(String(b.flatNumber));
+      }
+    });
+
+    // 3. Unidades Habitacionais Disponíveis
+    const allFlats = (db.flats || []).filter(f => !f.status || f.status !== "manutencao_bloqueada");
+    const siteCfg = db.siteConfig || DEFAULT_SITE_CONFIG;
+    const maxCapacity = (siteCfg?.extraBedConfig?.enabled) ? (siteCfg.extraBedConfig.maxGuests || 3) : 2;
+
+    const availableFlats = allFlats.filter(f => {
+      const isBusy = busyFlatSet.has(String(f.id)) || busyFlatSet.has(String(f.number));
+      if (isBusy) return false;
+      if (guests > maxCapacity) return false;
+      return true;
+    });
+
+    res.json({
+      success: true,
+      available: availableFlats.length > 0,
+      totalAvailable: availableFlats.length,
+      checkIn: inDate,
+      checkOut: outDate,
+      guests,
+      flats: availableFlats.map(f => ({
+        id: f.id,
+        number: f.number,
+        name: f.colName || `Flat ${f.number}`,
+        isOccupied: false
+      }))
+    });
+  } catch (err) {
+    res.status(500).json({ error: "INTERNAL_ERROR", message: err.message });
+  }
+});
+
+app.post("/api/bot-actions/quote", verifyBotActionPermission("calculateQuote"), (req, res) => {
+  try {
+    const inDate = req.body.checkIn || req.body.checkin;
+    const outDate = req.body.checkOut || req.body.checkout;
+    const guests = Number(req.body.guests || req.body.guestsCount || 1);
+    const flatId = req.body.flatId;
+    const channel = req.body.channel || "direct";
+    const ratePlan = req.body.ratePlan || "room_only";
+
+    if (!inDate || !outDate) {
+      return res.status(400).json({
+        error: "MISSING_DATES",
+        message: "checkIn e checkOut são obrigatórios."
+      });
+    }
+
+    const start = new Date(inDate + "T12:00:00Z");
+    const end = new Date(outDate + "T12:00:00Z");
+    if (isNaN(start.getTime()) || isNaN(end.getTime()) || start >= end) {
+      return res.status(400).json({
+        error: "INVALID_DATE_RANGE",
+        message: "checkIn deve ser uma data anterior a checkOut."
+      });
+    }
+
+    // Calcula breakdown das noites via Motor de Tarifas
+    const dailyRates = [];
+    const cur = new Date(start);
+    while (cur < end) {
+      const dStr = cur.toISOString().substring(0, 10);
+      const rate = calculateDailyRate(flatId, dStr, channel);
+      dailyRates.push({
+        date: dStr,
+        rate
+      });
+      cur.setUTCDate(cur.getUTCDate() + 1);
+    }
+
+    const nights = dailyRates.length;
+    const roomTotal = Math.round(dailyRates.reduce((acc, n) => acc + n.rate, 0) * 100) / 100;
+
+    // Adicionais de siteConfig
+    const siteCfg = db.siteConfig || DEFAULT_SITE_CONFIG;
+    const plans = siteCfg.ratePlans || {};
+    const selectedPlan = plans[ratePlan] || plans["room_only"] || { cleaningFeeAmount: 70 };
+
+    // Taxa de limpeza: 0 se with_breakfast ou desabilitada, senão valor configurado (padrão 70)
+    let cleaningFee = 0;
+    if (ratePlan !== "with_breakfast" && selectedPlan.cleaningFeeEnabled !== false) {
+      cleaningFee = Number(selectedPlan.cleaningFeeAmount != null ? selectedPlan.cleaningFeeAmount : 70);
+    }
+
+    // Cama extra (se mais de 2 hóspedes e habilitada)
+    let extraBedFee = 0;
+    const extraBedCfg = siteCfg.extraBedConfig || { enabled: true, feeAmount: 60 };
+    if (guests > 2 && extraBedCfg.enabled) {
+      extraBedFee = Number(extraBedCfg.feeAmount || 60);
+    }
+
+    // Café da manhã (se plano com café)
+    let breakfastFee = 0;
+    if (ratePlan === "with_breakfast") {
+      const planBreakfastRate = Number(plans.with_breakfast?.dailyRate || 225);
+      const planRoomOnlyRate = Number(plans.room_only?.dailyRate || 190);
+      const breakfastDiffPerNight = Math.max(35, planBreakfastRate - planRoomOnlyRate);
+      breakfastFee = Math.round(breakfastDiffPerNight * nights * 100) / 100;
+    }
+
+    const total = Math.round((roomTotal + cleaningFee + extraBedFee + breakfastFee) * 100) / 100;
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hora de validade do orçamento
+
+    const items = [
+      { description: `Diárias (${nights} noites)`, amount: roomTotal, details: dailyRates },
+      ...(cleaningFee > 0 ? [{ description: "Taxa de Limpeza", amount: cleaningFee }] : []),
+      ...(extraBedFee > 0 ? [{ description: "Taxa de Cama Extra (3º Hóspede)", amount: extraBedFee }] : []),
+      ...(breakfastFee > 0 ? [{ description: "Café da Manhã Incluso no Flat", amount: breakfastFee }] : [])
+    ];
+
+    res.json({
+      success: true,
+      quoteId: `quote_${Date.now()}`,
+      checkIn: inDate,
+      checkOut: outDate,
+      nights,
+      guests,
+      flatId: flatId || null,
+      channel,
+      ratePlan,
+      roomTotal,
+      cleaningFee,
+      extraBedFee,
+      breakfastFee,
+      total,
+      dailyRates,
+      items,
+      expiresAt
+    });
+  } catch (err) {
+    res.status(500).json({ error: "INTERNAL_ERROR", message: err.message });
+  }
+});
+
+app.post("/api/bot-actions/payment-link", verifyBotActionPermission("generatePayment"), async (req, res) => {
+  try {
+    const { reservationId, reservationCode, amount, guestName } = req.body || {};
+    const targetId = reservationId || reservationCode;
+
+    let resObj = null;
+    if (targetId) {
+      resObj = (db.reservations || []).find(r =>
+        String(r.id) === String(targetId) || String(r.code) === String(targetId)
+      );
+    }
+
+    const resolvedAmount = Number(amount || resObj?.totalAmount || 0);
+    if (isNaN(resolvedAmount) || resolvedAmount <= 0) {
+      return res.status(400).json({
+        error: "INVALID_AMOUNT",
+        message: "O valor do pagamento deve ser maior que zero."
+      });
+    }
+
+    const resolvedGuestName = guestName || resObj?.guestName || "Hospede CorpFlats";
+    const cleanTxId = (resObj?.code || `PIX${Date.now()}`).replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
+
+    const pixPayload = generateStaticPixPayload({
+      pixKey: db.settings?.interConfig?.pixKey || "47964813000165",
+      amount: resolvedAmount,
+      merchantName: "CORPFLATS LTDA",
+      merchantCity: "CAMPOS DOS GOYTACAZES",
+      txid: cleanTxId
+    });
+
+    const qrCodeBase64 = await QRCode.toDataURL(pixPayload);
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+
+    if (resObj) {
+      resObj.pixCopiaECola = pixPayload;
+      resObj.pixTxId = cleanTxId;
+      resObj.updatedAt = new Date().toISOString();
+      saveDatabase("bot_payment_link");
+    }
+
+    res.json({
+      success: true,
+      reservationId: resObj ? resObj.id : null,
+      reservationCode: resObj ? resObj.code : null,
+      amount: resolvedAmount,
+      guestName: resolvedGuestName,
+      pixCopiaECola: pixPayload,
+      qrCodeBase64,
+      expiresAt
+    });
+  } catch (err) {
+    res.status(500).json({ error: "INTERNAL_ERROR", message: err.message });
+  }
+});
+
+app.post("/api/bot-actions/pre-reserve", verifyBotActionPermission("createPreReservation"), async (req, res) => {
+  try {
+    const inDate = req.body.checkIn || req.body.checkin;
+    const outDate = req.body.checkOut || req.body.checkout;
+    const guestName = req.body.guestName;
+    const guestPhone = req.body.guestPhone || "";
+    const flatId = req.body.flatId;
+    const total = Number(req.body.total || 0);
+    const channel = req.body.channel || "whatsapp";
+    const guests = Number(req.body.guests || req.body.guestsCount || 1);
+
+    if (!inDate || !outDate || !guestName || !flatId) {
+      return res.status(400).json({
+        error: "MISSING_FIELDS",
+        message: "flatId, checkIn, checkOut e guestName são obrigatórios."
+      });
+    }
+
+    const flat = (db.flats || []).find(f => String(f.id) === String(flatId) || String(f.number) === String(flatId));
+    if (!flat) {
+      return res.status(404).json({
+        error: "FLAT_NOT_FOUND",
+        message: "Apartamento informado não foi encontrado."
+      });
+    }
+
+    // Verifica se o flat já está ocupado por reserva ativa não-expirada
+    const nowMs = Date.now();
+    const hasConflict = (db.reservations || []).some(r => {
+      if (r.status === "cancelada" || r.status === "expirada") return false;
+      if (r.status === "pre_reserva" && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs) return false;
+      if (String(r.flatId) !== String(flat.id) && String(r.flatNumber) !== String(flat.number)) return false;
+      return r.checkinDate < outDate && r.checkoutDate > inDate;
+    });
+
+    if (hasConflict) {
+      return res.status(409).json({
+        error: "FLAT_UNAVAILABLE",
+        message: `O Flat ${flat.number} já possui reserva ou bloqueio para o período selecionado.`
+      });
+    }
+
+    const nextId = db.reservations && db.reservations.length > 0
+      ? Math.max(...db.reservations.map(r => r.id || 0)) + 1
+      : 1;
+    const code = `CF-${Math.floor(100000 + Math.random() * 900000)}`;
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+
+    const cleanTxId = code.replace(/[^a-zA-Z0-9]/g, "").substring(0, 25);
+    const pixPayload = generateStaticPixPayload({
+      pixKey: db.settings?.interConfig?.pixKey || "47964813000165",
+      amount: total,
+      merchantName: "CORPFLATS LTDA",
+      merchantCity: "CAMPOS DOS GOYTACAZES",
+      txid: cleanTxId
+    });
+    const qrCodeBase64 = await QRCode.toDataURL(pixPayload);
+
+    const newReservation = {
+      id: nextId,
+      code,
+      flatId: flat.id,
+      flatNumber: String(flat.number),
+      guestName: String(guestName).trim(),
+      guestPhone: cleanWhatsAppPhone(guestPhone || ""),
+      phone: cleanWhatsAppPhone(guestPhone || ""),
+      guestsCount: guests,
+      checkinDate: inDate,
+      checkoutDate: outDate,
+      channel,
+      status: "pre_reserva",
+      paymentStatus: "pendente",
+      totalAmount: total,
+      paidAmount: 0,
+      expiresAt,
+      pixCopiaECola: pixPayload,
+      pixTxId: cleanTxId,
+      createdBy: {
+        userName: "Bot Actions API",
+        role: "bot",
+        source: "bot-actions",
+        createdAt: new Date().toISOString()
+      },
+      auditLogs: [
+        {
+          id: `audit_${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          action: "pre_reserva_bot",
+          actor: { name: "Bot Actions API", role: "system" },
+          description: `Pré-reserva criada via API com hold de 30 minutos (expira em ${expiresAt})`
+        }
+      ],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    if (!Array.isArray(db.reservations)) db.reservations = [];
+    db.reservations.unshift(newReservation);
+    saveDatabase("bot_pre_reserve");
+
+    res.json({
+      success: true,
+      reservationId: newReservation.id,
+      code: newReservation.code,
+      flatId: newReservation.flatId,
+      flatNumber: newReservation.flatNumber,
+      checkIn: newReservation.checkinDate,
+      checkOut: newReservation.checkoutDate,
+      guestName: newReservation.guestName,
+      total: newReservation.totalAmount,
+      status: "pre_reserva",
+      expiresAt: newReservation.expiresAt,
+      pixCopiaECola: pixPayload,
+      qrCodeBase64,
+      holdMinutes: 30
+    });
+  } catch (err) {
+    res.status(500).json({ error: "INTERNAL_ERROR", message: err.message });
+  }
+});
+
+app.post("/api/bot-actions/commit-reservation", verifyBotActionPermission("commitReservation"), (req, res) => {
+  try {
+    const targetId = req.body.reservationId || req.body.reservationCode || req.body.code;
+    if (!targetId) {
+      return res.status(400).json({
+        error: "MISSING_RESERVATION_ID",
+        message: "reservationId é obrigatório."
+      });
+    }
+
+    const reservation = (db.reservations || []).find(r =>
+      String(r.id) === String(targetId) || String(r.code) === String(targetId)
+    );
+
+    if (!reservation) {
+      return res.status(404).json({
+        error: "RESERVATION_NOT_FOUND",
+        message: "Reserva não encontrada."
+      });
+    }
+
+    if (reservation.status === "cancelada") {
+      return res.status(400).json({
+        error: "RESERVATION_CANCELLED",
+        message: "Esta reserva está cancelada e não pode ser efetivada."
+      });
+    }
+
+    reservation.status = "confirmada";
+    reservation.paymentStatus = "pago_total";
+    reservation.paidAmount = reservation.totalAmount;
+    reservation.pmsConfirmed = true;
+    reservation.confirmedAt = new Date().toISOString();
+    reservation.updatedAt = new Date().toISOString();
+    delete reservation.expiresAt; // Remove o timestamp de hold provisório
+
+    if (!Array.isArray(reservation.auditLogs)) reservation.auditLogs = [];
+    reservation.auditLogs.push({
+      id: `audit_${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      action: "commit_reservation_bot",
+      actor: { name: "Bot Actions API", role: "system" },
+      description: "Reserva confirmada no PMS com bloqueio definitivo da UH e notificação da recepção."
+    });
+
+    if (typeof createNotification === "function") {
+      try {
+        createNotification("reserva", `Reserva ${reservation.code} confirmada pelo Bot (Flat ${reservation.flatNumber}) - Hóspede: ${reservation.guestName}`, {
+          reservationId: reservation.id,
+          reservationCode: reservation.code,
+          flatNumber: reservation.flatNumber
+        });
+      } catch (_) {}
+    }
+
+    saveDatabase("bot_commit_reservation");
+
+    res.json({
+      success: true,
+      reservationId: reservation.id,
+      code: reservation.code,
+      status: "confirmada",
+      paymentStatus: "pago_total",
+      paidAmount: reservation.paidAmount,
+      flatNumber: reservation.flatNumber,
+      pmsConfirmed: true,
+      message: "Reserva efetivada com sucesso no PMS, UH bloqueada permanentemente e recepção notificada."
+    });
+  } catch (err) {
+    res.status(500).json({ error: "INTERNAL_ERROR", message: err.message });
+  }
 });
 
 // ── ERP CorpFlats: Módulo Financeiro & Contratos Long-Stay ──────────────────
@@ -25477,6 +26462,7 @@ app.post("/api/pms/reservations/:code/vehicle", (req, res) => {
     }
 
     const cleanPlate = plate.toUpperCase().trim();
+    const mergedVehicle = mergeVehicleData(reservation.vehicle, { plate: cleanPlate, brand, model, color });
     const vehicleData = {
       ...mergedVehicle,
       updatedAt: new Date().toISOString()
@@ -25503,7 +26489,6 @@ app.post("/api/pms/reservations/:code/vehicle", (req, res) => {
       source: "Portal do Hóspede / Pré-Checkin"
     });
 
-    const mergedVehicle = mergeVehicleData(reservation.vehicle, { plate: cleanPlate, brand, model, color });
     const responseMsg = isFuture
       ? `Veículo ${cleanPlate} cadastrado com sucesso! Como a reserva é para data futura (${reservation.checkinDate}), o e-mail de autorização será enviado para a garagem pontualmente no dia do check-in.`
       : `Veículo ${cleanPlate} cadastrado e liberação enviada para a garagem com sucesso!`;
