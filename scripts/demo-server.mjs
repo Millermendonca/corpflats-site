@@ -15217,7 +15217,9 @@ app.all(["/api/pms/guest-portal/:code/self-checkin", "/api/pms/reservations/by-c
   triggerImmediateWhatsApp(db, saveDatabase, "checkin_completed", r).catch(() => {});
 
   if (req.method === "GET") {
-    return res.redirect(`/minha-reserva/${r.code}?self_checkin=success`);
+    const guestParam = req.query.guest || req.query.guestIndex || "";
+    const guestQuery = guestParam ? `&guest=${encodeURIComponent(guestParam)}` : "";
+    return res.redirect(`/minha-reserva/${r.code}?self_checkin=success${guestQuery}`);
   }
 
   res.json({

@@ -1597,10 +1597,21 @@ export function shouldMirrorTemplateToEmail(tpl) {
   return tpl?.sendEmail !== false;
 }
 
-/** Retorna o acompanhante correspondente a um targetRecipient "guest_2" / "guest_3" */
+/** Retorna o acompanhante correspondente a um targetRecipient "guest_2" / "guest_3" ou objeto de destinatário */
 export function getCompanionForTarget(recipients, targetRecipient) {
+  if (!recipients) return null;
+  if (targetRecipient && typeof targetRecipient === "object") {
+    const rawIdx = targetRecipient.guestIndex || targetRecipient.index;
+    if (rawIdx && Number(rawIdx) > 1) {
+      return (recipients.companions || []).find(c => c.index === Number(rawIdx)) || targetRecipient;
+    }
+    if (String(targetRecipient.type || "").startsWith("guest_")) {
+      const matchObj = /^guest_(\d+)$/.exec(String(targetRecipient.type));
+      if (matchObj) return (recipients.companions || []).find(c => c.index === Number(matchObj[1])) || null;
+    }
+  }
   const match = /^guest_(\d+)$/.exec(String(targetRecipient || ""));
-  if (!match || !recipients) return null;
+  if (!match) return null;
   return (recipients.companions || []).find(c => c.index === Number(match[1])) || null;
 }
 
@@ -1787,7 +1798,11 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
   const requester = recipients.requester;
   // Acompanhante (2º/3º hóspede) como destinatário: saudação e link de check-in são dele
   const companion = getCompanionForTarget(recipients, targetRecipient);
-  const recipientGuestIndex = companion ? companion.index : 1;
+  const recipientGuestIndex = companion 
+    ? (companion.index || companion.guestIndex || 1) 
+    : (targetRecipient && typeof targetRecipient === "object" && (targetRecipient.guestIndex || targetRecipient.index)
+        ? Number(targetRecipient.guestIndex || targetRecipient.index)
+        : 1);
 
   const recipientIsRequester = targetRecipient === "requester";
   const primaryRecipientName = companion ? companion.name : (recipientIsRequester ? requester.name : guest.name);
@@ -1848,7 +1863,9 @@ export function resolveWhatsAppTags(text, reservation = {}, db = {}, baseUrl = "
 
   // Links inteligentes com autenticação por código de reserva
   const linkCheckinDigital = getCheckinUrlSync(reservation, recipientGuestIndex, appOrigin, db);
-  const linkPortalHospede = `${appOrigin}/minha-reserva/${resCode}`;
+  const linkPortalHospede = recipientGuestIndex && Number(recipientGuestIndex) > 1 
+    ? `${appOrigin}/minha-reserva/${resCode}?guest=${recipientGuestIndex}` 
+    : `${appOrigin}/minha-reserva/${resCode}`;
   const linkPagamento = `${appOrigin}/minha-reserva/${resCode}`;
   const linkCopiarPix = `${appOrigin}/copiar-pix/${resCode}`;
   const linkCafeManha = (hasBreakfast || isBreakfastExplicitTemplate) && !isCancelled ? `${appOrigin}/cafe/${resCode}` : "";
@@ -2220,7 +2237,10 @@ export function renderTemplateButtons(rawButtons, reservation = {}, db = {}, bas
     reservation?.guestSelfCheckin
   );
 
-  const linkPortalHospede = `${appOrigin}/minha-reserva/${resCode}`;
+  const targetGuestIdx = companionTarget ? companionTarget.index : (targetRecipient?.guestIndex || targetRecipient?.index);
+  const linkPortalHospede = targetGuestIdx && Number(targetGuestIdx) > 1 
+    ? `${appOrigin}/minha-reserva/${resCode}?guest=${targetGuestIdx}` 
+    : `${appOrigin}/minha-reserva/${resCode}`;
   const linkCheckinDigital = getCheckinUrlSync(reservation, companionTarget ? companionTarget.index : 1, appOrigin, db);
   const linkAutocheckin = `${appOrigin}/api/pms/guest-portal/${resCode}/self-checkin`;
 

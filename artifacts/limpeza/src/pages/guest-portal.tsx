@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { useRoute, useLocation } from "wouter"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { 
-  Building2, Star, RotateCcw, Calendar, Users, Coffee, ShieldCheck, 
+  Building2, Star, RotateCcw, Calendar, Users, User, Coffee, ShieldCheck, 
   Sparkles, CheckCircle2, ArrowRight, Clock, KeyRound, 
   MessageCircle, FileText, Ban, AlertTriangle, ChevronRight,
   Wifi, HelpCircle, Check, Copy, Phone, UserCheck, ShieldAlert,
@@ -60,8 +60,23 @@ export default function GuestPortal() {
   }
 
   const rawCode = getInitialQuery()
+  const [searchCode, setSearchCode] = useState(rawCode)
   const [searchQuery, setSearchQuery] = useState(rawCode)
   const [code, setCode] = useState(rawCode)
+
+  const getInitialGuestIndex = () => {
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search)
+      const g = sp.get("guest") || sp.get("guestIndex") || sp.get("hospede")
+      if (g && !isNaN(Number(g))) return Number(g)
+      const targetCode = rawCode || ""
+      const saved = sessionStorage.getItem(`cf_active_guest_${targetCode}`) || localStorage.getItem(`cf_active_guest_${targetCode}`)
+      if (saved && !isNaN(Number(saved))) return Number(saved)
+    }
+    return 1
+  }
+
+  const [activeGuestIndex, setActiveGuestIndex] = useState<number>(getInitialGuestIndex)
   
   const [data, setData] = useState<any | null>(null)
   const [loading, setLoading] = useState(Boolean(rawCode))
@@ -207,7 +222,6 @@ export default function GuestPortal() {
       const effectiveCode = json.reservation?.code || q
       try {
         localStorage.setItem("corpflats_guest_session", effectiveCode)
-        localStorage.setItem("corpflats_guest_name", json.reservation?.guestName || "")
       } catch {}
       setError(null)
     } catch (e: any) {
@@ -216,6 +230,40 @@ export default function GuestPortal() {
       setLoading(false)
     }
   }
+
+  // Sincronização inteligente de hóspede ativo (URL query, storage ou correspondência de nome)
+  useEffect(() => {
+    if (!data?.reservation) return
+    const res = data.reservation
+    const guests = res.guests
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search)
+      const gParam = sp.get("guest") || sp.get("guestIndex") || sp.get("hospede")
+      if (gParam && !isNaN(Number(gParam))) {
+        setActiveGuestIndex(Number(gParam))
+        return
+      }
+      const targetCode = res.code || code || ""
+      const savedIndex = sessionStorage.getItem(`cf_active_guest_${targetCode}`) || 
+                         localStorage.getItem(`cf_active_guest_${targetCode}`)
+      if (savedIndex && !isNaN(Number(savedIndex))) {
+        setActiveGuestIndex(Number(savedIndex))
+        return
+      }
+      if (Array.isArray(guests) && guests.length > 1) {
+        const savedName = (localStorage.getItem("corpflats_guest_name") || "").toLowerCase().trim()
+        if (savedName) {
+          const matched = guests.find((g: any) => {
+            const n = (g.name || "").toLowerCase().trim()
+            return n && (n === savedName || n.includes(savedName) || savedName.includes(n))
+          })
+          if (matched && matched.index) {
+            setActiveGuestIndex(Number(matched.index))
+          }
+        }
+      }
+    }
+  }, [data, code])
 
   useEffect(() => {
     if (rawCode) {
@@ -371,14 +419,60 @@ export default function GuestPortal() {
     reservation?.guestSelfCheckin
   )
 
-  const isPreCheckinDone = Boolean(
-    data?.preCheckinStatus?.completed ||
-    data?.preCheckinStatus?.isFullyCompleted ||
-    reservation?.fnhrCompleted ||
-    reservation?.preCheckinCompleted ||
-    reservation?.hasPreCheckin ||
-    (Array.isArray(reservation?.guests) && reservation.guests.length > 0 && reservation.guests.some((g: any) => g.hasCompletedCheckin))
+  const guestsList: any[] = useMemo(() => {
+    if (Array.isArray(reservation?.guests) && reservation.guests.length > 0) {
+      return reservation.guests
+    }
+    if (reservation?.guestName) {
+      return [
+        {
+          index: 1,
+          name: reservation.guestName,
+          phone: reservation.guestPhone || "",
+          email: reservation.guestEmail || "",
+          hasCompletedCheckin: Boolean(reservation.fnhrCompleted || reservation.preCheckinCompleted)
+        }
+      ]
+    }
+    return []
+  }, [reservation])
+
+  const currentGuest = useMemo(() => {
+    return guestsList.find((g: any) => Number(g.index) === Number(activeGuestIndex)) 
+      || guestsList[activeGuestIndex - 1] 
+      || guestsList[0] 
+      || {}
+  }, [guestsList, activeGuestIndex])
+
+  const isCurrentGuestTitular = Number(currentGuest?.index || activeGuestIndex) === 1
+
+  const isCurrentGuestPreCheckinDone = Boolean(
+    currentGuest?.hasCompletedCheckin ||
+    (isCurrentGuestTitular && (
+      reservation?.fnhrCompleted ||
+      reservation?.preCheckinCompleted ||
+      reservation?.hasPreCheckin
+    ))
   )
+
+  const isPreCheckinDone = guestsList.length > 1
+    ? isCurrentGuestPreCheckinDone
+    : Boolean(
+        data?.preCheckinStatus?.completed ||
+        data?.preCheckinStatus?.isFullyCompleted ||
+        reservation?.fnhrCompleted ||
+        reservation?.preCheckinCompleted ||
+        reservation?.hasPreCheckin ||
+        (Array.isArray(reservation?.guests) && reservation.guests.length > 0 && reservation.guests.some((g: any) => g.hasCompletedCheckin))
+      )
+
+  const getCheckinPath = (readonly = false) => {
+    const c = code || reservation?.code || ""
+    const gParam = activeGuestIndex > 1 ? `guest=${activeGuestIndex}` : ""
+    const roParam = readonly ? "readonly=true" : ""
+    const parts = [gParam, roParam].filter(Boolean).join("&")
+    return `/pre-checkin/${c}${parts ? `?${parts}` : ""}`
+  }
 
   // Polling automático de status de pagamento a cada 6 segundos quando pendente
   useEffect(() => {
@@ -572,7 +666,9 @@ export default function GuestPortal() {
   const checkoutFormatted = reservation.checkoutDate ? format(parseISO(reservation.checkoutDate), "dd 'de' MMMM 'de' yyyy", { locale: ptBR }) : ""
   const nights = reservation.checkinDate && reservation.checkoutDate ? Math.max(1, differenceInDays(parseISO(reservation.checkoutDate), parseISO(reservation.checkinDate))) : 1
 
-  const guestName = reservation.guestName || reservation.guests?.[0]?.name || "Hóspede"
+  const guestName = (currentGuest?.name && !currentGuest.name.startsWith("Hóspede ") 
+    ? currentGuest.name 
+    : (isCurrentGuestTitular ? (reservation.guestName || currentGuest?.name || "Hóspede") : (currentGuest?.name || `Hóspede ${activeGuestIndex}`)))
   const rawAdminPhone = (adminWhatsApp || "5522997124021").replace(/\D/g, "")
   const finalWaNumber = rawAdminPhone.length === 10 || rawAdminPhone.length === 11 ? `55${rawAdminPhone}` : rawAdminPhone
   const whatsappUrl = `https://wa.me/${finalWaNumber}?text=${encodeURIComponent(`Olá! Tenho uma reserva (${reservation.code}) no Flat ${reservation.flatNumber} e gostaria de tirar uma dúvida.`)}`
@@ -1309,7 +1405,7 @@ export default function GuestPortal() {
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => setLocation(`/pre-checkin/${code || reservation.code}`)}
+                onClick={() => setLocation(getCheckinPath(false))}
                 className="hidden md:inline-flex h-9 px-3 rounded-xl border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs items-center gap-2 shadow-2xs"
               >
                 <FileText className="w-4 h-4 text-indigo-600 shrink-0" />
@@ -1385,7 +1481,7 @@ export default function GuestPortal() {
                 <DropdownMenuContent align="end" className="w-52 bg-white border-slate-200 rounded-2xl shadow-xl p-1.5 text-slate-800">
                   {!hasEnteredFlat && !isPreCheckinDone && (
                     <DropdownMenuItem
-                      onClick={() => setLocation(`/pre-checkin/${code || reservation.code}`)}
+                      onClick={() => setLocation(getCheckinPath(false))}
                       className="flex items-center gap-2.5 px-3 py-2.5 text-xs font-bold rounded-xl cursor-pointer hover:bg-slate-100 text-indigo-700"
                     >
                       <FileText className="w-4 h-4 text-indigo-600 shrink-0" />
@@ -1415,7 +1511,7 @@ export default function GuestPortal() {
                   )}
                   {isPreCheckinDone && (
                     <DropdownMenuItem
-                      onClick={() => setLocation(`/pre-checkin/${code || reservation.code}`)}
+                      onClick={() => setLocation(getCheckinPath(true))}
                       className="flex items-center gap-2.5 px-3 py-2.5 text-xs font-medium rounded-xl cursor-pointer hover:bg-slate-100 text-slate-600"
                     >
                       <FileText className="w-4 h-4 text-slate-500 shrink-0" />
@@ -1595,6 +1691,74 @@ export default function GuestPortal() {
             </div>
           </div>
 
+          {/* Alternância de Hóspede para reservas com múltiplos ocupantes */}
+          {guestsList.length > 1 && (
+            <div className="pt-1 pb-1">
+              <div className="flex flex-wrap items-center gap-1.5 p-2 rounded-2xl bg-slate-50/90 border border-slate-200/80">
+                <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1.5 shrink-0 px-1">
+                  <User className="w-3.5 h-3.5 text-sky-600" />
+                  Visualizando como:
+                </span>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {guestsList.map((g: any, idx: number) => {
+                    const gIdx = Number(g.index) || (idx + 1)
+                    const isSelected = gIdx === activeGuestIndex
+                    const isTitular = gIdx === 1
+                    const gDisplayName = g.name && !g.name.startsWith("Hóspede ") 
+                      ? g.name 
+                      : (isTitular ? (reservation.guestName || `Hóspede ${gIdx}`) : `Hóspede ${gIdx}`)
+                    const gCheckinDone = Boolean(g.hasCompletedCheckin || (isTitular && (reservation.fnhrCompleted || reservation.preCheckinCompleted)))
+
+                    return (
+                      <button
+                        key={gIdx}
+                        type="button"
+                        onClick={() => {
+                          setActiveGuestIndex(gIdx)
+                          try {
+                            sessionStorage.setItem(`cf_active_guest_${reservation.code || code}`, String(gIdx))
+                            localStorage.setItem(`cf_active_guest_${reservation.code || code}`, String(gIdx))
+                            localStorage.setItem("corpflats_guest_name", gDisplayName)
+                            const url = new URL(window.location.href)
+                            url.searchParams.set("guest", String(gIdx))
+                            window.history.replaceState({}, "", url.toString())
+                          } catch {}
+                        }}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                          isSelected
+                            ? "bg-sky-600 text-white shadow-xs scale-[1.02]"
+                            : "bg-white hover:bg-slate-100 text-slate-700 border border-slate-200"
+                        }`}
+                      >
+                        <span>👤 {gDisplayName}</span>
+                        {isTitular && (
+                          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-md ${
+                            isSelected ? "bg-sky-700 text-white" : "bg-slate-100 text-slate-600 border border-slate-200"
+                          }`}>
+                            Titular
+                          </span>
+                        )}
+                        {gCheckinDone ? (
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5 ${
+                            isSelected ? "bg-emerald-500/30 text-emerald-100" : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                          }`}>
+                            ✓ Check-in Ok
+                          </span>
+                        ) : (
+                          <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-md ${
+                            isSelected ? "bg-amber-500/30 text-amber-100" : "bg-amber-50 text-amber-700 border border-amber-200"
+                          }`}>
+                            Pendente Check-in
+                          </span>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Grid de Entrada e Saída */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
             <div className="p-4 rounded-2xl bg-slate-50/80 border border-slate-100 space-y-1.5 flex flex-col justify-between">
@@ -1634,7 +1798,7 @@ export default function GuestPortal() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => setLocation(`/pre-checkin/${code || reservation.code}`)}
+                    onClick={() => setLocation(getCheckinPath(true))}
                     className="text-[11px] text-slate-500 hover:text-slate-700 text-center w-full underline"
                   >
                     Ver Dados do Check-in
@@ -1665,7 +1829,7 @@ export default function GuestPortal() {
                   </Button>
                   <button
                     type="button"
-                    onClick={() => setLocation(`/pre-checkin/${code || reservation.code}`)}
+                    onClick={() => setLocation(getCheckinPath(true))}
                     className="text-[11px] text-slate-500 hover:text-slate-700 text-center w-full underline"
                   >
                     Ver Dados do Check-in
@@ -1674,7 +1838,7 @@ export default function GuestPortal() {
               ) : (
                 <Button
                   type="button"
-                  onClick={() => setLocation(`/pre-checkin/${code || reservation.code}`)}
+                  onClick={() => setLocation(getCheckinPath(false))}
                   className="w-full h-10 text-xs sm:text-sm font-bold rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs transition-all active:scale-95 flex items-center justify-center gap-2 mt-2"
                 >
                   <FileText className="w-4.5 h-4.5 shrink-0" />

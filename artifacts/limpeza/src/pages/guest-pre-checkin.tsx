@@ -445,6 +445,21 @@ export default function GuestPreCheckin() {
     }
   }, [])
 
+  const navigateToPortal = () => {
+    const targetCode = reservation?.code || code
+    if (!targetCode) {
+      setLocation("/minha-reserva")
+      return
+    }
+    const gParam = selectedGuestIndex > 1 ? `?guest=${selectedGuestIndex}` : ""
+    try {
+      sessionStorage.setItem(`cf_active_guest_${targetCode}`, String(selectedGuestIndex))
+      localStorage.setItem(`cf_active_guest_${targetCode}`, String(selectedGuestIndex))
+      if (fullName) localStorage.setItem("corpflats_guest_name", fullName)
+    } catch {}
+    setLocation(`/minha-reserva/${targetCode}${gParam}`)
+  }
+
   const loadGuestData = (resData: any, gIdx: number) => {
     const gList = resData.guests || []
     setGuestList(gList)
@@ -485,6 +500,15 @@ export default function GuestPreCheckin() {
     setPhone(gPhone)
     setEmail(gEmail)
     setDocument(gDoc)
+
+    try {
+      const activeCode = res.code || code
+      if (activeCode && gIdx) {
+        sessionStorage.setItem(`cf_active_guest_${activeCode}`, String(gIdx))
+        localStorage.setItem(`cf_active_guest_${activeCode}`, String(gIdx))
+        if (gName) localStorage.setItem("corpflats_guest_name", gName)
+      }
+    } catch {}
 
     const rawBirth = currentG?.birthDate || (isTitular ? (guest.birthDate || res.birthDate || "") : "")
     setBirthDate(toIsoDate(rawBirth))
@@ -1063,6 +1087,14 @@ export default function GuestPreCheckin() {
             })
           }
         } catch {}
+        try {
+          const activeCode = resData.reservation?.code || code
+          if (activeCode && selectedGuestIndex) {
+            sessionStorage.setItem(`cf_active_guest_${activeCode}`, String(selectedGuestIndex))
+            localStorage.setItem(`cf_active_guest_${activeCode}`, String(selectedGuestIndex))
+            if (fullName) localStorage.setItem("corpflats_guest_name", fullName)
+          }
+        } catch {}
         if (resData.fnrhDocument) {
           setGeneratedPdfInfo(resData.fnrhDocument)
         }
@@ -1272,7 +1304,7 @@ export default function GuestPreCheckin() {
         <nav className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-4 sm:px-8 py-3 shadow-2xs w-full max-w-full print:hidden">
           <div className="max-w-4xl mx-auto flex items-center justify-between gap-3">
             <div 
-              onClick={() => setLocation(reservation?.code ? `/minha-reserva/${reservation.code}` : "/minha-reserva")}
+              onClick={navigateToPortal}
               className="flex items-center gap-2.5 sm:gap-3 cursor-pointer group shrink-0"
             >
               {siteConfig?.branding?.logoImage ? (
@@ -1302,7 +1334,7 @@ export default function GuestPreCheckin() {
                   type="button"
                   variant="ghost"
                   size="sm"
-                  onClick={() => setLocation(`/minha-reserva/${reservation.code}`)}
+                  onClick={navigateToPortal}
                   className="h-8 sm:h-9 px-2.5 sm:px-3 text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-semibold text-xs rounded-xl flex items-center gap-1.5 transition-colors"
                 >
                   <ArrowLeft className="w-3.5 h-3.5" />
@@ -1903,7 +1935,7 @@ export default function GuestPreCheckin() {
       <nav className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-4 sm:px-8 py-3 shadow-2xs w-full max-w-full">
         <div className="max-w-4xl mx-auto flex items-center justify-between gap-3">
           <div 
-            onClick={() => setLocation(reservation?.code ? `/minha-reserva/${reservation.code}` : "/minha-reserva")}
+            onClick={navigateToPortal}
             className="flex items-center gap-2.5 sm:gap-3 cursor-pointer group shrink-0"
           >
             {siteConfig?.branding?.logoImage ? (
@@ -1933,7 +1965,7 @@ export default function GuestPreCheckin() {
                 type="button"
                 variant="ghost"
                 size="sm"
-                onClick={() => setLocation(`/minha-reserva/${reservation.code}`)}
+                onClick={navigateToPortal}
                 className="h-8 sm:h-9 px-2.5 sm:px-3 text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-semibold text-xs rounded-xl flex items-center gap-1.5 transition-colors"
               >
                 <ArrowLeft className="w-3.5 h-3.5" />
