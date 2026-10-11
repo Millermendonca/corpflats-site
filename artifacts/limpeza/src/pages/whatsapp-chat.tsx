@@ -1050,48 +1050,48 @@ Muito obrigado!`
           {activeConversation ? (
             <>
               {/* Header do Chat Ativo */}
-              <div className="h-16 px-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between shrink-0 z-10 shadow-2xs">
-                <div className="flex items-center gap-3 min-w-0">
+              <div className="h-16 px-3 sm:px-4 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between shrink-0 z-10 shadow-2xs gap-2">
+                <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 flex-1">
                   {/* Botão Voltar no Mobile */}
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="md:hidden h-8 w-8 rounded-lg -ml-1 text-slate-600"
+                    className="md:hidden h-8 w-8 rounded-lg -ml-1 text-slate-600 shrink-0"
                     onClick={() => setIsMobileListOpen(true)}
                   >
                     <ChevronLeft className="w-5 h-5" />
                   </Button>
 
                   {/* Avatar */}
-                  <div className="w-10 h-10 rounded-full bg-emerald-600 text-white font-bold text-sm flex items-center justify-center shadow-2xs shrink-0">
+                  <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-emerald-600 text-white font-bold text-sm flex items-center justify-center shadow-2xs shrink-0">
                     {(activeConversation.name || 'H').slice(0, 2).toUpperCase()}
                   </div>
 
                   {/* Detalhes do Hóspede */}
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 truncate">
-                      <h3 className="text-sm font-black text-slate-900 dark:text-slate-100 truncate">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 truncate">
+                      <h3 className="text-xs sm:text-sm font-black text-slate-900 dark:text-slate-100 truncate">
                         {activeConversation.name}
                       </h3>
-                      <span className="text-xs text-slate-500 font-mono">
+                      <span className="text-[10.5px] sm:text-xs text-slate-500 font-mono truncate hidden sm:inline">
                         {activeConversation.formattedPhone || activeConversation.phone}
                       </span>
                     </div>
 
                     {/* Pílula Resumo da Reserva */}
-                    <div className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                    <div className="flex items-center gap-1 text-[10px] sm:text-[11px] text-slate-500 dark:text-slate-400 truncate">
                       {activeConversation.flatNumber && (
-                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300">
+                        <Badge variant="secondary" className="text-[9.5px] sm:text-[10px] px-1.5 py-0 font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 shrink-0">
                           Flat {activeConversation.flatNumber}
                         </Badge>
                       )}
                       {activeConversation.reservationCode && (
-                        <span className="font-mono font-semibold text-slate-700 dark:text-slate-300">
+                        <span className="font-mono font-semibold text-slate-700 dark:text-slate-300 truncate">
                           {activeConversation.reservationCode}
                         </span>
                       )}
                       {activeConversation.reservation?.checkinDate && (
-                        <span className="hidden sm:inline text-[10.5px]">
+                        <span className="hidden md:inline text-[10px] truncate text-slate-400">
                           • {activeConversation.reservation.checkinDate.split('-').reverse().join('/')} a {activeConversation.reservation.checkoutDate.split('-').reverse().join('/')}
                         </span>
                       )}
@@ -1100,7 +1100,7 @@ Muito obrigado!`
                 </div>
 
                 {/* Ações do Header do Chat */}
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 shrink-0">
                   {/* Status da IA & Botão de Alternância */}
                   {activeConversation.aiPaused ? (
                     <Button
@@ -1108,13 +1108,13 @@ Muito obrigado!`
                       size="sm"
                       onClick={handleToggleAi}
                       disabled={togglingAi}
-                      className="h-8 px-2.5 rounded-lg border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 text-xs font-bold gap-1.5 hover:bg-amber-100"
+                      className="h-8 px-2 sm:px-2.5 rounded-lg border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 text-xs font-bold gap-1.5 hover:bg-amber-100 shrink-0"
                       title={activeConversation.aiPausedReason === 'guest_requested_human' 
                         ? 'Hóspede solicitou atendente humano. Clique para reativar IA nesta conversa' 
                         : 'Atendimento manual ativo. Clique para reativar IA nesta conversa'}
                     >
                       <Play className="w-3.5 h-3.5 text-amber-600" />
-                      <span className="hidden lg:inline">Retomar IA</span>
+                      <span className="hidden xl:inline">Retomar IA</span>
                     </Button>
                   ) : (
                     <Button
@@ -1122,11 +1122,11 @@ Muito obrigado!`
                       size="sm"
                       onClick={handleToggleAi}
                       disabled={togglingAi}
-                      className="h-8 px-2.5 rounded-lg border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-xs font-bold gap-1.5 hover:bg-emerald-100"
+                      className="h-8 px-2 sm:px-2.5 rounded-lg border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-xs font-bold gap-1.5 hover:bg-emerald-100 shrink-0"
                       title="IA respondendo automaticamente. Clique para pausar e assumir atendimento humano"
                     >
                       <Bot className="w-3.5 h-3.5 text-emerald-600" />
-                      <span className="hidden lg:inline">IA Ativa</span>
+                      <span className="hidden xl:inline">IA Ativa</span>
                       <Pause className="w-3 h-3 text-slate-400 ml-0.5" />
                     </Button>
                   )}
@@ -1134,35 +1134,35 @@ Muito obrigado!`
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8 rounded-lg text-slate-600 dark:text-slate-300 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
+                    className="h-8 w-8 rounded-lg text-slate-600 dark:text-slate-300 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 shrink-0"
                     title="Atualizar mensagens"
                     onClick={() => fetchActiveMessages(activeConversation.phone)}
                   >
-                    <RefreshCw className={`w-4 h-4 ${loadingMessages ? 'animate-spin text-emerald-600' : ''}`} />
+                    <RefreshCw className={`w-3.5 h-3.5 ${loadingMessages ? 'animate-spin text-emerald-600' : ''}`} />
                   </Button>
 
                   <a
                     href={`https://wa.me/${activeConversation.phone}`}
                     target="_blank"
                     rel="noreferrer"
-                    className="h-8 px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:border-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-slate-700 dark:text-slate-200 font-semibold text-xs inline-flex items-center gap-1.5 transition-colors"
+                    className="h-8 px-2 sm:px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:border-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-slate-700 dark:text-slate-200 font-semibold text-xs inline-flex items-center gap-1.5 transition-colors shrink-0"
                     title="Abrir conversa no WhatsApp Web externo"
                   >
                     <ExternalLink className="w-3.5 h-3.5 text-emerald-600" />
-                    <span className="hidden sm:inline">WhatsApp Externo</span>
+                    <span className="hidden xl:inline">WhatsApp Externo</span>
                   </a>
 
                   <Button
                     variant="outline"
                     size="sm"
-                    className={`h-8 px-2.5 rounded-lg text-xs font-bold gap-1.5 transition-colors ${
+                    className={`h-8 px-2 sm:px-2.5 rounded-lg text-xs font-bold gap-1.5 transition-colors shrink-0 ${
                       showDossier ? 'bg-emerald-50 dark:bg-emerald-950/60 border-emerald-500 text-emerald-700 dark:text-emerald-300' : ''
                     }`}
                     onClick={() => setShowDossier(!showDossier)}
                     title="Exibir/Ocultar Dossiê do Hóspede e Reserva"
                   >
                     <Info className="w-3.5 h-3.5" />
-                    <span className="hidden lg:inline">Dossiê</span>
+                    <span className="hidden sm:inline">Dossiê</span>
                   </Button>
                 </div>
               </div>
@@ -1395,139 +1395,55 @@ Muito obrigado!`
                 </button>
               </div>
 
-              {/* Rodapé de Envio (Input Area Melhorada e Expansível) */}
-              <div className="p-2.5 sm:p-3 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 shrink-0 transition-all">
+              {/* Rodapé de Envio (Área de Digitação em Largura Total) */}
+              <div className="p-2 sm:p-3 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 shrink-0 transition-all">
                 
-                {/* Barra superior de status/redação quando texto longo ou modo expandido */}
-                {(isExpandedEditor || inputMessage.length > 50 || inputMessage.includes('\n')) && (
-                  <div className="flex items-center justify-between pb-2 text-[11px] text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800/80 mb-2 px-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold text-slate-700 dark:text-slate-300">
-                        {inputMessage.length} caracteres
-                      </span>
-                      <span>•</span>
-                      <span>
-                        {inputMessage.split('\n').length} {inputMessage.split('\n').length === 1 ? 'linha' : 'linhas'}
-                      </span>
-                      <span className="hidden sm:inline text-slate-400">
-                        (Shift+Enter para pular linha • Enter para enviar)
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-1.5">
-                      {inputMessage.trim() && (
-                        <button
-                          type="button"
-                          onClick={() => setInputMessage('')}
-                          className="text-[10.5px] text-rose-500 hover:text-rose-600 hover:underline px-1.5 py-0.5 rounded"
-                        >
-                          Limpar
-                        </button>
-                      )}
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setIsExpandedEditor(!isExpandedEditor)}
-                        className="h-6 px-2 text-[10.5px] font-bold gap-1 text-slate-600 dark:text-slate-300 hover:text-emerald-600 rounded-md"
-                        title={isExpandedEditor ? "Recolher visualização da mensagem" : "Expandir caixa de mensagem para ver o texto completo"}
-                      >
-                        {isExpandedEditor ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
-                        <span>{isExpandedEditor ? 'Recolher' : 'Expandir Janela'}</span>
-                      </Button>
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex items-end gap-1.5 sm:gap-2">
-                  {/* Popover de Emojis */}
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-9 w-9 sm:h-10 sm:w-10 rounded-xl text-slate-500 hover:text-emerald-600 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
-                      >
-                        <Smile className="w-4 h-4 sm:w-5 sm:h-5" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent side="top" align="start" className="w-64 p-2 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-lg">
-                      <div className="grid grid-cols-5 gap-1.5 text-center">
-                        {EMOJI_LIST.map((emoji, eIdx) => (
-                          <button
-                            key={eIdx}
-                            type="button"
-                            onClick={() => {
-                              setInputMessage(prev => prev + emoji)
-                              if (textareaRef.current) textareaRef.current.focus()
-                            }}
-                            className="w-9 h-9 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-lg flex items-center justify-center transition-colors"
-                          >
-                            {emoji}
-                          </button>
-                        ))}
+                {/* Container Principal: Card Integrado de Mensagem em 100% de largura */}
+                <div className="w-full bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-2xl shadow-2xs focus-within:border-emerald-500 focus-within:bg-white dark:focus-within:bg-slate-900 focus-within:ring-2 focus-within:ring-emerald-500/15 transition-all overflow-hidden flex flex-col">
+                  
+                  {/* Barra superior de status/redação quando texto longo ou modo expandido */}
+                  {(isExpandedEditor || inputMessage.length > 40 || inputMessage.includes('\n')) && (
+                    <div className="flex items-center justify-between px-3 py-1.5 text-[11px] text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800 bg-white/70 dark:bg-slate-900/50">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-slate-700 dark:text-slate-300">
+                          {inputMessage.length} caracteres
+                        </span>
+                        <span>•</span>
+                        <span>
+                          {inputMessage.split('\n').length} {inputMessage.split('\n').length === 1 ? 'linha' : 'linhas'}
+                        </span>
                       </div>
-                    </PopoverContent>
-                  </Popover>
 
-                  {/* Dropdown de Anexo (Imagem ou Documento) */}
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="h-9 w-9 sm:h-10 sm:w-10 rounded-xl text-slate-500 hover:text-emerald-600 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
-                      >
-                        <Paperclip className="w-4 h-4 sm:w-5 sm:h-5" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent side="top" align="start" className="w-48 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800">
-                      <DropdownMenuItem
-                        className="cursor-pointer flex items-center gap-2 text-xs font-semibold py-2"
-                        onClick={() => {
-                          setAttachType('image')
-                          setAttachName('imagem.jpg')
-                          setAttachModalOpen(true)
-                        }}
-                      >
-                        <ImageIcon className="w-4 h-4 text-emerald-600" />
-                        <span>Enviar Imagem / Foto</span>
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        className="cursor-pointer flex items-center gap-2 text-xs font-semibold py-2"
-                        onClick={() => {
-                          setAttachType('document')
-                          setAttachName('Manual_do_Hospede_CorpFlats.pdf')
-                          setAttachUrl('https://corpflats.onrender.com/Manual_do_Hospede_CorpFlats.pdf')
-                          setAttachModalOpen(true)
-                        }}
-                      >
-                        <FileText className="w-4 h-4 text-rose-600" />
-                        <span>Enviar Documento PDF</span>
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                      <div className="flex items-center gap-1.5">
+                        {inputMessage.trim() && (
+                          <button
+                            type="button"
+                            onClick={() => setInputMessage('')}
+                            className="text-[10.5px] text-rose-500 hover:text-rose-600 hover:underline px-1.5 py-0.5 rounded"
+                          >
+                            Limpar
+                          </button>
+                        )}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setIsExpandedEditor(!isExpandedEditor)}
+                          className="h-5 px-1.5 text-[10.5px] font-bold gap-1 text-slate-600 dark:text-slate-300 hover:text-emerald-600 rounded"
+                          title={isExpandedEditor ? "Recolher caixa de digitação" : "Expandir caixa de digitação"}
+                        >
+                          {isExpandedEditor ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
+                          <span>{isExpandedEditor ? 'Recolher' : 'Expandir'}</span>
+                        </Button>
+                      </div>
+                    </div>
+                  )}
 
-                  {/* Botão Copiloto: Sugerir Resposta com IA */}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    onClick={handleSuggestWithAi}
-                    disabled={loadingAiSuggestion || !activePhone}
-                    className="h-9 w-9 sm:h-10 sm:w-10 rounded-xl border-purple-200 dark:border-purple-800/80 bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/60 shrink-0 shadow-2xs transition-colors"
-                    title="✨ Sugerir resposta com Inteligência Artificial (Copiloto)"
-                  >
-                    <Sparkles className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${loadingAiSuggestion ? 'animate-spin text-purple-600' : ''}`} />
-                  </Button>
-
-                  {/* Campo de Digitação com auto-grow e suporte a mensagens grandes */}
-                  <div className="flex-1 min-w-[140px] sm:min-w-[180px] relative">
+                  {/* 1. TEXTAREA EM LARGURA TOTAL (100% da área circulada) */}
+                  <div className="w-full relative">
                     <Textarea
                       ref={textareaRef}
-                      rows={isExpandedEditor ? 6 : 1}
+                      rows={isExpandedEditor ? 6 : 2}
                       value={inputMessage}
                       onChange={e => setInputMessage(e.target.value)}
                       onKeyDown={e => {
@@ -1537,37 +1453,141 @@ Muito obrigado!`
                         }
                       }}
                       placeholder="Digite uma mensagem (Enter para enviar, Shift+Enter para nova linha)..."
-                      className={`w-full text-xs sm:text-sm py-2.5 pl-3 pr-8 rounded-xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/60 focus:border-emerald-500 focus:bg-white dark:focus:bg-slate-900 transition-all font-sans leading-relaxed ${
+                      className={`w-full border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 px-3 py-2.5 text-xs sm:text-sm font-sans leading-relaxed text-slate-800 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 resize-y ${
                         isExpandedEditor 
-                          ? 'min-h-[140px] max-h-[380px] resize-y shadow-inner' 
-                          : 'min-h-[44px] max-h-[240px] resize-y'
+                          ? 'min-h-[140px] max-h-[380px]' 
+                          : 'min-h-[58px] max-h-[220px]'
                       }`}
                     />
 
-                    {/* Botão de Expandir/Recolher flutuante no canto superior direito do textarea */}
-                    <button
-                      type="button"
-                      onClick={() => setIsExpandedEditor(!isExpandedEditor)}
-                      className="absolute right-2 top-2 p-1 rounded-md text-slate-400 hover:text-emerald-600 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-                      title={isExpandedEditor ? "Recolher caixa de digitação" : "Expandir caixa de digitação (visualizar mensagem inteira)"}
-                    >
-                      {isExpandedEditor ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
-                    </button>
+                    {/* Botão de Expandir flutuante no canto quando a barra superior não estiver ativa */}
+                    {!isExpandedEditor && inputMessage.length <= 40 && !inputMessage.includes('\n') && (
+                      <button
+                        type="button"
+                        onClick={() => setIsExpandedEditor(true)}
+                        className="absolute right-2 top-2 p-1 rounded-md text-slate-400 hover:text-emerald-600 hover:bg-slate-200/60 dark:hover:bg-slate-700 transition-colors opacity-60 hover:opacity-100"
+                        title="Expandir caixa de digitação"
+                      >
+                        <Maximize2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
 
-                  {/* Botão de Envio */}
-                  <Button
-                    type="button"
-                    disabled={sending || !inputMessage.trim()}
-                    onClick={() => handleSendMessage()}
-                    className="h-9 w-9 sm:h-10 sm:w-10 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white p-0 shrink-0 shadow-xs flex items-center justify-center disabled:opacity-50"
-                  >
-                    {sending ? (
-                      <RefreshCw className="w-4 h-4 animate-spin text-white" />
-                    ) : (
-                      <Send className="w-4 h-4 sm:w-5 sm:h-5" />
-                    )}
-                  </Button>
+                  {/* 2. BARRA DE AÇÕES INFERIOR (Abaixo do Textarea) */}
+                  <div className="px-2 sm:px-2.5 py-1.5 bg-slate-100/60 dark:bg-slate-800/80 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between gap-1.5">
+                    {/* Ações da Esquerda: Emoji, Anexo, Copiloto IA */}
+                    <div className="flex items-center gap-1">
+                      {/* Popover de Emojis */}
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 rounded-lg text-slate-500 hover:text-emerald-600 hover:bg-slate-200/70 dark:hover:bg-slate-700 shrink-0"
+                            title="Inserir Emoji"
+                          >
+                            <Smile className="w-4 h-4" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent side="top" align="start" className="w-64 p-2 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-lg">
+                          <div className="grid grid-cols-5 gap-1.5 text-center">
+                            {EMOJI_LIST.map((emoji, eIdx) => (
+                              <button
+                                key={eIdx}
+                                type="button"
+                                onClick={() => {
+                                  setInputMessage(prev => prev + emoji)
+                                  if (textareaRef.current) textareaRef.current.focus()
+                                }}
+                                className="w-9 h-9 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-lg flex items-center justify-center transition-colors"
+                              >
+                                {emoji}
+                              </button>
+                            ))}
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+
+                      {/* Dropdown de Anexo (Imagem ou Documento) */}
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 rounded-lg text-slate-500 hover:text-emerald-600 hover:bg-slate-200/70 dark:hover:bg-slate-700 shrink-0"
+                            title="Anexar arquivo ou imagem"
+                          >
+                            <Paperclip className="w-4 h-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent side="top" align="start" className="w-48 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800">
+                          <DropdownMenuItem
+                            className="cursor-pointer flex items-center gap-2 text-xs font-semibold py-2"
+                            onClick={() => {
+                              setAttachType('image')
+                              setAttachName('imagem.jpg')
+                              setAttachModalOpen(true)
+                            }}
+                          >
+                            <ImageIcon className="w-4 h-4 text-emerald-600" />
+                            <span>Enviar Imagem / Foto</span>
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="cursor-pointer flex items-center gap-2 text-xs font-semibold py-2"
+                            onClick={() => {
+                              setAttachType('document')
+                              setAttachName('Manual_do_Hospede_CorpFlats.pdf')
+                              setAttachUrl('https://corpflats.onrender.com/Manual_do_Hospede_CorpFlats.pdf')
+                              setAttachModalOpen(true)
+                            }}
+                          >
+                            <FileText className="w-4 h-4 text-rose-600" />
+                            <span>Enviar Documento PDF</span>
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+
+                      {/* Botão Copiloto: Sugerir Resposta com IA */}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleSuggestWithAi}
+                        disabled={loadingAiSuggestion || !activePhone}
+                        className="h-8 px-2 rounded-lg text-purple-600 dark:text-purple-300 hover:bg-purple-100/70 dark:hover:bg-purple-950/60 font-semibold text-xs gap-1.5 shrink-0 transition-colors"
+                        title="✨ Sugerir resposta com Inteligência Artificial (Copiloto)"
+                      >
+                        <Sparkles className={`w-3.5 h-3.5 ${loadingAiSuggestion ? 'animate-spin text-purple-600' : ''}`} />
+                        <span className="hidden sm:inline text-[11px]">Copiloto IA</span>
+                      </Button>
+                    </div>
+
+                    {/* Ações da Direita: Dica de atalho e Botão de Enviar */}
+                    <div className="flex items-center gap-2">
+                      <span className="hidden md:inline text-[10px] text-slate-400 dark:text-slate-500">
+                        Shift+Enter pula linha
+                      </span>
+
+                      {/* Botão de Envio */}
+                      <Button
+                        type="button"
+                        disabled={sending || !inputMessage.trim()}
+                        onClick={() => handleSendMessage()}
+                        className="h-8 px-3 sm:px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs gap-1.5 shrink-0 shadow-xs flex items-center justify-center disabled:opacity-50 transition-all"
+                      >
+                        {sending ? (
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
+                        ) : (
+                          <>
+                            <span className="inline">Enviar</span>
+                            <Send className="w-3 h-3" />
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </>
