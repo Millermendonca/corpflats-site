@@ -273,6 +273,7 @@ function Router() {
         <AdminRoute path="/automacoes-camareiras" component={MaidWhatsappAutomation} moduleName="as Automações de WhatsApp para Camareiras" />
         <AdminRoute path="/camareiras-whatsapp" component={MaidWhatsappAutomation} moduleName="as Automações de WhatsApp para Camareiras" />
         <AdminRoute path="/governanca-whatsapp" component={MaidWhatsappAutomation} moduleName="as Automações de WhatsApp para Camareiras" />
+        <AdminRoute path="/whatsapp-automation" component={WhatsappAutomation} moduleName="a Automação de WhatsApp" />
         <AdminRoute path="/whatsapp" component={WhatsappAutomation} moduleName="a Automação de WhatsApp" />
         <AdminRoute path="/automacao-whatsapp" component={WhatsappAutomation} moduleName="a Automação de WhatsApp" />
         <AdminRoute path="/zapi-conexao" component={ZapiConnection} moduleName="a Conexão Z-API" />

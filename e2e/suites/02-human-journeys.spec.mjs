@@ -248,7 +248,10 @@ test.describe.serial("Milestone 3 (M3) - Jornadas Humanas Anti-Frustração (R3)
       expect(travelRes15.hour ?? travelRes15.brasilia?.hour).toBe(15);
 
       // 5. Reload guest portal page
-      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.goto("/minha-reserva/RES-TEST-LOCK-14H", {
+        waitUntil: "domcontentloaded",
+        timeout: 25000
+      });
       await guard.assertZeroWhiteScreen(15000);
 
       // 6. Assert digital lock code is now unlocked and prominently displayed
@@ -484,7 +487,8 @@ test.describe.serial("Milestone 3 (M3) - Jornadas Humanas Anti-Frustração (R3)
           state: "RJ",
           cep: "28035-000",
           legalTermsAccepted: true
-        }
+        },
+        timeout: 30000
       });
       expect(companionSubmitRes.ok()).toBe(true);
 
