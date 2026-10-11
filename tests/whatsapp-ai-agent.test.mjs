@@ -1,3 +1,5 @@
+process.env.PORT = "0";
+
 import { test, describe, before, beforeEach, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "fs";
@@ -933,6 +935,12 @@ describe("Agente de IA para WhatsApp - Testes Unitários e de Integração", () 
     activeTimeouts.forEach(h => clearTimeout(h));
     for (const srv of openServers) {
       try {
+        if (typeof srv.closeAllConnections === "function") {
+          srv.closeAllConnections();
+        }
+        if (typeof srv.unref === "function") {
+          srv.unref();
+        }
         await new Promise(r => srv.close(r));
       } catch (_) {}
     }
