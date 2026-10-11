@@ -24,7 +24,10 @@ import {
   inferFaqCategory,
   extractFaqKeywords,
   isQuestionMappedInFaq,
-  findExistingPendingFaq
+  findExistingPendingFaq,
+  classifyUnmetDemand,
+  detectAndRecordUnmetDemand,
+  UNMET_DEMAND_CATEGORIES
 } from "./whatsapp-ai-service.mjs";
 
 export {
@@ -33,7 +36,10 @@ export {
   inferFaqCategory,
   extractFaqKeywords,
   isQuestionMappedInFaq,
-  findExistingPendingFaq
+  findExistingPendingFaq,
+  classifyUnmetDemand,
+  detectAndRecordUnmetDemand,
+  UNMET_DEMAND_CATEGORIES
 };
 import {
   getCheckinUrlSync as getSerproCheckinUrlSync,

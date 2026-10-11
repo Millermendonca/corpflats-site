@@ -1,7 +1,7 @@
-# BRIEFING — 2026-09-29T05:58:30Z
+# BRIEFING — 2026-10-11T06:35:00Z
 
 ## Mission
-Adversarially stress-test database integrity, cross-flat consistency across 19 flats, reservation code prefixes, off-duty maid credits, duplicate statement prevention, and startup/integrity reconciliation idempotence for Guest-Flow-Manager governance and integrity overhaul.
+Adversarially challenge the completeness, robustness, and empirical execution of the E2E synthetic testing suites (01-crawler-45-screens, 02-human-journeys, 03-pairwise-matrix, 04-chaos-explorer), verify 100% 45-screen catalog coverage, and validate the consolidated HTML report e2e/reports/index.html to issue a formal empirical verdict (APPROVE or REJECT).
 
 ## 🔒 My Identity
 - Archetype: Empirical Challenger
@@ -10,57 +10,59 @@ Adversarially stress-test database integrity, cross-flat consistency across 19 f
 - Original parent: 5ad82d68-5382-4b5d-b3af-ea9aa33373f7
 - Milestone: Governance and integrity overhaul validation
 - Instance: 2 of 2
+- Milestone 2026-10-11: Empirical Adversarial Verification of E2E Suites & Scenarios
+- Current Parent Conversation ID: 5a1d1171-401e-4601-9229-45485822d731
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
 - Run verification code empirically — do not trust claims or logs
 - .agents/teamwork/ holds ONLY agent metadata (never code or data)
 - 5-Component handoff report (Observation, Logic Chain, Caveats, Conclusion, Verification Method) with verdict CONFIRMED or FAILED
+- Milestone 2026-10-11: Formal verdict must be APPROVE or REJECT
+- Verify 100% catalog coverage of the 45 functional screens in src/pages
+- Empirically execute and stress-test suites 01, 02, 03, 04
 
 ## Current Parent
-- Conversation ID: 5ad82d68-5382-4b5d-b3af-ea9aa33373f7
-- Updated: not yet
+- Conversation ID: 5a1d1171-401e-4601-9229-45485822d731
+- Updated: 2026-10-11T06:35:00Z
 
 ## Review Scope
 - **Files to review**:
-  - ORIGINAL_REQUEST.md
-  - PROJECT.md
-  - TEST_READY.md
-  - .agents/teamwork/challenger_2/context.md
-  - tests/governance-integrity.test.mjs
-  - tests/adversarial-stress.test.mjs
-  - artifacts/api-server/demo-server.mjs and scripts/demo-server.mjs
-  - data/database.json
-  - artifacts/limpeza/src/pages/dashboard.tsx and flat-card.tsx
-- **Interface contracts**: PROJECT.md
-- **Review criteria**: Empirical correctness, resilience under adversarial stress, edge-case coverage, idempotency.
+  - `ORIGINAL_REQUEST.md` (2026-10-11 E2E requirements)
+  - `PROJECT.md`
+  - `artifacts/limpeza/src/pages/` (all 46 page files)
+  - `artifacts/limpeza/src/App.tsx` (routing map)
+  - `e2e/suites/01-crawler-45-screens.spec.mjs`
+  - `e2e/suites/02-human-journeys.spec.mjs`
+  - `e2e/suites/03-pairwise-matrix.spec.mjs`
+  - `e2e/suites/04-chaos-explorer.spec.mjs`
+  - `e2e/reporters/html-reporter.mjs`
+  - `e2e/reports/index.html`
+  - `e2e/reports/modules-summary.json`
+  - `e2e/reports/test-results.json`
+  - `e2e/reports/usability-audit.json`
+- **Interface contracts**: PROJECT.md E2E specifications
+- **Review criteria**: 100% screen correspondence, empirical execution of test suites, resilience under adversarial stress, HTML report integrity.
 
 ## Key Decisions Made
-- Executed native test suite `tests/governance-integrity.test.mjs` (90/90 pass).
-- Designed and authored dedicated chaos and adversarial stress suite `tests/adversarial-stress.test.mjs` (23/23 pass).
-- Verified dual-server byte-for-byte identity via SHA-256 (`b4b54fe1afb0c801c956f802843c8f00669f83ee00ea2bab1cc52a87b2e1ddc4`).
-- Executed frontend production build (`npm run build` in `artifacts/limpeza`), succeeding in 15.22s.
-- Formulated definitive CONFIRMED verdict for governance overhaul.
+- Confirmed exact 1-to-1 match between 45 functional screens in `artifacts/limpeza/src/pages/` (+ 1 404 fallback) and `SCREEN_CATALOG` in `01-crawler-45-screens.spec.mjs`.
+- Initiating empirical execution and stress testing across suites 02, 03, 04, and 01.
 
 ## Artifact Index
-- DISPATCH.md — Initial dispatch instructions
-- BRIEFING.md — Persistent context and identity tracker
-- progress.md — Heartbeat and step tracking
-- handoff.md — Final verdict and 5-component report
-- tests/adversarial-stress.test.mjs — Authored adversarial test harness
+- DISPATCH.md — Incoming dispatch instructions
+- BRIEFING.md — Situational awareness and identity tracker
+- progress.md — Real-time progress and heartbeat
+- handoff.md — Final 5-component handoff report with formal verdict
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - H1: Database contains non-canonical flats or orphaned records across 19 active flats. (DISPROVED: exactly 19 flats, all cleanings and reservations resolve accurately).
-  - H2: Foreign flats (e.g. Flat 502) or corrupted flatIds can be reintroduced via incoming state. (DISPROVED: `reconcileUniversalIntegrity` purges 502 and repairs flatId alignments).
-  - H3: Reservation code prefix mismatches (e.g. `RES-712-0291` on Flat 512) remain unhandled or cause calendar collisions. (DISPROVED: strict flatNumber prefix alignment and zero calendar overlaps on Flat 712).
-  - H4: Off-duty maids can accrue duplicate or unearned statement credits. (DISPROVED: Grazi has zero credits on 26/09; 20 injected duplicate credits are strictly pruned to 1 while debits are preserved).
-  - H5: 100 consecutive reconciliation/startup runs cause state drift, duplicate IDs, or clean-to-dirty regressions. (DISPROVED: exact byte-identical JSON convergence across 100 cycles).
-  - H6: Flat 512 clean status can be reverted by auto-checkout routines without explicit manual override. (DISPROVED: immunity guards protect clean status across all 5 variations).
-  - H7: Flat 904 Jorge turnover falsely appears as carryover on 28/09. (DISPROVED: strictly isolated to 29/09).
-  - H8: Flat 313 Felipe stayover drags past dirty checkout 1358. (DISPROVED: stayover immunity prevents any ghost carryover).
-- **Vulnerabilities found**: None. System is resilient and empirically verified.
-- **Untested angles**: Physical PostgreSQL multi-node connection failover during network partition (out of scope for local mock environment, covered by pgHydratedSuccessfully guards).
+  - H1: Screen catalog misses functional pages present in `src/pages/`. (TESTING)
+  - H2: Human journeys fail on edge conditions (e.g. invalid documents, time boundaries, expired PIX). (TESTING)
+  - H3: Pairwise matrix breaks under combinatorial boundary cases. (TESTING)
+  - H4: Chaos explorer creates unhandled React uncaught exceptions or UI freezes. (TESTING)
+  - H5: Consolidated HTML report has missing data, broken links, or empty charts. (TESTING)
+- **Vulnerabilities found**: TBD during execution.
+- **Untested angles**: Full production network egress (tested by Challenger 1).
 
 ## Loaded Skills
 - None

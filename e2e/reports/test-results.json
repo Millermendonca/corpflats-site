@@ -6,7 +6,7 @@
       "test",
       "--config",
       "e2e/playwright.config.mjs",
-      "e2e/suites/04-chaos-explorer.spec.mjs"
+      "e2e/suites/03-pairwise-matrix.spec.mjs"
     ],
     "configFile": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\playwright.config.mjs",
     "rootDir": "C:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/e2e/suites",
@@ -225,20 +225,20 @@
   },
   "suites": [
     {
-      "title": "04-chaos-explorer.spec.mjs",
-      "file": "04-chaos-explorer.spec.mjs",
+      "title": "03-pairwise-matrix.spec.mjs",
+      "file": "03-pairwise-matrix.spec.mjs",
       "column": 0,
       "line": 0,
       "specs": [],
       "suites": [
         {
-          "title": "Milestone 5 (M5) - Gemini Chaos Explorer & Usabilidade Heurística (R5)",
-          "file": "04-chaos-explorer.spec.mjs",
-          "line": 21,
+          "title": "Milestone 4 (M4) - Matriz Combinatória de Estados Pairwise (R4)",
+          "file": "03-pairwise-matrix.spec.mjs",
+          "line": 19,
           "column": 15,
           "specs": [
             {
-              "title": "Ação Caótica 1: Cliques Duplos e Rápidos - Prevenção de Submissão Duplicada, Idempotência e Resiliência de Interface",
+              "title": "Cenário 1: Matriz de Composições de Reserva & Durações (Permutações Pairwise, Tarifas, PMS Calendar & Vouchers)",
               "ok": true,
               "tags": [],
               "tests": [
@@ -248,8 +248,8 @@
                     {
                       "type": "serial",
                       "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\04-chaos-explorer.spec.mjs",
-                        "line": 21,
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
                         "column": 15
                       }
                     }
@@ -262,18 +262,18 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 7171,
+                      "duration": 16083,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T06:29:50.632Z",
+                      "startTime": "2026-10-11T06:53:56.342Z",
                       "annotations": [
                         {
                           "type": "serial",
                           "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\04-chaos-explorer.spec.mjs",
-                            "line": 21,
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
                             "column": 15
                           }
                         }
@@ -284,13 +284,13 @@
                   "status": "expected"
                 }
               ],
-              "id": "575e8d42b49d9432006d-057c20d45becd179bd1a",
-              "file": "04-chaos-explorer.spec.mjs",
-              "line": 26,
+              "id": "ee4eb678168193b9785b-232fabeaaf2fcd1f0fa9",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 28,
               "column": 3
             },
             {
-              "title": "Ação Caótica 2: Injeção de Dados Fuzzing & Especiais - Sanitização XSS, SQLi, Emojis, Caracteres Especiais e Zero Crash do React",
+              "title": "Cenário 2: Auditoria dos 19 Flats sob Todos os 7 Estados de Governança no Dashboard de Limpeza",
               "ok": true,
               "tags": [],
               "tests": [
@@ -300,8 +300,8 @@
                     {
                       "type": "serial",
                       "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\04-chaos-explorer.spec.mjs",
-                        "line": 21,
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
                         "column": 15
                       }
                     }
@@ -314,18 +314,18 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4134,
+                      "duration": 3853,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T06:29:58.409Z",
+                      "startTime": "2026-10-11T06:54:13.684Z",
                       "annotations": [
                         {
                           "type": "serial",
                           "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\04-chaos-explorer.spec.mjs",
-                            "line": 21,
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
                             "column": 15
                           }
                         }
@@ -336,13 +336,13 @@
                   "status": "expected"
                 }
               ],
-              "id": "575e8d42b49d9432006d-f172713d507919b79df3",
-              "file": "04-chaos-explorer.spec.mjs",
-              "line": 95,
+              "id": "ee4eb678168193b9785b-ab490d3731ebe1d11bab",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 273,
               "column": 3
             },
             {
-              "title": "Ação Caótica 3: Navegação Fora de Ordem (Botão Voltar) - Resiliência em Formulários Multi-Step, Funis e Recuperação de Estado",
+              "title": "Cenário 3: Ciclo Completo de Ordens de Serviço (Criação Admin, Portal Token, Cadastro Prestador, Limites, Fotos & Camareira)",
               "ok": true,
               "tags": [],
               "tests": [
@@ -352,8 +352,8 @@
                     {
                       "type": "serial",
                       "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\04-chaos-explorer.spec.mjs",
-                        "line": 21,
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
                         "column": 15
                       }
                     }
@@ -366,18 +366,18 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 6375,
+                      "duration": 3223,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T06:30:02.586Z",
+                      "startTime": "2026-10-11T06:54:17.592Z",
                       "annotations": [
                         {
                           "type": "serial",
                           "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\04-chaos-explorer.spec.mjs",
-                            "line": 21,
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
                             "column": 15
                           }
                         }
@@ -388,13 +388,13 @@
                   "status": "expected"
                 }
               ],
-              "id": "575e8d42b49d9432006d-35192bbeb1da173579a3",
-              "file": "04-chaos-explorer.spec.mjs",
-              "line": 183,
+              "id": "ee4eb678168193b9785b-1eb4f40e0b5fd71435d3",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 449,
               "column": 3
             },
             {
-              "title": "Ação Caótica 4: Auditoria Qualitativa de Usabilidade Heurística - Textos Truncados, Sobreposições e Acessibilidade (usability-audit.json)",
+              "title": "Cenário 4: Regras de Café da Manhã & Cutoff Rígido das 22h com Time-Travel (Portal /cafe, Produção Cozinha & Rejeição Pós-22h)",
               "ok": true,
               "tags": [],
               "tests": [
@@ -404,8 +404,8 @@
                     {
                       "type": "serial",
                       "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\04-chaos-explorer.spec.mjs",
-                        "line": 21,
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
                         "column": 15
                       }
                     }
@@ -418,22 +418,18 @@
                       "workerIndex": 0,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 5547,
+                      "duration": 6201,
                       "errors": [],
-                      "stdout": [
-                        {
-                          "text": "[ChaosExplorer] Usability audit saved to C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\usability-audit.json (Score: 77/100, Findings: 28)\n"
-                        }
-                      ],
+                      "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T06:30:09.008Z",
+                      "startTime": "2026-10-11T06:54:20.864Z",
                       "annotations": [
                         {
                           "type": "serial",
                           "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\04-chaos-explorer.spec.mjs",
-                            "line": 21,
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
                             "column": 15
                           }
                         }
@@ -444,13 +440,13 @@
                   "status": "expected"
                 }
               ],
-              "id": "575e8d42b49d9432006d-ca78ed7c78fbff4acaae",
-              "file": "04-chaos-explorer.spec.mjs",
-              "line": 252,
+              "id": "ee4eb678168193b9785b-0b22acc943a8b33f58cd",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 599,
               "column": 3
             },
             {
-              "title": "Ação Caótica 1: Cliques Duplos e Rápidos - Prevenção de Submissão Duplicada, Idempotência e Resiliência de Interface",
+              "title": "Cenário 1: Matriz de Composições de Reserva & Durações (Permutações Pairwise, Tarifas, PMS Calendar & Vouchers)",
               "ok": true,
               "tags": [],
               "tests": [
@@ -460,8 +456,8 @@
                     {
                       "type": "serial",
                       "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\04-chaos-explorer.spec.mjs",
-                        "line": 21,
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
                         "column": 15
                       }
                     }
@@ -474,18 +470,18 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 8807,
+                      "duration": 6782,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T06:30:16.548Z",
+                      "startTime": "2026-10-11T06:54:30.249Z",
                       "annotations": [
                         {
                           "type": "serial",
                           "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\04-chaos-explorer.spec.mjs",
-                            "line": 21,
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
                             "column": 15
                           }
                         }
@@ -496,13 +492,13 @@
                   "status": "expected"
                 }
               ],
-              "id": "575e8d42b49d9432006d-8d9d609f155beed4dd72",
-              "file": "04-chaos-explorer.spec.mjs",
-              "line": 26,
+              "id": "ee4eb678168193b9785b-232f06b50897fb10f96d",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 28,
               "column": 3
             },
             {
-              "title": "Ação Caótica 2: Injeção de Dados Fuzzing & Especiais - Sanitização XSS, SQLi, Emojis, Caracteres Especiais e Zero Crash do React",
+              "title": "Cenário 2: Auditoria dos 19 Flats sob Todos os 7 Estados de Governança no Dashboard de Limpeza",
               "ok": true,
               "tags": [],
               "tests": [
@@ -512,8 +508,8 @@
                     {
                       "type": "serial",
                       "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\04-chaos-explorer.spec.mjs",
-                        "line": 21,
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
                         "column": 15
                       }
                     }
@@ -526,18 +522,18 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 6727,
+                      "duration": 4202,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T06:30:25.866Z",
+                      "startTime": "2026-10-11T06:54:37.773Z",
                       "annotations": [
                         {
                           "type": "serial",
                           "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\04-chaos-explorer.spec.mjs",
-                            "line": 21,
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
                             "column": 15
                           }
                         }
@@ -548,13 +544,13 @@
                   "status": "expected"
                 }
               ],
-              "id": "575e8d42b49d9432006d-bb2c602f9fffc8be04ba",
-              "file": "04-chaos-explorer.spec.mjs",
-              "line": 95,
+              "id": "ee4eb678168193b9785b-24665c377435d0fd755b",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 273,
               "column": 3
             },
             {
-              "title": "Ação Caótica 3: Navegação Fora de Ordem (Botão Voltar) - Resiliência em Formulários Multi-Step, Funis e Recuperação de Estado",
+              "title": "Cenário 3: Ciclo Completo de Ordens de Serviço (Criação Admin, Portal Token, Cadastro Prestador, Limites, Fotos & Camareira)",
               "ok": true,
               "tags": [],
               "tests": [
@@ -564,8 +560,8 @@
                     {
                       "type": "serial",
                       "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\04-chaos-explorer.spec.mjs",
-                        "line": 21,
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
                         "column": 15
                       }
                     }
@@ -578,18 +574,18 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 7068,
+                      "duration": 5242,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T06:30:32.647Z",
+                      "startTime": "2026-10-11T06:54:42.026Z",
                       "annotations": [
                         {
                           "type": "serial",
                           "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\04-chaos-explorer.spec.mjs",
-                            "line": 21,
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
                             "column": 15
                           }
                         }
@@ -600,13 +596,13 @@
                   "status": "expected"
                 }
               ],
-              "id": "575e8d42b49d9432006d-40cde604b171deada1e1",
-              "file": "04-chaos-explorer.spec.mjs",
-              "line": 183,
+              "id": "ee4eb678168193b9785b-a7f1e92ed845772ab7f6",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 449,
               "column": 3
             },
             {
-              "title": "Ação Caótica 4: Auditoria Qualitativa de Usabilidade Heurística - Textos Truncados, Sobreposições e Acessibilidade (usability-audit.json)",
+              "title": "Cenário 4: Regras de Café da Manhã & Cutoff Rígido das 22h com Time-Travel (Portal /cafe, Produção Cozinha & Rejeição Pós-22h)",
               "ok": true,
               "tags": [],
               "tests": [
@@ -616,8 +612,8 @@
                     {
                       "type": "serial",
                       "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\04-chaos-explorer.spec.mjs",
-                        "line": 21,
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
                         "column": 15
                       }
                     }
@@ -630,74 +626,18 @@
                       "workerIndex": 1,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 6568,
-                      "errors": [],
-                      "stdout": [
-                        {
-                          "text": "[ChaosExplorer] Usability audit saved to C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\usability-audit.json (Score: 74/100, Findings: 30)\n"
-                        }
-                      ],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2026-10-11T06:30:39.758Z",
-                      "annotations": [
-                        {
-                          "type": "serial",
-                          "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\04-chaos-explorer.spec.mjs",
-                            "line": 21,
-                            "column": 15
-                          }
-                        }
-                      ],
-                      "attachments": []
-                    }
-                  ],
-                  "status": "expected"
-                }
-              ],
-              "id": "575e8d42b49d9432006d-42bc195ef86260e244bf",
-              "file": "04-chaos-explorer.spec.mjs",
-              "line": 252,
-              "column": 3
-            },
-            {
-              "title": "Ação Caótica 1: Cliques Duplos e Rápidos - Prevenção de Submissão Duplicada, Idempotência e Resiliência de Interface",
-              "ok": true,
-              "tags": [],
-              "tests": [
-                {
-                  "timeout": 60000,
-                  "annotations": [
-                    {
-                      "type": "serial",
-                      "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\04-chaos-explorer.spec.mjs",
-                        "line": 21,
-                        "column": 15
-                      }
-                    }
-                  ],
-                  "expectedStatus": "passed",
-                  "projectId": "Mobile-375",
-                  "projectName": "Mobile-375",
-                  "results": [
-                    {
-                      "workerIndex": 2,
-                      "parallelIndex": 0,
-                      "status": "passed",
-                      "duration": 10125,
+                      "duration": 6565,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T06:30:52.899Z",
+                      "startTime": "2026-10-11T06:54:47.345Z",
                       "annotations": [
                         {
                           "type": "serial",
                           "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\04-chaos-explorer.spec.mjs",
-                            "line": 21,
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
                             "column": 15
                           }
                         }
@@ -708,13 +648,13 @@
                   "status": "expected"
                 }
               ],
-              "id": "575e8d42b49d9432006d-f0347c35f527745a0c32",
-              "file": "04-chaos-explorer.spec.mjs",
-              "line": 26,
+              "id": "ee4eb678168193b9785b-ba37b3c2e0fd8eeb0cb6",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 599,
               "column": 3
             },
             {
-              "title": "Ação Caótica 2: Injeção de Dados Fuzzing & Especiais - Sanitização XSS, SQLi, Emojis, Caracteres Especiais e Zero Crash do React",
+              "title": "Cenário 1: Matriz de Composições de Reserva & Durações (Permutações Pairwise, Tarifas, PMS Calendar & Vouchers)",
               "ok": true,
               "tags": [],
               "tests": [
@@ -724,8 +664,8 @@
                     {
                       "type": "serial",
                       "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\04-chaos-explorer.spec.mjs",
-                        "line": 21,
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
                         "column": 15
                       }
                     }
@@ -738,18 +678,18 @@
                       "workerIndex": 2,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 4589,
+                      "duration": 7213,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T06:31:04.067Z",
+                      "startTime": "2026-10-11T06:54:57.155Z",
                       "annotations": [
                         {
                           "type": "serial",
                           "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\04-chaos-explorer.spec.mjs",
-                            "line": 21,
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
                             "column": 15
                           }
                         }
@@ -760,13 +700,13 @@
                   "status": "expected"
                 }
               ],
-              "id": "575e8d42b49d9432006d-93f59b304c64653c769f",
-              "file": "04-chaos-explorer.spec.mjs",
-              "line": 95,
+              "id": "ee4eb678168193b9785b-0f0eba46a2512167cdbd",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 28,
               "column": 3
             },
             {
-              "title": "Ação Caótica 3: Navegação Fora de Ordem (Botão Voltar) - Resiliência em Formulários Multi-Step, Funis e Recuperação de Estado",
+              "title": "Cenário 2: Auditoria dos 19 Flats sob Todos os 7 Estados de Governança no Dashboard de Limpeza",
               "ok": true,
               "tags": [],
               "tests": [
@@ -776,8 +716,8 @@
                     {
                       "type": "serial",
                       "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\04-chaos-explorer.spec.mjs",
-                        "line": 21,
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
                         "column": 15
                       }
                     }
@@ -790,18 +730,18 @@
                       "workerIndex": 2,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 6255,
+                      "duration": 3913,
                       "errors": [],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T06:31:08.703Z",
+                      "startTime": "2026-10-11T06:55:05.162Z",
                       "annotations": [
                         {
                           "type": "serial",
                           "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\04-chaos-explorer.spec.mjs",
-                            "line": 21,
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
                             "column": 15
                           }
                         }
@@ -812,13 +752,13 @@
                   "status": "expected"
                 }
               ],
-              "id": "575e8d42b49d9432006d-a340049db26458dc0309",
-              "file": "04-chaos-explorer.spec.mjs",
-              "line": 183,
+              "id": "ee4eb678168193b9785b-b4ce8ed62fd50ef2469c",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 273,
               "column": 3
             },
             {
-              "title": "Ação Caótica 4: Auditoria Qualitativa de Usabilidade Heurística - Textos Truncados, Sobreposições e Acessibilidade (usability-audit.json)",
+              "title": "Cenário 3: Ciclo Completo de Ordens de Serviço (Criação Admin, Portal Token, Cadastro Prestador, Limites, Fotos & Camareira)",
               "ok": true,
               "tags": [],
               "tests": [
@@ -828,8 +768,8 @@
                     {
                       "type": "serial",
                       "location": {
-                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\04-chaos-explorer.spec.mjs",
-                        "line": 21,
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
                         "column": 15
                       }
                     }
@@ -842,22 +782,18 @@
                       "workerIndex": 2,
                       "parallelIndex": 0,
                       "status": "passed",
-                      "duration": 5023,
+                      "duration": 2854,
                       "errors": [],
-                      "stdout": [
-                        {
-                          "text": "[ChaosExplorer] Usability audit saved to C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\reports\\usability-audit.json (Score: 70/100, Findings: 33)\n"
-                        }
-                      ],
+                      "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-10-11T06:31:15.002Z",
+                      "startTime": "2026-10-11T06:55:09.123Z",
                       "annotations": [
                         {
                           "type": "serial",
                           "location": {
-                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\04-chaos-explorer.spec.mjs",
-                            "line": 21,
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
                             "column": 15
                           }
                         }
@@ -868,9 +804,61 @@
                   "status": "expected"
                 }
               ],
-              "id": "575e8d42b49d9432006d-1761278f39b645f4385b",
-              "file": "04-chaos-explorer.spec.mjs",
-              "line": 252,
+              "id": "ee4eb678168193b9785b-678ba31d137e870eb771",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 449,
+              "column": 3
+            },
+            {
+              "title": "Cenário 4: Regras de Café da Manhã & Cutoff Rígido das 22h com Time-Travel (Portal /cafe, Produção Cozinha & Rejeição Pós-22h)",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                        "line": 19,
+                        "column": 15
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "Mobile-375",
+                  "projectName": "Mobile-375",
+                  "results": [
+                    {
+                      "workerIndex": 2,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 4602,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-11T06:55:12.022Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "C:\\Users\\mille\\OneDrive\\Hotel\\Documentos hóspedes\\Guest-Flow-Manager\\e2e\\suites\\03-pairwise-matrix.spec.mjs",
+                            "line": 19,
+                            "column": 15
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "ee4eb678168193b9785b-c6c82765659a8feb0ddc",
+              "file": "03-pairwise-matrix.spec.mjs",
+              "line": 599,
               "column": 3
             }
           ]
@@ -880,8 +868,8 @@
   ],
   "errors": [],
   "stats": {
-    "startTime": "2026-10-11T06:29:48.549Z",
-    "duration": 92213.907,
+    "startTime": "2026-10-11T06:53:53.793Z",
+    "duration": 83788.878,
     "expected": 12,
     "skipped": 0,
     "unexpected": 0,

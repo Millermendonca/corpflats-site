@@ -984,6 +984,388 @@ function handleCommitReservation(db, args = {}) {
   };
 }
 
+// ── Mapeamento Contínuo de Demandas Sem Acesso & Oportunidades de Automação ──
+
+export const UNMET_DEMAND_CATEGORIES = {
+  efetivacao_reserva: {
+    category: "efetivacao_reserva",
+    title: "Efetivação de Reserva no PMS",
+    defaultSuggested: "Ativar a chave 'commitReservation' no painel de Ações do Bot para permitir confirmação automática."
+  },
+  cotacao_diarias: {
+    category: "cotacao_diarias",
+    title: "Cálculo de Orçamento / Cotação",
+    defaultSuggested: "Ativar a chave 'calculateQuote' no painel de Ações do Bot para cálculos automatizados."
+  },
+  consulta_disponibilidade: {
+    category: "consulta_disponibilidade",
+    title: "Consulta de Vagas e Disponibilidade",
+    defaultSuggested: "Ativar a chave 'checkAvailability' no painel de Ações do Bot para consulta em tempo real."
+  },
+  geracao_pix: {
+    category: "geracao_pix",
+    title: "Geração de Cobrança / PIX",
+    defaultSuggested: "Ativar a chave 'generatePayment' no painel de Ações do Bot para envio de PIX automático."
+  },
+  pre_reserva: {
+    category: "pre_reserva",
+    title: "Criação de Pré-Reserva com Hold",
+    defaultSuggested: "Ativar a chave 'createPreReservation' no painel de Ações do Bot para bloqueio temporário."
+  },
+  cancelamento_reserva: {
+    category: "cancelamento_reserva",
+    title: "Cancelamento e Estorno de Reserva",
+    defaultSuggested: "Desenvolver endpoint de cancelamento com política de reembolso e estorno."
+  },
+  alteracao_datas: {
+    category: "alteracao_datas",
+    title: "Alteração de Datas e Remarcação",
+    defaultSuggested: "Desenvolver fluxo autônomo de remarcação com recálculo de diárias."
+  },
+  enxoval_toalhas: {
+    category: "enxoval_toalhas",
+    title: "Solicitação de Enxoval / Toalhas Extras",
+    defaultSuggested: "Integrar com fila de governança para solicitação automática de itens de enxoval."
+  },
+  chamado_manutencao: {
+    category: "chamado_manutencao",
+    title: "Abertura de Chamado de Manutenção",
+    defaultSuggested: "Integrar com ordens de serviço (serviceOrders) para abertura automática de chamados."
+  },
+  limpeza_avulsa: {
+    category: "limpeza_avulsa",
+    title: "Solicitação de Limpeza Avulsa",
+    defaultSuggested: "Integrar com agendamento de limpezas da equipe de camareiras."
+  },
+  late_checkout: {
+    category: "late_checkout",
+    title: "Solicitação de Late Check-out",
+    defaultSuggested: "Desenvolver checagem automática de disponibilidade pós-12h com cobrança proporcional."
+  },
+  garagem_veiculo: {
+    category: "garagem_veiculo",
+    title: "Cadastro / Alteração de Placa de Veículo",
+    defaultSuggested: "Criar ferramenta para registrar e autorizar veículo diretamente em garageAuthorizations."
+  },
+  emissao_nota_fiscal: {
+    category: "emissao_nota_fiscal",
+    title: "Solicitação de Emissão de Nota Fiscal",
+    defaultSuggested: "Integrar com módulo fiscal (invoices) para emissão e envio automático de PDF/XML da NF."
+  },
+  troca_flat: {
+    category: "troca_flat",
+    title: "Solicitação de Troca de Quarto / Flat",
+    defaultSuggested: "Criar fluxo de verificação de troca de UH no PMS com confirmação da recepção."
+  },
+  cafe_quarto: {
+    category: "cafe_quarto",
+    title: "Solicitação de Café no Quarto",
+    defaultSuggested: "Integrar com módulo de produção de café da manhã para entrega no flat."
+  },
+  operacoes_sistema_pausadas: {
+    category: "operacoes_sistema_pausadas",
+    title: "Operação com Chave Mestra Pausada",
+    defaultSuggested: "Reativar Chave Mestra Global de Ações do Bot no painel do Agente de IA."
+  },
+  outros: {
+    category: "outros",
+    title: "Demanda Não Mapeada com Transbordo Humano",
+    defaultSuggested: "Analisar mensagem para mapear novo recurso ou ferramenta de automação no bot."
+  }
+};
+
+export function classifyUnmetDemand(text = "", actionTarget = null, explicitReason = null) {
+  const cleanText = String(text || "").trim();
+  const lower = cleanText.toLowerCase();
+
+  // 1. Se veio por target de ação do sistema (chave desativada)
+  if (actionTarget) {
+    if (actionTarget === "commitReservation") {
+      return {
+        category: "efetivacao_reserva",
+        demandTitle: UNMET_DEMAND_CATEGORIES.efetivacao_reserva.title,
+        reason: "action_disabled",
+        actionTarget,
+        suggestedFeature: UNMET_DEMAND_CATEGORIES.efetivacao_reserva.defaultSuggested
+      };
+    }
+    if (actionTarget === "calculateQuote") {
+      return {
+        category: "cotacao_diarias",
+        demandTitle: UNMET_DEMAND_CATEGORIES.cotacao_diarias.title,
+        reason: "action_disabled",
+        actionTarget,
+        suggestedFeature: UNMET_DEMAND_CATEGORIES.cotacao_diarias.defaultSuggested
+      };
+    }
+    if (actionTarget === "checkAvailability") {
+      return {
+        category: "consulta_disponibilidade",
+        demandTitle: UNMET_DEMAND_CATEGORIES.consulta_disponibilidade.title,
+        reason: "action_disabled",
+        actionTarget,
+        suggestedFeature: UNMET_DEMAND_CATEGORIES.consulta_disponibilidade.defaultSuggested
+      };
+    }
+    if (actionTarget === "generatePayment") {
+      return {
+        category: "geracao_pix",
+        demandTitle: UNMET_DEMAND_CATEGORIES.geracao_pix.title,
+        reason: "action_disabled",
+        actionTarget,
+        suggestedFeature: UNMET_DEMAND_CATEGORIES.geracao_pix.defaultSuggested
+      };
+    }
+    if (actionTarget === "createPreReservation") {
+      return {
+        category: "pre_reserva",
+        demandTitle: UNMET_DEMAND_CATEGORIES.pre_reserva.title,
+        reason: "action_disabled",
+        actionTarget,
+        suggestedFeature: UNMET_DEMAND_CATEGORIES.pre_reserva.defaultSuggested
+      };
+    }
+  }
+
+  // 2. Se a razão explícita for chave mestra desativada
+  if (explicitReason === "master_switch_disabled") {
+    return {
+      category: "operacoes_sistema_pausadas",
+      demandTitle: UNMET_DEMAND_CATEGORIES.operacoes_sistema_pausadas.title,
+      reason: "action_disabled",
+      actionTarget: null,
+      suggestedFeature: UNMET_DEMAND_CATEGORIES.operacoes_sistema_pausadas.defaultSuggested
+    };
+  }
+
+  // 3. Regras de Heurística Semântica para Novas Funcionalidades / Gaps
+  if (/\b(?:cancelar|cancelamento|cancele|desistir|desisti|estorno|estornar)\b/i.test(lower)) {
+    return {
+      category: "cancelamento_reserva",
+      demandTitle: UNMET_DEMAND_CATEGORIES.cancelamento_reserva.title,
+      reason: "capability_missing",
+      actionTarget: null,
+      suggestedFeature: UNMET_DEMAND_CATEGORIES.cancelamento_reserva.defaultSuggested
+    };
+  }
+
+  if (/\b(?:alterar|mudar|trocar|adiar|antecipar|remarcar)\s+(?:as?|os?|minhas?|meus?|de)?\s*(?:data|datas|check-?in|check-?out|dia|dias|estadia|periodo|per[ií]odo)\b/i.test(lower)) {
+    return {
+      category: "alteracao_datas",
+      demandTitle: UNMET_DEMAND_CATEGORIES.alteracao_datas.title,
+      reason: "capability_missing",
+      actionTarget: null,
+      suggestedFeature: UNMET_DEMAND_CATEGORIES.alteracao_datas.defaultSuggested
+    };
+  }
+
+  if (/\b(?:toalha|toalhas|len[cç]ol|len[cç][oó]is|travesseiro|travesseiros|cobertor|cobertores|enxoval|manta|edredom)\b/i.test(lower)) {
+    return {
+      category: "enxoval_toalhas",
+      demandTitle: UNMET_DEMAND_CATEGORIES.enxoval_toalhas.title,
+      reason: "capability_missing",
+      actionTarget: null,
+      suggestedFeature: UNMET_DEMAND_CATEGORIES.enxoval_toalhas.defaultSuggested
+    };
+  }
+
+  if (/\b(?:ar\s*(?:condicionado|split)?\s*(?:n[aã]o\s*gela|parou|quebrou|n[aã]o\s*liga)|chuveiro\s*(?:n[aã]o\s*esquenta|queimou|frio)|vazamento|pia\s*entupida|vaso\s*entupido|l[aâ]mpada\s*queimada|fechadura|porta\s*(?:n[aã]o\s*abre|emperrou)|tv\s*(?:n[aã]o\s*liga|sem\s*sinal)|manuten[cç][aã]o)\b/i.test(lower)) {
+    return {
+      category: "chamado_manutencao",
+      demandTitle: UNMET_DEMAND_CATEGORIES.chamado_manutencao.title,
+      reason: "capability_missing",
+      actionTarget: null,
+      suggestedFeature: UNMET_DEMAND_CATEGORIES.chamado_manutencao.defaultSuggested
+    };
+  }
+
+  if (/\b(?:limpeza\s*(?:extra|avulsa|hoje|agora)|pedir\s*(?:limpeza|faxina)|faxina|camareira\s*(?:no\s*quarto|pode\s*limpar)|limpar\s*(?:o\s*)?(?:meu\s*)?quarto\s*(?:hoje|agora))\b/i.test(lower)) {
+    return {
+      category: "limpeza_avulsa",
+      demandTitle: UNMET_DEMAND_CATEGORIES.limpeza_avulsa.title,
+      reason: "capability_missing",
+      actionTarget: null,
+      suggestedFeature: UNMET_DEMAND_CATEGORIES.limpeza_avulsa.defaultSuggested
+    };
+  }
+
+  if (/\b(?:late\s*check-?out|sair\s*mais\s*tarde|sa[ií]da\s*tardia|estender\s*(?:a\s*)?(?:estadia|sa[ií]da|di[aá]ria)|desocupar\s*mais\s*tarde|sair\s*(?:as|às)\s*(?:1[3-9]|20)\b)/i.test(lower)) {
+    return {
+      category: "late_checkout",
+      demandTitle: UNMET_DEMAND_CATEGORIES.late_checkout.title,
+      reason: "capability_missing",
+      actionTarget: null,
+      suggestedFeature: UNMET_DEMAND_CATEGORIES.late_checkout.defaultSuggested
+    };
+  }
+
+  if (/\b(?:placa|garagem|estacionamento|cadastrar\s*ve[ií]culo|trocar\s*de\s*carro|mudei\s*de\s*carro|carro\s*novo|autorizar\s*carro)\b/i.test(lower)) {
+    return {
+      category: "garagem_veiculo",
+      demandTitle: UNMET_DEMAND_CATEGORIES.garagem_veiculo.title,
+      reason: "capability_missing",
+      actionTarget: null,
+      suggestedFeature: UNMET_DEMAND_CATEGORIES.garagem_veiculo.defaultSuggested
+    };
+  }
+
+  if (/\b(?:nota\s*fiscal|nf|nfe|fatura|recibo\s*fiscal|comprovante\s*fiscal|cnpj\s*(?:na\s*nota)?)\b/i.test(lower)) {
+    return {
+      category: "emissao_nota_fiscal",
+      demandTitle: UNMET_DEMAND_CATEGORIES.emissao_nota_fiscal.title,
+      reason: "capability_missing",
+      actionTarget: null,
+      suggestedFeature: UNMET_DEMAND_CATEGORIES.emissao_nota_fiscal.defaultSuggested
+    };
+  }
+
+  if (/\b(?:trocar\s*de\s*(?:quarto|flat|apartamento)|mudar\s*de\s*(?:quarto|flat|apartamento)|outro\s*flat|andar\s*mais\s*alto)\b/i.test(lower)) {
+    return {
+      category: "troca_flat",
+      demandTitle: UNMET_DEMAND_CATEGORIES.troca_flat.title,
+      reason: "capability_missing",
+      actionTarget: null,
+      suggestedFeature: UNMET_DEMAND_CATEGORIES.troca_flat.defaultSuggested
+    };
+  }
+
+  if (/\b(?:caf[eé]\s*(?:da\s*manh[aã])?\s*(?:no\s*quarto|servido\s*no\s*quarto)|room\s*service|delivery\s*de\s*caf[eé])\b/i.test(lower)) {
+    return {
+      category: "cafe_quarto",
+      demandTitle: UNMET_DEMAND_CATEGORIES.cafe_quarto.title,
+      reason: "capability_missing",
+      actionTarget: null,
+      suggestedFeature: UNMET_DEMAND_CATEGORIES.cafe_quarto.defaultSuggested
+    };
+  }
+
+  return {
+    category: "outros",
+    demandTitle: UNMET_DEMAND_CATEGORIES.outros.title,
+    reason: explicitReason || "requires_operator",
+    actionTarget: null,
+    suggestedFeature: UNMET_DEMAND_CATEGORIES.outros.defaultSuggested
+  };
+}
+
+export function findExistingUnmetDemand(db, category, text, cleanPhone) {
+  if (!db || !Array.isArray(db.unmetDemands)) return null;
+
+  return db.unmetDemands.find(item => {
+    if (!item || item.status === "descartada" || item.status === "implementada") return false;
+    if (item.category !== category) return false;
+
+    // Se tiver telefone e for a mesma categoria, agrupa com alta preferência
+    if (cleanPhone && Array.isArray(item.clientPhones) && item.clientPhones.some(p => matchClientPhone(p, cleanPhone))) {
+      return true;
+    }
+
+    // Se for a mesma categoria e não for 'outros'
+    if (category !== "outros") {
+      return true;
+    }
+
+    const itemText = (item.rawMessage || "").toLowerCase();
+    const curText = (text || "").toLowerCase();
+    return itemText === curText || (item.variations || []).some(v => v.toLowerCase() === curText);
+  });
+}
+
+export function detectAndRecordUnmetDemand({
+  db,
+  text,
+  senderPhone,
+  senderName,
+  guestContext = null,
+  actionTarget = null,
+  reason = null,
+  saveDatabase = null,
+  createNotification = null
+}) {
+  if (!db) return null;
+  if (!Array.isArray(db.unmetDemands)) db.unmetDemands = [];
+
+  const rawText = String(text || "").trim();
+  if (!rawText && !actionTarget) return null;
+
+  const cleanPhone = cleanWhatsAppPhone(senderPhone) || String(senderPhone || "").replace(/\D/g, "");
+
+  // Descarta mensagens que são apenas saudações ou despedidas sem demanda
+  if (rawText && !actionTarget) {
+    const isGreeting = /^(?:oi|ol[aá]|opa|ei|bom dia|boa tarde|boa noite|tchau|obrigado|obrigada|valeu|ok|beleza|sim|n[aã]o)[.!?\s]*$/i.test(rawText);
+    if (isGreeting) return null;
+  }
+
+  const classification = classifyUnmetDemand(rawText, actionTarget, reason);
+  const now = new Date().toISOString();
+
+  // Verifica se já existe uma demanda em aberto similar
+  const existing = findExistingUnmetDemand(db, classification.category, rawText, cleanPhone);
+
+  if (existing) {
+    existing.occurrencesCount = (existing.occurrencesCount || 1) + 1;
+    existing.lastDetectedAt = now;
+    if (rawText && Array.isArray(existing.variations) && !existing.variations.includes(rawText)) {
+      existing.variations.push(rawText);
+      if (existing.variations.length > 20) existing.variations = existing.variations.slice(-20);
+    }
+    if (cleanPhone && Array.isArray(existing.clientPhones) && !existing.clientPhones.includes(cleanPhone)) {
+      existing.clientPhones.push(cleanPhone);
+    }
+    if (senderName && senderName !== "Hóspede" && (!existing.senderName || existing.senderName === "Hóspede")) {
+      existing.senderName = senderName;
+    }
+    if (guestContext && Object.keys(guestContext).length > 0) {
+      existing.guestContext = { ...(existing.guestContext || {}), ...guestContext };
+    }
+    if (typeof saveDatabase === "function") {
+      try { saveDatabase("unmet_demand_updated"); } catch (_) {}
+    }
+    return existing;
+  }
+
+  // Cria novo registro de demanda
+  const randomSuffix = Math.random().toString(36).substring(2, 7);
+  const newDemand = {
+    id: `demand_${Date.now()}_${randomSuffix}`,
+    category: classification.category,
+    demandTitle: classification.demandTitle,
+    reason: classification.reason,
+    actionTarget: classification.actionTarget || null,
+    suggestedFeature: classification.suggestedFeature,
+    rawMessage: rawText,
+    variations: rawText ? [rawText] : [],
+    senderPhone: cleanPhone,
+    clientPhones: cleanPhone ? [cleanPhone] : [],
+    senderName: senderName || "Hóspede",
+    guestContext: guestContext || null,
+    status: "nova",
+    occurrencesCount: 1,
+    firstDetectedAt: now,
+    lastDetectedAt: now,
+    adminNotes: ""
+  };
+
+  db.unmetDemands.unshift(newDemand);
+
+  if (typeof saveDatabase === "function") {
+    try { saveDatabase("unmet_demand_created"); } catch (_) {}
+  }
+
+  if (typeof createNotification === "function") {
+    try {
+      createNotification("demanda_ia", `💡 Nova Demanda Mapeada: ${newDemand.demandTitle} (${senderName || cleanPhone})`, {
+        link: "/whatsapp-automation?tab=demands_backlog",
+        demandId: newDemand.id
+      });
+    } catch (_) {}
+  }
+
+  console.log(`[Demandas IA] Nova demanda mapeada: "${newDemand.demandTitle}" (Motivo: ${newDemand.reason}, Categoria: ${newDemand.category})`);
+
+  return newDemand;
+}
+
 /**
  * Executa uma ação interna do bot com checagem de permissão e chave mestra
  */
@@ -991,6 +1373,18 @@ export async function executeBotAction(db, actionName, args = {}) {
   const settings = getBotActionsSettings(db);
 
   if (!settings.apiActionsEnabled || !settings.allowedActions?.[actionName]) {
+    try {
+      detectAndRecordUnmetDemand({
+        db,
+        text: args.messageText || `Tentativa de acionar a ação '${actionName}'`,
+        senderPhone: args.phone || args.guestPhone || "",
+        senderName: args.guestName || "Hóspede",
+        guestContext: args.guestContext || null,
+        actionTarget: actionName,
+        reason: "action_disabled"
+      });
+    } catch (_) {}
+
     return {
       error: "ACTION_DISABLED",
       action: actionName,
@@ -1850,6 +2244,34 @@ export async function processAiInboundMessage({
     });
   }
 
+  // 6.6. Mapeamento de Demandas Não Atendidas & Oportunidades de Automação
+  let unmetDemand = null;
+  const isActionDisabled = Boolean(
+    aiResult.functionResult?.error === "ACTION_DISABLED" ||
+    (aiResult.requiresHandover && aiResult.functionCall)
+  );
+  const actionTarget = aiResult.functionCall?.name || (aiResult.functionResult?.action || null);
+  const demandClassification = classifyUnmetDemand(incomingInfo.text, isActionDisabled ? actionTarget : null);
+  const isOperationalDemand = demandClassification.category !== "outros" && demandClassification.category !== "operacoes_sistema_pausadas";
+
+  if (isActionDisabled || aiResult.shouldHandover || aiResult.requiresHandover || isOperationalDemand) {
+    try {
+      unmetDemand = detectAndRecordUnmetDemand({
+        db,
+        text: incomingInfo.text,
+        senderPhone: incomingInfo.senderPhone || cleanTarget,
+        senderName: incomingInfo.senderName || conv?.name || "Hóspede",
+        guestContext: aiResult.guestContext || null,
+        actionTarget: isActionDisabled ? actionTarget : null,
+        reason: isActionDisabled ? "action_disabled" : (aiResult.shouldHandover ? "capability_missing" : "requires_operator"),
+        saveDatabase,
+        createNotification
+      });
+    } catch (demErr) {
+      console.warn("[Demandas IA] Erro ao registrar demanda não atendida:", demErr.message);
+    }
+  }
+
   // 7. Se for transbordo humano:
   if (aiResult.shouldHandover) {
     if (conv) {
@@ -1896,7 +2318,9 @@ export async function processAiInboundMessage({
       handover: true,
       replyText: aiResult.replyText,
       unmappedFaqCreated: Boolean(unmappedFaq),
-      unmappedFaq
+      unmappedFaq,
+      unmetDemandCreated: Boolean(unmetDemand),
+      unmetDemand
     };
   }
 
@@ -1936,6 +2360,8 @@ export async function processAiInboundMessage({
     source: aiResult.source,
     modelUsed: aiResult.modelUsed,
     unmappedFaqCreated: Boolean(unmappedFaq),
-    unmappedFaq
+    unmappedFaq,
+    unmetDemandCreated: Boolean(unmetDemand),
+    unmetDemand
   };
 }

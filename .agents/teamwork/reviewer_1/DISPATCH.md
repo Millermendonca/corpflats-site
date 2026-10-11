@@ -1,22 +1,27 @@
-## 2026-09-29T05:50:49Z
-You are Reviewer 1 for the Guest-Flow-Manager governance and integrity overhaul.
-Your working directory is: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/reviewer_1
-You MUST read:
-1. c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/ORIGINAL_REQUEST.md (MANDATORY: read this first!)
-2. c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/PROJECT.md
-3. c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/TEST_READY.md
-4. c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/reviewer_1/context.md
+# Reviewer 1 Dispatch: E2E Testing Suite Verification (M1, M2, M3)
 
-Tasks:
-- Objectively review the entire work product across backend, frontend, database, and tests.
-- Verify that every acceptance criterion in ORIGINAL_REQUEST.md is fully satisfied:
-  - Flat 512 remains clean definitively without auto-reversion.
-  - Flat 904 displays cleaning order only on correct date (29/09) with distinct visual date mode indicator in dashboard.
-  - Flat 313 has zero false pending from 25/09 and displays Felipe's correct stay.
-  - Flat 511 note and maid assignment corrected, Grazi has zero off-duty credits on 26/09.
-  - Reservation RES-712-0291 and cleaning 1351 properly allocated to Flat 712.
-  - Full test suite runs with 100% success (`node --test tests/governance-integrity.test.mjs`).
-  - Frontend production build (`artifacts/limpeza/dist/`) updated.
-- Verify byte-for-byte dual-server synchronization (`git diff --no-index artifacts/api-server/demo-server.mjs scripts/demo-server.mjs`).
-- Deliver your review report and 5-component handoff.md with a definitive verdict: APPROVE or REQUEST_CHANGES.
-- Message the orchestrator when complete.
+## Instructions
+Read `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (specifically section `## 2026-10-11T00:38:03Z`).
+Read `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\PROJECT.md`.
+Read handoff reports from:
+- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m1_sandbox\handoff.md`
+- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m2_crawler\handoff.md`
+- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\worker_m3_journeys\handoff.md`
+
+## Mission
+Independently review the E2E synthetic testing suite for M1 (Sandbox Local Isolado & Interceptadores), M2 (Universal 45 Screens Crawler & Sanity), and M3 (Human Journeys & Anti-Frustration):
+1. Verify `e2e/sandbox/` architecture and mock servers (Z-API WhatsApp, SMTP Nodemailer, PIX simulator, time-travel).
+2. Verify `e2e/suites/01-crawler-45-screens.spec.mjs` visits 100% of the 45 functional screens across Desktop, Tablet, and Mobile with zero white screen and zero console.errors.
+3. Verify `e2e/suites/02-human-journeys.spec.mjs` implements all 7 anti-frustration journeys.
+4. Run verification commands (e.g. `node e2e/runner.mjs e2e/suites/02-human-journeys.spec.mjs` or sandbox verify).
+5. Verify twin-server parity: `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs` must have identical SHA-256 hash.
+6. Issue a clear verdict: `APPROVE` or `REQUEST_CHANGES`.
+
+Write your full report to `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_1\handoff.md`.
+
+
+## 2026-10-11T06:34:41Z
+Você é o Reviewer 1 (E2E Testing Suite Verification - M1, M2, M3).
+Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_1
+Leia atentamente c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_1\DISPATCH.md e c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md.
+Revise os módulos M1 (Sandbox & Mocks), M2 (45 Telas Crawler) e M3 (Jornadas Humanas). Execute os testes de verificação e emita seu parecer formal: APPROVE ou REQUEST_CHANGES. Escreva seu relatório em c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\reviewer_1\handoff.md.

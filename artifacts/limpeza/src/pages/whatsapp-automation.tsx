@@ -51,11 +51,14 @@ import {
   RotateCcw,
   FileText,
   Workflow,
-  Bot
+  Bot,
+  Lightbulb
 } from "lucide-react"
 import { AccessDenied } from "@/components/access-denied"
 import { useQuickMessages, WhatsAppQuickMessage, renderQuickMessage } from "@/hooks/use-quick-messages"
 import { FaqKnowledgeBase } from "@/components/faq-knowledge-base"
+import { BotDemandsBacklog } from "@/components/bot-demands-backlog"
+import { useBotDemands } from "@/hooks/use-bot-demands"
 
 interface ButtonAction {
   id: string
@@ -455,6 +458,10 @@ export default function WhatsappAutomation() {
     deleteQuickMessage,
     resetQuickMessages
   } = useQuickMessages()
+
+  // Oportunidades de Automação & Demandas Sem Acesso
+  const { stats: botDemandsStats } = useBotDemands()
+  const pendingDemandsCount = botDemandsStats?.openDemands ?? 0
 
   const [qmModalOpen, setQmModalOpen] = useState(false)
   const [editingQm, setEditingQm] = useState<WhatsAppQuickMessage | null>(null)
@@ -1694,10 +1701,19 @@ export default function WhatsappAutomation() {
 
         {/* Tabs Principais */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 w-full md:w-auto rounded-xl p-1 bg-muted/60">
+          <TabsList className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 w-full md:w-auto rounded-xl p-1 bg-muted/60">
             <TabsTrigger value="ai_agent" className="rounded-lg text-xs font-bold gap-1.5">
               <Bot className="w-3.5 h-3.5 text-blue-500" />
               🤖 Agente de IA
+            </TabsTrigger>
+            <TabsTrigger value="demands_backlog" className="rounded-lg text-xs font-bold gap-1.5 relative">
+              <Lightbulb className="w-3.5 h-3.5 text-amber-500" />
+              <span>Oportunidades IA</span>
+              {pendingDemandsCount > 0 && (
+                <span className="ml-1 px-1.5 py-0.2 text-[10px] rounded-full bg-amber-600 text-white font-black">
+                  {pendingDemandsCount}
+                </span>
+              )}
             </TabsTrigger>
             <TabsTrigger value="rules" className="rounded-lg text-xs font-bold gap-1.5">
               <Zap className="w-3.5 h-3.5 text-amber-500" />
@@ -3551,6 +3567,13 @@ export default function WhatsappAutomation() {
           ════════════════════════════════════════════════════════════════════ */}
           <TabsContent value="faq" className="space-y-6">
             <FaqKnowledgeBase />
+          </TabsContent>
+
+          {/* ════════════════════════════════════════════════════════════════════
+              ABA: OPORTUNIDADES DE AUTOMAÇÃO & DEMANDAS NÃO ATENDIDAS
+          ════════════════════════════════════════════════════════════════════ */}
+          <TabsContent value="demands_backlog" className="space-y-6">
+            <BotDemandsBacklog onNavigateToAiAgent={() => setActiveTab("ai_agent")} />
           </TabsContent>
 
           {/* ════════════════════════════════════════════════════════════════════

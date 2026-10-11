@@ -1,224 +1,168 @@
-# Forensic Integrity Audit & Handoff Report
+# Relatório de Handoff — Auditoria Forense de Integridade (E2E Synthetic Testing Suite)
 
-**Work Product**: Guest-Flow-Manager Governance & Integrity Overhaul (`artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, `artifacts/limpeza/src/pages/dashboard.tsx`, `artifacts/limpeza/src/components/flat-card.tsx`, `data/database.json`, `tests/governance-integrity.test.mjs`)  
-**Profile**: General Project  
-**Integrity Mode**: Development (per `ORIGINAL_REQUEST.md` line 8)  
-**Definitive Verdict**: **CLEAN**
+**Auditor**: `auditor_1` (Forensic Auditor — teamwork_preview_auditor)  
+**Parent Agent**: `5a1d1171-401e-4601-9229-45485822d731` (Orchestrator Lead Architect)  
+**Data**: 2026-10-11T06:52:00Z  
+**Veredito Forense**: **CLEAN**  
 
 ---
 
-## Forensic Audit Summary
+## Forensic Audit Report
+
+**Work Product**: Suíte de Testes Sintéticos E2E (`e2e/`), Mocks & Sandbox Isolado (`e2e/sandbox/`), Relatório HTML Consolidado (`e2e/reports/`), Servidores Gêmeos (`artifacts/api-server/` vs `scripts/`), e Integridade de Dados (`data/database.json`).  
+**Profile**: General Project  
+**Integrity Mode**: Development (per `ORIGINAL_REQUEST.md` line 8)  
+**Verdict**: **CLEAN**  
 
 ### Phase Results
-- **Hardcoded Output Detection**: **PASS** — Source code contains zero hardcoded test returns or mock strings.
-- **Facade Detection**: **PASS** — No dummy implementations, empty methods, or stub functions found.
-- **Pre-populated Artifact Detection**: **PASS** — Zero pre-populated test logs, result files, or fake attestation documents exist in the repository.
-- **Dual-Server Synchronization**: **PASS** — `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs` are 100% byte-for-byte identical (SHA-256: `B4B54FE1AFB0C801C956F802843C8F00669F83EE00EA2BAB1CC52A87B2E1DDC4`).
-- **Behavioral Test Verification**: **PASS** — `node --test tests/governance-integrity.test.mjs` executed natively with 90/90 passing tests across 20 suites with zero flakiness (~1.56s).
-- **Frontend Production Build Verification**: **PASS** — `npm run build` executed cleanly without errors in 16.89s producing updated distribution assets in `artifacts/limpeza/dist/public/`.
-- **Database Historical Sanitization**: **PASS** — Flats 512, 712, 313, 511, and all 19 canonical flats conform strictly to governance rules with zero orphaned checkouts and zero off-duty maid credits.
+- **Check 1: Ausência de Cheating / Facades / Mocks Fakes**: **PASS** — Validações interagem com DOM real, botões, formulários, inputs, canvas touch, dialogs e chamadas de API reais.
+- **Check 2: Imutabilidade Estrita do Banco de Produção (`data/database.json`)**: **PASS** — Hash SHA-256 verificado antes e depois da execução: `a63801585536a2ed5d3bd234867e29feb2f152cb8f77965e71670de38cb7bab3` (0 byte drift).
+- **Check 3: Paridade Byte-a-Byte Twin-Server (SHA-256)**: **PASS** — 100% de paridade idêntica entre `artifacts/api-server/` e `scripts/` em todos os arquivos de servidor executáveis.
+- **Check 4: Verificação Comportamental & Execução de Testes**: **PASS** — `verify-sandbox.mjs` executou 11/11 verificações com 100% de sucesso; testes unitários executaram com 100% de aprovação (24/24 e 11/11).
+- **Check 5: Compilação de Produção do Frontend (`artifacts/limpeza`)**: **PASS** — `npm run build` executado e concluído com código 0 em 1m 6s gerando `dist/public/` atualizado.
+- **Check 6: Governança Git & Regras AGENTS.md**: **PASS** — Identificados arquivos de trabalho modificados e prontos para a consolidação e `git push` pelo Orchestrator na Fase 8.
 
 ---
 
 ## 1. Observation
 
-### 1.1 Dual-Server Synchronization Check
-Command executed:
-```powershell
-git diff --no-index artifacts/api-server/demo-server.mjs scripts/demo-server.mjs
+### 1.1 Paridade Byte-a-Byte Twin-Server (SHA-256)
+Executado script de hashing criptográfico nos arquivos espelhados de backend:
+```bash
+node -e "const fs = require('fs'), crypto = require('crypto'); function hash(p){ return crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex'); } ['demo-server.mjs', 'whatsapp-ai-service.mjs', 'zapi-service.mjs', 'fnrh-pdf-service.mjs', 'fnrh-serpro-service.mjs', 'mail-service.mjs', 'storage-service.mjs'].forEach(f => { const h1 = hash('artifacts/api-server/' + f), h2 = hash('scripts/' + f); console.log(f, h1 === h2 ? 'PARITY OK' : 'MISMATCH', h1); });"
 ```
-Tool output:
+**Resultado verbatim**:
+```text
+demo-server.mjs PARITY OK 8301d003426921bd2c0095b4307a975620dba39446dfd0ce597af63aa36bae5a
+whatsapp-ai-service.mjs PARITY OK 4b95c6edc818916bededf865e59493ddd868f002f09897e43187eece4d744706
+zapi-service.mjs PARITY OK 49775c9abc817fbe59aa7bd1ba9a16915e511702d777d9e571486c6a399f9276
+fnrh-pdf-service.mjs PARITY OK 845254a8419ea08343a4baff7bcfd2d61d22c4376643d8103dac2a131582771b
+fnrh-serpro-service.mjs PARITY OK daadda63426434cd9925fcc25b7d726f83fec50e7f737e09bbef9500f8f4c78a
+mail-service.mjs PARITY OK 3f17611b44a6d54480434e7aa7b81d50bf436fc332523886a1548b5d036cc34c
+storage-service.mjs PARITY OK c3b6dbe78a5464d89e220e32c79e6cf56eefcbc3d33b6ec5cb35a8c5fb48fb10
 ```
-warning: in the working copy of 'artifacts/api-server/demo-server.mjs', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'scripts/demo-server.mjs', LF will be replaced by CRLF the next time Git touches it
-```
-Difference: 0 diff lines (exit code 0).
+Paridade: **100% idêntica, zero divergência**.
 
-SHA-256 Hash Verification:
-```powershell
-powershell -Command "Get-FileHash artifacts/api-server/demo-server.mjs, scripts/demo-server.mjs | Format-Table -AutoSize"
-```
-Tool output:
-```
-Algorithm Hash                                                             Path
---------- ----                                                             ----
-SHA256    B4B54FE1AFB0C801C956F802843C8F00669F83EE00EA2BAB1CC52A87B2E1DDC4 C:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\artifacts\api-server\demo-server.mjs
-SHA256    B4B54FE1AFB0C801C956F802843C8F00669F83EE00EA2BAB1CC52A87B2E1DDC4 C:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\scripts\demo-server.mjs
-```
-
-### 1.2 Backend Engine Logic Inspection (`artifacts/api-server/demo-server.mjs`)
-- **Retroactive Checkout Guard (lines 1700-1727)**:
+### 1.2 Imutabilidade Absoluta do Banco de Produção (`data/database.json`)
+Hash de `data/database.json` inspecionado antes e depois da execução completa da suíte de teste `verify-sandbox.mjs`:
+- Hash inicial: `a63801585536a2ed5d3bd234867e29feb2f152cb8f77965e71670de38cb7bab3` (tamanho: 1.190.832 bytes)
+- Hash pós-teste: `a63801585536a2ed5d3bd234867e29feb2f152cb8f77965e71670de38cb7bab3` (tamanho: 1.190.832 bytes)
+- Diferença de bytes: **0 bytes (imutabilidade estrita)**.
+- O sandbox utiliza isolamento estrito via variável de ambiente `DATABASE_FILE=data/database.test.json` e `DATA_FILE=data/database.test.json` (`e2e/sandbox/test-server.mjs`, linhas 113–114).
+- O seletor `db-seeder.mjs` (linhas 55–57) contém trava fail-safe:
   ```javascript
-  if (checkoutDate < todayStr) {
-    const nextReservation = (db.reservations || [])
-      .filter(otherR => 
-        (String(otherR.flatNumber) === String(r.flatNumber) || (r.flatId && otherR.flatId === r.flatId)) &&
-        otherR.status !== "cancelada" && otherR.status !== "cancelled" &&
-        otherR.checkinDate && otherR.checkinDate >= checkoutDate &&
-        otherR.id !== r.id && (otherR.code ? otherR.code !== r.code : true)
-      )
-      .sort((a, b) => (a.checkinDate || "").localeCompare(b.checkinDate || ""))[0];
-
-    const nextCheckinDate = nextReservation ? nextReservation.checkinDate : null;
-
-    const hasCleanBetween = (db.cleaningRequests || []).some(c => {
-      if (String(c.flatNumber) !== String(r.flatNumber) && (!r.flatId || c.flatId !== r.flatId)) return false;
-      if (c.status !== "clean") return false;
-      const cDate = c.requestDate || c.effectiveDate;
-      if (!cDate || cDate < checkoutDate) return false;
-      if (cDate <= todayStr) return true;
-      if (nextCheckinDate && cDate <= nextCheckinDate) return true;
-      return false;
-    });
-
-    if (hasCleanBetween) {
-      return;
-    }
-  }
-  ```
-- **Immunity Guards (lines 1768-1778)**:
-  ```javascript
-  if (
-    c.markedByAdmin === true ||
-    c.isCanonical === true ||
-    c.source === "admin_manual" ||
-    c.source === "manual" ||
-    c.addedBy === "admin" ||
-    Boolean(c.completedAt) ||
-    Boolean(c.assignedUserId)
-  ) {
-    return;
-  }
-  ```
-- **Note Non-Pollution Guard (lines 3461-3463)**:
-  ```javascript
-  if (!cleanItem.adminNote && other.adminNote && !other.adminNote.includes("Limpeza de check-out gerada automaticamente")) {
-    cleanItem.adminNote = other.adminNote;
-  }
-  ```
-- **Status PATCH Route Immunity Guarantee (lines 6635-6646)**:
-  ```javascript
-  if (status === "clean") {
-    const isAdmin = (userAuth ? userAuth.role === "admin" : true) || Boolean(bodyMarkedByAdmin);
-    if (isAdmin) {
-      item.markedByAdmin = true;
-    }
-    if (!item.completedAt) {
-      item.completedAt = customCompletedAt || now;
-    }
-    if (item.adminNote && item.adminNote.includes("Limpeza de check-out gerada automaticamente")) {
-      item.adminNote = null;
-    }
+  if (path.resolve(testPath) === path.resolve(prodPath)) {
+    throw new Error("[db-seeder] REFUSING TO SEED: testDbPath cannot be identical to production database.json!");
   }
   ```
 
-### 1.3 Frontend UI Logic Inspection (`artifacts/limpeza/src/...`)
-- In `dashboard.tsx` (lines 300-306, 332-360, 399-440):
-  - State variables `isToday`, `isTomorrow`, `isFuture`, `isAfter18`, `isForecastMode` are computed dynamically from `selectedDateStr` and system clock.
-  - Dedicated visual banner `"Modo Previsão (Próximo Turno)"` with badge `"Turno de Amanhã"` and explicit notice when the 18:00 automatic rollover is active.
-  - 1-click toggle buttons `"🟢 Hoje"` and `"🔮 Amanhã"` allow instant navigation between the current shift and tomorrow's forecast.
-- In `flat-card.tsx` (lines 856-866, 1103-1200):
-  - Occupancy precedence: `isOccupied` evaluates `flat.isOccupied` before checking `request?.isVacant` for future dates, preventing falsely displaying occupied flats as vacant.
-  - Card labels dynamically adapt: future dates display `"Check-out amanhã:"` or `"Saída Prevista:"` instead of past-tense `"Saiu:"`.
-  - Check-in badges display `"🟢 Entra Amanhã"` for future dates.
-  - Carry-over badge on future views is clarified to `"Pendente do turno de hoje"`.
+### 1.3 Ausência de Cheating / Facades / Mocks Fakes
+Inspeção estática e dinâmica de código nos arquivos da suíte E2E:
+1. `e2e/suites/01-crawler-45-screens.spec.mjs`:
+   - Navega via `page.goto` em cada uma das 45 telas mapeadas.
+   - Valida status HTTP < 400.
+   - Enforce de `guard.assertZeroWhiteScreen()` verificando presença de elementos DOM filhos, dimensões > 50px ou tags `svg`, `canvas`, `img`, `input`, `button`.
+   - Verifica `interactiveElementsCount > 0` e palavras-chave reais.
+2. `e2e/suites/02-human-journeys.spec.mjs`:
+   - Interage com seletores reais de formulários (`input[placeholder*='completo' i]`, `input[placeholder*='CPF' i]`).
+   - Clica no botão real "Avançar", valida renderização de imagem de CNH persistida (`img[alt='Documento']`), testa assinatura em canvas touch sem scroll de tela, valida isolamento de dados do Hóspede 2 vs Hóspede 1.
+3. `e2e/suites/03-pairwise-matrix.spec.mjs`:
+   - Realiza requisições POST para `/api/bot-actions/quote` calculando tarifas reais (validando acréscimo de taxa de limpeza R$ 70, taxa de cama extra R$ 60).
+   - Manipula horários reais via endpoint `/api/test/time-travel` testando cutoff de café das 22h.
+4. `e2e/suites/04-chaos-explorer.spec.mjs`:
+   - Executa cliques duplos rápidos com intervalo de 50ms testando idempotência de submissão.
+   - Injeta vetores reais de fuzzing (XSS, SQLi, emojis unicode, aspas não escapadas) confirmando sanitização e ausência de travamento do React.
+   - Aciona `page.goBack()` verificando listener `popstate` e sincronização do histórico do navegador.
+   - Executa auditoria heurística no DOM inspecionando 1.232 elementos reais gerando `usability-audit.json`.
+5. Mocks:
+   - `e2e/sandbox/mock-zapi.mjs`: Servidor HTTP nativo em porta 5056 gravando mensagens enviadas em memória e disparando webhooks reais para o backend.
+   - `e2e/sandbox/mock-smtp.mjs`: Servidor TCP nativo em porta 5025 implementando RFC 2822 (EHLO, AUTH, MAIL FROM, RCPT TO, DATA, RSET, QUIT) sem nenhuma biblioteca externa ou bypass fake.
 
-### 1.4 Persistent Data Store State (`data/database.json`)
-Direct inspection of database records confirmed:
-- `RES-712-0291`: Correctly allocated to `flatNumber: "712"`, `flatId: 14`. Flat 512 has 0 misallocated `RES-712-` reservations.
-- Cleaning ID 1351: Reallocated to `flatNumber: "712"`, `flatId: 14` with updated note.
-- Flat 313: Phantom dirty cleaning ID 1358 is completely eradicated. Active stay for Felipe (`RES-313-0301`, 28/09 to 02/10) carries 0 phantom dirty carryovers.
-- Flat 511: Cleaning ID 1338 reassigned to maid Cris (`assignedUserId: 2`, `assignedUsername: "Cris"`), note updated to `"Limpeza concluída por Cris em 26/09"`. Duplicate unearned credit `stmt_3_1338_20260928` removed from Grazi in `maidStatementEntries`. Cris has 1 legitimate credit entry.
-- Flat Universe: Exactly 19 active flats exist in `db.flats`, all matching canonical flat numbers. Foreign flat 502 is absent. Phantom dirty cleanings on 408 (1362), 113 (1364), and 712 (1361) are sanitized.
+### 1.4 Verificação Comportamental & Suítes de Teste
+1. Executado `node e2e/sandbox/verify-sandbox.mjs`:
+   - 11 passos executados com **100% de sucesso**:
+     - Sandbox Initialization (PID 6992): PASS
+     - API Health Check: PASS
+     - 19 Flats Integrity: PASS
+     - Production DB Isolation: PASS
+     - Time-Travel Engine (14:00, 18:00, 22:00): PASS
+     - PIX Payment Lifecycle (TxID settled): PASS
+     - Mock Z-API (WhatsApp): PASS
+     - Mock SMTP (Nodemailer): PASS
+     - Production Immutability Post-Test: PASS
+     - Teardown & Port Release: PASS
+     - Test Database Cleanup: PASS
+2. Executado `node --test tests/whatsapp-ai-agent.test.mjs`:
+   - 24/24 testes aprovados em 4.2s (0 falhas).
+3. Executado `node --test tests/bot-unmet-demands.test.mjs`:
+   - 11/11 testes aprovados em 7.3s (0 falhas).
 
-### 1.5 Automated Test Suite Execution
-Command executed:
-```powershell
-node --test tests/governance-integrity.test.mjs
-```
-Tool output:
-```
-# tests 90
-# suites 20
-# pass 90
-# fail 0
-# cancelled 0
-# skipped 0
-# todo 0
-# duration_ms 1561.9684
-```
-
-### 1.6 Frontend Production Build Execution
-Command executed:
-```powershell
-npm run build
-```
-Tool output:
-```
+### 1.5 Compilação de Produção do Frontend
+Executado `npm run build` na pasta `artifacts/limpeza`:
+```text
 > @workspace/limpeza@0.0.0 build
 > vite build --config vite.config.ts
 
-dist/public/index.html                     2.67 kB │ gzip:   0.83 kB
-dist/public/assets/index-CAuWHVw7.css    357.81 kB │ gzip:  45.28 kB
-dist/public/assets/index-BVJjErzV.js   2,916.38 kB │ gzip: 703.63 kB
-✓ built in 16.89s
+vite v7.3.6 building client environment for production...
+✓ 3357 modules transformed.
+dist/public/index.html                              2.65 kB │ gzip:   0.81 kB
+dist/public/assets/pdf.worker.min-rsCePomN.mjs  1,417.59 kB
+dist/public/assets/index.css                      390.31 kB │ gzip:  48.15 kB
+dist/public/assets/pdf.worker.min-DDwCJoSP.js       0.07 kB │ gzip:   0.09 kB
+dist/public/assets/pdf-z6sF223D.js                379.02 kB │ gzip: 114.08 kB
+dist/public/assets/index.js                     3,258.81 kB │ gzip: 785.90 kB
+✓ built in 1m 6s
 ```
+Código de saída: `0` (sucesso absoluto).
 
 ---
 
 ## 2. Logic Chain
 
-1. **Premise**: Under the Development integrity mode specified in `ORIGINAL_REQUEST.md`, work products must not contain hardcoded test return values, dummy/facade implementations, pre-populated result artifacts, or dual-server divergence.
-2. **Observation 1.1**: `git diff --no-index artifacts/api-server/demo-server.mjs scripts/demo-server.mjs` produces zero differences and identical SHA-256 hashes (`B4B54FE1AFB0C801C956F802843C8F00669F83EE00EA2BAB1CC52A87B2E1DDC4`). Therefore, backend dual-server divergence is zero.
-3. **Observation 1.2**: Inspection of `reconcileUniversalIntegrity` and `reconcileCleaningRequests` shows that immunity guards check generic properties (`markedByAdmin`, `isCanonical`, `source`, `completedAt`, `assignedUserId`), and retroactive guards compute dynamic date intervals across any flat and reservation without hardcoding flat numbers or specific IDs. Therefore, no facade or hardcoded bypasses exist in the backend engine.
-4. **Observation 1.3**: Inspection of `dashboard.tsx` and `flat-card.tsx` reveals real conditional rendering and UI controls for the 18:00 transition and card semantics, correctly resolving R2.
-5. **Observation 1.4**: Direct inspection of `data/database.json` shows that all historical corruptions identified in R3 and R4 (Flats 313, 511, 512, 712, and universal flats) were cleaned authentically while preserving all 19 active flats and 195 reservations.
-6. **Observation 1.5**: The native test suite `tests/governance-integrity.test.mjs` executes sandboxed evaluation of the real backend engine functions, UI semantics, and database invariants across 4 tiers, passing 90 out of 90 tests deterministically.
-7. **Observation 1.6**: Production frontend assets build cleanly without compilation errors, matching the code changes made.
-8. **Deduction**: Because all required functionality is genuinely implemented, verified by empirical execution, free of prohibited patterns, and fully synchronized, the work product passes all forensic criteria.
+1. **Premissa de Autenticidade**: Um sistema de testes sintéticos idôneo não pode se basear em asserções auto-certificantes ou mocks que retornam strings fixas "pass" sem passar pela lógica do servidor e do cliente.
+   - *Evidência*: A análise do código de `01-crawler-45-screens.spec.mjs`, `02-human-journeys.spec.mjs`, `03-pairwise-matrix.spec.mjs` e `04-chaos-explorer.spec.mjs` comprova que todas as interações operam sobre instâncias reais do Chrome/Playwright, verificando nós reais do DOM, disparando eventos nativos de mouse/touch e avaliando contratos de APIs REST reais.
+2. **Premissa de Imutabilidade**: Operações de teste jamais podem poluir ou corromper o banco de produção `data/database.json`.
+   - *Evidência*: O teste empírico de hash SHA-256 executado antes e após o ciclo completo de vida do sandbox comprovou 0 byte de variação (`a63801585536a2ed5d3bd234867e29feb2f152cb8f77965e71670de38cb7bab3`).
+3. **Premissa de Paridade Gêmea**: A arquitetura CorpFlats exige paridade estrita byte-a-byte entre os scripts de `artifacts/api-server/` e `scripts/`.
+   - *Evidência*: Todos os 7 arquivos de servidor executáveis espelhados possuem SHA-256 idêntico.
+4. **Premissa de Entregabilidade de Build**: Alterações no frontend devem compilar sem erros via Vite e gerar os artefatos de produção em `artifacts/limpeza/dist/public`.
+   - *Evidência*: `npm run build` concluiu com código 0 gerando bundles válidos.
+5. **Conclusão Lógica**: Não foram encontrados quaisquer vestígios de trapaça, facades ou corrupção de dados. O veredito forense é rigorosamente **CLEAN**.
 
 ---
 
 ## 3. Caveats
 
-- **External PMS Integration**: PMS webhooks or external live HTTP sync endpoints were not queried against external third-party hosts during this local offline audit; local database state and demo server reconciliation were audited comprehensively.
-- **Node.js Engine Notice**: Vite emitted a minor advisory notice regarding Node.js 20.10.0 vs 20.19+, but the build completed successfully with exit code 0 and valid bundle output.
-- No other caveats.
+- **Ambiente de Testes Local**: O teste utiliza mock local de Z-API na porta 5056 e mock SMTP na porta 5025 para garantir isolamento contra vazamento de rede e ausência de custos externos. O tráfego de rede para endpoints externos reais de Z-API não foi acionado, o que é o comportamento esperado e mandatado pelo isolamento sandbox de R1.
+- No caveats adicionais.
 
 ---
 
 ## 4. Conclusion
 
-The governance and integrity overhaul implements robust, genuine, and permanent business logic resolving all user-requested items (R1 through R4). There is zero evidence of cheating, dummy facades, hardcoded test return values, or pre-populated artifacts.
+O ecossistema de testes sintéticos E2E (M1 a M5), o sandbox isolado com interceptadores em memória, os servidores gêmeos sincronizados e a esteira de build do frontend atendem integralmente a todos os critérios forenses de integridade.
 
-**Final Verdict: CLEAN**
+**Veredito Forense Oficial**: **CLEAN**
 
 ---
 
 ## 5. Verification Method
 
-To independently reproduce and verify this audit verdict, execute the following commands in the project root:
+Para reproduzir e verificar de forma independente este resultado, execute os comandos:
 
-1. **Verify Dual-Server Synchronization**:
-   ```powershell
-   git diff --no-index artifacts/api-server/demo-server.mjs scripts/demo-server.mjs
-   ```
-   *Expected*: Zero differences returned.
+```bash
+# 1. Verificar paridade SHA-256 dos servidores gêmeos
+node -e "const fs = require('fs'), crypto = require('crypto'); function hash(p){ return crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex'); } console.log('Twin Parity:', hash('artifacts/api-server/demo-server.mjs') === hash('scripts/demo-server.mjs'));"
 
-2. **Verify Full Automated Test Suite**:
-   ```powershell
-   node --test tests/governance-integrity.test.mjs
-   ```
-   *Expected*: 90 pass, 0 fail across 20 suites.
+# 2. Executar suíte de verificação do Sandbox Isolado e Imutabilidade do DB
+node e2e/sandbox/verify-sandbox.mjs
 
-3. **Verify Frontend Build**:
-   ```powershell
-   npm run build
-   ```
-   *Expected*: Vite builds `dist/public/index.html` successfully with exit code 0.
+# 3. Executar suíte de testes unitários
+node --test tests/whatsapp-ai-agent.test.mjs
+node --test tests/bot-unmet-demands.test.mjs
 
-4. **Verify Database Consistency Invariants**:
-   ```powershell
-   node -e "const db = JSON.parse(require('fs').readFileSync('data/database.json')); console.log('Flats:', db.flats.length, 'Res 712:', (db.reservations.find(r => r.code === 'RES-712-0291') || {}).flatNumber, 'C1358:', (db.cleaningRequests.find(c => c.id === 1358) || {}).status);"
-   ```
-   *Expected*: `Flats: 19`, `Res 712: 712`, `C1358: undefined`.
+# 4. Executar build do frontend
+cd artifacts/limpeza && npm run build
+```
+
+Condição de Invalidação: Qualquer divergência de hash nos servidores gêmeos, alteração em `data/database.json` durante execução do sandbox, ou falha de compilação em `npm run build`.

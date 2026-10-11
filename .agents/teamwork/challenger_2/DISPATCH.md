@@ -1,18 +1,22 @@
-## 2026-09-29T05:50:49Z
-<USER_REQUEST>
-You are Challenger 2 for the Guest-Flow-Manager governance and integrity overhaul.
-Your working directory is: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/challenger_2
-You MUST read:
-1. c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/ORIGINAL_REQUEST.md (MANDATORY: read this first!)
-2. c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/PROJECT.md
-3. c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/TEST_READY.md
-4. c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/challenger_2/context.md
+# Challenger 2 Dispatch: Empirical Adversarial Verification of E2E Suites & Scenarios
 
-Tasks:
-- Adversarially stress-test database integrity and cross-flat consistency across all 19 active flats.
-- Check edge cases on reservation code prefixes, off-duty maid credits, and duplicate statement prevention.
-- Check server startup and integrity reconciliation idempotence under simulated repeat executions.
-- Run tests: `node --test tests/governance-integrity.test.mjs`.
-- Deliver your challenge report and 5-component handoff.md with a definitive verdict: CONFIRMED or FAILED.
-- Message the orchestrator when complete.
-</USER_REQUEST>
+## Instructions
+Read `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (specifically section `## 2026-10-11T00:38:03Z`).
+Read `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\PROJECT.md`.
+
+## Mission
+Adversarially challenge the completeness, robustness, and execution of the E2E test suites (`01-crawler-45-screens.spec.mjs`, `02-human-journeys.spec.mjs`, `03-pairwise-matrix.spec.mjs`, `04-chaos-explorer.spec.mjs`):
+1. Verify the catalog of 45 functional screens in `01-crawler-45-screens.spec.mjs` corresponds 100% to the real application pages in `artifacts/limpeza/src/pages/`.
+2. Empirically run tests in `02-human-journeys.spec.mjs` (Zero Amnésia, auto-link `/minha-conta`, vehicle details persistence, digital lock 14h, real-time PIX, mobile canvas touch, companion isolation).
+3. Empirically run tests in `03-pairwise-matrix.spec.mjs` and `04-chaos-explorer.spec.mjs`.
+4. Validate that the HTML report `e2e/reports/index.html` is properly generated, visually coherent, and has 0 missing data.
+5. Issue a clear empirical verdict: `APPROVE` or `REJECT`.
+
+Write your report to `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_2\handoff.md`.
+
+
+## 2026-10-11T06:34:42Z
+Você é o Challenger 2 (Empirical Adversarial Verification of E2E Suites & Scenarios).
+Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_2
+Leia atentamente c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_2\DISPATCH.md e c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md.
+Execute testes empíricos de estresse nas suítes 01, 02, 03 e 04, verifique a cobertura de 100% das 45 telas e a geração do relatório HTML consolidado. Emita seu parecer formal: APPROVE ou REJECT. Escreva seu relatório em c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\challenger_2\handoff.md.

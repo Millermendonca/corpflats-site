@@ -1,21 +1,12 @@
-# Progress - Challenger 2
+# Progress - Challenger 2: Empirical Adversarial Verification of E2E Suites & Scenarios
 
-Last visited: 2026-09-29T05:58:30Z
+Last visited: 2026-10-11T06:37:00Z
 
-## Status
-- [x] Initialized DISPATCH.md and BRIEFING.md
-- [x] Read MANDATORY files: ORIGINAL_REQUEST.md, PROJECT.md, TEST_READY.md, context.md
-- [x] Inspect test suite `tests/governance-integrity.test.mjs` and related source files
-- [x] Run test suite `node --test tests/governance-integrity.test.mjs` (90/90 pass)
-- [x] Design adversarial stress-test script `tests/adversarial-stress.test.mjs` checking:
-  - Database integrity & cross-flat consistency across all 19 active flats
-  - Edge cases on reservation code prefixes & non-standard booking prefixes
-  - Off-duty maid credits & duplicate statement prevention
-  - Server startup & integrity reconciliation idempotence under 100 consecutive cycles
-  - Targeted adversarial attacks on Flats 512, 904, 313, 511, 712
-- [x] Execute adversarial stress-test script empirically (23/23 pass)
-- [x] Execute combined test suites (113/113 tests pass, 0 failures, 25 suites)
-- [x] Verify frontend production build (`npm run build` in `artifacts/limpeza` successful)
-- [x] Verify dual-server byte-for-byte synchronization (SHA-256 match)
-- [ ] Compile Challenge Report & 5-Component handoff.md with verdict CONFIRMED
-- [ ] Send handoff message to orchestrator
+## Verification Plan
+1. [x] Step 1: Catalog Integrity Audit - Verify 100% correspondence between the 45 functional pages in `artifacts/limpeza/src/pages/` and `SCREEN_CATALOG` in `e2e/suites/01-crawler-45-screens.spec.mjs`.
+2. [ ] Step 2: Empirical Execution of Suite 02 (`02-human-journeys.spec.mjs`) - Run all 7 human journeys and stress-test assertions.
+3. [ ] Step 3: Empirical Execution of Suite 03 (`03-pairwise-matrix.spec.mjs`) - Run all 4 pairwise combinatorial scenarios.
+4. [ ] Step 4: Empirical Execution of Suite 04 (`04-chaos-explorer.spec.mjs`) - Run all 4 chaos explorer actions.
+5. [ ] Step 5: Empirical Execution & Validation of Suite 01 (`01-crawler-45-screens.spec.mjs`) - Validate crawler behavior across personas and viewports.
+6. [ ] Step 6: Full HTML Report Verification (`e2e/reports/index.html`) - Verify structure, modules summary, test results JSON, usability audit, and visual coherence.
+7. [ ] Step 7: Synthesize findings and formulate formal verdict (APPROVE or REJECT) in `handoff.md`.

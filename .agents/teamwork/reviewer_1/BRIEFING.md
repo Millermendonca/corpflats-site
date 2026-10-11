@@ -1,7 +1,7 @@
-# BRIEFING — 2026-09-29T05:57:30Z
+# BRIEFING — 2026-10-11T06:36:00Z
 
 ## Mission
-Review and adversarially challenge the Guest-Flow-Manager governance and integrity overhaul work product.
+Independent review and adversarial stress-testing of E2E Synthetic Testing Suite for M1 (Sandbox Local Isolado & Interceptadores), M2 (Universal 45 Screens Crawler), and M3 (Jornadas Humanas Anti-Frustração).
 
 ## 🔒 My Identity
 - Archetype: reviewer_critic
@@ -10,56 +10,46 @@ Review and adversarially challenge the Guest-Flow-Manager governance and integri
 - Original parent: 5ad82d68-5382-4b5d-b3af-ea9aa33373f7
 - Milestone: Governance and Integrity Overhaul Review
 - Instance: 1 of 1
+- Current Mission Instance: Reviewer 1 (M1, M2, M3 E2E Suite Verification)
+- Current Parent: 5a1d1171-401e-4601-9229-45485822d731
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
 - Verify every acceptance criterion in ORIGINAL_REQUEST.md
 - Adversarially stress-test assumptions, edge cases, integrity
 - Check for integrity violations (hardcoded test data, fake tests, facade logic)
+- Strict twin-server parity enforcement: artifacts/api-server/ vs scripts/
+- Zero white-screen, zero console errors, zero unintended 4xx/5xx
 
 ## Current Parent
-- Conversation ID: 5ad82d68-5382-4b5d-b3af-ea9aa33373f7
-- Updated: 2026-09-29T05:57:30Z
+- Conversation ID: 5a1d1171-401e-4601-9229-45485822d731
+- Updated: 2026-10-11T06:36:00Z
 
 ## Review Scope
 - Files to review:
-  - backend: artifacts/api-server/demo-server.mjs, scripts/demo-server.mjs
-  - frontend: artifacts/limpeza/src/pages/dashboard.tsx, artifacts/limpeza/src/components/flat-card.tsx, artifacts/limpeza/dist/...
-  - database/data: data/database.json
-  - tests: tests/governance-integrity.test.mjs, tests/adversarial-stress.test.mjs
-- Interface contracts: PROJECT.md, TEST_READY.md, ORIGINAL_REQUEST.md
-- Review criteria: Correctness, Completeness, Quality, Risk, Adversarial Stress-testing, Integrity
+  - M1: `e2e/sandbox/` (`db-seeder.mjs`, `mock-zapi.mjs`, `mock-smtp.mjs`, `pix-simulator.mjs`, `time-travel.mjs`, `test-server.mjs`, `verify-sandbox.mjs`, `cli-server.mjs`)
+  - M2: `e2e/suites/01-crawler-45-screens.spec.mjs`, `e2e/fixtures/` (`auth-fixtures.mjs`, `error-guard.mjs`), `e2e/playwright.config.mjs`, `e2e/runner.mjs`, `e2e/reporters/html-reporter.mjs`
+  - M3: `e2e/suites/02-human-journeys.spec.mjs` (Journeys 1 to 7)
+  - Twin-server parity: `artifacts/api-server/demo-server.mjs` vs `scripts/demo-server.mjs`
+- Interface contracts: PROJECT.md, ORIGINAL_REQUEST.md
+- Review criteria: Correctness, Completeness, Quality, Adversarial Robustness, Integrity (no facades, no bypasses, no hardcoded cheating)
 
 ## Key Decisions Made
-- Independent audit completed across backend, frontend, database, test runner, and build artifacts
-- Empirical execution of test suites: 113 total passing tests across 25 suites (90 in governance-integrity, 23 in adversarial-stress), 0 failures
-- Cryptographic hash verification of dual-server parity: identical SHA-256 (`b4b54fe...`)
-- Verified zero integrity violations: no hardcoded test outputs, no facade logic, no bypassed requirements
-- Final verdict issued: APPROVE
+- Commencing independent investigation across M1, M2, M3 modules and codebases.
+- Running empirical tests (`verify-sandbox.mjs`, runner on suites, twin-server parity hash).
 
 ## Artifact Index
 - DISPATCH.md — Dispatch log
-- BRIEFING.md — Situational awareness
+- BRIEFING.md — Persistent situational awareness
 - progress.md — Liveness heartbeat
-- review_report.md — Detailed review findings and adversarial challenge report
-- handoff.md — 5-component handoff report
+- handoff.md — 5-component handoff report and formal verdict
 
 ## Review Checklist
-- **Items reviewed**:
-  - `artifacts/api-server/demo-server.mjs` & `scripts/demo-server.mjs` (immunity guards, past checkout deduplication, note non-pollution, status patch)
-  - `artifacts/limpeza/src/pages/dashboard.tsx` & `flat-card.tsx` (18:00 switchover, visual forecast mode banner, 1-click toggles, card semantics, occupancy precedence)
-  - `data/database.json` (Flat 512, Flat 904, Flat 313, Flat 511, Flat 712, 19 active flats, maid statements)
-  - `artifacts/limpeza/dist/` (Production build verified, exit code 0)
-  - `tests/governance-integrity.test.mjs` & `tests/adversarial-stress.test.mjs` (all tests passing)
-- **Verdict**: APPROVE
-- **Unverified claims**: None (100% verified)
+- **Items reviewed**: Pending inspection
+- **Verdict**: Pending
+- **Unverified claims**: M1 mock isolation, M2 45 screens crawl, M3 7 journeys, twin-server parity
 
 ## Attack Surface
-- **Hypotheses tested**:
-  - Auto-reversion loop under multi-cycle reconciliation: PASSED (0 reversions)
-  - Stale PMS sync injecting past checkouts: PASSED (hasCleanBetween guard skips duplicates)
-  - Millisecond and month-end date switchovers: PASSED
-  - Foreign flat injection (flat 502): PASSED (auto-purged)
-  - Maid statement deduplication debit preservation: PASSED
-- **Vulnerabilities found**: None
-- **Untested angles**: None within governance overhaul scope
+- **Hypotheses tested**: Pending
+- **Vulnerabilities found**: Pending
+- **Untested angles**: Full suite execution, edge cases in mock and time-travel

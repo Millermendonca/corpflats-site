@@ -27,3 +27,28 @@ Your audit verdict is a BINARY VETO (CLEAN or INTEGRITY VIOLATION).
    - Verify `git log` shows recent commits are pushed to `origin main` per `AGENTS.md`.
 6. **Definitive Verdict**:
    - Deliver `CLEAN` or `INTEGRITY VIOLATION` in `audit.md` and `handoff.md`.
+
+
+## 2026-10-11T05:04:01Z
+You are the Forensic Auditor for Milestone 4 (Final Integration) for Guest-Flow-Manager.
+Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m4_auditor_1
+Project root: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager
+
+MANDATORY INSTRUCTION: You MUST read ORIGINAL_REQUEST.md before starting:
+c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
+
+Read task instructions in:
+c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m4_auditor_1\DISPATCH.md
+and the worker handoff:
+c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\m4_worker\handoff.md
+
+Perform systematic forensic integrity audit on Milestone 4:
+1. Hardcoded results check: ensure NO test bypasses, no hardcoded expected answers, no mock branches in production files.
+2. Dummy/Facade check: verify genuine business logic in prompt injection, heuristic matching, unmapped question detection, operator response capture, phone rule engine, and React UI components.
+3. Code Parity: verify 100% SHA-256 byte parity across mirrored pairs between artifacts/api-server/ and scripts/ across all 7 files.
+4. Independent test run: run `node --test tests/whatsapp-ai-agent.test.mjs` independently and confirm 24/24 pass with exit code 0.
+5. Independent build run: run `npm run build` in artifacts/limpeza and confirm exit code 0.
+6. Git check: confirm git status is clean and commits pushed to `origin main` per AGENTS.md.
+7. Port check: confirm port 5000 is clean.
+Deliver definitive verdict: CLEAN or INTEGRITY VIOLATION.
+Write audit.md and handoff.md in your working directory. Notify orchestrator via send_message.

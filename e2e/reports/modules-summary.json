@@ -29,11 +29,11 @@
     "name": "Jornadas Humanas Anti-Frustração",
     "shortName": "Jornadas Humanas M3",
     "desc": "7 Jornadas: Zero Amnésia, Multicanal, Veículos, Fechadura 14h, PIX Real-time, Canvas, Isolamento",
-    "passed": 21,
-    "total": 21,
+    "passed": 7,
+    "total": 7,
     "failed": 0,
     "status": "passed",
-    "durationMs": 156000
+    "durationMs": 49735
   },
   "m4": {
     "id": "m4",
@@ -45,7 +45,7 @@
     "total": 12,
     "failed": 0,
     "status": "passed",
-    "durationMs": 102000
+    "durationMs": 70733
   },
   "m5": {
     "id": "m5",
@@ -57,6 +57,6 @@
     "total": 12,
     "failed": 0,
     "status": "passed",
-    "durationMs": 78389
+    "durationMs": 114590
   }
 }

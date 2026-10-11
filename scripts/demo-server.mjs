@@ -66,7 +66,20 @@ import pg from "pg";
 import QRCode from "qrcode";
 import { uploadImageToStorage } from "./storage-service.mjs";
 import { MicrosoftGraphService } from "./microsoft-graph-service.mjs";
-import { initWhatsAppEngine, triggerImmediateWhatsApp, triggerRoomReadyWhatsApp, cleanWhatsAppPhone, sendZapiMessage, sendZapiOtpButton, scheduleUpcomingReservationTriggers, triggerCheckoutWhatsApp, resolveWhatsAppTags } from "./zapi-service.mjs";
+import {
+  initWhatsAppEngine,
+  triggerImmediateWhatsApp,
+  triggerRoomReadyWhatsApp,
+  cleanWhatsAppPhone,
+  sendZapiMessage,
+  sendZapiOtpButton,
+  scheduleUpcomingReservationTriggers,
+  triggerCheckoutWhatsApp,
+  resolveWhatsAppTags,
+  detectAndRecordUnmetDemand,
+  classifyUnmetDemand,
+  UNMET_DEMAND_CATEGORIES
+} from "./zapi-service.mjs";
 import { initMaidAutomationEngine } from "./maid-automation-service.mjs";
 import { sendInterPix, isInterConfigured, INTER_ENV } from "./inter-pix-service.mjs";
 import {
@@ -623,6 +636,7 @@ let db = {
   fnrhWhatsappOtps: [],
   fnrhInternalAuditLogs: [],
   faqItems: [],
+  unmetDemands: [],
   notificationSettings: {
     soundEnabled: true,
     adminWhatsApp: "5522997124021",
@@ -3954,6 +3968,7 @@ async function loadDatabase() {
       if (!db.tariffSettings) db.tariffSettings = getTariffSettings();
       if (!Array.isArray(db.tariffOverrides)) db.tariffOverrides = [];
       if (!db.botActionsSettings) db.botActionsSettings = getBotActionsSettings();
+      if (!Array.isArray(db.unmetDemands)) db.unmetDemands = [];
       reconcileUniversalIntegrity(loaded);
       sanitizeReservationFlags();
     }
@@ -21217,6 +21232,285 @@ app.post("/api/bot-actions/commit-reservation", verifyBotActionPermission("commi
       flatNumber: reservation.flatNumber,
       pmsConfirmed: true,
       message: "Reserva efetivada com sucesso no PMS, UH bloqueada permanentemente e recepção notificada."
+    });
+  } catch (err) {
+    res.status(500).json({ error: "INTERNAL_ERROR", message: err.message });
+  }
+});
+
+// ── Mapeamento Contínuo de Demandas Sem Acesso & Oportunidades de Automação ──
+
+app.get("/api/bot-demands", (req, res) => {
+  try {
+    if (!Array.isArray(db.unmetDemands)) db.unmetDemands = [];
+    let list = [...db.unmetDemands];
+
+    const { status, category, reason, search, sort } = req.query;
+
+    if (status && status !== "all") {
+      list = list.filter(d => (d.status || "aberta") === status);
+    }
+    if (category && category !== "all") {
+      list = list.filter(d => d.category === category);
+    }
+    if (reason && reason !== "all") {
+      list = list.filter(d => d.reason === reason);
+    }
+    if (search) {
+      const q = String(search).toLowerCase().trim();
+      list = list.filter(d =>
+        (d.demandTitle || "").toLowerCase().includes(q) ||
+        (d.rawMessage || "").toLowerCase().includes(q) ||
+        (d.suggestedFeature || "").toLowerCase().includes(q) ||
+        (d.senderName || "").toLowerCase().includes(q) ||
+        (d.senderPhone || "").includes(q) ||
+        (Array.isArray(d.variations) && d.variations.some(v => v.toLowerCase().includes(q))) ||
+        (Array.isArray(d.clientPhones) && d.clientPhones.some(p => p.includes(q)))
+      );
+    }
+
+    if (sort === "date") {
+      list.sort((a, b) => new Date(b.lastDetectedAt || b.createdAt || 0).getTime() - new Date(a.lastDetectedAt || a.createdAt || 0).getTime());
+    } else if (sort === "title") {
+      list.sort((a, b) => (a.demandTitle || "").localeCompare(b.demandTitle || ""));
+    } else {
+      // Default: sort by occurrencesCount descending
+      list.sort((a, b) => (b.occurrencesCount || 1) - (a.occurrencesCount || 1));
+    }
+
+    res.json({
+      success: true,
+      demands: list,
+      total: list.length
+    });
+  } catch (err) {
+    res.status(500).json({ error: "INTERNAL_ERROR", message: err.message });
+  }
+});
+
+app.get("/api/bot-demands/stats", (req, res) => {
+  try {
+    if (!Array.isArray(db.unmetDemands)) db.unmetDemands = [];
+    const list = db.unmetDemands;
+
+    let totalDemands = list.length;
+    let openDemands = 0;
+    let inAnalysisDemands = 0;
+    let plannedDemands = 0;
+    let implementedDemands = 0;
+    let discardedDemands = 0;
+    let totalOccurrences = 0;
+    let actionDisabledCount = 0;
+    let capabilityMissingCount = 0;
+    const uniquePhones = new Set();
+    const byCategory = {};
+    const byReason = {};
+
+    list.forEach(d => {
+      const st = d.status || "aberta";
+      if (st === "aberta" || st === "nova") openDemands++;
+      else if (st === "em_analise") inAnalysisDemands++;
+      else if (st === "planejada") plannedDemands++;
+      else if (st === "implementada") implementedDemands++;
+      else if (st === "descartada") discardedDemands++;
+
+      const count = Number(d.occurrencesCount || 1);
+      totalOccurrences += count;
+
+      if (d.reason === "action_disabled") actionDisabledCount++;
+      else if (d.reason === "capability_missing") capabilityMissingCount++;
+
+      if (Array.isArray(d.clientPhones)) {
+        d.clientPhones.forEach(p => { if (p) uniquePhones.add(p); });
+      } else if (d.senderPhone) {
+        uniquePhones.add(d.senderPhone);
+      }
+
+      const cat = d.category || "outros";
+      if (!byCategory[cat]) byCategory[cat] = { count: 0, occurrences: 0, title: UNMET_DEMAND_CATEGORIES?.[cat]?.title || cat };
+      byCategory[cat].count++;
+      byCategory[cat].occurrences += count;
+
+      const rsn = d.reason || "outros";
+      if (!byReason[rsn]) byReason[rsn] = { count: 0, occurrences: 0 };
+      byReason[rsn].count++;
+      byReason[rsn].occurrences += count;
+    });
+
+    const topRequested = [...list]
+      .filter(d => d.status !== "descartada")
+      .sort((a, b) => (b.occurrencesCount || 1) - (a.occurrencesCount || 1))
+      .slice(0, 5);
+
+    res.json({
+      success: true,
+      stats: {
+        totalDemands,
+        openDemands,
+        inAnalysisDemands,
+        plannedDemands,
+        implementedDemands,
+        discardedDemands,
+        totalOccurrences,
+        totalUniquePhones: uniquePhones.size,
+        actionDisabledCount,
+        capabilityMissingCount,
+        byCategory,
+        byReason,
+        topRequested,
+        categoriesCatalog: UNMET_DEMAND_CATEGORIES || {}
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: "INTERNAL_ERROR", message: err.message });
+  }
+});
+
+app.post("/api/bot-demands", (req, res) => {
+  try {
+    const { text, senderPhone, senderName, actionTarget, reason, category, demandTitle, suggestedFeature, guestContext } = req.body || {};
+
+    if (!text && !actionTarget && !category) {
+      return res.status(400).json({ error: "MISSING_DATA", message: "Informe text, actionTarget ou category." });
+    }
+
+    const demand = detectAndRecordUnmetDemand({
+      db,
+      text,
+      senderPhone,
+      senderName,
+      actionTarget,
+      reason,
+      guestContext,
+      saveDatabase,
+      createNotification
+    });
+
+    if (demand && (demandTitle || suggestedFeature || category)) {
+      if (demandTitle) demand.demandTitle = demandTitle;
+      if (suggestedFeature) demand.suggestedFeature = suggestedFeature;
+      if (category && category !== demand.category) {
+        demand.category = category;
+        demand.demandTitle = UNMET_DEMAND_CATEGORIES?.[category]?.title || demand.demandTitle;
+      }
+      saveDatabase("bot_demand_custom_saved");
+    }
+
+    res.json({
+      success: true,
+      demand
+    });
+  } catch (err) {
+    res.status(500).json({ error: "INTERNAL_ERROR", message: err.message });
+  }
+});
+
+app.patch("/api/bot-demands/:id", (req, res) => {
+  try {
+    if (!Array.isArray(db.unmetDemands)) db.unmetDemands = [];
+    const demand = db.unmetDemands.find(d => d.id === req.params.id);
+    if (!demand) {
+      return res.status(404).json({ error: "DEMAND_NOT_FOUND", message: "Demanda não encontrada." });
+    }
+
+    const { status, priority, adminNotes, suggestedFeature, category } = req.body || {};
+
+    if (status && ["aberta", "nova", "em_analise", "planejada", "implementada", "descartada"].includes(status)) {
+      demand.status = status === "nova" ? "aberta" : status;
+      demand.statusUpdatedAt = new Date().toISOString();
+    }
+    if (priority && ["alta", "media", "baixa"].includes(priority)) {
+      demand.priority = priority;
+    }
+    if (typeof adminNotes === "string") {
+      demand.adminNotes = adminNotes;
+    }
+    if (typeof suggestedFeature === "string") {
+      demand.suggestedFeature = suggestedFeature;
+    }
+    if (category && UNMET_DEMAND_CATEGORIES?.[category]) {
+      demand.category = category;
+      demand.demandTitle = UNMET_DEMAND_CATEGORIES[category].title;
+    }
+
+    demand.updatedAt = new Date().toISOString();
+    saveDatabase("bot_demand_updated");
+
+    res.json({
+      success: true,
+      demand
+    });
+  } catch (err) {
+    res.status(500).json({ error: "INTERNAL_ERROR", message: err.message });
+  }
+});
+
+app.delete("/api/bot-demands/:id", (req, res) => {
+  try {
+    if (!Array.isArray(db.unmetDemands)) db.unmetDemands = [];
+    const idx = db.unmetDemands.findIndex(d => d.id === req.params.id);
+    if (idx === -1) {
+      return res.status(404).json({ error: "DEMAND_NOT_FOUND", message: "Demanda não encontrada." });
+    }
+
+    const removed = db.unmetDemands.splice(idx, 1)[0];
+    saveDatabase("bot_demand_deleted");
+
+    res.json({
+      success: true,
+      demand: removed
+    });
+  } catch (err) {
+    res.status(500).json({ error: "INTERNAL_ERROR", message: err.message });
+  }
+});
+
+app.post("/api/bot-demands/:id/action-link", (req, res) => {
+  try {
+    if (!Array.isArray(db.unmetDemands)) db.unmetDemands = [];
+    const demand = db.unmetDemands.find(d => d.id === req.params.id);
+    if (!demand) {
+      return res.status(404).json({ error: "DEMAND_NOT_FOUND", message: "Demanda não encontrada." });
+    }
+
+    let targetAction = demand.actionTarget;
+    if (!targetAction) {
+      const catToAction = {
+        efetivacao_reserva: "commitReservation",
+        cotacao_diarias: "calculateQuote",
+        consulta_disponibilidade: "checkAvailability",
+        geracao_pix: "generatePayment",
+        pre_reserva: "createPreReservation"
+      };
+      targetAction = catToAction[demand.category];
+    }
+
+    if (!targetAction) {
+      return res.status(400).json({
+        error: "NO_ACTION_TARGET",
+        message: "Esta demanda não corresponde a uma chave de ação existente no painel do Bot."
+      });
+    }
+
+    if (!db.botActionsSettings) db.botActionsSettings = getBotActionsSettings();
+    if (!db.botActionsSettings.allowedActions) db.botActionsSettings.allowedActions = {};
+
+    db.botActionsSettings.apiActionsEnabled = true;
+    db.botActionsSettings.allowedActions[targetAction] = true;
+
+    demand.status = "implementada";
+    demand.statusUpdatedAt = new Date().toISOString();
+    const nowBr = new Date().toLocaleDateString("pt-BR");
+    demand.adminNotes = (demand.adminNotes ? demand.adminNotes + "\n" : "") + `Ação '${targetAction}' ativada nas configurações do Bot em ${nowBr}.`;
+    demand.updatedAt = new Date().toISOString();
+
+    saveDatabase("bot_demand_action_linked");
+
+    res.json({
+      success: true,
+      demand,
+      activatedAction: targetAction,
+      botActionsSettings: db.botActionsSettings
     });
   } catch (err) {
     res.status(500).json({ error: "INTERNAL_ERROR", message: err.message });

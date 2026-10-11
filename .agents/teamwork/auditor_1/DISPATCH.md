@@ -1,22 +1,31 @@
-## 2026-09-29T05:50:50Z
+# Forensic Auditor Dispatch: Integrity Verification of E2E Suite & Deliverables
 
-You are the Forensic Auditor for the Guest-Flow-Manager governance and integrity overhaul.
-Your working directory is: c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/auditor_1
-You MUST read:
-1. c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/ORIGINAL_REQUEST.md (MANDATORY: read this first!)
-2. c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/PROJECT.md
-3. c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/TEST_READY.md
-4. c:/Users/mille/OneDrive/Hotel/Documentos hóspedes/Guest-Flow-Manager/.agents/teamwork/auditor_1/context.md
+## Instructions
+Read `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (specifically section `## 2026-10-11T00:38:03Z`).
+Read `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\PROJECT.md`.
 
-Tasks:
-- Perform an exhaustive forensic integrity audit across all modified files (`artifacts/api-server/demo-server.mjs`, `scripts/demo-server.mjs`, `artifacts/limpeza/src/pages/dashboard.tsx`, `artifacts/limpeza/src/components/flat-card.tsx`, `data/database.json`, `tests/governance-integrity.test.mjs`).
-- Check for any integrity violations:
-  - Hardcoded test return values or expected outputs.
-  - Dummy or facade implementations.
-  - Fake or fabricated logs or attestation artifacts.
-  - Circumvention of core requirements.
-  - Dual-server divergence (`git diff --no-index artifacts/api-server/demo-server.mjs scripts/demo-server.mjs`).
-- Verify that every change implements genuine, robust business logic.
-- Run `node --test tests/governance-integrity.test.mjs`.
-- Deliver your forensic audit report and 5-component handoff.md with a definitive binary verdict: CLEAN or INTEGRITY VIOLATION.
-- Message the orchestrator when complete.
+## Mission
+Perform a complete, forensic integrity audit of the entire E2E synthetic testing implementation:
+1. **No Cheating / No Facades Check**:
+   - Verify that test assertions are genuine and interact with the real DOM and real API responses.
+   - Verify that no mock returns hardcoded static "all pass" strings circumventing actual business logic.
+   - Verify that tests actually exercise the backend and frontend components.
+2. **Database Immutability Check**:
+   - Verify that `data/database.json` has NOT been modified, truncated, or overwritten. Verify hash before and after execution.
+   - Verify that tests strictly use `data/database.test.json`.
+3. **Twin-Server Parity Check**:
+   - Verify byte-for-byte identity (SHA-256) between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`.
+4. **Git Compliance Check**:
+   - Check `git status`, `git log`, and ensure all changes have been built (`npm run build` in `artifacts/limpeza`), committed, and pushed to `origin main`.
+5. **Issue a clear audit verdict**:
+   - `CLEAN` (no integrity violations detected)
+   - `INTEGRITY VIOLATION` (cheating, dummy facades, data corruption detected).
+
+Write your full evidence report to `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_1\handoff.md`.
+
+
+## 2026-10-11T06:34:43Z
+Você é o Forensic Auditor (teamwork_preview_auditor).
+Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_1
+Leia atentamente c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_1\DISPATCH.md e c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md.
+Realize a auditoria forense completa de integridade: comprove ausência de cheating/facades/mocks estáticos fakes, verifique a imutabilidade absoluta do data/database.json de produção, teste a paridade byte-a-byte do twin-server (demo-server.mjs vs scripts/demo-server.mjs) e valide as regras de Git (build e push). Emita seu veredito forense estrito: CLEAN ou INTEGRITY VIOLATION. Escreva seu relatório em c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_1\handoff.md.
