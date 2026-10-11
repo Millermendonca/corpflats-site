@@ -11179,12 +11179,34 @@ app.get("/api/reservations/availability", (req, res) => {
 
     const allFlats = (db.flats || []).filter(f => !f.status || f.status !== "manutencao_bloqueada");
 
-    // Verifica flats ocupados no período
-    const occupiedFlatIds = new Set(
-      (db.reservations || [])
-        .filter(r => r.status !== "cancelada" && r.checkinDate < checkout && r.checkoutDate > checkin)
-        .map(r => String(r.flatNumber || r.flatId))
-    );
+    // Verifica flats ocupados no período (reservas ativas e holds provisórios)
+    const nowMs = Date.now();
+    const occupiedFlatIds = new Set();
+    (db.reservations || []).forEach(r => {
+      if (r.status === "cancelada" || r.status === "CANCELLED" || r.status === "expirada") return;
+      if ((r.status === "pre_reserva" || r.status === "pendente") && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") {
+        return;
+      }
+      if (r.checkinDate < checkout && r.checkoutDate > checkin) {
+        if (r.flatNumber != null) occupiedFlatIds.add(String(r.flatNumber));
+        if (r.flatId != null) occupiedFlatIds.add(String(r.flatId));
+      }
+      if (r.pendingModification && (r.pendingModification.status === "pending" || r.pendingModification.status === "pending_payment")) {
+        if (r.pendingModification.expiresAt && new Date(r.pendingModification.expiresAt).getTime() < nowMs) {
+          r.pendingModification.status = "expired";
+          r.pendingModification.expiredAt = new Date(nowMs).toISOString();
+        } else {
+          const pHoldIn = r.pendingModification.newCheckinDate || r.pendingModification.proposedCheckinDate;
+          const pHoldOut = r.pendingModification.newCheckoutDate || r.pendingModification.proposedCheckoutDate;
+          const pHoldFlatNum = r.pendingModification.newFlatNumber || r.pendingModification.proposedFlatNumber;
+          const pHoldFlatId = r.pendingModification.newFlatId || r.pendingModification.proposedFlatId;
+          if (pHoldIn && pHoldOut && pHoldIn < checkout && pHoldOut > checkin) {
+            if (pHoldFlatNum != null) occupiedFlatIds.add(String(pHoldFlatNum));
+            if (pHoldFlatId != null) occupiedFlatIds.add(String(pHoldFlatId));
+          }
+        }
+      }
+    });
 
     const availableFlats = allFlats.filter(f => !occupiedFlatIds.has(String(f.number)) && !occupiedFlatIds.has(String(f.id)));
     const totalAvailable = availableFlats.length;
@@ -11480,11 +11502,33 @@ app.post("/api/reservations/direct-booking", async (req, res) => {
 
     // 1. Busca todos os flats vagos no período
     const allFlats = (db.flats || []).filter(f => !f.status || f.status !== "manutencao_bloqueada");
-    const occupiedFlatNumbers = new Set(
-      (db.reservations || [])
-        .filter(r => r.status !== "cancelada" && r.checkinDate < checkoutDate && r.checkoutDate > checkinDate)
-        .map(r => String(r.flatNumber || r.flatId))
-    );
+    const nowMs = Date.now();
+    const occupiedFlatNumbers = new Set();
+    (db.reservations || []).forEach(r => {
+      if (r.status === "cancelada" || r.status === "CANCELLED" || r.status === "expirada") return;
+      if ((r.status === "pre_reserva" || r.status === "pendente") && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") {
+        return;
+      }
+      if (r.checkinDate < checkoutDate && r.checkoutDate > checkinDate) {
+        if (r.flatNumber != null) occupiedFlatNumbers.add(String(r.flatNumber));
+        if (r.flatId != null) occupiedFlatNumbers.add(String(r.flatId));
+      }
+      if (r.pendingModification && (r.pendingModification.status === "pending" || r.pendingModification.status === "pending_payment")) {
+        if (r.pendingModification.expiresAt && new Date(r.pendingModification.expiresAt).getTime() < nowMs) {
+          r.pendingModification.status = "expired";
+          r.pendingModification.expiredAt = new Date(nowMs).toISOString();
+        } else {
+          const pHoldIn = r.pendingModification.newCheckinDate || r.pendingModification.proposedCheckinDate;
+          const pHoldOut = r.pendingModification.newCheckoutDate || r.pendingModification.proposedCheckoutDate;
+          const pHoldFlatNum = r.pendingModification.newFlatNumber || r.pendingModification.proposedFlatNumber;
+          const pHoldFlatId = r.pendingModification.newFlatId || r.pendingModification.proposedFlatId;
+          if (pHoldIn && pHoldOut && pHoldIn < checkoutDate && pHoldOut > checkinDate) {
+            if (pHoldFlatNum != null) occupiedFlatNumbers.add(String(pHoldFlatNum));
+            if (pHoldFlatId != null) occupiedFlatNumbers.add(String(pHoldFlatId));
+          }
+        }
+      }
+    });
 
     let candidateFlats = allFlats.filter(f => !occupiedFlatNumbers.has(String(f.number)) && !occupiedFlatNumbers.has(String(f.id)));
 
@@ -15453,15 +15497,1089 @@ app.post("/api/pms/guest-portal/:code/cancel", async (req, res) => {
   });
 });
 
+// ── M1: Helpers de Hold Provisório e Detecção Canônica de Conflitos ─────────
+export function isPendingHoldActive(pending, nowMs = Date.now()) {
+  if (!pending) return false;
+  if (pending.status !== "pending" && pending.status !== "pending_payment") return false;
+  if (!pending.expiresAt) return false;
+  const expMs = new Date(pending.expiresAt).getTime();
+  if (isNaN(expMs) || expMs <= nowMs) {
+    return false;
+  }
+  return true;
+}
+
+export function expirePendingHoldIfNeeded(r, nowMs = Date.now()) {
+  if (r && r.pendingModification && (r.pendingModification.status === "pending" || r.pendingModification.status === "pending_payment")) {
+    const expMs = new Date(r.pendingModification.expiresAt).getTime();
+    if (!isNaN(expMs) && expMs <= nowMs) {
+      r.pendingModification.status = "expired";
+      r.pendingModification.expiredAt = new Date(nowMs).toISOString();
+      return true;
+    }
+  }
+  return false;
+}
+
+export function hasReservationConflict({
+  flatId,
+  flatNumber,
+  checkinDate,
+  checkoutDate,
+  excludeReservationId = null,
+  excludePendingHoldReservationId = null,
+  nowMs = Date.now()
+}) {
+  const targetFlatIdStr = flatId != null ? String(flatId) : null;
+  const targetFlatNumberStr = flatNumber != null ? String(flatNumber) : null;
+
+  // 1. Checa contra reservas ativas no PMS
+  const conflictWithReservation = (db.reservations || []).some(other => {
+    if (excludeReservationId && (other.id === excludeReservationId || String(other.id) === String(excludeReservationId) || other.code === excludeReservationId)) {
+      return false;
+    }
+    if (other.status === "cancelada" || other.status === "CANCELLED" || other.status === "expirada") {
+      return false;
+    }
+    // Expira pré-reservas vencidas
+    if ((other.status === "pre_reserva" || other.status === "pendente") && other.expiresAt) {
+      if (new Date(other.expiresAt).getTime() < nowMs && other.paymentStatus !== "pago_total") {
+        other.status = "expirada";
+        return false;
+      }
+    }
+
+    const otherFlatIdStr = other.flatId != null ? String(other.flatId) : null;
+    const otherFlatNumberStr = other.flatNumber != null ? String(other.flatNumber) : null;
+    const matchesFlat =
+      (targetFlatNumberStr && (targetFlatNumberStr === otherFlatNumberStr || targetFlatNumberStr === otherFlatIdStr)) ||
+      (targetFlatIdStr && (targetFlatIdStr === otherFlatIdStr || targetFlatIdStr === otherFlatNumberStr));
+
+    if (!matchesFlat) return false;
+
+    return checkinDate < other.checkoutDate && checkoutDate > other.checkinDate;
+  });
+
+  if (conflictWithReservation) return true;
+
+  // 2. Checa contra holds provisórios (r.pendingModification)
+  const conflictWithPendingHold = (db.reservations || []).some(other => {
+    if (excludePendingHoldReservationId && (other.id === excludePendingHoldReservationId || String(other.id) === String(excludePendingHoldReservationId) || other.code === excludePendingHoldReservationId)) {
+      return false;
+    }
+    const pending = other.pendingModification;
+    if (!pending) return false;
+    if (pending.status !== "pending" && pending.status !== "pending_payment") return false;
+
+    // Se o hold expirou, atualiza status para expired e não bloqueia
+    if (pending.expiresAt && new Date(pending.expiresAt).getTime() < nowMs) {
+      pending.status = "expired";
+      pending.expiredAt = new Date(nowMs).toISOString();
+      return false;
+    }
+
+    const pHoldIn = pending.newCheckinDate || pending.proposedCheckinDate;
+    const pHoldOut = pending.newCheckoutDate || pending.proposedCheckoutDate;
+    const pHoldFlatId = pending.newFlatId != null ? String(pending.newFlatId) : null;
+    const pHoldFlatNum = pending.newFlatNumber != null ? String(pending.newFlatNumber) : (pHoldFlatId || String(other.flatNumber));
+
+    const matchesFlat =
+      (targetFlatNumberStr && (targetFlatNumberStr === pHoldFlatNum || targetFlatNumberStr === pHoldFlatId)) ||
+      (targetFlatIdStr && (targetFlatIdStr === pHoldFlatId || targetFlatIdStr === pHoldFlatNum));
+
+    if (!matchesFlat) return false;
+
+    return checkinDate < pHoldOut && checkoutDate > pHoldIn;
+  });
+
+  if (conflictWithPendingHold) return true;
+
+  // 3. Checa contra bloqueios de manutenção (db.roomBlocks)
+  const conflictWithRoomBlock = (db.roomBlocks || []).some(b => {
+    const bFlatId = b.flatId != null ? String(b.flatId) : null;
+    const bFlatNum = b.flatNumber != null ? String(b.flatNumber) : null;
+    const matchesFlat =
+      (targetFlatNumberStr && (targetFlatNumberStr === bFlatNum || targetFlatNumberStr === bFlatId)) ||
+      (targetFlatIdStr && (targetFlatIdStr === bFlatId || targetFlatIdStr === bFlatNum));
+
+    if (!matchesFlat) return false;
+
+    return checkinDate < b.endDate && checkoutDate > b.startDate;
+  });
+
+  if (conflictWithRoomBlock) return true;
+
+  return false;
+}
+
+// ── M1: Função de Commit Atômico da Modificação Liquidada ───────────────────
+export async function commitPendingModification(r, pending, {
+  amount = null,
+  paidAt = null,
+  endToEndId = null,
+  txId = null,
+  paymentMethod = "pix",
+  source = "Banco Inter"
+} = {}) {
+  if (!r || !pending) return { success: false, error: "Reserva ou alteração pendente ausente." };
+
+  const additionalPaid = Number(amount !== null ? amount : pending.additionalAmountToPay || 0);
+  const oldCheckin = r.checkinDate;
+  const oldCheckout = r.checkoutDate;
+  const oldFlatNumber = r.flatNumber;
+  const oldFlatId = r.flatId;
+  const oldTotalAmount = Number(r.totalAmount || 0);
+  const oldPaidAmount = Number(r.paidAmount || 0);
+  const oldGuestCount = r.guestCount || 1;
+  const oldNights = pending.oldNights || Math.max(1, Math.round((new Date(oldCheckout + "T00:00:00Z") - new Date(oldCheckin + "T00:00:00Z")) / (1000 * 3600 * 24)));
+  const targetCheckin = pending.newCheckinDate || pending.proposedCheckinDate || oldCheckin;
+  const targetCheckout = pending.newCheckoutDate || pending.proposedCheckoutDate || oldCheckout;
+  const newNights = pending.newNights || Math.max(1, Math.round((new Date(targetCheckout + "T00:00:00Z") - new Date(targetCheckin + "T00:00:00Z")) / (1000 * 3600 * 24)));
+  const targetFlatNumber = String(pending.newFlatNumber || pending.proposedFlatNumber || oldFlatNumber);
+  const targetFlatId = pending.newFlatId || pending.proposedFlatId || oldFlatId;
+  const targetGuestCount = Math.max(1, Number(pending.newGuestCount || pending.proposedGuestCount || oldGuestCount));
+
+  // 1. Preserva datas anteriores para histórico e auditoria
+  if (r.checkinDate !== targetCheckin) r.previousCheckinDate = r.checkinDate;
+  if (r.checkoutDate !== targetCheckout) r.previousCheckoutDate = r.checkoutDate;
+
+  // 2. Atualiza datas, flat e ocupantes
+  r.checkinDate = targetCheckin;
+  r.checkoutDate = targetCheckout;
+  if (targetFlatNumber && targetFlatNumber !== String(r.flatNumber)) {
+    r.flatNumber = targetFlatNumber;
+    if (targetFlatId) r.flatId = Number(targetFlatId) || targetFlatId;
+  }
+  if (targetGuestCount) {
+    r.guestCount = targetGuestCount;
+  }
+  r.calendarSequence = (r.calendarSequence || 0) + 1;
+  r.updatedAt = new Date().toISOString();
+
+  // 3. Atualização Financeira & Registro de Pagamento
+  r.totalAmount = oldTotalAmount + additionalPaid;
+  r.paidAmount = oldPaidAmount + additionalPaid;
+  r.paymentStatus = (r.totalAmount > 0 && r.paidAmount >= r.totalAmount) ? "pago_total" : (r.paidAmount > 0 ? "sinal_pago" : r.paymentStatus);
+  if (paymentMethod) r.paymentMethod = paymentMethod;
+
+  const resolvedPaidAt = paidAt || new Date().toISOString();
+  if (endToEndId) r.pixEndToEndId = endToEndId;
+  if (txId && paymentMethod === "cartao_credito") r.mpPaymentId = String(txId);
+
+  if (!Array.isArray(r.payments)) r.payments = [];
+  const payRecord = {
+    id: `pay_mod_${paymentMethod}_${Date.now()}`,
+    amount: additionalPaid,
+    method: paymentMethod || "pix",
+    date: resolvedPaidAt,
+    notes: `Acréscimo de modificação de reserva liquidado via ${source}${endToEndId ? ` (E2E: ${endToEndId})` : ""}${txId ? ` (TxId: ${txId})` : ""}`,
+    txId: txId || pending.pixTxId || null,
+    endToEndId: endToEndId || null,
+    pendingId: pending.pendingId || pending.id || null
+  };
+  r.payments.push(payRecord);
+
+  // 4. Invalidação Obrigatória de Assinatura (Requisito R3)
+  r.needsReSignature = true;
+  r.reSignatureReason = "Alteração no período da estadia ou flat";
+  r.fnhrCompleted = false;
+  r.preCheckinCompleted = false;
+  delete r.fnrhPdfUrl;
+  delete r.fnrhSha256Hash;
+  if (Array.isArray(r.guests)) {
+    r.guests.forEach(g => {
+      g.needsReSignature = true;
+      g.hasCompletedCheckin = false;
+    });
+  }
+
+  // 5. Registro no Histórico de Modificações (modificationHistory)
+  if (!Array.isArray(r.modificationHistory)) r.modificationHistory = [];
+  r.modificationHistory.push({
+    modifiedAt: new Date().toISOString(),
+    oldCheckin,
+    newCheckin: targetCheckin,
+    oldCheckout,
+    newCheckout: targetCheckout,
+    oldFlatNumber,
+    newFlatNumber: targetFlatNumber,
+    oldNights,
+    newNights,
+    oldGuests: oldGuestCount,
+    newGuests: targetGuestCount,
+    additionalAmountToPay: additionalPaid,
+    refundAmount: pending.refundAmount || 0,
+    isUnder24h: Boolean(pending.isUnder24h),
+    nonRefundableReduction: Boolean(pending.nonRefundableReduction),
+    paymentMethod,
+    paymentId: txId || endToEndId || null,
+    reason: pending.reason || "Modificação com acréscimo liquidada via autoatendimento",
+    settledVia: source,
+    pendingId: pending.pendingId || pending.id || null
+  });
+
+  // 6. Trilha de Auditoria (Audit Logs)
+  ensureReservationAuditLogs(r);
+  addReservationAuditLog(r, {
+    action: "portal_modify_settled",
+    actor: {
+      id: null,
+      name: r.guestName || "Hóspede",
+      role: "guest",
+      type: "guest"
+    },
+    source: "Portal do Hóspede (Liquidação de Modificação)",
+    description: `Modificação confirmada com liquidação de R$ ${additionalPaid.toFixed(2)} via ${source}`,
+    changes: [
+      {
+        field: "dates",
+        label: "Período da Estadia",
+        oldValue: `${oldCheckin} a ${oldCheckout}`,
+        newValue: `${targetCheckin} a ${targetCheckout}`
+      },
+      ...(oldFlatNumber !== targetFlatNumber ? [{
+        field: "flatNumber",
+        label: "Flat",
+        oldValue: String(oldFlatNumber),
+        newValue: String(targetFlatNumber)
+      }] : []),
+      {
+        field: "totalAmount",
+        label: "Valor Total",
+        oldValue: `R$ ${oldTotalAmount.toFixed(2)}`,
+        newValue: `R$ ${(oldTotalAmount + additionalPaid).toFixed(2)} (+R$ ${additionalPaid.toFixed(2)})`
+      },
+      {
+        field: "needsReSignature",
+        label: "Re-assinatura FNRH",
+        oldValue: "false",
+        newValue: "true"
+      }
+    ]
+  });
+
+  logAuditEvent({
+    level: "info",
+    category: "reservation",
+    action: "RESERVATION_MODIFICATION_SETTLED",
+    actor: { name: r.guestName || "Hóspede", role: "guest" },
+    source: "portal_modify_status",
+    details: {
+      reservationCode: r.code,
+      pendingId: pending.pendingId || pending.id,
+      additionalAmountToPay: additionalPaid,
+      paymentMethod,
+      source
+    }
+  });
+
+  // 7. Sincronização Operacional
+  // A. Pedidos de Café da Manhã fora da nova janela são cancelados
+  if (!db.breakfastOrders) db.breakfastOrders = [];
+  const nowBrl = getBrasiliaNow();
+  const todayStr = nowBrl.date;
+  db.breakfastOrders.forEach(o => {
+    if ((o.reservationCode && (o.reservationCode === r.code || o.reservationCode === r.reservationCode)) || o.reservationId === r.id) {
+      if (o.date < targetCheckin || o.date > targetCheckout) {
+        o.status = "cancelled";
+        o.cancelReason = computeBreakfastCancellationReason(o, r, todayStr, nowBrl, db);
+      } else if (o.date >= targetCheckin && o.date <= targetCheckout && o.status === "cancelled") {
+        o.status = "pending";
+        o.cancelReason = null;
+      }
+    }
+  });
+
+  // B. Se for estadia futura, limpa carimbos de rotina matinal
+  if (isReservationForFuture(r)) {
+    delete r.morningEmailSentDate;
+    delete r.morningEmailSentAt;
+    delete r.receptionNotifiedAt;
+    if (r.vehicle) {
+      delete r.vehicle.garageNotifiedAt;
+      delete r.vehicle.lastNotifiedPlate;
+    }
+  }
+
+  // C. Reconciliação de Governança
+  if (Array.isArray(db.cleaningRequests)) {
+    const reqItem = db.cleaningRequests.find(c =>
+      (c.flatId === r.flatId || String(c.flatNumber) === String(r.flatNumber)) &&
+      (c.requestDate === oldCheckout || c.requestDate === oldCheckin)
+    );
+    if (reqItem) {
+      reqItem.requestDate = targetCheckout;
+      reqItem.effectiveDate = targetCheckout;
+      if (targetFlatNumber && targetFlatNumber !== String(oldFlatNumber)) {
+        reqItem.flatNumber = targetFlatNumber;
+        if (targetFlatId) reqItem.flatId = Number(targetFlatId) || targetFlatId;
+      }
+    }
+  }
+
+  // 8. Limpa o Hold Pendente
+  delete r.pendingModification;
+
+  // 9. Emite Notificação Operacional no Painel
+  createNotification({
+    category: "checkout",
+    title: `🔄 Alteração Confirmada: Apt ${r.flatNumber} (${r.code})`,
+    message: `Estadia estendida para ${targetCheckin} a ${targetCheckout}. Pagamento de R$ ${additionalPaid.toFixed(2)} liquidado via ${source}.`,
+    severity: "success",
+    metadata: {
+      reservationCode: r.code,
+      additionalAmountToPay: additionalPaid,
+      newCheckinDate: targetCheckin,
+      newCheckoutDate: targetCheckout
+    },
+    targetUrl: `/reservas?code=${r.code}`
+  });
+
+  // 10. Persistência Atômica no Disco e DB
+  saveDatabase("modify_settled_committed");
+
+  return { success: true, committed: true, reservation: r };
+}
+
+// ── POST /api/pms/guest-portal/:code/modify-preview (Etapa 1 - Simulação Read-Only) ──
+app.post("/api/pms/guest-portal/:code/modify-preview", (req, res) => {
+  const code = (req.params.code || "").trim();
+  if (!db.reservations) db.reservations = [];
+  const r = findReservationByLocatorOrContact(code) || (db.reservations || []).find(x => x.code === code || String(x.id) === code);
+  if (!r) {
+    return res.status(404).json({
+      success: false,
+      available: false,
+      error: "NOT_FOUND",
+      message: "Reserva não encontrada."
+    });
+  }
+
+  if (r.status === "cancelada" || r.status === "CANCELLED" || r.status === "expirada") {
+    return res.status(400).json({
+      success: false,
+      available: false,
+      error: "RESERVATION_CANCELLED",
+      message: "Esta reserva está cancelada ou expirada e não pode ser modificada."
+    });
+  }
+
+  const directChannels = ["whatsapp", "site", "site_direto", "direto", "balcao"];
+  const channel = (r.channel || "").toLowerCase();
+  if (!directChannels.includes(channel)) {
+    return res.status(403).json({
+      success: false,
+      available: false,
+      error: "EXTERNAL_CHANNEL",
+      message: `Modificação pelo portal não permitida para reservas do canal ${r.channel || "externo"}. Por favor, solicite a alteração diretamente pela plataforma de origem (Booking.com, Airbnb, etc.).`
+    });
+  }
+
+  const { newCheckinDate, newCheckoutDate, newGuestCount, newFlatId, newFlatNumber, reason } = req.body || {};
+
+  if (!newCheckinDate || !newCheckoutDate) {
+    return res.status(400).json({
+      success: false,
+      available: false,
+      error: "INVALID_DATES",
+      message: "Datas de check-in e check-out são obrigatórias."
+    });
+  }
+
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dateRegex.test(newCheckinDate) || !dateRegex.test(newCheckoutDate)) {
+    return res.status(400).json({
+      success: false,
+      available: false,
+      error: "INVALID_DATES",
+      message: "Formato de data inválido. Utilize o formato YYYY-MM-DD."
+    });
+  }
+
+  if (newCheckoutDate <= newCheckinDate) {
+    return res.status(400).json({
+      success: false,
+      available: false,
+      error: "INVALID_DATES",
+      message: "A data de check-out deve ser posterior à data de check-in."
+    });
+  }
+
+  // Identificação e validação do flat de destino
+  let targetFlat = null;
+  if (newFlatId || newFlatNumber) {
+    targetFlat = (db.flats || []).find(f =>
+      (newFlatId && (f.id === Number(newFlatId) || String(f.id) === String(newFlatId))) ||
+      (newFlatNumber && String(f.number) === String(newFlatNumber))
+    );
+    if (!targetFlat) {
+      return res.status(404).json({
+        success: false,
+        available: false,
+        error: "FLAT_NOT_FOUND",
+        message: "Apartamento informado não foi encontrado."
+      });
+    }
+  } else {
+    targetFlat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber)) || {
+      id: r.flatId,
+      number: r.flatNumber || "113"
+    };
+  }
+
+  const targetFlatId = targetFlat.id;
+  const targetFlatNumber = String(targetFlat.number);
+  const guestsNum = Math.max(1, Math.min(6, Number(newGuestCount) || r.guestCount || 1));
+
+  // 1. Verificação de conflito no calendário do flat de destino
+  const isSameFlat = targetFlatNumber === String(r.flatNumber || r.flatId);
+  const conflict = hasReservationConflict({
+    flatId: targetFlatId,
+    flatNumber: targetFlatNumber,
+    checkinDate: newCheckinDate,
+    checkoutDate: newCheckoutDate,
+    excludeReservationId: isSameFlat ? r.id : null,
+    excludePendingHoldReservationId: r.id
+  });
+
+  if (conflict) {
+    return res.status(409).json({
+      success: false,
+      available: false,
+      error: "CONFLICT",
+      message: `O Flat ${targetFlatNumber} não possui disponibilidade para o período solicitado (${newCheckinDate} a ${newCheckoutDate}). Por favor, selecione outras datas ou entre em contato com nossa administração.`,
+      conflictMessage: `O Flat ${targetFlatNumber} não possui disponibilidade para o período solicitado (${newCheckinDate} a ${newCheckoutDate}).`
+    });
+  }
+
+  // 2. Cálculo de diárias e tarifas
+  const parseDate = (dStr) => new Date(dStr + "T00:00:00Z");
+  const oldNights = Math.max(1, Math.round((parseDate(r.checkoutDate) - parseDate(r.checkinDate)) / (1000 * 3600 * 24)));
+  const newNights = Math.max(1, Math.round((parseDate(newCheckoutDate) - parseDate(newCheckinDate)) / (1000 * 3600 * 24)));
+  const dailyRate = Number(r.dailyRate) || (oldNights > 0 ? (Number(r.totalAmount || 0) / oldNights) : 160);
+
+  const nightsDiff = newNights - oldNights;
+  const extraNights = Math.max(0, nightsDiff);
+  const reducedNights = Math.max(0, -nightsDiff);
+
+  // 3. Regra das 24h antes do check-in (14:00 do dia anterior ao check-in original)
+  const originalCheckin = new Date(r.checkinDate + "T14:00:00-03:00");
+  const cutoff24h = new Date(originalCheckin.getTime() - 24 * 3600 * 1000);
+  const now = new Date();
+  const isUnder24h = now.getTime() >= cutoff24h.getTime();
+
+  let additionalAmountToPay = 0;
+  let refundAmount = 0;
+  let nonRefundableReduction = false;
+  let policyNotice = "";
+
+  if (newNights > oldNights) {
+    additionalAmountToPay = extraNights * dailyRate;
+    policyNotice = `Acréscimo de ${extraNights} ${extraNights === 1 ? 'diária' : 'diárias'} (+R$ ${additionalAmountToPay.toFixed(2)}).`;
+  } else if (newNights < oldNights) {
+    const valueOfReducedNights = reducedNights * dailyRate;
+    if (isUnder24h) {
+      nonRefundableReduction = true;
+      refundAmount = 0;
+      policyNotice = `Redução de ${reducedNights} ${reducedNights === 1 ? 'diária' : 'diárias'} efetuada com menos de 24h do início (limite: 14h do dia anterior). Não há direito a estorno ou reembolso conforme o Contrato de Hospedagem.`;
+    } else {
+      refundAmount = valueOfReducedNights;
+      policyNotice = `Redução de ${reducedNights} ${reducedNights === 1 ? 'diária' : 'diárias'} com estorno/crédito elegível de R$ ${valueOfReducedNights.toFixed(2)}.`;
+    }
+  } else {
+    policyNotice = "Mesma duração de estadia. Nenhuma cobrança ou estorno adicional.";
+  }
+
+  if (guestsNum < (r.guestCount || 1) && isUnder24h) {
+    nonRefundableReduction = true;
+  }
+
+  const originalTotalAmount = Number(r.totalAmount || 0);
+  const newTotalAmount = Math.max(0, originalTotalAmount + additionalAmountToPay - refundAmount);
+  const requiresPayment = additionalAmountToPay > 0;
+  const datesChanged = r.checkinDate !== newCheckinDate || r.checkoutDate !== newCheckoutDate;
+  const flatChanged = String(r.flatNumber || r.flatId) !== targetFlatNumber;
+  const requiresReSignature = datesChanged || flatChanged;
+
+  return res.json({
+    success: true,
+    available: true,
+    originalDates: {
+      checkinDate: r.checkinDate,
+      checkoutDate: r.checkoutDate,
+      nights: oldNights,
+      flatNumber: String(r.flatNumber || r.flatId),
+      guestCount: r.guestCount || 1,
+      totalAmount: originalTotalAmount
+    },
+    newDates: {
+      checkinDate: newCheckinDate,
+      checkoutDate: newCheckoutDate,
+      nights: newNights,
+      flatNumber: targetFlatNumber,
+      guestCount: guestsNum,
+      totalAmount: newTotalAmount
+    },
+    flat: {
+      id: targetFlat.id,
+      number: targetFlatNumber
+    },
+    dailyRate,
+    duration: newNights,
+    extraNights,
+    additionalAmountToPay,
+    refundAmount,
+    currency: "BRL",
+    requiresPayment,
+    requiresReSignature,
+    isUnder24h,
+    nonRefundableReduction,
+    policyNotice
+  });
+});
+
+// ── POST /api/pms/guest-portal/:code/modify-checkout (Etapa 2 - Hold Provisório de 30 Minutos) ──
+app.post("/api/pms/guest-portal/:code/modify-checkout", async (req, res) => {
+  try {
+    const code = (req.params.code || "").trim();
+    if (!db.reservations) db.reservations = [];
+    const r = findReservationByLocatorOrContact(code) || (db.reservations || []).find(x => x.code === code || String(x.id) === code);
+    if (!r) {
+      return res.status(404).json({ error: "Reserva não encontrada." });
+    }
+
+    if (r.status === "cancelada" || r.status === "CANCELLED" || r.status === "expirada") {
+      return res.status(400).json({ error: "Esta reserva está cancelada e não pode ser modificada." });
+    }
+
+    const directChannels = ["whatsapp", "site", "site_direto", "direto", "balcao"];
+    const channel = (r.channel || "").toLowerCase();
+    if (!directChannels.includes(channel)) {
+      return res.status(403).json({
+        error: `Modificação pelo portal não permitida para reservas do canal ${r.channel || "externo"}. Por favor, solicite a alteração diretamente pela plataforma de origem.`
+      });
+    }
+
+    const {
+      newCheckinDate,
+      newCheckoutDate,
+      newGuestCount,
+      newFlatId,
+      newFlatNumber,
+      reason,
+      paymentMethod = "pix"
+    } = req.body || {};
+
+    if (!newCheckinDate || !newCheckoutDate) {
+      return res.status(400).json({ error: "Datas de check-in e check-out são obrigatórias." });
+    }
+
+    if (newCheckoutDate <= newCheckinDate) {
+      return res.status(400).json({ error: "A data de check-out deve ser posterior à data de check-in." });
+    }
+
+    // 1. Resolução do Flat de Destino
+    let targetFlatId = r.flatId;
+    let targetFlatNumber = String(r.flatNumber || r.flatId);
+
+    if (newFlatId != null || newFlatNumber != null) {
+      const foundFlat = (db.flats || []).find(f =>
+        (newFlatId != null && (String(f.id) === String(newFlatId) || Number(f.id) === Number(newFlatId))) ||
+        (newFlatNumber != null && String(f.number) === String(newFlatNumber))
+      );
+      if (foundFlat) {
+        targetFlatId = foundFlat.id;
+        targetFlatNumber = String(foundFlat.number);
+      } else if (newFlatNumber != null) {
+        targetFlatNumber = String(newFlatNumber);
+      }
+    }
+
+    const guestsNum = Math.max(1, Math.min(6, Number(newGuestCount) || r.guestCount || 1));
+
+    // 2. Verificação Concorrente de Conflitos
+    const isSameFlat = targetFlatNumber === String(r.flatNumber || r.flatId);
+    const hasConflict = hasReservationConflict({
+      flatId: targetFlatId,
+      flatNumber: targetFlatNumber,
+      checkinDate: newCheckinDate,
+      checkoutDate: newCheckoutDate,
+      excludeReservationId: isSameFlat ? r.id : null,
+      excludePendingHoldReservationId: r.id
+    });
+
+    if (hasConflict) {
+      return res.status(409).json({
+        error: "FLAT_UNAVAILABLE",
+        message: `O Flat ${targetFlatNumber} não possui disponibilidade para o período solicitado (${newCheckinDate} a ${newCheckoutDate}). Por favor, selecione outras datas ou entre em contato com nossa administração.`
+      });
+    }
+
+    // 3. Cálculo Financeiro e Política 24h
+    const parseDate = (dStr) => new Date(dStr + "T00:00:00Z");
+    const oldNights = Math.max(1, Math.round((parseDate(r.checkoutDate) - parseDate(r.checkinDate)) / 86400000));
+    const newNights = Math.max(1, Math.round((parseDate(newCheckoutDate) - parseDate(newCheckinDate)) / 86400000));
+    const dailyRate = Number(r.dailyRate) || (oldNights > 0 ? (Number(r.totalAmount || 0) / oldNights) : 160);
+
+    const originalCheckin = new Date(r.checkinDate + "T14:00:00-03:00");
+    const cutoff24h = new Date(originalCheckin.getTime() - 24 * 3600 * 1000);
+    const now = new Date();
+    const isUnder24h = now.getTime() >= cutoff24h.getTime();
+
+    let additionalAmountToPay = 0;
+    let refundAmount = 0;
+    let nonRefundableReduction = false;
+
+    if (newNights > oldNights) {
+      const extraNights = newNights - oldNights;
+      additionalAmountToPay = extraNights * dailyRate;
+    } else if (newNights < oldNights) {
+      const reducedNights = oldNights - newNights;
+      const val = reducedNights * dailyRate;
+      if (isUnder24h) {
+        nonRefundableReduction = true;
+      } else {
+        refundAmount = val;
+      }
+    }
+
+    // Se não há acréscimo de valor, o pagamento não é necessário
+    if (additionalAmountToPay <= 0) {
+      return res.json({
+        success: true,
+        requiresPayment: false,
+        additionalAmountToPay: 0,
+        refundAmount,
+        message: "Esta alteração não requer pagamento adicional e pode ser confirmada diretamente.",
+        newDates: {
+          checkinDate: newCheckinDate,
+          checkoutDate: newCheckoutDate
+        },
+        newFlatNumber: targetFlatNumber,
+        newGuestCount: guestsNum
+      });
+    }
+
+    // 4. Parâmetros de Hold (30 minutos)
+    const holdMinutes = 30;
+    const expiresAt = new Date(now.getTime() + holdMinutes * 60 * 1000).toISOString();
+    const pendingId = `mod_${Date.now()}_${crypto.randomBytes(3).toString("hex")}`;
+
+    // 5. Geração de Cobrança PIX (Inter Dinâmico com Fallback Estático)
+    let pixTxId = null;
+    let pixCopiaECola = null;
+
+    try {
+      const pixResult = await createInterPixCob({
+        amount: additionalAmountToPay,
+        description: `Modificacao Reserva ${r.code}`,
+        debtorName: r.guestName,
+        debtorDocument: r.guestDocument || r.document,
+        reservationCode: r.code
+      });
+      if (pixResult) {
+        pixTxId = pixResult.txid;
+        pixCopiaECola = pixResult.pixCopiaECola;
+      }
+    } catch (pixErr) {
+      const cleanTxId = `MOD${r.code.replace(/[^a-zA-Z0-9]/g, "")}${pendingId.replace(/[^a-zA-Z0-9]/g, "")}`.substring(0, 25);
+      pixTxId = cleanTxId;
+      pixCopiaECola = generateStaticPixPayload({
+        pixKey: db.settings?.interConfig?.pixKey || "47964813000165",
+        amount: additionalAmountToPay,
+        merchantName: "CORPFLATS LTDA",
+        merchantCity: "CAMPOS DOS GOYTACAZES",
+        txid: cleanTxId
+      });
+    }
+
+    let qrCodeBase64 = "";
+    if (pixCopiaECola) {
+      try {
+        qrCodeBase64 = await QRCode.toDataURL(pixCopiaECola);
+      } catch (qrErr) {
+        console.error("[modify-checkout] Erro ao gerar QRCode:", qrErr);
+      }
+    }
+
+    // 6. Geração de Preferência Mercado Pago (Checkout Pro)
+    let mpPreferenceId = null;
+    let mpCheckoutUrl = null;
+
+    try {
+      const mpPreference = await createMercadoPagoPreference({
+        reservationCode: `MOD-${r.code}`,
+        amount: additionalAmountToPay,
+        guestName: r.guestName,
+        guestEmail: r.guestEmail,
+        nights: Math.max(1, newNights - oldNights),
+        flatNumber: targetFlatNumber
+      });
+      if (mpPreference) {
+        mpPreferenceId = mpPreference.id;
+        mpCheckoutUrl = mpPreference.initPoint;
+      }
+    } catch (mpErr) {
+      // Ignora erro se MP não configurado no ambiente
+    }
+
+    // 7. Registro do Bloqueio Provisório em r.pendingModification (Datas originais inalteradas!)
+    r.pendingModification = {
+      pendingId,
+      newCheckinDate,
+      newCheckoutDate,
+      newGuestCount: guestsNum,
+      newFlatId: targetFlatId,
+      newFlatNumber: targetFlatNumber,
+      additionalAmountToPay,
+      createdAt: now.toISOString(),
+      expiresAt,
+      status: "pending",
+      paymentMethod: paymentMethod === "credit_card" ? "credit_card" : "pix",
+      pixTxId,
+      pixQrCodeUrl: qrCodeBase64,
+      pixCopiaECola,
+      mpPreferenceId,
+      mpCheckoutUrl,
+      reason: reason || "Modificação solicitada pelo hóspede via autoatendimento",
+      oldCheckinDate: r.checkinDate,
+      oldCheckoutDate: r.checkoutDate,
+      oldFlatNumber: String(r.flatNumber || r.flatId),
+      oldFlatId: r.flatId,
+      oldTotalAmount: Number(r.totalAmount || 0),
+      oldNights,
+      newNights,
+      extraNights: newNights - oldNights,
+      dailyRate,
+      refundAmount: 0,
+      isUnder24h,
+      nonRefundableReduction: false
+    };
+
+    saveDatabase("modify_checkout_hold");
+
+    // 8. Resposta com dados de liquidação e hold
+    res.json({
+      success: true,
+      pendingId,
+      additionalAmountToPay,
+      expiresAt,
+      holdMinutes,
+      pixQrCodeUrl: qrCodeBase64,
+      pixCopiaECola,
+      pixTxId,
+      mpCheckoutUrl,
+      mpPreferenceId,
+      newDates: {
+        checkinDate: newCheckinDate,
+        checkoutDate: newCheckoutDate
+      },
+      newFlatNumber: targetFlatNumber,
+      newGuestCount: guestsNum
+    });
+  } catch (err) {
+    console.error("[modify-checkout] Erro inesperado:", err);
+    res.status(500).json({ error: "INTERNAL_ERROR", message: err.message });
+  }
+});
+
+// ── GET /api/pms/guest-portal/:code/modify-status (Status Polling & Commit Atômico) ──
+app.get("/api/pms/guest-portal/:code/modify-status", async (req, res) => {
+  try {
+    const code = (req.params.code || "").trim();
+    const pendingId = (req.query.pendingId || "").trim();
+
+    if (!db.reservations) db.reservations = [];
+    const r = findReservationByLocatorOrContact(code) || (db.reservations || []).find(x => x.code === code || String(x.id) === code);
+    if (!r) {
+      return res.status(404).json({ success: false, error: "Reserva não encontrada." });
+    }
+
+    // 1. Caso a modificação já tenha sido confirmada em polling anterior
+    if (!r.pendingModification) {
+      const recentMod = Array.isArray(r.modificationHistory)
+        ? r.modificationHistory.find(m => pendingId && m.pendingId === pendingId)
+        : null;
+
+      if (recentMod) {
+        return res.json({
+          success: true,
+          paid: true,
+          status: "paid",
+          committed: true,
+          message: "Pagamento confirmado! As datas da sua estadia foram atualizadas com sucesso.",
+          newCheckinDate: recentMod.newCheckin,
+          newCheckoutDate: recentMod.newCheckout,
+          flatNumber: recentMod.newFlatNumber || r.flatNumber,
+          needsReSignature: Boolean(r.needsReSignature),
+          reSignatureUrl: `/pre-checkin/${r.code}?resign=1`
+        });
+      }
+
+      return res.json({
+        success: true,
+        paid: false,
+        status: "none",
+        committed: false,
+        message: "Nenhuma alteração pendente ativa encontrada para esta reserva."
+      });
+    }
+
+    const pending = r.pendingModification;
+
+    // 2. Validação do ID do Hold
+    if (pendingId && pending.pendingId && pending.pendingId !== pendingId && pending.id !== pendingId) {
+      return res.status(400).json({
+        success: false,
+        error: "O identificador da alteração pendente não coincide com o hold ativo."
+      });
+    }
+
+    // 3. Verificação de Expiração do Hold (30 minutos)
+    const nowMs = Date.now();
+    const expiresMs = new Date(pending.expiresAt).getTime();
+    if (pending.status === "expired" || expiresMs < nowMs) {
+      if (pending.status !== "expired") {
+        pending.status = "expired";
+        pending.expiredAt = new Date().toISOString();
+        saveDatabase("modify_hold_expired");
+      }
+      return res.json({
+        success: true,
+        paid: false,
+        status: "expired",
+        committed: false,
+        message: "O prazo de 30 minutos para pagamento desta alteração expirou. Por favor, inicie uma nova simulação."
+      });
+    }
+
+    // 4. Verificação de Cancelamento
+    if (pending.status === "canceled" || pending.status === "cancelled") {
+      return res.json({
+        success: true,
+        paid: false,
+        status: "canceled",
+        committed: false,
+        message: "Esta alteração pendente foi cancelada."
+      });
+    }
+
+    // 5. CONSULTA ATIVA DE PAGAMENTO (Banco Inter & Mercado Pago)
+    let paymentVerified = false;
+    let paymentDetails = null;
+
+    // Em ambiente de teste automatizado, permite simulação via flag controlada
+    if (process.env.NODE_ENV === "test" && (req.query.simulatePayment === "true" || req.headers["x-test-simulate-payment"] === "true")) {
+      paymentVerified = true;
+      paymentDetails = {
+        amount: Number(pending.additionalAmountToPay || 0),
+        paidAt: new Date().toISOString(),
+        txId: pending.pixTxId || "TEST_TX_123",
+        endToEndId: "E99999999TEST",
+        paymentMethod: pending.paymentMethod || "pix",
+        source: "Teste Automatizado"
+      };
+    }
+
+    // A. Cobrança PIX Banco Inter por TxId
+    if (pending.pixTxId) {
+      try {
+        const cobData = await checkInterPixCobStatus(pending.pixTxId);
+        if (cobData && (cobData.status === "CONCLUIDA" || (Array.isArray(cobData.pix) && cobData.pix.length > 0))) {
+          const valorPago = Number(cobData.pix?.[0]?.valor || cobData.valor?.original || pending.additionalAmountToPay);
+          paymentVerified = true;
+          paymentDetails = {
+            amount: valorPago,
+            paidAt: cobData.pix?.[0]?.horario || new Date().toISOString(),
+            endToEndId: cobData.pix?.[0]?.endToEndId,
+            txId: pending.pixTxId,
+            paymentMethod: "pix",
+            source: "Banco Inter Cobrança"
+          };
+        }
+      } catch (err) {
+        console.warn("[Modify Status] Erro ao checar Inter Pix Cob:", err.message);
+      }
+    }
+
+    // B. Extrato Bancário Completo Banco Inter (Fallback para PIX estático)
+    if (!paymentVerified) {
+      try {
+        const extratoMatch = await checkInterBankingExtratoPixForPending(r, pending);
+        if (extratoMatch && extratoMatch.found) {
+          paymentVerified = true;
+          paymentDetails = {
+            amount: extratoMatch.amount,
+            paidAt: extratoMatch.paidAt,
+            endToEndId: extratoMatch.endToEndId,
+            txId: extratoMatch.txId,
+            pagador: extratoMatch.pagador,
+            paymentMethod: "pix",
+            source: "Banco Inter Extrato"
+          };
+        }
+      } catch (err) {
+        console.warn("[Modify Status] Erro ao checar Inter Extrato:", err.message);
+      }
+    }
+
+    // C. Mercado Pago (Cartão de Crédito)
+    if (!paymentVerified) {
+      try {
+        const mpSearchRef = `MOD-${r.code}`;
+        let mpPayment = await checkMercadoPagoPaymentByRef(mpSearchRef);
+        if (!mpPayment && pending.pendingId) {
+          mpPayment = await checkMercadoPagoPaymentByRef(pending.pendingId);
+        }
+
+        if (mpPayment && mpPayment.status === "approved") {
+          const valorPago = Number(mpPayment.transaction_amount || mpPayment.total_paid_amount || pending.additionalAmountToPay);
+          paymentVerified = true;
+          paymentDetails = {
+            amount: valorPago,
+            paidAt: mpPayment.date_approved || new Date().toISOString(),
+            txId: String(mpPayment.id),
+            paymentMethod: "cartao_credito",
+            source: "Mercado Pago"
+          };
+        }
+      } catch (err) {
+        console.warn("[Modify Status] Erro ao checar Mercado Pago:", err.message);
+      }
+    }
+
+    // 6. SE LIQUIDADO -> EXECUTA O COMMIT ATÔMICO
+    if (paymentVerified && paymentDetails) {
+      const commitRes = await commitPendingModification(r, pending, paymentDetails);
+      if (!commitRes.success) {
+        return res.status(500).json({ success: false, error: commitRes.error });
+      }
+
+      return res.json({
+        success: true,
+        paid: true,
+        status: "paid",
+        committed: true,
+        message: "Pagamento confirmado! As datas da sua estadia foram atualizadas com sucesso.",
+        newCheckinDate: r.checkinDate,
+        newCheckoutDate: r.checkoutDate,
+        flatNumber: r.flatNumber,
+        needsReSignature: true,
+        reSignatureUrl: `/pre-checkin/${r.code}?resign=1`
+      });
+    }
+
+    // 7. SE AINDA NÃO LIQUIDADO -> RETORNA PENDING
+    return res.json({
+      success: true,
+      paid: false,
+      status: "pending",
+      committed: false,
+      message: "Aguardando confirmação do pagamento.",
+      pendingId: pending.pendingId,
+      expiresAt: pending.expiresAt,
+      additionalAmountToPay: pending.additionalAmountToPay,
+      pixTxId: pending.pixTxId || null,
+      pixCopiaECola: pending.pixCopiaECola || null,
+      pixQrCodeUrl: pending.pixQrCodeUrl || null,
+      mpCheckoutUrl: pending.mpCheckoutUrl || null
+    });
+  } catch (err) {
+    console.error("[Modify Status Check] Erro:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── POST /api/pms/guest-portal/:code/modify-cancel-pending (Cancelamento do Hold) ──
+app.post("/api/pms/guest-portal/:code/modify-cancel-pending", (req, res) => {
+  try {
+    const code = (req.params.code || "").trim();
+    const { pendingId } = req.body || {};
+
+    if (!db.reservations) db.reservations = [];
+    const r = findReservationByLocatorOrContact(code) || (db.reservations || []).find(x => x.code === code || String(x.id) === code);
+    if (!r) {
+      return res.status(404).json({ success: false, error: "Reserva não encontrada." });
+    }
+
+    if (!r.pendingModification) {
+      return res.json({
+        success: true,
+        message: "Nenhuma alteração pendente ativa para cancelar.",
+        committed: false
+      });
+    }
+
+    const pending = r.pendingModification;
+    if (pendingId && pending.pendingId && pending.pendingId !== pendingId && pending.id !== pendingId) {
+      return res.status(400).json({
+        success: false,
+        error: "O identificador da alteração pendente informado não coincide com o hold ativo."
+      });
+    }
+
+    if (pending.status === "paid" || pending.status === "committed") {
+      return res.status(400).json({
+        success: false,
+        error: "Não é possível cancelar uma alteração cujo pagamento já foi processado."
+      });
+    }
+
+    const canceledPendingId = pending.pendingId || pending.id || "mod_hold";
+    delete r.pendingModification;
+
+    ensureReservationAuditLogs(r);
+    addReservationAuditLog(r, {
+      action: "portal_modify_hold_canceled",
+      actor: {
+        id: null,
+        name: r.guestName || "Hóspede",
+        role: "guest",
+        type: "guest"
+      },
+      source: "Portal do Hóspede",
+      description: `Bloqueio provisório de alteração (${canceledPendingId}) cancelado pelo hóspede. Período original preservado.`
+    });
+
+    logAuditEvent({
+      level: "info",
+      category: "reservation",
+      action: "RESERVATION_MODIFICATION_HOLD_CANCELED",
+      actor: { name: r.guestName || "Hóspede", role: "guest" },
+      source: "portal_modify_cancel_pending",
+      details: {
+        reservationCode: r.code,
+        canceledPendingId
+      }
+    });
+
+    saveDatabase("modify_hold_canceled");
+
+    return res.json({
+      success: true,
+      message: "Alteração pendente cancelada com sucesso. O bloqueio temporário foi liberado.",
+      originalDates: {
+        checkinDate: r.checkinDate,
+        checkoutDate: r.checkoutDate,
+        flatNumber: r.flatNumber
+      }
+    });
+  } catch (err) {
+    console.error("[Modify Cancel Pending] Erro:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── POST /api/pms/guest-portal/:code/modify (Endpoint Direto Protegido com 402) ──
 app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
   const code = (req.params.code || "").trim();
   if (!db.reservations) db.reservations = [];
-  const r = findReservationByLocatorOrContact(code);
+  const r = findReservationByLocatorOrContact(code) || (db.reservations || []).find(x => x.code === code || String(x.id) === code);
   if (!r) {
     return res.status(404).json({ error: "Reserva não encontrada." });
   }
 
-  if (r.status === "cancelada" || r.status === "CANCELLED") {
+  if (r.status === "cancelada" || r.status === "CANCELLED" || r.status === "expirada") {
     return res.status(400).json({ error: "Esta reserva está cancelada e não pode ser modificada." });
   }
 
@@ -15473,7 +16591,7 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
     });
   }
 
-  const { newCheckinDate, newCheckoutDate, newGuestCount, reason } = req.body || {};
+  const { newCheckinDate, newCheckoutDate, newGuestCount, newFlatId, newFlatNumber, reason } = req.body || {};
 
   if (!newCheckinDate || !newCheckoutDate) {
     return res.status(400).json({ error: "Datas de check-in e check-out são obrigatórias." });
@@ -15483,25 +16601,43 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
     return res.status(400).json({ error: "A data de check-out deve ser posterior à data de check-in." });
   }
 
+  // 1. Resolução do Flat de Destino
+  let targetFlatId = r.flatId;
+  let targetFlatNumber = String(r.flatNumber || r.flatId);
+
+  if (newFlatId != null || newFlatNumber != null) {
+    const foundFlat = (db.flats || []).find(f =>
+      (newFlatId != null && (String(f.id) === String(newFlatId) || Number(f.id) === Number(newFlatId))) ||
+      (newFlatNumber != null && String(f.number) === String(newFlatNumber))
+    );
+    if (foundFlat) {
+      targetFlatId = foundFlat.id;
+      targetFlatNumber = String(foundFlat.number);
+    } else if (newFlatNumber != null) {
+      targetFlatNumber = String(newFlatNumber);
+    }
+  }
+
   const guestsNum = Math.max(1, Math.min(6, Number(newGuestCount) || r.guestCount || 1));
 
-  // Verificar disponibilidade do flat para as novas datas (evitar sobreposição de reservas)
-  const flatNumberStr = String(r.flatNumber || r.flatId);
-  const hasConflict = (db.reservations || []).some(other => {
-    if (other.id === r.id || other.code === r.code) return false;
-    if (other.status === "cancelada" || other.status === "CANCELLED") return false;
-    const otherFlat = String(other.flatNumber || other.flatId);
-    if (otherFlat !== flatNumberStr) return false;
-    return (newCheckinDate < other.checkoutDate) && (newCheckoutDate > other.checkinDate);
+  // 2. Verificar disponibilidade do flat para as novas datas (evitar sobreposição)
+  const isSameFlat = targetFlatNumber === String(r.flatNumber || r.flatId);
+  const conflict = hasReservationConflict({
+    flatId: targetFlatId,
+    flatNumber: targetFlatNumber,
+    checkinDate: newCheckinDate,
+    checkoutDate: newCheckoutDate,
+    excludeReservationId: isSameFlat ? r.id : null,
+    excludePendingHoldReservationId: r.id
   });
 
-  if (hasConflict) {
+  if (conflict) {
     return res.status(409).json({
-      error: `O Flat ${r.flatNumber} não possui disponibilidade para o período solicitado (${newCheckinDate} a ${newCheckoutDate}). Por favor, selecione outras datas ou entre em contato com nossa administração.`
+      error: `O Flat ${targetFlatNumber} não possui disponibilidade para o período solicitado (${newCheckinDate} a ${newCheckoutDate}). Por favor, selecione outras datas ou entre em contato com nossa administração.`
     });
   }
 
-  // Cálculo de diárias
+  // 3. Cálculo de diárias
   const parseDate = (dStr) => new Date(dStr + "T00:00:00Z");
   const oldNights = Math.max(1, Math.round((parseDate(r.checkoutDate) - parseDate(r.checkinDate)) / (1000 * 3600 * 24)));
   const newNights = Math.max(1, Math.round((parseDate(newCheckoutDate) - parseDate(newCheckinDate)) / (1000 * 3600 * 24)));
@@ -15516,7 +16652,6 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
   const isReducingNights = newNights < oldNights;
   const isReducingGuests = guestsNum < (r.guestCount || 1);
   const isIncreasingNights = newNights > oldNights;
-  const isIncreasingGuests = guestsNum > (r.guestCount || 1);
 
   let refundAmount = 0;
   let additionalAmountToPay = 0;
@@ -15525,8 +16660,7 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
 
   if (isIncreasingNights) {
     const extraNights = newNights - oldNights;
-    additionalAmountToPay += extraNights * dailyRate;
-    r.totalAmount = Number(r.totalAmount || 0) + additionalAmountToPay;
+    additionalAmountToPay = extraNights * dailyRate;
     policyNotice = `Acréscimo de ${extraNights} ${extraNights === 1 ? 'diária' : 'diárias'} (+R$ ${additionalAmountToPay.toFixed(2)}).`;
   } else if (isReducingNights) {
     const reducedNights = oldNights - newNights;
@@ -15536,8 +16670,7 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
       nonRefundableReduction = true;
       policyNotice = `Redução de ${reducedNights} ${reducedNights === 1 ? 'diária' : 'diárias'} efetuada com menos de 24h do início (limite: 14h do dia anterior). Não há direito a estorno ou reembolso conforme o Contrato de Hospedagem.`;
     } else {
-      refundAmount += valueOfReducedNights;
-      r.totalAmount = Math.max(0, Number(r.totalAmount || 0) - valueOfReducedNights);
+      refundAmount = valueOfReducedNights;
       policyNotice = `Redução de ${reducedNights} ${reducedNights === 1 ? 'diária' : 'diárias'} com estorno/crédito elegível de R$ ${valueOfReducedNights.toFixed(2)}.`;
     }
   }
@@ -15546,7 +16679,24 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
     nonRefundableReduction = true;
   }
 
-  // Histórico de Modificação
+  // 4. BLOQUEIO DE SEGURANÇA M1: Se há valor adicional a pagar, REJEITA com 402 Payment Required!
+  if (additionalAmountToPay > 0) {
+    return res.status(402).json({
+      success: false,
+      requiresPayment: true,
+      error: "PAYMENT_REQUIRED",
+      message: `A alteração solicitada requer acréscimo de R$ ${additionalAmountToPay.toFixed(2)}. Por favor, utilize o fluxo de checkout com pagamento para confirmar.`,
+      additionalAmountToPay,
+      policyNotice
+    });
+  }
+
+  // Se for redução com estorno elegível, desconta do total
+  if (refundAmount > 0) {
+    r.totalAmount = Math.max(0, Number(r.totalAmount || 0) - refundAmount);
+  }
+
+  // 5. Histórico de Modificação
   if (!r.modificationHistory) r.modificationHistory = [];
   r.modificationHistory.push({
     modifiedAt: new Date().toISOString(),
@@ -15554,17 +16704,20 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
     newCheckin: newCheckinDate,
     oldCheckout: r.checkoutDate,
     newCheckout: newCheckoutDate,
+    oldFlatNumber: String(r.flatNumber || r.flatId),
+    newFlatNumber: targetFlatNumber,
     oldNights,
     newNights,
     oldGuests: r.guestCount || 1,
     newGuests: guestsNum,
-    additionalAmountToPay,
+    additionalAmountToPay: 0,
     refundAmount,
     isUnder24h,
     nonRefundableReduction,
     reason: reason || "Modificação solicitada pelo hóspede via autoatendimento"
   });
 
+  // 6. Trilha de Auditoria
   ensureReservationAuditLogs(r);
   addReservationAuditLog(r, {
     action: "portal_modify",
@@ -15589,18 +16742,24 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
         oldValue: String(r.guestCount || 1),
         newValue: String(guestsNum)
       }] : []),
-      ...(additionalAmountToPay > 0 ? [{
-        field: "totalAmount",
-        label: "Acréscimo de Valor",
-        oldValue: `R$ ${Number(r.totalAmount - additionalAmountToPay).toFixed(2)}`,
-        newValue: `R$ ${Number(r.totalAmount).toFixed(2)} (+R$ ${additionalAmountToPay.toFixed(2)})`
+      ...(targetFlatNumber !== String(r.flatNumber || r.flatId) ? [{
+        field: "flatNumber",
+        label: "Flat",
+        oldValue: String(r.flatNumber || r.flatId),
+        newValue: targetFlatNumber
       }] : []),
       ...(refundAmount > 0 ? [{
         field: "totalAmount",
         label: "Estorno/Crédito",
         oldValue: `R$ ${Number(r.totalAmount + refundAmount).toFixed(2)}`,
         newValue: `R$ ${Number(r.totalAmount).toFixed(2)} (-R$ ${refundAmount.toFixed(2)})`
-      }] : [])
+      }] : []),
+      {
+        field: "needsReSignature",
+        label: "Re-assinatura FNRH",
+        oldValue: "false",
+        newValue: "true"
+      }
     ]
   });
 
@@ -15611,11 +16770,30 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
     r.previousCheckoutDate = r.checkoutDate;
   }
 
-  // Salvar novos parâmetros
+  // 7. Salvar novos parâmetros
   r.checkinDate = newCheckinDate;
   r.checkoutDate = newCheckoutDate;
+  if (targetFlatNumber && targetFlatNumber !== String(r.flatNumber)) {
+    r.flatNumber = targetFlatNumber;
+    if (targetFlatId) r.flatId = Number(targetFlatId) || targetFlatId;
+  }
+  r.guestCount = guestsNum;
   r.calendarSequence = (r.calendarSequence || 0) + 1;
   r.updatedAt = new Date().toISOString();
+
+  // 8. Invalidação Obrigatória de Assinatura (Requisito R3)
+  r.needsReSignature = true;
+  r.reSignatureReason = "Alteração no período da estadia ou acomodação";
+  r.fnhrCompleted = false;
+  r.preCheckinCompleted = false;
+  delete r.fnrhPdfUrl;
+  delete r.fnrhSha256Hash;
+  if (Array.isArray(r.guests)) {
+    r.guests.forEach(g => {
+      g.needsReSignature = true;
+      g.hasCompletedCheckin = false;
+    });
+  }
 
   // Sincronizar pedidos de café da manhã vinculados
   if (!db.breakfastOrders) db.breakfastOrders = [];
@@ -15646,8 +16824,6 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
   }
 
   // Gatilho B: Notificação de alteração de datas para a recepção/portaria
-  // Regra de Comunicação Estrita: Apenas dispara se for para o dia de hoje (ou estadias correntes) e se a portaria já recebeu a reserva.
-  // Para datas futuras, aguarda pontualmente a rotina matinal das 07:00 do dia do check-in.
   if (isReservationForTodayOrPast(r) && hasReceptionReceivedReservation(r, db)) {
     try {
       const flat = (db.flats || []).find(f => f.id === r.flatId || String(f.number) === String(r.flatNumber));
@@ -15692,7 +16868,7 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
     }
   }
 
-  saveDatabase();
+  saveDatabase("modify_direct_committed");
 
   res.json({
     success: true,
@@ -15702,12 +16878,14 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
     policyNotice,
     isUnder24h,
     nonRefundableReduction,
-    additionalAmountToPay,
+    additionalAmountToPay: 0,
     refundAmount,
     newCheckinDate,
     newCheckoutDate,
     newNights,
     newGuestCount: guestsNum,
+    needsReSignature: true,
+    reSignatureUrl: `/pre-checkin/${r.code}?resign=1`,
     reservation: {
       ...r,
       nights: newNights
@@ -20761,6 +21939,23 @@ app.get("/api/bot-actions/availability", verifyBotActionPermission("checkAvailab
         if (r.flatId != null) busyFlatSet.add(String(r.flatId));
         if (r.flatNumber != null) busyFlatSet.add(String(r.flatNumber));
       }
+
+      // Hold provisório de modificação
+      if (r.pendingModification && (r.pendingModification.status === "pending" || r.pendingModification.status === "pending_payment")) {
+        if (r.pendingModification.expiresAt && new Date(r.pendingModification.expiresAt).getTime() < nowMs) {
+          r.pendingModification.status = "expired";
+          r.pendingModification.expiredAt = new Date(nowMs).toISOString();
+        } else {
+          const pHoldIn = r.pendingModification.newCheckinDate || r.pendingModification.proposedCheckinDate;
+          const pHoldOut = r.pendingModification.newCheckoutDate || r.pendingModification.proposedCheckoutDate;
+          const pHoldFlatNum = r.pendingModification.newFlatNumber || r.pendingModification.proposedFlatNumber;
+          const pHoldFlatId = r.pendingModification.newFlatId || r.pendingModification.proposedFlatId;
+          if (pHoldIn && pHoldOut && pHoldIn < outDate && pHoldOut > inDate) {
+            if (pHoldFlatId != null) busyFlatSet.add(String(pHoldFlatId));
+            if (pHoldFlatNum != null) busyFlatSet.add(String(pHoldFlatNum));
+          }
+        }
+      }
     });
 
     (db.roomBlocks || []).forEach(b => {
@@ -20997,13 +22192,32 @@ app.post("/api/bot-actions/pre-reserve", verifyBotActionPermission("createPreRes
       });
     }
 
-    // 1. Verificação SÍNCRONA de conflito no PMS (Reservas ativas e RoomBlocks)
+    // 1. Verificação SÍNCRONA de conflito no PMS (Reservas ativas, RoomBlocks e Holds Provisórios)
     const nowMs = Date.now();
     const hasConflict = (db.reservations || []).some(r => {
       if (r.status === "cancelada" || r.status === "expirada") return false;
       if ((r.status === "pre_reserva" || r.status === "pendente") && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") return false;
-      if (String(r.flatId) !== String(flat.id) && String(r.flatNumber) !== String(flat.number)) return false;
-      return r.checkinDate < outDate && r.checkoutDate > inDate;
+      const matchesFlat = String(r.flatId) === String(flat.id) || String(r.flatNumber) === String(flat.number);
+      if (matchesFlat && r.checkinDate < outDate && r.checkoutDate > inDate) return true;
+
+      // Hold provisório de modificação
+      if (r.pendingModification && (r.pendingModification.status === "pending" || r.pendingModification.status === "pending_payment")) {
+        if (r.pendingModification.expiresAt && new Date(r.pendingModification.expiresAt).getTime() < nowMs) {
+          r.pendingModification.status = "expired";
+          r.pendingModification.expiredAt = new Date(nowMs).toISOString();
+        } else {
+          const pHoldIn = r.pendingModification.newCheckinDate || r.pendingModification.proposedCheckinDate;
+          const pHoldOut = r.pendingModification.newCheckoutDate || r.pendingModification.proposedCheckoutDate;
+          const pHoldFlatNum = r.pendingModification.newFlatNumber || r.pendingModification.proposedFlatNumber;
+          const pHoldFlatId = r.pendingModification.newFlatId || r.pendingModification.proposedFlatId;
+          const holdMatches = (pHoldFlatId != null && String(pHoldFlatId) === String(flat.id)) ||
+                              (pHoldFlatNum != null && (String(pHoldFlatNum) === String(flat.number) || String(pHoldFlatNum) === String(flat.id)));
+          if (holdMatches && pHoldIn && pHoldOut && pHoldIn < outDate && pHoldOut > inDate) {
+            return true;
+          }
+        }
+      }
+      return false;
     });
 
     if (hasConflict) {
@@ -21176,8 +22390,27 @@ app.post("/api/bot-actions/commit-reservation", verifyBotActionPermission("commi
       if (String(r.id) === String(reservation.id) || String(r.code) === String(reservation.code)) return false;
       if (r.status === "cancelada" || r.status === "expirada") return false;
       if ((r.status === "pre_reserva" || r.status === "pendente") && r.expiresAt && new Date(r.expiresAt).getTime() < nowMs && r.paymentStatus !== "pago_total") return false;
-      if (String(r.flatId) !== String(reservation.flatId) && String(r.flatNumber) !== String(reservation.flatNumber)) return false;
-      return r.checkinDate < reservation.checkoutDate && r.checkoutDate > reservation.checkinDate;
+      const matchesFlat = (String(r.flatId) === String(reservation.flatId) || String(r.flatNumber) === String(reservation.flatNumber));
+      if (matchesFlat && r.checkinDate < reservation.checkoutDate && r.checkoutDate > reservation.checkinDate) return true;
+
+      // Hold provisório de modificação
+      if (r.pendingModification && (r.pendingModification.status === "pending" || r.pendingModification.status === "pending_payment")) {
+        if (r.pendingModification.expiresAt && new Date(r.pendingModification.expiresAt).getTime() < nowMs) {
+          r.pendingModification.status = "expired";
+          r.pendingModification.expiredAt = new Date(nowMs).toISOString();
+        } else {
+          const pHoldIn = r.pendingModification.newCheckinDate || r.pendingModification.proposedCheckinDate;
+          const pHoldOut = r.pendingModification.newCheckoutDate || r.pendingModification.proposedCheckoutDate;
+          const pHoldFlatNum = r.pendingModification.newFlatNumber || r.pendingModification.proposedFlatNumber;
+          const pHoldFlatId = r.pendingModification.newFlatId || r.pendingModification.proposedFlatId;
+          const holdMatches = (pHoldFlatId != null && String(pHoldFlatId) === String(reservation.flatId)) ||
+                              (pHoldFlatNum != null && (String(pHoldFlatNum) === String(reservation.flatNumber) || String(pHoldFlatNum) === String(reservation.flatId)));
+          if (holdMatches && pHoldIn && pHoldOut && pHoldIn < reservation.checkoutDate && pHoldOut > reservation.checkinDate) {
+            return true;
+          }
+        }
+      }
+      return false;
     });
 
     if (hasConflict) {
@@ -28054,6 +29287,73 @@ async function checkInterBankingExtratoPix(r) {
     return null;
   } catch (err) {
     console.error("[Banco Inter Extrato] Falha geral:", err);
+    return null;
+  }
+}
+
+// 6.2.4 Consulta Ativa no Extrato Bancário para Acréscimo de Modificação Pendente
+async function checkInterBankingExtratoPixForPending(r, pending) {
+  try {
+    if (!r || !pending) return null;
+    const data = await getCachedInterExtratoCompleto();
+    if (!data || !Array.isArray(data.transacoes) || data.transacoes.length === 0) {
+      return null;
+    }
+
+    const cleanResCode = String(r.code || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+    const cleanPixTxId = String(pending.pixTxId || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+    const expectedAmount = Number(pending.additionalAmountToPay || 0);
+
+    for (const t of data.transacoes) {
+      if (t.tipoTransacao !== "PIX" || t.tipoOperacao !== "C") continue;
+
+      const txValor = Number(t.valor || 0);
+      const txIdFromDetails = String(t.detalhes?.txId || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+      const endToEndId = t.detalhes?.endToEndId || t.idTransacao;
+
+      // Impede vinculação caso essa transação já tenha sido lançada em pagamentos
+      const alreadyClaimed = (db.reservations || []).some(other =>
+        (other.payments || []).some(p => p.endToEndId === endToEndId || p.txId === endToEndId) ||
+        other.pixEndToEndId === endToEndId
+      );
+      if (alreadyClaimed) continue;
+
+      const txIdMatched = Boolean(
+        txIdFromDetails && (
+          (cleanPixTxId && txIdFromDetails === cleanPixTxId) ||
+          (cleanPixTxId && cleanPixTxId.length >= 5 && txIdFromDetails.includes(cleanPixTxId)) ||
+          (cleanPixTxId && cleanPixTxId.length >= 5 && cleanPixTxId.includes(txIdFromDetails))
+        )
+      );
+
+      const amountMatched = Math.abs(txValor - expectedAmount) < 0.05;
+
+      const guestNameNormalized = (r.guestName || "")
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+      const firstGuestName = guestNameNormalized.split(" ")[0] || "";
+      const pagadorNormalized = (t.detalhes?.nomePagador || t.descricao || "")
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+
+      const nameMatched = Boolean(
+        firstGuestName.length >= 3 && pagadorNormalized.includes(firstGuestName)
+      );
+
+      if (txIdMatched || (amountMatched && (nameMatched || (cleanResCode && txIdFromDetails.includes("MOD"))))) {
+        console.log(`[Banco Inter Extrato] MATCH de acréscimo de alteração confirmado para reserva ${r.code}! TxID: ${t.detalhes?.txId || t.idTransacao}, Valor: ${txValor}`);
+        return {
+          found: true,
+          amount: txValor,
+          paidAt: t.dataInclusao || t.dataTransacao || new Date().toISOString(),
+          endToEndId,
+          txId: t.detalhes?.txId || pending.pixTxId,
+          pagador: t.detalhes?.nomePagador || t.descricao
+        };
+      }
+    }
+
+    return null;
+  } catch (err) {
+    console.error("[Banco Inter Extrato Pending] Falha:", err);
     return null;
   }
 }
