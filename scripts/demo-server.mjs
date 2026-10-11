@@ -78,7 +78,8 @@ import {
   resolveWhatsAppTags,
   detectAndRecordUnmetDemand,
   classifyUnmetDemand,
-  UNMET_DEMAND_CATEGORIES
+  UNMET_DEMAND_CATEGORIES,
+  appendMessageToConversation
 } from "./zapi-service.mjs";
 import { initMaidAutomationEngine } from "./maid-automation-service.mjs";
 import { sendInterPix, isInterConfigured, INTER_ENV } from "./inter-pix-service.mjs";
@@ -1598,6 +1599,21 @@ function sanitizeLostAndFound() {
             item.lastGuestEmail = pabloRes.guestEmail || "";
           }
         }
+      }
+    }
+
+    // Vincula automaticamente a camareira e seu WhatsApp se já registrados ou identificáveis
+    if (!item.maidPhone && item.foundBy) {
+      const u = (db.users || []).find(x =>
+        (x.role === "camareira" || x.role === "cleaner") &&
+        (x.name?.toLowerCase().trim() === item.foundBy.toLowerCase().trim() ||
+         x.username?.toLowerCase().trim() === item.foundBy.toLowerCase().trim() ||
+         (item.notes && x.name && item.notes.toLowerCase().includes(x.name.toLowerCase())))
+      );
+      if (u) {
+        if (item.foundBy === "Camareira") item.foundBy = u.name || u.username;
+        item.maidPhone = u.whatsapp || u.phone;
+        item.maidId = u.id;
       }
     }
   }
@@ -15612,6 +15628,9 @@ export function hasReservationConflict({
   return false;
 }
 
+// ── M1: In-Flight Commit Map para Concorrência em Modificações de Reserva ──────
+const activeModificationCommits = new Map();
+
 // ── M1: Função de Commit Atômico da Modificação Liquidada ───────────────────
 export async function commitPendingModification(r, pending, {
   amount = null,
@@ -15622,6 +15641,30 @@ export async function commitPendingModification(r, pending, {
   source = "Banco Inter"
 } = {}) {
   if (!r || !pending) return { success: false, error: "Reserva ou alteração pendente ausente." };
+
+  const targetPendingId = pending.pendingId || pending.id || null;
+
+  // Idempotency check: se já registrado no histórico de modificações ou nos pagamentos
+  const alreadyInHistory = Boolean(
+    targetPendingId &&
+    Array.isArray(r.modificationHistory) &&
+    r.modificationHistory.some(m => m.pendingId === targetPendingId)
+  );
+
+  const alreadyInPayments = Boolean(
+    targetPendingId &&
+    Array.isArray(r.payments) &&
+    r.payments.some(p => p.pendingId === targetPendingId)
+  );
+
+  if (alreadyInHistory || alreadyInPayments || pending._committed) {
+    return {
+      success: true,
+      committed: true,
+      alreadyCommitted: true,
+      reservation: r
+    };
+  }
 
   const additionalPaid = Number(amount !== null ? amount : pending.additionalAmountToPay || 0);
   const oldCheckin = r.checkinDate;
@@ -15656,28 +15699,40 @@ export async function commitPendingModification(r, pending, {
   r.calendarSequence = (r.calendarSequence || 0) + 1;
   r.updatedAt = new Date().toISOString();
 
-  // 3. Atualização Financeira & Registro de Pagamento
-  r.totalAmount = oldTotalAmount + additionalPaid;
-  r.paidAmount = oldPaidAmount + additionalPaid;
-  r.paymentStatus = (r.totalAmount > 0 && r.paidAmount >= r.totalAmount) ? "pago_total" : (r.paidAmount > 0 ? "sinal_pago" : r.paymentStatus);
-  if (paymentMethod) r.paymentMethod = paymentMethod;
+  // 3. Atualização Financeira & Registro de Pagamento com Deduplicação
+  if (!Array.isArray(r.payments)) r.payments = [];
+  const targetTxId = txId || pending.pixTxId || null;
+  const isDuplicatePayment = r.payments.some(p => {
+    if (targetPendingId && p.pendingId && p.pendingId === targetPendingId) return true;
+    if (targetTxId && p.txId && String(p.txId) === String(targetTxId)) return true;
+    if (endToEndId && p.endToEndId && p.endToEndId === endToEndId) return true;
+    return false;
+  });
 
   const resolvedPaidAt = paidAt || new Date().toISOString();
   if (endToEndId) r.pixEndToEndId = endToEndId;
-  if (txId && paymentMethod === "cartao_credito") r.mpPaymentId = String(txId);
+  if (targetTxId && paymentMethod === "cartao_credito") r.mpPaymentId = String(targetTxId);
+  if (paymentMethod) r.paymentMethod = paymentMethod;
 
-  if (!Array.isArray(r.payments)) r.payments = [];
-  const payRecord = {
-    id: `pay_mod_${paymentMethod}_${Date.now()}`,
-    amount: additionalPaid,
-    method: paymentMethod || "pix",
-    date: resolvedPaidAt,
-    notes: `Acréscimo de modificação de reserva liquidado via ${source}${endToEndId ? ` (E2E: ${endToEndId})` : ""}${txId ? ` (TxId: ${txId})` : ""}`,
-    txId: txId || pending.pixTxId || null,
-    endToEndId: endToEndId || null,
-    pendingId: pending.pendingId || pending.id || null
-  };
-  r.payments.push(payRecord);
+  if (!isDuplicatePayment && additionalPaid > 0) {
+    r.totalAmount = oldTotalAmount + additionalPaid;
+    r.paidAmount = oldPaidAmount + additionalPaid;
+    r.paymentStatus = (r.totalAmount > 0 && r.paidAmount >= r.totalAmount) ? "pago_total" : (r.paidAmount > 0 ? "sinal_pago" : r.paymentStatus);
+
+    const payRecord = {
+      id: `pay_mod_${paymentMethod}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      amount: additionalPaid,
+      method: paymentMethod || "pix",
+      date: resolvedPaidAt,
+      notes: `Acréscimo de modificação de reserva liquidado via ${source}${endToEndId ? ` (E2E: ${endToEndId})` : ""}${targetTxId ? ` (TxId: ${targetTxId})` : ""}`,
+      txId: targetTxId,
+      endToEndId: endToEndId || null,
+      pendingId: targetPendingId
+    };
+    r.payments.push(payRecord);
+  } else if (!isDuplicatePayment && additionalPaid <= 0) {
+    r.paymentStatus = (r.totalAmount > 0 && r.paidAmount >= r.totalAmount) ? "pago_total" : (r.paidAmount > 0 ? "sinal_pago" : r.paymentStatus);
+  }
 
   // 4. Invalidação Obrigatória de Assinatura (Requisito R3)
   r.needsReSignature = true;
@@ -15693,30 +15748,33 @@ export async function commitPendingModification(r, pending, {
     });
   }
 
-  // 5. Registro no Histórico de Modificações (modificationHistory)
+  // 5. Registro no Histórico de Modificações com Deduplicação
   if (!Array.isArray(r.modificationHistory)) r.modificationHistory = [];
-  r.modificationHistory.push({
-    modifiedAt: new Date().toISOString(),
-    oldCheckin,
-    newCheckin: targetCheckin,
-    oldCheckout,
-    newCheckout: targetCheckout,
-    oldFlatNumber,
-    newFlatNumber: targetFlatNumber,
-    oldNights,
-    newNights,
-    oldGuests: oldGuestCount,
-    newGuests: targetGuestCount,
-    additionalAmountToPay: additionalPaid,
-    refundAmount: pending.refundAmount || 0,
-    isUnder24h: Boolean(pending.isUnder24h),
-    nonRefundableReduction: Boolean(pending.nonRefundableReduction),
-    paymentMethod,
-    paymentId: txId || endToEndId || null,
-    reason: pending.reason || "Modificação com acréscimo liquidada via autoatendimento",
-    settledVia: source,
-    pendingId: pending.pendingId || pending.id || null
-  });
+  const isDuplicateHistory = Boolean(targetPendingId && r.modificationHistory.some(m => m.pendingId === targetPendingId));
+  if (!isDuplicateHistory) {
+    r.modificationHistory.push({
+      modifiedAt: new Date().toISOString(),
+      oldCheckin,
+      newCheckin: targetCheckin,
+      oldCheckout,
+      newCheckout: targetCheckout,
+      oldFlatNumber,
+      newFlatNumber: targetFlatNumber,
+      oldNights,
+      newNights,
+      oldGuests: oldGuestCount,
+      newGuests: targetGuestCount,
+      additionalAmountToPay: additionalPaid,
+      refundAmount: pending.refundAmount || 0,
+      isUnder24h: Boolean(pending.isUnder24h),
+      nonRefundableReduction: Boolean(pending.nonRefundableReduction),
+      paymentMethod,
+      paymentId: targetTxId || endToEndId || null,
+      reason: pending.reason || "Modificação com acréscimo liquidada via autoatendimento",
+      settledVia: source,
+      pendingId: targetPendingId
+    });
+  }
 
   // 6. Trilha de Auditoria (Audit Logs)
   ensureReservationAuditLogs(r);
@@ -15818,6 +15876,8 @@ export async function commitPendingModification(r, pending, {
   }
 
   // 8. Limpa o Hold Pendente
+  pending._committed = true;
+  pending.status = "paid";
   delete r.pendingModification;
 
   // 9. Emite Notificação Operacional no Painel
@@ -16295,6 +16355,32 @@ app.get("/api/pms/guest-portal/:code/modify-status", async (req, res) => {
       return res.status(404).json({ success: false, error: "Reserva não encontrada." });
     }
 
+    const reservationCode = r.code;
+
+    // 0. Coordenação Concorrente: se commit já está em andamento para esta reserva, aguarda o lock
+    if (activeModificationCommits.has(reservationCode)) {
+      try {
+        await activeModificationCommits.get(reservationCode);
+      } catch (_) {}
+
+      const recentMod = Array.isArray(r.modificationHistory)
+        ? r.modificationHistory.find(m => pendingId && m.pendingId === pendingId) || r.modificationHistory[r.modificationHistory.length - 1]
+        : null;
+
+      return res.json({
+        success: true,
+        paid: true,
+        status: "paid",
+        committed: true,
+        message: "Pagamento confirmado! As datas da sua estadia foram atualizadas com sucesso.",
+        newCheckinDate: recentMod ? recentMod.newCheckin : r.checkinDate,
+        newCheckoutDate: recentMod ? recentMod.newCheckout : r.checkoutDate,
+        flatNumber: (recentMod && recentMod.newFlatNumber) || r.flatNumber,
+        needsReSignature: Boolean(r.needsReSignature),
+        reSignatureUrl: `/pre-checkin/${r.code}?resign=1`
+      });
+    }
+
     // 1. Caso a modificação já tenha sido confirmada em polling anterior
     if (!r.pendingModification) {
       const recentMod = Array.isArray(r.modificationHistory)
@@ -16382,7 +16468,7 @@ app.get("/api/pms/guest-portal/:code/modify-status", async (req, res) => {
     }
 
     // A. Cobrança PIX Banco Inter por TxId
-    if (pending.pixTxId) {
+    if (!paymentVerified && pending.pixTxId) {
       try {
         const cobData = await checkInterPixCobStatus(pending.pixTxId);
         if (cobData && (cobData.status === "CONCLUIDA" || (Array.isArray(cobData.pix) && cobData.pix.length > 0))) {
@@ -16448,25 +16534,58 @@ app.get("/api/pms/guest-portal/:code/modify-status", async (req, res) => {
       }
     }
 
-    // 6. SE LIQUIDADO -> EXECUTA O COMMIT ATÔMICO
+    // 6. SE LIQUIDADO -> EXECUTA O COMMIT ATÔMICO COM COORDENAÇÃO DE LOCK
     if (paymentVerified && paymentDetails) {
-      const commitRes = await commitPendingModification(r, pending, paymentDetails);
-      if (!commitRes.success) {
-        return res.status(500).json({ success: false, error: commitRes.error });
+      if (activeModificationCommits.has(reservationCode)) {
+        try {
+          await activeModificationCommits.get(reservationCode);
+        } catch (_) {}
+
+        const recentMod = Array.isArray(r.modificationHistory)
+          ? r.modificationHistory.find(m => pendingId && m.pendingId === pendingId) || r.modificationHistory[r.modificationHistory.length - 1]
+          : null;
+
+        return res.json({
+          success: true,
+          paid: true,
+          status: "paid",
+          committed: true,
+          message: "Pagamento confirmado! As datas da sua estadia foram atualizadas com sucesso.",
+          newCheckinDate: recentMod ? recentMod.newCheckin : r.checkinDate,
+          newCheckoutDate: recentMod ? recentMod.newCheckout : r.checkoutDate,
+          flatNumber: (recentMod && recentMod.newFlatNumber) || r.flatNumber,
+          needsReSignature: Boolean(r.needsReSignature),
+          reSignatureUrl: `/pre-checkin/${r.code}?resign=1`
+        });
       }
 
-      return res.json({
-        success: true,
-        paid: true,
-        status: "paid",
-        committed: true,
-        message: "Pagamento confirmado! As datas da sua estadia foram atualizadas com sucesso.",
-        newCheckinDate: r.checkinDate,
-        newCheckoutDate: r.checkoutDate,
-        flatNumber: r.flatNumber,
-        needsReSignature: true,
-        reSignatureUrl: `/pre-checkin/${r.code}?resign=1`
-      });
+      // Transição síncrona imediata antes de qualquer operação assíncrona
+      pending.status = "committing";
+
+      const commitPromise = commitPendingModification(r, pending, paymentDetails);
+      activeModificationCommits.set(reservationCode, commitPromise);
+
+      try {
+        const commitRes = await commitPromise;
+        if (!commitRes.success) {
+          return res.status(500).json({ success: false, error: commitRes.error });
+        }
+
+        return res.json({
+          success: true,
+          paid: true,
+          status: "paid",
+          committed: true,
+          message: "Pagamento confirmado! As datas da sua estadia foram atualizadas com sucesso.",
+          newCheckinDate: r.checkinDate,
+          newCheckoutDate: r.checkoutDate,
+          flatNumber: r.flatNumber,
+          needsReSignature: true,
+          reSignatureUrl: `/pre-checkin/${r.code}?resign=1`
+        });
+      } finally {
+        activeModificationCommits.delete(reservationCode);
+      }
     }
 
     // 7. SE AINDA NÃO LIQUIDADO -> RETORNA PENDING
@@ -16894,6 +17013,207 @@ app.post("/api/pms/guest-portal/:code/modify", (req, res) => {
 });
 
 // ── Achados & Perdidos (Lost and Found / Item Encontrado no Quarto) ──────────
+function formatPhoneDisplay(phone) {
+  if (!phone) return "";
+  const digits = String(phone).replace(/\D/g, "");
+  const national = digits.startsWith("55") && digits.length >= 12 ? digits.substring(2) : digits;
+  if (national.length === 11) {
+    return `(${national.substring(0, 2)}) ${national.substring(2, 7)}-${national.substring(7)}`;
+  } else if (national.length === 10) {
+    return `(${national.substring(0, 2)}) ${national.substring(2, 6)}-${national.substring(6)}`;
+  }
+  return String(phone);
+}
+
+async function notifyLostItemGuest({ item, db, saveDatabase }) {
+  if (!item) return { success: false, reason: "invalid_item" };
+
+  // 1. Identifica ou recupera o telefone do hóspede
+  let guestPhone = item.lastGuestPhone;
+  if (!guestPhone && item.lastGuestName && item.lastGuestName !== "Hóspede Anterior") {
+    const rMatch = (db.reservations || []).find(r =>
+      (r.guestName || "").toLowerCase().trim() === item.lastGuestName.toLowerCase().trim() &&
+      r.guestPhone
+    );
+    if (rMatch) guestPhone = rMatch.guestPhone;
+
+    if (!guestPhone && Array.isArray(db.guests)) {
+      const gMatch = db.guests.find(g =>
+        (g.name || "").toLowerCase().trim() === item.lastGuestName.toLowerCase().trim() &&
+        (g.phone || g.whatsapp)
+      );
+      if (gMatch) guestPhone = gMatch.whatsapp || gMatch.phone;
+    }
+    if (guestPhone) {
+      item.lastGuestPhone = guestPhone;
+    }
+  }
+
+  const cleanGuestPhone = typeof cleanWhatsAppPhone === "function" ? cleanWhatsAppPhone(guestPhone) : (guestPhone ? String(guestPhone).replace(/\D/g, "") : "");
+  if (!cleanGuestPhone) {
+    console.log(`[Lost and Found] Hóspede ${item.lastGuestName || "desconhecido"} sem telefone cadastrado para o item #${item.id}. Notificação não disparada.`);
+    item.guestNotified = false;
+    item.guestNotificationStatus = "no_phone";
+    if (saveDatabase) saveDatabase();
+    return { success: false, reason: "no_phone" };
+  }
+
+  // 2. Identifica e resolve os dados da camareira que encontrou
+  let maidName = item.foundBy || "Camareira";
+  let maidPhone = item.maidPhone;
+  let maidId = item.maidId;
+
+  if (!maidPhone) {
+    const uMatch = (db.users || []).find(u =>
+      (u.role === "camareira" || u.role === "cleaner") &&
+      (u.name?.toLowerCase().trim() === maidName.toLowerCase().trim() ||
+       u.username?.toLowerCase().trim() === maidName.toLowerCase().trim() ||
+       (maidName && u.name && maidName.toLowerCase().includes(u.name.toLowerCase())))
+    );
+    if (uMatch) {
+      maidName = uMatch.name || uMatch.username;
+      maidPhone = uMatch.whatsapp || uMatch.phone;
+      maidId = uMatch.id;
+    }
+  }
+
+  if (!maidPhone) {
+    const regDate = item.registrationDate || (item.createdAt ? item.createdAt.substring(0, 10) : "");
+    const clMatch = (db.cleaningRequests || []).find(cr =>
+      (String(cr.flatNumber) === String(item.flatNumber) || (item.flatId && cr.flatId === Number(item.flatId))) &&
+      (cr.requestDate === regDate || cr.effectiveDate === regDate) &&
+      cr.assignedUserId
+    );
+    if (clMatch) {
+      const u = (db.users || []).find(x => x.id === clMatch.assignedUserId);
+      if (u) {
+        if (!maidName || maidName === "Camareira") maidName = u.name || u.username;
+        maidPhone = u.whatsapp || u.phone;
+        maidId = u.id;
+      }
+    }
+  }
+
+  item.foundBy = maidName;
+  if (maidPhone) item.maidPhone = maidPhone;
+  if (maidId) item.maidId = maidId;
+
+  const cleanMaidPhone = typeof cleanWhatsAppPhone === "function" ? cleanWhatsAppPhone(maidPhone) : (maidPhone ? String(maidPhone).replace(/\D/g, "") : "");
+  const formattedMaidPhone = formatPhoneDisplay(maidPhone);
+
+  const guestFirstName = (item.lastGuestName && item.lastGuestName !== "Hóspede Anterior")
+    ? item.lastGuestName.split(" ")[0]
+    : "Hóspede";
+
+  // 3. Monta a mensagem para o cliente
+  let msg = `Olá, *${guestFirstName}*! Tudo bem?\n\n` +
+    `A equipe de governança do *CorpFlats Soho Residence* identificou que foi esquecido um objeto no *Flat ${item.flatNumber}*` +
+    `${item.locationInRoom ? ` (${item.locationInRoom})` : ""} após o seu check-out.\n\n` +
+    `📦 *Item encontrado:* ${item.description}\n`;
+
+  if (item.photoUrl && (item.photoUrl.startsWith("http://") || item.photoUrl.startsWith("https://"))) {
+    msg += `📸 *Foto do item:* ${item.photoUrl}\n`;
+  }
+
+  const buttons = [];
+
+  if (cleanMaidPhone) {
+    const cleanMaidWa = cleanMaidPhone.startsWith("55") ? cleanMaidPhone : `55${cleanMaidPhone}`;
+    const maidWaLink = `https://wa.me/${cleanMaidWa}?text=${encodeURIComponent(`Olá, ${maidName}! Sou ${guestFirstName} do Flat ${item.flatNumber}. Gostaria de combinar a retirada do meu item (${item.description}) esquecido no quarto.`)}`;
+    msg += `\n👩‍💼 *Encontrado e guardado por:* ${maidName}\n` +
+      `📱 *WhatsApp da Camareira:* ${formattedMaidPhone || cleanMaidPhone}\n` +
+      `💬 *Link direto:* ${maidWaLink}\n\n` +
+      `Por favor, entre em contato diretamente com a *${maidName}* pelo WhatsApp acima para combinar a retirada ou envio do seu objeto! ✨`;
+
+    buttons.push({
+      id: "btn_contact_maid",
+      type: "URL",
+      label: `Falar com ${maidName.split(" ")[0]}`,
+      url: `https://wa.me/${cleanMaidWa}`
+    });
+  } else {
+    const rawAdmin = db.settings?.receptionPhone || db.settings?.receptionWhatsApp || db.siteConfig?.branding?.whatsapp || db.settings?.adminWhatsApp || "5522997124021";
+    const cleanAdmin = typeof cleanWhatsAppPhone === "function" ? cleanWhatsAppPhone(rawAdmin) : String(rawAdmin).replace(/\D/g, "");
+    const cleanAdminWa = cleanAdmin.startsWith("55") ? cleanAdmin : `55${cleanAdmin}`;
+    const formattedAdmin = formatPhoneDisplay(rawAdmin);
+    const adminWaLink = `https://wa.me/${cleanAdminWa}?text=${encodeURIComponent(`Olá! Sou ${guestFirstName} do Flat ${item.flatNumber}. Gostaria de informações sobre meu item (${item.description}) esquecido no quarto.`)}`;
+    msg += `\n👩‍💼 *Encontrado por:* ${maidName}\n` +
+      `📱 *WhatsApp da Governança / Recepção:* ${formattedAdmin || rawAdmin}\n` +
+      `💬 *Link direto:* ${adminWaLink}\n\n` +
+      `Por favor, entre em contato com a nossa equipe pelo WhatsApp acima para combinar a retirada do seu objeto! ✨`;
+
+    buttons.push({
+      id: "btn_contact_reception",
+      type: "URL",
+      label: "Falar com Recepção",
+      url: `https://wa.me/${cleanAdminWa}`
+    });
+  }
+
+  // 4. Disparo oficial via Z-API
+  let waResult = { success: true, simulated: true };
+  try {
+    if (typeof sendZapiMessage === "function") {
+      waResult = await sendZapiMessage(db.zapiConfig, {
+        phone: cleanGuestPhone,
+        message: msg,
+        buttons,
+        recipientRole: "guest"
+      });
+    }
+  } catch (err) {
+    console.error("[Lost and Found WhatsApp Error]", err);
+    waResult = { success: false, error: err.message };
+  }
+
+  // 5. Histórico Z-API
+  if (!db.whatsappHistory) db.whatsappHistory = [];
+  db.whatsappHistory.push({
+    id: `lost_${item.id}_${Date.now()}`,
+    guestName: item.lastGuestName,
+    guestPhone: cleanGuestPhone,
+    flatNumber: item.flatNumber,
+    lostItemId: item.id,
+    triggerEvent: "lost_item_registered",
+    message: msg,
+    buttons,
+    status: waResult.success ? "sent" : (waResult.blockedByTestMode ? "blocked_sandbox" : "failed"),
+    method: waResult.simulated ? "mock" : (waResult.method || "api"),
+    error: waResult.error || null,
+    sentAt: new Date().toISOString()
+  });
+
+  // 6. Conversa com o hóspede
+  if (typeof appendMessageToConversation === "function") {
+    appendMessageToConversation(db, {
+      phone: cleanGuestPhone,
+      senderName: "CorpFlats - Achados & Perdidos",
+      senderPhone: db?.zapiConfig?.instanceId || "",
+      fromMe: true,
+      text: msg,
+      type: "text",
+      triggerEvent: "lost_item_registered",
+      status: waResult.success ? "delivered" : "failed"
+    });
+  }
+
+  item.guestNotified = Boolean(waResult.success);
+  item.guestNotifiedAt = waResult.success ? new Date().toISOString() : null;
+  item.guestNotificationStatus = waResult.success ? "sent" : (waResult.blockedByTestMode ? "blocked_sandbox" : "failed");
+  item.guestNotificationError = waResult.error || null;
+  item.notifiedPhone = cleanGuestPhone;
+  item.updatedAt = new Date().toISOString();
+
+  if (saveDatabase) saveDatabase();
+
+  return {
+    success: waResult.success,
+    result: waResult,
+    message: msg,
+    recipient: cleanGuestPhone
+  };
+}
+
 app.get("/api/lost-and-found", (req, res) => {
   if (!db.lostAndFound) db.lostAndFound = [];
   sanitizeLostAndFound();
@@ -16920,7 +17240,11 @@ app.post("/api/lost-and-found", async (req, res) => {
       timestamp = "",
       guestName = "",
       guestPhone = "",
-      guestEmail = ""
+      guestEmail = "",
+      maidName = "",
+      maidPhone = "",
+      maidId = null,
+      foundBy = ""
     } = req.body;
 
     if (!description || !description.trim()) {
@@ -17027,7 +17351,62 @@ app.post("/api/lost-and-found", async (req, res) => {
       );
       if (guestMatch) {
         lastGuestPhone = guestMatch.guestPhone;
+      } else if (Array.isArray(db.guests)) {
+        const crmGuest = db.guests.find(g =>
+          (g.name || "").toLowerCase().trim() === lastGuestName.toLowerCase().trim() &&
+          (g.phone || g.whatsapp)
+        );
+        if (crmGuest) lastGuestPhone = crmGuest.whatsapp || crmGuest.phone;
       }
+    }
+
+    // 4. Identificação e Vinculação da Camareira que Encontrou
+    let resolvedMaidName = maidName || foundBy;
+    let resolvedMaidPhone = maidPhone || "";
+    let resolvedMaidId = maidId ? Number(maidId) : null;
+
+    if (user && (user.role === "camareira" || user.role === "cleaner")) {
+      resolvedMaidName = user.name || user.username;
+      resolvedMaidPhone = user.whatsapp || user.phone || resolvedMaidPhone;
+      resolvedMaidId = user.id;
+    } else if (resolvedMaidId) {
+      const u = (db.users || []).find(x => x.id === resolvedMaidId);
+      if (u) {
+        if (!resolvedMaidName) resolvedMaidName = u.name || u.username;
+        if (!resolvedMaidPhone) resolvedMaidPhone = u.whatsapp || u.phone;
+      }
+    } else if (resolvedMaidName) {
+      const u = (db.users || []).find(x =>
+        (x.role === "camareira" || x.role === "cleaner") &&
+        (x.name?.toLowerCase().trim() === resolvedMaidName.toLowerCase().trim() ||
+         x.username?.toLowerCase().trim() === resolvedMaidName.toLowerCase().trim() ||
+         (x.name && resolvedMaidName.toLowerCase().includes(x.name.toLowerCase())))
+      );
+      if (u) {
+        resolvedMaidName = u.name || u.username;
+        if (!resolvedMaidPhone) resolvedMaidPhone = u.whatsapp || u.phone;
+        resolvedMaidId = u.id;
+      }
+    }
+
+    if (!resolvedMaidPhone) {
+      const checkoutCleaning = (db.cleaningRequests || []).find(cr =>
+        (String(cr.flatNumber) === String(targetFlat) || (flatId && cr.flatId === Number(flatId))) &&
+        (cr.requestDate === registrationDate || cr.effectiveDate === registrationDate) &&
+        cr.assignedUserId
+      );
+      if (checkoutCleaning) {
+        const u = (db.users || []).find(x => x.id === checkoutCleaning.assignedUserId);
+        if (u) {
+          if (!resolvedMaidName || resolvedMaidName === "Camareira") resolvedMaidName = u.name || u.username;
+          resolvedMaidPhone = u.whatsapp || u.phone;
+          resolvedMaidId = u.id;
+        }
+      }
+    }
+
+    if (!resolvedMaidName) {
+      resolvedMaidName = user ? (user.name || user.username) : "Camareira";
     }
 
     const newItem = {
@@ -17038,12 +17417,16 @@ app.post("/api/lost-and-found", async (req, res) => {
       locationInRoom: locationInRoom.trim(),
       photoUrl: finalPhotoUrl,
       status: "guardado", // 'guardado' | 'devolvido' | 'descartado'
-      foundBy: user ? (user.name || user.username) : "Camareira",
+      foundBy: resolvedMaidName,
+      maidId: resolvedMaidId,
+      maidPhone: resolvedMaidPhone,
       lastGuestName,
       lastGuestPhone,
       lastGuestEmail,
       lastCheckoutDate,
+      registrationDate,
       notes: notes.trim(),
+      guestNotified: false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -17051,7 +17434,7 @@ app.post("/api/lost-and-found", async (req, res) => {
     db.lostAndFound.unshift(newItem);
     saveDatabase();
 
-    // 4. Registro de Auditoria Fail-Safe
+    // 5. Registro de Auditoria Fail-Safe
     logAuditEvent({
       level: "info",
       category: "cleaning",
@@ -17063,13 +17446,15 @@ app.post("/api/lost-and-found", async (req, res) => {
         locationInRoom: newItem.locationInRoom,
         photoUrl: finalPhotoUrl ? "anexada" : "sem foto",
         lastGuestName: newItem.lastGuestName,
-        lastGuestPhone: newItem.lastGuestPhone
+        lastGuestPhone: newItem.lastGuestPhone,
+        maidPhone: newItem.maidPhone,
+        foundBy: newItem.foundBy
       },
       source: "cleaning_dashboard",
       ip: req.ip || req.headers["x-forwarded-for"] || ""
     });
 
-    // 5. Notificação Central para a Equipe de Gestão
+    // 6. Notificação Central para a Equipe de Gestão
     createNotification({
       category: "lost_item",
       title: `📦 Item Encontrado - Flat ${newItem.flatNumber}`,
@@ -17078,6 +17463,10 @@ app.post("/api/lost-and-found", async (req, res) => {
       metadata: { flatId, flatNumber: newItem.flatNumber, lostItemId: id, photoUrl: newItem.photoUrl, lastGuestName },
       targetUrl: "/achados-perdidos"
     });
+
+    // 7. Notificação Automática no WhatsApp do Cliente com Contato da Camareira
+    const notifyResult = await notifyLostItemGuest({ item: newItem, db, saveDatabase });
+    console.log(`[Lost and Found] Notificação WhatsApp para item #${newItem.id}:`, notifyResult.success ? "Enviada" : (notifyResult.reason || notifyResult.result?.error));
 
     res.status(201).json(newItem);
   } catch (err) {
@@ -17101,6 +17490,9 @@ app.patch("/api/lost-and-found/:id", async (req, res) => {
   if (req.body.lastGuestEmail !== undefined) item.lastGuestEmail = req.body.lastGuestEmail;
   if (req.body.description !== undefined) item.description = req.body.description;
   if (req.body.locationInRoom !== undefined) item.locationInRoom = req.body.locationInRoom;
+  if (req.body.maidPhone !== undefined) item.maidPhone = req.body.maidPhone;
+  if (req.body.foundBy !== undefined) item.foundBy = req.body.foundBy;
+  if (req.body.maidId !== undefined) item.maidId = req.body.maidId ? Number(req.body.maidId) : null;
 
   if (req.body.photoBase64 !== undefined) {
     if (req.body.photoBase64 && typeof req.body.photoBase64 === "string" && req.body.photoBase64.startsWith("data:image/")) {
@@ -17127,16 +17519,39 @@ app.patch("/api/lost-and-found/:id", async (req, res) => {
   item.updatedAt = new Date().toISOString();
   saveDatabase();
 
+  if (req.body.notifyGuest === true) {
+    await notifyLostItemGuest({ item, db, saveDatabase });
+  }
+
   logAuditEvent({
     level: "info",
     category: "cleaning",
     action: `LOST_ITEM_${(item.status || "updated").toUpperCase()}`,
     actor: { name: user ? user.name : "Sistema", role: user?.role || "admin" },
-    details: { id, flatNumber: item.flatNumber, status: item.status, returnedTo: item.returnedTo, hasPhoto: Boolean(item.photoUrl) },
+    details: { id, flatNumber: item.flatNumber, status: item.status, returnedTo: item.returnedTo, hasPhoto: Boolean(item.photoUrl), maidPhone: item.maidPhone },
     source: "dashboard"
   });
 
   res.json(item);
+});
+
+app.post("/api/lost-and-found/:id/notify-guest", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!db.lostAndFound) db.lostAndFound = [];
+  const item = db.lostAndFound.find(i => i.id === id);
+  if (!item) return res.status(404).json({ error: "Item não encontrado." });
+
+  if (req.body?.guestPhone) item.lastGuestPhone = req.body.guestPhone;
+  if (req.body?.guestName) item.lastGuestName = req.body.guestName;
+  if (req.body?.maidPhone) item.maidPhone = req.body.maidPhone;
+  if (req.body?.foundBy) item.foundBy = req.body.foundBy;
+
+  const result = await notifyLostItemGuest({ item, db, saveDatabase });
+  res.json({
+    success: result.success,
+    item,
+    details: result
+  });
 });
 
 app.delete("/api/lost-and-found/:id", (req, res) => {
