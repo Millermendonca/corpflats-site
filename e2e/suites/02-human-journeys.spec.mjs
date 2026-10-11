@@ -19,7 +19,7 @@ import { test, expect } from "@playwright/test";
 import { injectAuthSession } from "../fixtures/auth-fixtures.mjs";
 import { attachErrorGuard } from "../fixtures/error-guard.mjs";
 import { setTimeTravelHour, resetTimeTravel } from "../sandbox/time-travel.mjs";
-import { simulatePixPayment, simulatePixExpiration } from "../sandbox/pix-simulator.mjs";
+import { simulatePixPayment, simulatePixExpiration, resetPendingPixReservation } from "../sandbox/pix-simulator.mjs";
 import { getSentEmails, clearSentEmails } from "../sandbox/mock-smtp.mjs";
 
 test.describe.serial("Milestone 3 (M3) - Jornadas Humanas Anti-Frustração (R3)", () => {
@@ -276,6 +276,9 @@ test.describe.serial("Milestone 3 (M3) - Jornadas Humanas Anti-Frustração (R3)
     const guard = attachErrorGuard(page, { allowGuestAuth401: true });
 
     try {
+      // 0. Ensure reservation is in pristine pending PIX state across all viewports
+      await resetPendingPixReservation({ baseUrl, reservationCode: "RES-TEST-PIX-PENDING" });
+
       // 1. Navigate to pending PIX page in guest portal (/minha-reserva/RES-TEST-PIX-PENDING)
       await page.goto("/minha-reserva/RES-TEST-PIX-PENDING", {
         waitUntil: "domcontentloaded",

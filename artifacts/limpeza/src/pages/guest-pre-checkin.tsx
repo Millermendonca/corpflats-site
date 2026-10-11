@@ -733,8 +733,10 @@ export default function GuestPreCheckin() {
   const whatsappUrl = `https://wa.me/${whatsappNumber.replace(/[^0-9]/g, "")}?text=${encodeURIComponent(`Olá! Gostaria de ajuda com o pré-check-in digital${reservation?.code ? ` da reserva ${reservation.code}` : ''}.`)}`
 
   // Signature canvas handlers
+  const isDrawingRef = useRef(false)
   const startDrawing = (e: any) => {
     setIsDrawing(true)
+    isDrawingRef.current = true
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext("2d")
@@ -747,7 +749,7 @@ export default function GuestPreCheckin() {
   }
 
   const draw = (e: any) => {
-    if (!isDrawing) return
+    if (!isDrawing && !isDrawingRef.current) return
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext("2d")
@@ -764,6 +766,7 @@ export default function GuestPreCheckin() {
 
   const stopDrawing = () => {
     setIsDrawing(false)
+    isDrawingRef.current = false
     if (canvasRef.current) {
       setSignatureData(canvasRef.current.toDataURL("image/png"))
     }

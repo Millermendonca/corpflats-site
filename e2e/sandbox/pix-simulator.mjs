@@ -138,3 +138,41 @@ export async function simulatePixExpiration(options = {}) {
 
   return { success: false, reservationCode: code, message: "Reservation not found in test DB" };
 }
+
+/**
+ * Resets a test reservation to pending PIX state.
+ * @param {object} options
+ * @param {string} [options.baseUrl="http://127.0.0.1:5055"]
+ * @param {string} [options.reservationCode="RES-TEST-PIX-PENDING"]
+ * @param {string} [options.testDbPath="data/database.test.json"]
+ * @returns {Promise<{ success: boolean }>}
+ */
+export async function resetPendingPixReservation(options = {}) {
+  const baseUrl = (options.baseUrl || "http://127.0.0.1:5055").replace(/\/+$/, "");
+  const code = options.reservationCode || "RES-TEST-PIX-PENDING";
+  const testDbPath = path.resolve(process.cwd(), options.testDbPath || "data/database.test.json");
+
+  if (fs.existsSync(testDbPath)) {
+    const raw = fs.readFileSync(testDbPath, "utf-8");
+    const db = JSON.parse(raw);
+    const r = (db.reservations || []).find(item => item.code === code);
+    if (r) {
+      r.paymentStatus = "aguardando_pix";
+      r.paidAmount = 0.00;
+      r.isPaid = false;
+      r.status = "pendente";
+      r.pixTxId = "PIX_SANDBOX_TX_001";
+      r.pixCopiaECola = "00020101021226930014BR.GOV.BCB.PIX2571spi-qrcode.bancointer.com.br/spi/pj/v2/mock998877665544332211005204000053039865406280.005802BR5901*6013CAMPOS_DOS_GO61082802014062070503***6304MOCK";
+      delete r.paidAt;
+      delete r.pixEndToEndId;
+      delete r.pixExpired;
+      delete r.pixExpiredAt;
+      fs.writeFileSync(testDbPath, JSON.stringify(db, null, 2), "utf-8");
+
+      await fetch(`${baseUrl}/api/test/db-reset`, { method: "POST" }).catch(() => {});
+      return { success: true };
+    }
+  }
+  return { success: false };
+}
+
