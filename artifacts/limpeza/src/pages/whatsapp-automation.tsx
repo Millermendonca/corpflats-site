@@ -551,6 +551,15 @@ export default function WhatsappAutomation() {
   const [simulatingAi, setSimulatingAi] = useState(false)
   const [simResult, setSimResult] = useState<any>(null)
 
+  // Developer Guidelines & Tone Management States
+  const [developerGuidelines, setDeveloperGuidelines] = useState<any[]>([])
+  const [loadingGuidelines, setLoadingGuidelines] = useState<boolean>(false)
+  const [addGuidelineModalOpen, setAddGuidelineModalOpen] = useState<boolean>(false)
+  const [newGuidelineRule, setNewGuidelineRule] = useState<string>("")
+  const [newGuidelineCategory, setNewGuidelineCategory] = useState<"factual" | "tone">("factual")
+  const [newGuidelineSample, setNewGuidelineSample] = useState<string>("")
+  const [savingGuideline, setSavingGuideline] = useState<boolean>(false)
+
   // Estado das Chaves de Ação do Bot (Bot Actions API)
   const [botActionsSettings, setBotActionsSettings] = useState<BotActionsSettings>({
     apiActionsEnabled: true,
@@ -740,6 +749,9 @@ export default function WhatsappAutomation() {
         const data = await res.json()
         if (data.aiConfig) {
           setAiConfig(data.aiConfig)
+          if (Array.isArray(data.aiConfig.developerGuidelines)) {
+            setDeveloperGuidelines(data.aiConfig.developerGuidelines)
+          }
         }
         setGeminiStatus({
           configured: Boolean(data.geminiConfigured),
@@ -753,6 +765,101 @@ export default function WhatsappAutomation() {
     } finally {
       setLoadingAiConfig(false)
     }
+  }
+
+  const fetchDeveloperGuidelines = async () => {
+    try {
+      setLoadingGuidelines(true)
+      const res = await fetch("/api/whatsapp/developer-guidelines")
+      if (res.ok) {
+        const data = await res.json()
+        if (Array.isArray(data.guidelines)) {
+          setDeveloperGuidelines(data.guidelines)
+        }
+      }
+    } catch (e: any) {
+      console.warn("Erro ao carregar diretrizes aprendidas:", e.message)
+    } finally {
+      setLoadingGuidelines(false)
+    }
+  }
+
+  const handleOpenAddGuidelineModal = () => {
+    setNewGuidelineRule("")
+    setNewGuidelineCategory("factual")
+    setNewGuidelineSample("")
+    setAddGuidelineModalOpen(true)
+  }
+
+  const handleSaveNewGuideline = async () => {
+    if (!newGuidelineRule.trim()) {
+      toast({ title: "Informe o texto da diretriz", variant: "destructive" })
+      return
+    }
+
+    try {
+      setSavingGuideline(true)
+      const res = await fetch("/api/whatsapp/developer-guidelines", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rule: newGuidelineRule.trim(),
+          text: newGuidelineRule.trim(),
+          correctionText: newGuidelineRule.trim(),
+          category: newGuidelineCategory,
+          sample: newGuidelineSample.trim() || undefined,
+          source: "manual"
+        })
+      })
+
+      if (res.ok) {
+        toast({
+          title: "Diretriz Adicionada com Sucesso! 🧠✨",
+          description: "A regra agora faz parte da base ativa de conhecimento da Sofia."
+        })
+        setAddGuidelineModalOpen(false)
+        fetchDeveloperGuidelines()
+        fetchAiConfig()
+      } else {
+        const err = await res.json()
+        toast({ title: "Erro ao salvar diretriz", description: err.error || "Falha na requisição", variant: "destructive" })
+      }
+    } catch (err: any) {
+      toast({ title: "Erro ao salvar", description: err.message, variant: "destructive" })
+    } finally {
+      setSavingGuideline(false)
+    }
+  }
+
+  const handleDeleteGuideline = async (id: string) => {
+    try {
+      const res = await fetch(`/api/whatsapp/developer-guidelines/${id}`, {
+        method: "DELETE"
+      })
+      if (res.ok) {
+        toast({
+          title: "Diretriz Excluída",
+          description: "A diretriz foi removida da base da Sofia."
+        })
+        setDeveloperGuidelines(prev => prev.filter(g => (g.id || g) !== id))
+        fetchDeveloperGuidelines()
+        fetchAiConfig()
+      } else {
+        const err = await res.json()
+        toast({ title: "Erro ao excluir", description: err.error || "Falha na requisição", variant: "destructive" })
+      }
+    } catch (err: any) {
+      toast({ title: "Erro ao excluir", description: err.message, variant: "destructive" })
+    }
+  }
+
+  const handleTestGuidelineInSimulator = (guide: any) => {
+    const textToTest = guide.sample || guide.rule || guide.text || ""
+    setSimMessage(textToTest)
+    toast({
+      title: "Diretriz Carregada no Simulador! 🎯",
+      description: `Pergunta preenchida para teste: "${textToTest.slice(0, 60)}${textToTest.length > 60 ? '...' : ''}"`
+    })
   }
 
   const handleSaveAiConfig = async () => {
@@ -774,6 +881,7 @@ export default function WhatsappAutomation() {
           description: "O Agente de IA está atualizado com os novos parâmetros."
         })
         fetchAiConfig()
+        fetchDeveloperGuidelines()
       } else {
         const err = await res.json()
         toast({ title: "Erro ao salvar", description: err.error || "Falha na requisição", variant: "destructive" })
@@ -823,8 +931,17 @@ export default function WhatsappAutomation() {
     fetchReservations()
     checkStatus()
     fetchAiConfig()
+    fetchDeveloperGuidelines()
     fetchBotActionsSettings()
   }, [])
+
+  // Auto-refresh guidelines when switching to ai_agent tab
+  useEffect(() => {
+    if (activeTab === "ai_agent") {
+      fetchAiConfig()
+      fetchDeveloperGuidelines()
+    }
+  }, [activeTab])
 
   const fetchTemplates = async () => {
     try {
@@ -2277,6 +2394,123 @@ export default function WhatsappAutomation() {
                         Salvar Configurações do Agente
                       </Button>
                     </div>
+                  </CardContent>
+                </Card>
+
+                {/* Card: Diretrizes & Calibrações Aprendidas (developerGuidelines) */}
+                <Card className="border border-purple-200/80 dark:border-purple-900/60 bg-gradient-to-br from-purple-50/40 via-white to-indigo-50/30 dark:from-slate-900 dark:to-purple-950/20 shadow-xs">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <CardTitle className="text-base font-bold flex items-center gap-2 text-purple-950 dark:text-purple-200">
+                          <Sparkles className="w-4 h-4 text-purple-600" />
+                          Diretrizes & Calibrações Aprendidas
+                        </CardTitle>
+                        <Badge variant="outline" className="bg-purple-100 text-purple-800 dark:bg-purple-950 border-purple-200 text-[10px] font-bold">
+                          {developerGuidelines.length} Ativas
+                        </Badge>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={handleOpenAddGuidelineModal}
+                        className="h-7 text-xs font-bold border-purple-300 text-purple-700 hover:bg-purple-100/60 dark:hover:bg-purple-950 gap-1 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        Nova Diretriz
+                      </Button>
+                    </div>
+                    <CardDescription className="text-xs text-purple-900/70 dark:text-purple-300/70">
+                      Regras de tom, estilo e correções factuais ensinadas via WhatsApp pelo Desenvolvedor (22998505276) ou pelo Web Chat.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3 pt-1">
+                    {loadingGuidelines ? (
+                      <div className="p-4 text-center text-xs text-muted-foreground flex items-center justify-center gap-2">
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        Carregando diretrizes aprendidas...
+                      </div>
+                    ) : developerGuidelines.length === 0 ? (
+                      <div className="p-4 text-center rounded-xl border border-dashed border-purple-200 dark:border-purple-800 text-xs text-muted-foreground space-y-1">
+                        <p className="font-semibold text-purple-800 dark:text-purple-300">Nenhuma diretriz aprendida registrada</p>
+                        <p className="text-[11px]">
+                          Envie comandos via WhatsApp para a Sofia do número 22998505276 (ex: <em>"responda de forma mais curta por favor"</em>) ou utilize o botão <strong>✏️ Corrigir / Ensinar Sofia</strong> no Web Chat.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                        {developerGuidelines.map((guide: any, idx: number) => {
+                          const guideId = guide.id || String(idx)
+                          const ruleText = guide.rule || guide.text || ""
+                          const isTone = guide.category === "tone"
+                          const sourceLabel =
+                            guide.source === "whatsapp_developer"
+                              ? "📱 WhatsApp Dev"
+                              : (guide.source === "web_chat_operator" || guide.source === "web_chat_rectification")
+                              ? "🖥️ Chat Web"
+                              : "⚙️ Manual"
+
+                          return (
+                            <div
+                              key={guideId}
+                              className="p-3 rounded-xl bg-white/90 dark:bg-slate-800/90 border border-slate-200/80 dark:border-slate-700/80 flex items-start justify-between gap-3 shadow-2xs hover:border-purple-400 transition-colors"
+                            >
+                              <div className="space-y-1 flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <Badge className={
+                                    isTone 
+                                      ? "bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200 text-[9px] font-bold"
+                                      : "bg-blue-100 text-blue-800 border-blue-200 text-[9px] font-bold"
+                                  }>
+                                    {isTone ? "🎨 Tom & Estilo" : "📌 Fato / Regra"}
+                                  </Badge>
+                                  <Badge variant="outline" className="text-[9px] text-slate-500">
+                                    {sourceLabel}
+                                  </Badge>
+                                  {guide.createdAt && (
+                                    <span className="text-[10px] text-slate-400">
+                                      {new Date(guide.createdAt).toLocaleDateString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-xs font-semibold text-slate-800 dark:text-slate-200 leading-relaxed">
+                                  {ruleText}
+                                </p>
+                                {guide.sample && (
+                                  <p className="text-[11px] text-slate-500 italic">
+                                    Amostra: "{guide.sample}"
+                                  </p>
+                                )}
+                              </div>
+
+                              <div className="flex items-center gap-1 shrink-0">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleTestGuidelineInSimulator(guide)}
+                                  className="h-7 w-7 p-0 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950 cursor-pointer"
+                                  title="Testar no Simulador"
+                                >
+                                  <Play className="w-3.5 h-3.5" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleDeleteGuideline(guideId)}
+                                  className="h-7 w-7 p-0 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950 cursor-pointer"
+                                  title="Excluir Diretriz"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
 
@@ -4597,6 +4831,97 @@ export default function WhatsappAutomation() {
               >
                 <Check className="w-3.5 h-3.5" />
                 Salvar Mensagem Rápida
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* MODAL: NOVA DIRETRIZ MANUAL PARA A SOFIA */}
+        <Dialog open={addGuidelineModalOpen} onOpenChange={setAddGuidelineModalOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-base font-black text-purple-950 dark:text-purple-200">
+                <Sparkles className="w-5 h-5 text-purple-600" />
+                Nova Diretriz para a Sofia
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                Adicione manualmente uma regra factual ou ajuste de tom que a Sofia deve seguir ao responder.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-3 py-2 text-xs">
+              {/* Categoria */}
+              <div className="space-y-1">
+                <Label className="text-xs font-bold">Categoria da Diretriz:</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setNewGuidelineCategory("factual")}
+                    className={`p-2 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                      newGuidelineCategory === "factual"
+                        ? "bg-blue-50 border-blue-500 text-blue-700 dark:bg-blue-950/50 dark:border-blue-500 dark:text-blue-200 shadow-2xs"
+                        : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
+                    }`}
+                  >
+                    <span>📌</span> Fato / Regra
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewGuidelineCategory("tone")}
+                    className={`p-2 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                      newGuidelineCategory === "tone"
+                        ? "bg-fuchsia-50 border-fuchsia-500 text-fuchsia-700 dark:bg-fuchsia-950/50 dark:border-fuchsia-500 dark:text-fuchsia-200 shadow-2xs"
+                        : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
+                    }`}
+                  >
+                    <span>🎨</span> Tom & Estilo
+                  </button>
+                </div>
+              </div>
+
+              {/* Texto da Regra */}
+              <div className="space-y-1">
+                <Label className="text-xs font-bold">Texto da Diretriz / Regra:</Label>
+                <Textarea
+                  rows={3}
+                  value={newGuidelineRule}
+                  onChange={e => setNewGuidelineRule(e.target.value)}
+                  placeholder={
+                    newGuidelineCategory === "factual"
+                      ? "Ex: O flat 905 possui cafeteira Nespresso e o checkout é impreterivelmente às 11:00."
+                      : "Ex: Responda de forma mais concisa em 2 a 3 frases, usando menos emojis."
+                  }
+                  className="text-xs"
+                />
+              </div>
+
+              {/* Amostra / Pergunta de Teste */}
+              <div className="space-y-1">
+                <Label className="text-xs font-bold">Pergunta de Teste / Exemplo (Opcional):</Label>
+                <Input
+                  value={newGuidelineSample}
+                  onChange={e => setNewGuidelineSample(e.target.value)}
+                  placeholder="Ex: Qual o horário de checkout do 905?"
+                  className="text-xs h-8 rounded-xl"
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Facilita o teste rápido no simulador ao lado.
+                </p>
+              </div>
+            </div>
+
+            <DialogFooter className="gap-2">
+              <Button variant="outline" size="sm" onClick={() => setAddGuidelineModalOpen(false)}>
+                Cancelar
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleSaveNewGuideline}
+                disabled={savingGuideline || !newGuidelineRule.trim()}
+                className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold gap-1 shadow-xs cursor-pointer"
+              >
+                {savingGuideline ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                Salvar Diretriz
               </Button>
             </DialogFooter>
           </DialogContent>

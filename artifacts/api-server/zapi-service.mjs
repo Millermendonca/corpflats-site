@@ -27,7 +27,9 @@ import {
   findExistingPendingFaq,
   classifyUnmetDemand,
   detectAndRecordUnmetDemand,
-  UNMET_DEMAND_CATEGORIES
+  UNMET_DEMAND_CATEGORIES,
+  applyToneCalibration,
+  saveDeveloperGuideline
 } from "./whatsapp-ai-service.mjs";
 
 export {
@@ -39,7 +41,9 @@ export {
   findExistingPendingFaq,
   classifyUnmetDemand,
   detectAndRecordUnmetDemand,
-  UNMET_DEMAND_CATEGORIES
+  UNMET_DEMAND_CATEGORIES,
+  applyToneCalibration,
+  saveDeveloperGuideline
 };
 import {
   getCheckinUrlSync as getSerproCheckinUrlSync,
@@ -1170,6 +1174,30 @@ export function matchClientPhone(phoneA, phoneB) {
   return cleanA.endsWith(last8B) || cleanB.endsWith(last8A);
 }
 
+// ── Identificação Persistente de Administrador / Desenvolvedor (Modo Treinador) ──
+export const DEVELOPER_PHONES = [
+  "22998505276",
+  "5522998505276"
+];
+
+export function isDeveloperPhone(rawPhone, db = null) {
+  if (!rawPhone) return false;
+  const digits = String(rawPhone).replace(/\D/g, "");
+  if (!digits) return false;
+  if (DEVELOPER_PHONES.includes(digits)) return true;
+  const clean = cleanWhatsAppPhone(digits);
+  if (clean === "5522998505276" || clean === "22998505276") return true;
+  if ((digits.endsWith("998505276") || digits.endsWith("98505276")) && (clean.startsWith("5522") || digits.startsWith("22"))) {
+    return true;
+  }
+  const configuredDev = db?.whatsappAiSettings?.developerPhone;
+  if (configuredDev) {
+    const cleanConfig = cleanWhatsAppPhone(configuredDev);
+    if (clean === cleanConfig || digits === String(configuredDev).replace(/\D/g, "")) return true;
+  }
+  return false;
+}
+
 // ── Motor de Regras de Exceção e Segmentação por Cliente (FAQ Sofia) ───────────
 export function isFaqApplicableToClient(faqItem, clientPhone) {
   if (!faqItem || typeof faqItem !== 'object') return false;
@@ -1269,13 +1297,19 @@ export function linkOperatorResponseToPendingFaq(db, param1, param2) {
   targetItem.answeredBy = answeredBy;
   targetItem.updatedAt = nowIso;
 
-  // Pausa a IA na conversa deste cliente em db.whatsappConversations
+  // Pausa a IA na conversa deste cliente em db.whatsappConversations (exceto se for desenvolvedor)
   if (Array.isArray(db.whatsappConversations)) {
     const conv = db.whatsappConversations.find(c => matchClientPhone(c.phone, cleanPhone));
     if (conv) {
-      conv.aiPaused = true;
-      conv.aiPausedAt = nowIso;
-      conv.aiPausedReason = "operator_manual_reply";
+      if (!isDeveloperPhone(cleanPhone, db)) {
+        conv.aiPaused = true;
+        conv.aiPausedAt = nowIso;
+        conv.aiPausedReason = "operator_manual_reply";
+      } else {
+        conv.isDeveloper = true;
+        conv.aiPaused = false;
+        conv.aiPausedReason = null;
+      }
     }
   }
 
@@ -4419,19 +4453,23 @@ export function appendMessageToConversation(db, {
     : findReservationByPhone(db, cleanPhone);
 
   const nowIso = timestamp || new Date().toISOString();
+  const isDev = isDeveloperPhone(cleanPhone, db);
 
   if (!conv) {
     conv = {
       id: cleanPhone,
       phone: cleanPhone,
       formattedPhone: isGroup ? groupName || cleanPhone : formatPhoneDisplay(cleanPhone),
-      name: isGroup ? groupName || "Grupo WhatsApp" : (matchedResv?.guestName || senderName || formatPhoneDisplay(cleanPhone)),
+      name: isGroup ? groupName || "Grupo WhatsApp" : (isDev ? "Miller Mendonça (Desenvolvedor)" : (matchedResv?.guestName || senderName || formatPhoneDisplay(cleanPhone))),
       avatarUrl: "",
       isGroup: Boolean(isGroup),
       groupId: groupId || null,
       groupName: groupName || null,
       unreadCount: fromMe ? 0 : 1,
       pinned: false,
+      isDeveloper: isDev,
+      aiPaused: false,
+      aiPausedReason: null,
       reservationCode: matchedResv?.code || null,
       flatNumber: matchedResv?.flatNumber || "",
       checkinDate: matchedResv?.checkinDate || "",
@@ -4445,6 +4483,14 @@ export function appendMessageToConversation(db, {
     };
     db.whatsappConversations.unshift(conv);
   } else {
+    if (isDev) {
+      conv.isDeveloper = true;
+      conv.aiPaused = false;
+      conv.aiPausedReason = null;
+      if (!conv.name || conv.name === conv.phone) {
+        conv.name = "Miller Mendonça (Desenvolvedor)";
+      }
+    }
     if (!conv.reservationCode && matchedResv) {
       conv.reservationCode = matchedResv.code;
       conv.flatNumber = matchedResv.flatNumber;
@@ -4640,6 +4686,31 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
   function ensureDbDefaults() {
     const db = getDb();
     if (!db) return;
+    if (!db.whatsappAiSettings) {
+      db.whatsappAiSettings = {
+        developerPhone: "22998505276",
+        developerGuidelines: [],
+        toneSettings: {
+          conciseness: "normal",
+          emojiUsage: "moderate",
+          formality: "casual_professional",
+          customRules: [],
+          updatedAt: new Date().toISOString()
+        }
+      };
+    }
+    if (!Array.isArray(db.whatsappAiSettings.developerGuidelines)) {
+      db.whatsappAiSettings.developerGuidelines = [];
+    }
+    if (!db.whatsappAiSettings.toneSettings) {
+      db.whatsappAiSettings.toneSettings = {
+        conciseness: "normal",
+        emojiUsage: "moderate",
+        formality: "casual_professional",
+        customRules: [],
+        updatedAt: new Date().toISOString()
+      };
+    }
     if (!Array.isArray(db.faqItems)) {
       db.faqItems = [];
     }
@@ -5953,9 +6024,15 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
         // 1. Pausa a IA nesta conversa para assegurar controle humano total
         const conv = updatedConv || (db.whatsappConversations || []).find(c => matchClientPhone(c.phone, cleanTarget));
         if (conv) {
-          conv.aiPaused = true;
-          conv.aiPausedAt = incomingInfo.timestamp || new Date().toISOString();
-          conv.aiPausedReason = "operator_manual_reply";
+          if (!isDeveloperPhone(cleanTarget, db)) {
+            conv.aiPaused = true;
+            conv.aiPausedAt = incomingInfo.timestamp || new Date().toISOString();
+            conv.aiPausedReason = "operator_manual_reply";
+          } else {
+            conv.isDeveloper = true;
+            conv.aiPaused = false;
+            conv.aiPausedReason = null;
+          }
         }
 
         // 2. Auto-aprendizado: vincula a resposta do operador se houver pergunta pendente nas últimas 24h
@@ -6535,9 +6612,15 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     });
 
     if (updatedConv) {
-      updatedConv.aiPaused = true;
-      updatedConv.aiPausedAt = nowIso;
-      updatedConv.aiPausedReason = "operator_manual_reply";
+      if (!isDeveloperPhone(cleanPhone, db)) {
+        updatedConv.aiPaused = true;
+        updatedConv.aiPausedAt = nowIso;
+        updatedConv.aiPausedReason = "operator_manual_reply";
+      } else {
+        updatedConv.isDeveloper = true;
+        updatedConv.aiPaused = false;
+        updatedConv.aiPausedReason = null;
+      }
     }
 
     // Auto-aprendizado: vincula a resposta do operador se houver pergunta pendente nas últimas 24h
@@ -6853,6 +6936,22 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       return res.status(404).json({ error: "Conversa não encontrada." });
     }
 
+    if (isDeveloperPhone(cleanPhone, db)) {
+      conv.isDeveloper = true;
+      conv.aiPaused = false;
+      conv.aiPausedAt = null;
+      conv.aiPausedReason = null;
+      saveDatabase();
+      return res.json({
+        success: true,
+        phone: cleanPhone,
+        isDeveloper: true,
+        aiPaused: false,
+        aiPausedReason: null,
+        message: "O número do desenvolvedor possui imunidade permanente contra pausa de IA."
+      });
+    }
+
     const currentPaused = Boolean(conv.aiPaused);
     const newPaused = req.body.aiPaused !== undefined ? Boolean(req.body.aiPaused) : !currentPaused;
 
@@ -6904,6 +7003,178 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // 5.1. Retificar Mensagem e Ensinar a Sofia (/api/whatsapp/chat/:phone/correct-message)
+  app.post("/api/whatsapp/chat/:phone/correct-message", async (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const rawPhone = String(req.params.phone || "");
+    const cleanPhone = cleanWhatsAppPhone(rawPhone);
+
+    const {
+      correctionText,
+      correction,
+      rectificationMessage,
+      sendToGuest = true,
+      learnGuideline = true,
+      category,
+      flatNumber,
+      targetFlat,
+      source = "web_chat_rectification"
+    } = req.body || {};
+
+    const finalCorrection = (correctionText || correction || "").trim();
+    if (!finalCorrection) {
+      return res.status(400).json({ error: "O texto da correção/diretriz é obrigatório." });
+    }
+
+    let savedGuideline = null;
+    if (learnGuideline !== false) {
+      savedGuideline = saveDeveloperGuideline(db, {
+        text: finalCorrection,
+        category: category || inferFaqCategory(finalCorrection) || "geral",
+        targetFlat: flatNumber || targetFlat || null,
+        active: true,
+        source
+      });
+    }
+
+    let sentMessage = null;
+    let sendResult = null;
+
+    if (sendToGuest !== false && cleanPhone) {
+      const messageToSend = rectificationMessage ||
+        `Olá! Gostaria de retificar uma informação sobre sua estadia: ${finalCorrection}. Qualquer dúvida, estamos à disposição! ✨`;
+
+      try {
+        sendResult = await sendZapiMessage(db.zapiConfig, {
+          phone: cleanPhone,
+          message: messageToSend,
+          bypassTestMode: true
+        });
+      } catch (sendErr) {
+        console.warn("[Z-API Rectification] Falha ao enviar mensagem de retificação:", sendErr.message);
+        sendResult = { success: false, error: sendErr.message };
+      }
+
+      appendMessageToConversation(db, {
+        phone: cleanPhone,
+        senderName: db.zapiConfig?.aiAgent?.agentName || "Sofia (Retificação)",
+        fromMe: true,
+        text: messageToSend,
+        status: sendResult?.success ? "sent" : "failed",
+        messageId: sendResult?.messageId || `rect_${Date.now()}`
+      });
+
+      sentMessage = messageToSend;
+    }
+
+    saveDatabase();
+
+    res.json({
+      success: true,
+      phone: cleanPhone,
+      guideline: savedGuideline,
+      sentMessage,
+      sendResult
+    });
+  });
+
+  // 5.2. Listar Diretrizes do Desenvolvedor (/api/whatsapp/developer-guidelines)
+  app.get(["/api/whatsapp/developer-guidelines", "/api/whatsapp/ai/developer-guidelines"], (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    let list = Array.isArray(db.whatsappAiSettings?.developerGuidelines) ? [...db.whatsappAiSettings.developerGuidelines] : [];
+    const { active, category, search } = req.query || {};
+    if (active !== undefined) {
+      const isActive = active === "true" || active === true;
+      list = list.filter(g => Boolean(g.active) === isActive);
+    }
+    if (category) {
+      list = list.filter(g => g.category === category);
+    }
+    if (search) {
+      const s = String(search).toLowerCase();
+      list = list.filter(g => (g.text || "").toLowerCase().includes(s));
+    }
+    res.json({ success: true, guidelines: list });
+  });
+
+  // 5.3. Criar Diretriz do Desenvolvedor Manualmente (/api/whatsapp/developer-guidelines)
+  app.post(["/api/whatsapp/developer-guidelines", "/api/whatsapp/ai/developer-guidelines"], (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const text = (req.body.text || req.body.correctionText || "").trim();
+    if (!text) {
+      return res.status(400).json({ error: "O texto da diretriz é obrigatório." });
+    }
+    const newGuideline = saveDeveloperGuideline(db, {
+      text,
+      category: req.body.category || inferFaqCategory(text) || "geral",
+      targetFlat: req.body.targetFlat || req.body.flatNumber || null,
+      active: req.body.active !== undefined ? Boolean(req.body.active) : true,
+      source: req.body.source || "manual_admin"
+    });
+    saveDatabase();
+    res.status(201).json({ success: true, guideline: newGuideline });
+  });
+
+  // 5.4. Atualizar Diretriz do Desenvolvedor (/api/whatsapp/developer-guidelines/:id)
+  const handleUpdateGuideline = (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const id = req.params.id;
+    const list = db.whatsappAiSettings?.developerGuidelines || [];
+    const item = list.find(g => g.id === id);
+    if (!item) {
+      return res.status(404).json({ error: "Diretriz não encontrada." });
+    }
+    if (req.body.text !== undefined) item.text = String(req.body.text).trim();
+    if (req.body.category !== undefined) item.category = req.body.category;
+    if (req.body.targetFlat !== undefined) item.targetFlat = req.body.targetFlat;
+    if (req.body.active !== undefined) item.active = Boolean(req.body.active);
+    item.updatedAt = new Date().toISOString();
+    saveDatabase();
+    res.json({ success: true, guideline: item });
+  };
+  app.patch(["/api/whatsapp/developer-guidelines/:id", "/api/whatsapp/ai/developer-guidelines/:id"], handleUpdateGuideline);
+  app.put(["/api/whatsapp/developer-guidelines/:id", "/api/whatsapp/ai/developer-guidelines/:id"], handleUpdateGuideline);
+
+  // 5.5. Excluir Diretriz do Desenvolvedor (/api/whatsapp/developer-guidelines/:id)
+  app.delete(["/api/whatsapp/developer-guidelines/:id", "/api/whatsapp/ai/developer-guidelines/:id"], (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const id = req.params.id;
+    const beforeLen = (db.whatsappAiSettings?.developerGuidelines || []).length;
+    db.whatsappAiSettings.developerGuidelines = (db.whatsappAiSettings?.developerGuidelines || []).filter(g => g.id !== id);
+    if (db.whatsappAiSettings.developerGuidelines.length === beforeLen) {
+      return res.status(404).json({ error: "Diretriz não encontrada." });
+    }
+    saveDatabase();
+    res.json({ success: true, deletedId: id });
+  });
+
+  // 5.6. Consultar e Atualizar Calibração de Tom (/api/whatsapp/tone-settings)
+  app.get(["/api/whatsapp/tone-settings", "/api/whatsapp/ai/tone-settings"], (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    res.json({
+      success: true,
+      toneSettings: db.whatsappAiSettings?.toneSettings || {
+        conciseness: "normal",
+        emojiUsage: "moderate",
+        formality: "casual_professional"
+      }
+    });
+  });
+
+  app.post(["/api/whatsapp/tone-settings", "/api/whatsapp/ai/tone-settings"], (req, res) => {
+    const db = getDb();
+    ensureDbDefaults();
+    const updated = applyToneCalibration(db, req.body || {});
+    saveDatabase();
+    res.json({ success: true, toneSettings: updated });
   });
 
   // ─── Base de Conhecimento & FAQ Dinâmico Endpoints ─────────────────────────

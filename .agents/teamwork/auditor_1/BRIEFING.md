@@ -1,63 +1,67 @@
-# BRIEFING — 2026-10-11T06:51:00Z
+# BRIEFING — 2026-10-12T00:08:00Z
 
 ## Mission
-Perform comprehensive forensic integrity audit of the entire E2E synthetic testing implementation (M1-M5), verifying no cheating/facades/mocks fakes, production database immutability, twin-server SHA-256 byte parity, build integrity, and Git compliance, delivering a strict binary verdict (CLEAN or INTEGRITY VIOLATION).
+Independent forensic integrity audit of the Smart Flat Hub work product (R1-R5) in Guest-Flow-Manager, verifying genuine implementation (no facades or hardcoding), complete privacy isolation (zero leaks in guest-portal.tsx), 100% SHA-256 twin-server parity, clean frontend build, and strictly pontual test execution.
 
 ## 🔒 My Identity
 - Archetype: forensic_auditor
 - Roles: [critic, specialist, auditor]
 - Working directory: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_1
-- Original parent: 5a1d1171-401e-4601-9229-45485822d731
-- Target: full project (E2E synthetic testing suite & system integrity)
+- Original parent: 26335f75-5ae5-4381-97dc-4cdaaa103cfd
+- Target: Smart Flat Hub (R1-R5)
+- Current parent: 26335f75-5ae5-4381-97dc-4cdaaa103cfd
 
 ## 🔒 Key Constraints
 - Audit-only — do NOT modify implementation code
 - Trust NOTHING — verify everything independently
 - If ANY check fails, verdict is INTEGRITY VIOLATION and reject the work product
-- Follow user-defined rules in AGENTS.md (clean build and git push)
+- Follow user-defined rules in AGENTS.md (clean build and git push, strict pontual test only)
+- NUNCA executar testes globais, varreduras ou em lote (PROIBIDO rodar tests/*.test.mjs)
+- Apenas teste estritamente pontual: execute EXCLUSIVAMENTE node --test tests/smart-flat-hub.test.mjs
+- Twin-Server Parity Mandate: 100% SHA-256 parity between scripts/ e artifacts/api-server/ for demo-server.mjs
+- Privacy Isolation (R1): zero guest leaks in guest-portal.tsx, preview isolated to /preview/smart-flat
 
 ## Current Parent
-- Conversation ID: 5a1d1171-401e-4601-9229-45485822d731
-- Updated: 2026-10-11T06:51:00Z
+- Conversation ID: 26335f75-5ae5-4381-97dc-4cdaaa103cfd
+- Updated: 2026-10-12T00:08:00Z
 
 ## Audit Scope
-- **Work product**: E2E synthetic testing suite (`e2e/`), sandbox mocks, HTML reporter, twin-servers, database immutability.
+- **Work product**: Smart Flat Hub backend (scripts/demo-server.mjs & artifacts/api-server/demo-server.mjs), frontend (artifacts/limpeza/src/pages/smart-flat-preview.tsx, components/smart-flat/, App.tsx, guest-portal.tsx), test suite (tests/smart-flat-hub.test.mjs), hardware guide (docs/SMART_FLAT_HARDWARE_GUIDE.md)
 - **Profile loaded**: General Project
 - **Audit type**: forensic integrity check
 - **Integrity mode**: development (per ORIGINAL_REQUEST.md)
 
 ## Audit Progress
-- **Phase**: reporting
+- **Phase**: investigating
 - **Checks completed**:
-  - [x] Initialized DISPATCH.md and BRIEFING.md
-  - [x] Read ORIGINAL_REQUEST.md, PROJECT.md, TEST_INFRA.md, DISPATCH.md
-  - [x] Twin-server byte-by-byte SHA-256 parity verification (100% MATCH)
-  - [x] Production database (`data/database.json`) absolute immutability (0 byte drift before/after test run)
-  - [x] Static code forensic analysis: no facades, no cheating, genuine DOM & socket implementations
-  - [x] Behavioral verification: `verify-sandbox.mjs` (11/11 PASS), unit suites (35/35 PASS)
-  - [x] Production frontend build: `npm run build` in `artifacts/limpeza` (code 0 in 1m 6s)
-  - [x] Git compliance verification: verified uncommitted working tree ready for orchestrator Phase 8 commit & push
-- **Checks remaining**: []
-- **Findings so far**: CLEAN
+  - [x] Initialized DISPATCH.md and updated BRIEFING.md
+  - [x] Read and confirmed ORIGINAL_REQUEST.md constraints (development mode)
+- **Checks remaining**:
+  - [ ] Source code forensic inspection of demo-server.mjs (endpoints, ETA math, temperature clamp, fail-safe timer, playlist triggers)
+  - [ ] Source code forensic inspection of frontend components (SmartFlatHub, DeviceCard, ClimateControl, FailSafeStatus, WelcomeMusicPlayer)
+  - [ ] Source code inspection of tests/smart-flat-hub.test.mjs (detect facade / self-certifying / hardcoded bypasses)
+  - [ ] Privacy isolation audit of guest-portal.tsx (verify zero modifications / zero leaks)
+  - [ ] Twin-server SHA-256 parity computation (scripts/demo-server.mjs vs artifacts/api-server/demo-server.mjs)
+  - [ ] Behavioral verification: execute strictly node --test tests/smart-flat-hub.test.mjs
+  - [ ] Frontend build verification: npm run build in artifacts/limpeza
+  - [ ] Git commit and remote push status
+  - [ ] Deliver 5-component handoff report with explicit verdict
+- **Findings so far**: Under investigation
 
 ## Attack Surface
-- **Hypotheses tested**:
-  - H1: Tests use hardcoded pass assertions or fake DOM selectors. (REJECTED: Real DOM, assertions on live inputs, canvas, text, and APIs).
-  - H2: Sandbox writes to or mutates `data/database.json`. (REJECTED: Empirical SHA-256 before & after execution identical, tests write to database.test.json).
-  - H3: `artifacts/api-server/` and `scripts/` diverge. (REJECTED: 100% SHA-256 byte parity verified on all twin server scripts).
-  - H4: Pre-populated fake report/logs without real execution. (REJECTED: Live execution confirmed, Playwright runner logs and artifacts verified).
-- **Vulnerabilities found**: None.
-- **Untested angles**: External Z-API production webhook roundtrip (isolated locally by mock-zapi as intended).
+- **Hypotheses tested**: [TBD]
+- **Vulnerabilities found**: [TBD]
+- **Untested angles**: [TBD]
 
 ## Loaded Skills
 None
 
 ## Key Decisions Made
-- Binary verdict formulated: CLEAN.
-- Full evidence and verbatim terminal outputs compiled into handoff.md.
+- Audit underway.
+- Strictly adhere to AGENTS.md test constraint (only node --test tests/smart-flat-hub.test.mjs).
 
 ## Artifact Index
 - DISPATCH.md — audit assignment instructions
-- BRIEFING.md — persistent auditor memory
+- BRIEFING.md — persistent auditor working memory
 - progress.md — liveness heartbeat
-- handoff.md — final 5-component audit report
+- handoff.md — final 5-component forensic audit report

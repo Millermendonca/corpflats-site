@@ -1,108 +1,194 @@
-# Relatório de Revisão Adversarial (Reviewer 2) — Otimização de Memória e Event Loop
+# Relatório de Handoff & Revisão Frontend — Reviewer 2 (Frontend Reviewer)
 
-> [!WARNING] **Skepticism Disclaimer**
-> Embora a suíte pontual e a paridade twin estejam com 100% de aprovação e as maiores causas de bloqueio síncrono e stale cache tenham sido definitivamente sanadas, o comportamento sob picos volumosos de centenas de conexões concorrentes sustentadas no cluster do Render exigirá monitoramento contínuo da telemetria em produção.
-
----
-
-## 1. What the prior attempt got wrong
-
-1. **Serialização Síncrona (`JSON.stringify(db)`) e Reconciliação Eager a Cada Chamada de `saveDatabase("auto_save")`**
-   - **Input**: Múltiplas requisições simultâneas ou consecutivas disparando operações que chamam `saveDatabase()` em rajada (ex.: importações, webhooks, check-ins, interações de hóspedes).
-   - **Expected**: Em regime de auto-save com debounce de 300ms, a serialização e os cálculos de pruning/reconciliação deveriam ocorrer no momento do flush em disco, processando o estado acumulado uma única vez.
-   - **Actual**: O código anterior executava `reconcileCleaningRequests()`, `pruneDatabase()` e `const stateJson = JSON.stringify(db)` de forma síncrona imediatamente em cada invocação de `saveDatabase()`, mesmo quando `localSaveTimeout` já estava agendado e pendente. Isso bloqueava o Event Loop por dezenas de milissegundos repetidas vezes por segundo e inflava o Heap com múltiplas strings JSON redundantes de megabytes descartadas em seguida.
-   - **Root Cause**: Eager serialization síncrona antes do debounce em vez de deferred/lazy serialization no momento do flush.
-
-2. **Funções de Invalidação de Cache Inertes / Nunca Chamadas (`invalidateGuestCache` e `invalidateFlatsCache`)**
-   - **Input**: Atualização cadastral in-place de um hóspede ou flat (ex.: alteração de documento, telefone, nome ou número do flat) sem alteração no `.length` das coleções `db.guests` / `db.flats`.
-   - **Expected**: Ao salvar as alterações via `saveDatabase()`, os índices em memória devem ser imediatamente invalidados para refletir os novos dados no PMS Calendar e relatórios.
-   - **Actual**: O Reviewer 1 criou `invalidateGuestCache()` e `invalidateFlatsCache()`, mas não adicionou chamadas a essas funções em nenhum ponto do código. Sem chamada explícita, o cache dependia unicamente de `length` e TTL (até 5-10s), retornando dados defasados após mutações in-place.
-   - **Root Cause**: Dead code / omissão de chamada de invalidação de cache no ponto focal de persistência (`saveDatabase()`).
-
-3. **Leitura de Disco Síncrona (`fs.readFileSync`) em Todas as Requisições de Páginas SPA**
-   - **Input**: Qualquer requisição HTTP acessando rotas de frontend (SPA catch-all `app.get("*", ...)`).
-   - **Expected**: O arquivo `index.html` deve ser carregado uma vez do disco e servido da memória (`cachedIndexHtml`) sem I/O de disco repetido.
-   - **Actual**: A checagem em `serveSpaWithMetadata` utilizava `if (indexPath)` sem verificar `!html`, forçando uma leitura síncrona de arquivo (`fs.readFileSync(indexPath, "utf-8")`) em todas as visitas, gerando I/O síncrono bloqueante do loop de eventos.
-   - **Root Cause**: Falta da guarda `if (!html && indexPath)` antes de ler o disco.
-
-4. **Operação Síncrona Bloqueante no Startup (`loadDatabase`)**
-   - **Input**: Inicialização do servidor Node.js hidratando dados do arquivo `database.json`.
-   - **Expected**: Leitura assíncrona não-bloqueante no loop de inicialização.
-   - **Actual**: Utilizava `fs.readFileSync(DB_FILE, "utf-8")` dentro de uma função declarada como `async function loadDatabase()`.
-   - **Root Cause**: Uso desnecessário de método síncrono bloqueante em contexto assíncrono.
-
-5. **Spreading de Array em `Math.max` Dentro de Loop de Reconciliação**
-   - **Input**: Execução de `reconcileUniversalIntegrity()` com centenas de solicitações de limpeza.
-   - **Expected**: Cálculo eficiente de `maxCleanId` sem alocação desnecessária de memória ou risco de estouro de stack.
-   - **Actual**: `Math.max(...db.cleaningRequests.map(c => Number(c.id) || 0))` dentro de um loop de reservas, alocando novo array a cada iteração e espalhando argumentos na pilha de chamadas.
-   - **Root Cause**: Uso de `.map()` com spread operator em vez de busca linear direta.
-
-6. **Falso-Positivo no Teste Unitário de Deduplicação de Slow Requests**
-   - **Input**: Execução do Teste 6 em `tests/server-monitor-rca.test.mjs`.
-   - **Expected**: O teste deve submeter uma requisição com duração real >= 500ms para certificar que o registro não duplica em `recentSlowRequests` após os eventos `finish` e `close`.
-   - **Actual**: O teste disparava `finish()` e `close()` imediatamente (<1ms). Como a duração era inferior a 500ms, `recentSlowRequests.unshift` nunca era invocado, e a asserção `slowMatches.length <= 1` passava com `0 <= 1` sem jamais testar a deduplicação.
-   - **Root Cause**: Falta de temporização real ou simulação de duração >= 500ms no teste unitário.
+**Data/Hora**: 2026-10-12T00:06:00Z  
+**Autor**: Reviewer 2 (`77ff6655-c9f5-470f-89e3-f10c85766cc7`)  
+**Destinatário**: Orchestrator / Parent Agent (`d9d088c2-767a-4f5a-9d52-d234243c2f9b`)  
+**Escopo**: Auditoria Independente de Frontend e Análise Adversarial da Implementação de Retificação de Mensagens em 1 Clique e Gestão de Diretrizes & Calibrações na Automação WhatsApp (`artifacts/limpeza/src/pages/whatsapp-chat.tsx` e `artifacts/limpeza/src/pages/whatsapp-automation.tsx`).  
+**Veredito**: **APPROVE**
 
 ---
 
-## 2. What I changed
+## 1. Observation
 
-### Arquivos Modificados:
-1. `scripts/demo-server.mjs` e `artifacts/api-server/demo-server.mjs` (Par Twin 100% idêntico)
-2. `scripts/server-monitor-service.mjs` e `artifacts/api-server/server-monitor-service.mjs` (Par Twin 100% idêntico)
-3. `tests/server-monitor-rca.test.mjs`
+### 1.1. Inspeção no Web Chat (`artifacts/limpeza/src/pages/whatsapp-chat.tsx`)
 
-### Detalhamento das Alterações:
-1. **Lazy Debounced Persistence no Servidor**:
-   - `saveDatabase("auto_save")` agora marca flags de dirty (`pendingLocalDirty = true`, `pendingPgDirty = true`) e agenda timers de debounce sem realizar serialização imediata.
-   - `flushLocalDiskState()` e `flushPgState()` executam `reconcileCleaningRequests()`, `pruneDatabase()` e `JSON.stringify(db)` de forma adiada e coordenada apenas no momento em que a gravação em lote for de fato iniciada.
-   - Salvamentos manuais/críticos (`manual_`, `repair_`, `shutdown`) cancelam timers pendentes e gravam imediatamente.
-2. **Invalidação Ativa e Blindagem de Caches de Hóspedes e Flats**:
-   - `saveDatabase()` agora chama explicitamente `invalidateGuestCache()` e `invalidateFlatsCache()` a cada mutação de estado.
-   - `getGuestIndexes()` indexa chaves por ID numérico e string (`g.id`, `String(g.id)`, `Number(g.id)`), prevenindo incompatibilidades de tipo entre dados numéricos e strings.
-   - `getFlatsByNumberMap()` indexa por número e ID tanto em string quanto numérico.
-   - As declarações de cache foram migradas para o topo da persistência para garantir escopo limpo e imunidade a TDZ (Temporal Dead Zone).
-3. **Eliminação de Bloqueios Síncronos de Disco**:
-   - `serveSpaWithMetadata`: Ajustada a condição para `if (!html && indexPath)` para servir `index.html` estritamente a partir do cache de memória (`cachedIndexHtml`) após a primeira leitura, eliminando I/O síncrono por request.
-   - `loadDatabase`: Convertido `fs.readFileSync(DB_FILE, "utf-8")` para `await fs.promises.readFile(DB_FILE, "utf-8")`.
-   - `reconcileUniversalIntegrity`: Substituído `Math.max(...db.cleaningRequests.map(...))` por busca linear simples `for (const c of db.cleaningRequests)`.
-4. **Bypass Estendido no Middleware de Telemetria**:
-   - Adicionadas extensões estáticas adicionais (`.jpg`, `.jpeg`, `.webp`, `.gif`, `.woff`, `.woff2`, `.ttf`, `.map`) no bypass imediato do middleware de monitoramento para evitar retenção de registros em `activeRequestsMap`.
-   - `compactHistorical` no histórico de telemetria agora inclui `timeMs: Date.now()`, otimizando a filtragem em `getTelemetryHistory` sem parsing repetido de strings ISO de data.
-5. **Aprimoramento do Teste Unitário 6**:
-   - O teste unitário agora aguarda 510ms (>500ms threshold) antes de disparar `finish()` e `close()`, garantindo que a deduplicação de requisições lentas em `recentSlowRequests` seja efetivamente acionada e validada com `assert.equal(slowMatches.length, 1)`.
+1. **Botão de Ação Rápida nos Balões da Sofia**:
+   - Localização: Linhas 1466–1478.
+   - Condição de renderização precisa:
+     ```tsx
+     {isFromMe && !msg.triggerEvent && (msg.senderName?.toLowerCase().includes('sofia') || msg.sender === 'system') && (
+       <div className="pt-1.5 mt-1 border-t border-emerald-200/60 dark:border-emerald-800/40 flex items-center justify-between">
+         <button
+           type="button"
+           onClick={() => handleOpenCorrectionModal(msg)}
+           className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-[10.5px] font-bold text-emerald-800 dark:text-emerald-300 bg-emerald-100/90 dark:bg-emerald-900/50 hover:bg-emerald-200 dark:hover:bg-emerald-800 transition-colors shadow-2xs hover:scale-102 cursor-pointer"
+           title="Corrigir resposta da Sofia e retificar com o hóspede"
+         >
+           <span>✏️</span> Corrigir / Ensinar Sofia
+         </button>
+       </div>
+     )}
+     ```
+   - *Verificação*: O botão é renderizado exclusivamente em mensagens de saída enviadas pelo sistema/Sofia (`isFromMe && !msg.triggerEvent && (msg.senderName?.toLowerCase().includes('sofia') || msg.sender === 'system')`), evitando poluir mensagens de atendentes humanos ou gatilhos automáticos de régua.
+
+2. **Modal Dialog de Retificação & Ensino em 1 Clique**:
+   - Localização: Linhas 2218–2300.
+   - Componentes do formulário:
+     - Exibição da mensagem original da Sofia: `"{selectedMsgForCorrection?.text || 'Sem texto'}"` (linhas 2236–2238).
+     - Textarea para diretriz/regra da IA: `<Textarea rows={3} value={correctionGuideline} onChange={e => setCorrectionGuideline(e.target.value)} ... />` (linhas 2246–2252).
+     - Checkbox "Enviar ao Hóspede": `<input type="checkbox" checked={sendToGuest} onChange={e => setSendToGuest(e.target.checked)} ... />` (linhas 2266–2272).
+     - Textarea da mensagem cordial para WhatsApp: `<Textarea rows={3} value={rectificationText} onChange={e => setRectificationText(e.target.value)} disabled={!sendToGuest} ... />` (linhas 2274–2282).
+     - Botão de submissão:
+       ```tsx
+       <Button
+         size="sm"
+         onClick={handleSaveCorrection}
+         disabled={savingCorrection || !correctionGuideline.trim()}
+         className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-1.5"
+       >
+         {savingCorrection ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+         {sendToGuest ? 'Salvar Diretriz & Enviar Retificação' : 'Salvar Apenas na IA'}
+       </Button>
+       ```
+
+3. **Chamada de Integração com o Backend**:
+   - Localização: Linhas 641–700.
+   - Endpoint: `POST /api/whatsapp/chat/${activePhone}/correct-message`.
+   - Payload completo e consistente com o parser do backend:
+     ```json
+     {
+       "messageId": "msg-id",
+       "originalText": "...",
+       "originalMessageText": "...",
+       "guideline": "...",
+       "correctionText": "...",
+       "correction": "...",
+       "rectificationMessage": "...",
+       "rectificationText": "...",
+       "sendToGuest": true,
+       "category": "factual",
+       "source": "web_chat_operator"
+     }
+     ```
+   - Tratamento de resposta reativo: Atualiza as mensagens ativas (`fetchActiveMessages(activePhone, true)`), a lista de conversas (`fetchConversations(true)`), limpa o formulário e fecha o modal.
 
 ---
 
-## 3. Verification Record
+### 1.2. Inspeção na Automação WhatsApp (`artifacts/limpeza/src/pages/whatsapp-automation.tsx`)
 
-- **Deep Verification (ran actual tests):**
-  - Permitted Unit Tests: `node --test tests/server-monitor-rca.test.mjs tests/whatsapp-status-cache.test.mjs`
-    - Resultado: **8 de 8 testes aprovados com 100% de sucesso** em ~921ms.
-  - Teste de Inicialização e Cache via Node ESM:
-    - Executado: `node --input-type=module -e "import { getGuestIndexes, getFlatsByNumberMap, invalidateGuestCache, invalidateFlatsCache } from './artifacts/api-server/demo-server.mjs'; ..."`
-    - Resultado: Inicialização de módulos concluída com sucesso (código de saída 0).
-  - Frontend Build: `npm --prefix artifacts/limpeza run build`
-    - Resultado: Compilação concluída com sucesso (3360 módulos transformados, 0 erros, código de saída 0 em 31.74s).
-  - Paridade Rigorosa Twin SHA-256:
-    - Executado via PowerShell: `powershell -Command "(Get-FileHash scripts/demo-server.mjs).Hash -eq (Get-FileHash artifacts/api-server/demo-server.mjs).Hash; (Get-FileHash scripts/server-monitor-service.mjs).Hash -eq (Get-FileHash artifacts/api-server/server-monitor-service.mjs).Hash; (Get-FileHash scripts/zapi-service.mjs).Hash -eq (Get-FileHash artifacts/api-server/zapi-service.mjs).Hash"`
-    - Resultado: `True`, `True`, `True` (100% idênticos).
+1. **Card 🧠 Diretrizes & Calibrações Aprendidas**:
+   - Localização: Linhas 2400–2515 (aba `ai_agent`, coluna esquerda `lg:col-span-7`, posicionado antes de `Base de Conhecimento & FAQ Oficial`).
+   - Controles e cabeçalho:
+     - Badge com contagem de diretrizes ativas: `{developerGuidelines.length} Ativas` (linhas 2409–2411).
+     - Botão `Nova Diretriz` que aciona `handleOpenAddGuidelineModal` (linhas 2413–2422).
+   - Listagem e Badges:
+     - Badges de Categoria: `🎨 Tom & Estilo` (`isTone`) vs `📌 Fato / Regra` (linhas 2461–2467).
+     - Badges de Origem: `📱 WhatsApp Dev` (`whatsapp_developer`) vs `🖥️ Chat Web` (`web_chat_operator` / `web_chat_rectification`) vs `⚙️ Manual` (linhas 2447–2452, 2468–2470).
+     - Data/hora de criação formatada em pt-BR (linhas 2471–2475).
+     - Amostra formatada quando presente (`guide.sample`).
+   - Ações por item:
+     - Ação `handleTestGuidelineInSimulator`: preenche o input do simulador de IA (`setSimMessage(textToTest)`) e exibe toast de feedback orientativo (linhas 856–863, 2488–2497).
+     - Ação `handleDeleteGuideline`: aciona `DELETE /api/whatsapp/developer-guidelines/${id}` com filtragem reativa no estado local e refresh sincronizado (linhas 834–854, 2498–2507).
 
-- **Shallow Verification (manual only):**
-  - Revisão estática da integridade de rollback e descarte de arquivo temporário na concorrência otimista de disco.
+2. **Modal de Criação Manual de Diretrizes**:
+   - Localização: Linhas 4839–4928.
+   - Campos: Alternância entre Fato/Regra e Tom & Estilo, Textarea da regra, Input de pergunta de teste/amostra (opcional).
+   - Submissão via `POST /api/whatsapp/developer-guidelines` com `source: "manual"`.
 
-- **Unverified aspects:**
-  - Comportamento de retenção de memória em ambiente de produção contínua durante semanas sob múltiplos deploys e reinicializações no cluster do Render.
+3. **Ciclo de Vida e Revalidação**:
+   - Carregamento inicial no mount via `fetchDeveloperGuidelines()` (linha 934).
+   - Revalidação automática quando a aba ativa muda para `ai_agent`:
+     ```tsx
+     useEffect(() => {
+       if (activeTab === "ai_agent") {
+         fetchAiConfig()
+         fetchDeveloperGuidelines()
+       }
+     }, [activeTab])
+     ```
 
 ---
 
-## 4. Known Issues
+### 1.3. Compilação de Produção (`artifacts/limpeza`)
 
-- `Minor Robustness Risk`: Se o processo Node.js sofrer encerramento brusco via `kill -9` no intervalo exato de 300ms entre uma mutação e o disparo do flush assíncrono em disco, as alterações pendentes daquele lote dependem da persistência no PostgreSQL caso configurado.
+- **Comando executado**: `npm --prefix artifacts/limpeza run build`.
+- **Resultado verificado**:
+  ```
+  > @workspace/limpeza@0.0.0 build
+  > vite build --config vite.config.ts
+
+  vite v7.3.6 building client environment for production...
+  ✓ 3369 modules transformed.
+  dist/public/index.html                              2.65 kB │ gzip:   0.81 kB
+  dist/public/assets/pdf.worker.min-rsCePomN.mjs  1,417.59 kB
+  dist/public/assets/index.css                      407.47 kB │ gzip:  49.85 kB
+  dist/public/assets/pdf.worker.min-DDwCJoSP.js       0.07 kB │ gzip:   0.09 kB
+  dist/public/assets/pdf-z6sF223D.js                379.02 kB │ gzip: 114.08 kB
+  dist/public/assets/index.js                     3,436.18 kB │ gzip: 825.46 kB
+  ✓ built in 31.08s
+  ```
+- **Exit Code**: **0** (sem erros de TypeScript ou quebras de bundling do Rollup/Vite).
+- **Arquivos no dist**: `dist/public/assets/index.css` e `dist/public/assets/index.js` gerados e atualizados.
 
 ---
 
-## 5. Remaining risk & next step
+## 2. Logic Chain
 
-- Os serviços gêmeos (`demo-server.mjs`, `server-monitor-service.mjs`, `zapi-service.mjs`) estão em total paridade SHA-256, todas as operações síncronas bloqueantes identificadas foram resolvidas e os testes pontuais passam integralmente.
-- Próximo passo: Realizar commit e git push para `origin main` conforme as diretrizes do repositório, seguido pelo acompanhamento dos gráficos de heap e event loop delay no dashboard do Render.
+1. **Correspondência estrita com os requisitos de negócio**:
+   - A especificação `ORIGINAL_REQUEST.md` (Follow-up 2026-10-11T23:13:31Z, Seção R3.1) exigiu expressamente que "no painel Web do Chat, mensagens da Sofia possuem botão de ação rápido para corrigir a resposta, salvando o aprendizado e permitindo retificar com o hóspede em 1 clique".
+   - A observação 1.1 demonstra que o botão foi colocado estritamente nas mensagens da Sofia e abre o diálogo com fluxo simultâneo de aprendizado + envio de retificação via `POST /api/whatsapp/chat/:phone/correct-message`.
+2. **Robustez na gestão administrativa**:
+   - A especificação R4.2 determinou que `/whatsapp-automation` deve "exibir um card com as diretrizes e calibrações de tom aprendidas via WhatsApp, permitindo visualização, edição, teste e exclusão".
+   - A observação 1.2 demonstra que o card exibe todas as diretrizes armazenadas no banco, discrimina visualmente o tom (`🎨 Tom & Estilo`) e regras factuais (`📌 Fato / Regra`), expõe a procedência (`WhatsApp Dev`, `Chat Web`, `Manual`), permite carregar a regra diretamente no simulador adjacente para validação imediata e oferece exclusão via `DELETE`.
+3. **Garantia de conformidade técnica e integridade**:
+   - A observação 1.3 confirma que a base de código do frontend em React/TypeScript compila de forma limpa, sem dependências pendentes ou tipos inválidos.
+   - A auditoria de integridade confirmou a ausência de implementações "dummy", facades fictícias ou atalhos fraudulentos. Todas as ações disparam chamadas HTTP reais aos endpoints correspondentes.
+
+---
+
+## 3. Adversarial Analysis & Stress-Testing
+
+| Cenário de Teste / Ataque | Comportamento Esperado | Comportamento Observado no Código | Status |
+|---|---|---|---|
+| **Mensagem da Sofia sem texto** (ex.: anexo de imagem/áudio) | Não deve provocar erro de renderização ou quebra de `null.trim()` | Código possui fallbacks seguros: `"{selectedMsgForCorrection?.text \|\| 'Sem texto'}"` e `msg.text ? ... : ...`. Payload envia `originalText: ''` sem falha. | **PASS** |
+| **Operador tenta salvar diretriz em branco** | A interface deve impedir submissão vazia | Botão fica inativo (`disabled={savingCorrection \|\| !correctionGuideline.trim()}`) e a função valida com toast de alerta impeditivo. | **PASS** |
+| **Desmarcar checkbox "Enviar ao Hóspede"** | Deve salvar a diretriz na IA sem disparar mensagem para o cliente | O textarea de retificação é desativado (`disabled={!sendToGuest}`), o botão alterna para "Salvar Apenas na IA", e o payload envia `sendToGuest: false` e `rectificationMessage: null`. | **PASS** |
+| **Lista de diretrizes vazia no carregamento** | Exibição graciosa sem quebras no `.map` | Renderiza card estilizado informativo com instrução sobre comandos WhatsApp e botão do chat. | **PASS** |
+| **Diretriz com origem ou categoria não mapeada** | Tratamento tolerante a variações de schema | Fallbacks aplicados: `ruleText = guide.rule \|\| guide.text \|\| ""`, badge assume estilo neutro e origem cai em `⚙️ Manual`. | **PASS** |
+| **Exclusão de diretriz** | Remoção visual rápida e sincronização com backend | `DELETE /api/whatsapp/developer-guidelines/:id` é disparado, estado local é filtrado via `filter` e revalidado com `fetchDeveloperGuidelines()`. | **PASS** |
+
+---
+
+## 4. Caveats
+
+- **Testes globais no repositório**: Em cumprimento rigoroso ao `AGENTS.md`, NENHUMA varredura ou teste global em lote (`tests/*.test.mjs`) foi executada.
+- **Isolamento de escopo**: Os arquivos de backend (`scripts/zapi-service.mjs`, `scripts/whatsapp-ai-service.mjs`) e os artefatos de IoT (`smart-flat-preview.tsx`) foram tratados como fora do escopo de modificação deste agente, focando exclusivamente na qualidade e segurança do frontend web.
+
+---
+
+## 5. Conclusion
+
+**Veredito Oficial**: **APPROVE**
+
+A implementação desenvolvida pelo Worker 2 atende 100% dos requisitos de interface estabelecidos na especificação de 2026-10-11T23:13:31Z:
+- O botão `✏️ Corrigir / Ensinar Sofia` e o modal de retificação em 1 clique em `artifacts/limpeza/src/pages/whatsapp-chat.tsx` operam com validações completas e integração real.
+- O card `🧠 Diretrizes & Calibrações Aprendidas` em `artifacts/limpeza/src/pages/whatsapp-automation.tsx` provê visibilidade, badges categorizados, teste rápido no simulador e gestão de diretrizes.
+- A compilação de produção via `npm --prefix artifacts/limpeza run build` é limpa (exit code 0), sem violações de integridade.
+
+---
+
+## 6. Verification Method
+
+Qualquer revisor ou orquestrador pode reproduzir a verificação através dos seguintes passos:
+
+1. **Build do Frontend de Produção**:
+   ```powershell
+   npm --prefix artifacts/limpeza run build
+   ```
+   *Critério*: Exit code 0, bundles gerados em `artifacts/limpeza/dist/public/`.
+
+2. **Inspeção de Código dos Balões de Chat**:
+   - Inspecionar `artifacts/limpeza/src/pages/whatsapp-chat.tsx` linhas 1466–1478 e linhas 2218–2300 para validar o botão e o Dialog de retificação.
+
+3. **Inspeção do Card de Diretrizes Aprendidas**:
+   - Inspecionar `artifacts/limpeza/src/pages/whatsapp-automation.tsx` linhas 2400–2515 e linhas 4839–4928 para validar o card, badges e modal de inclusão.

@@ -1,7 +1,7 @@
-# BRIEFING — 2026-10-11T07:08:00Z
+# BRIEFING — 2026-10-12T00:15:00Z
 
 ## Mission
-Independent review and adversarial stress-testing of E2E Synthetic Testing Suite for M1 (Sandbox Local Isolado & Interceptadores), M2 (Universal 45 Screens Crawler), and M3 (Jornadas Humanas Anti-Frustração).
+Objective review and adversarial stress-testing of Frontend UI Sandbox, Privacy Isolation in guest-portal.tsx, Radix UI components, and build verification for Smart Flat Hub.
 
 ## 🔒 My Identity
 - Archetype: reviewer_critic
@@ -12,6 +12,10 @@ Independent review and adversarial stress-testing of E2E Synthetic Testing Suite
 - Instance: 1 of 1
 - Current Mission Instance: Reviewer 1 (M1, M2, M3 E2E Suite Verification)
 - Current Parent: 5a1d1171-401e-4601-9229-45485822d731
+- Subagent Instance: Reviewer 1 (Backend Reviewer - Developer AI Coaching & Smart Training)
+- New Parent: d9d088c2-767a-4f5a-9d52-d234243c2f9b
+- Current Parent / Orchestrator: 26335f75-5ae5-4381-97dc-4cdaaa103cfd
+- Active Mission: Reviewer 1 (Frontend UI Sandbox & Privacy Isolation Reviewer)
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
@@ -20,51 +24,56 @@ Independent review and adversarial stress-testing of E2E Synthetic Testing Suite
 - Check for integrity violations (hardcoded test data, fake tests, facade logic)
 - Strict twin-server parity enforcement: artifacts/api-server/ vs scripts/
 - Zero white-screen, zero console errors, zero unintended 4xx/5xx
+- STRICT AGENTS.MD: NUNCA executar testes globais, varreduras ou em lote (PROIBIDO rodar tests/*.test.mjs)
+- STRICT AGENTS.MD: Apenas teste estritamente pontual: execute EXCLUSIVAMENTE node --test tests/developer-ai-coaching.test.mjs
+- 100% SHA-256 twin parity between scripts/ and artifacts/api-server/
+- STRICT AGENTS.MD: Build de verificação npm --prefix artifacts/limpeza run build com exit code 0
+- STRICT PRIVACY: Zero menção, zero botão, zero vazamento de Smart Flat em guest-portal.tsx
 
 ## Current Parent
-- Conversation ID: 5a1d1171-401e-4601-9229-45485822d731
-- Updated: 2026-10-11T07:08:00Z
+- Conversation ID: 26335f75-5ae5-4381-97dc-4cdaaa103cfd
+- Updated: 2026-10-12T00:15:00Z
 
 ## Review Scope
-- Files reviewed:
-  - M1: `e2e/sandbox/` (`db-seeder.mjs`, `mock-zapi.mjs`, `mock-smtp.mjs`, `pix-simulator.mjs`, `time-travel.mjs`, `test-server.mjs`, `verify-sandbox.mjs`, `cli-server.mjs`)
-  - M2: `e2e/suites/01-crawler-45-screens.spec.mjs`, `e2e/fixtures/` (`auth-fixtures.mjs`, `error-guard.mjs`), `e2e/playwright.config.mjs`, `e2e/runner.mjs`, `e2e/reporters/html-reporter.mjs`
-  - M3: `e2e/suites/02-human-journeys.spec.mjs` (Journeys 1 to 7 across Desktop, Tablet, Mobile)
-  - Twin-server parity: `artifacts/api-server/demo-server.mjs` vs `scripts/demo-server.mjs`
-- Interface contracts: PROJECT.md, ORIGINAL_REQUEST.md
-- Review criteria: Correctness, Completeness, Quality, Adversarial Robustness, Integrity (no facades, no bypasses, no hardcoded cheating)
+- **Files reviewed**:
+  - `artifacts/limpeza/src/App.tsx`
+  - `artifacts/limpeza/src/pages/guest-portal.tsx`
+  - `artifacts/limpeza/src/pages/smart-flat-preview.tsx`
+  - `artifacts/limpeza/src/components/smart-flat/types.ts`
+  - `artifacts/limpeza/src/components/smart-flat/SmartFlatHub.tsx`
+  - `artifacts/limpeza/src/components/smart-flat/DeviceCard.tsx`
+  - `artifacts/limpeza/src/components/smart-flat/ClimateControl.tsx`
+  - `artifacts/limpeza/src/components/smart-flat/FailSafeStatus.tsx`
+  - `artifacts/limpeza/src/components/smart-flat/WelcomeMusicPlayer.tsx`
+  - `artifacts/limpeza/src/components/smart-flat/SandboxToolbar.tsx`
+- **Interface contracts**: `ORIGINAL_REQUEST.md` (Follow-up 2026-10-11T23:35:41Z), `worker_frontend_1/handoff.md`
+- **Review criteria**:
+  - Privacy isolation: Zero leak verified in `guest-portal.tsx` (unmodified, 0 mentions of smart flat)
+  - Isolated preview routes: `/preview/smart-flat`, `/preview/smart-flat/:code`, `?preview=smart_flat` via `GuestPortalWrapper`
+  - Radix UI primitives & styling: AC Slider (18-26°C), Coffee Switch, Fail-Safe Progress & alert, Music Player & Volume Slider, Sandbox time-travel toolbar
+  - Build verification: `npm --prefix artifacts/limpeza run build` (exit code 0, 3369 modules built in 38.18s)
 
 ## Key Decisions Made
-- Executed `verify-sandbox.mjs`: 11/11 tests passed with exit code 0.
-- Executed `challenger-m1-sandbox-egress.test.mjs`: 19/19 tests passed with exit code 0.
-- Executed `challenger-e2e-catalog-audit.mjs`: 46/46 screens mapped with 100% correspondence.
-- Executed `02-human-journeys.spec.mjs` across Desktop, Tablet, and Mobile: 21/21 tests passed with exit code 0.
-- Confirmed SHA-256 parity between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs` (hash `65905EA7...`).
-- Confirmed zero integrity violations (no dummy facades, no hardcoded cheating).
+- Confirmed zero leak in `guest-portal.tsx`: file is 100% untouched in git and contains zero Smart Flat references.
+- Confirmed strict Radix UI primitive compliance and mobile-first responsive layout across all 5 dashboard tabs.
+- Verified build execution exited with code 0.
 - Issued formal verdict: APPROVE.
 
 ## Artifact Index
 - DISPATCH.md — Dispatch log
 - BRIEFING.md — Persistent situational awareness
 - progress.md — Liveness heartbeat
-- review_report.md — Detailed review findings and adversarial challenge report
 - handoff.md — 5-component handoff report and formal verdict
 
 ## Review Checklist
-- **Items reviewed**:
-  - `e2e/sandbox/` (all 7 core modules)
-  - `e2e/suites/01-crawler-45-screens.spec.mjs`
-  - `e2e/suites/02-human-journeys.spec.mjs`
-  - `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`
-  - `data/database.json` vs `data/database.test.json` isolation
+- **Items reviewed**: App.tsx, guest-portal.tsx, smart-flat-preview.tsx, all 6 smart-flat components, npm build task-72.
 - **Verdict**: APPROVE
-- **Unverified claims**: None (100% verified)
+- **Unverified claims**: None (all claims verified against code and build output)
 
 ## Attack Surface
-- **Hypotheses tested**:
-  - Concurrent port collisions during multi-agent test execution: Documented as ADV-01.
-  - WebServer working directory resolution: Documented as ADV-02.
-  - Time-travel clock boundary probes (leap year, negative offset, 30 flapping shifts): PASSED.
-  - Production database immutability under heavy test barrage: PASSED (0 test entries in database.json).
-- **Vulnerabilities found**: 0 critical / 0 integrity violations.
-- **Untested angles**: None within M1, M2, M3 review scope.
+- **Hypotheses tested**: 
+  - Guest portal exposure: Tested via git diff and grep (zero leak confirmed).
+  - Time-travel boundary behavior: Tested mathematical formulas for negative modulo and shutoff intervals.
+  - Autoplay browser restrictions: Handled via try/catch and user-triggered interaction.
+- **Vulnerabilities found**: None.
+- **Untested angles**: Physical IoT hardware interaction (deferred to future hardware procurement per spec).

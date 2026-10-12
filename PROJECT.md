@@ -1,58 +1,41 @@
-# Project: CorpFlats Guest-Flow-Manager - Secure Reservation Modification Flow
+# Project: Modo Desenvolvedor & Treinamento Inteligente no WhatsApp (CorpFlats)
 
 ## Architecture
-- **Backend Core**: In-memory `db` persisted atomically via `atomicWriteFileSync` in `data/database.json`. Server entry points in `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs` maintaining strict 100% byte-for-byte SHA-256 parity (`72EA96CE4DC341181B8B41E7A01FE91F52E975FDD757FBD70C033688FEC6184F`).
-- **Guest Portal Frontend**: React + TypeScript single-page app in `artifacts/limpeza/src/pages/guest-portal.tsx` and `guest-pre-checkin.tsx`, built via Vite to `artifacts/limpeza/dist/`.
-- **Payment Layer**: Banco Inter PIX (dynamic mTLS + static EMV with QRCode), Mercado Pago Checkout preference, status polling (`/modify-status` / `/payment-status`) with in-flight Promise locking (`activeModificationCommits = new Map()`) and payment deduplication.
-- **Legal & Reception Synchronization**: FNRH check-in document generation via `scripts/fnrh-pdf-service.mjs`, digital signatures, automated WhatsApp notifications via `scripts/zapi-service.mjs`, email dispatch via `scripts/mail-service.mjs`, and real-time polling on Reception (`/api/reception/today`) and Garage (`/api/pms/garage/daily-sheet`).
+- **Inbound WhatsApp Pipeline**: `scripts/zapi-service.mjs` & `artifacts/api-server/zapi-service.mjs`
+- **AI Coaching & Prompt Engine**: `scripts/whatsapp-ai-service.mjs` & `artifacts/api-server/whatsapp-ai-service.mjs`
+- **Data Persistence**: `data/database.json` -> `db.whatsappAiSettings.developerGuidelines`, `db.whatsappAiSettings.toneSettings`, `aiConfig.systemPrompt`
+- **Frontend Web Chat**: `artifacts/limpeza/src/pages/whatsapp-chat.tsx`
+- **Frontend AI Automation**: `artifacts/limpeza/src/pages/whatsapp-automation.tsx`
+- **Production Build**: `artifacts/limpeza/dist/`
+- **Targeted Test Suite**: `tests/developer-ai-coaching.test.mjs`
 
 ## Feature Inventory
 | # | Feature | Description | Milestone | Source |
 |---|---------|-------------|-----------|--------|
-| 1 | Simulation & Availability Check (`/modify-preview`) | Validates flat calendar availability, calculates daily rates, extra nights, 24h refund policy, and returns pricing breakdown without mutating database. | M1 | ORIGINAL_REQUEST R1 (DONE) |
-| 2 | Provisional Hold & Conflict Guard | Prevents double-booking during payment checkout via 30-minute hold (`r.pendingModification`) while keeping original dates intact until payment confirmation. | M1 | ORIGINAL_REQUEST R1, R2 (DONE) |
-| 3 | Payment Settlement Before Date Commit | When `additionalAmountToPay > 0`, dates are committed only after PIX/Card payment verification; canceling or abandoning leaves reservation untouched. | M1 | ORIGINAL_REQUEST R2 (DONE) |
-| 4 | Audit Trail & Payment Recording | Commits `r.payments`, `r.totalAmount`, `r.modificationHistory`, and updates reservation dates atomically upon verified payment with in-flight mutex lock. | M1 | ORIGINAL_REQUEST R2 (DONE) |
-| 5 | Mandatory Re-Signature Invalidation | Flags `r.needsReSignature = true`, clears `fnhrCompleted`, `signatureUrl`, and stale FNRH links whenever dates or flat change in Portal or PMS Admin. | M2 | ORIGINAL_REQUEST R3 |
-| 6 | Automated Re-Signature Communication | Dispatches WhatsApp and/or email notification with direct personalized link (`/pre-checkin/:code?resign=1`) for immediate re-signing. | M2 | ORIGINAL_REQUEST R3 |
-| 7 | Forensic Document Generation & Reception Email Delivery | Generates updated FNRH PDF with SHA-256 hash upon re-signing, clears `needsReSignature = false`, and delivers document to reception email. | M2 | ORIGINAL_REQUEST R3 |
-| 8 | Reception & Garage Panel Synchronization | Reception panel (`reception-tablet.tsx`) blocks check-in while `needsReSignature = true`; garage panel (`garage-dashboard.tsx`) adds polling to reflect updated stay dates & vehicle plates. | M3 | ORIGINAL_REQUEST R4 |
-| 9 | Guest Portal Multi-Step UI Modal & Re-Sign Banner | Guest portal displays Step 1 preview badge & cost breakdown, Step 2 PIX QR Code/Copia e Cola + Card checkout with polling, and top banner when re-signature is required. | M3 | ORIGINAL_REQUEST R1, R2, R3 |
-| 10 | Schedulers & Daily Routines Synchronization | Synchronizes morning 07:00 notification routine, breakfast orders, and housekeeping turnovers to new stay dates. | M2 | ORIGINAL_REQUEST R4 |
-| 11 | Comprehensive E2E Testing Suite (Tiers 1-4) | Automated tests covering availability simulation, payment settlement guardrails, re-signature invalidation, WhatsApp link dispatch, and panel synchronization. | M4 | ORIGINAL_REQUEST Acceptance Criteria |
-| 12 | Twin-Server Parity & Production Build Cleanliness | Strict SHA-256 parity between `scripts/` and `artifacts/api-server/`, clean `npm run build` in `artifacts/limpeza`, and git push to `origin main`. | M4 | Strict Guardrails & Parity |
+| 1 | Developer Phone Recognition | Helper `isDeveloperPhone` recognizing 22998505276 / 5522998505276 | M1 (DONE) | R1 |
+| 2 | Persistent AI Pause Bypass | 4-layer defense ensuring developer chat is never muted by `aiPaused: true` | M1 (DONE) | R1 |
+| 3 | Tri-Modal Intent Engine | Classifies developer messages into guest simulation vs tone calibration vs factual coaching | M1 (DONE) | R1, R2 |
+| 4 | Non-Literal Tone Calibration | Extracts tone parameters from natural language ("responda mais curto"), updates config, generates cordial confirmation + summary + live sample | M1 (DONE) | R2 |
+| 5 | Real-Time Guideline Injection | Injects active `developerGuidelines` and `toneSettings` into Sofia's prompt for all guests in real time | M1 (DONE) | R4 |
+| 6 | Rectification Backend Endpoint | `POST /api/whatsapp/chat/:phone/correct-message` for 1-click guideline learning & guest rectification | M1 (DONE) | R3 |
+| 7 | Guidelines Management API | CRUD endpoints for developer guidelines | M1 (DONE) | R4 |
+| 8 | Dedicated Targeted Test Suite | `tests/developer-ai-coaching.test.mjs` validating all backend features (8/8 PASS) | M1 (DONE) | Verification |
+| 9 | Web Chat 1-Click Rectification | Button "✏️ Corrigir / Ensinar Sofia" on Sofia's bubbles and modal in `whatsapp-chat.tsx` | M2 | R3 |
+| 10 | Administrative Guidelines Card | Card "🧠 Diretrizes & Calibrações Aprendidas" in `whatsapp-automation.tsx` | M2 | R4 |
+| 11 | Production Frontend Build | Clean build with `npm --prefix artifacts/limpeza run build` and `dist/` updated | M2 | AGENTS.md |
+| 12 | Twin-Server Parity & Git Push | 100% SHA-256 match for twin files, gate verification, and immediate `git push origin main` | M3 | AGENTS.md |
 
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| M1 | Backend Simulation, Hold & Settlement Engine | Endpoints `/modify-preview`, `/modify-checkout`, `/modify-status`, `/modify-cancel-pending`, availability check, calendar hold, atomic payment commit, in-flight mutex locking. | None | DONE |
-| M2 | Re-Signature Lifecycle, Document Delivery & Ops Synchronization | Invalidation of signature on date/flat change, automated WhatsApp/email dispatch with direct re-signing link, PDF re-generation, reception email dispatch, scheduler sync. | M1 | IN_PROGRESS |
-| M3 | Guest Portal UI Flow, Modals & Operational Panels | Refactor `guest-portal.tsx` modal (Step 1 preview, Step 2 payment checkout), re-signature banner, `guest-pre-checkin.tsx` fast-track, and `garage-dashboard.tsx` polling. | M1, M2 | PLANNED |
-| M4 | Comprehensive E2E Test Suite, Parity & Production Verification | Tiers 1-4 automated tests, SHA-256 parity validation, clean `npm run build` in `artifacts/limpeza`, git push. | M1, M2, M3 | PLANNED |
+| M1 | Backend Core & AI Coaching Engine | `zapi-service.mjs`, `whatsapp-ai-service.mjs`, parity sync, test creation | M0 | DONE |
+| M2 | Frontend Web Chat & Automation UI | `whatsapp-chat.tsx`, `whatsapp-automation.tsx`, build `artifacts/limpeza` | M1 | IN_PROGRESS |
+| M3 | Gate, Parity Verification & Git Push | Reviewers, Challengers, Auditor, SHA-256 parity, git commit & push | M1, M2 | PLANNED |
 
 ## Interface Contracts
-### Frontend ↔ Backend Modification Endpoints
-- `POST /api/pms/guest-portal/:code/modify-preview`
-  - Input: `{ newCheckinDate: string, newCheckoutDate: string, newGuestCount?: number, newFlatId?: string, reason?: string }`
-  - Output: `{ success: true, available: boolean, conflictMessage?: string, originalDates: { checkinDate, checkoutDate }, newDates: { checkinDate, checkoutDate }, dailyRate: number, extraNights: number, additionalAmountToPay: number, refundAmount: number, currency: 'BRL', requiresPayment: boolean }`
-- `POST /api/pms/guest-portal/:code/modify-checkout`
-  - Input: `{ newCheckinDate: string, newCheckoutDate: string, newGuestCount?: number, newFlatId?: string, reason?: string, paymentMethod: 'pix' | 'credit_card' }`
-  - Output: `{ success: true, pendingId: string, additionalAmountToPay: number, pixQrCodeUrl?: string, pixCopiaECola?: string, pixTxId?: string, mpCheckoutUrl?: string, expiresAt: string }`
-- `GET /api/pms/guest-portal/:code/modify-status?pendingId=:id`
-  - Output: `{ success: true, status: 'pending' | 'paid' | 'expired' | 'canceled', committed: boolean, message?: string }`
-- `POST /api/pms/guest-portal/:code/modify-cancel-pending`
-  - Input: `{ pendingId?: string }`
-  - Output: `{ success: true, message: string }`
-- `POST /api/pms/pre-checkin`
-  - Input: form submission with signature
-  - Behavior: Saves signature, clears `r.needsReSignature = false`, generates FNRH PDF with SHA-256 hash, delivers email to reception.
+### `POST /api/whatsapp/chat/:phone/correct-message`
+- Request: `{ messageId?, originalText?, guideline: string, rectificationMessage?: string, sendToGuest: boolean, category?: string }`
+- Response: `{ success: true, guideline: object, sentMessage?: object }`
 
-## Code Layout
-- `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs`: Server routes and business logic (must be byte-for-byte identical).
-- `scripts/fnrh-pdf-service.mjs` and `artifacts/api-server/fnrh-pdf-service.mjs`: Forensic PDF generation with SHA-256.
-- `scripts/zapi-service.mjs` and `artifacts/api-server/zapi-service.mjs`: WhatsApp notification triggers.
-- `artifacts/limpeza/src/pages/guest-portal.tsx`: Guest Portal UI, reservation view, modification modal.
-- `artifacts/limpeza/src/pages/guest-pre-checkin.tsx`: Pre-checkin and re-signing canvas.
-- `artifacts/limpeza/src/pages/reception-tablet.tsx`: Reception tablet view.
-- `artifacts/limpeza/src/pages/garage-dashboard.tsx`: Garage dashboard.
-- `tests/`: Automated test suites (`node --test tests/*.test.mjs`).
+### `db.whatsappAiSettings.developerGuidelines`
+- Schema: `{ id: string, rule: string, category: "tone"|"factual", targetFlat?: string|null, createdAt: string, active: boolean, source: "whatsapp_developer"|"web_chat_operator"|"manual", sample?: string }`

@@ -1,7 +1,7 @@
-# BRIEFING — 2026-10-11T07:12:00Z
+# BRIEFING — 2026-10-12T00:07:00Z
 
 ## Mission
-Adversarially challenge the completeness, robustness, and empirical execution of the E2E synthetic testing suites (01-crawler-45-screens, 02-human-journeys, 03-pairwise-matrix, 04-chaos-explorer), verify 100% 45-screen catalog coverage, and validate the consolidated HTML report e2e/reports/index.html to issue a formal empirical verdict (APPROVE or REJECT).
+Adversarially challenge the Developer AI Coaching & Rectification feature: test the rectification endpoint POST /api/whatsapp/chat/:phone/correct-message contract, guidelines CRUD endpoints (GET, POST, PATCH, DELETE at /api/whatsapp/developer-guidelines), dynamic reflection of saved guidelines on subsequent guest inquiries, and execute node --test tests/developer-ai-coaching.test.mjs to issue verdict APPROVE or REQUEST_CHANGES.
 
 ## 🔒 My Identity
 - Archetype: Empirical Challenger
@@ -11,7 +11,7 @@ Adversarially challenge the completeness, robustness, and empirical execution of
 - Milestone: Governance and integrity overhaul validation
 - Instance: 2 of 2
 - Milestone 2026-10-11: Empirical Adversarial Verification of E2E Suites & Scenarios
-- Current Parent Conversation ID: 5a1d1171-401e-4601-9229-45485822d731
+- Milestone 2026-10-12: API & Rectification Adversarial Testing (Developer AI Coaching & Rectification)
 
 ## 🔒 Key Constraints
 - Review-only — do NOT modify implementation code
@@ -21,54 +21,54 @@ Adversarially challenge the completeness, robustness, and empirical execution of
 - Milestone 2026-10-11: Formal verdict must be APPROVE or REJECT
 - Verify 100% catalog coverage of the 45 functional screens in src/pages
 - Empirically execute and stress-test suites 01, 02, 03, 04
+- STRICT AGENTS.MD: NUNCA executar testes globais, varreduras ou em lote (PROIBIDO rodar tests/*.test.mjs)
+- Apenas teste estritamente pontual: execute EXCLUSIVAMENTE node --test tests/developer-ai-coaching.test.mjs
+- Twin-server parity mandate: parity between scripts/ and artifacts/api-server/ must hold
 
 ## Current Parent
-- Conversation ID: 5a1d1171-401e-4601-9229-45485822d731
-- Updated: 2026-10-11T07:12:00Z
+- Conversation ID: d9d088c2-767a-4f5a-9d52-d234243c2f9b
+- Updated: 2026-10-12T00:06:11Z
 
 ## Review Scope
 - **Files to review**:
-  - `ORIGINAL_REQUEST.md` (2026-10-11 E2E requirements)
-  - `PROJECT.md`
-  - `artifacts/limpeza/src/pages/` (all 46 page files)
-  - `artifacts/limpeza/src/App.tsx` (routing map)
-  - `e2e/suites/01-crawler-45-screens.spec.mjs`
-  - `e2e/suites/02-human-journeys.spec.mjs`
-  - `e2e/suites/03-pairwise-matrix.spec.mjs`
-  - `e2e/suites/04-chaos-explorer.spec.mjs`
-  - `e2e/reporters/html-reporter.mjs`
-  - `e2e/reports/index.html`
-  - `e2e/reports/modules-summary.json`
-  - `e2e/reports/test-results.json`
-  - `e2e/reports/usability-audit.json`
-- **Interface contracts**: PROJECT.md E2E specifications
-- **Review criteria**: 100% screen correspondence, empirical execution of test suites, resilience under adversarial stress, HTML report integrity.
+  - `tests/developer-ai-coaching.test.mjs`
+  - `scripts/zapi-service.mjs` & `artifacts/api-server/zapi-service.mjs`
+  - `scripts/whatsapp-ai-service.mjs` & `artifacts/api-server/whatsapp-ai-service.mjs`
+  - `scripts/demo-server.mjs` & `artifacts/api-server/demo-server.mjs`
+  - `artifacts/limpeza/src/pages/whatsapp-chat.tsx`
+  - `artifacts/limpeza/src/pages/whatsapp-automation.tsx`
+- **Review criteria**:
+  - Rectification endpoint contract and boundary conditions
+  - Guidelines CRUD contract and filter/edge cases
+  - Dynamic reflection and immediate system instruction / response update
+  - Strict point unit test passing 100%
+  - Production build passing 100%
+  - Twin server hash parity 100%
 
 ## Key Decisions Made
-- Executed catalog audit `tests/challenger-e2e-catalog-audit.mjs` confirming 100% coverage (45/45 functional screens in `src/pages` + 404 fallback mapped in `App.tsx` and `SCREEN_CATALOG`).
-- Empirically executed Suite 02 (`02-human-journeys.spec.mjs`): 7/7 journeys passed (58.0s).
-- Empirically executed Suite 03 (`03-pairwise-matrix.spec.mjs`): 4/4 combinatorial scenarios passed (36.2s).
-- Empirically executed Suite 04 (`04-chaos-explorer.spec.mjs`): 4/4 chaos explorer actions passed (27.5s).
-- Empirically executed cross-category sample of Suite 01 (`01-crawler-45-screens.spec.mjs`): 7/7 sample screens passed (1.1m).
-- Forensically verified `e2e/reports/index.html`: 0 missing data, dark-theme layout, 4 chaos explorer pillars, DOM usability score 77/100, zero-failures badge.
+- Empirically executed `node --test tests/developer-ai-coaching.test.mjs` (8/8 tests passed, 0 failures).
+- Empirically executed adversarial contract test on `POST /api/whatsapp/chat/:phone/correct-message` (empty body, whitespace, learnGuideline: false, sendToGuest: false, phone sanitization, error resilience).
+- Empirically executed adversarial test on `/api/whatsapp/developer-guidelines` CRUD (missing text, valid POST, category filtering, search filtering, 404 on invalid IDs for PATCH and DELETE, toggle active).
+- Empirically verified dynamic reflection (immediate inclusion in system prompt and heuristic responses, immediate exclusion upon deactivation/deletion).
+- Verified twin-server parity: SHA-256 identical across `scripts/` and `artifacts/api-server/`.
+- Executed `npm run build` in `artifacts/limpeza` (code 0, 45.86s).
 - Formulated definitive **APPROVE** verdict.
 
 ## Artifact Index
 - DISPATCH.md — Incoming dispatch instructions
-- BRIEFING.md — Situational awareness and identity tracker
+- BRIEFING.md — Situational awareness and persistent memory
 - progress.md — Real-time progress and heartbeat
 - handoff.md — Final 5-component handoff report with formal verdict APPROVE
-- tests/challenger-e2e-catalog-audit.mjs — Automated catalog and route correspondence audit
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - H1: Screen catalog misses functional pages present in `src/pages/`. (DISPROVED: exactly 45 functional pages + 404 fallback exist, 100% mapped).
-  - H2: Human journeys fail on edge conditions (e.g. invalid documents, time boundaries, expired PIX). (DISPROVED: all 7 journeys passed).
-  - H3: Pairwise matrix breaks under combinatorial boundary cases. (DISPROVED: all 4 scenarios passed).
-  - H4: Chaos explorer creates unhandled React uncaught exceptions or UI freezes. (DISPROVED: XSS sanitized, double clicks handled idempotently, Back navigation recovers state).
-  - H5: Consolidated HTML report has missing data, broken links, or empty charts. (DISPROVED: 100% populated with zero external dependencies).
-- **Vulnerabilities found**: None. System is resilient and empirically verified.
-- **Untested angles**: Hardware-level GPU accelerated WebGL canvas rendering (tested via software emulation).
+  - H1: `POST /api/whatsapp/chat/:phone/correct-message` breaks on empty/whitespace inputs or non-numeric phone formatting. (REFUTED: Validates empty/whitespace returning 400; normalizes phone with regex).
+  - H2: `learnGuideline: false` or `sendToGuest: false` fail to isolate side effects. (REFUTED: Flags strictly respect conditional execution).
+  - H3: Guidelines CRUD fails on missing IDs or invalid parameters. (REFUTED: Returns clean 400 for missing text, 404 for non-existent IDs on PATCH/DELETE).
+  - H4: Deactivating/deleting a guideline leaves stale cache in prompts or heuristic responses. (REFUTED: Filtering is dynamic on every prompt construction and heuristic query).
+  - H5: Developer phone can get paused by operator replies. (REFUTED: Developer immunity bypasses pause and unpauses automatically).
+- **Vulnerabilities found**: None. System is resilient and fully compliant.
+- **Untested angles**: Extreme volume concurrency (>10,000 req/s) on SQLite/JSON mock file database (handled by single-threaded Node event loop with synchronous save serialization).
 
 ## Loaded Skills
 - None

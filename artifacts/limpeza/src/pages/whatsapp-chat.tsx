@@ -72,6 +72,7 @@ export interface ChatMessage {
   status?: 'sent' | 'delivered' | 'read' | 'failed'
   triggerEvent?: string
   templateTitle?: string
+  messageId?: string
 }
 
 export interface ChatConversation {
@@ -235,6 +236,14 @@ export default function WhatsappChat() {
   const [attachUrl, setAttachUrl] = useState('')
   const [attachName, setAttachName] = useState('')
   const [attachCaption, setAttachCaption] = useState('')
+
+  // Message Rectification / Ensinar Sofia Dialog
+  const [correctModalOpen, setCorrectModalOpen] = useState(false)
+  const [selectedMsgForCorrection, setSelectedMsgForCorrection] = useState<ChatMessage | null>(null)
+  const [correctionGuideline, setCorrectionGuideline] = useState('')
+  const [rectificationText, setRectificationText] = useState('')
+  const [sendToGuest, setSendToGuest] = useState(true)
+  const [savingCorrection, setSavingCorrection] = useState(false)
 
   // Scroll to bottom reference
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -612,6 +621,81 @@ export default function WhatsappChat() {
       toast({ title: 'Erro de envio', description: err.message, variant: 'destructive' })
     } finally {
       setSending(false)
+    }
+  }
+
+  // Open Message Rectification Dialog for Sofia's messages
+  const handleOpenCorrectionModal = (msg: ChatMessage) => {
+    setSelectedMsgForCorrection(msg)
+    setCorrectionGuideline('')
+    setRectificationText(
+      msg.text
+        ? 'Olá! Gostaria de retificar a informação anterior: '
+        : 'Olá! Gostaria de retificar uma informação sobre sua estadia.'
+    )
+    setSendToGuest(true)
+    setCorrectModalOpen(true)
+  }
+
+  // Save Guideline & Optionally Send Rectification Message
+  const handleSaveCorrection = async () => {
+    if (!selectedMsgForCorrection || !activePhone) return
+    if (!correctionGuideline.trim()) {
+      toast({
+        title: 'Diretriz obrigatória',
+        description: 'Informe o que a Sofia deve aprender.',
+        variant: 'destructive'
+      })
+      return
+    }
+
+    setSavingCorrection(true)
+    try {
+      const payload = {
+        messageId: selectedMsgForCorrection.id || selectedMsgForCorrection.messageId || null,
+        originalText: selectedMsgForCorrection.text || '',
+        originalMessageText: selectedMsgForCorrection.text || '',
+        guideline: correctionGuideline.trim(),
+        correctionText: correctionGuideline.trim(),
+        correction: correctionGuideline.trim(),
+        rectificationMessage: sendToGuest ? (rectificationText.trim() || null) : null,
+        rectificationText: sendToGuest ? (rectificationText.trim() || null) : null,
+        sendToGuest,
+        category: 'factual',
+        source: 'web_chat_operator'
+      }
+
+      const res = await fetch(`/api/whatsapp/chat/${activePhone}/correct-message`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+
+      const data = await res.json()
+      if (res.ok && data.success) {
+        toast({
+          title: sendToGuest ? 'Diretriz Salva & Retificação Enviada!' : 'Diretriz Salva na Sofia!',
+          description: sendToGuest
+            ? 'A IA assimilou a nova regra e a mensagem de retificação foi enviada ao hóspede.'
+            : 'A IA assimilou a nova regra com sucesso.'
+        })
+        setCorrectModalOpen(false)
+        setSelectedMsgForCorrection(null)
+        setCorrectionGuideline('')
+        setRectificationText('')
+        await fetchActiveMessages(activePhone, true)
+        fetchConversations(true)
+      } else {
+        throw new Error(data.error || 'Erro ao processar retificação')
+      }
+    } catch (err: any) {
+      toast({
+        title: 'Erro ao salvar correção',
+        description: err.message || 'Falha ao salvar diretriz',
+        variant: 'destructive'
+      })
+    } finally {
+      setSavingCorrection(false)
     }
   }
 
@@ -1378,6 +1462,20 @@ Muito obrigado!`
                                 </>
                               )}
                             </div>
+
+                            {/* Botão de Ensinar / Corrigir Sofia */}
+                            {isFromMe && !msg.triggerEvent && (msg.senderName?.toLowerCase().includes('sofia') || msg.sender === 'system') && (
+                              <div className="pt-1.5 mt-1 border-t border-emerald-200/60 dark:border-emerald-800/40 flex items-center justify-between">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenCorrectionModal(msg)}
+                                  className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-[10.5px] font-bold text-emerald-800 dark:text-emerald-300 bg-emerald-100/90 dark:bg-emerald-900/50 hover:bg-emerald-200 dark:hover:bg-emerald-800 transition-colors shadow-2xs hover:scale-102 cursor-pointer"
+                                  title="Corrigir resposta da Sofia e retificar com o hóspede"
+                                >
+                                  <span>✏️</span> Corrigir / Ensinar Sofia
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </React.Fragment>
@@ -2112,6 +2210,90 @@ Muito obrigado!`
             >
               {sending ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
               Enviar Arquivo
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL: CORRIGIR RESPOSTA & ENSINAR SOFIA */}
+      <Dialog open={correctModalOpen} onOpenChange={setCorrectModalOpen}>
+        <DialogContent className="sm:max-w-lg max-h-[90vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base font-black text-emerald-800 dark:text-emerald-300">
+              <span>✏️</span> Corrigir Resposta & Ensinar Sofia
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-500">
+              Ensine a regra correta para a IA e retifique cordialmente com o hóspede no WhatsApp em 1 clique.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2 text-xs overflow-y-auto">
+            {/* Mensagem Original */}
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-1">
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                Mensagem Original da Sofia:
+              </span>
+              <p className="italic text-slate-700 dark:text-slate-300 leading-relaxed">
+                "{selectedMsgForCorrection?.text || 'Sem texto'}"
+              </p>
+            </div>
+
+            {/* Orientação para a IA */}
+            <div className="space-y-1.5">
+              <label className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1">
+                <span>🧠</span> O que a Sofia deve aprender? (Diretriz / Regra)
+              </label>
+              <Textarea
+                rows={3}
+                value={correctionGuideline}
+                onChange={e => setCorrectionGuideline(e.target.value)}
+                placeholder="Ex: O flat 905 tem cama queen e o checkout é às 11:00. O café da manhã inicia às 06:00 nos finais de semana."
+                className="text-xs"
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Esta regra será assimilada na base de diretrizes ativas da Sofia.
+              </p>
+            </div>
+
+            {/* Retificação para o Hóspede */}
+            <div className="space-y-2 pt-1 border-t border-slate-100 dark:border-slate-800">
+              <div className="flex items-center justify-between">
+                <label className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1">
+                  <span>💬</span> Mensagem Cordial de Retificação para o WhatsApp
+                </label>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-semibold text-slate-500">Enviar ao Hóspede</span>
+                  <input
+                    type="checkbox"
+                    checked={sendToGuest}
+                    onChange={e => setSendToGuest(e.target.checked)}
+                    className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer h-4 w-4"
+                  />
+                </div>
+              </div>
+              <Textarea
+                rows={3}
+                value={rectificationText}
+                onChange={e => setRectificationText(e.target.value)}
+                disabled={!sendToGuest}
+                className="text-xs"
+                placeholder="Mensagem cordial a ser enviada ao hóspede..."
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0 pt-2">
+            <Button variant="outline" size="sm" onClick={() => setCorrectModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleSaveCorrection}
+              disabled={savingCorrection || !correctionGuideline.trim()}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-1.5"
+            >
+              {savingCorrection ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+              {sendToGuest ? 'Salvar Diretriz & Enviar Retificação' : 'Salvar Apenas na IA'}
             </Button>
           </DialogFooter>
         </DialogContent>

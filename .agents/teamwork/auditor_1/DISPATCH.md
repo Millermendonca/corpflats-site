@@ -1,31 +1,41 @@
-# Forensic Auditor Dispatch: Integrity Verification of E2E Suite & Deliverables
-
-## Instructions
-Read `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md` (specifically section `## 2026-10-11T00:38:03Z`).
-Read `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\PROJECT.md`.
+# Task Assignment: Forensic Auditor (auditor_1)
 
 ## Mission
-Perform a complete, forensic integrity audit of the entire E2E synthetic testing implementation:
-1. **No Cheating / No Facades Check**:
-   - Verify that test assertions are genuine and interact with the real DOM and real API responses.
-   - Verify that no mock returns hardcoded static "all pass" strings circumventing actual business logic.
-   - Verify that tests actually exercise the backend and frontend components.
-2. **Database Immutability Check**:
-   - Verify that `data/database.json` has NOT been modified, truncated, or overwritten. Verify hash before and after execution.
-   - Verify that tests strictly use `data/database.test.json`.
-3. **Twin-Server Parity Check**:
-   - Verify byte-for-byte identity (SHA-256) between `artifacts/api-server/demo-server.mjs` and `scripts/demo-server.mjs`.
-4. **Git Compliance Check**:
-   - Check `git status`, `git log`, and ensure all changes have been built (`npm run build` in `artifacts/limpeza`), committed, and pushed to `origin main`.
-5. **Issue a clear audit verdict**:
-   - `CLEAN` (no integrity violations detected)
-   - `INTEGRITY VIOLATION` (cheating, dummy facades, data corruption detected).
+Perform an independent, forensic audit of the Smart Flat Hub codebase for integrity, authenticity, and compliance with all constraints:
+1. Verify Authenticity (ZERO CHEATING):
+   - Confirm that implementations are genuine and NOT dummy facades or hardcoded mock-only return values for tests.
+   - Confirm that logic genuinely computes ETA windows, temperature limits (18-26°C), fail-safe shutoff, and playlist triggers.
+2. Verify Privacy Isolation (R1):
+   - Confirm that `guest-portal.tsx` has NOT been modified to include smart flat controls for real guests in production.
+   - Confirm that preview routes `/preview/smart-flat` are isolated.
+3. Verify Twin-Server Parity Mandate:
+   - Compute SHA-256 hashes of `scripts/demo-server.mjs` and `artifacts/api-server/demo-server.mjs` and confirm identical hashes.
+4. Verify AGENTS.md Compliance:
+   - Verify that no global test suites were executed or scripted.
+   - Verify that frontend build completed cleanly.
+   - Verify git commit status and push.
+5. Execute strictly the dedicated pontual test:
+   - `node --test tests/smart-flat-hub.test.mjs`
 
-Write your full evidence report to `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_1\handoff.md`.
+Read:
+- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md`
+- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md`
+- `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\AGENTS.md`
+
+Output your report to: `c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_1\handoff.md` with explicit verdict `CLEAN` or `INTEGRITY VIOLATION`.
 
 
-## 2026-10-11T06:34:43Z
-Você é o Forensic Auditor (teamwork_preview_auditor).
-Seu diretório de trabalho é: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_1
-Leia atentamente c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_1\DISPATCH.md e c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md.
-Realize a auditoria forense completa de integridade: comprove ausência de cheating/facades/mocks estáticos fakes, verifique a imutabilidade absoluta do data/database.json de produção, teste a paridade byte-a-byte do twin-server (demo-server.mjs vs scripts/demo-server.mjs) e valide as regras de Git (build e push). Emita seu veredito forense estrito: CLEAN ou INTEGRITY VIOLATION. Escreva seu relatório em c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_1\handoff.md.
+## 2026-10-12T00:05:14Z
+From: 26335f75-5ae5-4381-97dc-4cdaaa103cfd
+Priority: MESSAGE_PRIORITY_HIGH
+Content:
+You are Forensic Auditor (auditor_1) for Smart Flat Hub.
+Your working directory is: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_1
+Read instructions in: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_1\DISPATCH.md
+Read the user request in: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\ORIGINAL_REQUEST.md
+Read the project master plan in: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\PROJECT.md
+Also read AGENTS.md in project root.
+
+Perform an independent forensic integrity audit. Verify no hardcoded test facades, authentic logic, zero guest leaks in production, 100% SHA-256 twin parity, clean frontend build, and run strictly the dedicated pontual test (node --test tests/smart-flat-hub.test.mjs).
+Write your report and explicit verdict (CLEAN or INTEGRITY VIOLATION) to: c:\Users\mille\OneDrive\Hotel\Documentos hóspedes\Guest-Flow-Manager\.agents\teamwork\auditor_1\handoff.md.
+Message the orchestrator when finished.

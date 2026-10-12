@@ -54,6 +54,7 @@ import ReservationJourney from '@/pages/reservation-journey';
 import ServiceOrders from '@/pages/service-orders';
 import ServiceWorkerPortal from '@/pages/service-worker-portal';
 import ServerMonitorPage from '@/pages/server-monitor';
+import SmartFlatPreview from '@/pages/smart-flat-preview';
 import NotFound from '@/pages/not-found';
 
 const queryClient = new QueryClient({
@@ -166,10 +167,26 @@ function StaffRoute({ path, component }: { path: string; component: React.Compon
   );
 }
 
+function GuestPortalWrapper(props: any) {
+  if (typeof window !== 'undefined') {
+    const sp = new URLSearchParams(window.location.search);
+    if (sp.get('preview') === 'smart_flat') {
+      return <SmartFlatPreview />;
+    }
+  }
+  return <GuestPortal {...props} />;
+}
+
 function Router() {
   return (
     <RoutedErrorBoundary>
       <Switch>
+        {/* Smart Flat Hub Sandbox Preview Routes (Isolated from production guests) */}
+        <Route path="/preview/smart-flat/:code" component={SmartFlatPreview} />
+        <Route path="/preview/smart-flat" component={SmartFlatPreview} />
+        <Route path="/admin/smart-flat-preview/:code" component={SmartFlatPreview} />
+        <Route path="/admin/smart-flat-preview" component={SmartFlatPreview} />
+
         {/* Public Booking Engine & Guest Hub */}
         <Route path="/reservar" component={BookingEngine} />
         <Route path="/booking" component={BookingEngine} />
@@ -181,16 +198,16 @@ function Router() {
         <Route path="/minha-reserva/:code/room-service" component={GuestBreakfast} />
         <Route path="/portal-hospede/:code/cafe" component={GuestBreakfast} />
         <Route path="/guest-portal/:code/cafe" component={GuestBreakfast} />
-        <Route path="/minha-reserva/:code" component={GuestPortal} />
-        <Route path="/minha-reserva" component={GuestPortal} />
-        <Route path="/copiar-pix/:code" component={GuestPortal} />
-        <Route path="/copiar-pix" component={GuestPortal} />
-        <Route path="/pix/:code" component={GuestPortal} />
-        <Route path="/pix" component={GuestPortal} />
-        <Route path="/portal-hospede/:code" component={GuestPortal} />
-        <Route path="/portal-hospede" component={GuestPortal} />
-        <Route path="/guest-portal/:code" component={GuestPortal} />
-        <Route path="/guest-portal" component={GuestPortal} />
+        <Route path="/minha-reserva/:code" component={GuestPortalWrapper} />
+        <Route path="/minha-reserva" component={GuestPortalWrapper} />
+        <Route path="/copiar-pix/:code" component={GuestPortalWrapper} />
+        <Route path="/copiar-pix" component={GuestPortalWrapper} />
+        <Route path="/pix/:code" component={GuestPortalWrapper} />
+        <Route path="/pix" component={GuestPortalWrapper} />
+        <Route path="/portal-hospede/:code" component={GuestPortalWrapper} />
+        <Route path="/portal-hospede" component={GuestPortalWrapper} />
+        <Route path="/guest-portal/:code" component={GuestPortalWrapper} />
+        <Route path="/guest-portal" component={GuestPortalWrapper} />
         <Route path="/pre-checkin/:code" component={GuestPreCheckin} />
         <Route path="/pre-checkin" component={GuestPreCheckin} />
         <Route path="/verificar-ficha/:uuid" component={VerifyFnrh} />

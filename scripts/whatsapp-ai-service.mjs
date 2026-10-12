@@ -11,10 +11,10 @@
  * - Base de conhecimento rica sobre o CorpFlats (Wi-Fi, garagem, café, horários, localização, comodidades)
  */
 
-import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES, isFaqApplicableToClient, matchClientPhone, generateStaticPixPayload, linkOperatorResponseToPendingFaq, captureOperatorResponseForFaq } from "./zapi-service.mjs";
+import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES, isFaqApplicableToClient, matchClientPhone, generateStaticPixPayload, linkOperatorResponseToPendingFaq, captureOperatorResponseForFaq, isDeveloperPhone, DEVELOPER_PHONES } from "./zapi-service.mjs";
 import { getCheckinUrlSync as getSerproCheckinUrlSync } from "./fnrh-serpro-service.mjs";
 
-export { isFaqApplicableToClient, matchClientPhone, linkOperatorResponseToPendingFaq, captureOperatorResponseForFaq };
+export { isFaqApplicableToClient, matchClientPhone, linkOperatorResponseToPendingFaq, captureOperatorResponseForFaq, isDeveloperPhone, DEVELOPER_PHONES };
 
 /**
  * Resolução dinâmica e unificada de URL de check-in para o agente de IA WhatsApp
@@ -1425,13 +1425,387 @@ const PORTUGUESE_STOP_WORDS = new Set([
   "voce", "voces"
 ]);
 
+// ── Motor de Treinamento Inteligente, Calibração de Tom e Modo Desenvolvedor ──
+
+/**
+ * Classifica a intenção de mensagens enviadas pelo desenvolvedor/gestor:
+ * - tone_calibration: comandos de ajuste estilístico/tom (não literais)
+ * - factual_coaching: regras factuais, horários, correções de flats
+ * - guest_simulation: simulação de dúvidas de hotelaria/hóspede
+ */
+export function classifyDeveloperMessage(messageText, db = null) {
+  if (!messageText || typeof messageText !== "string") {
+    return { type: "guest_simulation", originalText: "" };
+  }
+  const text = messageText.trim();
+  const lower = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+  // 1. Detecção de Calibração de Tom / Estilo (tone_calibration)
+  const toneKeywords = [
+    /\b(mais curt[ao]|mais concis[ao]|mais objetiv[ao]|mais sucint[ao]|respostas? curtas?|mais breve|menos prolix[ao]|seja breve|seja curt[ao]|seja concis[ao]|seja objetiv[ao]|reduza o tamanho|responda curto)\b/,
+    /\b(mais detalhad[ao]|mais explicativ[ao]|mais complet[ao]|respostas? longas?)\b/,
+    /\b(menos emojis?|sem emojis?|n[aã]o use emojis?|evite emojis?|zero emojis?|reduza os emojis?|tire os emojis?)\b/,
+    /\b(mais emojis?|use emojis?|bastante emojis?)\b/,
+    /\b(mais executiv[ao]|tom executiv[ao]|mais formal|tom formal|mais corporativ[ao]|mais polid[ao])\b/,
+    /\b(mais descontra[ií]d[ao]|mais informal|tom informal|tom descontra[ií]d[ao]|mais acolhedor[ao]|mais amig[aá]vel|mais caloros[ao])\b/,
+    /\b(calibre seu tom|ajuste o tom|mude o tom|altere o tom|novo tom|estilo de resposta)\b/
+  ];
+
+  const isToneMatch = toneKeywords.some(pattern => pattern.test(lower));
+  if (isToneMatch) {
+    const updates = {};
+    if (/\b(mais curt[ao]|mais concis[ao]|mais objetiv[ao]|mais sucint[ao]|respostas? curtas?|mais breve|menos prolix[ao]|seja breve|seja curt[ao]|seja concis[ao]|seja objetiv[ao]|reduza o tamanho|responda curto)\b/.test(lower)) {
+      updates.conciseness = "compact";
+      updates.ruleText = "Responda de forma curta e objetiva (ideal de 1 a 3 frases para WhatsApp).";
+    } else if (/\b(mais detalhad[ao]|mais explicativ[ao]|mais complet[ao]|respostas? longas?)\b/.test(lower)) {
+      updates.conciseness = "detailed";
+      updates.ruleText = "Forneça explicações detalhadas e completas.";
+    }
+
+    if (/\b(sem emojis?|n[aã]o use emojis?|zero emojis?|tire os emojis?)\b/.test(lower)) {
+      updates.emojiUsage = "none";
+      updates.ruleText = (updates.ruleText ? updates.ruleText + " " : "") + "Não utilize emojis.";
+    } else if (/\b(menos emojis?|evite emojis?|reduza os emojis?)\b/.test(lower)) {
+      updates.emojiUsage = "minimal";
+      updates.ruleText = (updates.ruleText ? updates.ruleText + " " : "") + "Use emojis com moderação estrita (no máximo 1 emoji pontual).";
+    } else if (/\b(mais emojis?|use emojis?|bastante emojis?)\b/.test(lower)) {
+      updates.emojiUsage = "expressive";
+      updates.ruleText = (updates.ruleText ? updates.ruleText + " " : "") + "Utilize emojis acolhedores com mais frequência.";
+    }
+
+    if (/\b(mais executiv[ao]|tom executiv[ao]|mais formal|tom formal|mais corporativ[ao]|mais polid[ao])\b/.test(lower)) {
+      updates.formality = "executive";
+      updates.ruleText = (updates.ruleText ? updates.ruleText + " " : "") + "Adote tom executivo, formal e polido.";
+    } else if (/\b(mais descontra[ií]d[ao]|mais informal|tom informal|tom descontra[ií]d[ao]|mais amig[aá]vel|mais caloros[ao])\b/.test(lower)) {
+      updates.formality = "casual";
+      updates.ruleText = (updates.ruleText ? updates.ruleText + " " : "") + "Adote tom descontraído, amigável e caloroso.";
+    }
+
+    return {
+      type: "tone_calibration",
+      updates,
+      originalText: text
+    };
+  }
+
+  // 2. Detecção de Treinamento Factual / Aprendizado de Diretriz (factual_coaching)
+  const hasQuestionIntent = text.includes("?") || isPotentialGuestQuestion(text);
+
+  const isCoachingPattern = (
+    /\b(informa[cç][aã]o\s+correta|o\s+correto\s+[eé]|nova\s+regra|regra\s+(?:geral|[eé])|aprenda\s+que|anote\s+(?:a[ií]|isso)|grave\s+que|lembre\s+que|hor[aá]rio\s+mudou|mudou\s+para|n[aã]o\s+diga\s+que|nunca\s+diga\s+que|n[aã]o\s+informe\s+que|retifique|corre[cç][aã]o:)\b/i.test(text) ||
+    (!hasQuestionIntent && /^sofia\s*,\s*(?:para\s+o\s+flat|o\s+hor[aá]rio|a\s+regra|n[aã]o\s+diga|aprenda|anote|informe|considere|atualize)/i.test(text)) ||
+    (!hasQuestionIntent && /\b(?:para\s+o\s+flat|no\s+flat|sobre\s+o\s+flat)\s+(\d{2,4})\b/i.test(text) && /\b(informa[cç][aã]o|corret|regra|senha|mudou)\b/i.test(text))
+  );
+
+  if (isCoachingPattern) {
+    const flatMatch = text.match(/\b(?:flat|apto|apartamento|quarto)\s*(\d{2,4})\b/i);
+    const targetFlat = flatMatch ? flatMatch[1] : null;
+
+    let cleanText = text.replace(/^sofia\s*[,:]\s*/i, "").trim();
+
+    let category = "geral";
+    if (/caf[eé]|desjejum/i.test(lower)) category = "cafe";
+    else if (/check-?in|entrada/i.test(lower)) category = "checkin";
+    else if (/check-?out|sa[ií]da/i.test(lower)) category = "checkout";
+    else if (/wi-?fi|internet|senha/i.test(lower)) category = "wifi";
+    else if (/garagem|estacionamento|vaga|carro/i.test(lower)) category = "garagem";
+    else if (/pet|cachorro|animal/i.test(lower)) category = "pet";
+    else if (targetFlat) category = `flat_${targetFlat}`;
+
+    return {
+      type: "factual_coaching",
+      guideline: {
+        text: cleanText,
+        category,
+        targetFlat
+      },
+      originalText: text
+    };
+  }
+
+  // 3. Simulação de Hóspede (guest_simulation)
+  return {
+    type: "guest_simulation",
+    originalText: text
+  };
+}
+
+/**
+ * Atualiza a seção de estilo do systemPrompt da Sofia sem apagar as diretrizes essenciais
+ */
+export function updateSystemPromptTone(basePrompt, tone) {
+  if (!basePrompt) return basePrompt;
+  const toneBlock = `\n\n[CALIBRAÇÃO DE ESTILO & TOM (ATUALIZADO)]:
+- Concisão: ${tone.conciseness === "compact" ? "Alta concisão. Respostas curtas, objetivas (1 a 3 frases), ideais para leitura dinâmica no WhatsApp." : tone.conciseness === "detailed" ? "Explicativo e completo." : "Equilibrado."}
+- Emojis: ${tone.emojiUsage === "none" ? "NÃO utilizar emojis." : tone.emojiUsage === "minimal" ? "Emojis mínimos e pontuais (no máximo 1)." : "Moderado e amigável."}
+- Formalidade: ${tone.formality === "executive" ? "Executivo e formal." : tone.formality === "casual" ? "Descontraído e acolhedor." : "Profissional acolhedor."}
+${Array.isArray(tone.customRules) && tone.customRules.length > 0 ? `- Regras de Estilo Ativas:\n  • ${tone.customRules.join("\n  • ")}` : ""}`;
+
+  if (basePrompt.includes("[CALIBRAÇÃO DE ESTILO & TOM")) {
+    return basePrompt.replace(/\[CALIBRAÇÃO DE ESTILO & TOM[\s\S]*?(?=\n\n\[|$)/, toneBlock.trim());
+  }
+  return basePrompt.trim() + toneBlock;
+}
+
+/**
+ * Aplica calibração de tom às configurações do sistema (db.whatsappAiSettings e aiConfig)
+ */
+export function applyToneCalibration(db, updates = {}) {
+  if (!db) return null;
+  if (!db.whatsappAiSettings) {
+    db.whatsappAiSettings = { developerGuidelines: [] };
+  }
+  if (!db.whatsappAiSettings.toneSettings) {
+    db.whatsappAiSettings.toneSettings = {
+      conciseness: "normal",
+      emojiUsage: "moderate",
+      formality: "casual_professional",
+      customRules: [],
+      updatedAt: new Date().toISOString()
+    };
+  }
+
+  const tone = db.whatsappAiSettings.toneSettings;
+  if (updates.conciseness) tone.conciseness = updates.conciseness;
+  if (updates.emojiUsage) tone.emojiUsage = updates.emojiUsage;
+  if (updates.formality) tone.formality = updates.formality;
+  if (updates.ruleText) {
+    if (!Array.isArray(tone.customRules)) tone.customRules = [];
+    if (!tone.customRules.includes(updates.ruleText)) {
+      tone.customRules.unshift(updates.ruleText);
+    }
+  }
+  tone.updatedAt = new Date().toISOString();
+
+  // Sincroniza com db.zapiConfig.aiAgent se configurado
+  if (db.zapiConfig?.aiAgent) {
+    db.zapiConfig.aiAgent.toneSettings = { ...tone };
+    const basePrompt = db.zapiConfig.aiAgent.systemPrompt || DEFAULT_AI_CONFIG.systemPrompt;
+    db.zapiConfig.aiAgent.systemPrompt = updateSystemPromptTone(basePrompt, tone);
+  }
+
+  return tone;
+}
+
+/**
+ * Persiste uma nova diretriz ensinada pelo desenvolvedor em db.whatsappAiSettings.developerGuidelines
+ */
+export function saveDeveloperGuideline(db, guidelineData = {}) {
+  if (!db) return null;
+  if (!db.whatsappAiSettings) {
+    db.whatsappAiSettings = { developerGuidelines: [] };
+  }
+  if (!Array.isArray(db.whatsappAiSettings.developerGuidelines)) {
+    db.whatsappAiSettings.developerGuidelines = [];
+  }
+
+  const newGuideline = {
+    id: guidelineData.id || `guideline_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    text: (guidelineData.text || "").trim(),
+    category: guidelineData.category || inferFaqCategory(guidelineData.text || "") || "geral",
+    targetFlat: guidelineData.targetFlat || null,
+    active: guidelineData.active !== undefined ? Boolean(guidelineData.active) : true,
+    createdAt: guidelineData.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    source: guidelineData.source || "whatsapp_developer"
+  };
+
+  db.whatsappAiSettings.developerGuidelines.unshift(newGuideline);
+  return newGuideline;
+}
+
+/**
+ * Formata confirmação cordial ao desenvolvedor com resumo e amostra no novo tom
+ */
+export function formatDeveloperToneConfirmation({ toneUpdates = {}, tone = {}, db = null }) {
+  const intro = "Entendido perfeitamente, Miller! ⚙️ Diretriz de estilo atualizada no sistema.";
+
+  const summaryItems = [];
+  if (tone.conciseness === "compact") {
+    summaryItems.push("• *Concisão:* Respostas curtas e objetivas (1 a 3 frases), ideais para WhatsApp.");
+  } else if (tone.conciseness === "detailed") {
+    summaryItems.push("• *Concisão:* Respostas detalhadas e completas.");
+  }
+  if (tone.emojiUsage === "none") {
+    summaryItems.push("• *Emojis:* Desativados (respostas sem emojis).");
+  } else if (tone.emojiUsage === "minimal") {
+    summaryItems.push("• *Emojis:* Uso mínimo (no máximo 1 emoji pontual).");
+  } else if (tone.emojiUsage === "expressive") {
+    summaryItems.push("• *Emojis:* Uso expressivo e caloroso.");
+  }
+  if (tone.formality === "executive") {
+    summaryItems.push("• *Formalidade:* Tom executivo e formal.");
+  } else if (tone.formality === "casual") {
+    summaryItems.push("• *Formalidade:* Tom descontraído e amigável.");
+  }
+  if (summaryItems.length === 0 && toneUpdates.ruleText) {
+    summaryItems.push(`• *Estilo:* ${toneUpdates.ruleText}`);
+  }
+
+  let sample = "";
+  if (tone.conciseness === "compact" && tone.emojiUsage === "none") {
+    sample = "Olá! Nosso check-in inicia às 14h. Se o flat for liberado antes pela governança, avisamos você imediatamente.";
+  } else if (tone.conciseness === "compact") {
+    sample = "Olá! Nosso check-in inicia às 14h. Se o flat for liberado antes pela governança, avisamos você imediatamente! 🔑";
+  } else if (tone.emojiUsage === "none") {
+    sample = "Olá! Nosso check-in inicia às 14h e o check-out é até às 12h. Para reservas diretas, oferecemos early check-in a partir das 10h mediante disponibilidade de higienização.";
+  } else if (tone.formality === "executive") {
+    sample = "Prezado hóspede, informamos que o procedimento de check-in inicia-se a partir das 14h00. Permanecemos à inteira disposição para qualquer solicitação adicional.";
+  } else if (tone.formality === "casual") {
+    sample = "Oi! Tudo bem? Nosso check-in começa a partir das 14h, mas se o seu apê ficar pronto antes a gente te dá um toque por aqui! 😊";
+  } else {
+    sample = "Olá! Nosso check-in inicia às 14h. Se o seu flat estiver pronto antes pela equipe de governança, avisaremos você na hora! 🔑✨";
+  }
+
+  return `${intro}\n\n${summaryItems.join("\n")}\n\n👉 *Amostra imediata no novo tom calibrado:*\n"${sample}"\n\nA nova calibração já está em vigor para todas as conversas com hóspedes! 🚀`;
+}
+
+/**
+ * Formata confirmação cordial ao desenvolvedor para aprendizado de regra factual
+ */
+export function formatDeveloperCoachingConfirmation({ newGuideline, sampleResponse = null, db = null }) {
+  const intro = "Entendido perfeitamente, Miller! 📚 Nova diretriz assimilada na base de conhecimento oficial da Sofia.";
+  const details = [
+    `• *Regra aprendida:* ${newGuideline.text}`,
+    `• *Categoria:* ${newGuideline.category}${newGuideline.targetFlat ? ` (Flat ${newGuideline.targetFlat})` : ""}`,
+    `• *Status:* Ativa com prioridade máxima`
+  ];
+
+  let sample = sampleResponse;
+  if (!sample) {
+    if (newGuideline.category === "cafe" || newGuideline.text.toLowerCase().includes("café")) {
+      sample = `Olá! ${newGuideline.text} Qualquer dúvida, estamos à disposição! ☕✨`;
+    } else if (newGuideline.targetFlat) {
+      sample = `Olá! Sobre o Flat ${newGuideline.targetFlat}: ${newGuideline.text} Conte conosco! 🔑`;
+    } else {
+      sample = `Olá! Conforme nossa política atualizada: ${newGuideline.text} Estamos à disposição! ✨`;
+    }
+  }
+
+  return `${intro}\n\n${details.join("\n")}\n\n👉 *Como responderei aos hóspedes:*\n"${sample}"\n\nA diretriz já está ativa e valendo para todos os atendimentos! 🚀`;
+}
+
+/**
+ * Monta os blocos dinâmicos de instruções de tom e diretrizes para o Gemini
+ */
+export function buildDynamicSystemInstruction(aiConfig, db, guestContext) {
+  const toneSettings = db?.whatsappAiSettings?.toneSettings || aiConfig?.toneSettings || null;
+  const activeGuidelines = (db?.whatsappAiSettings?.developerGuidelines || [])
+    .filter(g => g && g.active !== false);
+
+  let toneSection = "";
+  if (toneSettings) {
+    const rules = [];
+    if (toneSettings.conciseness === "compact") {
+      rules.push("SEJA EXTREMAMENTE CONCISA: Responda de forma curta, direta e objetiva (idealmente de 1 a 3 frases). Evite textos longos.");
+    } else if (toneSettings.conciseness === "detailed") {
+      rules.push("Seja detalhada e forneça explicações completas.");
+    }
+    if (toneSettings.emojiUsage === "none") {
+      rules.push("NÃO USE EMOJIS: Responda sem nenhum emoji.");
+    } else if (toneSettings.emojiUsage === "minimal") {
+      rules.push("USE EMOJIS COM MODERAÇÃO MÍNIMA: No máximo 1 emoji pontual.");
+    }
+    if (toneSettings.formality === "executive") {
+      rules.push("TOM EXECUTIVO: Adote tom formal, corporativo e polido.");
+    } else if (toneSettings.formality === "casual") {
+      rules.push("TOM CASUAL: Adote tom descontraído, amigável e caloroso.");
+    }
+    if (Array.isArray(toneSettings.customRules)) {
+      rules.push(...toneSettings.customRules);
+    }
+    if (rules.length > 0) {
+      toneSection = `\n[DIRETRIZES DE ESTILO & CALIBRAÇÃO DE TOM EM VIGOR]\n${rules.map(r => `• ${r}`).join("\n")}\n`;
+    }
+  }
+
+  let guidelinesSection = "";
+  if (activeGuidelines.length > 0) {
+    guidelinesSection = `\n[DIRETRIZES DO DESENVOLVEDOR & REGRAS APRENDIDAS (PRIORIDADE MÁXIMA)]\nAs seguintes instruções foram ensinadas pelo gestor/desenvolvedor e POSSUEM PRIORIDADE ABSOLUTA sobre regras gerais anteriores:\n${activeGuidelines.map(g => `• [${g.category || "geral"}${g.targetFlat ? ` | Flat ${g.targetFlat}` : ""}] ${g.text}`).join("\n")}\n`;
+  }
+
+  return { toneSection, guidelinesSection };
+}
+
+/**
+ * Ajusta a resposta heurística para respeitar a calibração de tom
+ */
+export function applyToneFormatting(text, toneSettings) {
+  if (!text || !toneSettings) return text;
+  let result = text;
+
+  // 1. Concisão: compact
+  if (toneSettings.conciseness === "compact") {
+    const paragraphs = result.split(/\n\n+/).filter(Boolean);
+    if (paragraphs.length > 1) {
+      result = paragraphs[0];
+    }
+  }
+
+  // 2. Formalidade: executive
+  if (toneSettings.formality === "executive") {
+    result = result
+      .replace(/^Olá,?\s*[^!]*!\s*/i, "Prezado(a) hóspede, informamos que ")
+      .replace(/^Oi,?\s*[^!]*!\s*/i, "Prezado(a) hóspede, informamos que ");
+  }
+
+  // 3. Emojis: none ou minimal
+  if (toneSettings.emojiUsage === "none") {
+    result = result.replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E0}-\u{1F1FF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}]/gu, "").replace(/\s{2,}/g, " ").trim();
+  } else if (toneSettings.emojiUsage === "minimal") {
+    const emojis = result.match(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E0}-\u{1F1FF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}]/gu);
+    if (emojis && emojis.length > 1) {
+      let count = 0;
+      result = result.replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E0}-\u{1F1FF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}]/gu, (match) => {
+        count++;
+        return count === 1 ? match : "";
+      }).replace(/\s{2,}/g, " ").trim();
+    }
+  }
+
+  return result;
+}
+
 /**
  * Resposta Heurística de Contingência caso o Google Gemini esteja offline ou sem cota
  */
-export function generateHeuristicResponse(messageText = "", guestContext = {}, aiConfig = DEFAULT_AI_CONFIG, dbOrFaqs = null) {
+export function generateHeuristicResponse(messageText = "", guestContext = {}, aiConfig = DEFAULT_AI_CONFIG, dbOrFaqs = null, dbParam = null) {
   const text = (messageText || "").toLowerCase().trim();
   const kb = aiConfig.knowledgeBase || DEFAULT_AI_CONFIG.knowledgeBase;
   const name = guestContext.guestName ? `, ${guestContext.guestName.split(" ")[0]}` : "";
+
+  const activeDb = dbParam || (dbOrFaqs && typeof dbOrFaqs === "object" && !Array.isArray(dbOrFaqs) && dbOrFaqs.whatsappAiSettings ? dbOrFaqs : (typeof globalThis !== "undefined" ? globalThis.db : null));
+  const activeGuidelines = (activeDb?.whatsappAiSettings?.developerGuidelines || []).filter(g => g && g.active !== false);
+  const toneSettings = activeDb?.whatsappAiSettings?.toneSettings || aiConfig?.toneSettings || null;
+  const ret = (msg) => applyToneFormatting(msg, toneSettings);
+
+  // 0. Diretrizes do Desenvolvedor (Prioridade Máxima)
+  if (activeGuidelines.length > 0) {
+    // 0.1 Flat específico
+    const flatNum = guestContext?.flatNumber || (text.match(/\b(?:flat|apto|quarto)\s*(\d{2,4})\b/i)?.[1] || null);
+    if (flatNum) {
+      const flatGuideline = activeGuidelines.find(g => String(g.targetFlat) === String(flatNum));
+      if (flatGuideline) {
+        return ret(`Olá${name}! Sobre o Flat ${flatNum}: ${flatGuideline.text} Estamos à disposição! ✨`);
+      }
+    }
+
+    // 0.2 Café da manhã
+    if (/caf[eé]|desjejum/i.test(text)) {
+      const cafeGuideline = activeGuidelines.find(g => g.category === "cafe" || (g.text || "").toLowerCase().includes("café"));
+      if (cafeGuideline) {
+        return ret(`Olá${name}! 🥐☕ ${cafeGuideline.text}\n\nPara agendar sua bandeja e escolher os itens do café da manhã, acesse o link do Portal do Hóspede até a véspera! ✨`);
+      }
+    }
+
+    // 0.3 Check-in / Horário de Entrada
+    if (/check-?in|entrada|hor[aá]rio\s+de\s+entrada|que\s+horas\s+posso\s+entrar|chegada/i.test(text) && !/pr[eé]-?check-?in/i.test(text)) {
+      const checkinGuideline = activeGuidelines.find(g => g.category === "checkin" || (g.text || "").toLowerCase().includes("check-in"));
+      if (checkinGuideline) {
+        return ret(`Olá${name}! ${checkinGuideline.text} 🔑`);
+      }
+    }
+  }
 
   // Extrai e filtra itens de FAQ ativos e aplicáveis ao cliente
   let candidateFaqs = [];
@@ -1549,7 +1923,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     }
 
     if (bestFaq && highestScore >= 25) {
-      return `Olá${name}! ${bestFaq.answer}`;
+      return ret(`Olá${name}! ${bestFaq.answer}`);
     }
   }
 
@@ -1557,65 +1931,70 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
   if (/wifi|wi-fi|internet|senha(?:\s+do\s+wi-?fi)?|conectar/i.test(text)) {
     const flatNum = guestContext?.flatNumber || "";
     const netName = flatNum ? `apto ${flatNum}` : "apto {número do seu flat}";
-    return `Olá${name}! 📶 Cada flat possui sua própria rede Wi-Fi exclusiva para máxima estabilidade e velocidade:\n\n• *Nome da Rede:* ${netName}\n• *Senha:* \`${kb.wifiPassword || "1234567890123"}\`\n\nCaso tenha qualquer dificuldade para conectar, certifique-se de digitar a senha com atenção. Estamos à disposição! ✨`;
+    return ret(`Olá${name}! 📶 Cada flat possui sua própria rede Wi-Fi exclusiva para máxima estabilidade e velocidade:\n\n• *Nome da Rede:* ${netName}\n• *Senha:* \`${kb.wifiPassword || "1234567890123"}\`\n\nCaso tenha qualquer dificuldade para conectar, certifique-se de digitar a senha com atenção. Estamos à disposição! ✨`);
   }
 
   // 2. Café da Manhã (verificado antes de termos genéricos de acomodação)
   if (/caf[eé]|desjejum/i.test(text)) {
-    return `Olá${name}! 🥐☕ ${kb.breakfastInfo}\n\nPara agendar sua bandeja e escolher os itens do café da manhã, acesse o link do Portal do Hóspede até a véspera! ✨`;
+    return ret(`Olá${name}! 🥐☕ ${kb.breakfastInfo}\n\nPara agendar sua bandeja e escolher os itens do café da manhã, acesse o link do Portal do Hóspede até a véspera! ✨`);
   }
 
   // 3. Garagem / Estacionamento / Carro
   if (/garagem|estacionamento|vaga|carro|ve[ií]culo|placa/i.test(text)) {
-    return `Olá${name}! 🚗 ${kb.garageInfo}\n\nSe ainda não informou os dados do veículo, acesse seu Pré-Check-in Digital ou envie por aqui a *Placa, Modelo e Cor* que já providenciamos a autorização com a portaria!`;
+    return ret(`Olá${name}! 🚗 ${kb.garageInfo}\n\nSe ainda não informou os dados do veículo, acesse seu Pré-Check-in Digital ou envie por aqui a *Placa, Modelo e Cor* que já providenciamos a autorização com a portaria!`);
   }
 
   // 4. Localização / Endereço / Onde fica
   if (/endere[cç]o|localiza[cç][aã]o|onde\s+fica|como\s+chegar|mapa/i.test(text)) {
-    return `Olá${name}! 📍 Estamos localizados no *${kb.address}*.\n\nLocalização privilegiada no Centro de Campos dos Goytacazes! Se precisar de instruções de rota ou localização no Google Maps, nos avise. 🏨`;
+    return ret(`Olá${name}! 📍 Estamos localizados no *${kb.address}*.\n\nLocalização privilegiada no Centro de Campos dos Goytacazes! Se precisar de instruções de rota ou localização no Google Maps, nos avise. 🏨`);
   }
 
-  // 5. Check-out / Horário de Saída
+  // 5. Check-in / Horário de Entrada
+  if (/check-?in|entrada|hor[aá]rio\s+de\s+entrada|que\s+horas\s+posso\s+entrar|chegada/i.test(text) && !/pr[eé]-?check-?in/i.test(text)) {
+    return ret(`Olá${name}! O horário padrão de check-in é a partir das *${kb.checkinTime}* 🔑.\n\nPara reservas diretas, o early check-in a partir das 10h é gratuito mediante disponibilidade de liberação pela governança.`);
+  }
+
+  // 5.1 Check-out / Horário de Saída
   if (/check-?out|sa[ií]da|hor[aá]rio\s+de\s+sa[ií]da|que\s+horas\s+sair|deixar\s+a\s+chave/i.test(text)) {
-    return `Olá${name}! O horário padrão de check-out é até às *${kb.checkoutTime}* ⏰.\n\nPara fazer a saída, pedimos que desligue ar-condicionado e luzes e entregue as chaves/cartão na portaria do condomínio. Caso necessite de late check-out, fale conosco com antecedência! 🙏`;
+    return ret(`Olá${name}! O horário padrão de check-out é até às *${kb.checkoutTime}* ⏰.\n\nPara fazer a saída, pedimos que desligue ar-condicionado e luzes e entregue as chaves/cartão na portaria do condomínio. Caso necessite de late check-out, fale conosco com antecedência! 🙏`);
   }
 
   // 6. Status do Quarto / Posso entrar? / Está pronto?
   if (/(?:quarto|flat|apartamento|chave|porta).*(?:pront|liberad|limp|entrar|chegand)|(?:pront|liberad).*(?:quarto|flat|apartamento)|posso\s+(?:entrar|ir)|senha\s+da\s+porta|chegando/i.test(text)) {
     if (guestContext.stayStatus === "checkin_hoje") {
       if (guestContext.isRoomReady) {
-        return `Ótima notícia${name}! 🎉 O seu *Flat ${guestContext.flatNumber}* já está *100% limpo, higienizado e pronto* para te receber! Ao chegar, basta se identificar na portaria com seu documento para a liberação da chave. Seja muito bem-vindo(a)! 🏨🔑`;
+        return ret(`Ótima notícia${name}! 🎉 O seu *Flat ${guestContext.flatNumber}* já está *100% limpo, higienizado e pronto* para te receber! Ao chegar, basta se identificar na portaria com seu documento para a liberação da chave. Seja muito bem-vindo(a)! 🏨🔑`);
       } else {
-        return `Olá${name}! O seu *Flat ${guestContext.flatNumber}* está sendo finalizado com todo carinho pela nossa governança para garantir máxima higiene e conforto ✨. O horário oficial de entrada é a partir das *${kb.checkinTime}*. Assim que a limpeza for 100% liberada pela equipe, nós te avisaremos por aqui imediatamente! 🕒`;
+        return ret(`Olá${name}! O seu *Flat ${guestContext.flatNumber}* está sendo finalizado com todo carinho pela nossa governança para garantir máxima higiene e conforto ✨. O horário oficial de entrada é a partir das *${kb.checkinTime}*. Assim que a limpeza for 100% liberada pela equipe, nós te avisaremos por aqui imediatamente! 🕒`);
       }
     }
     if (guestContext.stayStatus === "em_estadia") {
-      return `Olá${name}! Você está acomodado(a) no *Flat ${guestContext.flatNumber}*. Caso precise de alguma manutenção, toalhas extras ou limpeza durante a estadia, é só nos avisar por aqui que cuidaremos para você! 🛎️`;
+      return ret(`Olá${name}! Você está acomodado(a) no *Flat ${guestContext.flatNumber}*. Caso precise de alguma manutenção, toalhas extras ou limpeza durante a estadia, é só nos avisar por aqui que cuidaremos para você! 🛎️`);
     }
   }
 
   // 7. Cotação / Nova Reserva / Preço
   if (/reserva|diaria|diária|preco|preço|valor|alugar|vaga|disponibilidade/i.test(text)) {
-    return `Olá${name}! ✨ Será um enorme prazer receber você no CorpFlats!\n\nDispomos de 19 flats executivos finamente decorados, equipados com ar-condicionado Split, cozinha completa, Wi-Fi veloz e vaga de garagem no melhor ponto de Campos/RJ.\n\nPara consultar disponibilidade exata e garantir a melhor tarifa direta sem taxas de intermediários, acesse nosso site oficial:\n👉 ${kb.siteUrl}\n\nOu me informe as datas desejadas (entrada e saída) que posso te ajudar! 🏨`;
+    return ret(`Olá${name}! ✨ Será um enorme prazer receber você no CorpFlats!\n\nDispomos de 19 flats executivos finamente decorados, equipados com ar-condicionado Split, cozinha completa, Wi-Fi veloz e vaga de garagem no melhor ponto de Campos/RJ.\n\nPara consultar disponibilidade exata e garantir a melhor tarifa direta sem taxas de intermediários, acesse nosso site oficial:\n👉 ${kb.siteUrl}\n\nOu me informe as datas desejadas (entrada e saída) que posso te ajudar! 🏨`);
   }
 
   // 7.5 Pré-Check-in / Link de Check-in
   if (/check-?in\s+online|pr[eé]-?check-?in|ficha(?:\s+de\s+check-?in)?|link(?:\s+do|\s+de)?\s+check-?in/i.test(text)) {
     if (guestContext.checkinUrl) {
-      return `Olá${name}! Você pode realizar o seu Pré-Check-in Digital pelo link seguro abaixo:\n👉 ${guestContext.checkinUrl}\n\nO preenchimento antecipado garante a liberação rápida da portaria na sua chegada! Qualquer dúvida, conte conosco. 🏨✨`;
+      return ret(`Olá${name}! Você pode realizar o seu Pré-Check-in Digital pelo link seguro abaixo:\n👉 ${guestContext.checkinUrl}\n\nO preenchimento antecipado garante a liberação rápida da portaria na sua chegada! Qualquer dúvida, conte conosco. 🏨✨`);
     }
   }
 
   // 8. Saudação Genérica
   if (/^(oi|olá|ola|bom dia|boa tarde|boa noite|opa|ei|hello|hi)[!.]*$/i.test(text)) {
     if (guestContext.hasReservation) {
-      return `Olá${name}! Tudo bem? Sou a ${aiConfig.agentName}, concierge virtual da CorpFlats. Como posso tornar a sua estadia ainda mais agradável hoje? 🏨✨`;
+      return ret(`Olá${name}! Tudo bem? Sou a ${aiConfig.agentName}, concierge virtual da CorpFlats. Como posso tornar a sua estadia ainda mais agradável hoje? 🏨✨`);
     }
-    return `Olá${name}! Sou a ${aiConfig.agentName}, concierge virtual da CorpFlats em Campos dos Goytacazes. Como posso te ajudar hoje? Ficou com alguma dúvida sobre nossas acomodações ou sobre sua estadia? 😊`;
+    return ret(`Olá${name}! Sou a ${aiConfig.agentName}, concierge virtual da CorpFlats em Campos dos Goytacazes. Como posso te ajudar hoje? Ficou com alguma dúvida sobre nossas acomodações ou sobre sua estadia? 😊`);
   }
 
   // 9. Resposta padrão prestativa
-  return `Olá${name}! Recebi sua mensagem. Sou a ${aiConfig.agentName}, concierge virtual da CorpFlats 🏨.\n\nPosso te ajudar com informações sobre *Wi-Fi, horários de check-in/out, status do flat, garagem, café da manhã e localização*. Como posso te ajudar? Se preferir falar com um atendente da recepção, basta me avisar! ✨`;
+  return ret(`Olá${name}! Recebi sua mensagem. Sou a ${aiConfig.agentName}, concierge virtual da CorpFlats 🏨.\n\nPosso te ajudar com informações sobre *Wi-Fi, horários de check-in/out, status do flat, garagem, café da manhã e localização*. Como posso te ajudar? Se preferir falar com um atendente da recepção, basta me avisar! ✨`);
 }
 
 /**
@@ -1883,13 +2262,14 @@ ${systemActionsNotice}
 `;
 
   const apiKey = process.env.GEMINI_API_KEY || db?.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY;
+  const { toneSection, guidelinesSection } = buildDynamicSystemInstruction(aiConfig, db, guestContext);
 
   // 3. Tenta responder via Google Gemini (com Function Calling adaptativo se disponível)
   if (apiKey) {
     try {
       const geminiRes = await callGeminiAi({
         apiKey,
-        systemInstruction: `${aiConfig.systemPrompt}\n\n${contextString}`,
+        systemInstruction: `${aiConfig.systemPrompt}\n${toneSection}${guidelinesSection}\n${contextString}`,
         prompt: messageText,
         history,
         db,
@@ -1914,7 +2294,7 @@ ${systemActionsNotice}
   }
 
   // 4. Contingência Heurística Local de Alta Precisão (Zero-Crash Fallback)
-  const heuristicText = generateHeuristicResponse(messageText, guestContext, aiConfig, applicableFaqs);
+  const heuristicText = generateHeuristicResponse(messageText, guestContext, aiConfig, applicableFaqs, db);
   return {
     shouldHandover: false,
     replyText: heuristicText,
@@ -2182,10 +2562,111 @@ export async function processAiInboundMessage({
     return p && (p.endsWith(cleanTarget.slice(-8)) || cleanTarget.endsWith(p.slice(-8)));
   });
 
+  const isDev = isDeveloperPhone(cleanTarget, db);
+
   // Se a conversa estiver pausada manualmente (operador assumiu ou hóspede pediu humano)
   if (conv && conv.aiPaused === true) {
-    console.log(`[WhatsApp AI] Conversa com ${cleanTarget} com IA pausada. Aguardando atendimento humano.`);
-    return { skipped: true, reason: "conversation_ai_paused" };
+    if (isDev) {
+      console.log(`[WhatsApp AI] Imunidade do Desenvolvedor ativada para ${cleanTarget}: restaurando aiPaused = false.`);
+      conv.aiPaused = false;
+      conv.aiPausedReason = null;
+      conv.isDeveloper = true;
+    } else {
+      console.log(`[WhatsApp AI] Conversa com ${cleanTarget} com IA pausada. Aguardando atendimento humano.`);
+      return { skipped: true, reason: "conversation_ai_paused" };
+    }
+  }
+
+  // 3.5. Roteamento do Desenvolvedor (Tri-Modal Coaching Engine)
+  if (isDev) {
+    if (conv) conv.isDeveloper = true;
+    const devClassification = classifyDeveloperMessage(incomingInfo.text, db);
+
+    if (devClassification.type === "tone_calibration") {
+      console.log(`[WhatsApp AI Developer Mode] Comando de Calibração de Tom recebido de ${cleanTarget}:`, devClassification.updates);
+      const updatedTone = applyToneCalibration(db, devClassification.updates);
+      if (typeof saveDatabase === "function") {
+        try { saveDatabase("developer_tone_calibrated"); } catch (_) {}
+      }
+
+      const confirmationText = formatDeveloperToneConfirmation({
+        toneUpdates: devClassification.updates,
+        tone: updatedTone,
+        db
+      });
+
+      if (typeof sendZapiMessage === "function") {
+        await sendZapiMessage(db.zapiConfig, {
+          phone: cleanTarget,
+          message: confirmationText,
+          bypassTestMode: true
+        });
+      }
+
+      if (typeof appendMessageFn === "function") {
+        appendMessageFn(db, {
+          phone: cleanTarget,
+          senderName: aiConfig.agentName || "Sofia",
+          fromMe: true,
+          text: confirmationText,
+          status: "delivered",
+          messageId: `dev_tone_${Date.now()}`
+        });
+      }
+
+      return {
+        handled: true,
+        processed: true,
+        mode: "developer_coaching",
+        type: "tone_calibration",
+        replyText: confirmationText,
+        toneSettings: updatedTone
+      };
+    }
+
+    if (devClassification.type === "factual_coaching") {
+      console.log(`[WhatsApp AI Developer Mode] Treinamento Factual recebido de ${cleanTarget}:`, devClassification.guideline);
+      const newGuideline = saveDeveloperGuideline(db, devClassification.guideline);
+      if (typeof saveDatabase === "function") {
+        try { saveDatabase("developer_guideline_saved"); } catch (_) {}
+      }
+
+      const confirmationText = formatDeveloperCoachingConfirmation({
+        newGuideline,
+        db
+      });
+
+      if (typeof sendZapiMessage === "function") {
+        await sendZapiMessage(db.zapiConfig, {
+          phone: cleanTarget,
+          message: confirmationText,
+          bypassTestMode: true
+        });
+      }
+
+      if (typeof appendMessageFn === "function") {
+        appendMessageFn(db, {
+          phone: cleanTarget,
+          senderName: aiConfig.agentName || "Sofia",
+          fromMe: true,
+          text: confirmationText,
+          status: "delivered",
+          messageId: `dev_guideline_${Date.now()}`
+        });
+      }
+
+      return {
+        handled: true,
+        processed: true,
+        mode: "developer_coaching",
+        type: "factual_coaching",
+        replyText: confirmationText,
+        guideline: newGuideline
+      };
+    }
+
+    // Se for guest_simulation, continua o fluxo normal abaixo simulando hóspede
+    console.log(`[WhatsApp AI Developer Mode] Simulação de Hóspede por ${cleanTarget}: gerando resposta como Sofia Concierge.`);
   }
 
   // 4. Verifica Modo de Atuação
@@ -2194,7 +2675,7 @@ export async function processAiInboundMessage({
     return { skipped: true, reason: "mode_copilot_only" };
   }
 
-  if (aiConfig.mode === "off_hours") {
+  if (aiConfig.mode === "off_hours" && !isDev) {
     // Horário fora de expediente
     const now = new Date();
     const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
@@ -2280,7 +2761,7 @@ export async function processAiInboundMessage({
 
   // 7. Se for transbordo humano:
   if (aiResult.shouldHandover) {
-    if (conv) {
+    if (conv && !isDev) {
       conv.aiPaused = true;
       conv.aiPausedAt = new Date().toISOString();
       conv.aiPausedReason = "guest_requested_human";
