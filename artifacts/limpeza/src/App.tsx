@@ -184,8 +184,10 @@ function Router() {
         {/* Smart Flat Hub Sandbox Preview Routes (Isolated from production guests) */}
         <Route path="/preview/smart-flat/:code" component={SmartFlatPreview} />
         <Route path="/preview/smart-flat" component={SmartFlatPreview} />
+        <Route path="/preview/smart-flat/" component={SmartFlatPreview} />
         <Route path="/admin/smart-flat-preview/:code" component={SmartFlatPreview} />
         <Route path="/admin/smart-flat-preview" component={SmartFlatPreview} />
+        <Route path="/admin/smart-flat-preview/" component={SmartFlatPreview} />
 
         {/* Public Booking Engine & Guest Hub */}
         <Route path="/reservar" component={BookingEngine} />
