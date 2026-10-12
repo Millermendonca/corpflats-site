@@ -184,6 +184,11 @@ test("R2: Classificação Tri-Modal de Mensagens do Desenvolvedor", () => {
 
   const f3 = classifyDeveloperMessage("Não diga que temos restaurante presencial");
   assert.equal(f3.type, "factual_coaching");
+
+  const f4 = classifyDeveloperMessage("Sofia, sou miller. Não deve perguntar assim a menos que a pessoa já esteja hospedada, se não não faz sentido. Você verificou primieiro isso?");
+  assert.equal(f4.type, "factual_coaching");
+  assert.equal(f4.guideline.category, "saudacao");
+  assert.ok(f4.guideline.text.includes("hospedada"));
 });
 
 // ── 3. Execução de Calibração de Tom com Amostra e Persistência ───────────────
@@ -525,5 +530,48 @@ test("R5: Imunidade a Falso-Positivo em FAQ (palavra 'possui' não deve disparar
     db
   );
   assert.ok(respFerro.includes("Ferro de Passar"), "Pergunta legítima deve responder FAQ de ferro");
+});
+
+test("R6: Saudação Inteligente Orientada pelo Status da Estadia (Anti-'estadia agradável' para quem não entrou)", () => {
+  // 1. Reserva futura
+  const respFutura = generateHeuristicResponse(
+    "Olá",
+    {
+      guestName: "Miller",
+      stayStatus: "reserva_futura",
+      flatNumber: "712",
+      hasReservation: true,
+      reservation: { checkinDate: "2026-10-12", flatNumber: "712" }
+    },
+    DEFAULT_AI_CONFIG
+  );
+  assert.ok(!respFutura.includes("tornar a sua estadia"), "Não deve perguntar sobre estadia agradável para reserva futura");
+  assert.ok(respFutura.includes("estadia confirmada a partir de"), "Deve reconhecer data futura de estadia");
+
+  // 2. Em estadia (já no flat)
+  const respEstadia = generateHeuristicResponse(
+    "Olá",
+    {
+      guestName: "Miller",
+      stayStatus: "em_estadia",
+      flatNumber: "712",
+      hasReservation: true,
+      reservation: { checkinDate: "2026-10-10", flatNumber: "712" }
+    },
+    DEFAULT_AI_CONFIG
+  );
+  assert.ok(respEstadia.includes("tornar a sua estadia no Flat 712 ainda mais agradável"), "Deve saudar hóspede em estadia");
+
+  // 3. Sem reserva ativa
+  const respSemReserva = generateHeuristicResponse(
+    "Olá",
+    {
+      guestName: "Visitante",
+      stayStatus: "sem_reserva_ativa",
+      hasReservation: false
+    },
+    DEFAULT_AI_CONFIG
+  );
+  assert.ok(!respSemReserva.includes("tornar a sua estadia"), "Não deve falar de estadia para visitante sem reserva");
 });
 
