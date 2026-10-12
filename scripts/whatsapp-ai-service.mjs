@@ -11,10 +11,10 @@
  * - Base de conhecimento rica sobre o CorpFlats (Wi-Fi, garagem, café, horários, localização, comodidades)
  */
 
-import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES, isFaqApplicableToClient, matchClientPhone, generateStaticPixPayload, linkOperatorResponseToPendingFaq, captureOperatorResponseForFaq, isDeveloperPhone, DEVELOPER_PHONES } from "./zapi-service.mjs";
+import { cleanWhatsAppPhone, DEFAULT_TEST_ALLOWED_PHONES, isFaqApplicableToClient, matchClientPhone, generateStaticPixPayload, linkOperatorResponseToPendingFaq, captureOperatorResponseForFaq, isDeveloperPhone, DEVELOPER_PHONES, doesReservationMatchPhone, findAllReservationsByPhone, formatPhoneDisplay } from "./zapi-service.mjs";
 import { getCheckinUrlSync as getSerproCheckinUrlSync } from "./fnrh-serpro-service.mjs";
 
-export { isFaqApplicableToClient, matchClientPhone, linkOperatorResponseToPendingFaq, captureOperatorResponseForFaq, isDeveloperPhone, DEVELOPER_PHONES };
+export { isFaqApplicableToClient, matchClientPhone, linkOperatorResponseToPendingFaq, captureOperatorResponseForFaq, isDeveloperPhone, DEVELOPER_PHONES, doesReservationMatchPhone, findAllReservationsByPhone, formatPhoneDisplay };
 
 /**
  * Resolução dinâmica e unificada de URL de check-in para o agente de IA WhatsApp
@@ -64,6 +64,9 @@ DIRETRIZES DE ATENDIMENTO:
 3. Seja sempre fidedigna às informações fornecidas no CONTEXTO DO HÓSPEDE e na BASE DE CONHECIMENTO. NUNCA invente números de apartamentos, códigos ou senhas que não constem nos dados oficiais.
 4. Se o hóspede solicitar expressamente falar com um atendente humano, transborde o atendimento com gentileza informando que a equipe da recepção assumirá a conversa em instantes.
 5. Para hóspedes que chegam hoje: confira o status de limpeza informado no contexto. Se estiver "LIMPO E LIBERADO", comemore que o apartamento já está pronto para recebê-lo! Se estiver "EM PREPARAÇÃO", informe que a governança está caprichando na higienização para liberar o flat até o horário oficial das 14:00 (ou antes se finalizado).
+5.1. Para perguntas sobre reserva ('minha reserva está confirmada?', 'tenho reserva?'):
+- Se o hóspede POSSUIR reserva no contexto (ativa, hoje ou futura): confirme a reserva com entusiasmo, informando o número do Flat, data de entrada (check-in a partir das 14h), data de saída (check-out até às 12h) e o link do Pré-Check-in Digital. NUNCA envie apresentação comercial de 19 flats para quem já tem reserva!
+- Se o hóspede NÃO possuir reserva vinculada ao número no contexto: informe cordialmente que não localizou reserva ativa ou futura para o número de WhatsApp dele e solicite com cortesia o nome completo do titular ou o código da reserva para verificação. NUNCA envie apresentação comercial genérica de 19 flats para quem está perguntando se possui reserva!
 6. Para novos clientes / sem reserva: apresente a CorpFlats como a melhor opção de flats executivos mobiliados e climatizados em Campos dos Goytacazes (Centro, no prestigiado Edifício Soho Residence Service, na Rua Conselheiro Otaviano, 209), convide a reservar pelo site oficial e tire dúvidas de diárias e comodidades.`,
   knowledgeBase: {
     address: "Edifício Soho Residence Service, Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ",
@@ -176,30 +179,38 @@ export function buildGuestContext(db, phone) {
   let matchedReservation = null;
   const reservations = Array.isArray(db?.reservations) ? db.reservations : [];
 
-  // 1. Busca reserva que coincida com o telefone
+  // 1. Busca reserva que coincida com o telefone (prioriza ativa hoje, depois futura confirmada, depois passada)
   if (cleanPhone) {
-    // Procura reserva ativa para hoje ou futura
-    matchedReservation = reservations.find(r => {
-      if (r.status === "cancelada" || r.status === "cancelled") return false;
-      const rPhone = normalizePhone(r.guestPhone || r.phone || "");
-      if (!rPhone) return false;
-      const match = cleanPhone.endsWith(rPhone.slice(-8)) || rPhone.endsWith(cleanPhone.slice(-8));
-      return match && (r.checkinDate === todayStr || r.checkoutDate === todayStr || (r.checkinDate <= todayStr && r.checkoutDate >= todayStr));
-    });
+    const allMatching = typeof findAllReservationsByPhone === "function"
+      ? findAllReservationsByPhone(db, cleanPhone)
+      : reservations.filter(r => {
+          if (!r) return false;
+          const rPhone = normalizePhone(r.guestPhone || r.phone || "");
+          return rPhone && (cleanPhone.endsWith(rPhone.slice(-8)) || rPhone.endsWith(cleanPhone.slice(-8)));
+        });
 
-    // Se não encontrou reserva em curso, procura a mais recente ou futura
+    const nonCancelled = allMatching.filter(r => r && r.status !== "cancelada" && r.status !== "cancelled");
+
+    // 1.1 Ativa hoje (em estadia, check-in hoje ou check-out hoje)
+    matchedReservation = nonCancelled.find(r => 
+      (r.checkinDate === todayStr || r.checkoutDate === todayStr || (r.checkinDate <= todayStr && r.checkoutDate >= todayStr))
+    );
+
+    // 1.2 Se não está em estadia hoje, procura reserva futura confirmada (ordenada pela data de check-in mais próxima)
     if (!matchedReservation) {
-      const candidates = reservations.filter(r => {
-        if (r.status === "cancelada" || r.status === "cancelled") return false;
-        const rPhone = normalizePhone(r.guestPhone || r.phone || "");
-        if (!rPhone) return false;
-        return cleanPhone.endsWith(rPhone.slice(-8)) || rPhone.endsWith(cleanPhone.slice(-8));
-      });
-      if (candidates.length > 0) {
-        // Ordena por check-in decrescente
-        candidates.sort((a, b) => (b.checkinDate || "").localeCompare(a.checkinDate || ""));
-        matchedReservation = candidates[0];
+      const futureCandidates = nonCancelled
+        .filter(r => (r.checkinDate || "") >= todayStr)
+        .sort((a, b) => (a.checkinDate || "").localeCompare(b.checkinDate || ""));
+      if (futureCandidates.length > 0) {
+        matchedReservation = futureCandidates[0];
       }
+    }
+
+    // 1.3 Se não há futura nem ativa, pega a passada mais recente
+    if (!matchedReservation && nonCancelled.length > 0) {
+      const pastCandidates = nonCancelled
+        .sort((a, b) => (b.checkoutDate || b.checkinDate || "").localeCompare(a.checkoutDate || a.checkinDate || ""));
+      matchedReservation = pastCandidates[0];
     }
   }
 
@@ -265,7 +276,7 @@ export function buildGuestContext(db, phone) {
     timeStr,
     phone: cleanPhone,
     guestName,
-    hasReservation: Boolean(matchedReservation),
+    hasReservation: Boolean(matchedReservation && matchedReservation.status !== "cancelada" && matchedReservation.status !== "cancelled" && stayStatus !== "estadia_passada"),
     checkinUrl,
     reservation: matchedReservation ? {
       code: matchedReservation.code || matchedReservation.reservationCode || `RES-${flatNumber}`,
@@ -1422,10 +1433,59 @@ const PORTUGUESE_STOP_WORDS = new Set([
   "com", "para", "pra", "pro",
   "e", "que", "se", "como", "qual", "quais",
   "quando", "onde", "quem", "tem", "ha", "eh",
-  "voce", "voces"
+  "voce", "voces", "você", "vocês",
+  "possui", "possuem", "ter", "deve", "devem",
+  "alguem", "alguém", "pessoa", "pessoas",
+  "esta", "está", "estao", "estão", "estou",
+  "favor", "por favor", "gostaria", "queria", "saber",
+  "verificar", "perguntar", "dizer", "falar", "responder"
 ]);
 
 // ── Motor de Treinamento Inteligente, Calibração de Tom e Modo Desenvolvedor ──
+
+/**
+ * Sintetiza o texto de coaching do desenvolvedor em uma diretriz profissional
+ * sem repetir erros de digitação ou frases informais literais ("Anti-Papagaio")
+ */
+export function synthesizeGuidelineFromText(rawText, category = "geral") {
+  const text = String(rawText || "").trim();
+  const lower = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+  // Caso 1: Regra sobre checagem de reserva
+  if (/pergu?i?nt.*reserva|verific.*reserva/i.test(lower)) {
+    return "Ao ser questionada se tem reserva ou se a reserva está confirmada ('minha reserva está confirmada?'), verificar no sistema se o hóspede possui reserva ativa para data atual ou futura. Se confirmada, apresentar os detalhes do flat, check-in, check-out e link do pré-check-in. Se não localizada pelo número, solicitar o nome completo do titular ou código da reserva com cortesia.";
+  }
+
+  // Caso 2: Regra sobre café com horário específico informado
+  if (/caf[eé]|desjejum/i.test(lower)) {
+    const timeMatch = text.match(/\b(\d{1,2}(?::\d{2})?\s*(?:h|as|às|a|-)\s*\d{1,2}(?::\d{2})?(?:h)?)\b/i);
+    if (timeMatch) {
+      return `O horário do café da manhã é ${timeMatch[0]} em bandeja servida no quarto, com agendamento até a véspera pelo portal.`;
+    }
+  }
+
+  // Caso 3: Regra sobre check-in / check-out com horário específico
+  if (/check-?in|entrada/i.test(lower)) {
+    const timeMatch = text.match(/\b(\d{1,2}(?::\d{2})?\s*(?:h|as|às|a|-)\s*\d{1,2}(?::\d{2})?(?:h)?)\b/i);
+    if (timeMatch) {
+      return `O horário de check-in é a partir das ${timeMatch[0]}.`;
+    }
+  }
+
+  // Caso 4: Regra genérica bem sintetizada preservando fatos
+  let synthesized = text
+    .replace(/^sofia\s*[,:]\s*/i, "")
+    .replace(/^(?:quando|sempre\s+que|toda\s+vez\s+que|se)\s+(?:algu[eé]m|o\s+h[oó]spede|o\s+cliente|um\s+h[oó]spede|[a-z]+)\s+pergu?i?nt[^,.:;]+(?:voc[eê]\s+deve|favor|deve-se|tem\s+que)\s+/i, "Ao ser questionada sobre este tema: ")
+    .replace(/^voc[eê]\s+deve\s+/i, "Sempre ")
+    .trim();
+
+  if (synthesized.length > 0) {
+    synthesized = synthesized.charAt(0).toUpperCase() + synthesized.slice(1);
+    if (!synthesized.endsWith(".")) synthesized += ".";
+  }
+
+  return synthesized;
+}
 
 /**
  * Classifica a intenção de mensagens enviadas pelo desenvolvedor/gestor:
@@ -1489,12 +1549,13 @@ export function classifyDeveloperMessage(messageText, db = null) {
   }
 
   // 2. Detecção de Treinamento Factual / Aprendizado de Diretriz (factual_coaching)
-  const hasQuestionIntent = text.includes("?") || isPotentialGuestQuestion(text);
-
   const isCoachingPattern = (
     /\b(informa[cç][aã]o\s+correta|o\s+correto\s+[eé]|nova\s+regra|regra\s+(?:geral|[eé])|aprenda\s+que|anote\s+(?:a[ií]|isso)|grave\s+que|lembre\s+que|hor[aá]rio\s+mudou|mudou\s+para|n[aã]o\s+diga\s+que|nunca\s+diga\s+que|n[aã]o\s+informe\s+que|retifique|corre[cç][aã]o:)\b/i.test(text) ||
-    (!hasQuestionIntent && /^sofia\s*,\s*(?:para\s+o\s+flat|o\s+hor[aá]rio|a\s+regra|n[aã]o\s+diga|aprenda|anote|informe|considere|atualize)/i.test(text)) ||
-    (!hasQuestionIntent && /\b(?:para\s+o\s+flat|no\s+flat|sobre\s+o\s+flat)\s+(\d{2,4})\b/i.test(text) && /\b(informa[cç][aã]o|corret|regra|senha|mudou)\b/i.test(text))
+    /\b(?:quando|sempre\s+que|toda\s+vez\s+que|se)\s+(?:algu[eé]m|o\s+h[oó]spede|o\s+cliente|um\s+h[oó]spede|[a-z]+)\s+.*?\bpergu?i?nt/i.test(text) ||
+    /\b(?:quando|sempre\s+que|toda\s+vez\s+que)\s+pergu?i?nt/i.test(text) ||
+    /\b(?:voc[eê]\s+(?:deve|precisa|tem\s+que)|sempre\s+verifique|favor\s+verificar|verifique\s+se|n[aã]o\s+(?:responda|diga|fale|mande)|responda\s+que|oriente\s+que)\b/i.test(text) ||
+    /^sofia\s*,\s*(?:para\s+o\s+flat|o\s+hor[aá]rio|a\s+regra|n[aã]o\s+diga|aprenda|anote|informe|considere|atualize|quando|se|voc[eê])/i.test(text) ||
+    (/\b(?:para\s+o\s+flat|no\s+flat|sobre\s+o\s+flat)\s+(\d{2,4})\b/i.test(text) && /\b(informa[cç][aã]o|corret|regra|senha|mudou)\b/i.test(text))
   );
 
   if (isCoachingPattern) {
@@ -1504,7 +1565,8 @@ export function classifyDeveloperMessage(messageText, db = null) {
     let cleanText = text.replace(/^sofia\s*[,:]\s*/i, "").trim();
 
     let category = "geral";
-    if (/caf[eé]|desjejum/i.test(lower)) category = "cafe";
+    if (/reserva|estadia|check-?in\s+futuro|h[oó]spede\s+com\s+reserva/i.test(lower)) category = "reserva";
+    else if (/caf[eé]|desjejum/i.test(lower)) category = "cafe";
     else if (/check-?in|entrada/i.test(lower)) category = "checkin";
     else if (/check-?out|sa[ií]da/i.test(lower)) category = "checkout";
     else if (/wi-?fi|internet|senha/i.test(lower)) category = "wifi";
@@ -1512,12 +1574,15 @@ export function classifyDeveloperMessage(messageText, db = null) {
     else if (/pet|cachorro|animal/i.test(lower)) category = "pet";
     else if (targetFlat) category = `flat_${targetFlat}`;
 
+    const synthesizedRule = synthesizeGuidelineFromText(cleanText, category);
+
     return {
       type: "factual_coaching",
       guideline: {
-        text: cleanText,
+        text: synthesizedRule,
         category,
-        targetFlat
+        targetFlat,
+        rawInput: text
       },
       originalText: text
     };
@@ -1673,7 +1738,9 @@ export function formatDeveloperCoachingConfirmation({ newGuideline, sampleRespon
 
   let sample = sampleResponse;
   if (!sample) {
-    if (newGuideline.category === "cafe" || newGuideline.text.toLowerCase().includes("café")) {
+    if (newGuideline.category === "reserva" || newGuideline.text.toLowerCase().includes("reserva")) {
+      sample = "Olá! Sim, sua reserva está confirmada! 🏨✨\n• Flat: 605\n• Entrada: 15/10 a partir das 14:00h\n• Saída: 18/10 até as 12:00h\n• Status: Confirmada\n(Se não houver reserva ativa ou futura vinculada ao número, informo com cortesia e solicito o nome do titular ou código da reserva).";
+    } else if (newGuideline.category === "cafe" || newGuideline.text.toLowerCase().includes("café")) {
       sample = `Olá! ${newGuideline.text} Qualquer dúvida, estamos à disposição! ☕✨`;
     } else if (newGuideline.targetFlat) {
       sample = `Olá! Sobre o Flat ${newGuideline.targetFlat}: ${newGuideline.text} Conte conosco! 🔑`;
@@ -1767,6 +1834,18 @@ export function applyToneFormatting(text, toneSettings) {
 }
 
 /**
+ * Formata data no formato brasileiro DD/MM/AAAA
+ */
+export function formatBrDate(dateStr) {
+  if (!dateStr || typeof dateStr !== "string") return dateStr || "";
+  const parts = dateStr.slice(0, 10).split("-");
+  if (parts.length === 3 && parts[0].length === 4) {
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+  return dateStr;
+}
+
+/**
  * Resposta Heurística de Contingência caso o Google Gemini esteja offline ou sem cota
  */
 export function generateHeuristicResponse(messageText = "", guestContext = {}, aiConfig = DEFAULT_AI_CONFIG, dbOrFaqs = null, dbParam = null) {
@@ -1803,6 +1882,14 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
       const checkinGuideline = activeGuidelines.find(g => g.category === "checkin" || (g.text || "").toLowerCase().includes("check-in"));
       if (checkinGuideline) {
         return ret(`Olá${name}! ${checkinGuideline.text} 🔑`);
+      }
+    }
+
+    // 0.4 Pet / Animais
+    if (/pet|cachorro|animal/i.test(text)) {
+      const petGuideline = activeGuidelines.find(g => g.category === "pet" || (g.text || "").toLowerCase().includes("pet"));
+      if (petGuideline) {
+        return ret(`Olá${name}! 🐾 ${petGuideline.text}`);
       }
     }
   }
@@ -1852,8 +1939,10 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
         score += 200;
       } else {
         const commonWithQ = qTokens.filter(t => queryTokens.includes(t));
-        if (commonWithQ.length > 0) {
-          score += commonWithQ.length * 30;
+        if (commonWithQ.length >= 2) {
+          score += commonWithQ.length * 25;
+        } else if (commonWithQ.length === 1 && qTokens.length <= 2) {
+          score += 20;
         }
       }
 
@@ -1922,7 +2011,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
       }
     }
 
-    if (bestFaq && highestScore >= 25) {
+    if (bestFaq && highestScore >= 50) {
       return ret(`Olá${name}! ${bestFaq.answer}`);
     }
   }
@@ -1970,6 +2059,39 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     }
     if (guestContext.stayStatus === "em_estadia") {
       return ret(`Olá${name}! Você está acomodado(a) no *Flat ${guestContext.flatNumber}*. Caso precise de alguma manutenção, toalhas extras ou limpeza durante a estadia, é só nos avisar por aqui que cuidaremos para você! 🛎️`);
+    }
+  }
+
+  // 6.8 Consulta sobre Reserva Existente / Confirmação de Reserva
+  const isExistingReservationInquiry = (
+    /(?:m[ij]nhas?\s+reservas?|minhas?\s+di[aá]rias?|minha\s+estadia)/i.test(text) ||
+    /(?:reserva|estadia).*(?:confirmad[ao]|aprovad[ao]|status|certo|ok|garantid[ao]|ativa)/i.test(text) ||
+    /(?:confirmad[ao]|status|certo|ok).*(?:reserva|estadia)/i.test(text) ||
+    /(?:tenho|tem|existe|possui)\s+(?:alguma\s+)?reserva/i.test(text) ||
+    /(?:verificar|consultar|conferir|confirmar|saber)\s+(?:minha\s+|se\s+tenho\s+|a\s+)?reserva/i.test(text) ||
+    /^(?:est[aá]|t[aá])\s+confirmad[ao]\??$/i.test(text)
+  );
+
+  if (isExistingReservationInquiry) {
+    if (guestContext?.hasReservation && guestContext?.reservation && guestContext.reservation.status !== "cancelada" && guestContext.reservation.status !== "cancelled") {
+      const r = guestContext.reservation;
+      const flatStr = r.flatNumber || guestContext.flatNumber || "UH a definir";
+      const checkinFmt = r.checkinDate ? formatBrDate(r.checkinDate) : "Data a confirmar";
+      const checkoutFmt = r.checkoutDate ? formatBrDate(r.checkoutDate) : "Data a confirmar";
+      const stayMsg = guestContext.stayStatus === "reserva_futura"
+        ? `Sua estadia está confirmada e programada para início em *${checkinFmt}*!`
+        : (guestContext.stayStatus === "checkin_hoje"
+          ? `O seu check-in é hoje (${checkinFmt}) a partir das 14:00h!`
+          : (guestContext.stayStatus === "em_estadia"
+            ? `Você já está acomodado(a) no *Flat ${flatStr}*!`
+            : `Sua estadia está confirmada!`));
+      const linkUrl = r.checkinUrl || guestContext.checkinUrl;
+      const linkMsg = linkUrl ? `\n\n📋 *Pré-Check-in Digital:*\n👉 ${linkUrl}` : "";
+      const paymentStr = r.paymentStatus === "pago_total" ? "Pagamento Quitado" : "Pagamento Pendente";
+      return ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada (${paymentStr})\n\n${stayMsg}${linkMsg}\n\nSe precisar de qualquer apoio adicional sobre a sua estadia, estou à total disposição!`);
+    } else {
+      const displayPhone = clientPhone ? ` (*${formatPhoneDisplay ? formatPhoneDisplay(clientPhone) : clientPhone}*)` : "";
+      return ret(`Olá${name}! Não localizei nenhuma reserva ativa ou futura confirmada para este número de WhatsApp${displayPhone} no nosso sistema.\n\nSe a sua reserva foi realizada em outro nome, com outro telefone ou por plataformas como Booking.com ou Airbnb, por favor me informe o seu *nome completo* ou o *código da reserva* para que eu possa verificar com a nossa equipe! 🛎️✨`);
     }
   }
 
@@ -2566,8 +2688,9 @@ export async function processAiInboundMessage({
 
   // Se a conversa estiver pausada manualmente (operador assumiu ou hóspede pediu humano)
   if (conv && conv.aiPaused === true) {
-    if (isDev) {
-      console.log(`[WhatsApp AI] Imunidade do Desenvolvedor ativada para ${cleanTarget}: restaurando aiPaused = false.`);
+    const devClassification = isDev ? classifyDeveloperMessage(incomingInfo.text, db) : null;
+    if (isDev && devClassification && devClassification.type !== "simulation_question") {
+      console.log(`[WhatsApp AI] Comando de desenvolvedor recebido em conversa pausada. Processando coaching.`);
       conv.aiPaused = false;
       conv.aiPausedReason = null;
       conv.isDeveloper = true;

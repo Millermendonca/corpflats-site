@@ -441,3 +441,89 @@ test("R4: Reflexo Dinâmico das Calibrações e Diretrizes no Atendimento ao Hó
   assert.ok(promptBlocks.guidelinesSection.includes("06:30 às 09:30"));
   assert.ok(promptBlocks.guidelinesSection.includes("flat 905"));
 });
+
+// ── 5. Correção de Checagem de Reserva & Prevenção de Falso-Positivo de FAQ ────
+test("R5: Treinamento e Resposta de Confirmação de Reserva ('mijnha reserva ta confirmada?')", () => {
+  // 1. Mensagem de coaching do desenvolvedor com erro de digitação ("pergiuntar")
+  const coachingMsg = "Quando alguém pergiuntar se tem reserva você deve verificar se a pessoa possui reserva cadastrada para data atual ou futura";
+  const classification = classifyDeveloperMessage(coachingMsg);
+  assert.equal(classification.type, "factual_coaching", "Deve reconhecer como factual_coaching mesmo com erro 'pergiuntar'");
+  assert.equal(classification.guideline.category, "reserva");
+  assert.ok(classification.guideline.text.includes("reserva ativa para data atual ou futura"));
+
+  const confirmation = formatDeveloperCoachingConfirmation({ newGuideline: classification.guideline });
+  assert.ok(confirmation.includes("Nova diretriz assimilada"));
+  assert.ok(confirmation.includes("Flat: 605") || confirmation.includes("sua reserva está confirmada"));
+
+  // 2. Consulta de hóspede com reserva confirmada (inclusive com erro de digitação 'mijnha')
+  const ctxWithRes = {
+    guestName: "Miller",
+    hasReservation: true,
+    stayStatus: "checkin_hoje",
+    flatNumber: "712",
+    checkinUrl: "https://corpflats.onrender.com/pre-checkin/RES-712-0291",
+    reservation: {
+      flatNumber: "712",
+      checkinDate: "2026-10-12",
+      checkoutDate: "2026-10-13",
+      status: "confirmada",
+      paymentStatus: "pago_total"
+    }
+  };
+
+  const respWithRes = generateHeuristicResponse("mijnha reserva ta confirmada?", ctxWithRes, DEFAULT_AI_CONFIG);
+  assert.ok(respWithRes.includes("sua reserva está *confirmada*"), "Deve confirmar a reserva do hóspede");
+  assert.ok(respWithRes.includes("712"), "Deve citar o Flat 712");
+  assert.ok(respWithRes.includes("12/10/2026") || respWithRes.includes("12/10"), "Deve informar a data de check-in formatada");
+  assert.ok(respWithRes.includes("https://corpflats.onrender.com/pre-checkin/RES-712-0291"), "Deve enviar link do pré-check-in");
+  assert.ok(!respWithRes.includes("Dispomos de 19 flats"), "NÃO pode retornar apresentação comercial para quem já tem reserva");
+
+  // 3. Consulta de hóspede sem reserva
+  const ctxNoRes = {
+    guestName: "Visitante",
+    phone: "21988887777",
+    hasReservation: false,
+    stayStatus: "sem_reserva_ativa"
+  };
+
+  const respNoRes = generateHeuristicResponse("mijnha reserva ta confirmada?", ctxNoRes, DEFAULT_AI_CONFIG);
+  assert.ok(respNoRes.includes("Não localizei nenhuma reserva ativa ou futura"), "Deve informar que não localizou reserva para o número");
+  assert.ok(respNoRes.includes("nome completo") || respNoRes.includes("código da reserva"), "Deve solicitar nome completo ou código");
+  assert.ok(!respNoRes.includes("Dispomos de 19 flats"), "NÃO pode retornar apresentação comercial genérica de 19 flats");
+});
+
+test("R5: Imunidade a Falso-Positivo em FAQ (palavra 'possui' não deve disparar ferro de passar)", () => {
+  const db = {
+    faqItems: [
+      {
+        id: "faq-pending-ferro",
+        question: "O flat possui ferro e tábua de passar roupa disponíveis?",
+        answer: "👔 *Ferro de Passar Roupas:*\n\nSim! Disponibilizamos ferro de passar roupas no flat.",
+        category: "estrutura_flat",
+        keywords: ["ferro", "ferro de passar", "tabua", "passar roupa"],
+        variations: ["Tem ferro de passar no quarto?"],
+        status: "ativo"
+      }
+    ],
+    whatsappAiSettings: { developerGuidelines: [] }
+  };
+
+  // Frase longa contendo 'possui' NÃO deve acionar a FAQ de ferro
+  const respMsgLonga = generateHeuristicResponse(
+    "Quando alguém perguntar se tem reserva você deve verificar se a pessoa possui reserva cadastrada para data atual ou futura",
+    { guestName: "Miller" },
+    DEFAULT_AI_CONFIG,
+    db
+  );
+  assert.ok(!respMsgLonga.includes("Ferro de Passar"), "Não deve responder ferro de passar para frase sobre reserva");
+
+  // Pergunta legítima sobre ferro DEVE acionar a FAQ de ferro
+  const respFerro = generateHeuristicResponse(
+    "Tem ferro de passar roupa?",
+    { guestName: "Miller" },
+    DEFAULT_AI_CONFIG,
+    db
+  );
+  assert.ok(respFerro.includes("Ferro de Passar"), "Pergunta legítima deve responder FAQ de ferro");
+});
+

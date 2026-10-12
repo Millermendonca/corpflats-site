@@ -375,8 +375,9 @@ export default function WhatsappAutomation() {
   const { data: user, isLoading: loadingUser } = useGetMe()
   const { toast } = useToast()
 
-  // Tab control
-  const [activeTab, setActiveTab] = useState<string>("rules")
+  // Tab control - Unificado para 5 abas principais com sub-navegação na Sofia AI
+  const [activeTab, setActiveTab] = useState<string>("ai_hub")
+  const [aiSubTab, setAiSubTab] = useState<"training" | "behavior" | "permissions" | "simulator">("training")
 
   // State: Templates
   const [templates, setTemplates] = useState<WhatsAppTemplate[]>([])
@@ -922,7 +923,21 @@ export default function WhatsappAutomation() {
       const params = new URLSearchParams(window.location.search)
       const tabParam = params.get("tab")
       if (tabParam) {
-        setActiveTab(tabParam)
+        if (tabParam === "faq" || tabParam === "training" || tabParam === "demands_backlog") {
+          setActiveTab("ai_hub")
+          setAiSubTab("training")
+        } else if (tabParam === "ai_agent" || tabParam === "behavior") {
+          setActiveTab("ai_hub")
+          setAiSubTab("behavior")
+        } else if (tabParam === "permissions" || tabParam === "actions" || tabParam === "bot_actions") {
+          setActiveTab("ai_hub")
+          setAiSubTab("permissions")
+        } else if (tabParam === "simulator") {
+          setActiveTab("ai_hub")
+          setAiSubTab("simulator")
+        } else {
+          setActiveTab(tabParam)
+        }
       }
     }
     fetchTemplates()
@@ -937,7 +952,7 @@ export default function WhatsappAutomation() {
 
   // Auto-refresh guidelines when switching to ai_agent tab
   useEffect(() => {
-    if (activeTab === "ai_agent") {
+    if (activeTab === "ai_hub" || activeTab === "ai_agent") {
       fetchAiConfig()
       fetchDeveloperGuidelines()
     }
@@ -1818,39 +1833,32 @@ export default function WhatsappAutomation() {
         )}
 
         {/* Tabs Principais */}
+        {/* Tabs Principais Unificadas (5 Abas Limpas) */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 w-full md:w-auto rounded-xl p-1 bg-muted/60">
-            <TabsTrigger value="ai_agent" className="rounded-lg text-xs font-bold gap-1.5">
+          <TabsList className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 w-full md:w-auto rounded-xl p-1 bg-muted/60">
+            <TabsTrigger value="ai_hub" className="rounded-lg text-xs font-bold gap-1.5 relative">
               <Bot className="w-3.5 h-3.5 text-blue-500" />
-              🤖 Agente de IA
-            </TabsTrigger>
-            <TabsTrigger value="demands_backlog" className="rounded-lg text-xs font-bold gap-1.5 relative">
-              <Lightbulb className="w-3.5 h-3.5 text-amber-500" />
-              <span>Oportunidades IA</span>
+              <span>🤖 Agente Sofia (IA)</span>
               {pendingDemandsCount > 0 && (
-                <span className="ml-1 px-1.5 py-0.2 text-[10px] rounded-full bg-amber-600 text-white font-black">
+                <span className="ml-1 px-1.5 py-0.2 text-[10px] rounded-full bg-amber-600 text-white font-black" title="Demandas/Perguntas pendentes">
                   {pendingDemandsCount}
                 </span>
               )}
             </TabsTrigger>
             <TabsTrigger value="rules" className="rounded-lg text-xs font-bold gap-1.5">
               <Zap className="w-3.5 h-3.5 text-amber-500" />
-              Régua Automática
-            </TabsTrigger>
-            <TabsTrigger value="faq" className="rounded-lg text-xs font-bold gap-1.5 relative">
-              <HelpCircle className="w-3.5 h-3.5 text-indigo-500" />
-              📚 Base & FAQ
+              ⚡ Régua Automática
             </TabsTrigger>
             <TabsTrigger value="quick_messages" className="rounded-lg text-xs font-bold gap-1.5 relative">
               <MessageSquare className="w-3.5 h-3.5 text-emerald-500" />
-              ⚡ Mensagens Rápidas
+              💬 Mensagens Rápidas
               <span className="ml-1 px-1.5 py-0.2 text-[10px] rounded-full bg-emerald-600 text-white font-black">
                 {quickMessages.filter(m => m.enabled !== false).length}
               </span>
             </TabsTrigger>
             <TabsTrigger value="queue" className="rounded-lg text-xs font-bold gap-1.5 relative">
               <Clock className="w-3.5 h-3.5 text-purple-500" />
-              Fila de Envios
+              🕒 Fila de Envios
               {queue.filter(q => q.status === "scheduled").length > 0 && (
                 <span className="ml-1 px-1.5 py-0.2 text-[10px] rounded-full bg-purple-600 text-white font-black">
                   {queue.filter(q => q.status === "scheduled").length}
@@ -1859,14 +1867,14 @@ export default function WhatsappAutomation() {
             </TabsTrigger>
             <TabsTrigger value="history" className="rounded-lg text-xs font-bold gap-1.5">
               <CheckCheck className="w-3.5 h-3.5 text-emerald-500" />
-              Histórico
+              ✅ Histórico
             </TabsTrigger>
           </TabsList>
 
           {/* ════════════════════════════════════════════════════════════════════
-              ABA 0: AGENTE DE IA (CONCIERGE VIRTUAL)
+              ABA 0: HUB CENTRAL UNIFICADO DO AGENTE SOFIA (IA)
           ════════════════════════════════════════════════════════════════════ */}
-          <TabsContent value="ai_agent" className="space-y-6">
+          <TabsContent value="ai_hub" className="space-y-6">
             {/* Top Status & Overview Banner (4 Cards) */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <Card className="border-blue-200 dark:border-blue-900/60 bg-blue-50/50 dark:bg-blue-950/20 shadow-xs">
@@ -1973,9 +1981,110 @@ export default function WhatsappAutomation() {
             </div>
 
             {/* ════════════════════════════════════════════════════════════════════
-                DESTAQUE: CHAVE MESTRA & MATRIZ DE AÇÕES DO SISTEMA (BOT ACTIONS API)
+                SUB-NAVEGAÇÃO DO HUB SOFIA (Pills Compactas & Intuitivas)
             ════════════════════════════════════════════════════════════════════ */}
-            <Card className={`border-2 transition-all shadow-md rounded-2xl overflow-hidden ${
+            <div className="flex flex-wrap items-center justify-between gap-3 p-1.5 bg-slate-100/90 dark:bg-slate-900/90 rounded-2xl border shadow-xs">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Button
+                  type="button"
+                  variant={aiSubTab === "training" ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => setAiSubTab("training")}
+                  className={`text-xs font-bold rounded-xl gap-2 transition-all ${
+                    aiSubTab === "training" 
+                      ? "bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs" 
+                      : "text-slate-600 dark:text-slate-400 hover:text-foreground"
+                  }`}
+                >
+                  <HelpCircle className="w-3.5 h-3.5" />
+                  📚 Base & Treinamento
+                  {pendingDemandsCount > 0 && (
+                    <span className="ml-0.5 px-1.5 py-0.2 text-[9px] rounded-full bg-amber-500 text-white font-black">
+                      {pendingDemandsCount}
+                    </span>
+                  )}
+                </Button>
+
+                <Button
+                  type="button"
+                  variant={aiSubTab === "behavior" ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => setAiSubTab("behavior")}
+                  className={`text-xs font-bold rounded-xl gap-2 transition-all ${
+                    aiSubTab === "behavior" 
+                      ? "bg-blue-600 hover:bg-blue-700 text-white shadow-xs" 
+                      : "text-slate-600 dark:text-slate-400 hover:text-foreground"
+                  }`}
+                >
+                  <Sliders className="w-3.5 h-3.5" />
+                  ⚙️ Comportamento & Prompt
+                  {developerGuidelines.length > 0 && (
+                    <span className="ml-0.5 px-1.5 py-0.2 text-[9px] rounded-full bg-purple-500 text-white font-black">
+                      {developerGuidelines.length}
+                    </span>
+                  )}
+                </Button>
+
+                <Button
+                  type="button"
+                  variant={aiSubTab === "permissions" ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => setAiSubTab("permissions")}
+                  className={`text-xs font-bold rounded-xl gap-2 transition-all ${
+                    aiSubTab === "permissions" 
+                      ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs" 
+                      : "text-slate-600 dark:text-slate-400 hover:text-foreground"
+                  }`}
+                >
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  🔑 Ações no Sistema (PMS)
+                  <span className={`ml-0.5 px-1.5 py-0.2 text-[9px] rounded-full font-black ${
+                    botActionsSettings.apiActionsEnabled ? "bg-emerald-500 text-white" : "bg-amber-500 text-white"
+                  }`}>
+                    {botActionsSettings.apiActionsEnabled ? `${Object.values(botActionsSettings.allowedActions || {}).filter(Boolean).length}/5` : "OFF"}
+                  </span>
+                </Button>
+
+                <Button
+                  type="button"
+                  variant={aiSubTab === "simulator" ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => setAiSubTab("simulator")}
+                  className={`text-xs font-bold rounded-xl gap-2 transition-all ${
+                    aiSubTab === "simulator" 
+                      ? "bg-violet-600 hover:bg-violet-700 text-white shadow-xs" 
+                      : "text-slate-600 dark:text-slate-400 hover:text-foreground"
+                  }`}
+                >
+                  <Play className="w-3.5 h-3.5" />
+                  🧪 Simulador ao Vivo
+                </Button>
+              </div>
+
+              <div className="hidden md:flex items-center gap-2 pr-2 text-[11px] text-muted-foreground font-medium">
+                <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span>Sofia IA • Atendimento Inteligente</span>
+              </div>
+            </div>
+
+            {/* SUB-ABA 1: BASE DE CONHECIMENTO & TREINAMENTO (FAQ + DEMANDAS) */}
+            {aiSubTab === "training" && (
+              <div className="space-y-6 animate-in fade-in-50 duration-200">
+                <FaqKnowledgeBase />
+
+                <div className="pt-2">
+                  <BotDemandsBacklog onNavigateToAiAgent={() => {
+                    setActiveTab("ai_hub")
+                    setAiSubTab("behavior")
+                  }} />
+                </div>
+              </div>
+            )}
+
+            {/* SUB-ABA 3: MATRIZ DE AÇÕES & PERMISSÕES NO SISTEMA (PMS) */}
+            {aiSubTab === "permissions" && (
+              <div className="space-y-6 animate-in fade-in-50 duration-200">
+                <Card className={`border-2 transition-all shadow-md rounded-2xl overflow-hidden ${
               botActionsSettings.apiActionsEnabled
                 ? "border-emerald-500/40 bg-gradient-to-br from-emerald-500/5 via-background to-background dark:border-emerald-500/30"
                 : "border-amber-500/40 bg-gradient-to-br from-amber-500/5 via-background to-background dark:border-amber-500/30"
@@ -2211,13 +2320,15 @@ export default function WhatsappAutomation() {
                 </div>
               </CardContent>
             </Card>
+          </div>
+        )}
 
-            {/* Painel Principal de Configurações */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              {/* Coluna Esquerda: Controles & Prompt (7 cols) */}
-              <div className="lg:col-span-7 space-y-6">
-                <Card className="border shadow-xs">
-                  <CardHeader className="pb-3">
+        {/* SUB-ABA 2: COMPORTAMENTO, IDENTIDADE & PROMPT */}
+        {aiSubTab === "behavior" && (
+          <div className="space-y-6 animate-in fade-in-50 duration-200">
+            <div className="space-y-6">
+              <Card className="border shadow-xs">
+                <CardHeader className="pb-3">
                     <div className="flex items-center justify-between">
                       <div>
                         <CardTitle className="text-base font-bold flex items-center gap-2">
@@ -2513,186 +2624,128 @@ export default function WhatsappAutomation() {
                     )}
                   </CardContent>
                 </Card>
-
-                {/* Central Oficial de Respostas & Base de Conhecimento (Unificada na Aba Base & FAQ) */}
-                <Card className="border border-indigo-200/80 dark:border-indigo-900/60 bg-gradient-to-br from-indigo-50/50 via-white to-blue-50/40 dark:from-slate-900 dark:to-indigo-950/20 shadow-xs">
-                  <CardHeader className="pb-3">
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-base font-bold flex items-center gap-2 text-indigo-950 dark:text-indigo-200">
-                        <HelpCircle className="w-4 h-4 text-indigo-600" />
-                        Base de Conhecimento & FAQ Oficial
-                      </CardTitle>
-                      <Badge variant="outline" className="bg-indigo-100 text-indigo-800 dark:bg-indigo-950 border-indigo-200 text-[10px] font-bold">
-                        Fonte Única da Verdade
-                      </Badge>
-                    </div>
-                    <CardDescription className="text-xs text-indigo-900/70 dark:text-indigo-300/70">
-                      Todas as informações oficiais de Wi-Fi, Café da Manhã, Garagem, Estrutura e Políticas estão centralizadas na aba <strong>📚 Base & FAQ</strong>. Tanto a Sofia quanto os operadores utilizam rigorosamente a mesma base de respostas aprovadas.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-3 pt-1">
-                    <div className="grid grid-cols-2 gap-2 text-[11px]">
-                      <div className="p-2.5 rounded-lg bg-white/80 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700/60 flex items-center gap-2">
-                        <Wifi className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                        <div>
-                          <p className="font-semibold text-slate-800 dark:text-slate-200">Wi-Fi Oficial</p>
-                          <p className="text-[10px] text-muted-foreground">Rede apto &#123;número&#125; • Senha padrão</p>
-                        </div>
-                      </div>
-                      <div className="p-2.5 rounded-lg bg-white/80 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700/60 flex items-center gap-2">
-                        <Coffee className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                        <div>
-                          <p className="font-semibold text-slate-800 dark:text-slate-200">Café da Manhã</p>
-                          <p className="text-[10px] text-muted-foreground">05h às 09:30 • Bandeja no quarto</p>
-                        </div>
-                      </div>
-                      <div className="p-2.5 rounded-lg bg-white/80 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700/60 flex items-center gap-2">
-                        <DoorOpen className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                        <div>
-                          <p className="font-semibold text-slate-800 dark:text-slate-200">Garagem Soho</p>
-                          <p className="text-[10px] text-muted-foreground">Rotativa grátis • Placa no check-in</p>
-                        </div>
-                      </div>
-                      <div className="p-2.5 rounded-lg bg-white/80 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700/60 flex items-center gap-2">
-                        <MapPin className="w-3.5 h-3.5 text-rose-600 shrink-0" />
-                        <div>
-                          <p className="font-semibold text-slate-800 dark:text-slate-200">Localização</p>
-                          <p className="text-[10px] text-muted-foreground">R. Conselheiro Otaviano, 209</p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => setActiveTab("faq")}
-                      className="w-full h-9 rounded-xl border-indigo-300 dark:border-indigo-800 hover:bg-indigo-100/60 dark:hover:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-bold text-xs gap-2 mt-2"
-                    >
-                      <HelpCircle className="w-3.5 h-3.5" />
-                      Gerenciar Base de Conhecimento & FAQs Oficiais
-                      <ExternalLink className="w-3.5 h-3.5 ml-auto" />
-                    </Button>
-                  </CardContent>
-                </Card>
-              </div>
-
-              {/* Coluna Direita: Simulador de Atendimento Interativo (5 cols) */}
-              <div className="lg:col-span-5 space-y-6">
-                <Card className="border border-blue-200 dark:border-blue-900/60 shadow-xs">
-                  <CardHeader className="bg-gradient-to-tr from-blue-50/80 to-indigo-50/50 dark:from-blue-950/30 dark:to-indigo-950/20 border-b pb-3">
-                    <CardTitle className="text-base font-bold flex items-center gap-2 text-blue-900 dark:text-blue-100">
-                      <Sparkles className="w-4 h-4 text-blue-600" />
-                      Simulador do Agente de IA
-                    </CardTitle>
-                    <CardDescription className="text-xs text-blue-700/80 dark:text-blue-300/80">
-                      Teste perguntas e veja em tempo real como o agente responderá aos hóspedes antes de ativar em produção.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="p-4 space-y-4">
-                    {/* Botões Rápidos de Perguntas Típicas */}
-                    <div className="space-y-1.5">
-                      <Label className="text-[11px] font-semibold text-slate-500">Perguntas Rápidas de Teste:</Label>
-                      <div className="flex flex-wrap gap-1.5">
-                        {[
-                          "Qual a senha do wifi?",
-                          "Meu quarto já está pronto?",
-                          "Quero falar com uma pessoa",
-                          "Tem café da manhã?",
-                          "Qual o horário de check-out?",
-                          "Qual o endereço?",
-                          "Tem vaga de garagem?"
-                        ].map((q, idx) => (
-                          <button
-                            key={idx}
-                            type="button"
-                            onClick={() => setSimMessage(q)}
-                            className="text-[11px] px-2 py-1 rounded-lg bg-slate-100 hover:bg-blue-50 hover:text-blue-700 dark:bg-slate-800 dark:hover:bg-blue-950/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 transition-colors"
-                          >
-                            {q}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold">Telefone de Teste (para simular reconhecimento de reserva)</Label>
-                      <Input
-                        value={simPhone}
-                        onChange={e => setSimPhone(e.target.value)}
-                        placeholder="Ex: 22998505276 (ou deixe outro número para testar lead)"
-                        className="h-9 text-xs font-mono"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold">Mensagem do Hóspede</Label>
-                      <Textarea
-                        rows={3}
-                        value={simMessage}
-                        onChange={e => setSimMessage(e.target.value)}
-                        placeholder="Digite o que o hóspede falaria no WhatsApp..."
-                        className="text-xs"
-                      />
-                    </div>
-
-                    <Button
-                      type="button"
-                      onClick={handleSimulateAi}
-                      disabled={simulatingAi || !simMessage.trim()}
-                      className="w-full h-9 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs gap-2"
-                    >
-                      {simulatingAi ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-                      Testar Resposta da IA
-                    </Button>
-
-                    {/* Exibição do Resultado da Simulação */}
-                    {simResult && (
-                      <div className="space-y-3 pt-2 border-t mt-3">
-                        <div className="flex items-center justify-between text-xs font-bold">
-                          <span className="flex items-center gap-1.5 text-blue-700 dark:text-blue-300">
-                            <Bot className="w-3.5 h-3.5" />
-                            Resposta Gerada:
-                          </span>
-                          <div className="flex items-center gap-1.5">
-                            {simResult.shouldHandover && (
-                              <Badge variant="destructive" className="text-[10px] py-0">
-                                🚨 Transbordo Detectado
-                              </Badge>
-                            )}
-                            <Badge variant="outline" className="text-[10px] py-0">
-                              {simResult.source === "gemini" ? `Gemini (${simResult.modelUsed})` : "Heurístico Local"}
-                            </Badge>
-                          </div>
-                        </div>
-
-                        {/* Balão estilo WhatsApp */}
-                        <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-slate-800 dark:text-slate-100 text-xs leading-relaxed whitespace-pre-wrap shadow-2xs font-sans">
-                          {simResult.replyText}
-                        </div>
-
-                        {/* Detalhes do Contexto Detectado */}
-                        {simResult.guestContext && (
-                          <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border text-[11px] space-y-1">
-                            <span className="font-bold text-slate-700 dark:text-slate-300 block">Contexto Identificado pelo Sistema:</span>
-                            <div className="grid grid-cols-2 gap-1 text-muted-foreground">
-                              <span>Hóspede: <strong>{simResult.guestContext.guestName || "Lead / Sem Reserva"}</strong></span>
-                              <span>Status: <strong>{simResult.guestContext.stayStatus}</strong></span>
-                              {simResult.guestContext.flatNumber && (
-                                <span>Flat: <strong>{simResult.guestContext.flatNumber}</strong></span>
-                              )}
-                              {simResult.guestContext.cleaningStatus && (
-                                <span>Limpeza: <strong>{simResult.guestContext.cleaningStatus}</strong></span>
-                              )}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
               </div>
             </div>
-          </TabsContent>
+          )}
+
+        {/* SUB-ABA 4: SIMULADOR AO VIVO */}
+        {aiSubTab === "simulator" && (
+          <div className="space-y-6 animate-in fade-in-50 duration-200">
+            <Card className="border border-blue-200 dark:border-blue-900/60 shadow-xs max-w-4xl mx-auto">
+              <CardHeader className="bg-gradient-to-tr from-blue-50/80 to-indigo-50/50 dark:from-blue-950/30 dark:to-indigo-950/20 border-b pb-3">
+                <CardTitle className="text-base font-bold flex items-center gap-2 text-blue-900 dark:text-blue-100">
+                  <Sparkles className="w-4 h-4 text-blue-600" />
+                  Simulador do Agente de IA
+                </CardTitle>
+                <CardDescription className="text-xs text-blue-700/80 dark:text-blue-300/80">
+                  Teste perguntas e veja em tempo real como o agente responderá aos hóspedes antes de ativar em produção.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="p-5 space-y-4">
+                {/* Botões Rápidos de Perguntas Típicas */}
+                <div className="space-y-1.5">
+                  <Label className="text-[11px] font-semibold text-slate-500">Perguntas Rápidas de Teste:</Label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {[
+                      "Qual a senha do wifi?",
+                      "Meu quarto já está pronto?",
+                      "Quero falar com uma pessoa",
+                      "Tem café da manhã?",
+                      "Qual o horário de check-out?",
+                      "Qual o endereço?",
+                      "Tem vaga de garagem?"
+                    ].map((q, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => setSimMessage(q)}
+                        className="text-[11px] px-2 py-1 rounded-lg bg-slate-100 hover:bg-blue-50 hover:text-blue-700 dark:bg-slate-800 dark:hover:bg-blue-950/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 transition-colors"
+                      >
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold">Telefone de Teste (simular contexto de reserva)</Label>
+                    <Input
+                      value={simPhone}
+                      onChange={e => setSimPhone(e.target.value)}
+                      placeholder="Ex: 22998505276 (ou deixe outro número para testar lead)"
+                      className="h-9 text-xs font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold">Mensagem do Hóspede</Label>
+                    <Input
+                      value={simMessage}
+                      onChange={e => setSimMessage(e.target.value)}
+                      placeholder="Digite o que o hóspede falaria no WhatsApp..."
+                      className="h-9 text-xs"
+                    />
+                  </div>
+                </div>
+
+                <Button
+                  type="button"
+                  onClick={handleSimulateAi}
+                  disabled={simulatingAi || !simMessage.trim()}
+                  className="w-full h-10 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs gap-2"
+                >
+                  {simulatingAi ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                  Testar Resposta da IA
+                </Button>
+
+                {/* Exibição do Resultado da Simulação */}
+                {simResult && (
+                  <div className="space-y-3 pt-3 border-t mt-3">
+                    <div className="flex items-center justify-between text-xs font-bold">
+                      <span className="flex items-center gap-1.5 text-blue-700 dark:text-blue-300">
+                        <Bot className="w-3.5 h-3.5" />
+                        Resposta Gerada pela Sofia:
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        {simResult.shouldHandover && (
+                          <Badge variant="destructive" className="text-[10px] py-0">
+                            🚨 Transbordo Detectado
+                          </Badge>
+                        )}
+                        <Badge variant="outline" className="text-[10px] py-0">
+                          {simResult.source === "gemini" ? `Gemini (${simResult.modelUsed})` : "Heurístico Local"}
+                        </Badge>
+                      </div>
+                    </div>
+
+                    {/* Balão estilo WhatsApp */}
+                    <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-slate-800 dark:text-slate-100 text-xs leading-relaxed whitespace-pre-wrap shadow-2xs font-sans">
+                      {simResult.replyText}
+                    </div>
+
+                    {/* Detalhes do Contexto Detectado */}
+                    {simResult.guestContext && (
+                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border text-[11px] space-y-1.5">
+                        <span className="font-bold text-slate-700 dark:text-slate-300 block">Contexto Identificado pelo Sistema:</span>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-muted-foreground">
+                          <div>Hóspede: <strong className="text-foreground">{simResult.guestContext.guestName || "Lead / Sem Reserva"}</strong></div>
+                          <div>Status: <strong className="text-foreground">{simResult.guestContext.stayStatus}</strong></div>
+                          {simResult.guestContext.flatNumber && (
+                            <div>Flat: <strong className="text-foreground">{simResult.guestContext.flatNumber}</strong></div>
+                          )}
+                          {simResult.guestContext.cleaningStatus && (
+                            <div>Limpeza: <strong className="text-foreground">{simResult.guestContext.cleaningStatus}</strong></div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+      </TabsContent>
 
           {/* ════════════════════════════════════════════════════════════════════
               ABA 1: RÉGUA DE GATILHOS (AUTOMAÇÕES)
@@ -3750,17 +3803,17 @@ export default function WhatsappAutomation() {
           </TabsContent>
 
           {/* ════════════════════════════════════════════════════════════════════
-              ABA: BASE DE CONHECIMENTO & FAQ DINÂMICO (SOFIA AI)
+              FALLBACK RETROATIVO: BASE & DEMANDAS ANTIGAS
           ════════════════════════════════════════════════════════════════════ */}
           <TabsContent value="faq" className="space-y-6">
             <FaqKnowledgeBase />
           </TabsContent>
 
-          {/* ════════════════════════════════════════════════════════════════════
-              ABA: OPORTUNIDADES DE AUTOMAÇÃO & DEMANDAS NÃO ATENDIDAS
-          ════════════════════════════════════════════════════════════════════ */}
           <TabsContent value="demands_backlog" className="space-y-6">
-            <BotDemandsBacklog onNavigateToAiAgent={() => setActiveTab("ai_agent")} />
+            <BotDemandsBacklog onNavigateToAiAgent={() => {
+              setActiveTab("ai_hub")
+              setAiSubTab("behavior")
+            }} />
           </TabsContent>
 
           {/* ════════════════════════════════════════════════════════════════════

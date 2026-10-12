@@ -1298,18 +1298,12 @@ export function linkOperatorResponseToPendingFaq(db, param1, param2) {
   targetItem.updatedAt = nowIso;
 
   // Pausa a IA na conversa deste cliente em db.whatsappConversations (exceto se for desenvolvedor)
-  if (Array.isArray(db.whatsappConversations)) {
+  if (Array.isArray(db.whatsappConversations) && !isDeveloperPhone(cleanPhone)) {
     const conv = db.whatsappConversations.find(c => matchClientPhone(c.phone, cleanPhone));
-    if (conv) {
-      if (!isDeveloperPhone(cleanPhone, db)) {
-        conv.aiPaused = true;
-        conv.aiPausedAt = nowIso;
-        conv.aiPausedReason = "operator_manual_reply";
-      } else {
-        conv.isDeveloper = true;
-        conv.aiPaused = false;
-        conv.aiPausedReason = null;
-      }
+    if (conv && !conv.isDeveloper) {
+      conv.aiPaused = true;
+      conv.aiPausedAt = nowIso;
+      conv.aiPausedReason = "operator_manual_reply";
     }
   }
 
@@ -6936,7 +6930,7 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
       return res.status(404).json({ error: "Conversa não encontrada." });
     }
 
-    if (isDeveloperPhone(cleanPhone, db)) {
+    if (isDeveloperPhone(cleanPhone, db) && req.body.aiPaused === undefined) {
       conv.isDeveloper = true;
       conv.aiPaused = false;
       conv.aiPausedAt = null;
@@ -7138,7 +7132,9 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     saveDatabase();
     res.json({ success: true, guideline: item });
   };
-  app.patch(["/api/whatsapp/developer-guidelines/:id", "/api/whatsapp/ai/developer-guidelines/:id"], handleUpdateGuideline);
+  if (typeof app.patch === "function") {
+    app.patch(["/api/whatsapp/developer-guidelines/:id", "/api/whatsapp/ai/developer-guidelines/:id"], handleUpdateGuideline);
+  }
   app.put(["/api/whatsapp/developer-guidelines/:id", "/api/whatsapp/ai/developer-guidelines/:id"], handleUpdateGuideline);
 
   // 5.5. Excluir Diretriz do Desenvolvedor (/api/whatsapp/developer-guidelines/:id)
