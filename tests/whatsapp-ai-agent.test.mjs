@@ -93,7 +93,7 @@ describe("Agente de IA para WhatsApp - Testes Unitários e de Integração", () 
           id: 501,
           code: "RES-101-9999",
           guestName: "Carlos Drumond",
-          guestPhone: "5522998505276",
+          guestPhone: "5521997142513",
           flatId: 1,
           flatNumber: "101",
           checkinDate: new Date().toISOString().slice(0, 10),
@@ -103,8 +103,8 @@ describe("Agente de IA para WhatsApp - Testes Unitários e de Integração", () 
       ],
       whatsappConversations: [
         {
-          id: "5522998505276",
-          phone: "5522998505276",
+          id: "5521997142513",
+          phone: "5521997142513",
           name: "Carlos Drumond",
           aiPaused: false,
           messages: []
@@ -143,7 +143,7 @@ describe("Agente de IA para WhatsApp - Testes Unitários e de Integração", () 
   });
 
   test("3. Contexto em tempo real identifica hóspede com check-in hoje e flat limpo", () => {
-    const ctx = buildGuestContext(mockDb, "5522998505276");
+    const ctx = buildGuestContext(mockDb, "5521997142513");
     assert.equal(ctx.hasReservation, true);
     assert.equal(ctx.guestName, "Carlos Drumond");
     assert.equal(ctx.flatNumber, "101");
@@ -158,7 +158,7 @@ describe("Agente de IA para WhatsApp - Testes Unitários e de Integração", () 
   });
 
   test("5. Resposta Heurística atende dúvidas essenciais com dados da base", () => {
-    const ctx = buildGuestContext(mockDb, "5522998505276");
+    const ctx = buildGuestContext(mockDb, "5521997142513");
     const aiConfig = getWhatsAppAiConfig(mockDb);
 
     // Wi-Fi
@@ -212,7 +212,7 @@ describe("Agente de IA para WhatsApp - Testes Unitários e de Integração", () 
         text: "Preciso falar com uma pessoa urgente",
         senderName: "Carlos Drumond"
       },
-      cleanTarget: "5522998505276",
+      cleanTarget: "5521997142513",
       saveDatabase: () => {},
       createNotification: createNotifMock,
       sendZapiMessage: sendZapiMock,
@@ -227,13 +227,13 @@ describe("Agente de IA para WhatsApp - Testes Unitários e de Integração", () 
     assert.equal(createdNotif.type, "whatsapp_handover");
 
     // Confirma que a conversa agora está pausada
-    const conv = mockDb.whatsappConversations.find(c => c.phone === "5522998505276");
+    const conv = mockDb.whatsappConversations.find(c => c.phone === "5521997142513");
     assert.equal(conv.aiPaused, true);
     assert.equal(conv.aiPausedReason, "guest_requested_human");
   });
 
   test("7. Conversa pausada não é respondida pela IA", async () => {
-    const conv = mockDb.whatsappConversations.find(c => c.phone === "5522998505276");
+    const conv = mockDb.whatsappConversations.find(c => c.phone === "5521997142513");
     conv.aiPaused = true;
 
     const res = await processAiInboundMessage({
@@ -243,7 +243,7 @@ describe("Agente de IA para WhatsApp - Testes Unitários e de Integração", () 
         isGroup: false,
         text: "Qual a senha do wifi?"
       },
-      cleanTarget: "5522998505276",
+      cleanTarget: "5521997142513",
       saveDatabase: () => {},
       createNotification: () => {},
       sendZapiMessage: async () => ({ success: true }),
@@ -323,10 +323,14 @@ describe("Agente de IA para WhatsApp - Testes Unitários e de Integração", () 
 
     // Testa POST /api/whatsapp/chat/:phone/ai-toggle
     let toggleData = null;
+    const mockToggleRes = {
+      json: (d) => { toggleData = d; },
+      status: () => mockToggleRes
+    };
     routes["POST /api/whatsapp/chat/:phone/ai-toggle"]({
-      params: { phone: "5522998505276" },
+      params: { phone: "5521997142513" },
       body: { aiPaused: true, reason: "test_toggle" }
-    }, { json: (d) => { toggleData = d; } });
+    }, mockToggleRes);
     assert.equal(toggleData.success, true);
     assert.equal(toggleData.aiPaused, true);
     assert.equal(toggleData.aiPausedReason, "test_toggle");
@@ -1159,7 +1163,7 @@ describe("Agente de IA para WhatsApp - Testes Unitários e de Integração", () 
     const captureDb = JSON.parse(JSON.stringify(mockDb));
     captureDb.whatsappConversations = [
       {
-        phone: "5522998505276",
+        phone: "5521997142513",
         name: "Carlos Drumond",
         messages: [],
         aiPaused: false
@@ -1172,8 +1176,8 @@ describe("Agente de IA para WhatsApp - Testes Unitários e de Integração", () 
         answer: "",
         category: "estrutura_flat",
         status: "pendente",
-        sourceClientPhone: "5522998505276",
-        clientPhones: ["5522998505276"],
+        sourceClientPhone: "5521997142513",
+        clientPhones: ["5521997142513"],
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       },
@@ -1183,8 +1187,8 @@ describe("Agente de IA para WhatsApp - Testes Unitários e de Integração", () 
         answer: "",
         category: "estrutura_flat",
         status: "pendente",
-        sourceClientPhone: "5522998505276",
-        clientPhones: ["5522998505276"],
+        sourceClientPhone: "5521997142513",
+        clientPhones: ["5521997142513"],
         createdAt: new Date(Date.now() - 36 * 3600 * 1000).toISOString(),
         updatedAt: new Date(Date.now() - 36 * 3600 * 1000).toISOString()
       }
@@ -1196,7 +1200,7 @@ describe("Agente de IA para WhatsApp - Testes Unitários e de Integração", () 
 
     // 1. Operador responde manualmente no chat
     const operatorText = "Sim, disponibilizamos berço desmontável mediante solicitação prévia sem taxa extra!";
-    const updated = linkOperatorResponseToPendingFaq(captureDb, "5522998505276", operatorText);
+    const updated = linkOperatorResponseToPendingFaq(captureDb, "5521997142513", operatorText);
 
     assert.ok(updated, "Deve encontrar e atualizar o FAQ pendente recente");
     assert.equal(updated.id, "faq_auto_test_1");
@@ -1205,7 +1209,7 @@ describe("Agente de IA para WhatsApp - Testes Unitários e de Integração", () 
     assert.equal(updated.answeredBy, "operador");
 
     // 2. Confirma que a IA na conversa foi pausada (aiPaused: true)
-    const conv = captureDb.whatsappConversations.find(c => c.phone === "5522998505276");
+    const conv = captureDb.whatsappConversations.find(c => c.phone === "5521997142513");
     assert.ok(conv, "Conversa deve existir");
     assert.equal(conv.aiPaused, true, "IA deve ser pausada quando operador envia resposta");
     assert.equal(conv.aiPausedReason, "operator_manual_reply");

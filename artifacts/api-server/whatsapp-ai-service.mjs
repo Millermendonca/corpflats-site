@@ -2688,9 +2688,8 @@ export async function processAiInboundMessage({
 
   // Se a conversa estiver pausada manualmente (operador assumiu ou hóspede pediu humano)
   if (conv && conv.aiPaused === true) {
-    const devClassification = isDev ? classifyDeveloperMessage(incomingInfo.text, db) : null;
-    if (isDev && devClassification && devClassification.type !== "simulation_question") {
-      console.log(`[WhatsApp AI] Comando de desenvolvedor recebido em conversa pausada. Processando coaching.`);
+    if (isDev) {
+      console.log(`[WhatsApp AI] Mensagem de desenvolvedor recebida em conversa pausada. Restaurando atividade da IA.`);
       conv.aiPaused = false;
       conv.aiPausedReason = null;
       conv.isDeveloper = true;
