@@ -714,23 +714,23 @@ export default function GuestPreCheckin() {
     // Hóspede 1: pode ler do cadastro titular
     // Hóspede 2+: lê SOMENTE de currentG (NUNCA herda fotos do hóspede 1!)
     const selfie = currentG?.selfieUrl || (isTitular ? (res.selfieUrl || guest.photoUrl || null) : null)
-    const doc = currentG?.docPhotoUrl || (isTitular ? (res.docPhotoUrl || guest.docPhotoUrl || null) : null)
-    const isReSignatureNeeded = Boolean(
-      isResignParam || 
-      res.needsReSignature || 
-      currentG?.needsReSignature
-    )
+    // Avaliação estritamente individual da necessidade de re-assinatura
+    const isGuestPendingReSign = currentG?.needsReSignature !== undefined
+      ? Boolean(currentG.needsReSignature)
+      : (Boolean(res.needsReSignature) && !currentG?.hasCompletedCheckin)
+
+    const isReSignatureNeeded = isGuestPendingReSign
     const sig = isReSignatureNeeded ? null : (currentG?.signatureUrl || (isTitular ? res.signatureUrl : null))
 
     setSelfiePhoto(selfie || null)
     setDocPhoto(doc || null)
     setSignatureData(sig || null)
 
-    // O Hóspede só é considerado concluído se ELE MESMO (currentG) tiver check-in feito nesta reserva!
+    // O Hóspede só é considerado concluído se ELE MESMO (currentG) tiver check-in feito nesta reserva e não precisar re-assinar!
     const fnhrDone = Boolean(
       !isReSignatureNeeded && (
         currentG?.hasCompletedCheckin || 
-        (isTitular && res.fnhrCompleted && res.signatureUrl && selfie)
+        (isTitular && res.fnhrCompleted && (sig || res.signatureUrl) && selfie)
       )
     )
 
@@ -1100,11 +1100,10 @@ export default function GuestPreCheckin() {
       const cleanModel = isCarTransport ? vehicleModel.trim() : ""
       const cleanColor = isCarTransport ? vehicleColor.trim() : ""
 
-      const isReSignatureNeeded = Boolean(
-        isResignParam || 
-        reservation?.needsReSignature || 
-        guestList[selectedGuestIndex - 1]?.needsReSignature
-      )
+      const currentGuestItem = guestList.find((g: any) => g.index === selectedGuestIndex) || guestList[selectedGuestIndex - 1]
+      const isReSignatureNeeded = currentGuestItem?.needsReSignature !== undefined
+        ? Boolean(currentGuestItem.needsReSignature)
+        : (Boolean(reservation?.needsReSignature) && !currentGuestItem?.hasCompletedCheckin)
 
       const res = await fetch("/api/pms/pre-checkin", {
         method: "POST",
@@ -1625,6 +1624,8 @@ export default function GuestPreCheckin() {
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {guestList.map((g: any) => {
                   const isCurrent = selectedGuestIndex === g.index
+                  const gNeedsReSign = Boolean(g.needsReSignature)
+                  const gDone = !gNeedsReSign && Boolean(g.hasCompletedCheckin)
                   return (
                     <button
                       key={g.index}
@@ -1636,24 +1637,71 @@ export default function GuestPreCheckin() {
                           loadGuestData({ reservation, guests: guestList }, g.index)
                         }
                       }}
-                      className={`py-2 px-3 rounded-xl text-xs font-bold transition-all text-left flex items-center justify-between border ${
+                      className={`py-2 px-3 rounded-xl text-xs font-bold transition-all text-left flex items-center justify-between border cursor-pointer ${
                         isCurrent
                           ? "bg-slate-900 text-white border-slate-900 shadow-sm"
-                          : g.hasCompletedCheckin
+                          : gNeedsReSign
+                          ? "bg-amber-50 border-amber-300 text-amber-900 hover:bg-amber-100"
+                          : gDone
                           ? "bg-emerald-50/80 border-emerald-200 text-emerald-800 hover:bg-emerald-100/80"
                           : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
                       }`}
                     >
                       <span className="truncate">{g.name || `Hóspede ${g.index}`}</span>
-                      {g.hasCompletedCheckin ? (
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0 ml-1" />
+                      {gNeedsReSign ? (
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5 shrink-0 ml-1 ${
+                          isCurrent ? "bg-amber-400 text-amber-950 font-black" : "bg-amber-100 text-amber-900 border border-amber-300"
+                        }`}>
+                          ⚠️ Re-assinar
+                        </span>
+                      ) : gDone ? (
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5 shrink-0 ml-1 ${
+                          isCurrent ? "bg-emerald-500/30 text-emerald-100" : "bg-emerald-100 text-emerald-800"
+                        }`}>
+                          ✓ Assinado
+                        </span>
                       ) : (
-                        <span className="text-[9px] px-1 py-0.5 rounded bg-slate-200 text-slate-600 shrink-0 ml-1">Pendente</span>
+                        <span className={`text-[9px] px-1 py-0.5 rounded shrink-0 ml-1 ${
+                          isCurrent ? "bg-slate-800 text-slate-300" : "bg-slate-200 text-slate-600"
+                        }`}>
+                          Pendente
+                        </span>
                       )}
                     </button>
                   )
                 })}
               </div>
+              {guestList.some((g: any) => Boolean(g.needsReSignature)) && (
+                <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-300 space-y-1.5 print:hidden animate-in fade-in">
+                  <span className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>Reserva Atualizada • Assinatura de Acompanhante Pendente</span>
+                  </span>
+                  <p className="text-xs text-amber-900 leading-snug">
+                    Esta ficha já foi assinada. Para liberação na portaria, o(s) acompanhante(s) abaixo ainda precisa(m) assinar a declaração atualizada:
+                  </p>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {guestList.filter((g: any) => Boolean(g.needsReSignature)).map((pg: any) => (
+                      <Button
+                        key={pg.index}
+                        type="button"
+                        size="sm"
+                        onClick={() => {
+                          setSelectedGuestIndex(pg.index)
+                          setStep(1)
+                          if (reservation) {
+                            loadGuestData({ reservation, guests: guestList }, pg.index)
+                          }
+                        }}
+                        className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs gap-1.5 rounded-xl h-8 px-3 shadow-xs cursor-pointer"
+                      >
+                        <PenTool className="w-3 h-3" />
+                        <span>Assinar por {pg.name || `Hóspede ${pg.index}`}</span>
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -2211,32 +2259,82 @@ export default function GuestPreCheckin() {
           </Card>
         )}
 
-        {Boolean(isResignParam || reservation?.needsReSignature || guestList[selectedGuestIndex - 1]?.needsReSignature) && (
-          <div className="p-4 sm:p-5 bg-amber-50 border-2 border-amber-300 rounded-2xl space-y-2.5 shadow-sm animate-in fade-in">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-100 text-amber-900 rounded-full text-xs font-bold">
-                <AlertTriangle className="w-3.5 h-3.5 text-amber-700" />
-                <span>Reserva Atualizada • Nova Assinatura Obrigatória</span>
+        {/* Banner de Re-assinatura: Individualizado por Hóspede Selecionado */}
+        {(() => {
+          const currentG = guestList.find((g: any) => g.index === selectedGuestIndex) || guestList[selectedGuestIndex - 1]
+          const isCurrentPendingReSign = currentG?.needsReSignature !== undefined
+            ? Boolean(currentG.needsReSignature)
+            : (Boolean(reservation?.needsReSignature) && !currentG?.hasCompletedCheckin)
+          const otherPending = guestList.filter((g: any) => g.index !== selectedGuestIndex && Boolean(g.needsReSignature))
+
+          if (isCurrentPendingReSign) {
+            return (
+              <div className="p-4 sm:p-5 bg-amber-50 border-2 border-amber-300 rounded-2xl space-y-2.5 shadow-sm animate-in fade-in">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-100 text-amber-900 rounded-full text-xs font-bold">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-700" />
+                    <span>Reserva Atualizada • Nova Assinatura Obrigatória para {currentG?.name || `Hóspede ${selectedGuestIndex}`}</span>
+                  </div>
+                  {step < 3 && (
+                    <button
+                      type="button"
+                      onClick={() => setStep(3)}
+                      className="text-xs font-bold text-amber-900 hover:text-amber-950 underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>Ir direto para assinatura (Passo 3)</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+                <h3 className="text-sm sm:text-base font-bold text-amber-950">
+                  {reservation?.reSignatureReason || "Sua reserva teve as datas ou acomodação alteradas. É obrigatório assinar a declaração atualizada para liberar o acesso ao condomínio."}
+                </h3>
+                <p className="text-xs text-amber-800 leading-relaxed">
+                  ⚡ <strong>Fluxo Expresso:</strong> Todos os seus dados cadastrais (Nome, CPF, Telefone, Endereço e Foto do Documento) foram preservados com segurança. Confira os novos dados do flat e período acima e assine ao final para confirmar sua nova Ficha de Hospedagem.
+                </p>
               </div>
-              {step < 3 && (
-                <button
-                  type="button"
-                  onClick={() => setStep(3)}
-                  className="text-xs font-bold text-amber-900 hover:text-amber-950 underline flex items-center gap-1 cursor-pointer"
-                >
-                  <span>Ir direto para assinatura (Passo 3)</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-            <h3 className="text-sm sm:text-base font-bold text-amber-950">
-              {reservation?.reSignatureReason || "Sua reserva teve as datas ou acomodação alteradas. É obrigatório assinar a declaração atualizada para liberar o acesso ao condomínio."}
-            </h3>
-            <p className="text-xs text-amber-800 leading-relaxed">
-              ⚡ <strong>Fluxo Expresso:</strong> Todos os seus dados cadastrais (Nome, CPF, Telefone, Endereço e Foto do Documento) foram preservados com segurança. Confira os novos dados do flat e período acima e assine ao final para confirmar sua nova Ficha de Hospedagem.
-            </p>
-          </div>
-        )}
+            )
+          }
+
+          if (currentG?.hasCompletedCheckin && !isCurrentPendingReSign && otherPending.length > 0) {
+            return (
+              <div className="p-4 sm:p-5 bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-50 border-2 border-emerald-300 rounded-2xl space-y-2 shadow-sm animate-in fade-in">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-100 text-emerald-800 rounded-full text-xs font-bold">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Assinatura de {currentG?.name || `Hóspede ${selectedGuestIndex}`} Atualizada com Sucesso!</span>
+                  </div>
+                </div>
+                <p className="text-xs text-emerald-950 font-medium leading-relaxed">
+                  A declaração deste hóspede já foi assinada e atualizada. Para concluir a autorização na portaria, preencha o check-in de:{" "}
+                  <strong>{otherPending.map((g: any) => g.name || `Hóspede ${g.index}`).join(", ")}</strong>.
+                </p>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {otherPending.map((og: any) => (
+                    <Button
+                      key={og.index}
+                      type="button"
+                      size="sm"
+                      onClick={() => {
+                        setSelectedGuestIndex(og.index)
+                        setStep(1)
+                        if (reservation) {
+                          loadGuestData({ reservation, guests: guestList }, og.index)
+                        }
+                      }}
+                      className="bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold gap-1 rounded-xl h-8 px-3 shadow-xs cursor-pointer"
+                    >
+                      <PenTool className="w-3 h-3" />
+                      <span>Assinar por {og.name || `Hóspede ${og.index}`}</span>
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            )
+          }
+
+          return null
+        })()}
 
         {/* Alerta de Token Expirado (Link de 2 horas) com Botão de Renovação */}
         {tokenInfo && !tokenInfo.valid && (
@@ -2283,6 +2381,8 @@ export default function GuestPreCheckin() {
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               {guestList.map((g: any) => {
                 const isCurrent = selectedGuestIndex === g.index
+                const gNeedsReSign = Boolean(g.needsReSignature)
+                const gDone = !gNeedsReSign && Boolean(g.hasCompletedCheckin)
                 return (
                   <button
                     key={g.index}
@@ -2294,19 +2394,35 @@ export default function GuestPreCheckin() {
                         loadGuestData({ reservation, guests: guestList }, g.index)
                       }
                     }}
-                    className={`py-2 px-3 rounded-xl text-xs font-bold transition-all text-left flex items-center justify-between border ${
+                    className={`py-2 px-3 rounded-xl text-xs font-bold transition-all text-left flex items-center justify-between border cursor-pointer ${
                       isCurrent
                         ? "bg-slate-900 text-white border-slate-900 shadow-sm"
-                        : g.hasCompletedCheckin
+                        : gNeedsReSign
+                        ? "bg-amber-50 border-amber-300 text-amber-900 hover:bg-amber-100"
+                        : gDone
                         ? "bg-emerald-50/80 border-emerald-200 text-emerald-800 hover:bg-emerald-100/80"
                         : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
                     }`}
                   >
                     <span className="truncate">{g.name || `Hóspede ${g.index}`}</span>
-                    {g.hasCompletedCheckin ? (
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0 ml-1" />
+                    {gNeedsReSign ? (
+                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5 shrink-0 ml-1 ${
+                        isCurrent ? "bg-amber-400 text-amber-950 font-black" : "bg-amber-100 text-amber-900 border border-amber-300"
+                      }`}>
+                        ⚠️ Re-assinar
+                      </span>
+                    ) : gDone ? (
+                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5 shrink-0 ml-1 ${
+                        isCurrent ? "bg-emerald-500/30 text-emerald-100" : "bg-emerald-100 text-emerald-800"
+                      }`}>
+                        ✓ Assinado
+                      </span>
                     ) : (
-                      <span className="text-[9px] px-1 py-0.5 rounded bg-slate-200 text-slate-600 shrink-0 ml-1">Pendente</span>
+                      <span className={`text-[9px] px-1 py-0.5 rounded shrink-0 ml-1 ${
+                        isCurrent ? "bg-slate-800 text-slate-300" : "bg-slate-200 text-slate-600"
+                      }`}>
+                        Pendente
+                      </span>
                     )}
                   </button>
                 )

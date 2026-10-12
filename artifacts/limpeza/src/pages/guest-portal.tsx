@@ -219,6 +219,7 @@ export default function GuestPortal() {
   const [arrivalSuccessNotice, setArrivalSuccessNotice] = useState(false)
   const [selfCheckinNotice, setSelfCheckinNotice] = useState(false)
   const [confirmingSelfCheckin, setConfirmingSelfCheckin] = useState(false)
+  const [copiedGuestLinkIndex, setCopiedGuestLinkIndex] = useState<number | null>(null)
 
   const handleSaveEstimatedArrival = async () => {
     const timeVal = selectedArrivalTime || customArrivalTime.trim()
@@ -657,15 +658,38 @@ export default function GuestPortal() {
 
   const isCurrentGuestTitular = Number(currentGuest?.index || activeGuestIndex) === 1
 
-  const needsReSignature = Boolean(
+  // Avaliação estritamente individual e coletiva da re-assinatura
+  const reservationNeedsReSignature = Boolean(
     reservation?.needsReSignature ||
-    (currentGuest && currentGuest.needsReSignature)
+    (Array.isArray(guestsList) && guestsList.some((g: any) => Boolean(g.needsReSignature)))
   )
+
+  const currentGuestNeedsReSignature = Boolean(
+    currentGuest?.needsReSignature !== undefined
+      ? currentGuest.needsReSignature
+      : (reservationNeedsReSignature && !currentGuest?.hasCompletedCheckin)
+  )
+
+  // Status de re-assinatura por grupo de ocupantes
+  const pendingReSignGuests = useMemo(() => {
+    return guestsList.filter((g: any) => Boolean(g.needsReSignature))
+  }, [guestsList])
+
+  const completedReSignGuests = useMemo(() => {
+    return guestsList.filter((g: any) => Boolean(g.hasCompletedCheckin && !g.needsReSignature))
+  }, [guestsList])
+
+  const otherPendingReSignGuests = useMemo(() => {
+    return guestsList.filter((g: any) => Number(g.index) !== Number(activeGuestIndex) && Boolean(g.needsReSignature))
+  }, [guestsList, activeGuestIndex])
+
+  // Preserva needsReSignature apontando para a obrigação do hóspede atual
+  const needsReSignature = currentGuestNeedsReSignature
 
   const reSignatureReason = reservation?.reSignatureReason || 
     "Sua reserva teve as datas ou acomodação alteradas. É obrigatório assinar a declaração atualizada para liberar o acesso ao condomínio."
 
-  const isCurrentGuestPreCheckinDone = !needsReSignature && Boolean(
+  const isCurrentGuestPreCheckinDone = !currentGuestNeedsReSignature && Boolean(
     currentGuest?.hasCompletedCheckin ||
     currentGuest?.status === "CHECKED_IN" ||
     currentGuest?.fnrhSignedAt ||
@@ -677,9 +701,9 @@ export default function GuestPortal() {
     ))
   )
 
-  const isPreCheckinDone = !needsReSignature && (guestsList.length > 1
+  const isPreCheckinDone = guestsList.length > 1
     ? isCurrentGuestPreCheckinDone
-    : Boolean(
+    : (!currentGuestNeedsReSignature && Boolean(
         data?.preCheckinStatus?.completed ||
         data?.preCheckinStatus?.isFullyCompleted ||
         reservation?.fnhrCompleted ||
@@ -688,11 +712,16 @@ export default function GuestPortal() {
         (Array.isArray(reservation?.guests) && reservation.guests.length > 0 && reservation.guests.some((g: any) => g.hasCompletedCheckin))
       ))
 
-  const getCheckinPath = (readonly = false) => {
+  const getCheckinPath = (readonly = false, targetIdx?: number) => {
     const c = code || reservation?.code || ""
-    const gParam = activeGuestIndex > 1 ? `guest=${activeGuestIndex}` : ""
+    const idx = targetIdx ?? activeGuestIndex
+    const targetG = guestsList.find((g: any) => Number(g.index) === Number(idx)) || (idx === 1 ? currentGuest : null)
+    const targetNeedsResign = targetG?.needsReSignature !== undefined
+      ? Boolean(targetG.needsReSignature)
+      : (Boolean(reservationNeedsReSignature) && !targetG?.hasCompletedCheckin)
+    const gParam = idx > 1 ? `guest=${idx}` : ""
     const roParam = readonly ? "readonly=true" : ""
-    const resignParam = needsReSignature ? "resign=1" : ""
+    const resignParam = targetNeedsResign ? "resign=1" : ""
     const parts = [gParam, roParam, resignParam].filter(Boolean).join("&")
     return `/pre-checkin/${c}${parts ? `?${parts}` : ""}`
   }
@@ -1622,8 +1651,7 @@ export default function GuestPortal() {
 
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {/* Atalhos para Tablet e Desktop (>= md) */}
-            {/* Atalhos para Tablet e Desktop (>= md) */}
-            {!hasEnteredFlat && needsReSignature && (
+            {!hasEnteredFlat && currentGuestNeedsReSignature && (
               <Button
                 type="button"
                 size="sm"
@@ -1634,7 +1662,22 @@ export default function GuestPortal() {
                 <span>Assinar Termo Atualizado</span>
               </Button>
             )}
-            {!hasEnteredFlat && !needsReSignature && !isPreCheckinDone && (
+            {!hasEnteredFlat && !currentGuestNeedsReSignature && otherPendingReSignGuests.length > 0 && (
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  const targetG = otherPendingReSignGuests[0]
+                  setActiveGuestIndex(targetG.index)
+                  setLocation(getCheckinPath(false, targetG.index))
+                }}
+                className="hidden md:inline-flex h-9 px-3.5 rounded-xl bg-amber-100 hover:bg-amber-200 border border-amber-300 text-amber-900 font-bold text-xs items-center gap-2 shadow-2xs"
+              >
+                <PenTool className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                <span>Assinar por {otherPendingReSignGuests[0].name?.split(" ")[0] || "Acompanhante"}</span>
+              </Button>
+            )}
+            {!hasEnteredFlat && !currentGuestNeedsReSignature && otherPendingReSignGuests.length === 0 && !isPreCheckinDone && (
               <Button
                 type="button"
                 variant="outline"
@@ -1713,7 +1756,7 @@ export default function GuestPortal() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-52 bg-white border-slate-200 rounded-2xl shadow-xl p-1.5 text-slate-800">
-                  {!hasEnteredFlat && needsReSignature && (
+                  {!hasEnteredFlat && currentGuestNeedsReSignature && (
                     <DropdownMenuItem
                       onClick={() => setLocation(getCheckinPath(false))}
                       className="flex items-center gap-2.5 px-3 py-2.5 text-xs font-bold rounded-xl cursor-pointer hover:bg-amber-50 text-amber-900"
@@ -1722,7 +1765,20 @@ export default function GuestPortal() {
                       <span>Assinar Termo Atualizado</span>
                     </DropdownMenuItem>
                   )}
-                  {!hasEnteredFlat && !needsReSignature && !isPreCheckinDone && (
+                  {!hasEnteredFlat && !currentGuestNeedsReSignature && otherPendingReSignGuests.length > 0 && (
+                    <DropdownMenuItem
+                      onClick={() => {
+                        const targetG = otherPendingReSignGuests[0]
+                        setActiveGuestIndex(targetG.index)
+                        setLocation(getCheckinPath(false, targetG.index))
+                      }}
+                      className="flex items-center gap-2.5 px-3 py-2.5 text-xs font-bold rounded-xl cursor-pointer hover:bg-amber-50 text-amber-900"
+                    >
+                      <PenTool className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>Assinar por {otherPendingReSignGuests[0].name?.split(" ")[0] || "Acompanhante"}</span>
+                    </DropdownMenuItem>
+                  )}
+                  {!hasEnteredFlat && !currentGuestNeedsReSignature && otherPendingReSignGuests.length === 0 && !isPreCheckinDone && (
                     <DropdownMenuItem
                       onClick={() => setLocation(getCheckinPath(false))}
                       className="flex items-center gap-2.5 px-3 py-2.5 text-xs font-bold rounded-xl cursor-pointer hover:bg-slate-100 text-indigo-700"
@@ -1797,8 +1853,8 @@ export default function GuestPortal() {
       {/* ── Main Container ──────────────────────────────────────────────── */}
       <main className="max-w-4xl w-full mx-auto px-4 py-6 sm:py-8 space-y-6">
         
-        {/* ── Banner de Alerta: Re-assinatura Obrigatória (Datas ou Flat Alterados) ── */}
-        {!isCancelled && needsReSignature && (
+        {/* ── Banner de Alerta: Re-assinatura Obrigatória para o Hóspede Atual ── */}
+        {!isCancelled && currentGuestNeedsReSignature && (
           <div className="rounded-3xl border-2 border-amber-400 bg-gradient-to-r from-amber-50 via-orange-50/80 to-amber-50 p-5 sm:p-6 shadow-md space-y-3 animate-in fade-in slide-in-from-top-2">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div className="flex items-start sm:items-center gap-3.5">
@@ -1815,10 +1871,10 @@ export default function GuestPortal() {
                     </span>
                   </div>
                   <h2 className="text-lg sm:text-xl font-black text-amber-950 mt-1">
-                    Declaração de Check-in Requer Nova Assinatura
+                    Declaração de Check-in Requer Sua Assinatura
                   </h2>
                   <p className="text-xs sm:text-sm text-amber-900/90 mt-0.5 leading-relaxed max-w-2xl">
-                    Sua reserva teve as datas ou acomodação alteradas. É obrigatório assinar a declaração atualizada para liberar o acesso ao condomínio.
+                    Olá, <strong>{currentGuest?.name || reservation.guestName}</strong>! Sua reserva teve as datas ou acomodação alteradas. É obrigatório assinar a declaração atualizada para liberar o acesso ao condomínio.
                   </p>
                 </div>
               </div>
@@ -1827,7 +1883,7 @@ export default function GuestPortal() {
                 <Button
                   type="button"
                   onClick={() => setLocation(getCheckinPath(false))}
-                  className="w-full sm:w-auto h-11 px-5 rounded-xl bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md transition-all"
+                  className="w-full sm:w-auto h-11 px-5 rounded-xl bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer"
                 >
                   <PenTool className="w-4 h-4" />
                   <span>Assinar Termo Atualizado</span>
@@ -1842,11 +1898,198 @@ export default function GuestPortal() {
                 <strong>Seus dados e documentos estão salvos:</strong> você só precisará conferir as novas informações da estadia e assinar digitalmente.
               </span>
             </div>
+
+            {guestsList.length > 1 && (
+              <div className="pt-2 border-t border-amber-200/60 flex flex-wrap items-center gap-2">
+                <span className="text-[11px] font-bold text-amber-900">Status dos Ocupantes:</span>
+                {guestsList.map((g: any) => {
+                  const gNeedsReSign = Boolean(g.needsReSignature)
+                  const gDone = !gNeedsReSign && Boolean(g.hasCompletedCheckin)
+                  return (
+                    <span
+                      key={g.index}
+                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold ${
+                        gNeedsReSign
+                          ? "bg-amber-200/90 text-amber-950 border border-amber-300"
+                          : gDone
+                          ? "bg-emerald-100 text-emerald-900 border border-emerald-300"
+                          : "bg-white/80 text-slate-700 border border-slate-200"
+                      }`}
+                    >
+                      {gDone ? "✓" : "⏳"} {g.name || `Hóspede ${g.index}`}:{" "}
+                      <strong>{gNeedsReSign ? "Re-assinatura Pendente" : gDone ? "Assinatura Ok" : "Pendente"}</strong>
+                    </span>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Banner Informativo: Assinatura do Hóspede Atual Concluída, Aguardando Acompanhante ── */}
+        {!isCancelled && !currentGuestNeedsReSignature && reservationNeedsReSignature && otherPendingReSignGuests.length > 0 && (
+          <div className="rounded-3xl border-2 border-emerald-400 bg-gradient-to-r from-emerald-50 via-teal-50/70 to-amber-50/70 p-5 sm:p-6 shadow-md space-y-4 animate-in fade-in slide-in-from-top-2">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-start sm:items-center gap-3.5">
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center font-bold shadow-sm shrink-0">
+                  <CheckCircle2 className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Badge className="bg-emerald-600 text-white text-[10.5px] font-bold px-2 py-0.5">
+                      ✓ SUA ASSINATURA ESTÁ ATUALIZADA
+                    </Badge>
+                    <Badge className="bg-amber-100 text-amber-900 border border-amber-300 text-[10.5px] font-bold px-2 py-0.5 animate-pulse">
+                      ⏳ FALTA ACOMPANHANTE ({otherPendingReSignGuests.length})
+                    </Badge>
+                    <span className="text-[11px] text-slate-600 font-semibold font-mono">
+                      Flat {reservation.flatNumber} • {reservation.code}
+                    </span>
+                  </div>
+                  <h2 className="text-lg sm:text-xl font-black text-slate-900 mt-1">
+                    Sua Assinatura foi Atualizada com Sucesso!
+                  </h2>
+                  <p className="text-xs sm:text-sm text-slate-700 mt-0.5 leading-relaxed max-w-2xl">
+                    Olá, <strong>{currentGuest?.name || reservation.guestName}</strong>! Sua declaração de check-in para o <strong>Flat {reservation.flatNumber}</strong> já está assinada e registrada. Para a liberação completa do grupo na portaria, falta apenas o preenchimento de:{" "}
+                    <strong>{otherPendingReSignGuests.map((g: any) => g.name || `Hóspede ${g.index}`).join(", ")}</strong>.
+                  </p>
+                </div>
+              </div>
+
+              <div className="shrink-0 w-full sm:w-auto flex flex-col sm:flex-row gap-2">
+                <Button
+                  type="button"
+                  onClick={() => {
+                    const firstPending = otherPendingReSignGuests[0]
+                    setActiveGuestIndex(firstPending.index)
+                    setLocation(getCheckinPath(false, firstPending.index))
+                  }}
+                  className="h-11 px-5 rounded-xl bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer"
+                >
+                  <PenTool className="w-4 h-4" />
+                  <span>Preencher por {otherPendingReSignGuests[0].name?.split(" ")[0] || "Acompanhante"}</span>
+                  <ArrowRight className="w-4 h-4" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setLocation(getCheckinPath(true, activeGuestIndex))}
+                  className="h-11 px-4 rounded-xl border-slate-300 hover:bg-slate-100 text-slate-700 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <FileText className="w-4 h-4 text-emerald-600" />
+                  <span>Ver Minha Ficha</span>
+                </Button>
+              </div>
+            </div>
+
+            {/* Lista detalhada dos ocupantes com status visual isolado */}
+            <div className="bg-white/80 rounded-2xl border border-emerald-200/80 p-3.5 space-y-2.5">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 block">
+                Status Individual dos Hóspedes:
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {guestsList.map((g: any) => {
+                  const gNeedsReSign = Boolean(g.needsReSignature)
+                  const gDone = !gNeedsReSign && Boolean(g.hasCompletedCheckin)
+                  const isCur = Number(g.index) === Number(activeGuestIndex)
+                  const isCopied = copiedGuestLinkIndex === g.index
+
+                  return (
+                    <div
+                      key={g.index}
+                      className={`p-2.5 rounded-xl border flex items-center justify-between gap-2 ${
+                        gDone
+                          ? "bg-emerald-50/70 border-emerald-200 text-emerald-950"
+                          : "bg-amber-50/80 border-amber-200 text-amber-950"
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-bold text-xs truncate">
+                            {g.name || `Hóspede ${g.index}`}
+                          </span>
+                          {Number(g.index) === 1 && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-semibold">
+                              Titular
+                            </span>
+                          )}
+                          {isCur && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-sky-200 text-sky-800 font-semibold">
+                              Você
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[10.5px] flex items-center gap-1 mt-0.5 font-medium">
+                          {gDone ? (
+                            <>
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                              <span className="text-emerald-700 font-semibold">Assinatura Atualizada ✓</span>
+                            </>
+                          ) : (
+                            <>
+                              <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                              <span className="text-amber-800 font-semibold">Re-assinatura Pendente</span>
+                            </>
+                          )}
+                        </span>
+                      </div>
+
+                      <div className="shrink-0 flex items-center gap-1">
+                        {gNeedsReSign ? (
+                          <>
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => {
+                                setActiveGuestIndex(g.index)
+                                setLocation(getCheckinPath(false, g.index))
+                              }}
+                              className="h-8 px-2.5 text-[11px] font-bold rounded-lg bg-amber-600 hover:bg-amber-700 text-white shadow-2xs cursor-pointer"
+                            >
+                              Assinar
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                const origin = typeof window !== "undefined" ? window.location.origin : ""
+                                const url = `${origin}/pre-checkin/${encodeURIComponent(reservation.code)}?guest=${g.index}&resign=1`
+                                if (navigator.clipboard?.writeText) {
+                                  navigator.clipboard.writeText(url)
+                                  setCopiedGuestLinkIndex(g.index)
+                                  setTimeout(() => setCopiedGuestLinkIndex(null), 2500)
+                                }
+                              }}
+                              className="h-8 px-2 text-[11px] font-medium rounded-lg border-amber-300 text-amber-900 hover:bg-amber-100 cursor-pointer"
+                              title="Copiar link para enviar ao acompanhante"
+                            >
+                              {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                              <span className="hidden sm:inline ml-1">{isCopied ? "Copiado!" : "Copiar"}</span>
+                            </Button>
+                          </>
+                        ) : (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setLocation(getCheckinPath(true, g.index))}
+                            className="h-8 px-2 text-[11px] font-medium text-emerald-800 hover:bg-emerald-100/70 cursor-pointer"
+                          >
+                            Ver Ficha
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
           </div>
         )}
 
         {/* ── Banner de Confirmação: Re-assinatura Concluída com Sucesso ─────────── */}
-        {typeof window !== "undefined" && new URLSearchParams(window.location.search).get("resign_success") === "1" && !needsReSignature && (
+        {typeof window !== "undefined" && new URLSearchParams(window.location.search).get("resign_success") === "1" && !reservationNeedsReSignature && (
           <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 text-white shadow-lg flex items-center justify-between gap-4 animate-in fade-in slide-in-from-top-2">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-2xl bg-white/20 flex items-center justify-center shrink-0">
@@ -1857,7 +2100,7 @@ export default function GuestPortal() {
                   ✓ Ficha de Check-in Re-assinada com Sucesso!
                 </h3>
                 <p className="text-xs sm:text-sm text-emerald-50 leading-relaxed mt-0.5">
-                  Sua declaração atualizada com as novas datas e acomodação foi autenticada e enviada para a portaria. O acesso ao condomínio está 100% liberado!
+                  Todas as declarações atualizadas com as novas datas e acomodação foram autenticadas e enviadas para a portaria. O acesso ao condomínio está 100% liberado!
                 </p>
               </div>
             </div>
@@ -2017,7 +2260,8 @@ export default function GuestPortal() {
                     const gDisplayName = g.name && !g.name.startsWith("Hóspede ") 
                       ? g.name 
                       : (isTitular ? (reservation.guestName || `Hóspede ${gIdx}`) : `Hóspede ${gIdx}`)
-                    const gCheckinDone = Boolean(
+                    const gNeedsReSign = Boolean(g.needsReSignature)
+                    const gCheckinDone = !gNeedsReSign && Boolean(
                       g.hasCompletedCheckin || 
                       g.status === "CHECKED_IN" || 
                       g.fnrhSignedAt || 
@@ -2043,6 +2287,10 @@ export default function GuestPortal() {
                         className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                           isSelected
                             ? "bg-sky-600 text-white shadow-xs scale-[1.02]"
+                            : gNeedsReSign
+                            ? "bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300"
+                            : gCheckinDone
+                            ? "bg-emerald-50/80 hover:bg-emerald-100 text-emerald-900 border border-emerald-200"
                             : "bg-white hover:bg-slate-100 text-slate-700 border border-slate-200"
                         }`}
                       >
@@ -2054,15 +2302,21 @@ export default function GuestPortal() {
                             Titular
                           </span>
                         )}
-                        {gCheckinDone ? (
+                        {gNeedsReSign ? (
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5 ${
+                            isSelected ? "bg-amber-400 text-amber-950 font-black" : "bg-amber-100 text-amber-900 border border-amber-300"
+                          }`}>
+                            ⚠️ Re-assinar
+                          </span>
+                        ) : gCheckinDone ? (
                           <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5 ${
                             isSelected ? "bg-emerald-500/30 text-emerald-100" : "bg-emerald-50 text-emerald-700 border border-emerald-200"
                           }`}>
-                            ✓ Check-in Ok
+                            ✓ Assinado
                           </span>
                         ) : (
                           <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-md ${
-                            isSelected ? "bg-amber-500/30 text-amber-100" : "bg-amber-50 text-amber-700 border border-amber-200"
+                            isSelected ? "bg-slate-700 text-slate-200" : "bg-slate-100 text-slate-600 border border-slate-200"
                           }`}>
                             Pendente Check-in
                           </span>
@@ -2087,11 +2341,15 @@ export default function GuestPortal() {
                     <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-300 font-bold text-[10px]">
                       ✓ Entrada Confirmada
                     </Badge>
-                  ) : needsReSignature ? (
+                  ) : currentGuestNeedsReSignature ? (
                     <Badge variant="outline" className="bg-amber-100 text-amber-900 border-amber-300 font-bold text-[10px] animate-pulse">
                       ⚠️ Re-assinatura Obrigatória
                     </Badge>
-                  ) : isPreCheckinDone ? (
+                  ) : otherPendingReSignGuests.length > 0 ? (
+                    <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-300 font-bold text-[10px]">
+                      ✓ Seu Check-in Ok • Acompanhante Pendente
+                    </Badge>
+                  ) : isCurrentGuestPreCheckinDone ? (
                     <Badge variant="outline" className="bg-sky-50 text-sky-700 border-sky-300 font-bold text-[10px]">
                       ✓ Dados Enviados
                     </Badge>
@@ -2110,7 +2368,7 @@ export default function GuestPortal() {
                 </span>
               </div>
 
-              {needsReSignature ? (
+              {currentGuestNeedsReSignature ? (
                 <div className="space-y-2 mt-2">
                   <div className="p-2.5 rounded-xl bg-amber-100/90 border border-amber-300 text-amber-950 text-xs font-medium leading-snug">
                     <span className="font-bold block text-amber-900 mb-0.5">⚠️ Assinatura Atualizada Obrigatória</span>
@@ -2119,11 +2377,41 @@ export default function GuestPortal() {
                   <Button
                     type="button"
                     onClick={() => setLocation(getCheckinPath(false))}
-                    className="w-full h-10 text-xs sm:text-sm font-bold rounded-xl bg-amber-600 hover:bg-amber-700 text-white shadow-xs transition-all active:scale-95 flex items-center justify-center gap-2"
+                    className="w-full h-10 text-xs sm:text-sm font-bold rounded-xl bg-amber-600 hover:bg-amber-700 text-white shadow-xs transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
                   >
                     <PenTool className="w-4.5 h-4.5 shrink-0" />
                     <span>Assinar Termo Atualizado</span>
                   </Button>
+                </div>
+              ) : otherPendingReSignGuests.length > 0 ? (
+                <div className="space-y-2 mt-2">
+                  <div className="p-2.5 rounded-xl bg-emerald-50/90 border border-emerald-200 text-emerald-950 text-xs font-medium leading-snug">
+                    <span className="font-bold block text-emerald-900 mb-0.5">✓ Sua Assinatura está Atualizada</span>
+                    Aguardando preenchimento de <strong>{otherPendingReSignGuests.map((g: any) => g.name || `Hóspede ${g.index}`).join(", ")}</strong> para liberação na portaria.
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      onClick={() => {
+                        const targetG = otherPendingReSignGuests[0]
+                        setActiveGuestIndex(targetG.index)
+                        setLocation(getCheckinPath(false, targetG.index))
+                      }}
+                      className="flex-1 h-9 text-xs font-bold rounded-xl bg-amber-600 hover:bg-amber-700 text-white shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <PenTool className="w-3.5 h-3.5" />
+                      <span>Preencher por {otherPendingReSignGuests[0].name?.split(" ")[0] || "Acompanhante"}</span>
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setLocation(getCheckinPath(true))}
+                      className="h-9 px-3 text-xs font-bold rounded-xl border-slate-200 text-slate-700 hover:bg-slate-100 flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <FileText className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Ver Minha Ficha</span>
+                    </Button>
+                  </div>
                 </div>
               ) : hasEnteredFlat ? (
                 <div className="space-y-1.5 mt-2">
