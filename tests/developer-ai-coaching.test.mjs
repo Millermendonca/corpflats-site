@@ -532,8 +532,8 @@ test("R5: Imunidade a Falso-Positivo em FAQ (palavra 'possui' não deve disparar
   assert.ok(respFerro.includes("Ferro de Passar"), "Pergunta legítima deve responder FAQ de ferro");
 });
 
-test("R6: Saudação Inteligente Orientada pelo Status da Estadia (Anti-'estadia agradável' para quem não entrou)", () => {
-  // 1. Reserva futura
+test("R6: Saudação Natural com Escuta Ativa (Anti-Presunção e Zero Oferta de Malas)", () => {
+  // 1. Saudação 'Olá' para hóspede com reserva futura
   const respFutura = generateHeuristicResponse(
     "Olá",
     {
@@ -545,26 +545,45 @@ test("R6: Saudação Inteligente Orientada pelo Status da Estadia (Anti-'estadia
     },
     DEFAULT_AI_CONFIG
   );
-  assert.ok(!respFutura.includes("tornar a sua estadia"), "Não deve perguntar sobre estadia agradável para reserva futura");
-  assert.ok(respFutura.includes("estadia confirmada a partir de"), "Deve reconhecer data futura de estadia");
+  assert.ok(respFutura.includes("Olá, Miller!"), "Deve saudar cordialmente pelo nome");
+  assert.ok(respFutura.includes("Como posso te ajudar hoje?"), "Deve perguntar abertamente como pode ajudar");
+  assert.ok(!respFutura.toLowerCase().includes("mala"), "NUNCA deve oferecer ajuda com malas");
+  assert.ok(!respFutura.toLowerCase().includes("bagag"), "NUNCA deve oferecer ajuda com bagagens");
+  assert.ok(!respFutura.includes("tornar a sua estadia"), "Não deve presumir estadia");
 
-  // 2. Em estadia (já no flat)
-  const respEstadia = generateHeuristicResponse(
-    "Olá",
+  // 2. Saudação 'Bom dia' para hóspede com check-out hoje
+  const respCheckout = generateHeuristicResponse(
+    "Bom dia",
     {
       guestName: "Miller",
-      stayStatus: "em_estadia",
-      flatNumber: "712",
+      stayStatus: "checkout_hoje",
+      flatNumber: "116",
       hasReservation: true,
-      reservation: { checkinDate: "2026-10-10", flatNumber: "712" }
+      reservation: { checkinDate: "2026-10-11", checkoutDate: "2026-10-12", flatNumber: "116" }
     },
     DEFAULT_AI_CONFIG
   );
-  assert.ok(respEstadia.includes("tornar a sua estadia no Flat 712 ainda mais agradável"), "Deve saudar hóspede em estadia");
+  assert.ok(respCheckout.startsWith("Bom dia, Miller!"), "Deve responder Bom dia mantendo a saudação");
+  assert.ok(respCheckout.includes("Como posso te ajudar hoje?"), "Deve perguntar como ajudar");
+  assert.ok(!respCheckout.toLowerCase().includes("mala"), "NUNCA deve oferecer malas no checkout");
+  assert.ok(!respCheckout.toLowerCase().includes("bagag"), "NUNCA deve oferecer bagagens no checkout");
 
-  // 3. Sem reserva ativa
+  // 3. Resposta sob demanda com uso do contexto (ex: pergunta sobre Wi-Fi)
+  const respWifi = generateHeuristicResponse(
+    "qual a senha do wifi?",
+    {
+      guestName: "Miller",
+      stayStatus: "checkin_hoje",
+      flatNumber: "116",
+      hasReservation: true
+    },
+    DEFAULT_AI_CONFIG
+  );
+  assert.ok(respWifi.includes("1234567890123"), "Deve usar o conhecimento sob demanda para responder perguntas pontuais");
+
+  // 4. Sem reserva ativa
   const respSemReserva = generateHeuristicResponse(
-    "Olá",
+    "Oi",
     {
       guestName: "Visitante",
       stayStatus: "sem_reserva_ativa",
@@ -572,6 +591,7 @@ test("R6: Saudação Inteligente Orientada pelo Status da Estadia (Anti-'estadia
     },
     DEFAULT_AI_CONFIG
   );
-  assert.ok(!respSemReserva.includes("tornar a sua estadia"), "Não deve falar de estadia para visitante sem reserva");
+  assert.ok(respSemReserva.includes("Como posso te ajudar hoje?"), "Deve saudar e perguntar como ajudar");
+  assert.ok(!respSemReserva.toLowerCase().includes("mala"), "Zero malas");
 });
 

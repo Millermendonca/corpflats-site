@@ -58,23 +58,22 @@ export const DEFAULT_AI_CONFIG = {
   systemPrompt: `Você é a Sofia, concierge virtual inteligente e acolhedora dos flats de alto padrão da CorpFlats no Edifício Soho Residence Service em Campos dos Goytacazes/RJ.
 Seu objetivo é encantar os hóspedes, responder dúvidas com precisão e fornecer assistência ágil e atenciosa.
 
-DIRETRIZES DE ATENDIMENTO:
+RACIOCÍNIO E DIRETRIZES DE CONVERSAÇÃO:
 1. Responda em português brasileiro de forma acolhedora, prestativa e concisa (ideal para leitura dinâmica em telas de celular no WhatsApp).
 2. Use emojis amigáveis com moderação (🏨, ✨, 🔑, ☕, 🚗, 🕒, 📍).
-3. Seja sempre fidedigna às informações fornecidas no CONTEXTO DO HÓSPEDE e na BASE DE CONHECIMENTO. NUNCA invente números de apartamentos, códigos ou senhas que não constem nos dados oficiais.
-4. Se o hóspede solicitar expressamente falar com um atendente humano, transborde o atendimento com gentileza informando que a equipe da recepção assumirá a conversa em instantes.
-5. Para hóspedes que chegam hoje: confira o status de limpeza informado no contexto. Se estiver "LIMPO E LIBERADO", comemore que o apartamento já está pronto para recebê-lo! Se estiver "EM PREPARAÇÃO", informe que a governança está caprichando na higienização para liberar o flat até o horário oficial das 14:00 (ou antes se finalizado).
-5.1. Para perguntas sobre reserva ('minha reserva está confirmada?', 'tenho reserva?'):
-- Se o hóspede POSSUIR reserva no contexto (ativa, hoje ou futura): confirme a reserva com entusiasmo, informando o número do Flat, data de entrada (check-in a partir das 14h), data de saída (check-out até às 12h) e o link do Pré-Check-in Digital. NUNCA envie apresentação comercial de 19 flats para quem já tem reserva!
-- Se o hóspede NÃO possuir reserva vinculada ao número no contexto: informe cordialmente que não localizou reserva ativa ou futura para o número de WhatsApp dele e solicite com cortesia o nome completo do titular ou o código da reserva para verificação. NUNCA envie apresentação comercial genérica de 19 flats para quem está perguntando se possui reserva!
-5.2. Para saudações iniciais ('olá', 'oi', 'bom dia', etc.):
-- Verifique SEMPRE o campo 'Status da estadia' no contexto antes de responder!
-- Se 'em_estadia': o hóspede já está hospedado dentro do flat; você pode perguntar como tornar a estadia no Flat X ainda mais agradável hoje.
-- Se 'checkin_hoje': a chegada é hoje (a partir das 14h); saude reconhecendo a chegada hoje e pergunte como ajudar com a chegada ou pré-check-in (se o flat estiver limpo, comemore a liberação antecipada!).
-- Se 'reserva_futura': a estadia é futura; NUNCA pergunte sobre tornar a estadia agradável hoje! Reconheça a reserva confirmada e informe a data de início e flat, colocando-se à disposição.
-- Se 'checkout_hoje': o hóspede sai hoje (até 12h); pergunte se precisa de apoio para check-out ou bagagem.
-- Se 'sem_reserva_ativa': saude como visitante/lead e pergunte como pode ajudar a escolher um flat ou tirar dúvidas.
-6. Para novos clientes / sem reserva: apresente a CorpFlats como a melhor opção de flats executivos mobiliados e climatizados em Campos dos Goytacazes (Centro, no prestigiado Edifício Soho Residence Service, na Rua Conselheiro Otaviano, 209), convide a reservar pelo site oficial e tire dúvidas de diárias e comodidades.`,
+3. Postura de Escuta Ativa e Saudação Natural:
+- Se o hóspede ou cliente enviou apenas uma saudação inicial (ex: "olá", "oi", "bom dia", "boa tarde", "boa noite", "tudo bem?"): responda com simpatia natural, cumprimente pelo nome se souber e apenas pergunte abertamente como pode ajudar hoje (ex: "Olá, Miller! Tudo bem? Sou a Sofia, concierge virtual da CorpFlats 🏨. Como posso te ajudar hoje? 😊").
+- NUNCA presuma que já sabe do que se trata o contato logo na saudação. Não faça suposições precipitadas nem despeje datas ou status de reserva logo de início sem que o hóspede tenha perguntado.
+- NUNCA ofereça ajuda com malas ou bagagens (o condomínio Soho não dispõe de serviço de maleiros/carregadores e essa oferta não condiz com a nossa operação).
+4. Uso Contextual do Conhecimento (Sob Demanda):
+- Tenha total consciência do CONTEXTO DO HÓSPEDE nos bastidores (número do flat, status da estadia, datas de check-in/out, regras de Wi-Fi, garagem, café, etc., ou a ausência de reserva).
+- Use esse conhecimento para formular uma resposta coerente, precisa e personalizada CONFORME O QUE O HÓSPEDE PERGUNTAR.
+  * Exemplo: se ele perguntar a senha da internet, use o Flat do contexto para informar a rede e senha daquele quarto.
+  * Exemplo: se perguntar sobre horários de saída ou check-in, use os dados da reserva dele.
+  * Exemplo: se perguntar "minha reserva está confirmada?", confirme com o número do flat e datas. Se não encontrar reserva para o número, informe com gentileza e peça o nome ou código.
+  * Exemplo: se não tiver reserva e perguntar sobre diárias ou flats, apresente as opções da CorpFlats com entusiasmo.
+5. Seja sempre fidedigna às informações fornecidas no CONTEXTO DO HÓSPEDE e na BASE DE CONHECIMENTO. NUNCA invente números de apartamentos, códigos ou senhas que não constem nos dados oficiais.
+6. Se o hóspede solicitar expressamente falar com um atendente humano, transborde o atendimento com gentileza informando que a equipe da recepção assumirá a conversa em instantes.`,
   knowledgeBase: {
     address: "Edifício Soho Residence Service, Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ",
     checkinTime: "14:00 (Check-in padrão a partir das 14h)",
@@ -118,11 +117,16 @@ export function getWhatsAppAiConfig(db) {
     if (!Array.isArray(current.handoverKeywords)) current.handoverKeywords = [...DEFAULT_AI_CONFIG.handoverKeywords];
     if (!current.systemPrompt) current.systemPrompt = DEFAULT_AI_CONFIG.systemPrompt;
     else {
-      if (!current.systemPrompt.includes("5.1. Para perguntas sobre reserva")) {
-        current.systemPrompt += `\n\n5.1. Para perguntas sobre reserva ('minha reserva está confirmada?', 'tenho reserva?'):\n- Se o hóspede POSSUIR reserva no contexto (ativa, hoje ou futura): confirme a reserva com entusiasmo, informando o número do Flat, data de entrada (check-in a partir das 14h), data de saída (check-out até às 12h) e o link do Pré-Check-in Digital. NUNCA envie apresentação comercial de 19 flats para quem já tem reserva!\n- Se o hóspede NÃO possuir reserva vinculada ao número no contexto: informe cordialmente que não localizou reserva ativa ou futura para o número de WhatsApp dele e solicite com cortesia o nome completo do titular ou o código da reserva para verificação. NUNCA envie apresentação comercial genérica de 19 flats para quem está perguntando se possui reserva!`;
+      // Remove menções legadas a bagagens ou presunções antigas de saudação
+      if (current.systemPrompt.includes("bagagem") || current.systemPrompt.includes("malas")) {
+        current.systemPrompt = current.systemPrompt.replace(/- Se 'checkout_hoje':.*bagagem\./g, "- Se 'checkout_hoje': o hóspede sai hoje (até 12h); responda cordialmente sem assumir perguntas nem oferecer auxílio com malas.");
       }
-      if (!current.systemPrompt.includes("5.2. Para saudações iniciais")) {
-        current.systemPrompt += `\n\n5.2. Para saudações iniciais ('olá', 'oi', 'bom dia', etc.):\n- Verifique SEMPRE o campo 'Status da estadia' no contexto antes de responder!\n- Se 'em_estadia': o hóspede já está hospedado dentro do flat; você pode perguntar como tornar a estadia no Flat X ainda mais agradável hoje.\n- Se 'checkin_hoje': a chegada é hoje (a partir das 14h); saude reconhecendo a chegada hoje e pergunte como ajudar com a chegada ou pré-check-in (se o flat estiver limpo, comemore a liberação antecipada!).\n- Se 'reserva_futura': a estadia é futura; NUNCA pergunte sobre tornar a estadia agradável hoje! Reconheça a reserva confirmada e informe a data de início e flat, colocando-se à disposição.\n- Se 'checkout_hoje': o hóspede sai hoje (até 12h); pergunte se precisa de apoio para check-out ou bagagem.\n- Se 'sem_reserva_ativa': saude como visitante/lead e pergunte como pode ajudar a escolher um flat ou tirar dúvidas.`;
+      if (current.systemPrompt.includes("5.2. Para saudações iniciais")) {
+        current.systemPrompt = current.systemPrompt.replace(/5\.2\. Para saudações iniciais.*?(?=6\.|$)/s, `5.2. Postura de Escuta Ativa e Saudação Natural:
+- Se o hóspede ou cliente enviou apenas uma saudação inicial (ex: 'olá', 'oi', 'bom dia', 'boa tarde', 'boa noite', 'tudo bem?'): responda com simpatia natural, cumprimente pelo nome se souber e apenas pergunte abertamente como pode ajudar hoje (ex: 'Olá, Miller! Tudo bem? Sou a Sofia, concierge virtual da CorpFlats 🏨. Como posso te ajudar hoje? 😊').
+- NUNCA presuma que já sabe do que se trata o contato logo na saudação. Não faça suposições precipitadas nem despeje datas ou status de reserva logo de início sem que o hóspede tenha perguntado.
+- NUNCA ofereça ajuda com malas ou bagagens (o condomínio Soho não dispõe de serviço de maleiros/carregadores e essa oferta não condiz com a nossa operação).
+- Uso Contextual do Conhecimento (Sob Demanda): Mantenha total consciência do CONTEXTO DO HÓSPEDE nos bastidores (número do flat, status da estadia, datas de check-in/out, regras de Wi-Fi, garagem, café, etc., ou a ausência de reserva). Use esse conhecimento para formular uma resposta coerente, precisa e personalizada CONFORME O QUE O HÓSPEDE PERGUNTAR.\n\n`);
       }
     }
     if (!current.knowledgeBase) current.knowledgeBase = { ...DEFAULT_AI_CONFIG.knowledgeBase };
@@ -179,17 +183,39 @@ export function detectHandoverIntent(text = "", customKeywords = null) {
 }
 
 /**
+ * Utilitário Canônico de Fuso Horário de Brasília (America/Sao_Paulo)
+ */
+export function getBrasiliaDateParts(d = new Date()) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  });
+  const parts = formatter.formatToParts(d);
+  const map = {};
+  for (const p of parts) {
+    map[p.type] = p.value;
+  }
+  return {
+    todayStr: `${map.year}-${map.month}-${map.day}`,
+    hour: parseInt(map.hour, 10),
+    minute: parseInt(map.minute, 10),
+    timeStr: `${map.hour}:${map.minute}`
+  };
+}
+
+/**
  * Constrói o contexto em tempo real do hóspede consultando reservas, flats e governança
  */
 export function buildGuestContext(db, phone) {
   const cleanPhone = normalizePhone(phone);
   const now = new Date();
-  // Horário de Brasília (UTC-3)
-  const brasiliaOffset = -3 * 60;
-  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
-  const brDate = new Date(utc + (brasiliaOffset * 60000));
-  const todayStr = brDate.toISOString().slice(0, 10);
-  const timeStr = brDate.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  const { todayStr, timeStr } = getBrasiliaDateParts(now);
 
   let matchedReservation = null;
   const reservations = Array.isArray(db?.reservations) ? db.reservations : [];
@@ -1466,7 +1492,17 @@ export function synthesizeGuidelineFromText(rawText, category = "geral") {
   const text = String(rawText || "").trim();
   const lower = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
-  // Caso 1: Regra sobre checagem de reserva
+  // Caso 1: Regra sobre malas / bagagens
+  if (/malas?|bagag/i.test(lower)) {
+    return "Nunca oferecer auxílio com malas ou bagagens. O condomínio Soho não dispõe de serviço de maleiros ou carregadores, mantendo o atendimento focado no acolhimento e nas dúvidas do hóspede.";
+  }
+
+  // Caso 2: Regra sobre postura de escuta ativa / sem presunção em saudações
+  if (/(?:n[aã]o\s+assumir|s[oó]\s+pergunt|como\s+pode\s+ajudar|racioc[ií]nio|apenas\s+responder)/i.test(lower) || (/(?:sauda[cç][aã]o|bom\s+dia|ol[aá])/i.test(lower) && /(?:h[oó]spede|reserva|ajud)/i.test(lower))) {
+    return "Adotar postura de escuta ativa: em saudações iniciais (olá, bom dia, etc.), cumprimentar cordialmente e apenas perguntar abertamente como pode ajudar hoje, sem presumir o assunto e sem despejar detalhes da reserva logo de início. O conhecimento sobre o hóspede ou reserva deve ser usado nos bastidores para responder com coerência sob demanda, conforme o que for perguntado.";
+  }
+
+  // Caso 3: Regra sobre checagem de reserva
   if (/pergu?i?nt.*reserva|verific.*reserva/i.test(lower)) {
     return "Ao ser questionada se tem reserva ou se a reserva está confirmada ('minha reserva está confirmada?'), verificar no sistema se o hóspede possui reserva ativa para data atual ou futura. Se confirmada, apresentar os detalhes do flat, check-in, check-out e link do pré-check-in. Se não localizada pelo número, solicitar o nome completo do titular ou código da reserva com cortesia.";
   }
@@ -1575,7 +1611,9 @@ export function classifyDeveloperMessage(messageText, db = null) {
     /\b(?:sou\s+(?:o\s+)?miller|aqui\s+[eé]\s+(?:o\s+)?miller|sou\s+(?:o\s+)?(?:desenvolvedor|dev|criador|programador))\b/i.test(lower) ||
     // Feedback de erro / crítica comportamental
     /\b(?:n[aã]o\s+deve|n[aã]o\s+pode|n[aã]o\s+pergunte|n[aã]o\s+diga|n[aã]o\s+fale|n[aã]o\s+responda|n[aã]o\s+mande)\s+(?:assim|dessa\s+forma|desse\s+jeito|isso)\b/i.test(lower) ||
-    /\b(?:n[aã]o\s+deve\s+(?:perguntar|dizer|falar|responder|mandar|agir|tratar|usar))\b/i.test(lower) ||
+    /\b(?:n[aã]o\s+deve\s+(?:perguntar|dizer|falar|responder|mandar|agir|tratar|usar|oferecer))\b/i.test(lower) ||
+    /\b(?:malas?|bagag(?:em|ens)?)\b/i.test(lower) ||
+    /\b(?:n[aã]o\s+assumir|s[oó]\s+deve\s+usar|apenas\s+responder|esse\s+seja\s+o\s+racioc[ií]nio|racioc[ií]nio)\b/i.test(lower) ||
     /\b(?:n[aã]o\s+faz\s+sentido|a\s+menos\s+que|s[oó]\s+se\s+a\s+pessoa|s[oó]\s+(?:pergunte|fale|diga|mande)\s+se)\b/i.test(lower) ||
     /\b(?:voc[eê]\s+verificou|verifique\s+(?:primeiro|antes)|verificou\s+(?:primeiro|antes)|cheque\s+(?:primeiro|antes))\b/i.test(lower) ||
     /\b(?:t[aá]\s+errad[ao]|est[aá]\s+errad[ao]|t[aá]\s+burra|est[aá]\s+burra|falhando|melhor(?:e|ar)\s+(?:a\s+resposta|isso)|corrij?a|aprenda\s+a)\b/i.test(lower) ||
@@ -1600,7 +1638,8 @@ export function classifyDeveloperMessage(messageText, db = null) {
       .trim();
 
     let category = "geral";
-    if (/(?:sauda[cç][aã]o|hospedad[ao]|esteja\s+hospedad[ao]|perguntar\s+assim|tornar\s+a\s+estadia)/i.test(lower)) category = "saudacao";
+    if (/(?:sauda[cç][aã]o|hospedad[ao]|esteja\s+hospedad[ao]|perguntar\s+assim|tornar\s+a\s+estadia|n[aã]o\s+assumir|racioc[ií]nio)/i.test(lower)) category = "saudacao";
+    else if (/(?:malas?|bagag)/i.test(lower)) category = "malas";
     else if (/reserva|estadia|check-?in\s+futuro|h[oó]spede\s+com\s+reserva/i.test(lower)) category = "reserva";
     else if (/caf[eé]|desjejum/i.test(lower)) category = "cafe";
     else if (/check-?in|entrada/i.test(lower)) category = "checkin";
@@ -2145,37 +2184,14 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     }
   }
 
-  // 8. Saudação Genérica Inteligente orientada pelo Status da Estadia
+  // 8. Saudação Genérica Natural (Escuta Ativa sem presunção e sem oferta de malas)
   if (/^(oi|olá|ola|bom dia|boa tarde|boa noite|opa|ei|hello|hi)[!., ]*$/i.test(text)) {
-    const flatStr = guestContext.flatNumber ? ` no Flat ${guestContext.flatNumber}` : "";
-    const flatOnly = guestContext.flatNumber ? ` (Flat ${guestContext.flatNumber})` : "";
-
-    // 1. Já está fisicamente hospedado dentro do flat
-    if (guestContext.stayStatus === "em_estadia") {
-      return ret(`Olá${name}! Tudo bem? Sou a ${aiConfig.agentName}, concierge virtual da CorpFlats. Como posso tornar a sua estadia${flatStr} ainda mais agradável hoje? 🏨✨`);
-    }
-
-    // 2. Check-in é hoje
-    if (guestContext.stayStatus === "checkin_hoje") {
-      if (guestContext.isRoomReady) {
-        return ret(`Olá${name}! Tudo bem? Sou a ${aiConfig.agentName}, concierge virtual da CorpFlats. Vi que sua chegada é hoje e seu Flat ${guestContext.flatNumber || ""} já está limpo e liberado! 🎉 Como posso te ajudar com a sua chegada hoje? 🔑✨`);
-      }
-      return ret(`Olá${name}! Tudo bem? Sou a ${aiConfig.agentName}, concierge virtual da CorpFlats. Vi que o seu check-in é hoje a partir das 14h${flatOnly}. Como posso te ajudar na preparação da sua chegada hoje? 🏨✨`);
-    }
-
-    // 3. Reserva futura confirmada (hóspede ainda em outra cidade/data)
-    if (guestContext.stayStatus === "reserva_futura" && guestContext.reservation) {
-      const checkinFormatted = guestContext.reservation.checkinDate ? formatBrDate(guestContext.reservation.checkinDate) : "data futura";
-      return ret(`Olá${name}! Tudo bem? Sou a ${aiConfig.agentName}, concierge virtual da CorpFlats. Vi que você possui uma estadia confirmada a partir de ${checkinFormatted}${flatOnly}. Como posso te ajudar hoje com suas dúvidas ou pré-check-in? 🏨✨`);
-    }
-
-    // 4. Check-out é hoje
-    if (guestContext.stayStatus === "checkout_hoje") {
-      return ret(`Olá${name}! Tudo bem? Sou a ${aiConfig.agentName}, concierge virtual da CorpFlats. Vi que seu check-out é hoje até as 12h${flatOnly}. Precisa de alguma assistência para sua saída ou bagagens? 🏨`);
-    }
-
-    // 5. Sem reserva ativa ou estadia passada (lead ou visitante)
-    return ret(`Olá${name}! Sou a ${aiConfig.agentName}, concierge virtual da CorpFlats em Campos dos Goytacazes. Como posso te ajudar hoje? Posso tirar dúvidas sobre nossas acomodações, valores de diárias ou comodidades! 😊`);
+    const lower = text.toLowerCase().trim();
+    let greetingWord = "Olá";
+    if (lower.startsWith("bom dia")) greetingWord = "Bom dia";
+    else if (lower.startsWith("boa tarde")) greetingWord = "Boa tarde";
+    else if (lower.startsWith("boa noite")) greetingWord = "Boa noite";
+    return ret(`${greetingWord}${name}! Tudo bem? Sou a ${aiConfig.agentName}, concierge virtual da CorpFlats 🏨. Como posso te ajudar hoje? 😊`);
   }
 
   // 9. Resposta padrão prestativa

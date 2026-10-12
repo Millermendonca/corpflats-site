@@ -19,7 +19,8 @@ import {
   buildGeminiTools,
   getBotActionsSettings,
   executeBotAction,
-  callGeminiAi
+  callGeminiAi,
+  getBrasiliaDateParts
 } from "../artifacts/api-server/whatsapp-ai-service.mjs";
 
 // Captura e gerencia servidores e timers de background para encerramento limpo sem mascaramento
@@ -57,6 +58,7 @@ describe("Agente de IA para WhatsApp - Testes Unitários e de Integração", () 
   let mockDb;
 
   beforeEach(() => {
+    const todayStr = getBrasiliaDateParts().todayStr;
     mockDb = {
       zapiConfig: {
         instanceId: "TEST_INSTANCE",
@@ -77,14 +79,14 @@ describe("Agente de IA para WhatsApp - Testes Unitários e de Integração", () 
           id: 1010,
           flatId: 1,
           flatNumber: "101",
-          requestDate: new Date().toISOString().slice(0, 10),
+          requestDate: todayStr,
           status: "clean"
         },
         {
           id: 2020,
           flatId: 2,
           flatNumber: "202",
-          requestDate: new Date().toISOString().slice(0, 10),
+          requestDate: todayStr,
           status: "dirty"
         }
       ],
@@ -96,8 +98,8 @@ describe("Agente de IA para WhatsApp - Testes Unitários e de Integração", () 
           guestPhone: "5521997142513",
           flatId: 1,
           flatNumber: "101",
-          checkinDate: new Date().toISOString().slice(0, 10),
-          checkoutDate: new Date(Date.now() + 86400000 * 5).toISOString().slice(0, 10),
+          checkinDate: todayStr,
+          checkoutDate: "2099-12-31",
           status: "confirmada"
         }
       ],
