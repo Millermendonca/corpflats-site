@@ -646,6 +646,7 @@ const defaultUsers = [
 let db = {
   users: defaultUsers,
   flats: [],
+  smartFlats: {},
   cleaningRequests: [],
   periodicTasks: [],
   periodicExecutions: [],
@@ -4141,6 +4142,7 @@ async function loadDatabase() {
       if (!Array.isArray(db.tariffOverrides)) db.tariffOverrides = [];
       if (!db.botActionsSettings) db.botActionsSettings = getBotActionsSettings();
       if (!Array.isArray(db.unmetDemands)) db.unmetDemands = [];
+      if (!db.smartFlats || typeof db.smartFlats !== "object" || Array.isArray(db.smartFlats)) db.smartFlats = {};
       reconcileUniversalIntegrity(loaded);
       sanitizeReservationFlags();
     }
@@ -33446,6 +33448,621 @@ setInterval(async () => {
   }
 }, 300000); // 5 minutos (era 30s — rotina matinal não precisa de polling agressivo)
 
+// ── SMART FLAT HUB (Domótica & Operação de Chegada) ──────────────────────────
+
+export const WELCOME_TRACKS = [
+  "CorpFlats Welcome Lounge",
+  "Sunset at Soho",
+  "Brisa de Verão",
+  "Executive Calm"
+];
+
+export function parseTimeToMinutes(str) {
+  if (!str) return null;
+  const s = String(str).trim().toLowerCase();
+  const m1 = s.match(/^(\d{1,2}):(\d{2})/);
+  if (m1) {
+    const h = parseInt(m1[1], 10);
+    const m = parseInt(m1[2], 10);
+    if (h >= 0 && h < 24 && m >= 0 && m < 60) return h * 60 + m;
+  }
+  const m2 = s.match(/^(\d{1,2})h(?:(\d{2}))?/);
+  if (m2) {
+    const h = parseInt(m2[1], 10);
+    const m = m2[2] ? parseInt(m2[2], 10) : 0;
+    if (h >= 0 && h < 24 && m >= 0 && m < 60) return h * 60 + m;
+  }
+  const m3 = s.match(/^(\d{1,2})$/);
+  if (m3) {
+    const h = parseInt(m3[1], 10);
+    if (h >= 0 && h < 24) return h * 60;
+  }
+  return null;
+}
+
+export function minutesToTimeStr(mins) {
+  if (mins === null || mins === undefined) return null;
+  const normalized = ((Math.floor(mins) % 1440) + 1440) % 1440;
+  const h = Math.floor(normalized / 60);
+  const m = normalized % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+export function createDefaultSmartFlatState(flatNumber, reservation = null) {
+  const reservationCode = reservation?.code || null;
+  const eta = reservation?.estimatedArrivalTime || null;
+  const isEntered = Boolean(
+    reservation?.guestSelfCheckin ||
+    reservation?.actualCheckinAt ||
+    reservation?.status === "checkin"
+  );
+
+  return {
+    flatNumber: String(flatNumber),
+    reservationCode,
+    devices: {
+      coffeeMaker: {
+        power: false,
+        scheduled: false,
+        scheduledTime: null,
+        turnedOnAt: null
+      },
+      ac: {
+        power: false,
+        mode: "cool",
+        targetTemperature: 22,
+        fanSpeed: "auto",
+        scheduled: false,
+        scheduledTime: null,
+        turnedOnAt: null
+      },
+      welcomePlaylist: {
+        enabled: true,
+        isPlaying: false,
+        volume: 35,
+        currentTrack: "CorpFlats Welcome Lounge",
+        playlist: "Bossa & Lounge Hospitality",
+        autoTriggered: false,
+        autoTriggeredAt: null
+      }
+    },
+    presence: {
+      eta: eta || null,
+      etaConfirmedAt: eta ? new Date().toISOString() : null,
+      isEntranceConfirmed: isEntered,
+      enteredAt: isEntered ? (reservation?.guestSelfCheckinAt || reservation?.actualCheckinAt || new Date().toISOString()) : null,
+      confirmationSource: isEntered ? (reservation?.guestSelfCheckin ? "guest_portal" : "reception") : null
+    },
+    failSafe: {
+      warningActive: false,
+      warningMessage: null,
+      warningSentAt: null,
+      shutoffTriggered: false,
+      shutoffTriggeredAt: null,
+      shutoffReason: null
+    },
+    timeContext: {
+      currentTime: "14:00",
+      canSchedule: false,
+      scheduleAllowedFrom: null,
+      scheduleBlockReason: null,
+      isCheckinToday: false,
+      isOfficialCheckinReached: false
+    },
+    updatedAt: new Date().toISOString()
+  };
+}
+
+export function resolveSmartFlatContext(targetParam, query = {}) {
+  const rawTarget = String(targetParam || "").trim();
+  const queryFlat = String(query.flat || query.flatNumber || "").trim();
+
+  let reservation = null;
+  let flatNumber = null;
+
+  // 1. Prioridade para número de flat conhecido (ex: "113", "313", "509")
+  if (rawTarget && !["preview", "hub", "sandbox", "default"].includes(rawTarget.toLowerCase())) {
+    const isKnownFlat = (db.flats || []).some(f => String(f.number) === rawTarget || String(f.id) === rawTarget) ||
+      DEFAULT_FLATS.some(f => String(f.number) === rawTarget || String(f.id) === rawTarget) ||
+      /^\d{2,4}$/.test(rawTarget);
+    if (isKnownFlat) {
+      flatNumber = rawTarget;
+    }
+  }
+
+  // 2. Se não for flat, busca por código/localizador de reserva (ex: RES-313-0301)
+  if (!flatNumber && rawTarget && !["preview", "hub", "sandbox", "default"].includes(rawTarget.toLowerCase())) {
+    reservation = findReservationByLocatorOrContact(rawTarget);
+    if (reservation) {
+      flatNumber = String(reservation.flatNumber || "").trim();
+    }
+  }
+
+  // 3. Fallback para parâmetro de query (?flat=113)
+  if (!flatNumber && queryFlat) {
+    flatNumber = queryFlat;
+  }
+
+  // 4. Flat padrão
+  if (!flatNumber) {
+    flatNumber = "113";
+  }
+
+  // 5. Se temos o flatNumber mas não localizou reserva, vincula reserva de hoje ou mais relevante
+  if (!reservation && db.reservations && Array.isArray(db.reservations)) {
+    const todayStr = getTodayStr();
+    reservation = db.reservations.find(r =>
+      String(r.flatNumber) === flatNumber &&
+      (r.status === "checkin" || r.checkinDate === todayStr) &&
+      r.status !== "cancelada" && r.status !== "cancelled"
+    ) || db.reservations.find(r =>
+      String(r.flatNumber) === flatNumber &&
+      r.status !== "cancelada" && r.status !== "cancelled"
+    ) || null;
+  }
+
+  return { flatNumber, reservation };
+}
+
+export function getOrCreateSmartFlat(flatNumber, reservation = null) {
+  if (!db.smartFlats || typeof db.smartFlats !== "object" || Array.isArray(db.smartFlats)) {
+    db.smartFlats = {};
+  }
+  const key = String(flatNumber || "113");
+  let sf = db.smartFlats[key];
+  if (!sf) {
+    sf = createDefaultSmartFlatState(key, reservation);
+    db.smartFlats[key] = sf;
+  } else if (reservation) {
+    if (!sf.reservationCode && reservation.code) {
+      sf.reservationCode = reservation.code;
+    }
+    if (!sf.presence.eta && reservation.estimatedArrivalTime) {
+      sf.presence.eta = reservation.estimatedArrivalTime;
+    }
+    const isEntered = Boolean(reservation.guestSelfCheckin || reservation.actualCheckinAt || reservation.status === "checkin");
+    if (isEntered && !sf.presence.isEntranceConfirmed) {
+      sf.presence.isEntranceConfirmed = true;
+      sf.presence.enteredAt = sf.presence.enteredAt || reservation.guestSelfCheckinAt || reservation.actualCheckinAt || new Date().toISOString();
+      sf.presence.confirmationSource = reservation.guestSelfCheckin ? "guest_portal" : "reception";
+      sf.failSafe.warningActive = false;
+      sf.failSafe.warningMessage = null;
+    }
+  }
+
+  if (reservation) {
+    reservation.smartFlat = sf;
+  }
+
+  return sf;
+}
+
+export function evaluateSmartFlatState(smartFlat, reservation = null, bNow = null) {
+  if (!smartFlat) return;
+  const nowInfo = bNow || getBrasiliaNow();
+  const currentMinutes = nowInfo.hour * 60 + nowInfo.minute;
+  const todayStr = nowInfo.date || getTodayStr();
+  const currentTime = nowInfo.timeStr || minutesToTimeStr(currentMinutes);
+
+  const checkinDate = reservation?.checkinDate || null;
+  const isCheckinToday = Boolean(checkinDate && checkinDate === todayStr);
+  const officialCheckinStr = db.settings?.checkinTime || "14:00";
+  const officialCheckinMinutes = parseTimeToMinutes(officialCheckinStr) ?? 840;
+  const isOfficialCheckinReached = Boolean(isCheckinToday && currentMinutes >= officialCheckinMinutes);
+
+  if (!smartFlat.presence.eta && reservation?.estimatedArrivalTime) {
+    smartFlat.presence.eta = reservation.estimatedArrivalTime;
+  }
+
+  const isEntered = Boolean(
+    smartFlat.presence.isEntranceConfirmed ||
+    reservation?.guestSelfCheckin ||
+    reservation?.actualCheckinAt ||
+    reservation?.status === "checkin"
+  );
+  if (isEntered && !smartFlat.presence.isEntranceConfirmed) {
+    smartFlat.presence.isEntranceConfirmed = true;
+    smartFlat.presence.enteredAt = smartFlat.presence.enteredAt || new Date().toISOString();
+    smartFlat.presence.confirmationSource = reservation?.guestSelfCheckin ? "guest_portal" : "reception";
+  }
+
+  const eta = smartFlat.presence.eta;
+  const etaMinutes = parseTimeToMinutes(eta);
+
+  // Validação da Janela de Antecedência de até 30min antes do ETA (R2)
+  let canSchedule = false;
+  let scheduleAllowedFrom = null;
+  let scheduleBlockReason = null;
+
+  if (etaMinutes !== null) {
+    const allowedFromMinutes = (etaMinutes - 30 + 1440) % 1440;
+    scheduleAllowedFrom = minutesToTimeStr(allowedFromMinutes);
+  }
+
+  if (isEntered) {
+    canSchedule = true;
+    scheduleBlockReason = null;
+  } else if (!eta || etaMinutes === null) {
+    canSchedule = false;
+    scheduleAllowedFrom = null;
+    scheduleBlockReason = "Informe seu horário previsto de chegada para liberar a programação dos aparelhos.";
+  } else {
+    const allowedFromMinutes = (etaMinutes - 30 + 1440) % 1440;
+    if (currentMinutes < allowedFromMinutes) {
+      canSchedule = false;
+      scheduleBlockReason = `A programação só é permitida com até 30 minutos de antecedência da sua chegada (a partir das ${scheduleAllowedFrom} para chegada às ${eta}).`;
+    } else {
+      canSchedule = true;
+    }
+  }
+
+  // Ciclo Fail-Safe de Presença (R3)
+  const devicesOn = Boolean(smartFlat.devices.coffeeMaker.power || smartFlat.devices.ac.power);
+
+  if (isEntered) {
+    smartFlat.failSafe.warningActive = false;
+    smartFlat.failSafe.warningMessage = null;
+  } else if (!devicesOn) {
+    if (!smartFlat.failSafe.shutoffTriggered) {
+      smartFlat.failSafe.warningActive = false;
+      smartFlat.failSafe.warningMessage = null;
+    }
+  } else if (etaMinutes !== null) {
+    const shutoffMinutes = etaMinutes + 30;
+
+    if (currentMinutes >= etaMinutes && currentMinutes < shutoffMinutes) {
+      smartFlat.failSafe.warningActive = true;
+      smartFlat.failSafe.warningMessage = "Você já chegou? Não esqueça de informar sua entrada aqui.";
+      if (!smartFlat.failSafe.warningSentAt) {
+        smartFlat.failSafe.warningSentAt = new Date().toISOString();
+      }
+    } else if (currentMinutes >= shutoffMinutes) {
+      smartFlat.devices.coffeeMaker.power = false;
+      smartFlat.devices.ac.power = false;
+      smartFlat.failSafe.warningActive = false;
+      smartFlat.failSafe.warningMessage = null;
+      smartFlat.failSafe.shutoffTriggered = true;
+      smartFlat.failSafe.shutoffTriggeredAt = new Date().toISOString();
+      smartFlat.failSafe.shutoffReason = "Equipamento desligado automaticamente por questão de segurança e economia de energia.";
+    }
+  }
+
+  // Trilha Sonora de Boas-Vindas Automática (R4)
+  if (isCheckinToday && currentMinutes >= officialCheckinMinutes) {
+    if (!smartFlat.devices.welcomePlaylist.autoTriggered) {
+      smartFlat.devices.welcomePlaylist.isPlaying = true;
+      smartFlat.devices.welcomePlaylist.autoTriggered = true;
+      smartFlat.devices.welcomePlaylist.autoTriggeredAt = new Date().toISOString();
+    }
+  }
+
+  smartFlat.timeContext = {
+    currentTime,
+    canSchedule,
+    scheduleAllowedFrom,
+    scheduleBlockReason,
+    isCheckinToday,
+    isOfficialCheckinReached
+  };
+  smartFlat.updatedAt = new Date().toISOString();
+
+  if (reservation) {
+    reservation.smartFlat = smartFlat;
+  }
+}
+
+// ── Rotas do Smart Flat Hub ──────────────────────────────────────────────────
+
+app.get("/api/smart-flat/:target", (req, res) => {
+  try {
+    const { flatNumber, reservation } = resolveSmartFlatContext(req.params.target, req.query);
+    const smartFlat = getOrCreateSmartFlat(flatNumber, reservation);
+    evaluateSmartFlatState(smartFlat, reservation);
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+    res.json({ ok: true, smartFlat });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.post("/api/smart-flat/:target/eta", (req, res) => {
+  try {
+    const { flatNumber, reservation } = resolveSmartFlatContext(req.params.target, req.query);
+    const smartFlat = getOrCreateSmartFlat(flatNumber, reservation);
+    const { estimatedArrivalTime, arrivalTime } = req.body || {};
+    const rawTime = String(estimatedArrivalTime || arrivalTime || "").trim();
+
+    if (!rawTime) {
+      return res.status(400).json({ ok: false, error: "Horário previsto de chegada é obrigatório." });
+    }
+
+    const etaMins = parseTimeToMinutes(rawTime);
+    if (etaMins === null) {
+      return res.status(400).json({ ok: false, error: "Horário previsto de chegada inválido. Use o formato HH:mm." });
+    }
+
+    const normalizedEta = minutesToTimeStr(etaMins);
+    smartFlat.presence.eta = normalizedEta;
+    smartFlat.presence.etaConfirmedAt = new Date().toISOString();
+
+    if (reservation) {
+      reservation.estimatedArrivalTime = normalizedEta;
+      reservation.guestArrivalResponse = `Previsão informada via Smart Flat Hub: ${normalizedEta}`;
+      reservation.guestArrivalResponseAt = new Date().toISOString();
+      reservation.updatedAt = new Date().toISOString();
+    }
+
+    evaluateSmartFlatState(smartFlat, reservation);
+    saveDatabase();
+
+    res.json({
+      ok: true,
+      eta: normalizedEta,
+      scheduleAllowedFrom: smartFlat.timeContext.scheduleAllowedFrom,
+      smartFlat
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.post("/api/smart-flat/:target/devices", (req, res) => {
+  try {
+    const { flatNumber, reservation } = resolveSmartFlatContext(req.params.target, req.query);
+    const smartFlat = getOrCreateSmartFlat(flatNumber, reservation);
+    evaluateSmartFlatState(smartFlat, reservation);
+
+    const { coffeeMaker, ac } = req.body || {};
+
+    const wantsCoffeeOn = coffeeMaker && (coffeeMaker.power === true || coffeeMaker.scheduled === true);
+    const wantsAcOn = ac && (ac.power === true || ac.scheduled === true);
+
+    if ((wantsCoffeeOn || wantsAcOn) && !smartFlat.presence.isEntranceConfirmed && !smartFlat.timeContext.canSchedule) {
+      return res.status(400).json({
+        ok: false,
+        error: smartFlat.timeContext.scheduleBlockReason || "Programação bloqueada: respeite a antecedência máxima de 30 minutos em relação ao ETA."
+      });
+    }
+
+    if (ac && ac.targetTemperature !== undefined) {
+      const temp = Number(ac.targetTemperature);
+      if (isNaN(temp) || temp < 18 || temp > 26) {
+        return res.status(400).json({
+          ok: false,
+          error: "Temperatura inválida. O ar-condicionado só aceita temperaturas entre 18°C e 26°C."
+        });
+      }
+      smartFlat.devices.ac.targetTemperature = Math.round(temp);
+    }
+
+    if (ac && typeof ac.mode === "string") {
+      const validModes = ["cool", "fan", "heat", "dry"];
+      if (validModes.includes(ac.mode.toLowerCase())) {
+        smartFlat.devices.ac.mode = ac.mode.toLowerCase();
+      }
+    }
+
+    if (ac && typeof ac.fanSpeed === "string") {
+      const validSpeeds = ["auto", "low", "mid", "high"];
+      if (validSpeeds.includes(ac.fanSpeed.toLowerCase())) {
+        smartFlat.devices.ac.fanSpeed = ac.fanSpeed.toLowerCase();
+      }
+    }
+
+    if (ac && ac.power !== undefined) {
+      const newPower = Boolean(ac.power);
+      smartFlat.devices.ac.power = newPower;
+      if (newPower) {
+        smartFlat.devices.ac.turnedOnAt = new Date().toISOString();
+        smartFlat.failSafe.shutoffTriggered = false;
+        smartFlat.failSafe.shutoffReason = null;
+      }
+    }
+
+    if (ac && ac.scheduled !== undefined) {
+      smartFlat.devices.ac.scheduled = Boolean(ac.scheduled);
+      smartFlat.devices.ac.scheduledTime = ac.scheduledTime ? String(ac.scheduledTime).trim() : null;
+    }
+
+    if (coffeeMaker && coffeeMaker.power !== undefined) {
+      const newPower = Boolean(coffeeMaker.power);
+      smartFlat.devices.coffeeMaker.power = newPower;
+      if (newPower) {
+        smartFlat.devices.coffeeMaker.turnedOnAt = new Date().toISOString();
+        smartFlat.failSafe.shutoffTriggered = false;
+        smartFlat.failSafe.shutoffReason = null;
+      }
+    }
+
+    if (coffeeMaker && coffeeMaker.scheduled !== undefined) {
+      smartFlat.devices.coffeeMaker.scheduled = Boolean(coffeeMaker.scheduled);
+      smartFlat.devices.coffeeMaker.scheduledTime = coffeeMaker.scheduledTime ? String(coffeeMaker.scheduledTime).trim() : null;
+    }
+
+    evaluateSmartFlatState(smartFlat, reservation);
+    saveDatabase();
+
+    res.json({ ok: true, smartFlat });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.post("/api/smart-flat/:target/confirm-entrance", (req, res) => {
+  try {
+    const { flatNumber, reservation } = resolveSmartFlatContext(req.params.target, req.query);
+    const smartFlat = getOrCreateSmartFlat(flatNumber, reservation);
+
+    const nowIso = new Date().toISOString();
+    smartFlat.presence.isEntranceConfirmed = true;
+    smartFlat.presence.enteredAt = nowIso;
+    smartFlat.presence.confirmationSource = "smart_flat_hub";
+
+    smartFlat.failSafe.warningActive = false;
+    smartFlat.failSafe.warningMessage = null;
+
+    if (reservation) {
+      reservation.guestSelfCheckin = true;
+      reservation.guestSelfCheckinAt = nowIso;
+      if (reservation.status !== "checkin" && reservation.status !== "checkout") {
+        reservation.status = "checkin";
+      }
+      reservation.updatedAt = nowIso;
+    }
+
+    evaluateSmartFlatState(smartFlat, reservation);
+    saveDatabase();
+
+    res.json({
+      ok: true,
+      message: "Entrada confirmada com sucesso! Fail-safe desativado.",
+      smartFlat
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.post("/api/smart-flat/:target/playlist", (req, res) => {
+  try {
+    const { flatNumber, reservation } = resolveSmartFlatContext(req.params.target, req.query);
+    const smartFlat = getOrCreateSmartFlat(flatNumber, reservation);
+    const { action, volume, track } = req.body || {};
+
+    const playlist = smartFlat.devices.welcomePlaylist;
+
+    if (action === "play") {
+      playlist.isPlaying = true;
+    } else if (action === "pause") {
+      playlist.isPlaying = false;
+    } else if (action === "toggle") {
+      playlist.isPlaying = !playlist.isPlaying;
+    } else if (action === "next") {
+      const idx = WELCOME_TRACKS.indexOf(playlist.currentTrack);
+      const nextIdx = (idx + 1) % WELCOME_TRACKS.length;
+      playlist.currentTrack = WELCOME_TRACKS[nextIdx];
+    } else if (action === "prev") {
+      const idx = WELCOME_TRACKS.indexOf(playlist.currentTrack);
+      const prevIdx = (idx - 1 + WELCOME_TRACKS.length) % WELCOME_TRACKS.length;
+      playlist.currentTrack = WELCOME_TRACKS[prevIdx];
+    } else if (action === "set_volume" && volume !== undefined) {
+      const v = Number(volume);
+      if (!isNaN(v)) {
+        playlist.volume = Math.max(0, Math.min(100, Math.round(v)));
+      }
+    }
+
+    if (track && WELCOME_TRACKS.includes(track)) {
+      playlist.currentTrack = track;
+    }
+
+    saveDatabase();
+
+    res.json({
+      ok: true,
+      welcomePlaylist: playlist,
+      smartFlat
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.post("/api/smart-flat/:target/simulate", (req, res) => {
+  try {
+    const { flatNumber, reservation } = resolveSmartFlatContext(req.params.target, req.query);
+    const smartFlat = getOrCreateSmartFlat(flatNumber, reservation);
+
+    const {
+      offsetMinutes,
+      simulatedTime,
+      forceShutoff,
+      forceWarning,
+      forceWelcomeMusic,
+      reset
+    } = req.body || {};
+
+    if (reset) {
+      global.__simulatedTimeOffsetMs = 0;
+      smartFlat.failSafe.warningActive = false;
+      smartFlat.failSafe.warningMessage = null;
+      smartFlat.failSafe.shutoffTriggered = false;
+      smartFlat.failSafe.shutoffReason = null;
+    }
+
+    if (typeof offsetMinutes === "number") {
+      global.__simulatedTimeOffsetMs = (global.__simulatedTimeOffsetMs || 0) + (offsetMinutes * 60000);
+    }
+
+    if (simulatedTime) {
+      const parsedMins = parseTimeToMinutes(simulatedTime);
+      if (parsedMins !== null) {
+        const bNow = getBrasiliaNow();
+        const currentMins = bNow.hour * 60 + bNow.minute;
+        const diffMins = parsedMins - currentMins;
+        global.__simulatedTimeOffsetMs = (global.__simulatedTimeOffsetMs || 0) + (diffMins * 60000);
+      }
+    }
+
+    if (forceShutoff) {
+      smartFlat.devices.coffeeMaker.power = false;
+      smartFlat.devices.ac.power = false;
+      smartFlat.failSafe.warningActive = false;
+      smartFlat.failSafe.warningMessage = null;
+      smartFlat.failSafe.shutoffTriggered = true;
+      smartFlat.failSafe.shutoffTriggeredAt = new Date().toISOString();
+      smartFlat.failSafe.shutoffReason = "Equipamento desligado automaticamente por questão de segurança e economia de energia.";
+    }
+
+    if (forceWarning) {
+      smartFlat.failSafe.warningActive = true;
+      smartFlat.failSafe.warningMessage = "Você já chegou? Não esqueça de informar sua entrada aqui.";
+      smartFlat.failSafe.warningSentAt = new Date().toISOString();
+    }
+
+    if (forceWelcomeMusic) {
+      smartFlat.devices.welcomePlaylist.isPlaying = true;
+      smartFlat.devices.welcomePlaylist.autoTriggered = true;
+      smartFlat.devices.welcomePlaylist.autoTriggeredAt = new Date().toISOString();
+    }
+
+    evaluateSmartFlatState(smartFlat, reservation);
+    saveDatabase();
+
+    res.json({
+      ok: true,
+      smartFlat,
+      effectiveTime: getEffectiveDate().toISOString(),
+      brasilia: getBrasiliaNow()
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// 6.6 Rotina Periódica Smart Flat Hub - Avaliação de Fail-Safe e Playlist
+setInterval(() => {
+  try {
+    if (!db.smartFlats || typeof db.smartFlats !== "object") return;
+    const bNow = getBrasiliaNow();
+    let changed = false;
+    for (const flatNumber of Object.keys(db.smartFlats)) {
+      const sf = db.smartFlats[flatNumber];
+      if (!sf) continue;
+      const res = sf.reservationCode ? findReservationByLocatorOrContact(sf.reservationCode) : null;
+      const prevShutoff = sf.failSafe?.shutoffTriggered;
+      const prevPlaying = sf.devices?.welcomePlaylist?.isPlaying;
+      evaluateSmartFlatState(sf, res, bNow);
+      if (sf.failSafe?.shutoffTriggered !== prevShutoff || sf.devices?.welcomePlaylist?.isPlaying !== prevPlaying) {
+        changed = true;
+      }
+    }
+    if (changed) {
+      saveDatabase();
+    }
+  } catch (_) {}
+}, 60000);
+
 const httpServer = app.listen(PORT, "0.0.0.0", () => {
   console.log(`[Demo Server] API rodando em http://0.0.0.0:${PORT}`);
   setAuditLogger(logAuditEvent);
@@ -33457,4 +34074,4 @@ httpServer.on("error", (err) => {
   console.error("[HTTP Server Error]", err?.message || err);
 });
 
-export { app };
+export { app, httpServer };
