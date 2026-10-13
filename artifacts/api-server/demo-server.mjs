@@ -7921,27 +7921,19 @@ function getFlatRealtimeStatus(flatId, flatNumber, dateStr = getTodayStr()) {
 
   const stayoverRes = activeRes.find(r => r.checkinDate < dateStr && r.checkoutDate > dateStr);
   const checkinTodayRes = activeRes.find(r => r.checkinDate === dateStr);
-  const isCheckedIn = Boolean(checkinTodayRes && (checkinTodayRes.status === "checked_in" || checkinTodayRes.checkinDone));
+  const isCheckedIn = Boolean(checkinTodayRes && (checkinTodayRes.status === "checked_in" || checkinTodayRes.status === "checkin" || checkinTodayRes.checkinDone || checkinTodayRes.fnhrCompleted));
   const checkoutTodayRes = activeRes.find(r => r.checkoutDate === dateStr);
   const isCheckedOut = Boolean(checkoutTodayRes && (checkoutTodayRes.status === "checked_out" || checkoutTodayRes.checkoutDone || checkoutTodayRes.actualCheckoutAt));
 
   const isOccupied = Boolean(stayoverRes || isCheckedIn || (checkoutTodayRes && !isCheckedOut));
   const currentGuest = stayoverRes ? (stayoverRes.guestName || stayoverRes.title) :
                        (checkoutTodayRes && !isCheckedOut) ? (checkoutTodayRes.guestName || checkoutTodayRes.title) :
-                       isCheckedIn ? (checkinTodayRes.guestName || checkinTodayRes.title) : null;
+                       isCheckedIn ? (checkinTodayRes.guestName || checkinTodayRes.title) :
+                       checkinTodayRes ? (checkinTodayRes.guestName || checkinTodayRes.title) : null;
 
-  // 2. Status de Higienização (db.cleaningRequests)
-  const dirtyReq = (db.cleaningRequests || []).find(c =>
-    (Number(c.flatId) === fId || (fNum && String(c.flatNumber) === fNum)) &&
-    !c.completedAt &&
-    !c.isInstructionOnly &&
-    c.source !== "manual_instruction" &&
-    c.type !== "instruction" &&
-    c.type !== "bed_adjustment_only" &&
-    (c.status === "dirty" || c.status === "pending" || c.status === "in_progress" || c.status === "cleaning_now" || (c.source === "checkout" && c.status !== "clean"))
-  );
-
-  const flatCleanings = (db.cleaningRequests || []).filter(c =>
+  // 2. Status de Higienização em Tempo Real (Apenas data consultada ou checkout recente)
+  const dailyRequests = typeof getRequestsForDate === "function" ? getRequestsForDate(dateStr) : (db.cleaningRequests || []);
+  const todayReq = dailyRequests.find(c =>
     (Number(c.flatId) === fId || (fNum && String(c.flatNumber) === fNum)) &&
     !c.isInstructionOnly &&
     c.source !== "manual_instruction" &&
@@ -7949,47 +7941,55 @@ function getFlatRealtimeStatus(flatId, flatNumber, dateStr = getTodayStr()) {
     c.type !== "bed_adjustment_only"
   );
 
-  const sortedCleanings = [...flatCleanings].sort((a, b) => {
-    const dateComp = String(b.requestDate || "").localeCompare(String(a.requestDate || ""));
-    if (dateComp !== 0) return dateComp;
-    return (Number(b.id) || 0) - (Number(a.id) || 0);
-  });
+  const directTodayReq = (db.cleaningRequests || []).find(c =>
+    (Number(c.flatId) === fId || (fNum && String(c.flatNumber) === fNum)) &&
+    (c.requestDate === dateStr || c.effectiveDate === dateStr) &&
+    !c.isInstructionOnly &&
+    c.source !== "manual_instruction" &&
+    c.type !== "instruction" &&
+    c.type !== "bed_adjustment_only"
+  );
 
-  const latestCleaning = sortedCleanings[0];
-  const inProgressCleaning = dirtyReq && (dirtyReq.status === "in_progress" || dirtyReq.status === "cleaning_now");
+  const reqToEvaluate = directTodayReq || todayReq;
 
   let isDirty = false;
   let cleaningStatus = "clean"; // "clean" | "dirty" | "in_progress"
 
-  if (inProgressCleaning) {
-    isDirty = true;
-    cleaningStatus = "in_progress";
-  } else if (dirtyReq) {
-    isDirty = true;
-    cleaningStatus = "dirty";
+  if (reqToEvaluate) {
+    const st = reqToEvaluate.cleaningRequest?.status || reqToEvaluate.status;
+    if (st === "in_progress" || st === "cleaning_now") {
+      isDirty = true;
+      cleaningStatus = "in_progress";
+    } else if (st === "dirty" || st === "pending") {
+      isDirty = true;
+      cleaningStatus = "dirty";
+    } else if (st === "clean" || st === "inspected" || Boolean(reqToEvaluate.completedAt)) {
+      isDirty = false;
+      cleaningStatus = "clean";
+    }
   } else if (checkoutTodayRes) {
     if (isCheckedOut) {
-      const cleanedToday = flatCleanings.find(c => (c.requestDate === dateStr || c.effectiveDate === dateStr) && (c.status === "clean" || c.status === "inspected" || Boolean(c.completedAt)));
-      if (!cleanedToday) {
-        isDirty = true;
-        cleaningStatus = "dirty";
-      } else {
-        isDirty = false;
-        cleaningStatus = "clean";
-      }
+      isDirty = true;
+      cleaningStatus = "dirty";
     } else {
       isDirty = false;
       cleaningStatus = "clean";
     }
-  } else if (latestCleaning && (latestCleaning.status === "clean" || latestCleaning.status === "inspected" || Boolean(latestCleaning.completedAt))) {
-    isDirty = false;
-    cleaningStatus = "clean";
-  } else if (latestCleaning && (latestCleaning.status === "dirty" || latestCleaning.status === "pending")) {
-    isDirty = true;
-    cleaningStatus = "dirty";
   } else {
-    isDirty = false;
-    cleaningStatus = "clean";
+    // Checkout recente (ontem) que ainda não teve faxina concluída
+    const yesterdayStr = typeof getOffsetDateStr === "function" ? getOffsetDateStr(-1) : "";
+    const recentCheckoutRes = yesterdayStr ? activeRes.find(r => r.checkoutDate === yesterdayStr) : null;
+    if (recentCheckoutRes) {
+      const recentClean = (db.cleaningRequests || []).find(c =>
+        (Number(c.flatId) === fId || (fNum && String(c.flatNumber) === fNum)) &&
+        (c.requestDate >= yesterdayStr || c.effectiveDate >= yesterdayStr) &&
+        (c.status === "clean" || c.status === "inspected" || Boolean(c.completedAt))
+      );
+      if (!recentClean) {
+        isDirty = true;
+        cleaningStatus = "dirty";
+      }
+    }
   }
 
   return {
@@ -11129,9 +11129,18 @@ app.post("/api/service/public/:token/flats/:flatId/start", async (req, res) => {
   }
 
   // 1. Prestador deve ter registro em serviceWorkers para aquele token (se não tiver → 403)
-  const worker = (db.serviceWorkers || []).find(w => (w.token === token || w.serviceOrderId === order.id) && w.mainWorker?.name && w.mainWorker?.cpf);
+  let worker = (db.serviceWorkers || []).find(w => (w.token === token || w.serviceOrderId === order.id) && w.mainWorker?.name && w.mainWorker?.cpf);
   if (!worker) {
-    return res.status(403).json({ error: "Prestador deve se identificar antes de iniciar o serviço." });
+    const b = req.body?.mainWorker || (req.body?.workerName && req.body?.workerCpf ? { name: req.body.workerName, cpf: req.body.workerCpf } : null);
+    const n = String(b?.name || "").trim(), c = String(b?.cpf || "").replace(/\D/g, "");
+    if (n && c.length === 11) {
+      if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
+      worker = { id: `sw_${Date.now()}`, serviceOrderId: order.id, token: order.token, mainWorker: { name: n, cpf: c }, collaborators: [], registeredAt: new Date().toISOString() };
+      db.serviceWorkers.push(worker);
+      saveDatabase("register_service_worker_on_start");
+    } else {
+      return res.status(403).json({ error: "Prestador deve se identificar antes de iniciar o serviço." });
+    }
   }
 
   const fId = Number(flatId);
