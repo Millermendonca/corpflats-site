@@ -41,6 +41,8 @@ import {
   ShieldCheck,
   Building,
   Info,
+  Car,
+  KeyRound,
 } from "lucide-react";
 
 // Types
@@ -52,6 +54,12 @@ export interface Collaborator {
 export interface WorkerIdentification {
   name: string;
   cpf: string;
+}
+
+export interface WorkerVehicle {
+  needsGarage: boolean;
+  plate?: string;
+  modelColor?: string;
 }
 
 export interface ServiceFlat {
@@ -75,6 +83,9 @@ export interface ServiceFlat {
   currentGuest?: string | null;
   hasCheckinToday?: boolean;
   hasCheckoutToday?: boolean;
+  expectedArrival?: string | null;
+  entryRequested?: boolean;
+  entryRequestedAt?: string | null;
 }
 
 export interface ServiceOrderData {
@@ -99,6 +110,7 @@ export interface ServiceWorkerRecord {
   token: string;
   mainWorker: WorkerIdentification;
   collaborators: Collaborator[];
+  vehicle?: WorkerVehicle;
   registeredAt: string;
 }
 
@@ -163,10 +175,23 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
   const [mainWorkerName, setMainWorkerName] = useState("");
   const [mainWorkerCpf, setMainWorkerCpf] = useState("");
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
+  const [needsGarage, setNeedsGarage] = useState(false);
+  const [vehiclePlate, setVehiclePlate] = useState("");
+  const [vehicleModelColor, setVehicleModelColor] = useState("");
 
   // Guard Dialog State
   const [guardDialogOpen, setGuardDialogOpen] = useState(false);
   const [pendingStartFlat, setPendingStartFlat] = useState<ServiceFlat | null>(null);
+
+  // Start Modal State (Required estimated finish)
+  const [startModalOpen, setStartModalOpen] = useState(false);
+  const [startingFlat, setStartingFlat] = useState<ServiceFlat | null>(null);
+  const [estimatedFinishInput, setEstimatedFinishInput] = useState("");
+
+  // Update Estimate Modal State
+  const [estimateModalOpen, setEstimateModalOpen] = useState(false);
+  const [estimatingFlat, setEstimatingFlat] = useState<ServiceFlat | null>(null);
+  const [newEstimateInput, setNewEstimateInput] = useState("");
 
   // Finish Modal State
   const [finishModalOpen, setFinishModalOpen] = useState(false);
@@ -215,6 +240,11 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
           }))
         );
       }
+      if (serverWorker.vehicle) {
+        setNeedsGarage(Boolean(serverWorker.vehicle.needsGarage));
+        setVehiclePlate(serverWorker.vehicle.plate || "");
+        setVehicleModelColor(serverWorker.vehicle.modelColor || "");
+      }
     }
   }, [serverWorker, isEditingWorker]);
 
@@ -253,6 +283,13 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
         }
       }
 
+      const cleanPlate = vehiclePlate.trim().toUpperCase();
+      const cleanModelColor = vehicleModelColor.trim();
+
+      if (needsGarage && !cleanPlate) {
+        throw new Error("Por favor, informe a placa do veículo para liberação do acesso à garagem.");
+      }
+
       const res = await fetch(`/api/service/public/${token}/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -262,6 +299,11 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
             cpf: cleanCpf,
           },
           collaborators: validCollaborators,
+          vehicle: {
+            needsGarage,
+            plate: cleanPlate,
+            modelColor: cleanModelColor,
+          },
         }),
       });
 
@@ -274,7 +316,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
     onSuccess: (data: any) => {
       toast({
         title: "Identificação salva com sucesso!",
-        description: "Agora você pode iniciar os atendimentos nos apartamentos.",
+        description: "Agora você pode solicitar entrada e iniciar os atendimentos nos apartamentos.",
       });
       setIsEditingWorker(false);
       queryClient.setQueryData(["public-service-order", token], (old: any) => {
@@ -287,6 +329,11 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
               cpf: cleanCpfDigits(mainWorkerCpf),
             },
             collaborators,
+            vehicle: {
+              needsGarage,
+              plate: vehiclePlate.trim().toUpperCase(),
+              modelColor: vehicleModelColor.trim(),
+            },
           },
         };
       });
@@ -301,11 +348,45 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
     },
   });
 
+  // Mutation: Request Entry
+  const requestEntryMutation = useMutation({
+    mutationFn: async (flatId: number | string) => {
+      const res = await fetch(`/api/service/public/${token}/flats/${flatId}/request-entry`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Erro ao solicitar entrada na recepção");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "🔑 Entrada solicitada!",
+        description: "A recepção foi notificada com seus dados e do serviço para autorizar sua entrada.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["public-service-order", token] });
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Não foi possível solicitar entrada",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   // Mutation: Start Flat
   const startMutation = useMutation({
-    mutationFn: async (args: number | string | { flatId: number | string; workerName?: string; workerCpf?: string }) => {
+    mutationFn: async (args: number | string | { flatId: number | string; workerName?: string; workerCpf?: string; estimatedFinishAt?: string }) => {
       const flatId = typeof args === "object" ? args.flatId : args;
-      const body = typeof args === "object" ? { workerName: args.workerName, workerCpf: args.workerCpf } : {};
+      const body: any = {};
+      if (typeof args === "object") {
+        if (args.workerName) body.workerName = args.workerName;
+        if (args.workerCpf) body.workerCpf = args.workerCpf;
+        if (args.estimatedFinishAt) body.estimatedFinishAt = args.estimatedFinishAt;
+      }
       const res = await fetch(`/api/service/public/${token}/flats/${flatId}/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -322,11 +403,45 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
         title: "▶️ Apartamento iniciado!",
         description: `O serviço no flat foi iniciado e a governança/recepção foi notificada.`,
       });
+      setStartModalOpen(false);
+      setStartingFlat(null);
       queryClient.invalidateQueries({ queryKey: ["public-service-order", token] });
     },
     onError: (err: any) => {
       toast({
         title: "Não foi possível iniciar o flat",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Mutation: Update Estimated Finish
+  const updateEstimateMutation = useMutation({
+    mutationFn: async ({ flatId, estimatedFinishAt }: { flatId: number | string; estimatedFinishAt: string }) => {
+      const res = await fetch(`/api/service/public/${token}/flats/${flatId}/update-estimate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ estimatedFinishAt }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Erro ao atualizar previsão");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "⏱️ Previsão atualizada!",
+        description: "A administração e a portaria foram notificadas sobre a nova previsão de término.",
+      });
+      setEstimateModalOpen(false);
+      setEstimatingFlat(null);
+      queryClient.invalidateQueries({ queryKey: ["public-service-order", token] });
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Erro ao atualizar previsão",
         description: err.message,
         variant: "destructive",
       });
@@ -404,28 +519,80 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
   };
 
   // Start Click Handler with Identification Guard
-  const handleStartFlatClick = async (flat: ServiceFlat) => {
+  const handleStartFlatClick = (flat: ServiceFlat) => {
     if (!hasSavedWorker) {
-      const cleanCpf = cleanCpfDigits(mainWorkerCpf);
-      if (mainWorkerName.trim() && cleanCpf.length === 11) {
-        try {
-          await registerMutation.mutateAsync();
-          startMutation.mutate(flat.flatId);
-          return;
-        } catch (err: any) {
-          toast({
-            title: "Erro ao salvar identificação",
-            description: err.message || "Por favor, verifique os dados informados.",
-            variant: "destructive",
-          });
-          return;
-        }
-      }
-      setPendingStartFlat(flat);
       setGuardDialogOpen(true);
       return;
     }
-    startMutation.mutate(flat.flatId);
+    setStartingFlat(flat);
+    const def = new Date(Date.now() + (order?.estimatedDurationHours || 2) * 3600000);
+    const defStr = new Date(def.getTime() - def.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    setEstimatedFinishInput(defStr);
+    setStartModalOpen(true);
+  };
+
+  // Request Entry Handler
+  const handleRequestEntry = (flat: ServiceFlat) => {
+    if (!hasSavedWorker) {
+      setGuardDialogOpen(true);
+      return;
+    }
+    requestEntryMutation.mutate(flat.flatId);
+  };
+
+  // Confirm Start Service with Estimated Finish Time
+  const handleConfirmStart = () => {
+    if (!startingFlat) return;
+    if (!estimatedFinishInput) {
+      toast({
+        title: "Previsão obrigatória",
+        description: "Por favor, informe a data e hora prevista de conclusão.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const isoDate = new Date(estimatedFinishInput).toISOString();
+    startMutation.mutate({
+      flatId: startingFlat.flatId,
+      estimatedFinishAt: isoDate,
+    });
+  };
+
+  // Open Update Estimate Modal
+  const handleOpenEstimateModal = (flat: ServiceFlat) => {
+    setEstimatingFlat(flat);
+    if (flat.estimatedFinishAt) {
+      try {
+        const d = new Date(flat.estimatedFinishAt);
+        const str = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+        setNewEstimateInput(str);
+      } catch {
+        const d = new Date(Date.now() + 3600000);
+        setNewEstimateInput(new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16));
+      }
+    } else {
+      const d = new Date(Date.now() + 3600000);
+      setNewEstimateInput(new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16));
+    }
+    setEstimateModalOpen(true);
+  };
+
+  // Confirm Update Estimate
+  const handleConfirmUpdateEstimate = () => {
+    if (!estimatingFlat) return;
+    if (!newEstimateInput) {
+      toast({
+        title: "Nova previsão obrigatória",
+        description: "Por favor, selecione a nova data e hora prevista de término.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const isoDate = new Date(newEstimateInput).toISOString();
+    updateEstimateMutation.mutate({
+      flatId: estimatingFlat.flatId,
+      estimatedFinishAt: isoDate,
+    });
   };
 
   // Open Finish Modal Handler
@@ -711,6 +878,9 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                           cpf: formatCpf(c.cpf),
                         })) || []
                       );
+                      setNeedsGarage(Boolean(serverWorker?.vehicle?.needsGarage));
+                      setVehiclePlate(serverWorker?.vehicle?.plate || "");
+                      setVehicleModelColor(serverWorker?.vehicle?.modelColor || "");
                       setIsEditingWorker(true);
                     }}
                     className="text-emerald-800 hover:text-emerald-900 hover:bg-emerald-100 dark:text-emerald-300 dark:hover:bg-emerald-900/50 text-xs gap-1.5"
@@ -736,6 +906,30 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                         </Badge>
                       ))}
                     </div>
+                  </div>
+                )}
+
+                {serverWorker?.vehicle && (
+                  <div className="pt-2 border-t border-emerald-200 dark:border-emerald-800/60 flex items-center gap-2 flex-wrap">
+                    <span className="text-[11px] font-bold text-emerald-800 dark:text-emerald-300 uppercase tracking-wider">
+                      Veículo & Garagem:
+                    </span>
+                    {serverWorker.vehicle.needsGarage ? (
+                      <Badge
+                        variant="secondary"
+                        className="bg-white/80 dark:bg-slate-900 text-emerald-900 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-800 text-xs py-0.5 flex items-center gap-1"
+                      >
+                        <Car className="w-3 h-3 text-emerald-700" />
+                        Garagem Solicitada: {serverWorker.vehicle.plate || "Sem placa"} {serverWorker.vehicle.modelColor ? `(${serverWorker.vehicle.modelColor})` : ""}
+                      </Badge>
+                    ) : (
+                      <Badge
+                        variant="secondary"
+                        className="bg-white/80 dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800 text-xs py-0.5"
+                      >
+                        Sem vaga de garagem
+                      </Badge>
+                    )}
                   </div>
                 )}
               </CardContent>
@@ -835,6 +1029,47 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                     </div>
                   )}
                 </div>
+
+                {/* Vehicle & Garage Access (Requirement 5) */}
+                <div className="space-y-3 bg-white dark:bg-slate-900 p-3.5 rounded-xl border border-amber-200 dark:border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="needs-garage-checkbox"
+                      checked={needsGarage}
+                      onChange={(e) => setNeedsGarage(e.target.checked)}
+                      className="w-4 h-4 rounded text-primary focus:ring-primary border-slate-300 cursor-pointer"
+                    />
+                    <Label htmlFor="needs-garage-checkbox" className="text-xs font-bold text-slate-800 dark:text-slate-100 cursor-pointer flex items-center gap-1.5">
+                      <Car className="w-3.5 h-3.5 text-primary" />
+                      Precisa de vaga na garagem para o veículo?
+                    </Label>
+                  </div>
+
+                  {needsGarage && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                      <div>
+                        <Label className="text-xs font-semibold">Placa do Veículo *</Label>
+                        <Input
+                          placeholder="Ex: ABC-1234 ou ABC1D23"
+                          value={vehiclePlate}
+                          onChange={(e) => setVehiclePlate(e.target.value.toUpperCase())}
+                          maxLength={10}
+                          className="mt-1 text-xs"
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs font-semibold">Modelo / Cor do Veículo</Label>
+                        <Input
+                          placeholder="Ex: Fiat Uno Branco"
+                          value={vehicleModelColor}
+                          onChange={(e) => setVehicleModelColor(e.target.value)}
+                          className="mt-1 text-xs"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
               </CardContent>
 
               <CardFooter className="p-4 sm:p-5 pt-0 flex gap-2">
@@ -887,7 +1122,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
         {/* Flats Cards List (R5) */}
         <div className="space-y-4">
           {order.flats.map((flat) => {
-            // Occupancy Badge
+            // Occupancy Badge (Requirement 1: No guest name, show expected arrival if check-in today)
             let occupancyBadge = (
               <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/40 text-[11px] font-semibold">
                 🟢 Vago / Limpo
@@ -896,13 +1131,13 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
             if (flat.isOccupied) {
               occupancyBadge = (
                 <Badge variant="outline" className="bg-rose-50 text-rose-700 border-rose-300 dark:bg-rose-950/40 text-[11px] font-semibold">
-                  🔴 Ocupado por Hóspede{flat.currentGuest ? `: ${flat.currentGuest}` : ""}
+                  🔴 Ocupado por Hóspede
                 </Badge>
               );
             } else if (flat.hasCheckinToday) {
               occupancyBadge = (
                 <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-300 dark:bg-blue-950/40 text-[11px] font-semibold">
-                  🔵 Check-in Hoje{flat.currentGuest ? `: ${flat.currentGuest}` : ""}
+                  🔵 Entrada Prevista: {flat.expectedArrival || "14:00"}
                 </Badge>
               );
             } else if (flat.isDirty) {
@@ -1057,14 +1292,34 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
 
                   {/* Started / Finished Information */}
                   {flat.status === "in_progress" && (
-                    <div className="flex flex-wrap items-center gap-3 text-xs bg-sky-50 dark:bg-sky-950/40 p-2.5 rounded-xl border border-sky-200 dark:border-sky-900 text-sky-900 dark:text-sky-200 font-medium">
-                      <div className="flex items-center gap-1">
-                        <Clock className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
-                        <span>Iniciado às {formatTime(flat.startedAt)}</span>
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs bg-sky-50 dark:bg-sky-950/40 p-2.5 rounded-xl border border-sky-200 dark:border-sky-900 text-sky-900 dark:text-sky-200 font-medium">
+                        <div className="flex items-center gap-1.5">
+                          <Clock className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
+                          <span>Iniciado às {formatTime(flat.startedAt)}</span>
+                        </div>
+                        {flat.estimatedFinishAt && (
+                          <div className="text-[11px] text-sky-700 dark:text-sky-300 font-semibold">
+                            Previsão: {formatDateTime(flat.estimatedFinishAt)}
+                          </div>
+                        )}
                       </div>
-                      {flat.estimatedFinishAt && (
-                        <div className="text-[11px] text-sky-700 dark:text-sky-300">
-                          (Previsão: {formatTime(flat.estimatedFinishAt)})
+
+                      {flat.estimatedFinishAt && new Date().getTime() > new Date(flat.estimatedFinishAt).getTime() && (
+                        <div className="p-2.5 bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 rounded-xl flex items-center justify-between text-xs text-rose-900 dark:text-rose-200">
+                          <div className="flex items-center gap-1.5 font-bold">
+                            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                            <span>Serviço atrasado! (Previsão: {formatTime(flat.estimatedFinishAt)})</span>
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleOpenEstimateModal(flat)}
+                            className="h-6 text-[10px] bg-white text-rose-700 border-rose-300 hover:bg-rose-50 px-2 shrink-0 font-semibold"
+                          >
+                            Atualizar Previsão
+                          </Button>
                         </div>
                       )}
                     </div>
@@ -1110,26 +1365,62 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                   )}
                 </CardContent>
 
-                {/* Card Action Button */}
+                {/* Card Action Button (Requirement 3: Solicitar Entrada -> Iniciar Serviço -> Finalizar Serviço) */}
                 <CardFooter className="p-4 pt-0">
                   {flat.status === "pending" && (
-                    <div className="w-full space-y-1.5">
-                      <Button
-                        onClick={() => handleStartFlatClick(flat)}
-                        disabled={!canStart || startMutation.isPending}
-                        className={`w-full font-bold text-xs h-10 shadow-xs ${
-                          canStart
-                            ? "bg-primary hover:bg-primary/90 text-primary-foreground"
-                            : "bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400 cursor-not-allowed opacity-80"
-                        }`}
-                      >
-                        {startMutation.isPending && startMutation.variables === flat.flatId ? (
-                          <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
-                        ) : (
-                          <Play className="w-4 h-4 mr-1.5 fill-current" />
-                        )}
-                        ▶️ Iniciar Apartamento
-                      </Button>
+                    <div className="w-full space-y-2">
+                      {!flat.entryRequested ? (
+                        <>
+                          <Button
+                            onClick={() => handleRequestEntry(flat)}
+                            disabled={!canStart || requestEntryMutation.isPending}
+                            className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs h-10 shadow-xs flex items-center justify-center gap-1.5"
+                          >
+                            {requestEntryMutation.isPending && requestEntryMutation.variables === flat.flatId ? (
+                              <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+                            ) : (
+                              <KeyRound className="w-4 h-4 mr-1.5" />
+                            )}
+                            🔑 Solicitar Entrada
+                          </Button>
+                          <div className="text-center">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleStartFlatClick(flat)}
+                              disabled={!canStart || startMutation.isPending}
+                              className="text-[11px] text-muted-foreground hover:text-primary h-6"
+                            >
+                              Já liberado na portaria? ▶️ Iniciar Apartamento
+                            </Button>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="flex items-center gap-1.5 text-xs text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 p-2.5 rounded-xl border border-amber-200 dark:border-amber-800">
+                            <KeyRound className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                            <span className="font-medium">
+                              Entrada solicitada às {formatTime(flat.entryRequestedAt)}. Liberação enviada à recepção.
+                            </span>
+                          </div>
+                          <Button
+                            onClick={() => handleStartFlatClick(flat)}
+                            disabled={!canStart || startMutation.isPending}
+                            className={`w-full font-bold text-xs h-10 shadow-xs ${
+                              canStart
+                                ? "bg-primary hover:bg-primary/90 text-primary-foreground"
+                                : "bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400 cursor-not-allowed opacity-80"
+                            }`}
+                          >
+                            {startMutation.isPending && startMutation.variables === flat.flatId ? (
+                              <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+                            ) : (
+                              <Play className="w-4 h-4 mr-1.5 fill-current" />
+                            )}
+                            ▶️ Iniciar Apartamento
+                          </Button>
+                        </>
+                      )}
 
                       {!canStart && (
                         <p className="text-[11px] text-amber-700 dark:text-amber-400 font-medium text-center px-1">
@@ -1140,13 +1431,24 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                   )}
 
                   {flat.status === "in_progress" && (
-                    <Button
-                      onClick={() => handleOpenFinishModal(flat)}
-                      className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-10 shadow-md flex items-center justify-center gap-1.5"
-                    >
-                      <CheckCircle2 className="w-4 h-4" />
-                      🏁 Finalizar Serviço
-                    </Button>
+                    <div className="w-full space-y-2">
+                      <Button
+                        onClick={() => handleOpenFinishModal(flat)}
+                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-10 shadow-md flex items-center justify-center gap-1.5"
+                      >
+                        <CheckCircle2 className="w-4 h-4" />
+                        🏁 Finalizar Serviço
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleOpenEstimateModal(flat)}
+                        className="w-full text-xs h-8 border-sky-300 text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:text-sky-300 dark:hover:bg-sky-950/40 flex items-center justify-center gap-1.5"
+                      >
+                        <Clock className="w-3.5 h-3.5" />
+                        ⏱️ Atualizar Previsão
+                      </Button>
+                    </div>
                   )}
 
                   {flat.status === "done" && (
@@ -1247,6 +1549,204 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
               className="w-full text-xs h-9"
             >
               Preencher no Início da Página
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Start Flat Modal: Requires Estimated Finish Date & Time (Requirement 4) */}
+      <Dialog open={startModalOpen} onOpenChange={setStartModalOpen}>
+        <DialogContent className="max-w-md rounded-2xl p-6">
+          <DialogHeader className="space-y-2">
+            <DialogTitle className="text-lg font-black text-slate-800 dark:text-slate-100 flex items-center gap-2">
+              <Play className="w-5 h-5 text-primary fill-current" />
+              Iniciar Flat {startingFlat?.flatNumber}
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Informe a previsão de conclusão dos trabalhos para este apartamento. Caso ocorra atraso, você poderá atualizar a previsão.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="p-3 bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-900 rounded-xl text-xs text-sky-900 dark:text-sky-200 space-y-1">
+              <span className="font-bold block">Controle de Horário</span>
+              <p className="text-[11px] leading-relaxed">
+                A previsão de término ajuda a governança a organizar a liberação de entrada e inspeção dos apartamentos.
+              </p>
+            </div>
+
+            <div>
+              <Label className="text-xs font-bold text-slate-800 dark:text-slate-100">
+                Previsão de Término (Data e Hora) *
+              </Label>
+              <Input
+                type="datetime-local"
+                value={estimatedFinishInput}
+                onChange={(e) => setEstimatedFinishInput(e.target.value)}
+                className="mt-1.5 text-sm"
+              />
+            </div>
+
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              <span className="text-[11px] font-semibold text-muted-foreground self-center mr-1">Atalhos:</span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  const d = new Date(Date.now() + 3600000);
+                  setEstimatedFinishInput(new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16));
+                }}
+                className="h-7 text-xs px-2"
+              >
+                +1 hora
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  const d = new Date(Date.now() + 7200000);
+                  setEstimatedFinishInput(new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16));
+                }}
+                className="h-7 text-xs px-2"
+              >
+                +2 horas
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  const d = new Date(Date.now() + 14400000);
+                  setEstimatedFinishInput(new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16));
+                }}
+                className="h-7 text-xs px-2"
+              >
+                +4 horas
+              </Button>
+            </div>
+          </div>
+
+          <DialogFooter className="mt-4 flex flex-col-reverse sm:flex-row gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setStartModalOpen(false)}
+              className="text-xs h-10"
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              onClick={handleConfirmStart}
+              disabled={startMutation.isPending || !estimatedFinishInput}
+              className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-xs h-10 shadow-xs"
+            >
+              {startMutation.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+              ) : (
+                <Play className="w-4 h-4 mr-1.5 fill-current" />
+              )}
+              Confirmar e Iniciar Serviço
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Update Estimate Modal (Requirement 4) */}
+      <Dialog open={estimateModalOpen} onOpenChange={setEstimateModalOpen}>
+        <DialogContent className="max-w-md rounded-2xl p-6">
+          <DialogHeader className="space-y-2">
+            <DialogTitle className="text-lg font-black text-slate-800 dark:text-slate-100 flex items-center gap-2">
+              <Clock className="w-5 h-5 text-sky-600" />
+              Atualizar Previsão — Flat {estimatingFlat?.flatNumber}
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Ajuste o novo horário previsto para o término do serviço. Os responsáveis e a portaria serão notificados automaticamente.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div>
+              <Label className="text-xs font-bold text-slate-800 dark:text-slate-100">
+                Nova Previsão de Término (Data e Hora) *
+              </Label>
+              <Input
+                type="datetime-local"
+                value={newEstimateInput}
+                onChange={(e) => setNewEstimateInput(e.target.value)}
+                className="mt-1.5 text-sm"
+              />
+            </div>
+
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              <span className="text-[11px] font-semibold text-muted-foreground self-center mr-1">Adicionar tempo:</span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  const base = newEstimateInput ? new Date(newEstimateInput).getTime() : Date.now();
+                  const d = new Date(base + 1800000);
+                  setNewEstimateInput(new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16));
+                }}
+                className="h-7 text-xs px-2"
+              >
+                +30 min
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  const base = newEstimateInput ? new Date(newEstimateInput).getTime() : Date.now();
+                  const d = new Date(base + 3600000);
+                  setNewEstimateInput(new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16));
+                }}
+                className="h-7 text-xs px-2"
+              >
+                +1 hora
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  const base = newEstimateInput ? new Date(newEstimateInput).getTime() : Date.now();
+                  const d = new Date(base + 7200000);
+                  setNewEstimateInput(new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16));
+                }}
+                className="h-7 text-xs px-2"
+              >
+                +2 horas
+              </Button>
+            </div>
+          </div>
+
+          <DialogFooter className="mt-4 flex flex-col-reverse sm:flex-row gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setEstimateModalOpen(false)}
+              className="text-xs h-10"
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              onClick={handleConfirmUpdateEstimate}
+              disabled={updateEstimateMutation.isPending || !newEstimateInput}
+              className="flex-1 bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs h-10 shadow-xs"
+            >
+              {updateEstimateMutation.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+              ) : (
+                <Check className="w-4 h-4 mr-1.5" />
+              )}
+              Confirmar Nova Previsão
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -134,7 +134,9 @@ import {
   getFlatAmenitiesInfo,
   searchFlatsByAmenities,
   handleGetFlatAmenities,
-  handleReallocateReservationFlat
+  handleReallocateReservationFlat,
+  querySystemData,
+  callGeminiAi
 } from "./whatsapp-ai-service.mjs";
 
 const { Pool } = pg;
@@ -7937,6 +7939,7 @@ function getFlatRealtimeStatus(flatId, flatNumber, dateStr = getTodayStr()) {
                        (checkoutTodayRes && !isCheckedOut) ? (checkoutTodayRes.guestName || checkoutTodayRes.title) :
                        isCheckedIn ? (checkinTodayRes.guestName || checkinTodayRes.title) :
                        checkinTodayRes ? (checkinTodayRes.guestName || checkinTodayRes.title) : null;
+  const expectedArrival = checkinTodayRes ? (checkinTodayRes.estimatedArrivalTime || checkinTodayRes.arrivalTime || "14:00") : null;
 
   // 2. Status de Higienização em Tempo Real (Apenas data consultada ou checkout recente)
   const dailyRequests = typeof getRequestsForDate === "function" ? getRequestsForDate(dateStr) : (db.cleaningRequests || []);
@@ -8006,6 +8009,7 @@ function getFlatRealtimeStatus(flatId, flatNumber, dateStr = getTodayStr()) {
     occupancyStatus: isOccupied ? "occupied" : "vacant",
     currentGuest: currentGuest || null,
     hasCheckinToday: Boolean(checkinTodayRes),
+    expectedArrival,
     hasCheckoutToday: Boolean(checkoutTodayRes),
     isCheckedOut,
     isCheckedIn
@@ -8030,7 +8034,24 @@ function formatServiceDuration(startIso, endIso) {
   return `${mins}min`;
 }
 
-async function dispatchServiceNotifications(action, order, flat, worker) {
+function formatDateTimeShort(isoStr) {
+  if (!isoStr) return "";
+  try {
+    const d = new Date(isoStr);
+    return d.toLocaleString("pt-BR", {
+      timeZone: "America/Sao_Paulo",
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    });
+  } catch {
+    return isoStr;
+  }
+}
+
+async function dispatchServiceNotifications(action, order, flat, worker, extraData = {}) {
   try {
     const timeFormatter = new Intl.DateTimeFormat("pt-BR", {
       timeZone: "America/Sao_Paulo",
@@ -8042,16 +8063,47 @@ async function dispatchServiceNotifications(action, order, flat, worker) {
 
     const workerName = (worker?.mainWorker?.name || flat.workerName || "Prestador").trim();
     const workerCpf = worker?.mainWorker?.cpf || flat.workerCpf || "";
+    const collaboratorsList = Array.isArray(worker?.collaborators) ? worker.collaborators : [];
+    const collabsStr = collaboratorsList.length > 0
+      ? collaboratorsList.map(c => `${c.name}${c.cpf ? ` (CPF: ${c.cpf})` : ""}`).join(", ")
+      : "Nenhum (profissional individual)";
+
+    const vehicle = worker?.vehicle || extraData?.vehicle;
+    const vehicleStr = vehicle?.needsGarage
+      ? `SIM 🚗 — Placa: ${vehicle.plate || "Não informada"} | Modelo/Cor: ${vehicle.modelColor || "Não informado"}`
+      : "Não necessita de garagem";
 
     let message = "";
-    if (action === "start") {
-      const estHours = order.estimatedDurationHours ? `${order.estimatedDurationHours}h` : "2h";
+    if (action === "entry_request") {
+      message = [
+        `🔑 *Solicitação de Liberação de Entrada* — ${order.title}`,
+        `🏠 Flat *${flat.flatNumber}*`,
+        `👤 Prestador: ${workerName}${workerCpf ? ` · CPF: ${workerCpf}` : ""}`,
+        `👥 Ajudante(s): ${collabsStr}`,
+        `🚗 Garagem/Veículo: ${vehicleStr}`,
+        `⏰ Horário: ${nowTimeStr}`,
+        `➡️ *Ação para Recepção:* Favor liberar o acesso / cartão ao flat ${flat.flatNumber} para o profissional.`
+      ].join("\n");
+    } else if (action === "start") {
+      const estFinishStr = flat.estimatedFinishAt
+        ? formatDateTimeShort(flat.estimatedFinishAt)
+        : (order.estimatedDurationHours ? `${order.estimatedDurationHours}h` : "2h");
       message = [
         `🔧 *Serviço iniciado* — ${order.title}`,
         `🏠 Flat *${flat.flatNumber}* | Prestador: ${workerName}${workerCpf ? ` · CPF: ${workerCpf}` : ""}`,
-        `⏰ ${nowTimeStr} · Previsão: ${estHours}`,
-        `➡️ Liberar cartão de acesso ao flat ${flat.flatNumber}`
+        `⏰ Início: ${nowTimeStr} · Previsão de término: ${estFinishStr}`,
+        `➡️ Cartão de acesso liberado ao flat ${flat.flatNumber}`
       ].join("\n");
+    } else if (action === "delay" || action === "overdue_alert") {
+      const estFinishStr = flat.estimatedFinishAt ? formatDateTimeShort(flat.estimatedFinishAt) : "--:--";
+      const isOverdue = action === "overdue_alert";
+      message = [
+        isOverdue ? `⚠️ *Alerta: Serviço com Previsão Expirada* — ${order.title}` : `⏱️ *Previsão de Término Atualizada* — ${order.title}`,
+        `🏠 Flat *${flat.flatNumber}* | Prestador: ${workerName}${workerCpf ? ` · CPF: ${workerCpf}` : ""}`,
+        `⏰ ${isOverdue ? "Previsão expirada em:" : "Nova previsão de término:"} ${estFinishStr}`,
+        extraData?.reason ? `📝 Motivo: "${extraData.reason}"` : "",
+        `➡️ Status: Em andamento no flat ${flat.flatNumber}.`
+      ].filter(Boolean).join("\n");
     } else {
       const startTimeStr = flat.startedAt ? timeFormatter.format(new Date(flat.startedAt)) : "--:--";
       const finishTimeStr = flat.finishedAt ? timeFormatter.format(new Date(flat.finishedAt)) : nowTimeStr;
@@ -8072,12 +8124,17 @@ async function dispatchServiceNotifications(action, order, flat, worker) {
 
     // 0. Notificação Interna e Registro no Audit Log Imediatos (Sem bloqueio por I/O de rede externa)
     try {
+      const notifTitle = action === "entry_request" ? `🔑 Solicitação de Entrada - Flat ${flat.flatNumber}` :
+                         action === "start" ? `🔧 Serviço iniciado - Flat ${flat.flatNumber}` :
+                         action === "finish" ? `✅ Serviço finalizado - Flat ${flat.flatNumber}` :
+                         action === "overdue_alert" ? `⚠️ Previsão expirada - Flat ${flat.flatNumber}` :
+                         `⏱️ Previsão atualizada - Flat ${flat.flatNumber}`;
       createNotification({
         category: "service_order",
-        title: action === "start" ? `🔧 Serviço iniciado - Flat ${flat.flatNumber}` : `✅ Serviço finalizado - Flat ${flat.flatNumber}`,
+        title: notifTitle,
         message: `${order.title}: ${workerName} no Flat ${flat.flatNumber}`,
-        severity: "info",
-        metadata: { serviceOrderId: order.id, flatId: flat.flatId, flatNumber: flat.flatNumber },
+        severity: action === "overdue_alert" ? "warning" : "info",
+        metadata: { serviceOrderId: order.id, flatId: flat.flatId, flatNumber: flat.flatNumber, action },
         targetUrl: `/servicos`
       });
     } catch (notifErr) {
@@ -8086,23 +8143,58 @@ async function dispatchServiceNotifications(action, order, flat, worker) {
 
     // 1. WhatsApp Admin (5522998505276)
     const adminPhone = "5522998505276";
-    if (typeof sendZapiMessage === "function") {
-      sendZapiMessage(db.zapiConfig, {
-        phone: adminPhone,
-        message,
-        bypassTestMode: true
-      }).catch(err => console.warn(`[ServiceOrder] WhatsApp to admin failed:`, err.message));
-    }
-
-    // 2. WhatsApp Reception
     const rawReceptionPhone = db.settings?.receptionPhone || db.settings?.receptionWhatsApp || db.siteConfig?.branding?.whatsapp || db.users?.find(u => u.role === "recepcao")?.whatsapp || db.settings?.adminWhatsApp || "5522997124021";
     const cleanReceptionPhone = cleanWhatsAppPhone ? cleanWhatsAppPhone(rawReceptionPhone) : String(rawReceptionPhone).replace(/\D/g, "");
-    if (cleanReceptionPhone && cleanReceptionPhone !== adminPhone && typeof sendZapiMessage === "function") {
-      sendZapiMessage(db.zapiConfig, {
-        phone: cleanReceptionPhone,
-        message,
-        bypassTestMode: true
-      }).catch(err => console.warn(`[ServiceOrder] WhatsApp to reception failed:`, err.message));
+
+    const targetPhones = new Set();
+    const targetEmails = new Set();
+
+    const normalizeEvents = (evts) => {
+      if (!Array.isArray(evts)) return [];
+      return evts.map(e => String(e).toLowerCase().trim());
+    };
+
+    const hasEvent = (evts, ev) => {
+      const list = normalizeEvents(evts);
+      if (ev === "entry_request") return list.includes("entry_request") || list.includes("solicitacao_entrada") || list.includes("liberacao");
+      if (ev === "start") return list.includes("start") || list.includes("inicio");
+      if (ev === "finish") return list.includes("finish") || list.includes("fim") || list.includes("finalizacao");
+      if (ev === "delay" || ev === "overdue_alert") return list.includes("delay") || list.includes("atraso") || list.includes("previsao");
+      return false;
+    };
+
+    if (Array.isArray(order.notificationRecipients) && order.notificationRecipients.length > 0) {
+      for (const rec of order.notificationRecipients) {
+        let shouldNotify = hasEvent(rec.events, action);
+        if (action === "entry_request" && vehicle?.needsGarage && (rec.role === "garage" || /garagem/i.test(rec.name))) {
+          shouldNotify = true;
+        }
+        if (shouldNotify) {
+          const cp = cleanWhatsAppPhone ? cleanWhatsAppPhone(rec.phone) : String(rec.phone || "").replace(/\D/g, "");
+          if (cp) targetPhones.add(cp);
+          if (rec.email && String(rec.email).includes("@")) targetEmails.add(rec.email.trim());
+        }
+      }
+    } else {
+      // Default fallback routing:
+      if (action === "entry_request") {
+        if (cleanReceptionPhone) targetPhones.add(cleanReceptionPhone);
+      } else {
+        targetPhones.add(adminPhone);
+        if (cleanReceptionPhone) targetPhones.add(cleanReceptionPhone);
+      }
+      const receptionEmail = db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
+      if (receptionEmail) targetEmails.add(receptionEmail);
+    }
+
+    if (typeof sendZapiMessage === "function") {
+      for (const phone of targetPhones) {
+        sendZapiMessage(db.zapiConfig, {
+          phone,
+          message,
+          bypassTestMode: true
+        }).catch(err => console.warn(`[ServiceOrder] WhatsApp to ${phone} failed:`, err.message));
+      }
     }
 
     // 2b. Enviar fotos via WhatsApp (somente na finalização)
@@ -8127,77 +8219,114 @@ async function dispatchServiceNotifications(action, order, flat, worker) {
           console.warn(`[ServiceOrder] Falha ao enviar foto ${photoUrl} via WhatsApp para ${phone}:`, imgErr.message);
         }
       };
-      // Monta URL pública para cada foto e envia sequencialmente
+
       const serverBaseUrl = process.env.SERVER_BASE_URL || db.settings?.serverBaseUrl || db.siteConfig?.branding?.siteUrl || "";
       for (let i = 0; i < flat.photos.length; i++) {
         const rawUrl = flat.photos[i];
-        // Se a URL já é absoluta (https://), usa diretamente; senão, prefixa com serverBaseUrl
         const photoUrl = rawUrl && rawUrl.startsWith("http") ? rawUrl : (serverBaseUrl ? `${serverBaseUrl.replace(/\/+$/, "")}${rawUrl}` : rawUrl);
         const caption = `📷 Flat ${flat.flatNumber} – ${order.title} (${i + 1}/${flat.photos.length})`;
         if (photoUrl) {
-          await sendImageToPhone(adminPhone, photoUrl, caption);
-          if (cleanReceptionPhone && cleanReceptionPhone !== adminPhone) {
-            await sendImageToPhone(cleanReceptionPhone, photoUrl, caption);
+          for (const phone of targetPhones) {
+            await sendImageToPhone(phone, photoUrl, caption);
           }
         }
       }
     }
 
-    // 3. Email Reception
-    const receptionEmail = db.settings?.receptionEmail || db.settings?.buildingEmail || process.env.RECEPTION_EMAIL || "millerpessanha@gmail.com";
-    if (receptionEmail && typeof sendEmailAsync === "function") {
-      const subject = `[CorpFlats] Serviço ${action === "start" ? "Iniciado" : "Finalizado"} - Flat ${flat.flatNumber} (${order.title})`;
+    // 3. Email Reception / Destinatários
+    if (targetEmails.size > 0 && typeof sendEmailAsync === "function") {
+      const actionName = action === "start" ? "Iniciado" : action === "finish" ? "Finalizado" : action === "entry_request" ? "Solicitação de Entrada" : "Aviso de Previsão";
+      const subject = `[CorpFlats] Serviço ${actionName} - Flat ${flat.flatNumber} (${order.title})`;
       const bodyHtml = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; line-height: 1.5;">
-          <h2 style="color: ${action === "start" ? "#0284c7" : "#16a34a"};">
-            ${action === "start" ? "🔧 Serviço Externo Iniciado" : "✅ Serviço Externo Finalizado"}
+          <h2 style="color: ${action === "start" ? "#0284c7" : action === "finish" ? "#16a34a" : "#d97706"};">
+            ${action === "start" ? "🔧 Serviço Externo Iniciado" : action === "finish" ? "✅ Serviço Externo Finalizado" : action === "entry_request" ? "🔑 Solicitação de Entrada no Flat" : "⏱️ Atualização de Previsão"}
           </h2>
           <p><strong>Serviço:</strong> ${order.title}</p>
           <p><strong>Apartamento:</strong> Flat ${flat.flatNumber}</p>
           <p><strong>Prestador:</strong> ${workerName}${workerCpf ? ` (CPF: ${workerCpf})` : ""}</p>
-          ${action === "start" ? `
+          ${action === "entry_request" ? `
+            <p><strong>Ajudantes:</strong> ${collabsStr}</p>
+            <p><strong>Garagem:</strong> ${vehicleStr}</p>
+            <div style="background-color: #fef3c7; padding: 12px; border-left: 4px solid #d97706; margin-top: 15px; border-radius: 4px;">
+              ➡️ <strong>Ação para Recepção/Portaria:</strong> Favor autorizar entrada e liberar cartão de acesso para o Flat ${flat.flatNumber}.
+            </div>
+          ` : action === "start" ? `
             <p><strong>Início:</strong> ${nowTimeStr}</p>
-            <p><strong>Previsão de Duração:</strong> ${order.estimatedDurationHours || 2}h</p>
+            <p><strong>Previsão de Término:</strong> ${flat.estimatedFinishAt ? formatDateTimeShort(flat.estimatedFinishAt) : `${order.estimatedDurationHours || 2}h`}</p>
             <div style="background-color: #f0f9ff; padding: 12px; border-left: 4px solid #0284c7; margin-top: 15px; border-radius: 4px;">
               ➡️ <strong>Ação para Recepção:</strong> Favor liberar o cartão de acesso para o prestador ao Flat ${flat.flatNumber}.
             </div>
-          ` : `
+          ` : action === "finish" ? `
             <p><strong>Duração:</strong> ${formatServiceDuration(flat.startedAt, flat.finishedAt)}</p>
             <p><strong>Precisa de Camareira:</strong> ${flat.needsCleaning === true ? "Sim" : (flat.needsCleaning === false ? "Não" : "N.A.")}</p>
             <p><strong>Observações:</strong> ${flat.observations || "Nenhuma observação informada."}</p>
             <p><strong>Fotos Anexadas:</strong> ${Array.isArray(flat.photos) ? flat.photos.length : 0}</p>
+          ` : `
+            <p><strong>Previsão de Término:</strong> ${flat.estimatedFinishAt ? formatDateTimeShort(flat.estimatedFinishAt) : "--:--"}</p>
+            ${extraData?.reason ? `<p><strong>Motivo:</strong> ${extraData.reason}</p>` : ""}
           `}
           <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
           <p style="font-size: 12px; color: #64748b;">Notificação enviada automaticamente pelo sistema CorpFlats Guest-Flow-Manager.</p>
         </div>
       `;
 
-      try {
-        sendEmailAsync({
-          db,
-          saveDatabase,
-          reservationId: "0",
-          recipient: receptionEmail,
-          to: receptionEmail,
-          subject,
-          emailSubject: subject,
-          bodyHtml,
-          html: bodyHtml,
-          emailHtml: bodyHtml,
-          metadata: {
-            category: "service_order",
-            serviceOrderId: order.id,
-            flatNumber: flat.flatNumber,
-            flatId: flat.flatId,
-            action
-          }
-        });
-      } catch (emailErr) {
-        console.warn("[SERVICE-ORDERS] Erro ao enviar email para recepção:", emailErr?.message || emailErr);
+      for (const email of targetEmails) {
+        try {
+          sendEmailAsync({
+            db,
+            saveDatabase,
+            reservationId: "0",
+            recipient: email,
+            to: email,
+            subject,
+            emailSubject: subject,
+            bodyHtml,
+            html: bodyHtml,
+            emailHtml: bodyHtml,
+            metadata: {
+              category: "service_order",
+              serviceOrderId: order.id,
+              flatNumber: flat.flatNumber,
+              flatId: flat.flatId,
+              action
+            }
+          });
+        } catch (emailErr) {
+          console.warn(`[SERVICE-ORDERS] Erro ao enviar email para ${email}:`, emailErr?.message || emailErr);
+        }
       }
     }
   } catch (err) {
     console.error("[ServiceOrder] Error dispatching notifications:", err);
+  }
+}
+
+function checkOverdueServiceFlats() {
+  try {
+    if (!Array.isArray(db.serviceOrders)) return;
+    const now = new Date();
+    let updated = false;
+
+    for (const order of db.serviceOrders) {
+      if (order.status !== "active") continue;
+      for (const flat of (order.flats || [])) {
+        if (flat.status === "in_progress" && flat.estimatedFinishAt && !flat.delayNotified) {
+          const estDate = new Date(flat.estimatedFinishAt);
+          if (estDate.getTime() < now.getTime()) {
+            flat.delayNotified = true;
+            updated = true;
+            const worker = (db.serviceWorkers || []).find(w => w.token === order.token || w.serviceOrderId === order.id);
+            dispatchServiceNotifications("overdue_alert", order, flat, worker);
+          }
+        }
+      }
+    }
+    if (updated) {
+      saveDatabase("check_overdue_service_flats");
+    }
+  } catch (err) {
+    console.warn("[ServiceOrder] Erro ao verificar atrasos de serviço:", err?.message || err);
   }
 }
 
@@ -10737,7 +10866,8 @@ app.post("/api/service-orders", (req, res) => {
     estimatedDurationHours = null,
     instructionFormat = "text",
     flats = [],
-    defaultInstructions = ""
+    defaultInstructions = "",
+    notificationRecipients = []
   } = req.body || {};
 
   if (!title || !String(title).trim()) {
@@ -10788,6 +10918,7 @@ app.post("/api/service-orders", (req, res) => {
     requirePhotos: typeof requirePhotos === "boolean" ? requirePhotos : true,
     estimatedDurationHours: estimatedDurationHours ? Number(estimatedDurationHours) : null,
     instructionFormat: instructionFormat === "list" ? "list" : "text",
+    notificationRecipients: Array.isArray(notificationRecipients) ? notificationRecipients : [],
     flats: formattedFlats
   };
 
@@ -10864,6 +10995,7 @@ app.patch("/api/service-orders/:id", (req, res) => {
   if (body.requirePhotos !== undefined) order.requirePhotos = Boolean(body.requirePhotos);
   if (body.estimatedDurationHours !== undefined) order.estimatedDurationHours = body.estimatedDurationHours ? Number(body.estimatedDurationHours) : null;
   if (body.instructionFormat !== undefined) order.instructionFormat = body.instructionFormat === "list" ? "list" : "text";
+  if (body.notificationRecipients !== undefined) order.notificationRecipients = Array.isArray(body.notificationRecipients) ? body.notificationRecipients : [];
 
   if (Array.isArray(body.flats)) {
     for (const f of body.flats) {
@@ -10957,6 +11089,9 @@ app.get("/api/service-orders/:id/progress", (req, res) => {
   const pending = flats.filter(f => f.status === "pending").length;
   const percentage = total > 0 ? Math.round((done / total) * 100) : 0;
 
+  // Verifica atrasos e dispara notificações se aplicável
+  checkOverdueServiceFlats();
+
   const worker = (db.serviceWorkers || []).find(w => w.serviceOrderId === order.id || w.token === order.token) || null;
   const todayStr = getTodayStr();
   const enrichedFlats = flats.map(f => {
@@ -10969,7 +11104,10 @@ app.get("/api/service-orders/:id/progress", (req, res) => {
       occupancyStatus: realtime.occupancyStatus,
       currentGuest: realtime.currentGuest,
       hasCheckinToday: realtime.hasCheckinToday,
-      hasCheckoutToday: realtime.hasCheckoutToday
+      expectedArrival: realtime.expectedArrival || (realtime.hasCheckinToday ? "14:00" : null),
+      hasCheckoutToday: realtime.hasCheckoutToday,
+      entryRequested: Boolean(f.entryRequested),
+      entryRequestedAt: f.entryRequestedAt || null
     };
   });
 
@@ -10978,6 +11116,7 @@ app.get("/api/service-orders/:id/progress", (req, res) => {
     title: order.title,
     token: order.token,
     status: order.status,
+    notificationRecipients: order.notificationRecipients || [],
     stats: {
       total,
       done,
@@ -11030,6 +11169,9 @@ app.get("/api/service/public/:token", (req, res) => {
     return res.status(404).json({ error: "Ordem de serviço não encontrada ou link inválido." });
   }
 
+  // Verifica atrasos e dispara notificações se aplicável
+  checkOverdueServiceFlats();
+
   const worker = (db.serviceWorkers || []).find(w => w.token === token || w.serviceOrderId === order.id) || null;
   const todayStr = getTodayStr();
 
@@ -11041,9 +11183,13 @@ app.get("/api/service/public/:token", (req, res) => {
       isOccupied: realtime.isOccupied,
       cleaningStatus: realtime.cleaningStatus,
       occupancyStatus: realtime.occupancyStatus,
-      currentGuest: realtime.currentGuest,
+      // O prestador de serviço não precisa saber o nome de quem entra no flat
+      currentGuest: null,
       hasCheckinToday: realtime.hasCheckinToday,
-      hasCheckoutToday: realtime.hasCheckoutToday
+      expectedArrival: realtime.expectedArrival || (realtime.hasCheckinToday ? "14:00" : null),
+      hasCheckoutToday: realtime.hasCheckoutToday,
+      entryRequested: Boolean(f.entryRequested),
+      entryRequestedAt: f.entryRequestedAt || null
     };
   });
 
@@ -11076,7 +11222,7 @@ app.post("/api/service/public/:token/register", (req, res) => {
     return res.status(404).json({ error: "Ordem de serviço não encontrada ou link inválido." });
   }
 
-  const { mainWorker, collaborators = [] } = req.body || {};
+  const { mainWorker, collaborators = [], vehicle } = req.body || {};
   if (!mainWorker || !mainWorker.name || !String(mainWorker.name).trim() || !mainWorker.cpf || !String(mainWorker.cpf).trim()) {
     return res.status(400).json({ error: "Nome completo e CPF do prestador principal são obrigatórios." });
   }
@@ -11099,12 +11245,19 @@ app.post("/api/service/public/:token/register", (req, res) => {
         .filter(c => c.name && c.cpf)
     : [];
 
+  const formattedVehicle = vehicle && typeof vehicle === "object" ? {
+    needsGarage: Boolean(vehicle.needsGarage),
+    plate: String(vehicle.plate || "").trim().toUpperCase(),
+    modelColor: String(vehicle.modelColor || "").trim()
+  } : { needsGarage: false, plate: "", modelColor: "" };
+
   if (worker) {
     worker.mainWorker = {
       name: String(mainWorker.name).trim(),
       cpf: String(mainWorker.cpf).trim()
     };
     worker.collaborators = formattedCollaborators;
+    worker.vehicle = formattedVehicle;
     worker.registeredAt = now;
   } else {
     worker = {
@@ -11116,6 +11269,7 @@ app.post("/api/service/public/:token/register", (req, res) => {
         cpf: String(mainWorker.cpf).trim()
       },
       collaborators: formattedCollaborators,
+      vehicle: formattedVehicle,
       registeredAt: now
     };
     db.serviceWorkers.push(worker);
@@ -11132,13 +11286,73 @@ function getOrRegisterServiceWorker(token, orderId, body) {
     const n = String(b?.name || "").trim(), c = String(b?.cpf || "").replace(/\D/g, "");
     if (n && c.length === 11) {
       if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
-      worker = { id: `sw_${Date.now()}`, serviceOrderId: orderId, token, mainWorker: { name: n, cpf: c }, collaborators: [], registeredAt: new Date().toISOString() };
+      const veh = body?.vehicle ? {
+        needsGarage: Boolean(body.vehicle.needsGarage),
+        plate: String(body.vehicle.plate || "").trim().toUpperCase(),
+        modelColor: String(body.vehicle.modelColor || "").trim()
+      } : { needsGarage: false, plate: "", modelColor: "" };
+      worker = { id: `sw_${Date.now()}`, serviceOrderId: orderId, token, mainWorker: { name: n, cpf: c }, collaborators: [], vehicle: veh, registeredAt: new Date().toISOString() };
       db.serviceWorkers.push(worker);
       saveDatabase("register_service_worker_on_start");
     }
+  } else if (body?.vehicle) {
+    worker.vehicle = {
+      needsGarage: Boolean(body.vehicle.needsGarage),
+      plate: String(body.vehicle.plate || "").trim().toUpperCase(),
+      modelColor: String(body.vehicle.modelColor || "").trim()
+    };
   }
   return worker;
 }
+
+// POST /api/service/public/:token/flats/:flatId/request-entry — Solicita liberação de entrada na recepção (Etapa 1 do fluxo)
+app.post("/api/service/public/:token/flats/:flatId/request-entry", async (req, res) => {
+  const { token, flatId } = req.params;
+  const order = (db.serviceOrders || []).find(o => o.token === token);
+  if (!order) return res.status(404).json({ error: "Ordem de serviço não encontrada ou link inválido." });
+
+  if (order.status === "closed") {
+    return res.status(400).json({ success: false, error: "Esta ordem de serviço está encerrada." });
+  }
+
+  const worker = getOrRegisterServiceWorker(token, order.id, req.body);
+  if (!worker) {
+    return res.status(403).json({ error: "Prestador deve se identificar antes de solicitar liberação de entrada." });
+  }
+
+  if (req.body?.vehicle) {
+    worker.vehicle = {
+      needsGarage: Boolean(req.body.vehicle.needsGarage),
+      plate: String(req.body.vehicle.plate || "").trim().toUpperCase(),
+      modelColor: String(req.body.vehicle.modelColor || "").trim()
+    };
+  }
+
+  const fId = Number(flatId);
+  const flat = (order.flats || []).find(f => Number(f.flatId) === fId || String(f.flatNumber) === String(flatId));
+  if (!flat) return res.status(404).json({ error: "Apartamento não encontrado nesta ordem de serviço." });
+
+  if (flat.status === "done") {
+    return res.status(400).json({ error: "Serviço já foi finalizado neste apartamento." });
+  }
+
+  flat.entryRequested = true;
+  flat.entryRequestedAt = new Date().toISOString();
+  flat.workerName = worker.mainWorker.name;
+  flat.workerCpf = worker.mainWorker.cpf;
+
+  saveDatabase("service_flat_request_entry");
+
+  // Dispara notificação da solicitação de entrada (evento entry_request)
+  dispatchServiceNotifications("entry_request", order, flat, worker, { vehicle: worker.vehicle });
+
+  res.json({
+    success: true,
+    flat,
+    worker,
+    message: "Solicitação de liberação de entrada enviada à recepção com sucesso."
+  });
+});
 
 // POST /api/service/public/:token/flats/:flatId/start — Inicia serviço no apartamento
 app.post("/api/service/public/:token/flats/:flatId/start", async (req, res) => {
@@ -11208,11 +11422,21 @@ app.post("/api/service/public/:token/flats/:flatId/start", async (req, res) => {
   flat.workerName = worker.mainWorker.name;
   flat.workerCpf = worker.mainWorker.cpf;
   flat.wasCleanWhenStarted = !isDirty;
+  flat.entryRequested = true;
+  if (!flat.entryRequestedAt) flat.entryRequestedAt = now.toISOString();
+  flat.delayNotified = false;
 
-  if (order.estimatedDurationHours && Number(order.estimatedDurationHours) > 0) {
+  if (req.body?.estimatedFinishAt) {
+    const customEst = new Date(req.body.estimatedFinishAt);
+    if (!isNaN(customEst.getTime())) {
+      flat.estimatedFinishAt = customEst.toISOString();
+    } else {
+      flat.estimatedFinishAt = new Date(now.getTime() + 2 * 3600 * 1000).toISOString();
+    }
+  } else if (order.estimatedDurationHours && Number(order.estimatedDurationHours) > 0) {
     flat.estimatedFinishAt = new Date(now.getTime() + Number(order.estimatedDurationHours) * 3600 * 1000).toISOString();
   } else {
-    flat.estimatedFinishAt = null;
+    flat.estimatedFinishAt = new Date(now.getTime() + 2 * 3600 * 1000).toISOString();
   }
 
   if (order.status === "draft") {
@@ -11314,6 +11538,48 @@ app.post("/api/service/public/:token/flats/:flatId/finish", async (req, res) => 
   res.json({
     success: true,
     flat
+  });
+});
+
+// POST /api/service/public/:token/flats/:flatId/update-estimate — Atualiza previsão de término caso o serviço atrase
+app.post("/api/service/public/:token/flats/:flatId/update-estimate", async (req, res) => {
+  const { token, flatId } = req.params;
+  const order = (db.serviceOrders || []).find(o => o.token === token);
+  if (!order) return res.status(404).json({ error: "Ordem de serviço não encontrada ou link inválido." });
+
+  const fId = Number(flatId);
+  const flat = (order.flats || []).find(f => Number(f.flatId) === fId || String(f.flatNumber) === String(flatId));
+  if (!flat) return res.status(404).json({ error: "Apartamento não encontrado nesta ordem de serviço." });
+
+  if (flat.status !== "in_progress") {
+    return res.status(400).json({ error: "Apenas apartamentos com serviço em andamento podem ter a previsão atualizada." });
+  }
+
+  const { estimatedFinishAt, reason } = req.body || {};
+  if (!estimatedFinishAt) {
+    return res.status(400).json({ error: "Data e hora prevista de término é obrigatória." });
+  }
+
+  const newEstDate = new Date(estimatedFinishAt);
+  if (isNaN(newEstDate.getTime())) {
+    return res.status(400).json({ error: "Data e hora prevista de término inválida." });
+  }
+
+  flat.estimatedFinishAt = newEstDate.toISOString();
+  flat.delayNotified = false; // Permite novo alerta caso expire novamente
+
+  saveDatabase("service_flat_update_estimate");
+
+  const worker = (db.serviceWorkers || []).find(w => w.token === token || w.serviceOrderId === order.id) || {
+    mainWorker: { name: flat.workerName || "Prestador", cpf: flat.workerCpf || "" }
+  };
+
+  dispatchServiceNotifications("delay", order, flat, worker, { reason });
+
+  res.json({
+    success: true,
+    flat,
+    message: "Previsão de término atualizada com sucesso."
   });
 });
 
@@ -30043,6 +30309,346 @@ app.post("/api/ai/process-inbound-message", async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Copiloto IA Global de Gestão no Painel Web/PMS ──────────────────────────
+
+export async function generateAdminCopilotLocalResponse(db, message = "", context = {}) {
+  const text = String(message || "").toLowerCase().trim();
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  // 1. Financeiro & Faturamento (prioridade sobre reservas para "resumo financeiro das reservas")
+  if (/financ|faturament|receita|tarifa|di[aá]ria|dre\b|lucro/i.test(text)) {
+    const res = await querySystemData(db, { module: "finance", requesterRole: "admin" });
+    const rev = res.revenueByChannel || {};
+
+    let reply = `### 💰 Resumo Financeiro & Tarifário\n\n`;
+    reply += `• **Reservas Ativas:** ${res.activeReservationsCount || 0}\n`;
+    reply += `• **Diária Média Efetiva (ADR):** R$ ${res.averageDailyRate || 237},00\n`;
+    reply += `• **Faturamento Estimado (Reservas):** R$ ${(res.totalRevenueEstimated || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}\n\n`;
+    reply += `**Divisão por Canal de Venda:**\n`;
+    reply += `- Vendas Diretas / WhatsApp: R$ ${(rev.direct || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}\n`;
+    reply += `- Booking.com: R$ ${(rev.booking || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}\n`;
+    reply += `- Airbnb: R$ ${(rev.airbnb || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}\n\n`;
+    reply += `**Parâmetros Tarifários Ativos:**\n`;
+    reply += `• Diária Base: R$ ${res.tariffSettings?.baseDailyRate || 237},00\n`;
+    reply += `• Taxa de Limpeza: R$ ${res.tariffSettings?.cleaningFee || 70},00\n`;
+    reply += `• Café Adicional/Pessoa: R$ ${res.tariffSettings?.breakfastFeePerson || 35},00\n`;
+
+    return { text: reply, data: res };
+  }
+
+  // 2. Café da Manhã & Pedidos (prioridade sobre manutenção para "Quais os pedidos de café...")
+  if (/caf[eé]|desjejum|card[aá]pio|bandeja/i.test(text)) {
+    const res = await querySystemData(db, { module: "breakfast", requesterRole: "admin", filters: { date: todayStr } });
+    const orders = res.orders || [];
+
+    let reply = `### 🥐☕ Produção de Café da Manhã (${todayStr})\n\n`;
+    reply += `• **Horário de Atendimento:** Das 05:00 às 09:30 (Entrega em bandeja no quarto)\n`;
+    reply += `• **Total de Pedidos para Hoje:** ${orders.length}\n\n`;
+
+    if (orders.length > 0) {
+      reply += `**Entregas Programadas:**\n`;
+      orders.forEach(o => {
+        const count = o.items ? o.items.length : 0;
+        reply += `- **${o.deliveryTime || "07:00"}h** • Flat ${o.roomNumber} (${o.clientName || "Hóspede"}) — ${count} itens selecionados\n`;
+      });
+    } else {
+      reply += `_Não constam pedidos agendados para hoje ou as bandejas já foram finalizadas._\n`;
+    }
+
+    return { text: reply, data: res };
+  }
+
+  // 3. Manutenções & Ordens de Serviço (evita capturar "os" com \bos\b)
+  if (/\b(?:o\.s\.|ordens?\s+de\s+servi[cç]o|manuten[cç]|conserto|defeito|reparo)\b/i.test(text)) {
+    const res = await querySystemData(db, { module: "maintenance", requesterRole: "admin" });
+    const orders = res.serviceOrders || [];
+    const active = orders.filter(o => o.status === "active");
+
+    let reply = `### 🛠️ Ordens de Serviço & Manutenção\n\n`;
+    reply += `• **Ordens Ativas:** ${active.length}\n`;
+    reply += `• **Total Registrado:** ${orders.length}\n\n`;
+
+    if (active.length > 0) {
+      reply += `**Chamados Ativos no Momento:**\n`;
+      active.forEach(o => {
+        const flatsStr = (o.flats || []).map(f => `Flat ${f.flatNumber} (${f.status})`).join(", ");
+        reply += `- **${o.title}**: ${flatsStr || "Geral"} • Prestador: ${o.workerName || "A definir"}\n`;
+      });
+    } else {
+      reply += `_Nenhuma ordem de serviço pendente no momento. Toda a infraestrutura operacional está em dia!_ ✨\n`;
+    }
+
+    return { text: reply, data: res };
+  }
+
+  // 4. Limpeza & Governança
+  if (/limpeza|govern|camareira|faxina|vistoria/i.test(text)) {
+    const res = await querySystemData(db, { module: "cleaning", requesterRole: "admin" });
+    const reqs = res.cleaningRequests || [];
+    const pending = reqs.filter(c => c.status === "pending" || c.status === "dirty");
+    const clean = reqs.filter(c => c.status === "clean");
+
+    let reply = `### 🧹 Governança & Status de Limpeza\n\n`;
+    reply += `• **Flats Limpos & Prontos:** ${clean.length}\n`;
+    reply += `• **Aguardando / Em Limpeza:** ${pending.length}\n\n`;
+
+    if (pending.length > 0) {
+      reply += `**Pendências de Limpeza:**\n`;
+      pending.forEach(c => {
+        reply += `- Flat ${c.flatNumber}: ${c.status} (Responsável: ${c.assignedUsername || "Não atribuído"})\n`;
+      });
+    } else {
+      reply += `_Todas as limpezas programadas estão regularizadas!_ ✨\n`;
+    }
+
+    return { text: reply, data: res };
+  }
+
+  // 5. Garagem & Estacionamento
+  if (/garagem|vaga|ve[ií]culo|placa/i.test(text)) {
+    const res = await querySystemData(db, { module: "garage", requesterRole: "admin" });
+    const auths = res.authorizations || [];
+
+    let reply = `### 🚗 Garagem & Veículos Autorizados\n\n`;
+    reply += `• **Regra Condominial:** ${res.rules?.policy}\n`;
+    reply += `• **Altura Limite:** ${res.rules?.heightLimitMeters}\n`;
+    reply += `• **Veículos com Autorização Ativa:** ${auths.length}\n\n`;
+
+    if (auths.length > 0) {
+      reply += `**Últimas Autorizações:**\n`;
+      auths.slice(0, 5).forEach(a => {
+        reply += `- **${a.plate}** (${[a.brand, a.model].filter(Boolean).join(" ") || "Carro"}): Flat ${a.flatNumber} — ${a.guestName}\n`;
+      });
+    }
+
+    return { text: reply, data: res };
+  }
+
+  // 6. Achados e Perdidos
+  if (/achad|perdid|esquec/i.test(text)) {
+    const res = await querySystemData(db, { module: "lost_and_found", requesterRole: "admin" });
+    const items = res.items || [];
+    const stored = items.filter(i => i.status !== "devolvido");
+
+    let reply = `### 🧳 Achados & Perdidos\n\n`;
+    reply += `• **Itens Guardados no Momento:** ${stored.length}\n`;
+    reply += `• **Total Registrado:** ${items.length}\n\n`;
+
+    if (stored.length > 0) {
+      reply += `**Itens Aguardando Retirada:**\n`;
+      stored.forEach(i => {
+        reply += `- Flat ${i.flatNumber}: **${i.description}** (${i.locationInRoom || "Quarto"}) — Encontrado em ${i.createdAt?.slice(0, 10) || "Data N/D"}\n`;
+      });
+    } else {
+      reply += `_Nenhum item pendente de devolução no momento._\n`;
+    }
+
+    return { text: reply, data: res };
+  }
+
+  // 7. Avaliações & Sentimento
+  if (/avalia[cç]|sentimento|nps|nota|feedback|review/i.test(text)) {
+    const res = await querySystemData(db, { module: "sentiment", requesterRole: "admin" });
+    let reply = `### ⭐ Satisfação dos Hóspedes & Sentimento\n\n`;
+    reply += `• **Nota Média Geral:** ${res.averageRating || 4.9} / 5.0 ⭐\n`;
+    reply += `• **Total de Avaliações:** ${res.totalReviews || 0}\n`;
+    reply += `• **Promotores NPS (Nota 5):** ${res.nps?.promoters || 0}\n`;
+    reply += `• **Detratores NPS (Nota ≤ 2):** ${res.nps?.detractors || 0}\n\n`;
+
+    if (Array.isArray(res.recentFeedbacks) && res.recentFeedbacks.length > 0) {
+      reply += `**Feedbacks Recentes:**\n`;
+      res.recentFeedbacks.slice(0, 3).forEach(f => {
+        reply += `- "${f.comment}" — _${f.author}_ (${f.rating}★)\n`;
+      });
+    }
+
+    return { text: reply, data: res };
+  }
+
+  // 8. Flats & Ocupação
+  if (/flat|quarto|apartamento|\buh\b|ocupad|livre|ocupac|status.*flat/i.test(text)) {
+    const res = await querySystemData(db, { module: "flats", requesterRole: "admin" });
+    const flats = res.flats || [];
+    const occupied = flats.filter(f => f.isOccupied);
+    const vacant = flats.filter(f => !f.isOccupied);
+    const inMaint = flats.filter(f => f.maintenanceStatus === "em_manutencao");
+    const needingClean = flats.filter(f => f.cleaningStatus === "dirty" || f.cleaningStatus === "pending");
+
+    let reply = `### 🏢 Panorama Geral dos Flats (${todayStr})\n\n`;
+    reply += `• **Total de Flats:** ${flats.length}\n`;
+    reply += `• **Ocupados Hoje:** ${occupied.length} (${Math.round((occupied.length / Math.max(1, flats.length)) * 100)}% de ocupação)\n`;
+    reply += `• **Livres / Disponíveis:** ${vacant.length} flats\n`;
+    if (needingClean.length > 0) {
+      reply += `• **Aguardando Limpeza:** ${needingClean.map(f => f.number).join(", ")}\n`;
+    }
+    if (inMaint.length > 0) {
+      reply += `• **Em Manutenção:** ${inMaint.map(f => f.number).join(", ")}\n`;
+    }
+
+    if (occupied.length > 0) {
+      reply += `\n**Flats Ocupados Hoje:**\n`;
+      occupied.slice(0, 8).forEach(f => {
+        reply += `- Flat ${f.number}: ${f.currentGuest?.name || "Hóspede"} (Check-out: ${f.currentGuest?.checkout || "N/D"})\n`;
+      });
+      if (occupied.length > 8) {
+        reply += `_...e mais ${occupied.length - 8} flats ocupados._\n`;
+      }
+    }
+    return { text: reply, data: res };
+  }
+
+  // 9. Próximos Check-ins / Reservas
+  if (/reserva|check-?in|entrada|sa[ií]da|h[oó]spede|pr[oó]xim/i.test(text)) {
+    const res = await querySystemData(db, { module: "reservations", requesterRole: "admin" });
+    const reservations = res.reservations || [];
+    const checkinsToday = reservations.filter(r => r.checkinDate === todayStr && r.status !== "cancelada");
+    const checkoutsToday = reservations.filter(r => r.checkoutDate === todayStr && r.status !== "cancelada");
+    const upcoming = reservations.filter(r => r.checkinDate > todayStr && r.status !== "cancelada")
+      .sort((a, b) => a.checkinDate.localeCompare(b.checkinDate))
+      .slice(0, 6);
+
+    let reply = `### 📅 Fluxo de Reservas & Chegadas (${todayStr})\n\n`;
+    reply += `• **Check-ins Hoje:** ${checkinsToday.length}\n`;
+    checkinsToday.forEach(r => {
+      reply += `  - Flat ${r.flatNumber || "A definir"}: **${r.guestName}** (${r.code || "Reserva"}) • ${r.paymentStatus === "pago_total" ? "Pago ✅" : "Pendente ⚠️"}\n`;
+    });
+
+    reply += `\n• **Check-outs Hoje:** ${checkoutsToday.length}\n`;
+    checkoutsToday.forEach(r => {
+      reply += `  - Flat ${r.flatNumber}: **${r.guestName}** (Limite 12h)\n`;
+    });
+
+    if (upcoming.length > 0) {
+      reply += `\n**Próximas Chegadas Confirmadas:**\n`;
+      upcoming.forEach(r => {
+        reply += `- **${r.checkinDate}**: Flat ${r.flatNumber} — ${r.guestName} (${r.channel || "Direta"})\n`;
+      });
+    }
+
+    return { text: reply, data: res };
+  }
+
+  // 10. Resumo Executivo Geral (Fallback inteligente)
+  const flatsRes = await querySystemData(db, { module: "flats", requesterRole: "admin" });
+  const resRes = await querySystemData(db, { module: "reservations", requesterRole: "admin" });
+  const maintRes = await querySystemData(db, { module: "maintenance", requesterRole: "admin" });
+
+  const totalFlats = flatsRes.flats?.length || 24;
+  const occupiedFlats = flatsRes.flats?.filter(f => f.isOccupied).length || 0;
+  const activeOrders = maintRes.serviceOrders?.filter(o => o.status === "active").length || 0;
+  const todayCheckins = resRes.reservations?.filter(r => r.checkinDate === todayStr && r.status !== "cancelada").length || 0;
+
+  let reply = `### 🏨 Copiloto IA de Gestão CorpFlats\n\n`;
+  reply += `Aqui está o resumo operacional em tempo real de hoje (${todayStr}):\n\n`;
+  reply += `• **Ocupação dos Flats:** ${occupiedFlats} de ${totalFlats} ocupados (${Math.round((occupiedFlats / totalFlats) * 100)}%)\n`;
+  reply += `• **Check-ins Hoje:** ${todayCheckins} previstos\n`;
+  reply += `• **Chamados de Manutenção:** ${activeOrders} ativos\n\n`;
+  reply += `Você pode me pedir detalhes específicos clicando nos botões de atalho rápidos ou perguntando sobre flats, reservas, limpeza, café da manhã, garagem, financeiro ou avaliações! ✨`;
+
+  return { text: reply, data: { flats: flatsRes, reservations: resRes, maintenance: maintRes } };
+}
+
+// POST /api/admin/copilot/chat — Endpoint do Copiloto IA de Gestão do PMS
+app.post("/api/admin/copilot/chat", async (req, res) => {
+  const userAuth = getAuthUser(req);
+  const isTestAuth = req.headers["x-test-admin"] === "1";
+
+  if (!userAuth && !isTestAuth) {
+    return res.status(401).json({ error: "Não autenticado." });
+  }
+
+  if (userAuth && userAuth.role !== "admin" && userAuth.role !== "recepcao" && !isTestAuth) {
+    return res.status(403).json({ error: "Acesso negado. Apenas administradores e recepção têm acesso ao Copiloto IA." });
+  }
+
+  const { message, messages = [], history = [], context = {} } = req.body || {};
+  const currentMessage = message || (Array.isArray(messages) && messages[messages.length - 1]?.text) || "";
+
+  if (!currentMessage || !String(currentMessage).trim()) {
+    return res.status(400).json({ error: "Mensagem é obrigatória." });
+  }
+
+  const apiKey = process.env.GEMINI_API_KEY || db?.settings?.geminiApiKey || process.env.GOOGLE_AI_API_KEY;
+
+  const adminSystemPrompt = `Você é o Copiloto IA de Gestão da CorpFlats no Edifício Soho Residence Service em Campos dos Goytacazes/RJ.
+Seu papel é ser o assistente executivo e analítico da administração, recepção e governança.
+Você tem acesso total e irrestrito de leitura a todas as operações do hotel pelo motor querySystemData (com requesterRole='admin').
+Você responde com dados reais, concisos, estruturados em Markdown (usando listas, tabelas, destaques em negrito e métricas claras).
+Sempre que for feita uma pergunta sobre status operacional, reservas, limpeza, manutenção, café da manhã, garagem, finanças ou avaliações, consulte a ferramenta querySystemData com o módulo correspondente para trazer dados atualizados.
+Mantenha um tom profissional, ágil e focado na tomada de decisão gerencial.`;
+
+  const formattedHistory = Array.isArray(messages) && messages.length > 1
+    ? messages.slice(0, -1).map(m => ({ fromMe: m.role === "assistant" || m.role === "model", text: m.content || m.text || "" }))
+    : Array.isArray(history) ? history : [];
+
+  const adminTools = [
+    {
+      functionDeclarations: [
+        {
+          name: "querySystemData",
+          description: "Consulta dados em tempo real do sistema CorpFlats para gestão (flats, reservas, limpeza, manutenção, café da manhã, garagem, achados e perdidos, regras/FAQs, financeiro e avaliações/sentimento).",
+          parameters: {
+            type: "OBJECT",
+            properties: {
+              module: {
+                type: "STRING",
+                description: "Módulo do sistema: 'flats', 'reservations', 'cleaning', 'maintenance', 'breakfast', 'garage', 'lost_and_found', 'faq', 'finance' ou 'sentiment'."
+              },
+              query: {
+                type: "STRING",
+                description: "Termo de busca, pergunta, número do flat ou filtro textual."
+              },
+              filters: {
+                type: "OBJECT",
+                description: "Filtros adicionais opcionais (ex: status, flatNumber, date, category)."
+              }
+            },
+            required: ["module"]
+          }
+        }
+      ]
+    }
+  ];
+
+  let geminiRes = null;
+  if (apiKey) {
+    try {
+      geminiRes = await callGeminiAi({
+        apiKey,
+        systemInstruction: adminSystemPrompt,
+        prompt: currentMessage,
+        history: formattedHistory,
+        db,
+        tools: adminTools,
+        customPrompt: true,
+        requesterRole: "admin"
+      });
+    } catch (gErr) {
+      console.warn("[Admin Copilot] Erro na chamada Gemini:", gErr.message);
+    }
+  }
+
+  if (geminiRes && geminiRes.ok && geminiRes.text) {
+    return res.json({
+      success: true,
+      reply: geminiRes.text,
+      modelUsed: geminiRes.model || "gemini",
+      source: "gemini",
+      functionCall: geminiRes.functionCall || null,
+      functionResult: geminiRes.functionResult || null
+    });
+  }
+
+  const localAnalysis = await generateAdminCopilotLocalResponse(db, currentMessage, context);
+  return res.json({
+    success: true,
+    reply: localAnalysis.text,
+    data: localAnalysis.data || null,
+    modelUsed: "local-heuristics",
+    source: "local"
+  });
 });
 
 

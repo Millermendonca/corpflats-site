@@ -46,13 +46,25 @@ import {
   ShieldCheck,
   ShieldAlert,
   Layers,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Bell,
+  Car,
+  Phone
 } from "lucide-react";
 
 export type CleanFlatMode = "never" | "priority" | "always";
 export type OrderStatus = "draft" | "active" | "closed";
 export type FlatServiceStatus = "pending" | "in_progress" | "done";
 export type InstructionFormat = "text" | "list";
+export type NotificationEvent = "entry_request" | "start" | "finish" | "delay";
+
+export interface ServiceNotificationRecipient {
+  id: string;
+  name: string;
+  phone: string;
+  role?: "custom" | "reception" | "garage";
+  events: NotificationEvent[];
+}
 
 export interface ServiceFlat {
   flatId: number;
@@ -67,6 +79,10 @@ export interface ServiceFlat {
   observations?: string | null;
   photos?: string[];
   needsCleaning?: boolean | null;
+  expectedArrival?: string | null;
+  entryRequested?: boolean;
+  entryRequestedAt?: string | null;
+  delayNotified?: boolean;
 }
 
 export interface ServiceOrder {
@@ -83,6 +99,7 @@ export interface ServiceOrder {
   estimatedDurationHours?: number | null;
   instructionFormat: InstructionFormat;
   defaultInstructions?: string;
+  notificationRecipients?: ServiceNotificationRecipient[];
   flats: ServiceFlat[];
 }
 
@@ -90,6 +107,11 @@ export interface ProgressWorker {
   id?: string;
   mainWorker?: { name: string; cpf: string };
   collaborators?: Array<{ name: string; cpf: string }>;
+  vehicle?: {
+    needsGarage: boolean;
+    plate?: string;
+    modelColor?: string;
+  };
   registeredAt?: string;
 }
 
@@ -98,6 +120,7 @@ export interface ServiceOrderProgressResponse {
   title: string;
   token: string;
   status: OrderStatus;
+  notificationRecipients?: ServiceNotificationRecipient[];
   stats: {
     total: number;
     done: number;
@@ -262,6 +285,60 @@ export default function ServiceOrders() {
   const [formHasCustomInstructions, setFormHasCustomInstructions] = useState(false);
   const [formFlatCustomInstructions, setFormFlatCustomInstructions] = useState<Record<number, string>>({});
 
+  // Notification Recipients State (R2 / Configuração de quem recebe cada notificação)
+  const DEFAULT_NOTIFICATION_RECIPIENTS: ServiceNotificationRecipient[] = [
+    {
+      id: "reception",
+      name: "Recepção",
+      phone: "5522997124021",
+      role: "reception",
+      events: ["entry_request", "start", "finish"],
+    },
+    {
+      id: "miller_admin",
+      name: "Miller (Admin)",
+      phone: "22998505276",
+      role: "custom",
+      events: ["start", "finish", "delay"],
+    },
+  ];
+  const [formRecipients, setFormRecipients] = useState<ServiceNotificationRecipient[]>(DEFAULT_NOTIFICATION_RECIPIENTS);
+
+  const handleToggleRecipientEvent = (recId: string, event: NotificationEvent) => {
+    setFormRecipients((prev) =>
+      prev.map((r) => {
+        if (r.id !== recId) return r;
+        const exists = r.events.includes(event);
+        const nextEvents = exists ? r.events.filter((e) => e !== event) : [...r.events, event];
+        return { ...r, events: nextEvents };
+      })
+    );
+  };
+
+  const handleUpdateRecipient = (recId: string, patch: Partial<ServiceNotificationRecipient>) => {
+    setFormRecipients((prev) =>
+      prev.map((r) => (r.id === recId ? { ...r, ...patch } : r))
+    );
+  };
+
+  const handleAddRecipient = () => {
+    const newId = `rec_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    setFormRecipients((prev) => [
+      ...prev,
+      {
+        id: newId,
+        name: "",
+        phone: "",
+        role: "custom",
+        events: ["start", "finish"],
+      },
+    ]);
+  };
+
+  const handleRemoveRecipient = (recId: string) => {
+    setFormRecipients((prev) => prev.filter((r) => r.id !== recId));
+  };
+
   // Reset form to blank creation state
   const resetFormToCreate = () => {
     setEditingOrderId(null);
@@ -275,6 +352,7 @@ export default function ServiceOrders() {
     setFormEstimatedDurationHours(3);
     setFormInstructionFormat("text");
     setFormDefaultInstructions("");
+    setFormRecipients(DEFAULT_NOTIFICATION_RECIPIENTS);
     // Default select all 19 active flats
     setFormSelectedFlatIds(activeFlats.map((f: any) => f.id));
     setFormHasCustomInstructions(false);
@@ -294,6 +372,12 @@ export default function ServiceOrders() {
     setFormEstimatedDurationHours(order.estimatedDurationHours ?? "");
     setFormInstructionFormat(order.instructionFormat || "text");
     setFormDefaultInstructions(order.defaultInstructions || "");
+
+    if (Array.isArray(order.notificationRecipients) && order.notificationRecipients.length > 0) {
+      setFormRecipients(order.notificationRecipients);
+    } else {
+      setFormRecipients(DEFAULT_NOTIFICATION_RECIPIENTS);
+    }
 
     const selectedIds = (order.flats || []).map((f) => f.flatId);
     setFormSelectedFlatIds(selectedIds);
@@ -345,6 +429,7 @@ export default function ServiceOrders() {
         estimatedDurationHours: formEstimatedDurationHours ? Number(formEstimatedDurationHours) : null,
         instructionFormat: formInstructionFormat,
         defaultInstructions: formDefaultInstructions.trim(),
+        notificationRecipients: formRecipients,
         workerName: formWorkerName.trim() || undefined,
         workerCpf: cleanCpfDigits(formWorkerCpf) || undefined,
         flats: flatsPayload,
@@ -1249,6 +1334,159 @@ export default function ServiceOrders() {
                     </p>
                   </div>
 
+                  {/* Notificações e Destinatários Configurados (R2) */}
+                  <div className="p-4 rounded-xl border bg-muted/20 space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                      <div className="space-y-0.5">
+                        <Label className="text-sm font-semibold flex items-center gap-1.5 text-foreground">
+                          <Bell className="w-4 h-4 text-primary" />
+                          Destinatários de Notificações (WhatsApp e Sistema)
+                        </Label>
+                        <p className="text-xs text-muted-foreground">
+                          Cadastre quem deve ser notificado e selecione quais mensagens cada pessoa ou setor receberá.
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleAddRecipient}
+                        className="h-8 text-xs gap-1 border-dashed border-primary/50 text-primary hover:text-primary hover:bg-primary/10 self-start sm:self-auto"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        + Adicionar Pessoa
+                      </Button>
+                    </div>
+
+                    <div className="space-y-3">
+                      {formRecipients.map((rec) => {
+                        const isPresetReception = rec.role === "reception" || rec.id === "reception";
+                        const isPresetGarage = rec.role === "garage" || rec.id === "garage";
+
+                        return (
+                          <div
+                            key={rec.id}
+                            className="p-3.5 bg-card border rounded-xl shadow-2xs space-y-3"
+                          >
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b pb-2.5">
+                              <div className="flex items-center gap-2 flex-1">
+                                {isPresetReception ? (
+                                  <Badge className="bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 border-sky-300 text-[10px] uppercase font-bold shrink-0">
+                                    🏢 Recepção
+                                  </Badge>
+                                ) : isPresetGarage ? (
+                                  <Badge className="bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 border-indigo-300 text-[10px] uppercase font-bold shrink-0">
+                                    🚗 Garagem / Portaria
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="outline" className="text-[10px] font-bold shrink-0">
+                                    👤 Pessoa
+                                  </Badge>
+                                )}
+
+                                <Input
+                                  placeholder="Nome da pessoa ou setor (ex: Miller, Grazi, Recepção)"
+                                  value={rec.name}
+                                  onChange={(e) => handleUpdateRecipient(rec.id, { name: e.target.value })}
+                                  className="h-8 text-xs font-semibold flex-1 min-w-[150px]"
+                                />
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-1.5">
+                                  <Phone className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                                  <Input
+                                    placeholder="WhatsApp (ex: 22998505276)"
+                                    value={rec.phone}
+                                    onChange={(e) => handleUpdateRecipient(rec.id, { phone: e.target.value })}
+                                    className="h-8 text-xs w-[160px]"
+                                  />
+                                </div>
+
+                                {!isPresetReception && (
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => handleRemoveRecipient(rec.id)}
+                                    className="h-8 w-8 text-rose-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 shrink-0"
+                                    title="Remover destinatário"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Event selection checkboxes */}
+                            <div className="space-y-1.5">
+                              <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider block">
+                                Notificações que este destinatário recebe:
+                              </span>
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-0.5">
+                                <label
+                                  className={`flex items-center gap-2 p-2 rounded-lg border text-xs cursor-pointer select-none transition-colors ${
+                                    rec.events.includes("entry_request")
+                                      ? "bg-amber-500/10 border-amber-500/40 font-semibold text-foreground"
+                                      : "bg-muted/30 border-transparent text-muted-foreground hover:bg-muted/50"
+                                  }`}
+                                >
+                                  <Checkbox
+                                    checked={rec.events.includes("entry_request")}
+                                    onCheckedChange={() => handleToggleRecipientEvent(rec.id, "entry_request")}
+                                  />
+                                  <span>🔑 Liberação de Entrada</span>
+                                </label>
+
+                                <label
+                                  className={`flex items-center gap-2 p-2 rounded-lg border text-xs cursor-pointer select-none transition-colors ${
+                                    rec.events.includes("start")
+                                      ? "bg-sky-500/10 border-sky-500/40 font-semibold text-foreground"
+                                      : "bg-muted/30 border-transparent text-muted-foreground hover:bg-muted/50"
+                                  }`}
+                                >
+                                  <Checkbox
+                                    checked={rec.events.includes("start")}
+                                    onCheckedChange={() => handleToggleRecipientEvent(rec.id, "start")}
+                                  />
+                                  <span>▶️ Início de Serviço</span>
+                                </label>
+
+                                <label
+                                  className={`flex items-center gap-2 p-2 rounded-lg border text-xs cursor-pointer select-none transition-colors ${
+                                    rec.events.includes("finish")
+                                      ? "bg-emerald-500/10 border-emerald-500/40 font-semibold text-foreground"
+                                      : "bg-muted/30 border-transparent text-muted-foreground hover:bg-muted/50"
+                                  }`}
+                                >
+                                  <Checkbox
+                                    checked={rec.events.includes("finish")}
+                                    onCheckedChange={() => handleToggleRecipientEvent(rec.id, "finish")}
+                                  />
+                                  <span>🏁 Fim de Serviço</span>
+                                </label>
+
+                                <label
+                                  className={`flex items-center gap-2 p-2 rounded-lg border text-xs cursor-pointer select-none transition-colors ${
+                                    rec.events.includes("delay")
+                                      ? "bg-rose-500/10 border-rose-500/40 font-semibold text-foreground"
+                                      : "bg-muted/30 border-transparent text-muted-foreground hover:bg-muted/50"
+                                  }`}
+                                >
+                                  <Checkbox
+                                    checked={rec.events.includes("delay")}
+                                    onCheckedChange={() => handleToggleRecipientEvent(rec.id, "delay")}
+                                  />
+                                  <span>⏱️ Atraso / Previsão</span>
+                                </label>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                   {/* 6. Seleção de Flats (Grid de 19 flats) */}
                   <div className="space-y-3 pt-2">
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b pb-2">
@@ -1636,8 +1874,30 @@ export default function ServiceOrders() {
                           ? `CPF: ${formatCpf(progressData.worker.mainWorker.cpf)}`
                           : "Aguardando cadastro no link"}
                       </span>
+                      {progressData.worker?.vehicle?.needsGarage && (
+                        <span className="text-[11px] text-indigo-700 dark:text-indigo-300 font-semibold block pt-1">
+                          🚗 Garagem: {progressData.worker.vehicle.plate || "Veículo"} {progressData.worker.vehicle.modelColor ? `(${progressData.worker.vehicle.modelColor})` : ""}
+                        </span>
+                      )}
                     </Card>
                   </div>
+
+                  {/* Destinatários Configurados na Ordem */}
+                  {Array.isArray(progressData.notificationRecipients) && progressData.notificationRecipients.length > 0 && (
+                    <div className="p-3 bg-muted/40 rounded-xl border text-xs flex items-center justify-between gap-3 flex-wrap">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Bell className="w-4 h-4 text-primary shrink-0" />
+                        <span className="font-bold text-foreground">Notificações configuradas:</span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {progressData.notificationRecipients.map((r, i) => (
+                            <Badge key={i} variant="outline" className="text-[10px] bg-background">
+                              {r.name} ({r.phone}) [{r.events.join(", ")}]
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Filtro por Status da Tabela */}
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1718,7 +1978,7 @@ export default function ServiceOrders() {
                                 {/* Flat */}
                                 <TableCell className="font-bold text-sm text-foreground">
                                   <div>Flat {flat.flatNumber}</div>
-                                  <div className="text-[10px] font-normal text-muted-foreground flex items-center gap-1 mt-0.5">
+                                  <div className="text-[10px] font-normal text-muted-foreground flex items-center gap-1 mt-0.5 flex-wrap">
                                     {(flat as any).isOccupied ? (
                                       <span className="text-rose-600 font-semibold">🔴 Ocupado{(flat as any).currentGuest ? ` (${(flat as any).currentGuest})` : ""}</span>
                                     ) : (flat as any).isDirty ? (
@@ -1726,21 +1986,46 @@ export default function ServiceOrders() {
                                     ) : (
                                       <span className="text-emerald-700 font-medium">🟢 Vago / Limpo</span>
                                     )}
+                                    {(flat as any).hasCheckinToday && (
+                                      <span className="text-blue-600 font-medium">
+                                        🔵 Chegada: {(flat as any).expectedArrival || "14:00"}
+                                      </span>
+                                    )}
+                                    {flat.entryRequested && flat.status === "pending" && (
+                                      <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 bg-amber-50 text-amber-800 border-amber-300">
+                                        🔑 Entrada Solicitada
+                                      </Badge>
+                                    )}
                                   </div>
                                 </TableCell>
 
                                 {/* Status */}
                                 <TableCell>
                                   {flat.status === "pending" && (
-                                    <Badge variant="secondary" className="text-[11px] font-semibold">
-                                      Pendente
-                                    </Badge>
+                                    <div className="space-y-1">
+                                      <Badge variant="secondary" className="text-[11px] font-semibold">
+                                        Pendente
+                                      </Badge>
+                                      {flat.entryRequested && (
+                                        <span className="text-[10px] text-amber-700 block font-medium">
+                                          🔑 Entrada solicitada
+                                        </span>
+                                      )}
+                                    </div>
                                   )}
                                   {flat.status === "in_progress" && (
-                                    <Badge className="bg-sky-600 hover:bg-sky-600 text-white text-[11px] font-semibold gap-1.5 animate-pulse">
-                                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
-                                      Em Andamento
-                                    </Badge>
+                                    <div className="space-y-1">
+                                      <Badge className="bg-sky-600 hover:bg-sky-600 text-white text-[11px] font-semibold gap-1.5 animate-pulse">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+                                        Em Andamento
+                                      </Badge>
+                                      {flat.estimatedFinishAt && (
+                                        <span className={`text-[10px] block font-semibold ${new Date(flat.estimatedFinishAt).getTime() < Date.now() ? "text-rose-600 font-bold animate-pulse" : "text-sky-700 dark:text-sky-300"}`}>
+                                          ⏱️ Previsão: {formatDateTime(flat.estimatedFinishAt)}
+                                          {new Date(flat.estimatedFinishAt).getTime() < Date.now() && " (EXPIRADO)"}
+                                        </span>
+                                      )}
+                                    </div>
                                   )}
                                   {flat.status === "done" && (
                                     <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white text-[11px] font-semibold gap-1">
