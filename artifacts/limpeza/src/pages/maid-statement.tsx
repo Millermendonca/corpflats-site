@@ -26,6 +26,7 @@ import {
   Building2,
   FileSpreadsheet,
   Share2,
+  Undo2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -117,6 +118,12 @@ export default function MaidStatementPage() {
   const [payAmount, setPayAmount] = useState("")
   const [payDescription, setPayDescription] = useState("")
   const [payingLoading, setPayingLoading] = useState(false)
+
+  // Reversal Modal State (Admin)
+  const [reversalModalOpen, setReversalModalOpen] = useState(false)
+  const [reversingLoading, setReversingLoading] = useState(false)
+  const [paymentToReverse, setPaymentToReverse] = useState<any | null>(null)
+  const [reversalNotifyWa, setReversalNotifyWa] = useState(true)
 
   // Carrega lista de camareiras se for admin
   useEffect(() => {
@@ -228,6 +235,16 @@ export default function MaidStatementPage() {
 
     try {
       setPayingLoading(true)
+      const now = new Date()
+      const year = now.getFullYear()
+      const month = String(now.getMonth() + 1).padStart(2, "0")
+      const day = now.getDate()
+      const isFirstHalf = day <= 15
+      const lastDayOfMonth = new Date(year, now.getMonth() + 1, 0).getDate()
+      const startD = isFirstHalf ? `${year}-${month}-01` : `${year}-${month}-16`
+      const endD = isFirstHalf ? `${year}-${month}-15` : `${year}-${month}-${String(lastDayOfMonth).padStart(2, "0")}`
+      const referencePeriod = `${startD}_${endD}`
+
       const res = await fetch(`/api/maids/${targetId}/pay`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -236,6 +253,7 @@ export default function MaidStatementPage() {
           type: payType,
           description: payDescription.trim() || undefined,
           sendWhatsApp: true,
+          referencePeriod,
         }),
       })
       const data = await res.json()
@@ -253,6 +271,55 @@ export default function MaidStatementPage() {
       toast({ title: "Erro de conexão", description: err.message, variant: "destructive" })
     } finally {
       setPayingLoading(false)
+    }
+  }
+
+  // ── Módulo de Estorno de Pagamento / Vale ──
+  const handleOpenReversal = (entry: StatementEntry) => {
+    const paymentId = entry.paymentId || entry.payment?.id || entry.id
+    setPaymentToReverse({
+      id: paymentId,
+      type: entry.payment?.type || (entry.description?.toLowerCase().includes("vale") ? "advance" : "payment"),
+      amount: entry.amount,
+      description: entry.description,
+      cleanerName: statementData?.userName
+    })
+    setReversalNotifyWa(true)
+    setReversalModalOpen(true)
+  }
+
+  const handleConfirmReversal = async () => {
+    if (!paymentToReverse) return
+    try {
+      setReversingLoading(true)
+      const res = await fetch(`/api/maids/payments/${paymentToReverse.id}?notifyWhatsApp=${reversalNotifyWa}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notifyWhatsApp: reversalNotifyWa }),
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        toast({
+          title: "✓ Estorno Realizado!",
+          description: data.message || "O lançamento foi estornado com sucesso e o saldo recomposto.",
+        })
+        setReversalModalOpen(false)
+        setPaymentToReverse(null)
+        setSelectedEntry(null)
+        if (statementData?.userId) {
+          fetchStatement(String(statementData.userId))
+        }
+      } else {
+        toast({
+          title: "Falha no estorno",
+          description: data.error || "Não foi possível estornar o lançamento.",
+          variant: "destructive",
+        })
+      }
+    } catch (err: any) {
+      toast({ title: "Erro de conexão", description: err.message, variant: "destructive" })
+    } finally {
+      setReversingLoading(false)
     }
   }
 
@@ -860,6 +927,17 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                 </div>
 
                 <DialogFooter className="gap-2 pt-2 flex flex-col sm:flex-row">
+                  {isAdmin && selectedEntry.entryType === "debit" && selectedEntry.paymentId && !selectedEntry.payment?.reversedAt && (
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      onClick={() => handleOpenReversal(selectedEntry)}
+                      className="w-full sm:w-auto rounded-xl h-10 text-xs font-bold gap-1.5"
+                    >
+                      <Undo2 className="w-3.5 h-3.5" />
+                      <span>Estornar</span>
+                    </Button>
+                  )}
                   <Button
                     type="button"
                     onClick={handleCopyReceiptText}
@@ -878,6 +956,79 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                   </Button>
                 </DialogFooter>
               </>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        {/* 🔄 MODAL DE CONFIRMAÇÃO DE ESTORNO DE PAGAMENTO / VALE */}
+        <Dialog open={reversalModalOpen} onOpenChange={setReversalModalOpen}>
+          <DialogContent className="sm:max-w-md bg-card border border-border rounded-3xl p-5 sm:p-6 shadow-2xl">
+            <DialogHeader>
+              <DialogTitle className="text-base font-black flex items-center gap-2 text-rose-600">
+                <Undo2 className="w-5 h-5" />
+                Confirmar Estorno de {paymentToReverse?.type === "advance" ? "Vale" : "Pagamento"}
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                Esta ação cancelará o lançamento e devolverá o valor ao saldo a receber da camareira.
+              </DialogDescription>
+            </DialogHeader>
+
+            {paymentToReverse && (
+              <div className="space-y-4 pt-2 text-xs">
+                <div className="p-3.5 rounded-2xl bg-muted/30 border border-border space-y-1.5">
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground">Colaboradora:</span>
+                    <strong className="text-foreground">{paymentToReverse.cleanerName || "Camareira"}</strong>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground">Valor a Estornar:</span>
+                    <strong className="text-rose-600 font-mono text-sm">
+                      R$ {Number(paymentToReverse.amount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                    </strong>
+                  </div>
+                  {paymentToReverse.description && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">Descrição:</span>
+                      <span className="text-foreground">{paymentToReverse.description}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-3 rounded-2xl border border-border/80 bg-background/50 flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    id="notifyReversalWaStatement"
+                    checked={reversalNotifyWa}
+                    onChange={(e) => setReversalNotifyWa(e.target.checked)}
+                    className="w-4 h-4 rounded text-primary focus:ring-primary border-border cursor-pointer"
+                  />
+                  <Label htmlFor="notifyReversalWaStatement" className="text-xs cursor-pointer font-medium select-none">
+                    Notificar camareira no WhatsApp sobre o estorno e saldo corrigido
+                  </Label>
+                </div>
+
+                <DialogFooter className="gap-2 pt-2 flex flex-col sm:flex-row">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setReversalModalOpen(false)}
+                    disabled={reversingLoading}
+                    className="w-full sm:w-auto rounded-xl h-10 text-xs font-bold"
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    onClick={handleConfirmReversal}
+                    disabled={reversingLoading}
+                    className="w-full sm:flex-1 rounded-xl h-10 text-xs font-bold gap-1.5 shadow-md shadow-rose-600/20"
+                  >
+                    <Undo2 className="w-3.5 h-3.5" />
+                    <span>{reversingLoading ? "Estornando..." : "Confirmar Estorno"}</span>
+                  </Button>
+                </DialogFooter>
+              </div>
             )}
           </DialogContent>
         </Dialog>

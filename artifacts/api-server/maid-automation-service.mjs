@@ -138,6 +138,8 @@ export function getExecutionDateStr(isoString) {
 }
 
 export function matchesPeriod(entry, payment, startD, endD) {
+  if (entry?.reversedAt || payment?.reversedAt || payment?.interStatus === "ESTORNADO") return false;
+
   if (payment && payment.referencePeriod) {
     const [refStart, refEnd] = payment.referencePeriod.split("_");
     if (refStart === startD && refEnd === endD) return true;
@@ -150,8 +152,16 @@ export function matchesPeriod(entry, payment, startD, endD) {
   // Se o pagamento for no dia seguinte ao fechamento oficial (ex: dia 16 após dia 15, ou dia 01 após fim de mês)
   const [ey, em, ed] = endD.split("-").map(Number);
   const nextDay = new Date(Date.UTC(ey, em - 1, ed + 1)).toISOString().substring(0, 10);
-  if (d === nextDay && (payment ? payment.type === "payment" : entry.description?.toLowerCase().includes("pagamento"))) {
+  const isSettlementPayment = payment ? payment.type === "payment" : entry.description?.toLowerCase().includes("pagamento");
+
+  if (d === nextDay && isSettlementPayment) {
     return true;
+  }
+
+  // Se for o primeiro dia de uma nova quinzena (dia 16 ou dia 01) e for um pagamento de quitação sem referencePeriod,
+  // ele pertenceu ao fechamento da quinzena ANTERIOR, logo não deve vazar para esta nova quinzena
+  if (d === startD && (d.endsWith("-16") || d.endsWith("-01")) && isSettlementPayment) {
+    return false;
   }
 
   if (d < startD || d > endD) return false;
@@ -176,6 +186,20 @@ export function syncMaidCredits(db, userId) {
   const cleanings = (db.cleaningRequests || []).filter(r => {
     if (r.status !== "clean" || r.isBedAdjustmentOnly || r.isInstructionOnly || r.type === "instruction" || r.source === "manual_instruction" || r.isPaidCleaning === false) return false;
     return r.assignedUserId === userId;
+  });
+
+  const validCleaningMap = new Map();
+  for (const c of cleanings) {
+    validCleaningMap.set(c.id, c);
+  }
+
+  // 1. Reconciliação de Setembro+: remove entradas de crédito órfãs ou de diárias não mais válidas/atribuídas
+  // Preserva 100% intacto o histórico fechado de Agosto (< 2026-09-01)
+  db.maidStatementEntries = db.maidStatementEntries.filter(e => {
+    if (e.userId !== userId || e.entryType !== "credit" || !e.cleaningRequestId) return true;
+    const entryDate = e.entryDate || (e.createdAt ? getExecutionDateStr(e.createdAt) : "");
+    if (entryDate < "2026-09-01") return true; // Preserva Agosto
+    return validCleaningMap.has(e.cleaningRequestId);
   });
 
   const existingCreditRefs = new Set(
@@ -266,12 +290,23 @@ export function getMaidPeriodFinances(db, userId, startDate = null, endDate = nu
   const priorEntries = (db?.maidStatementEntries || []).filter(e => {
     if (e.userId !== userId) return false;
     const payment = e.paymentId ? (db.maidPayments || []).find(p => p.id === e.paymentId) : null;
+    if (e.reversedAt || payment?.reversedAt || payment?.interStatus === "ESTORNADO") return false;
+
     if (payment && payment.referencePeriod) {
       const [refStart] = payment.referencePeriod.split("_");
       if (refStart >= startD) return false;
       return true;
     }
     const d = e.entryDate || (e.createdAt ? getExecutionDateStr(e.createdAt) : "");
+    if (!d) return false;
+
+    // Se for pagamento de quitação realizado no primeiro dia desta quinzena (dia 16 ou dia 01)
+    // referente ao fechamento anterior, conta no saldo da quinzena anterior
+    const isSettlement = payment ? payment.type === "payment" : e.description?.toLowerCase().includes("pagamento");
+    if (d === startD && (d.endsWith("-16") || d.endsWith("-01")) && isSettlement) {
+      return true;
+    }
+
     return d < startD;
   });
 
@@ -290,6 +325,7 @@ export function getMaidPeriodFinances(db, userId, startDate = null, endDate = nu
   const userVales = (db?.maidStatementEntries || []).filter(e => {
     if (e.userId !== userId || e.entryType !== "debit") return false;
     const payment = e.paymentId ? (db.maidPayments || []).find(p => p.id === e.paymentId) : null;
+    if (e.reversedAt || payment?.reversedAt || payment?.interStatus === "ESTORNADO") return false;
     if (!matchesPeriod(e, payment, startD, endD)) return false;
     return payment ? payment.type === "advance" : (e.description?.toLowerCase().includes("vale") || e.description?.toLowerCase().includes("adiantamento"));
   });
@@ -299,6 +335,7 @@ export function getMaidPeriodFinances(db, userId, startDate = null, endDate = nu
   const userPayments = (db?.maidStatementEntries || []).filter(e => {
     if (e.userId !== userId || e.entryType !== "debit") return false;
     const payment = e.paymentId ? (db.maidPayments || []).find(p => p.id === e.paymentId) : null;
+    if (e.reversedAt || payment?.reversedAt || payment?.interStatus === "ESTORNADO") return false;
     if (payment && payment.type === "advance") return false;
     if (!matchesPeriod(e, payment, startD, endD)) return false;
     return payment ? payment.type === "payment" : true;
@@ -310,7 +347,13 @@ export function getMaidPeriodFinances(db, userId, startDate = null, endDate = nu
   const netPendingAmount = Number(rawPending.toFixed(2));
 
   // 6. Saldo Vitalício Contábil
-  const allUserEntries = (db?.maidStatementEntries || []).filter(e => e.userId === userId);
+  const allUserEntries = (db?.maidStatementEntries || []).filter(e => {
+    if (e.userId !== userId) return false;
+    if (e.reversedAt) return false;
+    const payment = e.paymentId ? (db.maidPayments || []).find(p => p.id === e.paymentId) : null;
+    if (payment?.reversedAt || payment?.interStatus === "ESTORNADO") return false;
+    return true;
+  });
   const lifetimeBalance = Number(
     allUserEntries.reduce((sum, e) => e.entryType === "credit" ? sum + Number(e.amount || 0) : sum - Number(e.amount || 0), 0).toFixed(2)
   );

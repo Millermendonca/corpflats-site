@@ -272,6 +272,7 @@ describe('Motor Canônico de Finanças e Extrato de Camareiras (CorpFlats)', () 
     };
     const entry2 = { entryDate: '2026-09-16', paymentId: 'pay-2' };
     assert.strictEqual(matchesPeriod(entry2, paymentWithoutRef, '2026-09-01', '2026-09-15'), true, 'Fallback dinâmico deve associar dia 16 ao fechamento da 1ª quinzena');
+    assert.strictEqual(matchesPeriod(entry2, paymentWithoutRef, '2026-09-16', '2026-09-30'), false, 'Não deve vazar para a 2ª quinzena (anti-dupla contagem)');
   });
 
   it('11. getMaidPeriodFinances: Casos limites (camareira sem limpezas, período vazio)', () => {
@@ -290,6 +291,109 @@ describe('Motor Canônico de Finanças e Extrato de Camareiras (CorpFlats)', () 
     assert.strictEqual(fin.paymentsAmount, 0);
     assert.strictEqual(fin.netPendingAmount, 0);
     assert.strictEqual(fin.lifetimeBalance, 0);
+  });
+
+  it('12. getMaidPeriodFinances: Pagamento no dia 16 sem referencePeriod quita Q1 e não vira débito em Q2', () => {
+    const mockDb = {
+      users: [{ id: 10, username: 'maria', role: 'camareira' }],
+      cleaningRates: { defaultRatePerRoom: 25.00 },
+      cleaningRequests: [
+        { id: 'req-q1', assignedUserId: 10, status: 'clean', effectiveDate: '2026-09-10', flatNumber: 101 },
+        { id: 'req-q2', assignedUserId: 10, status: 'clean', effectiveDate: '2026-09-18', flatNumber: 201 }
+      ],
+      maidPayments: [
+        { id: 'pay-q1-settle', userId: 10, type: 'payment', amount: 25.00, paidAt: '2026-09-16T10:00:00Z' }
+      ],
+      maidStatementEntries: [
+        { id: 'st-pay-1', userId: 10, entryType: 'debit', amount: 25.00, entryDate: '2026-09-16', paymentId: 'pay-q1-settle' }
+      ]
+    };
+
+    // Em Q1 (01 a 15), o pagamento do dia 16 quita a diária de 25
+    const finQ1 = getMaidPeriodFinances(mockDb, 10, '2026-09-01', '2026-09-15');
+    assert.strictEqual(finQ1.grossAmount, 25.00);
+    assert.strictEqual(finQ1.paymentsAmount, 25.00);
+    assert.strictEqual(finQ1.netPendingAmount, 0.00);
+
+    // Em Q2 (16 a 30), o pagamento do dia 16 NÃO deve contar como pagamento de Q2 nem gerar dívida anterior
+    const finQ2 = getMaidPeriodFinances(mockDb, 10, '2026-09-16', '2026-09-30');
+    assert.strictEqual(finQ2.grossAmount, 25.00);
+    assert.strictEqual(finQ2.previousDebitBalance, 0.00, 'Saldo anterior deve ser 0 pois foi quitado');
+    assert.strictEqual(finQ2.paymentsAmount, 0.00, 'Não deve computar pagamento de Q1 dentro de Q2');
+    assert.strictEqual(finQ2.netPendingAmount, 25.00, 'Diária de Q2 continua pendente a receber');
+  });
+
+  it('13. getMaidPeriodFinances: Robustez a entradas e pagamentos marcados com reversedAt', () => {
+    const mockDb = {
+      users: [{ id: 10, username: 'maria', role: 'camareira' }],
+      cleaningRates: { defaultRatePerRoom: 25.00 },
+      cleaningRequests: [
+        { id: 'req-1', assignedUserId: 10, status: 'clean', effectiveDate: '2026-09-05', flatNumber: 101 }
+      ],
+      maidPayments: [
+        {
+          id: 'pay-estorno-direto',
+          userId: 10,
+          type: 'advance',
+          amount: 50.00,
+          paidAt: '2026-09-05T12:00:00Z',
+          referencePeriod: '2026-09-01_2026-09-15',
+          reversedAt: '2026-09-06T10:00:00Z',
+          interStatus: 'ESTORNADO'
+        }
+      ],
+      maidStatementEntries: [
+        // Entrada que ainda permaneceu mas tem reversedAt ou aponta para pagamento estornado
+        {
+          id: 'st-rev-flag',
+          userId: 10,
+          entryType: 'debit',
+          amount: 50.00,
+          entryDate: '2026-09-05',
+          paymentId: 'pay-estorno-direto',
+          reversedAt: '2026-09-06T10:00:00Z'
+        }
+      ]
+    };
+
+    const fin = getMaidPeriodFinances(mockDb, 10, '2026-09-01', '2026-09-15');
+    assert.strictEqual(fin.grossAmount, 25.00);
+    assert.strictEqual(fin.advancesAmount, 0.00, 'Vale estornado com reversedAt não deve abater');
+    assert.strictEqual(fin.netPendingAmount, 25.00, 'Saldo pendente deve ser o total bruto de 25');
+    assert.strictEqual(fin.lifetimeBalance, 25.00, 'Saldo contábil deve ignorar débito estornado');
+  });
+
+  it('14. syncMaidCredits: Reconciliação atômica de diárias excluídas ou reatribuídas em Setembro', () => {
+    const mockDb = {
+      users: [
+        { id: 10, username: 'maria', role: 'camareira' },
+        { id: 20, username: 'joana', role: 'camareira' }
+      ],
+      cleaningRates: { defaultRatePerRoom: 25.00 },
+      cleaningRequests: [
+        // Quarto foi reatribuído para Joana (id: 20)
+        { id: 'req-reatribuido', assignedUserId: 20, status: 'clean', effectiveDate: '2026-09-05', flatNumber: 101 },
+      ],
+      maidPayments: [],
+      maidStatementEntries: [
+        // Entrada de agosto fechada (não deve ser tocada)
+        { id: 'aug-1', userId: 10, entryType: 'credit', amount: 22.50, entryDate: '2026-08-20', cleaningRequestId: 'req-antigo' },
+        // Entrada obsoleta de setembro vinculada a req-reatribuido para Maria
+        { id: 'sep-obsoleto', userId: 10, entryType: 'credit', amount: 25.00, entryDate: '2026-09-05', cleaningRequestId: 'req-reatribuido' }
+      ]
+    };
+
+    // Sincroniza Maria
+    syncMaidCredits(mockDb, 10);
+    const mariaEntries = mockDb.maidStatementEntries.filter(e => e.userId === 10);
+    assert.strictEqual(mariaEntries.length, 1, 'Entrada de setembro reatribuída deve ter sido removida de Maria');
+    assert.strictEqual(mariaEntries[0].id, 'aug-1', 'Entrada de agosto deve ser mantida intacta');
+
+    // Sincroniza Joana
+    syncMaidCredits(mockDb, 20);
+    const joanaEntries = mockDb.maidStatementEntries.filter(e => e.userId === 20);
+    assert.strictEqual(joanaEntries.length, 1, 'Joana deve receber o crédito da faxina');
+    assert.strictEqual(joanaEntries[0].cleaningRequestId, 'req-reatribuido');
   });
 
 });

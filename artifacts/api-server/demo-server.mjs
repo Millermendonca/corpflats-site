@@ -90,7 +90,8 @@ import {
   getMaidPeriodFinances,
   syncMaidCredits as syncMaidCreditsCanonical,
   matchesPeriod as matchesPeriodCanonical,
-  generatePaymentId as generatePaymentIdCanonical
+  generatePaymentId as generatePaymentIdCanonical,
+  getBrasiliaNow as getBrasiliaNowCanonical
 } from "./maid-automation-service.mjs";
 import { sendInterPix, isInterConfigured, INTER_ENV } from "./inter-pix-service.mjs";
 import {
@@ -11544,7 +11545,7 @@ app.get("/api/analytics/report", (req, res) => {
     const netProduced = Math.max(0, Number((totalToPay - advancesInPeriod).toFixed(2)));
     const pendingToPay = Math.max(0, Number((netProduced - paymentsInPeriod).toFixed(2)));
     const isPaid = (totalToPay > 0 || advancesInPeriod > 0) && pendingToPay === 0 && paymentsInPeriod >= netProduced;
-    const paidAt = isPaid ? (userPayments[0]?.entryDate || (userPayments[0]?.createdAt ? userPayments[0].createdAt.substring(0, 10) : "2026-09-16")) : null;
+    const paidAt = isPaid ? (userPayments[0]?.entryDate || (userPayments[0]?.createdAt ? userPayments[0].createdAt.substring(0, 10) : endDate)) : null;
 
     grandTotalToPay += totalToPay;
     grandTotalAdvances += advancesInPeriod;
@@ -33312,7 +33313,13 @@ function ensureMaidPaymentsDb() {
 
 function getMaidBalance(userId) {
   ensureMaidPaymentsDb();
-  const entries = db.maidStatementEntries.filter(e => e.userId === userId);
+  const entries = db.maidStatementEntries.filter(e => {
+    if (e.userId !== userId) return false;
+    if (e.reversedAt) return false;
+    const payment = e.paymentId ? (db.maidPayments || []).find(p => p.id === e.paymentId) : null;
+    if (payment?.reversedAt || payment?.interStatus === "ESTORNADO") return false;
+    return true;
+  });
   return entries.reduce((sum, e) => {
     return e.entryType === "credit" ? sum + Number(e.amount) : sum - Number(e.amount);
   }, 0);
@@ -33337,15 +33344,18 @@ function buildStatement(userId) {
 
   let balance = 0;
   return entries.map(e => {
-    if (e.entryType === "credit") {
-      balance += Number(e.amount);
-    } else {
-      balance -= Number(e.amount);
-    }
-
     const payment = e.paymentId
       ? (db.maidPayments || []).find(p => p.id === e.paymentId)
       : null;
+
+    const isReversed = Boolean(e.reversedAt || payment?.reversedAt || payment?.interStatus === "ESTORNADO");
+    if (!isReversed) {
+      if (e.entryType === "credit") {
+        balance += Number(e.amount);
+      } else {
+        balance -= Number(e.amount);
+      }
+    }
 
     return {
       ...e,
@@ -33489,13 +33499,32 @@ app.post("/api/maids/:userId/pay", async (req, res) => {
     };
   }
 
+  let refStart = null;
+  let refEnd = null;
+  let computedReferencePeriod = referencePeriod;
+  if (computedReferencePeriod && computedReferencePeriod.includes("_")) {
+    [refStart, refEnd] = computedReferencePeriod.split("_");
+  } else {
+    const bNow = getBrasiliaNowCanonical();
+    const [year, month, day] = bNow.date.split("-").map(Number);
+    const isFirstHalf = day <= 15;
+    const lastDayOfMonth = new Date(year, month, 0).getDate();
+    refStart = isFirstHalf 
+      ? `${year}-${String(month).padStart(2, "0")}-01` 
+      : `${year}-${String(month).padStart(2, "0")}-16`;
+    refEnd = isFirstHalf 
+      ? `${year}-${String(month).padStart(2, "0")}-15` 
+      : `${year}-${String(month).padStart(2, "0")}-${String(lastDayOfMonth).padStart(2, "0")}`;
+    computedReferencePeriod = `${refStart}_${refEnd}`;
+  }
+
   const payment = {
     id: paymentId,
     userId: targetId,
     type,
     amount: numAmount,
     description: description || (type === "advance" ? `Vale — ${user.name || user.username}` : `Pagamento — ${user.name || user.username}`),
-    referencePeriod: referencePeriod || null,
+    referencePeriod: computedReferencePeriod,
     interTxId: interResult?.txId || null,
     interStatus: interResult?.status || (type === "advance" ? "VALE" : interError ? "FALHA" : "PENDENTE"),
     interSimulated: interResult?.simulated || false,
@@ -33524,11 +33553,6 @@ app.post("/api/maids/:userId/pay", async (req, res) => {
   db.maidStatementEntries.push(statementEntry);
   saveDatabase();
 
-  let refStart = null;
-  let refEnd = null;
-  if (referencePeriod && referencePeriod.includes("_")) {
-    [refStart, refEnd] = referencePeriod.split("_");
-  }
   const finances = getMaidPeriodFinances(db, targetId, refStart, refEnd);
   const currentBalance = getMaidBalance(targetId);
 

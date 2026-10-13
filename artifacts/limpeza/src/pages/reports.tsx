@@ -123,7 +123,7 @@ function printReceiptWindow(cleaner: any, startDate: string, endDate: string) {
     }).join("")
 
   const isPaid = Boolean(cleaner.isPaid || (payments >= netProduced && netProduced > 0))
-  const paidDateStr = formatDate(cleaner.paidAt || "2026-09-16")
+  const paidDateStr = formatDate(cleaner.paidAt || endDate)
 
   const html = `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -366,8 +366,12 @@ function printGeneralReportWindow(report: any, history: any[], startDate: string
       role: user?.role || "camareira",
       count: history.length,
       ratePerRoom: report?.myRatePerRoom || report?.defaultRatePerRoom || 35.00,
-      totalToPay: report?.myNetToPay ?? report?.myTotalToPay ?? (history.length * Number(report?.myRatePerRoom || 35)),
-      avgDurationMinutes: 35,
+      totalToPay: report?.myTotalToPay ?? (history.length * Number(report?.myRatePerRoom || 35)),
+      advancesInPeriod: report?.myAdvancesInPeriod || 0,
+      paymentsInPeriod: report?.myPaymentsInPeriod || 0,
+      netProduced: report?.myNetProduced,
+      isPaid: report?.myIsPaid,
+      avgDurationMinutes: report?.myAvgDurationMinutes || 35,
       cleanings: history
     }
     return printReceiptWindow(cleanerData, startDate, endDate)
@@ -1561,7 +1565,7 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                                     {isPaid ? (
                                       <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-500/15 px-2.5 py-1.5 rounded-xl border border-emerald-500/30">
                                         <Check className="w-3.5 h-3.5 text-emerald-600" />
-                                        <span>Pago em {formatDate(c.paidAt || '2026-09-16')}</span>
+                                        <span>Pago em {formatDate(c.paidAt || endDate)}</span>
                                       </span>
                                     ) : (
                                       <Button
@@ -2503,12 +2507,16 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
 
               <div className="flex items-center gap-2">
                 {activeCleanerReceipt && (() => {
+                  const gross = Number(activeCleanerReceipt.totalToPay || 0)
+                  const advances = Number(activeCleanerReceipt.advancesInPeriod || 0)
+                  const netProduced = activeCleanerReceipt.netProduced !== undefined ? Number(activeCleanerReceipt.netProduced) : Math.max(0, gross - advances)
+                  const payments = Number(activeCleanerReceipt.paymentsInPeriod || 0)
                   const isSettled = Boolean(activeCleanerReceipt.isPaid || (activeCleanerReceipt.pendingToPay === 0 && Number(activeCleanerReceipt.paymentsInPeriod || 0) > 0))
-                  const paidDateFmt = formatDate(activeCleanerReceipt.paidAt || '2026-09-16')
-                  const valorQuitado = formatBRL(activeCleanerReceipt.paymentsInPeriod || activeCleanerReceipt.netProduced || activeCleanerReceipt.totalToPay)
+                  const paidDateFmt = formatDate(activeCleanerReceipt.paidAt || endDate)
+                  const valorQuitado = formatBRL(payments || netProduced || gross)
                   const count = activeCleanerReceipt.count || 0
                   const rate = Number(activeCleanerReceipt.ratePerRoom || report?.defaultRatePerRoom || 35).toFixed(2)
-                  const net = formatBRL(activeCleanerReceipt.netToPay ?? activeCleanerReceipt.totalToPay)
+                  const net = formatBRL(activeCleanerReceipt.netToPay ?? netProduced)
                   const name = activeCleanerReceipt.name || activeCleanerReceipt.username
 
                   return (
@@ -2516,9 +2524,13 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
                       size="sm"
                       variant="outline"
                       onClick={() => {
+                        const breakdown = advances > 0
+                          ? `\n📈 *Produção Bruta:* R$ ${formatBRL(gross)} (${count} quartos)\n🎫 *Vales Concedidos:* − R$ ${formatBRL(advances)}\n`
+                          : `\n🧹 *Total de Quartos Limpos:* ${count} flats\n💵 *Valor por Quarto:* R$ ${rate}\n`
+
                         const msg = isSettled
-                          ? `📄 *CORPFLATS • FECHAMENTO DE DIÁRIAS (QUITADO)*\n\nOlá, *${name}*!\nSegue o comprovante de fechamento de governança:\n\n🗓️ *Período:* ${formatDate(startDate)} a ${formatDate(endDate)}\n🧹 *Total de Quartos Limpos:* ${count} flats\n💵 *Valor por Quarto:* R$ ${rate}\n✅ *STATUS:* *QUITADO / PAGO EM ${paidDateFmt}*\n💰 *VALOR TOTAL PAGO:* *R$ ${valorQuitado}*\n✨ *SALDO PENDENTE:* *R$ 0,00*\n\nObrigado pela dedicação e excelente trabalho! ✨`
-                          : `📄 *CORPFLATS • FECHAMENTO DE DIÁRIAS*\n\nOlá, *${name}*!\nSegue o resumo do seu fechamento de governança:\n\n🗓️ *Período:* ${formatDate(startDate)} a ${formatDate(endDate)}\n🧹 *Total de Quartos Limpos:* ${count} flats\n💵 *Valor por Quarto:* R$ ${rate}\n💰 *VALOR TOTAL A RECEBER:* *R$ ${net}*\n\nObrigado pela dedicação e excelente trabalho! ✨`
+                          ? `📄 *CORPFLATS • FECHAMENTO DE DIÁRIAS (QUITADO)*\n\nOlá, *${name}*!\nSegue o comprovante de fechamento de governança:\n\n🗓️ *Período:* ${formatDate(startDate)} a ${formatDate(endDate)}${breakdown}✅ *STATUS:* *QUITADO / PAGO EM ${paidDateFmt}*\n💰 *VALOR TOTAL PAGO:* *R$ ${valorQuitado}*\n✨ *SALDO PENDENTE:* *R$ 0,00*\n\nObrigado pela dedicação e excelente trabalho! ✨`
+                          : `📄 *CORPFLATS • FECHAMENTO DE DIÁRIAS*\n\nOlá, *${name}*!\nSegue o resumo do seu fechamento de governança:\n\n🗓️ *Período:* ${formatDate(startDate)} a ${formatDate(endDate)}${breakdown}💰 *VALOR LÍQUIDO A RECEBER:* *R$ ${net}*\n\nObrigado pela dedicação e excelente trabalho! ✨`
                         window.open("https://api.whatsapp.com/send?text=" + encodeURIComponent(msg), "_blank")
                       }}
                       className="h-9 px-3 rounded-xl text-xs font-bold gap-1.5 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10"
@@ -2550,7 +2562,7 @@ Comprovante digital emitido em ${new Date().toLocaleDateString("pt-BR")}`
               const netProduced = activeCleanerReceipt.netProduced !== undefined ? Number(activeCleanerReceipt.netProduced) : Math.max(0, gross - advances)
               const payments = Number(activeCleanerReceipt.paymentsInPeriod || 0)
               const isSettled = Boolean(activeCleanerReceipt.isPaid || (activeCleanerReceipt.pendingToPay === 0 && payments > 0))
-              const paidDateFmt = formatDate(activeCleanerReceipt.paidAt || '2026-09-16')
+              const paidDateFmt = formatDate(activeCleanerReceipt.paidAt || endDate)
               const valorQuitado = formatBRL(payments || netProduced || gross)
               const rateFmt = Number(activeCleanerReceipt.ratePerRoom || report?.defaultRatePerRoom || 35).toFixed(2)
               const netDisplay = formatBRL(activeCleanerReceipt.netToPay ?? netProduced)
