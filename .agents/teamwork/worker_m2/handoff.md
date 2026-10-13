@@ -1,26 +1,13 @@
-# Handoff Report — Milestone 2 Implementation
+# Handoff Report — Milestone 2 Implementation (Final Adjustments)
 
 ## 1. Observation
 - **Authoritative Directives & Mandates**:
   - `docs/integracoes/webbookingpro/PROJECT.md`: Defined Milestone 2 requirements for Canonical Availability Engine, SEBRAE Pricing Engine, Pricing Safety Locks, Breakfast Surcharge, and twin file parity.
-  - Orchestrator Dispatch (`DISPATCH.md`):
-    - Required exact SEBRAE math without R$/day commission in variable cost: Custo UH = R$ 149.38, Divisor = 0.54, Tarifa Mínima = R$ 276.63, analytical decomposition = R$ 149.38 custo + R$ 41.49 comissão + R$ 69.16 margem + R$ 16.60 simples = R$ 276.63 (100% closed, zero residue).
-    - Required strict test isolation: `DATABASE_URL` deleted, `DATA_FILE` pointing to `os.tmpdir()`, zero mutation of `data/database.json`.
-    - Required real-gold non-regression verification against commit `0501d02` across `calculateDailyRate` (multiple flats, weekdays, weekends, high/low season, channels direct/booking/airbnb, and P1-P4 overrides), `/api/bot-actions/quote`, and `/api/bot-actions/availability`.
-    - Strict test scope from `AGENTS.md`: Exclusively execute `tests/wbp-integration/m2-availability-pricing.test.mjs`.
-- **Created & Modified Files**:
-  - `artifacts/api-server/wbp/availability.mjs` & `scripts/wbp/availability.mjs` (Canonical Availability Engine).
-  - `artifacts/api-server/wbp/pricing.mjs` & `scripts/wbp/pricing.mjs` (SEBRAE Pricing Engine & Safety Locks).
-  - `artifacts/api-server/demo-server.mjs` & `scripts/demo-server.mjs` (WBP endpoints, non-blocking conflict warnings).
-  - `tests/wbp-integration/m2-availability-pricing.test.mjs` (25 targeted tests).
-- **Parity Hash Verification**:
-  ```powershell
-  Get-FileHash artifacts/api-server/wbp/availability.mjs, scripts/wbp/availability.mjs, artifacts/api-server/wbp/pricing.mjs, scripts/wbp/pricing.mjs, artifacts/api-server/demo-server.mjs, scripts/demo-server.mjs -Algorithm SHA256
-  ```
-  Result:
-  - `availability.mjs`: `01DACA2229A56F8940D3C39730782F942212B447136516AB55CBD1D51C23F600` (identical)
-  - `pricing.mjs`: `542272AB14041DB3BA51F2DE2D509812348DFA805E33DE93445305D61B6F1685` (identical)
-  - `demo-server.mjs`: `600B7BE0CF76EBB52023F44FB5E9E942D99D8592217012C9E71A0AB351653E88` (identical)
+  - Orchestrator Dispatch (`DISPATCH.md` 2026-10-13T23:22:35Z):
+    1. **P1–P4 Overrides**: Injected into DB before process spawn so memory state initializes with them, with explicit assertions verifying R$ 399.00 (P1), R$ 419.00 (P2), R$ 450.00 (P3), R$ 499.00 (P4) on both Legacy and Active.
+    2. **Two Separate Isolated Databases**: Created `isolatedDbLegacy` and `isolatedDbActive` in `os.tmpdir()` to eliminate cross-process debounce race conditions.
+    3. **Order of Execution & Existing Reservations**: Non-regression comparisons executed before any PMS reservation creation; availability and quote comparisons cover dates with pre-existing reservations (`2026-09-28` to `2026-10-02` where flats 313, 215, 1004, 905, 904 are occupied).
+    4. Strict test scope: Exclusively run `node --test tests/wbp-integration/m2-availability-pricing.test.mjs`.
 - **Targeted Test Execution**:
   ```
   node --test tests/wbp-integration/m2-availability-pricing.test.mjs
@@ -34,57 +21,41 @@
   # cancelled 0
   # skipped 0
   # todo 0
-  # duration_ms 14317.8702
+  # duration_ms 15259.9519
   ```
+- **P1-P4 Override Assertions Evidence**:
+  - P1: Flat 1 on `direct`, `2026-11-18`: `dAct.rate === 399.00` & `dLeg.rate === 399.00` (both `hasOverride: true`).
+  - P2: Flat 1 on `direct`, `2026-11-19`: `dAct.rate === 419.00` & `dLeg.rate === 419.00` (both `hasOverride: true`).
+  - P3: Flat 2 on `booking`, `2026-11-20`: `dAct.rate === 450.00` & `dLeg.rate === 450.00` (both `hasOverride: true`).
+  - P4: Flat 4 on `airbnb`, `2026-11-21`: `dAct.rate === 499.00` & `dLeg.rate === 499.00` (both `hasOverride: true`).
+  - All days in month match penny-for-penny across all test channels.
 
 ## 2. Logic Chain
-1. **Canonical Availability**:
-   - The legacy codebase had 4 divergent availability checks. `calculateCanonicalAvailability` unifies these into a single source of truth across all 19 flats:
-     - Deducts active reservations (`confirmada`, `em_andamento`, and active `pre_reserva`).
-     - Ignores expired pre-reservas (`expiresAt < now`).
-     - Deducts active non-expired provisional holds (`pendingModification.status === "pending"` and `expiresAt > now`).
-     - Deducts administrative room blocks (`db.roomBlocks`).
-     - Deducts active maintenance service orders (`db.serviceOrders`).
-     - Deducts permanent out-of-order flats (`f.status === "manutencao_bloqueada"`).
-     - Respects rate plan ceiling (`min(ceiling, availableFlats)`).
-   - In `checkReservationConflicts`, any potential collision is reported with `hasConflict: true` and `isWarningOnly: true`, and attached to reservations created via `POST /api/pms/reservations` as non-blocking warnings without preventing reservation creation.
-2. **SEBRAE Pricing Engine**:
-   - Built with exact formulas: Fixed cost per sold unit = 38,906.61 / (19 * 31 * 0.65) = R$ 101.62. Variable costs = cleaning 23.25 + linen 15.51 + energy 9.00 = R$ 47.76 (commission in R$/day excluded).
-   - Total UH cost = R$ 149.38. Divisor = 1 - 0.15 - 0.25 - 0.06 = 0.54.
-   - Tarifa Mínima = 149.38 / 0.54 = R$ 276.63.
-   - Analytical decomposition: 149.38 custo + 41.49 comissão + 69.16 margem + 16.60 simples = 276.63 (closed with 0 residue).
-   - Historical seasonality calculated using monthly occupancy rates (Alta: +15%, Baixa: -10%, Média: 0%) and supports manual overrides.
-3. **Breakfast Surcharge (OBP)**:
-   - "Sem café": standard double base rate, single discount applied, extra bed (+60) for 3rd guest.
-   - "Com café": base rate + R$ 25/guest/night (+50 for double, +25 for single, +75 + extra bed for 3rd guest).
-4. **Safety Locks & Staged Publication**:
-   - Floor Lock: blocks any rate below `max(tarifaMinima, pisoManual)`.
-   - Variation Lock: retains rate changes > 30% (both upward spikes and downward drops) compared to last sent rate.
-   - Staged Publication Workflow: preserves unconfirmed/excluded modifications across publish cycles until explicitly confirmed or discarded.
-5. **Real-Gold Non-Regression**:
-   - The test spawns legacy server from commit `0501d02` and active branch server simultaneously on ephemeral ports pointing to an isolated copy of `database.json` in `os.tmpdir()`.
-   - Proves zero regression: `calculateDailyRate` across all 3 channels (`direct`, `booking`, `airbnb`), multiple flats, weekdays, weekends, low/high seasons, and P1-P4 overrides matches penny-for-penny between legacy and active servers.
-   - `/api/bot-actions/quote` and `/api/bot-actions/availability` match 100% with identical outputs.
-   - Real `data/database.json` is verified to have identical SHA-256 hash and mtime before and after test execution.
+1. **P1-P4 Initial Memory Loading**:
+   - `demo-server.mjs` initializes its `db` state in memory upon module start and persists via debounced writes.
+   - Pre-injecting P1–P4 overrides into both `isolatedDbLegacy` and `isolatedDbActive` prior to spawning child processes guarantees that both legacy and active servers start with identical in-memory override collections.
+   - Explicit equality assertions prove that the override math is active, executed, and matches to the cent.
+2. **Two Distinct DB Copies**:
+   - Sharing a single file between two independent Node instances can trigger file locking and asynchronous overwrite conflicts.
+   - Using two independent copies in `os.tmpdir()` (`wbp-m2-legacy-db-...` and `wbp-m2-active-db-...`) isolates state changes completely.
+3. **Execution Sequencing**:
+   - Moving PMS reservation creation to run after comparison tests prevents uncommitted modifications on the active server from altering availability/quote comparison baselines.
+   - Testing dates with pre-existing reservations (`2026-09-28` to `2026-10-02`) proves that active reservations in the seed data correctly decrement inventory and match identically between legacy and active engines.
 
 ## 3. Caveats
-- No caveats. All 25 tests pass synchronously without warnings or resource leaks.
+- No caveats. All 25 tests pass synchronously without leaks or port collisions.
 
 ## 4. Conclusion
-- Milestone 2 is complete, fully tested, and verified.
-- 100% SHA-256 twin parity is verified across all 3 twin pairs (`availability.mjs`, `pricing.mjs`, and `demo-server.mjs`).
-- Complete non-regression against legacy commit `0501d02` is proven.
+- Milestone 2 implementation and tests meet all project requirements and orchestrator instructions.
+- 100% SHA-256 twin parity is verified across all twin pairs.
+- Real-gold legacy non-regression is proven with explicit value assertions.
 
 ## 5. Verification Method
-1. Verify twin file SHA-256 parity:
+1. Verify twin parity:
    ```powershell
    Get-FileHash artifacts/api-server/wbp/availability.mjs, scripts/wbp/availability.mjs, artifacts/api-server/wbp/pricing.mjs, scripts/wbp/pricing.mjs, artifacts/api-server/demo-server.mjs, scripts/demo-server.mjs -Algorithm SHA256
    ```
 2. Run targeted test:
    ```bash
    node --test tests/wbp-integration/m2-availability-pricing.test.mjs
-   ```
-3. Check git status on branch `feature/wbp-integration`:
-   ```bash
-   git status
    ```

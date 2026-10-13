@@ -70,3 +70,20 @@ ATENÇÃO: Instrução mandatória e bloqueante para o Marco 2 antes de qualquer
 4. **REGRAS AGENTS.md**:
    - Execute EXCLUSIVAMENTE esse arquivo de teste pontual.
 **Action**: Ajuste imediatamente o teste e a implementação conforme essas 4 regras. Ao concluir, reporte as linhas alteradas e o resultado da execução.
+
+## 2026-10-13T23:22:35Z
+**Context**: AJUSTES FINAIS OBRIGATÓRIOS PARA tests/wbp-integration/m2-availability-pricing.test.mjs.
+**Content**:
+O usuário/orquestrador-pai identificou 3 correções pontuais obrigatórias no teste antes do portão:
+1. **P1–P4 (Overrides de Tarifa)**:
+   - Os overrides estavam sendo gravados no arquivo DEPOIS do spawn; como o `demo-server` mantém estado em memória, os servidores estavam comparando sem overrides.
+   - CORREÇÃO: Injetar os overrides nas cópias do banco ANTES do spawn (ou via API em ambos) e ASSERTAR explicitamente que o override foi aplicado e reflete o valor correto (ex: flat 1 em 2026-11-18 direct = 399.00 nos dois), provando que o teste é efetivo.
+2. **DUAS CÓPIAS DE BANCO ISOLADAS**:
+   - Não use arquivo de banco único compartilhado entre os dois processos (evitar condição de corrida com debounce).
+   - Crie DUAS cópias temporárias idênticas em `os.tmpdir()` (uma para o legado, outra para o ativo) e limpe ambas no `after()`.
+3. **ORDEM DE EXECUÇÃO E RESERVAS**:
+   - A criação de reserva (`POST /api/pms/reservations`) ocorria apenas no servidor ativo antes das comparações, gerando divergência de estado para availability/quote.
+   - Mova o teste de criação de reservas para DEPOIS das comparações (ou use instância isolada).
+   - Garanta que as comparações de availability/quote cubram também datas com reservas pré-existentes na base inicial.
+4. Execute exclusivamente este arquivo de teste (`node --test tests/wbp-integration/m2-availability-pricing.test.mjs`), faça commit e push na branch `feature/wbp-integration`, e me reporte a contagem final de testes e a asserção do item 1.
+**Action**: Ajuste o arquivo de teste e reporte a contagem e evidência.

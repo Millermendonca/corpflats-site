@@ -579,8 +579,10 @@ describe("Milestone 2: Pricing Safety Locks & Staged Publication Workflow", () =
 
 describe("Milestone 2: Real-Gold Operational Non-Regression Guard (vs Legacy 0501d02)", () => {
   const prodDbPath = path.join(rootDir, "data", "database.json");
-  const isolatedDbPath = path.join(os.tmpdir(), `wbp-m2-isolated-db-${Date.now()}-${Math.random().toString(36).substring(2)}.json`);
-  const legacyServerFile = path.join(rootDir, "artifacts", "api-server", `.legacy-demo-server-m2-${Date.now()}.tmp.mjs`);
+  const runId = `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+  const isolatedDbLegacy = path.join(os.tmpdir(), `wbp-m2-legacy-db-${runId}.json`);
+  const isolatedDbActive = path.join(os.tmpdir(), `wbp-m2-active-db-${runId}.json`);
+  const legacyServerFile = path.join(rootDir, "artifacts", "api-server", `.legacy-demo-server-m2-${runId}.tmp.mjs`);
 
   let initialDbMetadata;
   let legacyPort;
@@ -595,11 +597,8 @@ describe("Milestone 2: Real-Gold Operational Non-Regression Guard (vs Legacy 050
     initialDbMetadata = getFileMetadata(prodDbPath);
     assert.ok(initialDbMetadata != null, "data/database.json must exist");
 
-    // 2. Create isolated test database in os.tmpdir()
-    fs.copyFileSync(prodDbPath, isolatedDbPath);
-
-    // Ensure bot actions are permitted in isolated database
-    const initialDbContent = JSON.parse(fs.readFileSync(isolatedDbPath, "utf-8"));
+    // 2. Prepare initial DB content with bot actions and P1-P4 overrides BEFORE spawning
+    const initialDbContent = JSON.parse(fs.readFileSync(prodDbPath, "utf-8"));
     initialDbContent.botActionsSettings = {
       apiActionsEnabled: true,
       allowedActions: {
@@ -613,7 +612,22 @@ describe("Milestone 2: Real-Gold Operational Non-Regression Guard (vs Legacy 050
       handoverMessage: "Esta ação do sistema está pausada ou requer atendimento humano.",
       updatedAt: new Date().toISOString()
     };
-    fs.writeFileSync(isolatedDbPath, JSON.stringify(initialDbContent, null, 2), "utf-8");
+
+    // Inject P1-P4 overrides prior to process start so memory cache initializes with them
+    initialDbContent.tariffOverrides = [
+      // P1: Flat específico + Canal exato (Flat 1, 2026-11-18, direct = R$ 399.00)
+      { id: "ovr-p1", flatId: "1", date: "2026-11-18", channel: "direct", rate: 399.00, reason: "P1 Override" },
+      // P2: Flat específico + Canal all (Flat 1, 2026-11-19, all = R$ 419.00)
+      { id: "ovr-p2", flatId: "1", date: "2026-11-19", channel: "all", rate: 419.00, reason: "P2 Override" },
+      // P3: Flat global (null/all) + Canal exato (Global, 2026-11-20, booking = R$ 450.00)
+      { id: "ovr-p3", flatId: null, date: "2026-11-20", channel: "booking", rate: 450.00, reason: "P3 Override" },
+      // P4: Flat global (null/all) + Canal all (Global, 2026-11-21, all = R$ 499.00)
+      { id: "ovr-p4", flatId: null, date: "2026-11-21", channel: "all", rate: 499.00, reason: "P4 Override" }
+    ];
+
+    // Write to TWO distinct isolated temporary databases to eliminate cross-process debounce race conditions
+    fs.writeFileSync(isolatedDbLegacy, JSON.stringify(initialDbContent, null, 2), "utf-8");
+    fs.writeFileSync(isolatedDbActive, JSON.stringify(initialDbContent, null, 2), "utf-8");
 
     // 3. Extract legacy demo-server.mjs from git commit 0501d02
     const legacyCode = execSync("git show 0501d02:artifacts/api-server/demo-server.mjs", {
@@ -632,20 +646,28 @@ describe("Milestone 2: Real-Gold Operational Non-Regression Guard (vs Legacy 050
     const baseSpawnEnv = { ...process.env };
     delete baseSpawnEnv.DATABASE_URL;
     baseSpawnEnv.NODE_ENV = "test";
-    baseSpawnEnv.DATA_FILE = isolatedDbPath;
-    baseSpawnEnv.DATABASE_FILE = isolatedDbPath;
 
-    // 5. Spawn Legacy Server process
+    // 5. Spawn Legacy Server process with its own dedicated isolated DB
     legacyProcess = spawn("node", [legacyServerFile], {
       cwd: rootDir,
-      env: { ...baseSpawnEnv, PORT: String(legacyPort) },
+      env: {
+        ...baseSpawnEnv,
+        PORT: String(legacyPort),
+        DATA_FILE: isolatedDbLegacy,
+        DATABASE_FILE: isolatedDbLegacy
+      },
       stdio: "pipe"
     });
 
-    // 6. Spawn Active Server process
+    // 6. Spawn Active Server process with its own dedicated isolated DB
     activeProcess = spawn("node", ["artifacts/api-server/demo-server.mjs"], {
       cwd: rootDir,
-      env: { ...baseSpawnEnv, PORT: String(activePort) },
+      env: {
+        ...baseSpawnEnv,
+        PORT: String(activePort),
+        DATA_FILE: isolatedDbActive,
+        DATABASE_FILE: isolatedDbActive
+      },
       stdio: "pipe"
     });
 
@@ -661,12 +683,15 @@ describe("Milestone 2: Real-Gold Operational Non-Regression Guard (vs Legacy 050
     if (legacyProcess && legacyProcess.pid) killProcessTree(legacyProcess.pid);
     if (activeProcess && activeProcess.pid) killProcessTree(activeProcess.pid);
 
-    // Remove temporary legacy file and isolated test database
+    // Remove temporary legacy file and both isolated test databases
     try {
       if (fs.existsSync(legacyServerFile)) fs.unlinkSync(legacyServerFile);
     } catch (_) {}
     try {
-      if (fs.existsSync(isolatedDbPath)) fs.unlinkSync(isolatedDbPath);
+      if (fs.existsSync(isolatedDbLegacy)) fs.unlinkSync(isolatedDbLegacy);
+    } catch (_) {}
+    try {
+      if (fs.existsSync(isolatedDbActive)) fs.unlinkSync(isolatedDbActive);
     } catch (_) {}
 
     // Verify real data/database.json was NEVER modified
@@ -675,65 +700,17 @@ describe("Milestone 2: Real-Gold Operational Non-Regression Guard (vs Legacy 050
     assert.equal(finalDbMetadata.mtimeMs, initialDbMetadata.mtimeMs, "Real data/database.json mtime MUST NOT change!");
   });
 
-  it("proves complete database isolation: isolated DB is in tmpdir and real database.json is untouched", () => {
-    assert.ok(isolatedDbPath.startsWith(os.tmpdir()), "Isolated DB must be in os.tmpdir()");
+  it("proves complete database isolation: isolated DBs are in tmpdir and real database.json is untouched", () => {
+    assert.ok(isolatedDbLegacy.startsWith(os.tmpdir()), "Isolated Legacy DB must be in os.tmpdir()");
+    assert.ok(isolatedDbActive.startsWith(os.tmpdir()), "Isolated Active DB must be in os.tmpdir()");
+    assert.notEqual(isolatedDbLegacy, isolatedDbActive, "Legacy and Active must use separate isolated databases");
+
     const currentMeta = getFileMetadata(prodDbPath);
     assert.equal(currentMeta.hash, initialDbMetadata.hash);
     assert.equal(currentMeta.mtimeMs, initialDbMetadata.mtimeMs);
   });
 
-  it("serves WBP HTTP Endpoints on Active server and attaches non-blocking conflict warnings to PMS reservations", async () => {
-    // 1. GET /api/wbp/availability
-    const availRes = await fetch(`${activeBaseUrl}/api/wbp/availability?startDate=2026-11-10&endDate=2026-11-12`);
-    assert.equal(availRes.status, 200);
-    const availData = await availRes.json();
-    assert.equal(availData.success, true);
-    assert.equal(availData.totalFlats, 19);
-    assert.ok(typeof availData.minAvailable === "number");
-
-    // 2. POST /api/wbp/conflicts/check
-    const conflictRes = await fetch(`${activeBaseUrl}/api/wbp/conflicts/check`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        flatNumber: "113",
-        checkinDate: "2026-11-10",
-        checkoutDate: "2026-11-12"
-      })
-    });
-    assert.equal(conflictRes.status, 200);
-    const conflictData = await conflictRes.json();
-    assert.equal(conflictData.success, true);
-    assert.equal(conflictData.isWarningOnly, true);
-
-    // 3. GET /api/wbp/pricing/preview
-    const prevRes = await fetch(`${activeBaseUrl}/api/wbp/pricing/preview?startDate=2026-11-10&endDate=2026-11-12`);
-    assert.equal(prevRes.status, 200);
-    const prevData = await prevRes.json();
-    assert.equal(prevData.success, true);
-    assert.ok(prevData.kpis != null);
-    assert.ok(Array.isArray(prevData.diffList));
-
-    // 4. PMS reservation creation with conflict attaches non-blocking warning (201 Created)
-    const pmsRes = await fetch(`${activeBaseUrl}/api/pms/reservations`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        flatId: 1,
-        flatNumber: "113",
-        checkinDate: "2026-11-10",
-        checkoutDate: "2026-11-12",
-        guestName: "Hóspede Teste M2",
-        total: 500
-      })
-    });
-    assert.equal(pmsRes.status, 201);
-    const pmsData = await pmsRes.json();
-    assert.ok(pmsData.id);
-  });
-
   it("preserves exact legacy calculateDailyRate results across multiple flats, weekdays, weekends, high/low season, and all channels (direct, booking, airbnb)", async () => {
-    // Test matrix of representative conditions:
     const testCases = [
       // Weekdays (Monday) & Weekends (Friday/Saturday) in regular season (Nov 2026)
       { month: "2026-11", flatId: "1", channel: "direct" },
@@ -786,57 +763,71 @@ describe("Milestone 2: Real-Gold Operational Non-Regression Guard (vs Legacy 050
     }
   });
 
-  it("preserves exact legacy calculateDailyRate results with P1-P4 tariff overrides", async () => {
-    // Inject P1-P4 overrides into isolated database
-    const dbContent = JSON.parse(fs.readFileSync(isolatedDbPath, "utf-8"));
-    dbContent.tariffOverrides = [
-      // P1: Flat específico + Canal exato
-      { id: "ovr-p1", flatId: "1", date: "2026-11-18", channel: "direct", rate: 399.00, reason: "P1 Override" },
-      // P2: Flat específico + Canal all
-      { id: "ovr-p2", flatId: "1", date: "2026-11-19", channel: "all", rate: 419.00, reason: "P2 Override" },
-      // P3: Flat global (null/all) + Canal exato
-      { id: "ovr-p3", flatId: null, date: "2026-11-20", channel: "booking", rate: 450.00, reason: "P3 Override" },
-      // P4: Flat global (null/all) + Canal all
-      { id: "ovr-p4", flatId: null, date: "2026-11-21", channel: "all", rate: 499.00, reason: "P4 Override" }
-    ];
-    fs.writeFileSync(isolatedDbPath, JSON.stringify(dbContent, null, 2), "utf-8");
+  it("preserves exact legacy calculateDailyRate results with P1-P4 tariff overrides, proving explicit application", async () => {
+    // 1. Flat 1 on 'direct' channel: verifies P1 (2026-11-18) and P2 (2026-11-19)
+    const [resLegFlat1Direct, resActFlat1Direct] = await Promise.all([
+      fetch(`${legacyBaseUrl}/api/tariffs/calendar?month=2026-11&channel=direct&flatId=1`),
+      fetch(`${activeBaseUrl}/api/tariffs/calendar?month=2026-11&channel=direct&flatId=1`)
+    ]);
+    const dataLegFlat1Direct = await resLegFlat1Direct.json();
+    const dataActFlat1Direct = await resActFlat1Direct.json();
 
-    // Both servers read from isolatedDbPath on each request (or reload)
-    const testCases = [
-      { flatId: "1", channel: "direct" },
-      { flatId: "1", channel: "booking" },
-      { flatId: "2", channel: "booking" },
-      { flatId: "2", channel: "direct" }
-    ];
+    const d18Act = dataActFlat1Direct.days.find(d => d.date === "2026-11-18");
+    const d18Leg = dataLegFlat1Direct.days.find(d => d.date === "2026-11-18");
+    assert.equal(d18Act.rate, 399.00, "P1 override must be exactly R$ 399.00 on Active");
+    assert.equal(d18Leg.rate, 399.00, "P1 override must be exactly R$ 399.00 on Legacy");
+    assert.equal(d18Act.hasOverride, true);
+    assert.equal(d18Leg.hasOverride, true);
 
-    for (const tc of testCases) {
-      const urlLegacy = `${legacyBaseUrl}/api/tariffs/calendar?month=2026-11&channel=${tc.channel}&flatId=${tc.flatId}`;
-      const urlActive = `${activeBaseUrl}/api/tariffs/calendar?month=2026-11&channel=${tc.channel}&flatId=${tc.flatId}`;
+    const d19Act = dataActFlat1Direct.days.find(d => d.date === "2026-11-19");
+    const d19Leg = dataLegFlat1Direct.days.find(d => d.date === "2026-11-19");
+    assert.equal(d19Act.rate, 419.00, "P2 override (all channel) must be exactly R$ 419.00 on Active");
+    assert.equal(d19Leg.rate, 419.00, "P2 override (all channel) must be exactly R$ 419.00 on Legacy");
+    assert.equal(d19Act.hasOverride, true);
+    assert.equal(d19Leg.hasOverride, true);
 
-      const [resLegacy, resActive] = await Promise.all([
-        fetch(urlLegacy),
-        fetch(urlActive)
-      ]);
+    // 2. Flat 2 on 'booking' channel: verifies P3 (2026-11-20) global booking override
+    const [resLegFlat2Booking, resActFlat2Booking] = await Promise.all([
+      fetch(`${legacyBaseUrl}/api/tariffs/calendar?month=2026-11&channel=booking&flatId=2`),
+      fetch(`${activeBaseUrl}/api/tariffs/calendar?month=2026-11&channel=booking&flatId=2`)
+    ]);
+    const dataLegFlat2Booking = await resLegFlat2Booking.json();
+    const dataActFlat2Booking = await resActFlat2Booking.json();
 
-      const [dataLegacy, dataActive] = await Promise.all([
-        resLegacy.json(),
-        resActive.json()
-      ]);
+    const d20Act = dataActFlat2Booking.days.find(d => d.date === "2026-11-20");
+    const d20Leg = dataLegFlat2Booking.days.find(d => d.date === "2026-11-20");
+    assert.equal(d20Act.rate, 450.00, "P3 global booking override must be exactly R$ 450.00 on Active");
+    assert.equal(d20Leg.rate, 450.00, "P3 global booking override must be exactly R$ 450.00 on Legacy");
+    assert.equal(d20Act.hasOverride, true);
+    assert.equal(d20Leg.hasOverride, true);
 
-      for (let i = 0; i < dataLegacy.days.length; i++) {
-        const dLeg = dataLegacy.days[i];
-        const dAct = dataActive.days[i];
-        assert.equal(
-          dAct.rate,
-          dLeg.rate,
-          `Override tariff mismatch on ${dLeg.date} for flat ${tc.flatId} channel ${tc.channel}: active=${dAct.rate} vs legacy=${dLeg.rate}`
-        );
-      }
+    // 3. Flat 4 on 'airbnb' channel: verifies P4 (2026-11-21) global all override
+    const [resLegFlat4Airbnb, resActFlat4Airbnb] = await Promise.all([
+      fetch(`${legacyBaseUrl}/api/tariffs/calendar?month=2026-11&channel=airbnb&flatId=4`),
+      fetch(`${activeBaseUrl}/api/tariffs/calendar?month=2026-11&channel=airbnb&flatId=4`)
+    ]);
+    const dataLegFlat4Airbnb = await resLegFlat4Airbnb.json();
+    const dataActFlat4Airbnb = await resActFlat4Airbnb.json();
+
+    const d21Act = dataActFlat4Airbnb.days.find(d => d.date === "2026-11-21");
+    const d21Leg = dataLegFlat4Airbnb.days.find(d => d.date === "2026-11-21");
+    assert.equal(d21Act.rate, 499.00, "P4 global all override must be exactly R$ 499.00 on Active");
+    assert.equal(d21Leg.rate, 499.00, "P4 global all override must be exactly R$ 499.00 on Legacy");
+    assert.equal(d21Act.hasOverride, true);
+    assert.equal(d21Leg.hasOverride, true);
+
+    // Verify complete month matches penny-for-penny across all 3 test channels
+    for (let i = 0; i < dataLegFlat1Direct.days.length; i++) {
+      assert.equal(dataActFlat1Direct.days[i].rate, dataLegFlat1Direct.days[i].rate);
+      assert.equal(dataActFlat2Booking.days[i].rate, dataLegFlat2Booking.days[i].rate);
+      assert.equal(dataActFlat4Airbnb.days[i].rate, dataLegFlat4Airbnb.days[i].rate);
     }
   });
 
   it("preserves exact legacy POST /api/bot-actions/quote responses across weekday, weekend, guest counts, and channels", async () => {
     const quotePayloads = [
+      // Dates with pre-existing reservations in initial database (2026-09-28 to 2026-09-30)
+      { checkIn: "2026-09-28", checkOut: "2026-09-30", guests: 2, flatId: 1, channel: "direct", ratePlan: "room_only" },
       // Weekday couple (direct)
       { checkIn: "2026-11-16", checkOut: "2026-11-18", guests: 2, flatId: 1, channel: "direct", ratePlan: "room_only" },
       // Weekend couple (direct)
@@ -889,8 +880,10 @@ describe("Milestone 2: Real-Gold Operational Non-Regression Guard (vs Legacy 050
     }
   });
 
-  it("preserves exact legacy GET /api/bot-actions/availability responses", async () => {
+  it("preserves exact legacy GET /api/bot-actions/availability responses, including on dates with pre-existing reservations", async () => {
     const testRanges = [
+      // Dates with pre-existing reservations in initial database (Flats 313, 215, 1004, 905, 904 occupied)
+      { checkIn: "2026-09-28", checkOut: "2026-10-02", guests: 2 },
       { checkIn: "2026-11-16", checkOut: "2026-11-18", guests: 2 },
       { checkIn: "2026-11-20", checkOut: "2026-11-23", guests: 2 },
       { checkIn: "2026-12-10", checkOut: "2026-12-15", guests: 1 }
@@ -919,5 +912,55 @@ describe("Milestone 2: Real-Gold Operational Non-Regression Guard (vs Legacy 050
       const legacyFlatIds = dataLegacy.flats.map(f => f.id).sort();
       assert.deepEqual(activeFlatIds, legacyFlatIds);
     }
+  });
+
+  it("serves WBP HTTP Endpoints on Active server and attaches non-blocking conflict warnings to PMS reservations (executed after comparisons)", async () => {
+    // 1. GET /api/wbp/availability
+    const availRes = await fetch(`${activeBaseUrl}/api/wbp/availability?startDate=2026-11-10&endDate=2026-11-12`);
+    assert.equal(availRes.status, 200);
+    const availData = await availRes.json();
+    assert.equal(availData.success, true);
+    assert.equal(availData.totalFlats, 19);
+    assert.ok(typeof availData.minAvailable === "number");
+
+    // 2. POST /api/wbp/conflicts/check
+    const conflictRes = await fetch(`${activeBaseUrl}/api/wbp/conflicts/check`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        flatNumber: "113",
+        checkinDate: "2026-11-10",
+        checkoutDate: "2026-11-12"
+      })
+    });
+    assert.equal(conflictRes.status, 200);
+    const conflictData = await conflictRes.json();
+    assert.equal(conflictData.success, true);
+    assert.equal(conflictData.isWarningOnly, true);
+
+    // 3. GET /api/wbp/pricing/preview
+    const prevRes = await fetch(`${activeBaseUrl}/api/wbp/pricing/preview?startDate=2026-11-10&endDate=2026-11-12`);
+    assert.equal(prevRes.status, 200);
+    const prevData = await prevRes.json();
+    assert.equal(prevData.success, true);
+    assert.ok(prevData.kpis != null);
+    assert.ok(Array.isArray(prevData.diffList));
+
+    // 4. PMS reservation creation with conflict attaches non-blocking warning (201 Created)
+    const pmsRes = await fetch(`${activeBaseUrl}/api/pms/reservations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        flatId: 1,
+        flatNumber: "113",
+        checkinDate: "2026-11-10",
+        checkoutDate: "2026-11-12",
+        guestName: "Hóspede Teste M2",
+        total: 500
+      })
+    });
+    assert.equal(pmsRes.status, 201);
+    const pmsData = await pmsRes.json();
+    assert.ok(pmsData.id);
   });
 });
