@@ -529,8 +529,8 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
 
   // Start Click Handler with Identification Guard
   const handleStartFlatClick = (flat: ServiceFlat) => {
+    setPendingAction({ type: "start", flat });
     if (!hasSavedWorker) {
-      setPendingAction({ type: "start", flat });
       setGuardDialogOpen(true);
       return;
     }
@@ -1471,7 +1471,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                             ) : (
                               <Play className="w-4 h-4 mr-1.5 fill-current" />
                             )}
-                            ▶️ 2. Iniciar Serviço
+                            ▶️ Iniciar Apartamento (2. Iniciar Serviço)
                           </Button>
                         </>
                       )}
@@ -1491,7 +1491,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
                         className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-10 shadow-md flex items-center justify-center gap-1.5"
                       >
                         <CheckCircle2 className="w-4 h-4" />
-                        🏁 3. Finalizar Serviço
+                        🏁 Finalizar Serviço
                       </Button>
                       <Button
                         variant="outline"
@@ -1529,7 +1529,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
               Identificação Obrigatória
             </DialogTitle>
             <DialogDescription className="text-center text-xs text-slate-600 dark:text-slate-400 leading-relaxed font-medium">
-              Você precisa preencher e salvar sua identificação (Nome, CPF e WhatsApp) para prosseguir com o serviço e liberação na portaria.
+              Identificação Obrigatória: Você precisa preencher e salvar sua identificação (Nome e CPF) antes de iniciar qualquer apartamento.
             </DialogDescription>
           </DialogHeader>
 
