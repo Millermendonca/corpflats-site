@@ -153,6 +153,18 @@ function formatCpf(cpf?: string | null): string {
   return cpf;
 }
 
+function formatCpfInput(val: string): string {
+  const digits = val.replace(/\D/g, "").slice(0, 11);
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 6) return `${digits.slice(0, 3)}.${digits.slice(3)}`;
+  if (digits.length <= 9) return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6)}`;
+  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9, 11)}`;
+}
+
+function cleanCpfDigits(val: string): string {
+  return val.replace(/\D/g, "");
+}
+
 export default function ServiceOrders() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -171,6 +183,11 @@ export default function ServiceOrders() {
         return numA - numB;
       });
   }, [rawFlats]);
+
+  const dirtyFlats = useMemo(() => activeFlats.filter((f: any) => Boolean(f.isDirty)), [activeFlats]);
+  const cleanFlats = useMemo(() => activeFlats.filter((f: any) => !f.isDirty), [activeFlats]);
+  const occupiedFlats = useMemo(() => activeFlats.filter((f: any) => Boolean(f.isOccupied)), [activeFlats]);
+  const vacantFlats = useMemo(() => activeFlats.filter((f: any) => !f.isOccupied), [activeFlats]);
 
   // Query: Lista de Ordens de Serviço
   const {
@@ -232,6 +249,8 @@ export default function ServiceOrders() {
   // Form State (Criar / Editar)
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
   const [formTitle, setFormTitle] = useState("");
+  const [formWorkerName, setFormWorkerName] = useState("");
+  const [formWorkerCpf, setFormWorkerCpf] = useState("");
   const [formCleanFlatMode, setFormCleanFlatMode] = useState<CleanFlatMode>("priority");
   const [formMaxSimultaneous, setFormMaxSimultaneous] = useState<number>(2);
   const [formMaxPerDay, setFormMaxPerDay] = useState<number>(4);
@@ -247,6 +266,8 @@ export default function ServiceOrders() {
   const resetFormToCreate = () => {
     setEditingOrderId(null);
     setFormTitle("");
+    setFormWorkerName("");
+    setFormWorkerCpf("");
     setFormCleanFlatMode("priority");
     setFormMaxSimultaneous(2);
     setFormMaxPerDay(4);
@@ -264,6 +285,8 @@ export default function ServiceOrders() {
   const loadOrderIntoForm = (order: ServiceOrder) => {
     setEditingOrderId(order.id);
     setFormTitle(order.title || "");
+    setFormWorkerName((order as any).workerName || "");
+    setFormWorkerCpf(formatCpfInput((order as any).workerCpf || ""));
     setFormCleanFlatMode(order.cleanFlatMode || "priority");
     setFormMaxSimultaneous(order.maxSimultaneousFlats || 2);
     setFormMaxPerDay(order.maxFlatsPerDay || 4);
@@ -322,6 +345,8 @@ export default function ServiceOrders() {
         estimatedDurationHours: formEstimatedDurationHours ? Number(formEstimatedDurationHours) : null,
         instructionFormat: formInstructionFormat,
         defaultInstructions: formDefaultInstructions.trim(),
+        workerName: formWorkerName.trim() || undefined,
+        workerCpf: cleanCpfDigits(formWorkerCpf) || undefined,
         flats: flatsPayload,
       };
 
@@ -922,6 +947,47 @@ export default function ServiceOrders() {
                     </p>
                   </div>
 
+                  {/* Prestador / Responsável (Opcional - Pré-atribuição) */}
+                  <div className="p-4 rounded-xl bg-muted/30 border space-y-3">
+                    <div className="space-y-0.5">
+                      <Label className="text-sm font-semibold flex items-center gap-1.5">
+                        <Users className="w-4 h-4 text-primary" />
+                        Prestador Responsável (Opcional - Pré-atribuição)
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        Se você já sabe quem executará o serviço, preencha abaixo para adiantar o cadastro. O prestador também pode preencher no próprio link.
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <Label htmlFor="worker-name" className="text-xs font-semibold">
+                          Nome do Prestador / Empresa
+                        </Label>
+                        <Input
+                          id="worker-name"
+                          placeholder="Ex: Carlos Pinturas ME"
+                          value={formWorkerName}
+                          onChange={(e) => setFormWorkerName(e.target.value)}
+                          className="h-9 text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor="worker-cpf" className="text-xs font-semibold">
+                          CPF do Prestador
+                        </Label>
+                        <Input
+                          id="worker-cpf"
+                          placeholder="000.000.000-00"
+                          value={formWorkerCpf}
+                          onChange={(e) => setFormWorkerCpf(formatCpfInput(e.target.value))}
+                          maxLength={14}
+                          className="h-9 text-xs"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
                   {/* 2. Modo de Liberação de Flat Limpo (R3/R4) */}
                   <div className="space-y-3">
                     <div className="space-y-0.5">
@@ -1197,7 +1263,25 @@ export default function ServiceOrders() {
                         </p>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setFormSelectedFlatIds(dirtyFlats.map((f: any) => f.id))}
+                          className="h-7 text-xs bg-amber-500/10 text-amber-800 dark:text-amber-300 border-amber-300 hover:bg-amber-500/20"
+                        >
+                          🧹 Selecionar Todos os Sujos ({dirtyFlats.length})
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setFormSelectedFlatIds(cleanFlats.map((f: any) => f.id))}
+                          className="h-7 text-xs bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 border-emerald-300 hover:bg-emerald-500/20"
+                        >
+                          🟢 Selecionar Todos os Limpos ({cleanFlats.length})
+                        </Button>
                         <Button
                           type="button"
                           variant="outline"
@@ -1217,6 +1301,19 @@ export default function ServiceOrders() {
                           Desmarcar Todos
                         </Button>
                       </div>
+                    </div>
+
+                    {/* Summary badges */}
+                    <div className="flex items-center gap-2 text-xs flex-wrap py-1">
+                      <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-300 text-[11px] font-semibold">
+                        🧹 Sujos / Pós-Checkout: {dirtyFlats.length}
+                      </Badge>
+                      <Badge variant="outline" className="bg-emerald-50 text-emerald-800 border-emerald-300 text-[11px] font-semibold">
+                        🟢 Vagos Limpos: {cleanFlats.filter((f: any) => !f.isOccupied).length}
+                      </Badge>
+                      <Badge variant="outline" className="bg-rose-50 text-rose-800 border-rose-300 text-[11px] font-semibold">
+                        🔴 Ocupados: {occupiedFlats.length}
+                      </Badge>
                     </div>
 
                     {flatsLoading ? (
@@ -1239,7 +1336,7 @@ export default function ServiceOrders() {
                                     : [...prev, flat.id]
                                 );
                               }}
-                              className={`cursor-pointer select-none p-3 rounded-xl border text-center transition-all flex flex-col items-center justify-center gap-1.5 ${
+                              className={`cursor-pointer select-none p-2.5 rounded-xl border text-center transition-all flex flex-col items-center justify-between gap-1.5 ${
                                 isSelected
                                   ? "border-primary bg-primary/10 shadow-xs font-semibold text-primary"
                                   : "border-border/60 hover:bg-muted/40 text-muted-foreground"
@@ -1259,9 +1356,28 @@ export default function ServiceOrders() {
                                   {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
                                 </div>
                               </div>
-                              <span className="text-[10px] text-muted-foreground truncate w-full">
-                                {flat.isOccupied ? "🔴 Ocupado" : "🟢 Vago / Limpo"}
-                              </span>
+
+                              <div className="flex flex-col items-center gap-0.5 w-full text-center">
+                                {flat.serviceInProgress ? (
+                                  <Badge variant="secondary" className="text-[9px] px-1.5 py-0 bg-sky-100 text-sky-800 border-sky-300">
+                                    ⏳ Em Serviço
+                                  </Badge>
+                                ) : null}
+
+                                {flat.isOccupied ? (
+                                  <span className="text-[10px] text-rose-600 font-semibold truncate w-full" title={flat.currentGuest ? `Hóspede: ${flat.currentGuest}` : "Ocupado"}>
+                                    🔴 Ocupado {flat.currentGuest ? `(${flat.currentGuest.split(' ')[0]})` : ""}
+                                  </span>
+                                ) : flat.isDirty ? (
+                                  <span className="text-[10px] text-amber-700 font-medium truncate w-full">
+                                    🧹 Sujo / Checkout
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] text-emerald-700 font-medium truncate w-full">
+                                    🟢 Vago / Limpo
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           );
                         })}
@@ -1597,7 +1713,16 @@ export default function ServiceOrders() {
                               >
                                 {/* Flat */}
                                 <TableCell className="font-bold text-sm text-foreground">
-                                  Flat {flat.flatNumber}
+                                  <div>Flat {flat.flatNumber}</div>
+                                  <div className="text-[10px] font-normal text-muted-foreground flex items-center gap-1 mt-0.5">
+                                    {(flat as any).isOccupied ? (
+                                      <span className="text-rose-600 font-semibold">🔴 Ocupado{(flat as any).currentGuest ? ` (${(flat as any).currentGuest})` : ""}</span>
+                                    ) : (flat as any).isDirty ? (
+                                      <span className="text-amber-700 font-medium">🧹 Sujo</span>
+                                    ) : (
+                                      <span className="text-emerald-700 font-medium">🟢 Vago / Limpo</span>
+                                    )}
+                                  </div>
                                 </TableCell>
 
                                 {/* Status */}

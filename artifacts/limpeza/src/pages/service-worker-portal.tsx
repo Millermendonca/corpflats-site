@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { useRoute } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -70,6 +70,11 @@ export interface ServiceFlat {
   wasCleanWhenStarted?: boolean | null;
   isDirty?: boolean;
   isOccupied?: boolean;
+  cleaningStatus?: string;
+  occupancyStatus?: string;
+  currentGuest?: string | null;
+  hasCheckinToday?: boolean;
+  hasCheckoutToday?: boolean;
 }
 
 export interface ServiceOrderData {
@@ -161,6 +166,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
 
   // Guard Dialog State
   const [guardDialogOpen, setGuardDialogOpen] = useState(false);
+  const [pendingStartFlat, setPendingStartFlat] = useState<ServiceFlat | null>(null);
 
   // Finish Modal State
   const [finishModalOpen, setFinishModalOpen] = useState(false);
@@ -195,6 +201,22 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
 
   const order = data?.order;
   const serverWorker = data?.worker;
+
+  // Sync serverWorker data into local form states if available and not manually editing
+  useEffect(() => {
+    if (serverWorker?.mainWorker?.name && !isEditingWorker) {
+      setMainWorkerName(serverWorker.mainWorker.name);
+      setMainWorkerCpf(formatCpf(serverWorker.mainWorker.cpf || ""));
+      if (Array.isArray(serverWorker.collaborators)) {
+        setCollaborators(
+          serverWorker.collaborators.map((c) => ({
+            name: c.name,
+            cpf: formatCpf(c.cpf || ""),
+          }))
+        );
+      }
+    }
+  }, [serverWorker, isEditingWorker]);
 
   // Initialize or synchronize local worker form when data arrives
   const hasSavedWorker = Boolean(serverWorker?.mainWorker?.name && serverWorker?.mainWorker?.cpf);
@@ -366,8 +388,24 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
   };
 
   // Start Click Handler with Identification Guard
-  const handleStartFlatClick = (flat: ServiceFlat) => {
+  const handleStartFlatClick = async (flat: ServiceFlat) => {
     if (!hasSavedWorker) {
+      const cleanCpf = cleanCpfDigits(mainWorkerCpf);
+      if (mainWorkerName.trim() && cleanCpf.length === 11) {
+        try {
+          await registerMutation.mutateAsync();
+          startMutation.mutate(flat.flatId);
+          return;
+        } catch (err: any) {
+          toast({
+            title: "Erro ao salvar identificação",
+            description: err.message || "Por favor, verifique os dados informados.",
+            variant: "destructive",
+          });
+          return;
+        }
+      }
+      setPendingStartFlat(flat);
       setGuardDialogOpen(true);
       return;
     }
@@ -842,7 +880,7 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
             if (flat.isOccupied) {
               occupancyBadge = (
                 <Badge variant="outline" className="bg-rose-50 text-rose-700 border-rose-300 dark:bg-rose-950/40 text-[11px] font-semibold">
-                  🔴 Ocupado por Hóspede
+                  🔴 Ocupado por Hóspede{flat.currentGuest ? `: ${flat.currentGuest}` : ""}
                 </Badge>
               );
             } else if (flat.isDirty) {
@@ -1117,15 +1155,76 @@ export default function ServiceWorkerPortal({ params: propsParams }: ServiceWork
             </DialogDescription>
           </DialogHeader>
 
-          <DialogFooter className="mt-4 flex flex-col sm:flex-row gap-2">
+          {/* Form inside Dialog so the worker can fill right away without scrolling */}
+          <div className="space-y-3 py-2 text-left">
+            <div>
+              <Label className="text-xs font-semibold">Nome Completo do Responsável *</Label>
+              <Input
+                placeholder="Ex: Carlos Pinturas"
+                value={mainWorkerName}
+                onChange={(e) => setMainWorkerName(e.target.value)}
+                className="mt-1 text-sm"
+              />
+            </div>
+            <div>
+              <Label className="text-xs font-semibold">CPF do Responsável *</Label>
+              <Input
+                placeholder="000.000.000-00"
+                value={mainWorkerCpf}
+                onChange={(e) => setMainWorkerCpf(formatCpf(e.target.value))}
+                maxLength={14}
+                className="mt-1 text-sm"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="mt-3 flex flex-col sm:flex-row gap-2">
             <Button
+              onClick={async () => {
+                const cleanCpf = cleanCpfDigits(mainWorkerCpf);
+                if (!mainWorkerName.trim() || cleanCpf.length !== 11) {
+                  toast({
+                    title: "Campos obrigatórios",
+                    description: "Preencha seu Nome completo e um CPF válido com 11 dígitos.",
+                    variant: "destructive",
+                  });
+                  return;
+                }
+                try {
+                  await registerMutation.mutateAsync();
+                  setGuardDialogOpen(false);
+                  if (pendingStartFlat) {
+                    startMutation.mutate(pendingStartFlat.flatId);
+                    setPendingStartFlat(null);
+                  }
+                } catch (err: any) {
+                  toast({
+                    title: "Erro ao salvar identificação",
+                    description: err.message || "Falha ao salvar identificação",
+                    variant: "destructive",
+                  });
+                }
+              }}
+              disabled={registerMutation.isPending || !mainWorkerName.trim() || cleanCpfDigits(mainWorkerCpf).length !== 11}
+              className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs h-10 shadow-xs"
+            >
+              {registerMutation.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+              ) : (
+                <Check className="w-4 h-4 mr-1.5" />
+              )}
+              Salvar Identificação e Iniciar Flat
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => {
                 setGuardDialogOpen(false);
                 scrollToBanner();
               }}
-              className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs h-10"
+              className="w-full text-xs h-9"
             >
-              Preencher Identificação Agora
+              Preencher no Início da Página
             </Button>
           </DialogFooter>
         </DialogContent>

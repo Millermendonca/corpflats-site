@@ -95,7 +95,12 @@ RACIOCÍNIO E DIRETRIZES DE CONVERSAÇÃO:
 - DEMANDAS OPERACIONAIS SEM ACESSO AUTÔNOMO: Se o hóspede solicitar uma ação operacional (cancelamento, alteração de datas, troca de flat, nota fiscal, toalhas extras, chamado de manutenção, itens especiais como berço) ou dados não disponíveis no sistema/FAQ:
   * NÃO invente dados nem dê respostas evasivas;
   * Chame imediatamente a ferramenta recordUnmetDemand para registrar a oportunidade na fila de automação do sistema;
-  * Responda de forma acolhedora informando que registrou a solicitação e que a equipe humana da recepção dará seguimento!`,
+  * Responda de forma acolhedora informando que registrou a solicitação e que a equipe humana da recepção dará seguimento!
+9. REGRA ANTI-COPIA-E-COLA & GERAÇÃO MULTITÓPICO CONTEXTUAL:
+- NUNCA use respostas prontas, engessadas ou cópia-e-cola de mensagens anteriores.
+- Use os fatos e diretrizes aprendidos como base de conhecimento vivo para formular respostas inéditas, humanizadas e personalizadas ao contexto do hóspede.
+- Se o hóspede enviar saudações (ex: "bom dia", "boa tarde", "olá"), retribua a saudação cordialmente pelo nome do hóspede.
+- Se a mensagem contiver múltiplas dúvidas juntas (ex: horário de checkout + se pode estender a reserva pelo WhatsApp), responda a TODOS os pontos de forma clara, acolhedora e integrada na mesma mensagem.`,
   knowledgeBase: {
     address: "Edifício Soho Residence Service, Rua Conselheiro Otaviano, 209 - Centro, Campos dos Goytacazes - RJ",
     checkinTime: "14:00 (Check-in padrão a partir das 14h)",
@@ -2442,8 +2447,13 @@ export function distillGuidelineFromOperatorResponse({ question = "", response =
   const qLower = qClean.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   const rLower = rClean.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
-  const isAffirmative = /^(?:sim|com certeza|claro|pode|consegue|tem|temos|positivo|perfeito|liberado|dispon[ií]vel|aceita|aceitamos|isso|exato|correto)\b/i.test(rLower);
-  const isNegative = /^(?:n[aã]o|infelizmente n[aã]o|n[aã]o pode|n[aã]o permitimos|proibido|n[aã]o temos|negativo|imposs[ií]vel)\b/i.test(rLower);
+  // Extrai o núcleo da resposta removendo saudações e cortesias preliminares ("olá", "bom dia", "oi", etc.)
+  const rCore = rLower
+    .replace(/^(?:ol[aá]|oi|bom\s+dia|boa\s+tarde|boa\s+noite|tudo\s+bem\??|opa)[,!.:;*\s]*/i, "")
+    .trim();
+
+  const isAffirmative = /^(?:sim|com certeza|claro|pode|consegue|tem|temos|positivo|perfeito|liberado|dispon[ií]vel|aceita|aceitamos|isso|exato|correto)\b/i.test(rCore);
+  const isNegative = /^(?:n[aã]o|infelizmente n[aã]o|n[aã]o pode|n[aã]o permitimos|proibido|n[aã]o temos|negativo|imposs[ií]vel)\b/i.test(rCore);
 
   let synthesizedGuideline = "";
   let sampleResponse = "";
@@ -2546,14 +2556,61 @@ export function distillGuidelineFromOperatorResponse({ question = "", response =
       sampleResponse = "Olá! 🥐☕ O café da manhã é servido em bandeja diretamente no seu quarto das 05:00 às 09:30, com agendamento prévio pelo Portal do Hóspede!";
     }
   }
-  // 12. Regra Geral / Fallback
+  // 12. Piscina / Academia / Lazer / Jacuzzi / Cobertura
+  else if (/piscina|academia|jacuzzi|cobertura|lazer|hidro/i.test(qLower)) {
+    finalCategory = "lazer";
+    if (!isNegative) {
+      synthesizedGuideline = "A piscina aquecida/jacuzzi e academia na cobertura funcionam diariamente das 06:00 às 22:00 para os hóspedes.";
+      sampleResponse = "Olá! Sim, dispomos de piscina/jacuzzi aquecida e academia na cobertura, abertas diariamente das 06:00 às 22:00 para os hóspedes! 🏊‍♂️✨";
+    } else {
+      synthesizedGuideline = "A área de lazer e piscina encontra-se temporariamente em manutenção.";
+      sampleResponse = "Olá! Informamos que a área de lazer está temporariamente indisponível para manutenção.";
+    }
+  }
+  // 13. Fumo / Cigarro / Proibições
+  else if (/fumo|fumar|cigarro|fumante/i.test(qLower)) {
+    finalCategory = "regras";
+    synthesizedGuideline = "É estritamente proibido fumar dentro dos flats e áreas fechadas do condomínio (ambiente 100% livre de fumo).";
+    sampleResponse = "Olá! Informamos que nossas acomodações são 100% livres de fumo, sendo estritamente proibido fumar dentro dos apartamentos e áreas comuns. 🚭";
+  }
+  // 14. Berço / Bebê / Cama extra
+  else if (/ber[cç]o|beb[eê]|crian[cç]a\s+de\s+colo|cama\s+extra/i.test(qLower)) {
+    finalCategory = "estrutura_flat";
+    if (!isNegative) {
+      synthesizedGuideline = "Disponibilizamos berço para bebês mediante solicitação prévia à recepção para acomodação no flat.";
+      sampleResponse = "Olá! Sim, disponibilizamos berço para seu bebê com todo carinho! Basta nos avisar com antecedência para prepararmos no flat para você. 👶✨";
+    } else {
+      synthesizedGuideline = "Não dispomos de berço para bebê nesta acomodação.";
+      sampleResponse = "Olá! Informamos que não dispomos de berço para bebês nas acomodações no momento.";
+    }
+  }
+  // 15. Secador de cabelo
+  else if (/secador(?:\s+de\s+cabelo)?/i.test(qLower)) {
+    finalCategory = "estrutura_flat";
+    if (!isNegative) {
+      synthesizedGuideline = "Dispomos de secador de cabelo nos flats para comodidade dos hóspedes.";
+      sampleResponse = "Olá! Sim, disponibilizamos secador de cabelo no flat para seu conforto durante a estadia! 💇‍♀️✨";
+    } else {
+      synthesizedGuideline = "Os flats não dispõem de secador de cabelo.";
+      sampleResponse = "Olá! Informamos que não dispomos de secador de cabelo nas acomodações.";
+    }
+  }
+  // 16. Roupa de cama / Toalhas / Enxoval
+  else if (/toalha|roupa\s+de\s+cama|len[cç]ol|enxoval|cobertor|travesseiro/i.test(qLower)) {
+    finalCategory = "estrutura_flat";
+    if (!isNegative) {
+      synthesizedGuideline = "Fornecemos enxoval hoteleiro completo com roupas de cama, travesseiros e toalhas de banho limpas em todas as estadias.";
+      sampleResponse = "Olá! Sim, todos os nossos flats contam com enxoval hoteleiro completo: roupas de cama limpas, travesseiros e toalhas higienizadas para sua chegada! 🛏️✨";
+    }
+  }
+  // 17. Regra Geral / Fallback Dinâmico
   else {
-    if (rClean.length >= 25) {
+    if (rClean.length >= 25 && !isAffirmative && !isNegative) {
       synthesizedGuideline = synthesizeGuidelineFromText(rClean, finalCategory);
       sampleResponse = `Olá! ${rClean}`;
     } else if (isAffirmative) {
       const cleanedQuestionTheme = qClean
-        .replace(/^(?:ol[aá]|oi|bom\s+dia|boa\s+tarde|boa\s+noite)[,!.:;]*\s*/i, "")
+        .replace(/^(?:ol[aá]|oi|bom\s+dia|boa\s+tarde|boa\s+noite)[,!.:;*\s]*/i, "")
         .replace(/^(?:voc[eê]s?\s+)?(?:consigo|posso|tem|temos|possui|possuem|aceita|aceitam|d[aá]\s+para|d[aá]\s+pra|existe|existem|fornece|fornecem|oferece|oferecem)\s+/i, "")
         .replace(/\?+$/, "")
         .trim();
@@ -2561,12 +2618,17 @@ export function distillGuidelineFromOperatorResponse({ question = "", response =
       sampleResponse = `Olá! Sim, temos ${cleanedQuestionTheme} disponível para sua comodidade! ✨`;
     } else if (isNegative) {
       const cleanedQuestionTheme = qClean
-        .replace(/^(?:ol[aá]|oi|bom\s+dia|boa\s+tarde|boa\s+noite)[,!.:;]*\s*/i, "")
+        .replace(/^(?:ol[aá]|oi|bom\s+dia|boa\s+tarde|boa\s+noite)[,!.:;*\s]*/i, "")
         .replace(/^(?:voc[eê]s?\s+)?(?:consigo|posso|tem|temos|possui|possuem|aceita|aceitam|d[aá]\s+para|d[aá]\s+pra|existe|existem|fornece|fornecem|oferece|oferecem)\s+/i, "")
         .replace(/\?+$/, "")
         .trim();
-      synthesizedGuideline = `Não é disponibilizado nem permitido aos hóspedes: ${cleanedQuestionTheme}.`;
-      sampleResponse = `Olá! Informamos que não dispomos de ${cleanedQuestionTheme} no momento.`;
+      if (/^(?:fumar|festa|barulho|levar|fazer|colocar)/i.test(cleanedQuestionTheme)) {
+        synthesizedGuideline = `Não é permitido aos hóspedes: ${cleanedQuestionTheme}.`;
+        sampleResponse = `Olá! Informamos que não é permitido ${cleanedQuestionTheme} nas dependências do flat.`;
+      } else {
+        synthesizedGuideline = `Não é disponibilizado nem fornecido aos hóspedes: ${cleanedQuestionTheme}.`;
+        sampleResponse = `Olá! Informamos que não dispomos de ${cleanedQuestionTheme} no momento.`;
+      }
     } else {
       synthesizedGuideline = synthesizeGuidelineFromText(rClean, finalCategory);
       sampleResponse = `Olá! ${rClean}`;
@@ -2749,7 +2811,12 @@ export function saveDeveloperGuideline(db, guidelineData = {}) {
 
   const rawText = String(guidelineData.text || "").trim();
   const cat = guidelineData.category || inferFaqCategory(rawText) || "geral";
-  const synthesizedText = (guidelineData.synthesized || guidelineData.source === "operator_response" || guidelineData.source === "faq_approval")
+  const isPreFormulated = guidelineData.synthesized ||
+    guidelineData.source === "operator_response" ||
+    guidelineData.source === "faq_approval" ||
+    Boolean(guidelineData.question) ||
+    /^(?:é\s+poss[ií]vel|o\s+hor[aá]rio|todos\s+os|dispomos|aceitamos|n[aã]o\s+[eé]\s+permitid|n[aã]o\s+dispomos|fornecemos|a\s+voltagem)/i.test(rawText);
+  const synthesizedText = isPreFormulated
     ? rawText
     : synthesizeGuidelineFromText(rawText, cat);
   const sample = guidelineData.sample || guidelineData.sampleResponse || generateSampleGuestResponse({
@@ -2757,6 +2824,52 @@ export function saveDeveloperGuideline(db, guidelineData = {}) {
     ruleText: synthesizedText,
     targetFlat: guidelineData.targetFlat || null
   });
+
+  // Se id fornecido, atualiza diretriz existente
+  if (guidelineData.id) {
+    const existingIndex = db.whatsappAiSettings.developerGuidelines.findIndex(g => g.id === guidelineData.id);
+    if (existingIndex >= 0) {
+      const existing = db.whatsappAiSettings.developerGuidelines[existingIndex];
+      const updated = {
+        ...existing,
+        text: synthesizedText,
+        category: cat,
+        targetFlat: guidelineData.targetFlat !== undefined ? guidelineData.targetFlat : existing.targetFlat,
+        sample,
+        sampleResponse: sample,
+        question: guidelineData.question !== undefined ? guidelineData.question : existing.question,
+        operatorText: guidelineData.operatorText !== undefined ? guidelineData.operatorText : existing.operatorText,
+        active: guidelineData.active !== undefined ? Boolean(guidelineData.active) : existing.active,
+        updatedAt: new Date().toISOString(),
+        source: guidelineData.source || existing.source
+      };
+      db.whatsappAiSettings.developerGuidelines[existingIndex] = updated;
+      return updated;
+    }
+  }
+
+  // Deduplicação inteligente para evitar diretrizes repetidas para a mesma pergunta ou fato
+  const matchIndex = db.whatsappAiSettings.developerGuidelines.findIndex(g => {
+    if (guidelineData.question && g.question && g.question.trim().toLowerCase() === guidelineData.question.trim().toLowerCase()) return true;
+    if (g.text && g.text.trim().toLowerCase() === synthesizedText.trim().toLowerCase()) return true;
+    return false;
+  });
+  if (matchIndex >= 0) {
+    const existing = db.whatsappAiSettings.developerGuidelines[matchIndex];
+    const updated = {
+      ...existing,
+      text: synthesizedText,
+      category: cat,
+      sample,
+      sampleResponse: sample,
+      question: guidelineData.question || existing.question,
+      operatorText: guidelineData.operatorText || existing.operatorText,
+      active: guidelineData.active !== undefined ? Boolean(guidelineData.active) : true,
+      updatedAt: new Date().toISOString()
+    };
+    db.whatsappAiSettings.developerGuidelines[matchIndex] = updated;
+    return updated;
+  }
 
   const newGuideline = {
     id: guidelineData.id || `guideline_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -2878,8 +2991,12 @@ export function buildDynamicSystemInstruction(aiConfig, db, guestContext) {
   }
 
   let guidelinesSection = "";
+  const antiCopyPasteRule = `\n[REGRA ANTI-COPIA-E-COLA & GERAÇÃO MULTITÓPICO CONTEXTUAL]\n- NUNCA use respostas prontas, engessadas ou cópia-e-cola de mensagens anteriores.\n- Use os fatos e diretrizes aprendidos como base de conhecimento vivo para sintetizar uma resposta inédita, humanizada e personalizada ao contexto do hóspede.\n- Se o hóspede enviar saudações (ex: "bom dia", "boa tarde", "olá"), retribua a saudação cordialmente pelo nome do hóspede.\n- Se a mensagem contiver múltiplas dúvidas juntas (ex: horário de checkout + se pode estender a reserva pelo WhatsApp), responda a TODOS os pontos de forma clara, acolhedora e integrada na mesma mensagem.\n`;
+
   if (activeGuidelines.length > 0) {
-    guidelinesSection = `\n[DIRETRIZES DO DESENVOLVEDOR & REGRAS APRENDIDAS (PRIORIDADE MÁXIMA)]\nAs seguintes instruções foram ensinadas pelo gestor/desenvolvedor e POSSUEM PRIORIDADE ABSOLUTA sobre regras gerais anteriores:\n${activeGuidelines.map(g => `• [${g.category || "geral"}${g.targetFlat ? ` | Flat ${g.targetFlat}` : ""}] ${g.text}`).join("\n")}\n\n[REGRA ANTI-COPIA-E-COLA & GERAÇÃO MULTITÓPICO CONTEXTUAL]\n- NUNCA use respostas prontas, engessadas ou cópia-e-cola de mensagens anteriores.\n- Use os fatos aprendidos acima como base de conhecimento vivo para sintetizar uma resposta inédita, humanizada e personalizada ao contexto do hóspede.\n- Se o hóspede enviar saudações (ex: "bom dia", "boa tarde", "olá"), retribua a saudação cordialmente pelo nome do hóspede.\n- Se a mensagem contiver múltiplas dúvidas juntas (ex: horário de checkout + se pode estender a reserva pelo WhatsApp), responda a TODOS os pontos de forma clara, acolhedora e integrada na mesma mensagem.\n`;
+    guidelinesSection = `\n[DIRETRIZES DO DESENVOLVEDOR & REGRAS APRENDIDAS (PRIORIDADE MÁXIMA)]\nAs seguintes instruções foram ensinadas pelo gestor/desenvolvedor e POSSUEM PRIORIDADE ABSOLUTA sobre regras gerais anteriores:\n${activeGuidelines.map(g => `• [${g.category || "geral"}${g.targetFlat ? ` | Flat ${g.targetFlat}` : ""}] ${g.text}`).join("\n")}\n${antiCopyPasteRule}`;
+  } else {
+    guidelinesSection = antiCopyPasteRule;
   }
 
   return { toneSection, guidelinesSection };
@@ -3423,104 +3540,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
   const asksExtension = /(?:estender|prorroga|prolongar|mais\s+di[aá]rias|ficar\s+mais)/i.test(text);
   const asksCheckoutTime = /(?:hor[aá]rio\s+(?:de\s+)?check-?out|que\s+horas\s+(?:é\s+o\s+|tenho\s+que\s+)?sair|hor[aá]rio\s+de\s+sa[ií]da|hor[aá]rio\s+do\s+check-?out|limite\s+de\s+sa[ií]da)/i.test(text);
 
-  // 0. Diretrizes do Desenvolvedor (Prioridade Máxima)
-  if (activeGuidelines.length > 0) {
-    // 0.1 Flat específico
-    const flatNum = guestContext?.flatNumber || (text.match(/\b(?:flat|apto|quarto)\s*(\d{2,4})\b/i)?.[1] || null);
-    if (flatNum) {
-      const flatGuideline = activeGuidelines.find(g => String(g.targetFlat) === String(flatNum));
-      if (flatGuideline) {
-        return ret(`${greetingSalutation} Sobre o Flat ${flatNum}: ${flatGuideline.text} Estamos à disposição! ✨`);
-      }
-    }
-
-    // 0.2 Café da manhã (apenas se NÃO for consulta de cotação/preço de diária)
-    if (/caf[eé]|desjejum/i.test(text) && !isPricingOrQuoteInquiry(text)) {
-      const cafeGuideline = activeGuidelines.find(g => g.category === "cafe" || (g.text || "").toLowerCase().includes("café"));
-      if (cafeGuideline) {
-        return ret(`${greetingSalutation} 🥐☕ ${cafeGuideline.text}\n\nPara agendar sua bandeja e escolher os itens do café da manhã, acesse o link do Portal do Hóspede até a véspera! ✨`);
-      }
-    }
-
-    // 0.3 Check-in / Horário de Entrada
-    if (/check-?in|entrada|hor[aá]rio\s+de\s+entrada|que\s+horas\s+posso\s+entrar|chegada/i.test(text) && !/pr[eé]-?check-?in/i.test(text)) {
-      const checkinGuideline = activeGuidelines.find(g => g.category === "checkin" || (g.text || "").toLowerCase().includes("check-in"));
-      if (checkinGuideline) {
-        return ret(`${greetingSalutation} ${checkinGuideline.text} 🔑`);
-      }
-    }
-
-    // 0.4 Pet / Animais
-    if (/pet|cachorro|animal/i.test(text)) {
-      const petGuideline = activeGuidelines.find(g => g.category === "pet" || (g.text || "").toLowerCase().includes("pet"));
-      if (petGuideline) {
-        return ret(`${greetingSalutation} 🐾 ${petGuideline.text}`);
-      }
-    }
-
-    // 0.5.A Geração Multitópico Composta: Horário de Check-out + Extensão de Reserva pelo WhatsApp
-    if (asksExtension && asksCheckoutTime) {
-      const extGuide = activeGuidelines.find(g => /(?:estender|prorroga|prolongar)/i.test(g.text || "") || g.category === "checkout");
-      const extContent = extGuide
-        ? extGuide.text
-        : "É possível estender e prorrogar a reserva de flat diretamente pelo WhatsApp com a equipe, mediante disponibilidade do flat.";
-      const extPhrase = extContent.toLowerCase().startsWith("é possível")
-        ? `E sim, ${extContent.charAt(0).toLowerCase() + extContent.slice(1)}`
-        : `E sim, é possível estender: ${extContent}`;
-      return ret(`${greetingSalutation} O horário de check-out é até as 12:00h. ${extPhrase} Caso queira prorrogar sua estadia, por favor me informe até que data gostaria de ficar para verificarmos a disponibilidade! 🏨✨`);
-    }
-
-    // 0.5.B Pergunta sobre Extensão de Reserva via WhatsApp / Prorrogação
-    if (asksExtension && !isPricingOrQuoteInquiry(text)) {
-      const extGuide = activeGuidelines.find(g => /(?:estender|prorroga|prolongar)/i.test(g.text || "") || /(?:estender|prorroga)/i.test(g.category || ""));
-      if (extGuide) {
-        const gText = extGuide.text;
-        const phrase = gText.toLowerCase().startsWith("é possível")
-          ? `É possível ${gText.replace(/^é possível\s*/i, "")}`
-          : gText;
-        return ret(`${greetingSalutation} Sim! ${phrase} Caso queira estender sua estadia, por favor me informe até que data gostaria de permanecer para verificarmos para você! 🏨✨`);
-      }
-    }
-
-    // 0.5.C Check-out / Saída / Horário simples
-    if (classifyUnmetDemand(text).category !== "checkout_comunicacao" && /check[- ]?out|sa[ií]da|desocup|late\s+check[- ]?out/i.test(text) && !asksExtension) {
-      const checkoutGuideline = activeGuidelines.find(g => g.category === "checkout" || (g.text || "").toLowerCase().includes("check-out") || (g.text || "").toLowerCase().includes("checkout"));
-      if (checkoutGuideline) {
-        const appOrigin = activeDb?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || kb.siteUrl || "https://corpflats.onrender.com";
-        const checkoutUrl = guestContext?.checkoutUrl || (guestContext?.reservation?.code ? `${appOrigin}/checkout/${guestContext.reservation.code}` : "");
-        const linkMsg = checkoutUrl ? `\n\n🚪 *Confirmação de Check-out:*\n👉 ${checkoutUrl}` : "";
-        return ret(`${greetingSalutation} ${checkoutGuideline.text}${linkMsg}`);
-      }
-    }
-
-    // 0.6 Outras Diretrizes Aprendidas Dinâmicas (Correspondência Semântica por Tokens e Pergunta Original)
-    for (const g of activeGuidelines) {
-      if (!g || !g.text || g.active === false) continue;
-      if (g.category === "cafe" || g.category === "checkin" || g.category === "pet" || g.category === "checkout") continue;
-
-      const gNorm = (g.text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-      const qClean = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-      const qTokens = qClean.split(/\s+/).filter(w => w.length > 3 && !PORTUGUESE_STOP_WORDS.has(w));
-      const gTokens = gNorm.split(/\s+/).filter(w => w.length > 3 && !PORTUGUESE_STOP_WORDS.has(w));
-
-      const commonTokens = qTokens.filter(t => gTokens.includes(t));
-      const matchesOrigQ = g.question && qClean.includes((g.question || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim());
-
-      if (commonTokens.length >= 2 || matchesOrigQ) {
-        return ret(`${greetingSalutation} ${g.text}`);
-      }
-    }
-  }
-
-  // 0.5.D Fallback para Extensão de Reserva se ainda não houver diretriz cadastrada
-  if (asksExtension && asksCheckoutTime) {
-    return ret(`${greetingSalutation} O horário de check-out é até as 12:00h. E sim, é possível estender e prorrogar a sua estadia diretamente por aqui pelo WhatsApp com a nossa equipe, mediante disponibilidade do flat! Caso queira prorrogar, por favor me informe até que data gostaria de ficar! 🏨✨`);
-  }
-  if (asksExtension && !isPricingOrQuoteInquiry(text)) {
-    return ret(`${greetingSalutation} Sim! É possível solicitar a extensão ou prorrogação da sua estadia diretamente por aqui pelo WhatsApp com a nossa equipe, mediante disponibilidade do flat! 🏨✨ Para verificar, por favor me informe até que data gostaria de ficar.`);
-  }
-
-  // 0.6 Comunicação de Check-out pelo Hóspede (Aviso de saída/desocupação)
+  // 0.A Comunicação de Check-out pelo Hóspede (Aviso de saída/desocupação)
   const queryAnalysis = analyzeGuestQuery(messageText, guestContext, activeDb);
   if (queryAnalysis.type === "OPERATIONAL_DEMAND" && queryAnalysis.primaryTopic === "checkout_comunicacao") {
     const extractedFlat = guestContext?.flatNumber || (messageText.match(/\b(?:flat|quarto|apto|apartamento|uh)\s*(\d{2,4})\b/i)?.[1]) || null;
@@ -3535,6 +3555,242 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
       extraAnswer = "\n\n🧳 Se precisar guardar suas malas após a saída enquanto aguarda sua viagem, você pode deixá-las com segurança na recepção 24h!";
     }
     return ret(`${checkoutResp}${extraAnswer}`);
+  }
+
+  // 0.B Diretrizes do Desenvolvedor para Flat Específico (Prioridade Máxima para regras de unidade)
+  if (activeGuidelines.length > 0) {
+    const flatNum = guestContext?.flatNumber || (text.match(/\b(?:flat|apto|quarto)\s*(\d{2,4})\b/i)?.[1] || null);
+    if (flatNum) {
+      const flatGuideline = activeGuidelines.find(g => String(g.targetFlat) === String(flatNum));
+      if (flatGuideline) {
+        return ret(`${greetingSalutation} Sobre o Flat ${flatNum}: ${flatGuideline.text} Estamos à disposição! ✨`);
+      }
+    }
+  }
+
+  // 0.C Geração Multitópico Composta e Contextual (Anti-Copia-e-Cola e Respostas Integradas)
+  // Executa tanto com diretrizes aprendidas dinâmicas quanto com a base de conhecimento padrão
+  const asksCheckout = /(?:hor[aá]rio\s+(?:de\s+)?check-?out|que\s+horas\s+(?:é\s+o\s+|tenho\s+que\s+)?sair|hor[aá]rio\s+de\s+sa[ií]da|hor[aá]rio\s+do\s+check-?out|limite\s+de\s+sa[ií]da|\bcheck[- ]?out\b|\bsa[ií]da\b)/i.test(text) && !asksExtension;
+  const asksCheckin = /(?:check-?in|entrada|hor[aá]rio\s+de\s+entrada|que\s+horas\s+posso\s+entrar|chegada)/i.test(text) && !/pr[eé]-?check-?in/i.test(text);
+  const asksWifi = /(?:wifi|wi-fi|internet|senha(?:\s+do\s+wi-?fi)?|conectar)/i.test(text);
+  const asksGarage = /(?:garagem|estacionamento|vaga\s*(?:de\s+garagem|para\s+carro|de\s+estacionamento|rotativa|coberta)|onde\s+estacionar|posso\s+(?:guardar|parar|estacionar)\s+o\s+carro)/i.test(text);
+  const asksBreakfast = /(?:caf[eé]|desjejum)/i.test(text) && !isPricingOrQuoteInquiry(text);
+  const asksPet = /(?:pet|cachorro|animal|gato)/i.test(text);
+  const asksLeisure = /(?:piscina|jacuzzi|academia|cobertura|lazer|hidro)/i.test(text);
+  const asksSmoking = /(?:fumo|fumar|cigarro|fumante)/i.test(text);
+  const asksLocation = /(?:endere[cç]o|localiza[cç][aã]o|onde\s+fica|como\s+chegar|mapa)/i.test(text);
+
+  const topicMatches = [
+    Boolean(asksCheckout || asksCheckoutTime),
+    Boolean(asksCheckin),
+    Boolean(asksExtension),
+    Boolean(asksWifi),
+    Boolean(asksGarage),
+    Boolean(asksBreakfast),
+    Boolean(asksPet),
+    Boolean(asksLeisure),
+    Boolean(asksSmoking),
+    Boolean(asksLocation)
+  ].filter(Boolean);
+
+  if (topicMatches.length >= 2) {
+    const parts = [];
+
+    // Check-out
+    if (asksCheckout || asksCheckoutTime) {
+      const checkoutGuide = activeGuidelines.find(g =>
+        (g.category === "checkout" || (g.text || "").toLowerCase().includes("check-out")) &&
+        !/(?:estender|prorroga|prolongar)/i.test(g.text || "")
+      );
+      if (checkoutGuide && !asksCheckoutTime) {
+        parts.push(`Sobre o check-out: ${checkoutGuide.text}`);
+      } else if (checkoutGuide && asksCheckoutTime && /(?:12:00|12h|hor[aá]rio)/i.test(checkoutGuide.text)) {
+        parts.push(`Sobre o check-out: ${checkoutGuide.text}`);
+      } else {
+        parts.push("O horário padrão de check-out é até as 12:00h (desocupação e entrega das chaves/cartão na portaria).");
+      }
+    }
+    // Check-in
+    if (asksCheckin) {
+      const checkinGuide = activeGuidelines.find(g => g.category === "checkin" || (g.text || "").toLowerCase().includes("check-in"));
+      if (checkinGuide) {
+        parts.push(`Sobre o check-in: ${checkinGuide.text}`);
+      } else {
+        parts.push("O horário padrão de check-in inicia a partir das 14:00h (com early check-in gratuito a partir das 10h para reservas diretas, mediante disponibilidade de liberação pela governança).");
+      }
+    }
+    // Extensão de estadia pelo WhatsApp
+    if (asksExtension) {
+      const extGuide = activeGuidelines.find(g => /(?:estender|prorroga|prolongar)/i.test(g.text || "") || g.category === "checkout");
+      if (extGuide) {
+        const cleanGuide = extGuide.text.toLowerCase().startsWith("é possível")
+          ? `E sim, ${extGuide.text.charAt(0).toLowerCase() + extGuide.text.slice(1)}`
+          : `E sim, é possível estender: ${extGuide.text}`;
+        parts.push(cleanGuide);
+      } else {
+        parts.push("E sim, é possível solicitar a prorrogação ou extensão da sua estadia diretamente por aqui pelo WhatsApp com a nossa equipe, mediante disponibilidade do flat.");
+      }
+    }
+    // Wi-Fi
+    if (asksWifi) {
+      const flatNum = guestContext?.flatNumber || "";
+      const netName = flatNum ? `apto ${flatNum}` : "apto {número do flat}";
+      parts.push(`Sobre a internet: cada flat possui Wi-Fi veloz individual (Rede: ${netName} | Senha: \`${kb.wifiPassword || "1234567890123"}\`).`);
+    }
+    // Garagem
+    if (asksGarage) {
+      const garageGuide = activeGuidelines.find(g => g.category === "garagem" || /garagem|estacionamento|vaga/i.test(g.text || ""));
+      if (garageGuide) {
+        parts.push(`Sobre o estacionamento: ${garageGuide.text}`);
+      } else {
+        parts.push("Sobre o estacionamento: dispomos de 1 vaga rotativa coberta e gratuita no condomínio Soho (basta cadastrar a placa no seu Pré-Check-in Digital para liberação na portaria 24h).");
+      }
+    }
+    // Café da manhã
+    if (asksBreakfast) {
+      const cafeGuide = activeGuidelines.find(g => g.category === "cafe" || (g.text || "").toLowerCase().includes("café"));
+      if (cafeGuide) {
+        parts.push(`Quanto ao café da manhã: ${cafeGuide.text}`);
+      } else {
+        parts.push("Quanto ao café da manhã: é servido em deliciosa bandeja diretamente no seu quarto das 05:00 às 09:30, com escolha de itens pelo portal até a véspera.");
+      }
+    }
+    // Pet
+    if (asksPet) {
+      const petGuide = activeGuidelines.find(g => g.category === "pet" || (g.text || "").toLowerCase().includes("pet"));
+      if (petGuide) {
+        parts.push(`Sobre animais: ${petGuide.text}`);
+      } else {
+        parts.push("Sobre animais: aceitamos cães de pequeno porte (até 10kg) com todo carinho, mediante taxa adicional de diária e normas condominiais.");
+      }
+    }
+    // Lazer
+    if (asksLeisure) {
+      const leisureGuide = activeGuidelines.find(g => g.category === "lazer" || /(?:piscina|academia|jacuzzi)/i.test(g.text || ""));
+      if (leisureGuide) {
+        parts.push(`Sobre o lazer: ${leisureGuide.text}`);
+      } else {
+        parts.push("Sobre o lazer: nossa piscina/jacuzzi aquecida e academia na cobertura funcionam diariamente das 06:00 às 22:00 exclusivamente para hóspedes.");
+      }
+    }
+    // Fumo
+    if (asksSmoking) {
+      const smokingGuide = activeGuidelines.find(g => g.category === "fumo" || /fumo|fumar|cigarro/i.test(g.text || ""));
+      if (smokingGuide) {
+        parts.push(`Sobre fumo: ${smokingGuide.text}`);
+      } else {
+        parts.push("Sobre fumo: nossas acomodações são 100% livres de fumo, sendo estritamente proibido fumar dentro dos flats e áreas comuns fechadas.");
+      }
+    }
+    // Localização
+    if (asksLocation) {
+      parts.push(`Nosso endereço é: ${kb.address} (Centro de Campos dos Goytacazes - RJ).`);
+    }
+
+    if (parts.length >= 2) {
+      let compoundBody = parts[0];
+      for (let i = 1; i < parts.length; i++) {
+        const p = parts[i];
+        if (/^(?:sobre|quanto|e\s+sim|al[eé]m)/i.test(p)) {
+          compoundBody += `\n\n${p}`;
+        } else {
+          compoundBody += `\n\nAlém disso, ${p.charAt(0).toLowerCase() + p.slice(1)}`;
+        }
+      }
+      const closing = asksExtension
+        ? "\n\nCaso queira prorrogar sua estadia, por favor me informe até que data gostaria de ficar para verificarmos a disponibilidade! 🏨✨"
+        : "\n\nQualquer dúvida adicional ou solicitação, estou à inteira disposição! 🏨✨";
+      return ret(`${greetingSalutation} ${compoundBody}${closing}`);
+    }
+  }
+
+  // 0.D Diretrizes do Desenvolvedor para Tópicos Individuais (Prioridade Máxima se houver diretriz)
+  if (activeGuidelines.length > 0) {
+    // 0.D.1 Café da manhã (apenas se NÃO for consulta de cotação/preço de diária)
+    if (/caf[eé]|desjejum/i.test(text) && !isPricingOrQuoteInquiry(text)) {
+      const cafeGuideline = activeGuidelines.find(g => g.category === "cafe" || (g.text || "").toLowerCase().includes("café"));
+      if (cafeGuideline) {
+        return ret(`${greetingSalutation} 🥐☕ ${cafeGuideline.text}\n\nPara agendar sua bandeja e escolher os itens do café da manhã, acesse o link do Portal do Hóspede até a véspera! ✨`);
+      }
+    }
+
+    // 0.D.2 Check-in / Horário de Entrada
+    if (/check-?in|entrada|hor[aá]rio\s+de\s+entrada|que\s+horas\s+posso\s+entrar|chegada/i.test(text) && !/pr[eé]-?check-?in/i.test(text)) {
+      const checkinGuideline = activeGuidelines.find(g => g.category === "checkin" || (g.text || "").toLowerCase().includes("check-in"));
+      if (checkinGuideline) {
+        return ret(`${greetingSalutation} ${checkinGuideline.text} 🔑`);
+      }
+    }
+
+    // 0.D.3 Pet / Animais
+    if (/pet|cachorro|animal/i.test(text)) {
+      const petGuideline = activeGuidelines.find(g => g.category === "pet" || (g.text || "").toLowerCase().includes("pet"));
+      if (petGuideline) {
+        return ret(`${greetingSalutation} 🐾 ${petGuideline.text}`);
+      }
+    }
+
+    // 0.D.4 Pergunta sobre Extensão de Reserva via WhatsApp / Prorrogação (Individual)
+    if (asksExtension && !isPricingOrQuoteInquiry(text)) {
+      const extGuide = activeGuidelines.find(g => /(?:estender|prorroga|prolongar)/i.test(g.text || "") || /(?:estender|prorroga)/i.test(g.category || ""));
+      if (extGuide) {
+        const gText = extGuide.text;
+        const phrase = gText.toLowerCase().startsWith("é possível")
+          ? `É possível ${gText.replace(/^é possível\s*/i, "")}`
+          : gText;
+        return ret(`${greetingSalutation} Sim! ${phrase} Caso queira estender sua estadia, por favor me informe até que data gostaria de permanecer para verificarmos para você! 🏨✨`);
+      }
+    }
+
+    // 0.D.5 Check-out / Saída / Horário simples (Individual)
+    if (classifyUnmetDemand(text).category !== "checkout_comunicacao" && /check[- ]?out|sa[ií]da|desocup|late\s+check[- ]?out/i.test(text) && !asksExtension) {
+      const checkoutGuideline = activeGuidelines.find(g =>
+        (g.category === "checkout" || (g.text || "").toLowerCase().includes("check-out") || (g.text || "").toLowerCase().includes("checkout")) &&
+        !/(?:estender|prorroga|prolongar)/i.test(g.text || "")
+      );
+      if (checkoutGuideline) {
+        const appOrigin = activeDb?.settings?.baseUrl || (typeof process !== "undefined" && process.env?.SERVER_BASE_URL) || kb.siteUrl || "https://corpflats.onrender.com";
+        const checkoutUrl = guestContext?.checkoutUrl || (guestContext?.reservation?.code ? `${appOrigin}/checkout/${guestContext.reservation.code}` : "");
+        const linkMsg = checkoutUrl ? `\n\n🚪 *Confirmação de Check-out:*\n👉 ${checkoutUrl}` : "";
+        return ret(`${greetingSalutation} ${checkoutGuideline.text}${linkMsg}`);
+      }
+    }
+
+    // 0.D.6 Outras Diretrizes Aprendidas Dinâmicas (Correspondência Semântica por Tokens e Pergunta Original)
+    for (const g of activeGuidelines) {
+      if (!g || !g.text || g.active === false) continue;
+
+      const gNorm = (g.text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\w\s]/g, " ");
+      const qClean = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\w\s]/g, " ");
+      const qTokens = qClean.split(/\s+/).filter(w => w.length > 2 && !PORTUGUESE_STOP_WORDS.has(w));
+      const gTokens = gNorm.split(/\s+/).filter(w => w.length > 2 && !PORTUGUESE_STOP_WORDS.has(w));
+
+      const commonTokens = qTokens.filter(t => gTokens.includes(t));
+
+      let origQMatch = false;
+      if (g.question) {
+        const origQNorm = (g.question || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\w\s]/g, " ");
+        const origQTokens = origQNorm.split(/\s+/).filter(w => w.length > 2 && !PORTUGUESE_STOP_WORDS.has(w));
+        const sharedQTokens = qTokens.filter(t => origQTokens.includes(t));
+        if (sharedQTokens.length >= 2 || (sharedQTokens.length === 1 && (origQTokens.length <= 2 || sharedQTokens[0].length >= 4))) {
+          origQMatch = true;
+        }
+      }
+
+      const isSingleKeywordMatch = commonTokens.length === 1 && (qTokens.length <= 2 || commonTokens[0].length >= 4);
+
+      if (commonTokens.length >= 2 || origQMatch || isSingleKeywordMatch) {
+        return ret(`${greetingSalutation} ${g.text}`);
+      }
+    }
+  }
+
+  // 0.E Fallback para Extensão de Reserva se ainda não houver diretriz cadastrada
+  if (asksExtension && asksCheckoutTime) {
+    return ret(`${greetingSalutation} O horário de check-out é até as 12:00h. E sim, é possível estender e prorrogar a sua estadia diretamente por aqui pelo WhatsApp com a nossa equipe, mediante disponibilidade do flat! Caso queira prorrogar, por favor me informe até que data gostaria de ficar! 🏨✨`);
+  }
+  if (asksExtension && !isPricingOrQuoteInquiry(text)) {
+    return ret(`${greetingSalutation} Sim! É possível solicitar a extensão ou prorrogação da sua estadia diretamente por aqui pelo WhatsApp com a nossa equipe, mediante disponibilidade do flat! 🏨✨ Para verificar, por favor me informe até que data gostaria de ficar.`);
   }
 
   // Extrai e filtra itens de FAQ ativos e aplicáveis ao cliente
@@ -3713,7 +3969,13 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
   }
 
   // 0.8 Motor Dinâmico de Cotações, Diárias e Tarifas (Prioridade Máxima sobre comodidades e rotinas operacionais)
-  if (isPricingOrQuoteInquiry(text) || /reserva|diaria|diária|preco|preço|valor|alugar|vaga|disponibilidade/i.test(text)) {
+  const mentionsGarage = /\b(?:garagem|estacionamento|carro|ve[ií]culo|placa)\b/i.test(text);
+  const isPricingOrQuote = isPricingOrQuoteInquiry(text) || (
+    /reserva|diaria|diária|preco|preço|valor|alugar|disponibilidade/i.test(text) && !mentionsGarage
+  ) || (
+    /\bvaga\b/i.test(text) && !mentionsGarage
+  );
+  if (isPricingOrQuote) {
     // 1. Extrai número de hóspedes mencionado no texto
     const isCoupleOr2 = /\b(?:2|duas)\s+pessoas|\bcasal\b/i.test(text);
     const is3Guests = /\b(?:3|tr[eê]s)\s+pessoas\b/i.test(text);
@@ -3730,7 +3992,7 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
 
     // 2.1 Pergunta estritamente sobre o valor do café avulso (sem diária de quarto)
     if (isOnlyBreakfastAlone) {
-      return ret(`Olá${name}! 🥐☕ O café da manhã da CorpFlats é servido exclusivamente em deliciosa bandeja personalizada com todo conforto diretamente no seu flat!\n\n• *Valor avulso:* R$ 35,00 por pessoa/dia.\n• *Dica especial:* Ao reservar sua diária diretamente conosco no plano com café incluso, você ganha o benefício exclusivo de *isenção total da taxa de limpeza*!\n\nGostaria de consultar as diárias com café para alguma data específica? ✨`);
+      return ret(`${greetingSalutation} 🥐☕ O café da manhã da CorpFlats é servido exclusivamente em deliciosa bandeja personalizada com todo conforto diretamente no seu flat!\n\n• *Valor avulso:* R$ 35,00 por pessoa/dia.\n• *Dica especial:* Ao reservar sua diária diretamente conosco no plano com café incluso, você ganha o benefício exclusivo de *isenção total da taxa de limpeza*!\n\nGostaria de consultar as diárias com café para alguma data específica? ✨`);
     }
 
     // 3. Consulta valores base no banco dinâmico
@@ -3742,76 +4004,76 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     // 4. Se especificou "1 pessoa com café" (pergunta exata do usuário!)
     if (isExplicit1 && mentionsWithBreakfast) {
       const withBreakfastRate = baseDailyRate + breakfastFeePerson; // 237 + 35 = 272
-      return ret(`Olá${name}! ✨ No canal direto da CorpFlats, a diária para *1 pessoa com café da manhã* servido no quarto fica a partir de *R$ ${withBreakfastRate},00* (e você ainda conta com o benefício exclusivo de *isenção total da taxa de limpeza*!).\n\nSe preferir a opção sem café, a diária fica a partir de *R$ ${baseDailyRate},00* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia).\n\nPara quais datas você gostaria da reserva? Me informando a entrada e saída, já verifico a disponibilidade e passo todos os detalhes! 🏨`);
+      return ret(`${greetingSalutation} ✨ No canal direto da CorpFlats, a diária para *1 pessoa com café da manhã* servido no quarto fica a partir de *R$ ${withBreakfastRate},00* (e você ainda conta com o benefício exclusivo de *isenção total da taxa de limpeza*!).\n\nSe preferir a opção sem café, a diária fica a partir de *R$ ${baseDailyRate},00* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia).\n\nPara quais datas você gostaria da reserva? Me informando a entrada e saída, já verifico a disponibilidade e passo todos os detalhes! 🏨`);
     }
 
     // 5. Se especificou "1 pessoa sem café"
     if (isExplicit1 && mentionsWithoutBreakfast) {
       const withBreakfastRate = baseDailyRate + breakfastFeePerson; // 272
-      return ret(`Olá${name}! ✨ No canal direto da CorpFlats, a diária para *1 pessoa sem café* fica a partir de *R$ ${baseDailyRate},00* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia).\n\n• *Opção com café no quarto:* a partir de *R$ ${withBreakfastRate},00 / diária* para 1 pessoa (com *isenção total da taxa de limpeza*!).\n\nPara quais datas você deseja a hospedagem? Me informe a data de entrada e saída para que eu consulte as vagas para você! 🏨`);
+      return ret(`${greetingSalutation} ✨ No canal direto da CorpFlats, a diária para *1 pessoa sem café* fica a partir de *R$ ${baseDailyRate},00* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia).\n\n• *Opção com café no quarto:* a partir de *R$ ${withBreakfastRate},00 / diária* para 1 pessoa (com *isenção total da taxa de limpeza*!).\n\nPara quais datas você deseja a hospedagem? Me informe a data de entrada e saída para que eu consulte as vagas para você! 🏨`);
     }
 
     // 6. Se especificou casal / 2 pessoas com café
     if (isCoupleOr2 && mentionsWithBreakfast) {
       const withBreakfastRate2 = baseDailyRate + (breakfastFeePerson * 2); // 237 + 70 = 307
-      return ret(`Olá${name}! ✨ No canal direto da CorpFlats, a diária para *2 pessoas (casal) com café da manhã* servido no quarto fica a partir de *R$ ${withBreakfastRate2},00* (com o benefício exclusivo de *isenção total da taxa de limpeza*!).\n\nSem café, a diária fica a partir de *R$ ${baseDailyRate},00* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia).\n\nPara quais datas vocês pretendem vir? Me informe o check-in e check-out que já consulto a disponibilidade! 🏨`);
+      return ret(`${greetingSalutation} ✨ No canal direto da CorpFlats, a diária para *2 pessoas (casal) com café da manhã* servido no quarto fica a partir de *R$ ${withBreakfastRate2},00* (com o benefício exclusivo de *isenção total da taxa de limpeza*!).\n\nSem café, a diária fica a partir de *R$ ${baseDailyRate},00* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia).\n\nPara quais datas vocês pretendem vir? Me informe o check-in e check-out que já consulto a disponibilidade! 🏨`);
     }
 
     // 7. Se especificou casal / 2 pessoas sem café
     if (isCoupleOr2 && mentionsWithoutBreakfast) {
       const withBreakfastRate2 = baseDailyRate + (breakfastFeePerson * 2);
-      return ret(`Olá${name}! ✨ No canal direto da CorpFlats, a diária para *2 pessoas (casal) sem café* fica a partir de *R$ ${baseDailyRate},00* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia).\n\n• *Com café da manhã no quarto:* a partir de *R$ ${withBreakfastRate2},00 / diária* para o casal (com *isenção total da taxa de limpeza*!).\n\nPara quais datas você gostaria da reserva? Me informe o período desejado! 🏨`);
+      return ret(`${greetingSalutation} ✨ No canal direto da CorpFlats, a diária para *2 pessoas (casal) sem café* fica a partir de *R$ ${baseDailyRate},00* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia).\n\n• *Com café da manhã no quarto:* a partir de *R$ ${withBreakfastRate2},00 / diária* para o casal (com *isenção total da taxa de limpeza*!).\n\nPara quais datas você gostaria da reserva? Me informe o período desejado! 🏨`);
     }
 
     // 8. Se mencionou "com café" genérico (sem quantidade explícita de pessoas)
     if (mentionsWithBreakfast) {
       const rate1 = baseDailyRate + breakfastFeePerson; // 272
       const rate2 = baseDailyRate + (breakfastFeePerson * 2); // 307
-      return ret(`Olá${name}! ✨ No canal direto da CorpFlats, nossas diárias com *café da manhã incluso servido no flat* são a partir de:\n• *1 pessoa:* a partir de *R$ ${rate1},00 / diária*\n• *2 pessoas (casal):* a partir de *R$ ${rate2},00 / diária*\n\n🎁 *Grande benefício:* No plano com café incluso, você tem *isenção total da taxa de limpeza*!\n(Na opção sem café, a diária base é a partir de R$ ${baseDailyRate},00 + taxa única de limpeza de R$ ${cleaningFee},00).\n\nPara qual período você planeja a sua estadia? Me informe as datas de entrada e saída que já verifico as vagas! 🏨`);
+      return ret(`${greetingSalutation} ✨ No canal direto da CorpFlats, nossas diárias com *café da manhã incluso servido no flat* são a partir de:\n• *1 pessoa:* a partir de *R$ ${rate1},00 / diária*\n• *2 pessoas (casal):* a partir de *R$ ${rate2},00 / diária*\n\n🎁 *Grande benefício:* No plano com café incluso, você tem *isenção total da taxa de limpeza*!\n(Na opção sem café, a diária base é a partir de R$ ${baseDailyRate},00 + taxa única de limpeza de R$ ${cleaningFee},00).\n\nPara qual período você planeja a sua estadia? Me informe as datas de entrada e saída que já verifico as vagas! 🏨`);
     }
 
     // 9. Se mencionou "sem café" genérico
     if (mentionsWithoutBreakfast) {
       const rate1 = baseDailyRate + breakfastFeePerson;
-      return ret(`Olá${name}! ✨ No canal direto da CorpFlats, a diária de acomodação completa *sem café* é a partir de *R$ ${baseDailyRate},00 / diária* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia).\n\n• *Com café da manhã no flat:* a partir de *R$ ${rate1},00 / diária* para 1 pessoa (com *isenção total da taxa de limpeza*!).\n\nPara quais datas você precisa da hospedagem? Me informe a data de entrada e saída que consulto a disponibilidade! 🏨`);
+      return ret(`${greetingSalutation} ✨ No canal direto da CorpFlats, a diária de acomodação completa *sem café* é a partir de *R$ ${baseDailyRate},00 / diária* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia).\n\n• *Com café da manhã no flat:* a partir de *R$ ${rate1},00 / diária* para 1 pessoa (com *isenção total da taxa de limpeza*!).\n\nPara quais datas você precisa da hospedagem? Me informe a data de entrada e saída que consulto a disponibilidade! 🏨`);
     }
 
     // 10. Pergunta genérica de diária / valores / cotação
     const rate1 = baseDailyRate + breakfastFeePerson; // 272
     const rate2 = baseDailyRate + (breakfastFeePerson * 2); // 307
-    return ret(`Olá${name}! ✨ No canal direto da CorpFlats, nossas diárias para flats executivos completos são a partir de:\n\n• *Sem café:* a partir de *R$ ${baseDailyRate},00 / diária* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia)\n• *Com café da manhã no quarto:* a partir de *R$ ${rate1},00 / diária* (1 pessoa) ou *R$ ${rate2},00 / diária* (casal), com *isenção total da taxa de limpeza*! 🥐☕\n\nDispomos de flats com cozinha completa, ar Split, Wi-Fi veloz e garagem no melhor ponto de Campos/RJ.\n\nQual período você pretende se hospedar e para quantas pessoas? Me informando as datas de entrada e saída, já verifico a disponibilidade em tempo real para você! 🏨`);
+    return ret(`${greetingSalutation} ✨ No canal direto da CorpFlats, nossas diárias para flats executivos completos são a partir de:\n\n• *Sem café:* a partir de *R$ ${baseDailyRate},00 / diária* (+ taxa única de limpeza de R$ ${cleaningFee},00 por estadia)\n• *Com café da manhã no quarto:* a partir de *R$ ${rate1},00 / diária* (1 pessoa) ou *R$ ${rate2},00 / diária* (casal), com *isenção total da taxa de limpeza*! 🥐☕\n\nDispomos de flats com cozinha completa, ar Split, Wi-Fi veloz e garagem no melhor ponto de Campos/RJ.\n\nQual período você pretende se hospedar e para quantas pessoas? Me informando as datas de entrada e saída, já verifico a disponibilidade em tempo real para você! 🏨`);
   }
 
   // 1. Wi-Fi / Internet
   if (/wifi|wi-fi|internet|senha(?:\s+do\s+wi-?fi)?|conectar/i.test(text)) {
     const flatNum = guestContext?.flatNumber || "";
     const netName = flatNum ? `apto ${flatNum}` : "apto {número do seu flat}";
-    return ret(`Olá${name}! 📶 Cada flat possui sua própria rede Wi-Fi exclusiva para máxima estabilidade e velocidade:\n\n• *Nome da Rede:* ${netName}\n• *Senha:* \`${kb.wifiPassword || "1234567890123"}\`\n\nCaso tenha qualquer dificuldade para conectar, certifique-se de digitar a senha com atenção. Estamos à disposição! ✨`);
+    return ret(`${greetingSalutation} 📶 Cada flat possui sua própria rede Wi-Fi exclusiva para máxima estabilidade e velocidade:\n\n• *Nome da Rede:* ${netName}\n• *Senha:* \`${kb.wifiPassword || "1234567890123"}\`\n\nCaso tenha qualquer dificuldade para conectar, certifique-se de digitar a senha com atenção. Estamos à disposição! ✨`);
   }
 
   // 2. Café da Manhã (verificado antes de termos genéricos de acomodação)
   if (/caf[eé]|desjejum/i.test(text)) {
-    return ret(`Olá${name}! 🥐☕ ${kb.breakfastInfo}\n\nPara agendar sua bandeja e escolher os itens do café da manhã, acesse o link do Portal do Hóspede até a véspera! ✨`);
+    return ret(`${greetingSalutation} 🥐☕ ${kb.breakfastInfo}\n\nPara agendar sua bandeja e escolher os itens do café da manhã, acesse o link do Portal do Hóspede até a véspera! ✨`);
   }
 
   // 3. Garagem / Estacionamento / Carro
   if (/garagem|estacionamento|vaga|carro|ve[ií]culo|placa/i.test(text)) {
-    return ret(`Olá${name}! 🚗 ${kb.garageInfo}\n\nSe ainda não informou os dados do veículo, acesse seu Pré-Check-in Digital ou envie por aqui a *Placa, Modelo e Cor* que já providenciamos a autorização com a portaria!`);
+    return ret(`${greetingSalutation} 🚗 ${kb.garageInfo}\n\nSe ainda não informou os dados do veículo, acesse seu Pré-Check-in Digital ou envie por aqui a *Placa, Modelo e Cor* que já providenciamos a autorização com a portaria!`);
   }
 
   // 4. Localização / Endereço / Onde fica
   if (/endere[cç]o|localiza[cç][aã]o|onde\s+fica|como\s+chegar|mapa/i.test(text)) {
-    return ret(`Olá${name}! 📍 Estamos localizados no *${kb.address}*.\n\nLocalização privilegiada no Centro de Campos dos Goytacazes! Se precisar de instruções de rota ou localização no Google Maps, nos avise. 🏨`);
+    return ret(`${greetingSalutation} 📍 Estamos localizados no *${kb.address}*.\n\nLocalização privilegiada no Centro de Campos dos Goytacazes! Se precisar de instruções de rota ou localização no Google Maps, nos avise. 🏨`);
   }
 
   // 5. Check-in / Horário de Entrada
   if (/check-?in|entrada|hor[aá]rio\s+de\s+entrada|que\s+horas\s+posso\s+entrar|chegada/i.test(text) && !/pr[eé]-?check-?in/i.test(text)) {
-    return ret(`Olá${name}! O horário padrão de check-in é a partir das *${kb.checkinTime}* 🔑.\n\nPara reservas diretas, o early check-in a partir das 10h é gratuito mediante disponibilidade de liberação pela governança.`);
+    return ret(`${greetingSalutation} O horário padrão de check-in é a partir das *${kb.checkinTime}* 🔑.\n\nPara reservas diretas, o early check-in a partir das 10h é gratuito mediante disponibilidade de liberação pela governança.`);
   }
 
   // 5.1 Check-out / Horário de Saída
   if (/check-?out|sa[ií]da|hor[aá]rio\s+de\s+sa[ií]da|que\s+horas\s+sair|deixar\s+a\s+chave/i.test(text)) {
-    return ret(`Olá${name}! O horário padrão de check-out é até às *${kb.checkoutTime}* ⏰.\n\nPara fazer a saída, pedimos que desligue ar-condicionado e luzes e entregue as chaves/cartão na portaria do condomínio. Caso necessite de late check-out, fale conosco com antecedência! 🙏`);
+    return ret(`${greetingSalutation} O horário padrão de check-out é até às *${kb.checkoutTime}* ⏰.\n\nPara fazer a saída, pedimos que desligue ar-condicionado e luzes e entregue as chaves/cartão na portaria do condomínio. Caso necessite de late check-out, fale conosco com antecedência! 🙏`);
   }
 
   // 6. Status do Quarto / Posso entrar? / Está pronto?
@@ -3820,18 +4082,18 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
       if (guestContext.isRoomReady) {
         return ret(`Ótima notícia${name}! 🎉 O seu *Flat ${guestContext.flatNumber}* já está *100% limpo, higienizado e pronto* para te receber! Ao chegar, basta se identificar na portaria com seu documento para a liberação da chave. Seja muito bem-vindo(a)! 🏨🔑`);
       } else {
-        return ret(`Olá${name}! O seu *Flat ${guestContext.flatNumber}* está sendo finalizado com todo carinho pela nossa governança para garantir máxima higiene e conforto ✨. O horário oficial de entrada é a partir das *${kb.checkinTime}*. Assim que a limpeza for 100% liberada pela equipe, nós te avisaremos por aqui imediatamente! 🕒`);
+        return ret(`${greetingSalutation} O seu *Flat ${guestContext.flatNumber}* está sendo finalizado com todo carinho pela nossa governança para garantir máxima higiene e conforto ✨. O horário oficial de entrada é a partir das *${kb.checkinTime}*. Assim que a limpeza for 100% liberada pela equipe, nós te avisaremos por aqui imediatamente! 🕒`);
       }
     }
     if (guestContext.stayStatus === "em_estadia") {
-      return ret(`Olá${name}! Você está acomodado(a) no *Flat ${guestContext.flatNumber}*. Caso precise de alguma manutenção, toalhas extras ou limpeza durante a estadia, é só nos avisar por aqui que cuidaremos para você! 🛎️`);
+      return ret(`${greetingSalutation} Você está acomodado(a) no *Flat ${guestContext.flatNumber}*. Caso precise de alguma manutenção, toalhas extras ou limpeza durante a estadia, é só nos avisar por aqui que cuidaremos para você! 🛎️`);
     }
   }
 
   // 7.5 Pré-Check-in / Link de Check-in
   if (/check-?in\s+online|pr[eé]-?check-?in|ficha(?:\s+de\s+check-?in)?|link(?:\s+do|\s+de)?\s+check-?in/i.test(text)) {
     if (guestContext.checkinUrl) {
-      return ret(`Olá${name}! Você pode realizar o seu Pré-Check-in Digital pelo link seguro abaixo:\n👉 ${guestContext.checkinUrl}\n\nO preenchimento antecipado garante a liberação rápida da portaria na sua chegada! Qualquer dúvida, conte conosco. 🏨✨`);
+      return ret(`${greetingSalutation} Você pode realizar o seu Pré-Check-in Digital pelo link seguro abaixo:\n👉 ${guestContext.checkinUrl}\n\nO preenchimento antecipado garante a liberação rápida da portaria na sua chegada! Qualquer dúvida, conte conosco. 🏨✨`);
     }
   }
 

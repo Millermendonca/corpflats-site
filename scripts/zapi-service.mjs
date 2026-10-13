@@ -1419,6 +1419,7 @@ export function linkOperatorResponseToPendingFaq(db, param1, param2) {
 
   // Salva a diretriz destilada na base viva de conhecimento da IA
   const newGuideline = saveDeveloperGuideline(db, {
+    id: targetItem.guidelineId || undefined,
     text: distilled.guidelineText,
     category: distilled.category || targetItem.category || "geral",
     sample: distilled.sampleResponse,
@@ -1431,11 +1432,14 @@ export function linkOperatorResponseToPendingFaq(db, param1, param2) {
 
   targetItem.operatorRawResponse = trimmedText;
   targetItem.distilledGuideline = distilled.guidelineText;
-  targetItem.guidelineId = newGuideline?.id || null;
+  targetItem.guidelineId = newGuideline?.id || targetItem.guidelineId || null;
 
-  // Se a resposta humana for curta ("sim", "pode", etc.), sugere a resposta articulada completa
+  // Se a resposta humana for curta ("sim", "pode", "Olá! Sim", etc.), sugere a resposta articulada completa
   // Se já for uma frase completa (>= 25 chars), preserva a redação do operador
-  if (trimmedText.length < 25 && /^(?:sim|n[aã]o|pode|consegue|claro|positivo|temos|tem)\b/i.test(trimmedText)) {
+  const coreResponse = trimmedText
+    .replace(/^(?:ol[aá]|oi|bom\s+dia|boa\s+tarde|boa\s+noite)[,!.:;*\s]*/i, "")
+    .trim();
+  if (coreResponse.length < 25 && /^(?:sim|n[aã]o|pode|consegue|claro|positivo|temos|tem)\b/i.test(coreResponse)) {
     targetItem.suggestedAnswer = distilled.sampleResponse;
   } else {
     targetItem.suggestedAnswer = trimmedText;
@@ -7487,18 +7491,19 @@ export function initWhatsAppEngine(app, dbOrGetter, saveDatabase, createNotifica
     item.approvedAt = new Date().toISOString();
     item.updatedAt = new Date().toISOString();
 
-    if (!item.guidelineId) {
-      const gText = item.distilledGuideline || finalAnswer;
-      const newG = saveDeveloperGuideline(db, {
-        text: gText,
-        category: item.category || "geral",
-        sample: finalAnswer,
-        source: "faq_approval",
-        question: item.question,
-        synthesized: true
-      });
-      if (newG) item.guidelineId = newG.id;
-    }
+    const gText = item.distilledGuideline || finalAnswer;
+    const newG = saveDeveloperGuideline(db, {
+      id: item.guidelineId || undefined,
+      text: gText,
+      category: item.category || "geral",
+      sample: finalAnswer,
+      sampleResponse: finalAnswer,
+      source: "faq_approval",
+      question: item.question,
+      synthesized: true,
+      active: true
+    });
+    if (newG && !item.guidelineId) item.guidelineId = newG.id;
 
     if (typeof saveDatabase === "function") saveDatabase();
     res.json({ success: true, item });

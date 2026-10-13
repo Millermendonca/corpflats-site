@@ -2372,6 +2372,48 @@ function reconcileUniversalIntegrity(incomingState = null) {
         }
       });
     }
+
+    // 1.13 Ordens de Serviço (União não-destrutiva)
+    if (Array.isArray(incomingState.serviceOrders) && incomingState.serviceOrders.length > 0) {
+      if (!db.serviceOrders) db.serviceOrders = [];
+      incomingState.serviceOrders.forEach(incOrder => {
+        if (!incOrder || !incOrder.id) return;
+        const existingIdx = db.serviceOrders.findIndex(o => o.id === incOrder.id || o.token === incOrder.token);
+        if (existingIdx === -1) {
+          db.serviceOrders.push({ ...incOrder });
+          changed = true;
+        } else {
+          const existing = db.serviceOrders[existingIdx];
+          const incDate = incOrder.updatedAt || incOrder.createdAt || "";
+          const curDate = existing.updatedAt || existing.createdAt || "";
+          if (incDate > curDate) {
+            db.serviceOrders[existingIdx] = { ...existing, ...incOrder };
+            changed = true;
+          }
+        }
+      });
+    }
+
+    // 1.14 Prestadores de Serviço (União não-destrutiva)
+    if (Array.isArray(incomingState.serviceWorkers) && incomingState.serviceWorkers.length > 0) {
+      if (!db.serviceWorkers) db.serviceWorkers = [];
+      incomingState.serviceWorkers.forEach(incWorker => {
+        if (!incWorker || !incWorker.id) return;
+        const existingIdx = db.serviceWorkers.findIndex(w => w.id === incWorker.id || (w.token && w.token === incWorker.token));
+        if (existingIdx === -1) {
+          db.serviceWorkers.push({ ...incWorker });
+          changed = true;
+        } else {
+          const existing = db.serviceWorkers[existingIdx];
+          const incDate = incWorker.registeredAt || "";
+          const curDate = existing.registeredAt || "";
+          if (incDate > curDate) {
+            db.serviceWorkers[existingIdx] = { ...existing, ...incWorker };
+            changed = true;
+          }
+        }
+      });
+    }
   }
 
   // 2. Normalização Universal e Purga Definitiva de Flats Inválidos (Flat 502)
@@ -4313,7 +4355,9 @@ async function loadDatabase() {
             whatsappHistory: (!pgLoaded.whatsappHistory || pgLoaded.whatsappHistory.length === 0) ? localWhatsappHistory : undefined,
             whatsappQueue: (!pgLoaded.whatsappQueue || pgLoaded.whatsappQueue.length === 0) ? localWhatsappQueue : undefined,
             whatsappConversations: (!pgLoaded.whatsappConversations || pgLoaded.whatsappConversations.length === 0) ? localWhatsappConversations : undefined,
-            faqItems: (!pgLoaded.faqItems || pgLoaded.faqItems.length === 0) ? localFaqItems : pgLoaded.faqItems
+            faqItems: (!pgLoaded.faqItems || pgLoaded.faqItems.length === 0) ? localFaqItems : pgLoaded.faqItems,
+            serviceOrders: (!pgLoaded.serviceOrders || pgLoaded.serviceOrders.length === 0) ? db.serviceOrders : pgLoaded.serviceOrders,
+            serviceWorkers: (!pgLoaded.serviceWorkers || pgLoaded.serviceWorkers.length === 0) ? db.serviceWorkers : pgLoaded.serviceWorkers
           });
           syncMaidCredits(2);
           syncMaidCredits(3);
@@ -7857,30 +7901,107 @@ function getFlatServiceInProgress(flatId, flatNumber) {
   return null;
 }
 
-function isFlatDirty(flatId, flatNumber, dateStr = getTodayStr()) {
+function getFlatRealtimeStatus(flatId, flatNumber, dateStr = getTodayStr()) {
   const fId = Number(flatId);
   const fNum = String(flatNumber || "");
 
-  // 1. Check active cleaning requests
+  // 1. Ocupação em tempo real (Reservas ativas cobrindo a data de referência)
+  const activeRes = (db.reservations || []).filter(r =>
+    (Number(r.flatId) === fId || (fNum && String(r.flatNumber) === fNum)) &&
+    r.status !== "cancelada" &&
+    r.status !== "cancelado" &&
+    r.status !== "no_show"
+  );
+
+  const stayoverRes = activeRes.find(r => r.checkinDate < dateStr && r.checkoutDate > dateStr);
+  const checkinTodayRes = activeRes.find(r => r.checkinDate === dateStr);
+  const isCheckedIn = Boolean(checkinTodayRes && (checkinTodayRes.status === "checked_in" || checkinTodayRes.checkinDone));
+  const checkoutTodayRes = activeRes.find(r => r.checkoutDate === dateStr);
+  const isCheckedOut = Boolean(checkoutTodayRes && (checkoutTodayRes.status === "checked_out" || checkoutTodayRes.checkoutDone || checkoutTodayRes.actualCheckoutAt));
+
+  const isOccupied = Boolean(stayoverRes || isCheckedIn || (checkoutTodayRes && !isCheckedOut));
+  const currentGuest = stayoverRes ? (stayoverRes.guestName || stayoverRes.title) :
+                       (checkoutTodayRes && !isCheckedOut) ? (checkoutTodayRes.guestName || checkoutTodayRes.title) :
+                       isCheckedIn ? (checkinTodayRes.guestName || checkinTodayRes.title) : null;
+
+  // 2. Status de Higienização (db.cleaningRequests)
   const dirtyReq = (db.cleaningRequests || []).find(c =>
     (Number(c.flatId) === fId || (fNum && String(c.flatNumber) === fNum)) &&
     !c.completedAt &&
     !c.isInstructionOnly &&
     c.source !== "manual_instruction" &&
-    (c.status === "dirty" || c.status === "in_progress" || c.status === "cleaning_now" || (c.source === "checkout" && c.status !== "clean"))
+    c.type !== "instruction" &&
+    c.type !== "bed_adjustment_only" &&
+    (c.status === "dirty" || c.status === "pending" || c.status === "in_progress" || c.status === "cleaning_now" || (c.source === "checkout" && c.status !== "clean"))
   );
-  if (dirtyReq) return true;
 
-  // 2. Check today's checkouts in reservations
-  const checkoutToday = (db.reservations || []).find(r =>
-    (Number(r.flatId) === fId || (fNum && String(r.flatNumber) === fNum)) &&
-    r.checkoutDate === dateStr &&
-    r.status !== "cancelada" &&
-    r.status !== "cancelado"
+  const flatCleanings = (db.cleaningRequests || []).filter(c =>
+    (Number(c.flatId) === fId || (fNum && String(c.flatNumber) === fNum)) &&
+    !c.isInstructionOnly &&
+    c.source !== "manual_instruction" &&
+    c.type !== "instruction" &&
+    c.type !== "bed_adjustment_only"
   );
-  if (checkoutToday) return true;
 
-  return false;
+  const sortedCleanings = [...flatCleanings].sort((a, b) => {
+    const dateComp = String(b.requestDate || "").localeCompare(String(a.requestDate || ""));
+    if (dateComp !== 0) return dateComp;
+    return (Number(b.id) || 0) - (Number(a.id) || 0);
+  });
+
+  const latestCleaning = sortedCleanings[0];
+  const inProgressCleaning = dirtyReq && (dirtyReq.status === "in_progress" || dirtyReq.status === "cleaning_now");
+
+  let isDirty = false;
+  let cleaningStatus = "clean"; // "clean" | "dirty" | "in_progress"
+
+  if (inProgressCleaning) {
+    isDirty = true;
+    cleaningStatus = "in_progress";
+  } else if (dirtyReq) {
+    isDirty = true;
+    cleaningStatus = "dirty";
+  } else if (checkoutTodayRes) {
+    if (isCheckedOut) {
+      const cleanedToday = flatCleanings.find(c => (c.requestDate === dateStr || c.effectiveDate === dateStr) && (c.status === "clean" || c.status === "inspected" || Boolean(c.completedAt)));
+      if (!cleanedToday) {
+        isDirty = true;
+        cleaningStatus = "dirty";
+      } else {
+        isDirty = false;
+        cleaningStatus = "clean";
+      }
+    } else {
+      isDirty = false;
+      cleaningStatus = "clean";
+    }
+  } else if (latestCleaning && (latestCleaning.status === "clean" || latestCleaning.status === "inspected" || Boolean(latestCleaning.completedAt))) {
+    isDirty = false;
+    cleaningStatus = "clean";
+  } else if (latestCleaning && (latestCleaning.status === "dirty" || latestCleaning.status === "pending")) {
+    isDirty = true;
+    cleaningStatus = "dirty";
+  } else {
+    isDirty = false;
+    cleaningStatus = "clean";
+  }
+
+  return {
+    isOccupied,
+    isDirty,
+    cleaningStatus,
+    occupancyStatus: isOccupied ? "occupied" : "vacant",
+    currentGuest: currentGuest || null,
+    hasCheckinToday: Boolean(checkinTodayRes),
+    hasCheckoutToday: Boolean(checkoutTodayRes),
+    isCheckedOut,
+    isCheckedIn
+  };
+}
+
+function isFlatDirty(flatId, flatNumber, dateStr = getTodayStr()) {
+  const realtime = getFlatRealtimeStatus(flatId, flatNumber, dateStr);
+  return Boolean(realtime.isDirty);
 }
 
 function formatServiceDuration(startIso, endIso) {
@@ -8071,10 +8192,22 @@ async function dispatchServiceNotifications(action, order, flat, worker) {
 app.get("/api/flats", (req, res) => {
   res.set("Cache-Control", "no-store, no-cache, must-revalidate");
   if (reconcileUniversalIntegrity()) saveDatabase();
-  const activeFlats = (db.flats || []).filter(f => f.isActive !== false).map(flat => ({
-    ...flat,
-    serviceInProgress: getFlatServiceInProgress(flat.id, flat.number)
-  }));
+  const todayStr = getTodayStr();
+  const activeFlats = (db.flats || []).filter(f => f.isActive !== false).map(flat => {
+    const realtime = getFlatRealtimeStatus(flat.id, flat.number, todayStr);
+    flat.isOccupied = realtime.isOccupied;
+    return {
+      ...flat,
+      serviceInProgress: getFlatServiceInProgress(flat.id, flat.number),
+      isOccupied: realtime.isOccupied,
+      isDirty: realtime.isDirty,
+      cleaningStatus: realtime.cleaningStatus,
+      occupancyStatus: realtime.occupancyStatus,
+      currentGuest: realtime.currentGuest,
+      hasCheckinToday: realtime.hasCheckinToday,
+      hasCheckoutToday: realtime.hasCheckoutToday
+    };
+  });
   triggerBackgroundSync();
   res.json(activeFlats);
 });
@@ -10531,7 +10664,14 @@ app.get("/api/service-orders", (req, res) => {
   if (userAuth.role !== "admin") return res.status(403).json({ error: "Acesso negado." });
 
   if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
-  const list = [...db.serviceOrders].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+  const list = [...db.serviceOrders].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()).map(o => {
+    const worker = (db.serviceWorkers || []).find(w => w.token === o.token || w.serviceOrderId === o.id);
+    return {
+      ...o,
+      workerName: worker?.mainWorker?.name || null,
+      workerCpf: worker?.mainWorker?.cpf || null
+    };
+  });
   res.json(list);
 });
 
@@ -10604,6 +10744,23 @@ app.post("/api/service-orders", (req, res) => {
     flats: formattedFlats
   };
 
+  const preWorkerName = String(req.body.workerName || req.body.mainWorker?.name || "").trim();
+  const preWorkerCpf = String(req.body.workerCpf || req.body.mainWorker?.cpf || "").replace(/\D/g, "");
+  if (preWorkerName && preWorkerCpf.length === 11) {
+    if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
+    db.serviceWorkers.push({
+      id: `sw_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      serviceOrderId: newOrder.id,
+      token: newOrder.token,
+      mainWorker: {
+        name: preWorkerName,
+        cpf: preWorkerCpf
+      },
+      collaborators: [],
+      registeredAt: new Date().toISOString()
+    });
+  }
+
   if (!Array.isArray(db.serviceOrders)) db.serviceOrders = [];
   db.serviceOrders.unshift(newOrder);
   saveDatabase("create_service_order");
@@ -10627,9 +10784,12 @@ app.get("/api/service-orders/:id", (req, res) => {
 
   const { id } = req.params;
   const order = (db.serviceOrders || []).find(o => String(o.id) === String(id) || String(o.token) === String(id));
-  if (!order) return res.status(404).json({ error: "Ordem de serviço não encontrada." });
-
-  res.json(order);
+  const worker = (db.serviceWorkers || []).find(w => w.token === order.token || w.serviceOrderId === order.id);
+  res.json({
+    ...order,
+    workerName: worker?.mainWorker?.name || null,
+    workerCpf: worker?.mainWorker?.cpf || null
+  });
 });
 
 // PATCH /api/service-orders/:id — Atualiza ordem de serviço (Admin)
@@ -10686,6 +10846,28 @@ app.patch("/api/service-orders/:id", (req, res) => {
     }
   }
 
+  if (body.mainWorker || body.workerName) {
+    const wName = String(body.workerName || body.mainWorker?.name || "").trim();
+    const wCpf = String(body.workerCpf || body.mainWorker?.cpf || "").replace(/\D/g, "");
+    if (wName && wCpf.length === 11) {
+      if (!Array.isArray(db.serviceWorkers)) db.serviceWorkers = [];
+      let worker = db.serviceWorkers.find(w => w.token === order.token || w.serviceOrderId === order.id);
+      if (worker) {
+        worker.mainWorker = { name: wName, cpf: wCpf };
+        worker.registeredAt = new Date().toISOString();
+      } else {
+        db.serviceWorkers.push({
+          id: `sw_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          serviceOrderId: order.id,
+          token: order.token,
+          mainWorker: { name: wName, cpf: wCpf },
+          collaborators: [],
+          registeredAt: new Date().toISOString()
+        });
+      }
+    }
+  }
+
   order.updatedAt = new Date().toISOString();
   saveDatabase("update_service_order");
 
@@ -10729,6 +10911,20 @@ app.get("/api/service-orders/:id/progress", (req, res) => {
   const percentage = total > 0 ? Math.round((done / total) * 100) : 0;
 
   const worker = (db.serviceWorkers || []).find(w => w.serviceOrderId === order.id || w.token === order.token) || null;
+  const todayStr = getTodayStr();
+  const enrichedFlats = flats.map(f => {
+    const realtime = getFlatRealtimeStatus(f.flatId, f.flatNumber, todayStr);
+    return {
+      ...f,
+      isDirty: realtime.isDirty,
+      isOccupied: realtime.isOccupied,
+      cleaningStatus: realtime.cleaningStatus,
+      occupancyStatus: realtime.occupancyStatus,
+      currentGuest: realtime.currentGuest,
+      hasCheckinToday: realtime.hasCheckinToday,
+      hasCheckoutToday: realtime.hasCheckoutToday
+    };
+  });
 
   res.json({
     orderId: order.id,
@@ -10743,7 +10939,7 @@ app.get("/api/service-orders/:id/progress", (req, res) => {
       percentage
     },
     worker,
-    flats
+    flats: enrichedFlats
   });
 });
 
@@ -10791,12 +10987,16 @@ app.get("/api/service/public/:token", (req, res) => {
   const todayStr = getTodayStr();
 
   const enrichedFlats = (order.flats || []).map(f => {
-    const isDirty = isFlatDirty(f.flatId, f.flatNumber, todayStr);
-    const flatInDb = (db.flats || []).find(fl => fl.id === f.flatId || String(fl.number) === String(f.flatNumber));
+    const realtime = getFlatRealtimeStatus(f.flatId, f.flatNumber, todayStr);
     return {
       ...f,
-      isDirty,
-      isOccupied: flatInDb ? Boolean(flatInDb.isOccupied) : false
+      isDirty: realtime.isDirty,
+      isOccupied: realtime.isOccupied,
+      cleaningStatus: realtime.cleaningStatus,
+      occupancyStatus: realtime.occupancyStatus,
+      currentGuest: realtime.currentGuest,
+      hasCheckinToday: realtime.hasCheckinToday,
+      hasCheckoutToday: realtime.hasCheckoutToday
     };
   });
 
