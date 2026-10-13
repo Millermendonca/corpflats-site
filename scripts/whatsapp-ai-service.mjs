@@ -1588,7 +1588,8 @@ export function classifyUnmetDemand(text = "", actionTarget = null, explicitReas
     };
   }
 
-  if (/\b(?:toalha|toalhas|len[cç]ol|len[cç][oó]is|travesseiro|travesseiros|cobertor|cobertores|enxoval|manta|edredom)\b/i.test(lower)) {
+  if (/\b(?:preciso|solicito|solicitar|gostaria|quero|favor|pode|mandar|trazer|trocar|troca|extra[s]?|limp[ao]s?|suj[ao]s?|mais)\b.*\b(?:toalha|toalhas|len[cç]ol|len[cç][oó]is|travesseiro|travesseiros|cobertor|cobertores|enxoval|manta|edredom)\b/i.test(lower) ||
+      /\b(?:toalha|toalhas|len[cç]ol|len[cç][oó]is|travesseiro|cobertor|enxoval)\b.*\b(?:extra[s]?|limp[ao]s?|suj[ao]s?|mais|adicional|adicionais|troca|trocar)\b/i.test(lower)) {
     return {
       category: "enxoval_toalhas",
       demandTitle: UNMET_DEMAND_CATEGORIES.enxoval_toalhas.title,
@@ -1628,7 +1629,8 @@ export function classifyUnmetDemand(text = "", actionTarget = null, explicitReas
     };
   }
 
-  if (/\b(?:placa|garagem|estacionamento|cadastrar\s*ve[ií]culo|trocar\s*de\s*carro|mudei\s*de\s*carro|carro\s*novo|autorizar\s*carro)\b/i.test(lower)) {
+  if (/\b(?:placa|cadastrar\s*ve[ií]culo|cadastrar\s*carro|trocar\s*de\s*carro|mudei\s*de\s*carro|carro\s*novo|autorizar\s*carro|autorizar\s*ve[ií]culo|adicionar\s*ve[ií]culo|adicionar\s*placa)\b/i.test(lower) ||
+      (/\b(?:garagem|estacionamento)\b/i.test(lower) && /\b(?:trocar|cadastrar|adicionar|mudar|liberar|placa)\b/i.test(lower))) {
     return {
       category: "garagem_veiculo",
       demandTitle: UNMET_DEMAND_CATEGORIES.garagem_veiculo.title,
@@ -1658,7 +1660,9 @@ export function classifyUnmetDemand(text = "", actionTarget = null, explicitReas
     };
   }
 
-  if (/\b(?:caf[eé]\s*(?:da\s*manh[aã])?\s*(?:no\s*quarto|servido\s*no\s*quarto)|room\s*service|delivery\s*de\s*caf[eé])\b/i.test(lower)) {
+  if (/\b(?:pedir|solicitar|entregar|enviar|trazer|agendar|mandar)\s+(?:o\s+)?caf[eé]\b/i.test(lower) ||
+      /\b(?:room\s*service|delivery\s*de\s*caf[eé])\b/i.test(lower) ||
+      (/\bcaf[eé]\s*(?:da\s*manh[aã])?\s*(?:no\s*quarto|servido\s*no\s*quarto)\b/i.test(lower) && /\b(?:pedir|quero|favor|preciso|solicito|trazer|entregar|agendar)\b/i.test(lower))) {
     return {
       category: "cafe_quarto",
       demandTitle: UNMET_DEMAND_CATEGORIES.cafe_quarto.title,
@@ -1668,7 +1672,7 @@ export function classifyUnmetDemand(text = "", actionTarget = null, explicitReas
     };
   }
 
-  if (/\b(?:ber[cç]o|secador(?:\s+de\s+cabelo)?|ferro(?:\s+de\s+passar)?|t[aá]bua|micro[- ]ondas|cafeteira|liquidificador|panela|utens[ií]lio|tomada\s+220|adaptador|recarga|carro\s+el[eé]trico|aquecedor)\b/i.test(lower)) {
+  if (/\b(?:ber[cç]o|secador(?:\s+de\s+cabelo)?|ferro(?:\s+de\s+passar)?|t[aá]bua(?:\s+de\s+passar)?|tomada\s+220|adaptador|recarga|carro\s+el[eé]trico|aquecedor|cama\s+extra)\b/i.test(lower)) {
     return {
       category: "itens_especiais_comodidades",
       demandTitle: UNMET_DEMAND_CATEGORIES.itens_especiais_comodidades.title,
@@ -1718,6 +1722,9 @@ export function detectAndRecordUnmetDemand({
   guestContext = null,
   actionTarget = null,
   reason = null,
+  category = null,
+  demandTitle = null,
+  suggestedFeature = null,
   saveDatabase = null,
   createNotification = null
 }) {
@@ -1725,17 +1732,25 @@ export function detectAndRecordUnmetDemand({
   if (!Array.isArray(db.unmetDemands)) db.unmetDemands = [];
 
   const rawText = String(text || "").trim();
-  if (!rawText && !actionTarget) return null;
+  if (!rawText && !actionTarget && !category) return null;
 
   const cleanPhone = cleanWhatsAppPhone(senderPhone) || String(senderPhone || "").replace(/\D/g, "");
 
   // Descarta mensagens que são apenas saudações ou despedidas sem demanda
-  if (rawText && !actionTarget) {
+  if (rawText && !actionTarget && !category) {
     const isGreeting = /^(?:oi|ol[aá]|opa|ei|bom dia|boa tarde|boa noite|tchau|obrigado|obrigada|valeu|ok|beleza|sim|n[aã]o)[.!?\s]*$/i.test(rawText);
     if (isGreeting) return null;
   }
 
-  const classification = classifyUnmetDemand(rawText, actionTarget, reason);
+  const classification = (category && demandTitle)
+    ? {
+        category,
+        demandTitle,
+        reason: reason || "capability_missing",
+        actionTarget: actionTarget || null,
+        suggestedFeature: suggestedFeature || UNMET_DEMAND_CATEGORIES[category]?.defaultSuggested || ""
+      }
+    : classifyUnmetDemand(rawText, actionTarget, reason);
   const now = new Date().toISOString();
 
   // Verifica se já existe uma demanda em aberto similar
@@ -2317,20 +2332,36 @@ export function formatBrDate(dateStr) {
 }
 
 /**
+ * Detecta se a mensagem é uma consulta de disponibilidade de quartos/vagas de hospedagem
+ */
+export function isAvailabilityInquiry(text = "") {
+  if (!text || typeof text !== "string") return false;
+  const lower = text.toLowerCase().trim();
+  const mentionsGarage = /\b(?:garagem|estacionamento|carro|ve[ií]culo|placa)\b/i.test(lower);
+  if (mentionsGarage) return false;
+
+  return (
+    /\b(?:disponibilidade|dispon[ií]vel|vagas?|quarto\s+vago|tem\s+vaga)\b/i.test(lower) ||
+    /\b(?:tem|teria|h[aá]|possuem)\s+(?:algum\s+)?(?:quarto|flat|apartamento|vaga)\b/i.test(lower)
+  );
+}
+
+/**
  * Detecta se a mensagem é uma consulta de cotação, tarifas, diárias ou valores
  */
 export function isPricingOrQuoteInquiry(text = "") {
   if (!text || typeof text !== "string") return false;
   const lower = text.toLowerCase().trim();
 
-  // Expressões explícitas de cotação / preço / diária / orçamento
+  // Expressões explícitas de cotação / preço / diária / orçamento ou disponibilidade de vagas
   return (
     /\b(?:quanto\s+(?:t[aá]|custa|[eé]|fica|sai)|qual\s+(?:o\s+)?(?:valor|pre[cç]o)|saber\s+(?:o\s+)?(?:valor|pre[cç]o|tarifa))\b/i.test(lower) ||
     /\b(?:pre[cç]o|valor|valores|pre[cç]os|tarifa|tarifas|tabela)\s+(?:de\s+(?:uma\s+)?|da[s]?\s+|do\s+)?(?:di[aá]rias?|flat|quarto|hospedagem|estadia|reserva|per[ií]odo|caf[eé])\b/i.test(lower) ||
     /\b(?:di[aá]rias?|hospedagem|estadia)\s+(?:com\s+caf[eé]|sem\s+caf[eé]|para\s+\d+\s+pesso|para\s+casal|individual|solteiro)\b/i.test(lower) ||
     /\b(?:or[cç]amento|cota[cç][aã]o|cotar)\b/i.test(lower) ||
     /\bdi[aá]rias?\b/i.test(lower) ||
-    /\b(?:nova\s+reserva|fazer\s+reserva|quero\s+reservar|reservar\s+quarto|alugar\s+flat)\b/i.test(lower)
+    /\b(?:nova\s+reserva|fazer\s+reserva|quero\s+reservar|reservar\s+quarto|alugar\s+flat)\b/i.test(lower) ||
+    isAvailabilityInquiry(text)
   );
 }
 
@@ -2359,8 +2390,8 @@ export function isOperationalNonPricingFaq(faq) {
  * - PRICING_QUOTE: Consulta de valores, diárias e cotações (VIA 2 - Leitura do Sistema)
  * - EXISTING_RESERVATION: Consulta de reserva existente (VIA 2 - Leitura do Sistema)
  * - FLAT_READY_STATUS: Consulta de status e prontidão do flat (VIA 2 - Leitura do Sistema)
- * - GENERIC_FAQ: Perguntas institucionais da base/FAQ (VIA 1 - FAQ e Conhecimento)
  * - OPERATIONAL_DEMAND: Solicitações operacionais sem acesso autônomo (Gera Demanda Não Atendida)
+ * - GENERIC_FAQ: Perguntas institucionais da base/FAQ (VIA 1 - FAQ e Conhecimento)
  * - UNKNOWN_INQUIRY: Dúvida não mapeada (Gera Demanda e FAQ pendente)
  */
 export function analyzeGuestQuery(rawText = "", guestContext = null, db = null) {
@@ -2383,7 +2414,7 @@ export function analyzeGuestQuery(rawText = "", guestContext = null, db = null) 
     };
   }
 
-  // 2. Preços, Tarifas, Diárias e Cotações (VIA 2 - Leitura do Sistema)
+  // 2. Preços, Tarifas, Diárias, Disponibilidade e Cotações (VIA 2 - Leitura do Sistema)
   if (isPricingOrQuoteInquiry(text)) {
     return {
       type: "PRICING_QUOTE",
@@ -2426,7 +2457,7 @@ export function analyzeGuestQuery(rawText = "", guestContext = null, db = null) 
     };
   }
 
-  // 5. Demanda Operacional Sem Acesso Autônomo
+  // 5. Demanda Operacional Sem Acesso Autônomo (Ações, Trocas, Manutenção, Chamados)
   const demandClassification = classifyUnmetDemand(text);
   if (demandClassification && demandClassification.category !== "outros" && demandClassification.category !== "operacoes_sistema_pausadas") {
     return {
@@ -2441,13 +2472,14 @@ export function analyzeGuestQuery(rawText = "", guestContext = null, db = null) 
   const isGenericFaqMatch = (
     /wifi|wi-fi|internet|senha(?:\s+do\s+wi-?fi)?|conectar/i.test(text) ||
     /caf[eé]|desjejum/i.test(text) ||
-    /garagem|estacionamento|vaga|carro/i.test(text) ||
+    /garagem|estacionamento|carro/i.test(text) ||
     /endere[cç]o|localiza[cç][aã]o|onde\s+fica|como\s+chegar/i.test(text) ||
     /check-?in|entrada|hor[aá]rio\s+de\s+entrada|chegada/i.test(text) ||
     /check-?out|sa[ií]da|hor[aá]rio\s+de\s+sa[ií]da/i.test(text) ||
     /pet|cachorro|animal/i.test(text) ||
     /piscina|jacuzzi|academia|cobertura|lazer/i.test(text) ||
-    /fumo|fumar|cigarro/i.test(text)
+    /fumo|fumar|cigarro/i.test(text) ||
+    /micro[- ]ondas|frigobar|cafeteira|cooktop|fog[aã]o|cozinha|utens[ií]lio|smart\s*tv|tv|televis[aã]o|cama|enxoval|toalha|len[cç]ol|roupa\s+de\s+cama|ar[- ]condicionado|ar\s+split|comodidade/i.test(text)
   );
 
   if (isGenericFaqMatch) {
@@ -2539,6 +2571,8 @@ export function validateAndRefineResponse({
         guestContext,
         actionTarget: null,
         reason: "capability_missing",
+        category: cat,
+        demandTitle,
         saveDatabase,
         createNotification
       });
@@ -2546,8 +2580,9 @@ export function validateAndRefineResponse({
 
     const isGenericFallback = replyText.includes("Posso te ajudar com informações sobre *Wi-Fi") ||
       (replyText.includes("Sou a Sofia, concierge virtual") && !replyText.includes("registrei") && !replyText.includes("equipe"));
+    const alreadyAcknowledged = /registrei|equipe|recep[cç][aã]o|encaminh|atender/i.test(replyText);
 
-    if (isGenericFallback || !replyText.toLowerCase().includes(cat.replace(/_/g, " "))) {
+    if (isGenericFallback || !alreadyAcknowledged) {
       replyText = ret(`Olá${name}! Recebi sua solicitação sobre *${demandTitle}* 🛎️. Como essa operação requer acompanhamento da nossa equipe, já registrei o seu pedido no sistema para a recepção atender você com máxima atenção! ✨`);
     }
   }
@@ -2583,6 +2618,49 @@ export function validateAndRefineResponse({
 
     if (isGenericFallback) {
       replyText = ret(`Olá${name}! Anotei sua dúvida. Como não tenho essa informação cadastrada no sistema, já registrei sua pergunta para a equipe da recepção te responder por aqui em instantes! 🛎️✨`);
+    }
+  }
+
+  // Regra 4: Validação de Status do Quarto / Prontidão (VIA 2)
+  if (analysis.type === "FLAT_READY_STATUS") {
+    const isGenericFallback = replyText.includes("Posso te ajudar com informações sobre *Wi-Fi") ||
+      (replyText.includes("Sou a Sofia, concierge virtual") && !replyText.includes("limpo") && !replyText.includes("pronto") && !replyText.includes("governança") && !replyText.includes("quarto"));
+
+    if (isGenericFallback && db) {
+      const flatNum = guestContext?.flatNumber || (queryText.match(/\b(?:flat|quarto|apto|apartamento)\s*(\d{2,4})\b/i)?.[1]) || null;
+      if (flatNum) {
+        const flatStatus = handleGetFlatStatus(db, { flatNumber: flatNum });
+        if (flatStatus && flatStatus.success) {
+          if (flatStatus.isRoomReady) {
+            replyText = ret(`Ótima notícia${name}! 🎉 O seu *Flat ${flatNum}* já está *100% limpo, higienizado e pronto* para te receber! Ao chegar, basta se identificar na portaria com seu documento para a liberação da chave. Seja muito bem-vindo(a)! 🏨🔑`);
+          } else {
+            const cleanDesc = flatStatus.cleaningStatus === "in_progress" ? "em higienização pela equipe de governança" : "sendo preparado pela nossa governança";
+            replyText = ret(`Olá${name}! O seu *Flat ${flatNum}* está ${cleanDesc} ✨. O horário oficial de entrada é a partir das 14:00h. Assim que a limpeza for liberada pela equipe, nós te avisaremos por aqui imediatamente! 🕒`);
+          }
+        }
+      } else {
+        replyText = ret(`Olá${name}! Para verificar se o seu apartamento já está pronto e liberado, por favor me informe o *número do seu flat* ou o *nome completo do titular da reserva*! 🛎️🔑`);
+      }
+    }
+  }
+
+  // Regra 5: Validação de Consulta de Reserva Existente (VIA 2)
+  if (analysis.type === "EXISTING_RESERVATION") {
+    const isGenericFallback = replyText.includes("Posso te ajudar com informações sobre *Wi-Fi") ||
+      (replyText.includes("Sou a Sofia, concierge virtual") && !replyText.includes("confirmada") && !replyText.includes("reserva"));
+
+    if (isGenericFallback) {
+      if (guestContext?.hasReservation && guestContext?.reservation && guestContext.reservation.status !== "cancelada") {
+        const r = guestContext.reservation;
+        const flatStr = r.flatNumber || guestContext.flatNumber || "UH a definir";
+        const checkinFmt = r.checkinDate ? formatBrDate(r.checkinDate) : "Data a confirmar";
+        const checkoutFmt = r.checkoutDate ? formatBrDate(r.checkoutDate) : "Data a confirmar";
+        const linkUrl = r.checkinUrl || guestContext.checkinUrl;
+        const linkMsg = linkUrl ? `\n\n📋 *Pré-Check-in Digital:*\n👉 ${linkUrl}` : "";
+        replyText = ret(`Olá${name}! Sim, sua reserva está *confirmada*! 🏨✨\n\n• *Flat:* ${flatStr}\n• *Entrada (Check-in):* ${checkinFmt} a partir das 14:00h\n• *Saída (Check-out):* ${checkoutFmt} até as 12:00h\n• *Status:* Confirmada${linkMsg}\n\nEstamos à disposição para tornar sua estadia excelente!`);
+      } else {
+        replyText = ret(`Olá${name}! Não localizei nenhuma reserva confirmada para este número de WhatsApp no sistema. Se a reserva foi realizada em outro nome ou plataforma, me informe o *nome completo do titular* ou o *código da reserva* que consulto para você! 🛎️✨`);
+      }
     }
   }
 
@@ -2934,6 +3012,26 @@ export function generateHeuristicResponse(messageText = "", guestContext = {}, a
     else if (lower.startsWith("boa tarde")) greetingWord = "Boa tarde";
     else if (lower.startsWith("boa noite")) greetingWord = "Boa noite";
     return ret(`${greetingWord}${name}! Tudo bem? Sou a ${aiConfig.agentName}, concierge virtual da CorpFlats 🏨. Como posso te ajudar hoje? 😊`);
+  }
+
+  // 7.8 Comodidades e Estrutura dos Flats
+  if (/micro[- ]ondas|frigobar|cafeteira|cooktop|fog[aã]o|cozinha|utens[ií]lio|smart\s*tv|tv|televis[aã]o|cama|enxoval|toalha|len[cç]ol|roupa\s+de\s+cama|ar[- ]condicionado|ar\s+split|comodidade/i.test(text)) {
+    return ret(`Olá${name}! ✨ Todos os nossos flats dispõem de: ${kb.amenities}`);
+  }
+
+  // 7.9 Animais e Pets
+  if (/pet|cachorro|animal|gato/i.test(text)) {
+    return ret(`Olá${name}! 🐾 ${kb.petPolicy}`);
+  }
+
+  // 7.10 Lazer, Cobertura, Piscina e Academia
+  if (/piscina|jacuzzi|academia|cobertura|lazer|hidro/i.test(text)) {
+    return ret(`Olá${name}! 🏊‍♂️ ${kb.leisureInfo || "Piscina/jacuzzi aquecida e academia na cobertura das 06:00 às 22:00 para uso exclusivo dos hóspedes."}`);
+  }
+
+  // 7.11 Fumo e Cigarro
+  if (/fumo|fumar|cigarro|fumante/i.test(text)) {
+    return ret(`Olá${name}! 🚭 ${kb.smokingPolicy}`);
   }
 
   // 9. Se for demanda operacional não atendida pela base de conhecimento

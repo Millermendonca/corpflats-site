@@ -133,6 +133,35 @@ describe("Semantic Query Analysis & Two-Track PMS Suite", () => {
 
       const q2 = analyzeGuestQuery("A piscina é aquecida?", null, mockDb);
       assert.equal(q2.type, "GENERIC_FAQ");
+
+      const q3 = analyzeGuestQuery("Vocês têm garagem?", null, mockDb);
+      assert.equal(q3.type, "GENERIC_FAQ");
+
+      const q4 = analyzeGuestQuery("Tem estacionamento incluído?", null, mockDb);
+      assert.equal(q4.type, "GENERIC_FAQ");
+
+      const q5 = analyzeGuestQuery("Vocês servem café no quarto?", null, mockDb);
+      assert.equal(q5.type, "GENERIC_FAQ");
+
+      const q6 = analyzeGuestQuery("Tem toalha e roupa de cama no flat?", null, mockDb);
+      assert.equal(q6.type, "GENERIC_FAQ");
+
+      const q7 = analyzeGuestQuery("O flat tem micro-ondas?", null, mockDb);
+      assert.equal(q7.type, "GENERIC_FAQ");
+
+      const q8 = analyzeGuestQuery("Tem ar condicionado no quarto?", null, mockDb);
+      assert.equal(q8.type, "GENERIC_FAQ");
+    });
+
+    it("classifies room availability and vacancy inquiries as PRICING_QUOTE (Track 2)", () => {
+      const q1 = analyzeGuestQuery("Tem vaga para o fim de semana?", null, mockDb);
+      assert.equal(q1.type, "PRICING_QUOTE");
+
+      const q2 = analyzeGuestQuery("Vocês têm disponibilidade para amanhã?", null, mockDb);
+      assert.equal(q2.type, "PRICING_QUOTE");
+
+      const q3 = analyzeGuestQuery("Tem quarto vago?", null, mockDb);
+      assert.equal(q3.type, "PRICING_QUOTE");
     });
 
     it("classifies unmapped queries as UNKNOWN_INQUIRY", () => {
@@ -240,6 +269,73 @@ describe("Semantic Query Analysis & Two-Track PMS Suite", () => {
 
       assert.equal(validation.replyText, candidateReply);
       assert.equal(validation.missingDataOrCapability, false);
+    });
+
+    it("allows amenity and garage institutional answers without false operational demand triggers", () => {
+      const initialCount = mockDb.unmetDemands.length;
+
+      // 1. Garagem
+      const vGarage = validateAndRefineResponse({
+        queryText: "Vocês têm garagem?",
+        candidateText: "Sim, dispomos de 1 vaga de garagem coberta gratuita por flat.",
+        db: mockDb
+      });
+      assert.equal(vGarage.replyText, "Sim, dispomos de 1 vaga de garagem coberta gratuita por flat.");
+      assert.equal(vGarage.missingDataOrCapability, false);
+
+      // 2. Micro-ondas
+      const vMicro = validateAndRefineResponse({
+        queryText: "O flat tem micro-ondas?",
+        candidateText: "Sim! Todos os nossos flats possuem cozinha compacta com micro-ondas, frigobar e cafeteira.",
+        db: mockDb
+      });
+      assert.equal(vMicro.replyText, "Sim! Todos os nossos flats possuem cozinha compacta com micro-ondas, frigobar e cafeteira.");
+      assert.equal(vMicro.missingDataOrCapability, false);
+
+      // 3. Café no quarto
+      const vCafe = validateAndRefineResponse({
+        queryText: "Vocês servem café no quarto?",
+        candidateText: "Sim, o café da manhã é servido exclusivamente em deliciosa bandeja no apartamento.",
+        db: mockDb
+      });
+      assert.equal(vCafe.replyText, "Sim, o café da manhã é servido exclusivamente em deliciosa bandeja no apartamento.");
+      assert.equal(vCafe.missingDataOrCapability, false);
+
+      // Nenhuma demanda espúria deve ter sido registrada
+      assert.equal(mockDb.unmetDemands.length, initialCount);
+    });
+
+    it("refines flat ready status using PMS reading when candidate is generic fallback", () => {
+      const genericFallback = "Olá! Sou a Sofia, concierge virtual da CorpFlats 🏨.\n\nPosso te ajudar com informações sobre *Wi-Fi, horários de check-in/out, status do flat, garagem, café da manhã e localização*. Como posso te ajudar?";
+
+      const validation = validateAndRefineResponse({
+        queryText: "O quarto 101 já tá pronto?",
+        candidateText: genericFallback,
+        db: mockDb
+      });
+
+      assert.notEqual(validation.replyText, genericFallback);
+      assert.match(validation.replyText, /Flat 101/);
+      assert.match(validation.replyText, /100% limpo, higienizado e pronto/);
+    });
+
+    it("refines existing reservation check using PMS when candidate is generic fallback", () => {
+      const genericFallback = "Olá! Sou a Sofia, concierge virtual da CorpFlats 🏨.\n\nPosso te ajudar com informações sobre *Wi-Fi, horários de check-in/out, status do flat, garagem, café da manhã e localização*. Como posso te ajudar?";
+
+      const validation = validateAndRefineResponse({
+        queryText: "Minha reserva está confirmada?",
+        candidateText: genericFallback,
+        guestContext: {
+          hasReservation: true,
+          reservation: mockDb.reservations[0]
+        },
+        db: mockDb
+      });
+
+      assert.notEqual(validation.replyText, genericFallback);
+      assert.match(validation.replyText, /confirmada/i);
+      assert.match(validation.replyText, /101/);
+      assert.match(validation.replyText, /13\/10\/2026/);
     });
   });
 

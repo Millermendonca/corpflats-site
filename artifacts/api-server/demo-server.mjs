@@ -23213,7 +23213,11 @@ export function getBotActionsSettings() {
         calculateQuote: true,
         generatePayment: true,
         createPreReservation: true,
-        commitReservation: true
+        commitReservation: true,
+        getReservationDetails: true,
+        getFlatStatus: true,
+        getPricingInfo: true,
+        recordUnmetDemand: true
       },
       preReservationHoldMinutes: 30,
       handoverMessage: "Esta ação do sistema está pausada ou requer atendimento humano.",
@@ -23226,7 +23230,11 @@ export function getBotActionsSettings() {
       calculateQuote: true,
       generatePayment: true,
       createPreReservation: true,
-      commitReservation: true
+      commitReservation: true,
+      getReservationDetails: true,
+      getFlatStatus: true,
+      getPricingInfo: true,
+      recordUnmetDemand: true
     };
   }
   return db.botActionsSettings;
