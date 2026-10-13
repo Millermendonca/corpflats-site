@@ -199,6 +199,8 @@ export default function PmsCalendar() {
   // Form fields
   const [formFlatId, setFormFlatId] = useState("")
   const isFlatManuallyChangedRef = useRef(false)
+  const [formIsFlatLocked, setFormIsFlatLocked] = useState(false)
+  const [formFlatLockReason, setFormFlatLockReason] = useState("")
   const [formGuestName, setFormGuestName] = useState("")
   const [formGuestPhone, setFormGuestPhone] = useState("")
   const [phoneVerification, setPhoneVerification] = useState<{
@@ -2092,6 +2094,8 @@ export default function PmsCalendar() {
     setFormDocFileName("")
     setFormHasMinor(false)
     setFormIsCamposResident(false)
+    setFormIsFlatLocked(false)
+    setFormFlatLockReason("")
     setMobileRangeStart(null)
     setResModalTab("reservation")
     setResModalOpen(true)
@@ -2271,6 +2275,8 @@ export default function PmsCalendar() {
     setFormDocFileName("")
     setFormHasMinor(false)
     setFormIsCamposResident(false)
+    setFormIsFlatLocked(false)
+    setFormFlatLockReason("")
     setPhoneVerification(null)
     setAuditLogs([])
     setCommunications([])
@@ -2440,6 +2446,8 @@ export default function PmsCalendar() {
     setFormHasMinor(Boolean(resItem.hasMinor))
     const isCamposRes = isResCamposResident(resItem, matchedGuest)
     setFormIsCamposResident(isCamposRes)
+    setFormIsFlatLocked(Boolean(resItem.isFlatLocked || resItem.flatLocked))
+    setFormFlatLockReason(resItem.flatLockReason || "")
     setResModalTab("reservation")
     setAuditLogs(Array.isArray(resItem.auditLogs) ? resItem.auditLogs : [])
     fetchAuditLogs(resItem.code || resItem.id)
@@ -3205,6 +3213,9 @@ export default function PmsCalendar() {
         docPhotoUrl: formDocPhotoUrl || undefined,
         hasMinor: formHasMinor,
         isCamposResident: formIsCamposResident,
+        isFlatLocked: formIsFlatLocked,
+        flatLocked: formIsFlatLocked,
+        flatLockReason: formIsFlatLocked ? formFlatLockReason.trim() : "",
         vehicle: formVehiclePlate.trim() ? {
           plate: formVehiclePlate.trim().toUpperCase(),
           brand: formVehicleBrand.trim(),
@@ -4152,6 +4163,11 @@ export default function PmsCalendar() {
                                     ⏳ Pré-Reserva
                                   </span>
                                 )}
+                                {(resItem.isFlatLocked || resItem.flatLocked) && (
+                                  <span title={`Quarto Preferencial / Bloqueado${resItem.flatLockReason ? `: ${resItem.flatLockReason}` : ""}`} className="shrink-0 text-[9px] px-1.5 py-0.2 bg-amber-400 text-slate-950 font-black rounded shadow-xs flex items-center gap-0.5">
+                                    🔒 Fixo
+                                  </span>
+                                )}
                                 {isMultiChannel && (
                                   <span title="Reserva com múltiplos canais de diárias" className="shrink-0 text-[8.5px] px-1 py-0.2 bg-black/60 backdrop-blur-xs text-white font-black rounded shadow-xs border border-white/40 flex items-center gap-0.5">
                                     🔀 Multi
@@ -4420,6 +4436,18 @@ export default function PmsCalendar() {
                         <span className="text-rose-600">Apt {dragConfirmData.originFlatNumber}</span>
                         <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
                         <span className="text-emerald-700">Apt {dragConfirmData.targetFlatNumber}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {Boolean(dragConfirmData.res?.isFlatLocked || dragConfirmData.res?.flatLocked) && dragConfirmData.originFlatNumber !== dragConfirmData.targetFlatNumber && (
+                    <div className="p-2.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-900 dark:text-amber-200 text-xs flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-bold block">Aviso: Reserva com Flat Bloqueado / Fixo!</span>
+                        <span className="text-[11px] leading-tight text-amber-800 dark:text-amber-300">
+                          Este hóspede possui preferência de quarto fixada no PMS{dragConfirmData.res?.flatLockReason ? ` (${dragConfirmData.res.flatLockReason})` : ""}. Como administrador você pode alterar, mas a Sofia AI não poderá mover este quarto.
+                        </span>
                       </div>
                     </div>
                   )}
@@ -4711,6 +4739,20 @@ export default function PmsCalendar() {
                   </div>
                 )}
 
+                {selectedRes && (selectedRes.isFlatLocked || selectedRes.flatLocked) && formFlatId && String(formFlatId) !== String(selectedRes.flatId) && (
+                  <div className="p-3 bg-amber-500/15 border-2 border-amber-500/50 rounded-xl text-amber-950 dark:text-amber-200 text-xs flex items-start gap-2.5 animate-in fade-in">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                    <div className="space-y-0.5">
+                      <p className="font-bold text-[12px] text-amber-900 dark:text-amber-300">
+                        Aviso: Quarto Preferencial / Bloqueado!
+                      </p>
+                      <p className="text-[11px] leading-tight text-amber-800 dark:text-amber-300/90">
+                        Esta reserva foi marcada com flat bloqueado{selectedRes.flatLockReason ? ` (${selectedRes.flatLockReason})` : ""}. A Sofia AI está proibida de alterar este quarto. Como administrador, você pode prosseguir com a alteração manual se desejar.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 items-start">
                   <div className="space-y-1.5 min-w-0">
                     <div className="flex items-center justify-between">
@@ -4848,6 +4890,41 @@ export default function PmsCalendar() {
                     )}
                   </div>
                 )}
+
+                {/* Bloqueio de Flat / Quarto Preferencial */}
+                <div className="p-3 bg-slate-50/80 dark:bg-slate-900/50 border border-border/70 rounded-xl space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <Lock className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                      <div>
+                        <span className="text-xs font-bold text-slate-900 dark:text-slate-100 block">
+                          Bloquear Flat (Quarto Preferencial / Não Trocar)
+                        </span>
+                        <span className="text-[11px] text-muted-foreground block leading-tight">
+                          Impede a Sofia AI de trocar ou remanejar o quarto deste hóspede. Evita alocação de novos hóspedes neste flat.
+                        </span>
+                      </div>
+                    </div>
+                    <Switch 
+                      checked={formIsFlatLocked} 
+                      onCheckedChange={setFormIsFlatLocked} 
+                    />
+                  </div>
+
+                  {formIsFlatLocked && (
+                    <div className="pt-2 border-t border-border/60 animate-in fade-in space-y-1">
+                      <Label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                        Motivo / Justificativa do Quarto Fixo (Opcional)
+                      </Label>
+                      <Input
+                        value={formFlatLockReason}
+                        onChange={e => setFormFlatLockReason(e.target.value)}
+                        placeholder="Ex: Hóspede pediu cama casal + ar split; hóspede idoso pediu andar baixo..."
+                        className="text-xs h-8"
+                      />
+                    </div>
+                  )}
+                </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 items-start">
                   {/* Entrada / Check-in */}

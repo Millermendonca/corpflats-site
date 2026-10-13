@@ -52,7 +52,8 @@ import {
   FileText,
   Workflow,
   Bot,
-  Lightbulb
+  Lightbulb,
+  ArrowLeftRight
 } from "lucide-react"
 import { AccessDenied } from "@/components/access-denied"
 import { useQuickMessages, WhatsAppQuickMessage, renderQuickMessage } from "@/hooks/use-quick-messages"
@@ -298,6 +299,7 @@ interface BotActionsSettings {
     generatePayment: boolean
     createPreReservation: boolean
     commitReservation: boolean
+    reallocateReservationFlat: boolean
   }
   preReservationHoldMinutes: number
   handoverMessage: string
@@ -367,6 +369,16 @@ const BOT_ACTIONS_METADATA: BotActionMeta[] = [
     iconName: "CheckCheck",
     badgeText: "PMS Lock",
     colorClass: "emerald"
+  },
+  {
+    key: "reallocateReservationFlat",
+    title: "Remanejamento / Troca de Flat",
+    endpoint: "/api/bot-actions/reallocate-flat",
+    method: "POST",
+    description: "Permite à Sofia trocar ou remanejar o flat de um hóspede (inclusive deslocando reserva futura não-fixa), respeitando quartos bloqueados/preferenciais.",
+    iconName: "ArrowLeftRight",
+    badgeText: "PMS Reallocation",
+    colorClass: "amber"
   }
 ]
 
@@ -569,7 +581,8 @@ export default function WhatsappAutomation() {
       calculateQuote: true,
       generatePayment: true,
       createPreReservation: true,
-      commitReservation: true
+      commitReservation: true,
+      reallocateReservationFlat: true
     },
     preReservationHoldMinutes: 30,
     handoverMessage: "Esta ação do sistema está pausada ou requer atendimento humano."
@@ -2041,7 +2054,7 @@ export default function WhatsappAutomation() {
                   <span className={`ml-0.5 px-1.5 py-0.2 text-[9px] rounded-full font-black ${
                     botActionsSettings.apiActionsEnabled ? "bg-emerald-500 text-white" : "bg-amber-500 text-white"
                   }`}>
-                    {botActionsSettings.apiActionsEnabled ? `${Object.values(botActionsSettings.allowedActions || {}).filter(Boolean).length}/5` : "OFF"}
+                    {botActionsSettings.apiActionsEnabled ? `${Object.values(botActionsSettings.allowedActions || {}).filter(Boolean).length}/${BOT_ACTIONS_METADATA.length}` : "OFF"}
                   </span>
                 </Button>
 
@@ -2174,14 +2187,14 @@ export default function WhatsappAutomation() {
                   <div>
                     <h4 className="text-xs font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                       <Sliders className="w-3.5 h-3.5 text-blue-500" />
-                      Matriz de Permissões Granulares (5 Ações Executivas)
+                      Matriz de Permissões Granulares ({BOT_ACTIONS_METADATA.length} Ações Executivas)
                     </h4>
                     <p className="text-[11px] text-muted-foreground">
                       Ative ou silencie ações individuais de acordo com o nível de autonomia desejado.
                     </p>
                   </div>
                   <Badge variant="secondary" className="text-[10px] font-bold">
-                    {Object.values(botActionsSettings.allowedActions || {}).filter(Boolean).length} de 5 Habilitadas
+                    {Object.values(botActionsSettings.allowedActions || {}).filter(Boolean).length} de {BOT_ACTIONS_METADATA.length} Habilitadas
                   </Badge>
                 </div>
 
@@ -2195,7 +2208,7 @@ export default function WhatsappAutomation() {
                   </div>
                 )}
 
-                {/* Grid dos 5 Cards Granulares */}
+                {/* Grid dos Cards Granulares */}
                 <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 transition-opacity ${
                   !botActionsSettings.apiActionsEnabled ? "opacity-60 pointer-events-none" : ""
                 }`}>
@@ -2221,6 +2234,7 @@ export default function WhatsappAutomation() {
                                 {action.key === "generatePayment" && <QrCode className="w-4 h-4" />}
                                 {action.key === "createPreReservation" && <Clock className="w-4 h-4" />}
                                 {action.key === "commitReservation" && <CheckCheck className="w-4 h-4" />}
+                                {action.key === "reallocateReservationFlat" && <ArrowLeftRight className="w-4 h-4" />}
                               </div>
                               <div>
                                 <h5 className="text-xs font-bold text-foreground leading-snug">{action.title}</h5>

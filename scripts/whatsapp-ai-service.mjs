@@ -1044,7 +1044,8 @@ export function hasGuestRequestedSpecificFlat(db, res, targetFlatNumber) {
   // 3. Notas e solicitações especiais
   const combinedNotes = `${res.notes || ""} ${res.specialRequests || ""} ${res.receptionNotes || ""} ${res.obs || ""}`.toLowerCase();
   const flatLockRegex = new RegExp(`(?:quarto|flat|apto|apartamento)?\\s*${fNum}\\s*(?:fixo|preferencial|bloquead[ao]|exclusiv[ao]|solicitad[ao])`, "i");
-  const requestRegex = new RegExp(`(?:pediu|solicitou|quer|exigiu|prefer[eê]|favor colocar)\\s*(?:no|o)?\\s*(?:flat|quarto|apto)?\\s*${fNum}\\b`, "i");
+  const requestRegex = new RegExp(`(?:pediu|solicitou|quer(?:ia)?|gostaria|exigiu|prefer[eê]|prefer[eê]ncia|favor colocar).*?\\b(?:no|o|para|pra)?\\s*(?:flat|quarto|apto)?\\s*${fNum}\\b`, "i");
+  const directRoomRegex = new RegExp(`(?:no|o|pro|pra|para|ficar no)\\s*(?:flat|quarto|apto)?\\s*${fNum}\\b`, "i");
   const generalLockRegex = /(?:quarto|flat|apto)\s*(?:preferencial|fixo|bloquead[ao]|n[aã]o\s+alterar|n[aã]o\s+mudar)/i;
 
   if (flatLockRegex.test(combinedNotes) || requestRegex.test(combinedNotes) || generalLockRegex.test(combinedNotes)) {
@@ -1058,7 +1059,7 @@ export function hasGuestRequestedSpecificFlat(db, res, targetFlatNumber) {
     if (conv && Array.isArray(conv.messages)) {
       const guestMessages = conv.messages.filter(m => !m.fromMe && m.text).map(m => String(m.text).toLowerCase());
       for (const msg of guestMessages) {
-        if (flatLockRegex.test(msg) || requestRegex.test(msg)) {
+        if (flatLockRegex.test(msg) || requestRegex.test(msg) || (directRoomRegex.test(msg) && /(?:quero|gostaria|posso|tem como|pode ser|prefiro|pedi|solicitei)/i.test(msg))) {
           return true;
         }
       }
